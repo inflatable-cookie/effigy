@@ -47,7 +47,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02/004-rust-native-scripting-surface-contract.md` is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
 - `g02/005-optional-distribution-surface-contract.md` is paused after one real consumer proof plus bounded widening made the optional distribution boundary trustworthy for metadata validation, artifact validation, and closeout evidence reuse.
 - `g02/006-colima-container-environment-contract.md` is now paused after the real-machine `colima nerdctl` live-stop and closeout path was hardened strongly enough to stop carrying a deferred warning.
-- `g02/007-distribution-release-and-consumer-rollout.md` is now the active release-prep lane for the deliberate `v0.3` cut.
+- `g02/020-multi-project-gateway-expansion-and-service-dns.md` is now the active strict lane as of 2026-04-22 (re-sequenced ahead of `g02.007` and `g02.019`; see `docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
+- `g02/007-distribution-release-and-consumer-rollout.md` is queued behind `g02.020`, still gated on explicit release intent for the deliberate `v0.3` cut. It resumes ahead of `g02.020` whenever release execution is explicitly requested.
 - `g02/010-effigy-modularization-and-crate-boundaries.md` is complete.
 - `g02/008-demo-and-manifest-import-rollout.md` remains planned, but stays outside the current `v0.3` release-prep queue.
 - `g02/009-vault-backed-varlock-rollout.md` remains planned, but stays outside the current `v0.3` release-prep queue.
@@ -56,8 +57,12 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-- `g02.007`
-- release-prep path: return to `115` and the release protocol surfaces
+- `g02.020` — execute batch card `303` (loopback-IP allocation and gateway
+  setup integration)
+- queued: `g02.007` (release-prep, still gated on explicit release intent;
+  resumes ahead of `g02.020` if release execution is requested)
+- queued: `g02.019` (v0.3 surface audit, after both `g02.020` and the release
+  cut settle)
 
 ## Research Program
 

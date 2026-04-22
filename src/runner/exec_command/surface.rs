@@ -6,7 +6,12 @@ use effigy_containers::{
     EffectiveContainerPolicy,
 };
 use effigy_exec::{CwdMapper, ExecAlias, ExecAliasTable};
-use effigy_manifest::{ManifestContainerConfig, ManifestContainersConfig, TASK_MANIFEST_FILE};
+use effigy_manifest::{
+    ManifestContainerConfig, ManifestContainerServiceConfig, ManifestContainersConfig,
+    TASK_MANIFEST_FILE,
+};
+use minijinja::{Environment, Value};
+use serde::Serialize;
 
 use crate::runner::container_command::support::validate_running_container_runtime_match;
 use crate::runner::error::RunnerError;
@@ -65,21 +70,23 @@ pub(super) fn load_named_container_config(
         })
 }
 
-pub(super) fn build_alias_table(config: &ManifestContainerConfig) -> ExecAliasTable {
+pub(super) fn build_alias_table(
+    config: &ManifestContainerConfig,
+) -> Result<ExecAliasTable, RunnerError> {
     let aliases = config
         .aliases
         .iter()
         .map(|(name, alias)| {
-            (
+            Ok((
                 name.clone(),
                 ExecAlias {
                     service: alias.service().to_owned(),
-                    command: alias.command(name).to_owned(),
+                    command: render_alias_command(name, alias.command(name), config)?,
                 },
-            )
+            ))
         })
-        .collect::<HashMap<_, _>>();
-    ExecAliasTable::from_map(aliases)
+        .collect::<Result<HashMap<_, _>, RunnerError>>()?;
+    Ok(ExecAliasTable::from_map(aliases))
 }
 
 pub(super) fn build_raw_exec_args(
@@ -171,4 +178,89 @@ fn map_host_cwd(
         .host_to_container(invocation_cwd)
         .map(|path| path.to_string_lossy().into_owned())
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
+}
+
+fn render_alias_command(
+    alias_name: &str,
+    command: &str,
+    config: &ManifestContainerConfig,
+) -> Result<String, RunnerError> {
+    if !command.contains("{{") && !command.contains("{%") && !command.contains("{#") {
+        return Ok(command.to_owned());
+    }
+
+    let mut env = Environment::new();
+    env.add_template("alias", command).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to parse command template for alias `{alias_name}`: {error}"
+        ))
+    })?;
+
+    let template = env.get_template("alias").map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to load command template for alias `{alias_name}`: {error}"
+        ))
+    })?;
+
+    let context = AliasTemplateContext::from_config(config);
+    template.render(&context).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to render command template for alias `{alias_name}`: {error}"
+        ))
+    })
+}
+
+#[derive(Serialize)]
+struct AliasTemplateContext {
+    services: HashMap<String, AliasTemplateService>,
+}
+
+impl AliasTemplateContext {
+    fn from_config(config: &ManifestContainerConfig) -> Self {
+        Self {
+            services: config
+                .services
+                .iter()
+                .map(|(name, service)| (name.clone(), AliasTemplateService::from_service(service)))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct AliasTemplateService {
+    catalog: String,
+    params: HashMap<String, Value>,
+}
+
+impl AliasTemplateService {
+    fn from_service(service: &ManifestContainerServiceConfig) -> Self {
+        Self {
+            catalog: service.catalog.clone(),
+            params: service
+                .params
+                .iter()
+                .map(|(key, value)| (key.clone(), toml_to_minijinja(value)))
+                .collect(),
+        }
+    }
+}
+
+fn toml_to_minijinja(value: &toml::Value) -> Value {
+    match value {
+        toml::Value::String(value) => Value::from(value.as_str()),
+        toml::Value::Integer(value) => Value::from(*value),
+        toml::Value::Float(value) => Value::from(*value),
+        toml::Value::Boolean(value) => Value::from(*value),
+        toml::Value::Array(values) => {
+            Value::from(values.iter().map(toml_to_minijinja).collect::<Vec<_>>())
+        }
+        toml::Value::Table(values) => Value::from_serialize(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), toml_to_minijinja(value)))
+                .collect::<HashMap<_, _>>(),
+        ),
+        toml::Value::Datetime(value) => Value::from(value.to_string()),
+    }
 }

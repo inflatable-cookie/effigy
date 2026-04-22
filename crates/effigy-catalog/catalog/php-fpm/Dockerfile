@@ -2,6 +2,9 @@ ARG PHP_VERSION=8.3
 FROM php:${PHP_VERSION}-fpm
 ARG WORKSPACE_UID=1000
 ARG WORKSPACE_GID=1000
+ARG COMPOSER_HOME=/home/dev/.config/composer
+ARG COMPOSER_GLOBAL_PACKAGES=""
+ARG NODE_GLOBAL_PACKAGES=""
 
 # ── install-php-extensions ────────────────────────────────────────────
 # Community standard tool that handles system-dependency resolution,
@@ -117,6 +120,22 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 # Allow Composer to run as root (common in dev containers).
 ENV COMPOSER_ALLOW_SUPERUSER=1
+ENV COMPOSER_HOME=${COMPOSER_HOME}
+ENV PATH=${COMPOSER_HOME}/vendor/bin:${PATH}
+
+RUN set -eux; \
+    workspace_group="$(id -gn dev)"; \
+    mkdir -p "${COMPOSER_HOME}"; \
+    chown -R dev:"${workspace_group}" "${COMPOSER_HOME}"
+
+RUN set -eux; \
+    packages="$(printf '%s\n' "${COMPOSER_GLOBAL_PACKAGES}" | xargs)"; \
+    if [ -n "${packages}" ]; then \
+        composer global config --no-plugins allow-plugins true; \
+        composer global require --no-interaction --prefer-dist ${packages}; \
+    fi; \
+    workspace_group="$(id -gn dev)"; \
+    chown -R dev:"${workspace_group}" "${COMPOSER_HOME}"
 
 # ── Node.js (optional, for frontend asset compilation) ────────────────
 # Many PHP projects need Node for asset builds (webpack, vite, mix).
@@ -126,7 +145,9 @@ RUN if [ -n "$NODE_VERSION" ]; then \
         curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
         && apt-get install -y --no-install-recommends nodejs \
         && rm -rf /var/lib/apt/lists/* \
-        && npm install -g npm@latest; \
+        && npm install -g npm@latest \
+        && corepack enable \
+        && if [ -n "$NODE_GLOBAL_PACKAGES" ]; then npm install -g $NODE_GLOBAL_PACKAGES; fi; \
     fi
 
 # ── Entrypoint ────────────────────────────────────────────────────────

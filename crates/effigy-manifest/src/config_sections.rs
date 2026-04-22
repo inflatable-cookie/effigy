@@ -4,6 +4,13 @@ use std::path::Path;
 use crate::ManifestError;
 use crate::ManifestManagedRun;
 
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct ManifestBundleConfig {
+    pub name: String,
+    #[serde(flatten)]
+    pub inputs: BTreeMap<String, toml::Value>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ManifestScanOutputFormat {

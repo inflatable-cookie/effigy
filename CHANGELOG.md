@@ -24,6 +24,36 @@ During v0.x, MINOR bumps may include breaking changes.
   remains under `infra/dev` after an explicit eject.
 
 ### Added
+- Persist bounded gateway loopback-IP assignments in
+  `~/.effigy/gateway/loopback-ips.json` and provision the macOS
+  `127.1.0.1`–`127.1.0.50` alias range during the existing elevated
+  `effigy gateway up` setup path, so later TCP-service DNS work can bind onto
+  stable loopback addresses without requesting extra privilege during normal
+  runtime.
+- Change HTTP gateway registration to prefer live runtime published-port
+  discovery over manifest-time host-port assumptions, so generated-compose
+  services with ephemeral host ports can still register `.test` routes
+  honestly after startup.
+- Add bounded project-owned TCP service DNS alias registration on top of the
+  loopback-IP gateway state, so shipped catalogs like Postgres, MariaDB,
+  Redis, Memcached, MinIO, Elasticsearch, and SMTP-capable mail services can
+  resolve stable DNS-only aliases such as `db.<app>.test` without pretending
+  to be HTTP proxy routes.
+- Add bounded shared-service DNS alias reuse on the same loopback-IP gateway
+  substrate, so several consuming projects can resolve the same shipped alias
+  shape like `db.<app>.test` onto one shared backing-service identity instead
+  of allocating duplicate per-project loopback IPs for the same shared
+  service.
+- Add a first-class top-level `[bundle]` manifest surface with a bundled
+  `decodelabs` resolver. Bundle defaults are applied after manifest
+  composition as lowest-precedence config, so repo-owned `effigy.toml`
+  blocks can override the resolved bundle shape directly without a second
+  indirection layer.
+- Add `effigy bundle list` and `effigy bundle inspect <name>` so users can
+  discover shipped bundles and inspect both the accepted `[bundle]` input
+  schema and the manifest paths each bundle injects by default, and expose the
+  same bundle schema surface through `effigy config --schema --target bundle`
+  with optional `--bundle <name>` detail.
 - Register the `northstar` starter with `effigy init`: `effigy init northstar`
   now emits the single-repo Northstar + Effigy consumer contract (root
   `effigy.toml` with a starter `[docs_policy]` block and `qa` / `qa:docs` /
@@ -132,8 +162,22 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add layered Composer-home support for bundled `php-fpm` workspaces: repos
   can opt PHP services into host Composer-home mounting when available, while
   the image still carries a fallback internal Composer home plus configurable
-  global packages such as the legacy `decodelabs/effigy` PHP tool for
-  DecodeLabs-era projects.
+  global packages; fallback global installs now treat those packages as
+  trusted and enable Composer plugins automatically inside the container-owned
+  Composer home during image build.
+- Extend bundled `php-fpm` Node support so enabling Node also enables
+  Corepack-backed `pnpm`, and let repos request npm global tools like
+  `eclint` through `node_global_packages`.
+- Let catalog services use the existing `variant` key for parameter presets as
+  well as config-file variants, and ship a bundled `php-fpm` `decodelabs`
+  preset covering the standard DecodeLabs PHP workspace defaults.
+- Add the same preset handling to bundled `nginx` `decodelabs`, so the
+  variant also applies the repo-root document root and `/var/www/html`
+  working-dir defaults instead of repeating them in each manifest.
+- Infer generated-service `working_dir` from `[containers.<name>].working_dir`
+  whenever the target catalog service supports that param, so repos only need
+  to declare the path once instead of repeating it across service and
+  workspace config.
 - Point generated service Dockerfile paths at the actual generated catalog
   artifact directory under `.effigy/runtime/compose/.effigy-catalog` instead of the stale
   repo-root `.effigy-catalog` compatibility path, so rebuilt workspace images

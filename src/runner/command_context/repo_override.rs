@@ -5,6 +5,7 @@ use effigy_cli::Command;
 pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf> {
     match cmd {
         Command::Version => None,
+        Command::Bundle(_) => None,
         Command::Changelog(_) => None,
         Command::Exec(args) => args.repo_override.clone(),
         Command::System(args) => args.repo_override.clone(),

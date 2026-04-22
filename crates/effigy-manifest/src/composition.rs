@@ -5,6 +5,7 @@ use serde::Deserialize;
 use toml::Value;
 
 use super::TaskManifest;
+use crate::bundles::{apply_bundle_defaults, bundle_source_path};
 use crate::ManifestError;
 
 #[derive(Debug)]
@@ -85,7 +86,16 @@ pub fn load_task_manifest_with_inspection(
     manifest_path: &Path,
 ) -> Result<LoadedTaskManifest, ManifestError> {
     let mut session = CompositionSession::default();
-    let composed = load_composed_value(manifest_path, &mut session)?;
+    let mut composed = load_composed_value(manifest_path, &mut session)?;
+    let bundle_name = apply_bundle_defaults(manifest_path, &mut composed.value)?;
+    if let Some(bundle_name) = bundle_name.as_deref() {
+        record_missing_bundle_sources(
+            "",
+            &composed.value,
+            &bundle_source_path(bundle_name),
+            &mut composed.source_map,
+        );
+    }
     let manifest: TaskManifest =
         composed
             .value
@@ -448,6 +458,23 @@ fn copy_source_entries(
     }
     if !copied_any {
         record_value_sources(path, incoming_value, fallback_source, current_sources);
+    }
+}
+
+fn record_missing_bundle_sources(
+    path: &str,
+    value: &Value,
+    source: &Path,
+    out: &mut BTreeMap<String, PathBuf>,
+) {
+    if !path.is_empty() {
+        out.entry(path.to_owned())
+            .or_insert_with(|| source.to_path_buf());
+    }
+    if let Some(table) = value.as_table() {
+        for (key, child) in table {
+            record_missing_bundle_sources(&join_path(path, key), child, source, out);
+        }
     }
 }
 

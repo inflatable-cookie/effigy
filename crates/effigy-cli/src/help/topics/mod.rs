@@ -1,4 +1,5 @@
 mod bootstrap;
+mod bundle;
 mod changelog;
 mod container;
 mod contracts;
@@ -21,6 +22,7 @@ mod watch;
 mod workspace;
 
 pub(crate) use bootstrap::render_bootstrap_help;
+pub(crate) use bundle::render_bundle_help;
 pub(crate) use changelog::render_changelog_help;
 pub(crate) use container::render_container_help;
 pub(crate) use contracts::render_contracts_help;

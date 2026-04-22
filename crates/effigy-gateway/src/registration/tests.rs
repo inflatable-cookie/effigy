@@ -8,7 +8,7 @@ fn register_and_deregister_roundtrip() {
 
     let reg = RouteRegistration {
         domain: "myapp.test".to_string(),
-        target: "127.0.0.1:8080".to_string(),
+        target: Some("127.0.0.1:8080".to_string()),
         dns_ip: None,
         tls: false,
         project_path: "/projects/myapp".to_string(),
@@ -20,7 +20,10 @@ fn register_and_deregister_roundtrip() {
 
     let table = RouteTable::load(&path).unwrap();
     assert_eq!(table.len(), 1);
-    assert_eq!(table.lookup("myapp.test").unwrap().target, "127.0.0.1:8080");
+    assert_eq!(
+        table.lookup("myapp.test").unwrap().target.as_deref(),
+        Some("127.0.0.1:8080")
+    );
 
     // Deregister.
     deregister_route(&path, "myapp.test").unwrap();
@@ -36,7 +39,7 @@ fn register_upserts_existing() {
 
     let reg1 = RouteRegistration {
         domain: "myapp.test".to_string(),
-        target: "127.0.0.1:8080".to_string(),
+        target: Some("127.0.0.1:8080".to_string()),
         dns_ip: None,
         tls: false,
         project_path: "/projects/myapp".to_string(),
@@ -46,7 +49,7 @@ fn register_upserts_existing() {
 
     let reg2 = RouteRegistration {
         domain: "myapp.test".to_string(),
-        target: "127.0.0.1:9090".to_string(),
+        target: Some("127.0.0.1:9090".to_string()),
         dns_ip: None,
         tls: true,
         project_path: "/projects/myapp".to_string(),
@@ -56,7 +59,10 @@ fn register_upserts_existing() {
 
     let table = RouteTable::load(&path).unwrap();
     assert_eq!(table.len(), 1);
-    assert_eq!(table.lookup("myapp.test").unwrap().target, "127.0.0.1:9090");
+    assert_eq!(
+        table.lookup("myapp.test").unwrap().target.as_deref(),
+        Some("127.0.0.1:9090")
+    );
     assert!(table.lookup("myapp.test").unwrap().tls);
 }
 
@@ -78,7 +84,7 @@ fn deregister_project_routes_removes_all() {
         &path,
         &RouteRegistration {
             domain: "app.test".to_string(),
-            target: "127.0.0.1:8080".to_string(),
+            target: Some("127.0.0.1:8080".to_string()),
             dns_ip: None,
             tls: false,
             project_path: "/projects/myapp".to_string(),
@@ -91,7 +97,7 @@ fn deregister_project_routes_removes_all() {
         &path,
         &RouteRegistration {
             domain: "api.test".to_string(),
-            target: "127.0.0.1:8080".to_string(),
+            target: Some("127.0.0.1:8080".to_string()),
             dns_ip: None,
             tls: false,
             project_path: "/projects/myapp".to_string(),
@@ -104,7 +110,7 @@ fn deregister_project_routes_removes_all() {
         &path,
         &RouteRegistration {
             domain: "other.test".to_string(),
-            target: "127.0.0.1:9090".to_string(),
+            target: Some("127.0.0.1:9090".to_string()),
             dns_ip: None,
             tls: false,
             project_path: "/projects/other".to_string(),
@@ -125,7 +131,7 @@ fn deregister_project_routes_removes_all() {
 fn build_registration_with_default_port() {
     let reg = build_registration("myapp.test", "myapp", "/projects/myapp", 8080, false, None);
     assert_eq!(reg.domain, "myapp.test");
-    assert_eq!(reg.target, "127.0.0.1:8080");
+    assert_eq!(reg.target.as_deref(), Some("127.0.0.1:8080"));
     assert!(!reg.tls);
 }
 
@@ -143,7 +149,7 @@ fn build_registration_with_port_registry() {
         Some(&registry),
     );
     // Should use the allocated port (8100), not the default (8080).
-    assert_eq!(reg.target, "127.0.0.1:8100");
+    assert_eq!(reg.target.as_deref(), Some("127.0.0.1:8100"));
 }
 
 #[test]

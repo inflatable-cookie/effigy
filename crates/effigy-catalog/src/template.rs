@@ -187,6 +187,9 @@ pub struct SiblingService {
 
     /// Expose port (if known).
     pub port: Option<u16>,
+
+    /// Validated manifest parameters declared for this sibling.
+    pub params: HashMap<String, Value>,
 }
 
 /// System-level context variables.
@@ -209,7 +212,7 @@ pub struct SystemContext {
 }
 
 /// Convert a TOML value to a minijinja Value.
-fn toml_to_minijinja(v: &toml::Value) -> Value {
+pub(crate) fn toml_to_minijinja(v: &toml::Value) -> Value {
     match v {
         toml::Value::String(s) => Value::from(s.as_str()),
         toml::Value::Integer(i) => Value::from(*i),

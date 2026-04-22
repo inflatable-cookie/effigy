@@ -11,12 +11,14 @@ pub(super) struct ConfigRequest {
     pub(super) minimal: bool,
     pub(super) output_json: bool,
     pub(super) target: Option<ConfigSchemaTarget>,
+    pub(super) bundle: Option<String>,
     pub(super) runner: Option<ConfigTestRunner>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ConfigSchemaTarget {
     Manifest,
+    Bundle,
     Demos,
     PackageManager,
     Test,
@@ -30,6 +32,7 @@ impl ConfigSchemaTarget {
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Manifest => "manifest",
+            Self::Bundle => "bundle",
             Self::Demos => "demos",
             Self::PackageManager => "package_manager",
             Self::Test => "test",
@@ -58,8 +61,9 @@ impl ConfigTestRunner {
     }
 }
 
-const CONFIG_TARGET_CHOICES: [(&str, ConfigSchemaTarget); 8] = [
+const CONFIG_TARGET_CHOICES: [(&str, ConfigSchemaTarget); 9] = [
     ("manifest", ConfigSchemaTarget::Manifest),
+    ("bundle", ConfigSchemaTarget::Bundle),
     ("demos", ConfigSchemaTarget::Demos),
     ("package_manager", ConfigSchemaTarget::PackageManager),
     ("test", ConfigSchemaTarget::Test),
@@ -87,6 +91,7 @@ pub(super) fn parse_config_request(
     let mut minimal = false;
     let mut output_json = false;
     let mut target: Option<ConfigSchemaTarget> = None;
+    let mut bundle: Option<String> = None;
     let mut runner: Option<ConfigTestRunner> = None;
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
         if parser.consume_any_bool_flag(
@@ -104,8 +109,16 @@ pub(super) fn parse_config_request(
             target = Some(parser.builtin_choice_flag_value(
                 "config",
                 "--target",
-                "manifest, demos, package_manager, test, tasks, defer, scan, shell",
+                "manifest, bundle, demos, package_manager, test, tasks, defer, scan, shell",
                 |value| BuiltinArgParser::choice_ignore_ascii_case(value, &CONFIG_TARGET_CHOICES),
+            )?);
+            return Ok(ParseLoopAction::Handled);
+        }
+        if arg == "--bundle" {
+            bundle = Some(parser.mapped_flag_value(
+                "`--bundle` requires a value",
+                |value| Some(value.to_owned()),
+                |_| "invalid `--bundle` value".to_owned(),
             )?);
             return Ok(ParseLoopAction::Handled);
         }
@@ -148,6 +161,16 @@ pub(super) fn parse_config_request(
             "`--target` requires `--schema` for built-in `config`",
         ));
     }
+    if bundle.is_some() && !schema {
+        return Err(BuiltinError::task_invocation(
+            "`--bundle` requires `--schema` for built-in `config`",
+        ));
+    }
+    if bundle.is_some() && target != Some(ConfigSchemaTarget::Bundle) {
+        return Err(BuiltinError::task_invocation(
+            "`--bundle` requires `--target bundle` for built-in `config`",
+        ));
+    }
     if runner.is_some() && !schema {
         return Err(BuiltinError::task_invocation(
             "`--runner` requires `--schema` for built-in `config`",
@@ -166,6 +189,7 @@ pub(super) fn parse_config_request(
         minimal,
         output_json,
         target,
+        bundle,
         runner,
     })
 }
@@ -178,6 +202,7 @@ pub struct ConfigParseContract {
     pub minimal: bool,
     pub output_json: bool,
     pub target: Option<&'static str>,
+    pub bundle: Option<String>,
     pub runner: Option<&'static str>,
 }
 
@@ -193,6 +218,7 @@ pub fn parse_config_contract_request(
         minimal: parsed.minimal,
         output_json: parsed.output_json,
         target: parsed.target.map(ConfigSchemaTarget::as_str),
+        bundle: parsed.bundle,
         runner: parsed.runner.map(ConfigTestRunner::as_str),
     })
 }

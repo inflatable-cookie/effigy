@@ -27,8 +27,8 @@ pub struct RouteRegistration {
     /// The domain to register (e.g., "myproject.test").
     pub domain: String,
 
-    /// The upstream host and port (e.g., "127.0.0.1:8080").
-    pub target: String,
+    /// Optional upstream host and port (e.g., "127.0.0.1:8080").
+    pub target: Option<String>,
 
     /// Optional DNS IP override for this route.
     pub dns_ip: Option<Ipv4Addr>,
@@ -129,7 +129,7 @@ pub fn build_registration(
 
     RouteRegistration {
         domain: domain.to_string(),
-        target: format!("127.0.0.1:{port}"),
+        target: Some(format!("127.0.0.1:{port}")),
         dns_ip: None,
         tls,
         project_path: project_path.to_string(),

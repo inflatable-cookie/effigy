@@ -99,7 +99,7 @@ pub(crate) fn resolve_compose_source(
         )));
     }
 
-    let services = build_service_declarations(repo_root, &local_services)?;
+    let services = build_service_declarations(repo_root, config, &local_services)?;
     let resolver = CatalogResolver::new(
         project_local_catalog_dir(repo_root),
         user_global_catalog_dir(),
@@ -191,19 +191,43 @@ pub(crate) fn resolve_compose_source(
 
 fn build_service_declarations(
     repo_root: &Path,
+    container_config: &ManifestContainerConfig,
     services: &std::collections::BTreeMap<String, ManifestContainerServiceConfig>,
 ) -> Result<Vec<ServiceDeclaration>, ContainerPolicyError> {
+    let resolver = CatalogResolver::new(
+        project_local_catalog_dir(repo_root),
+        user_global_catalog_dir(),
+    );
+
     services
         .iter()
         .map(|(name, service)| {
+            let fragment = resolver.resolve(&service.catalog)?;
+            let mut params = service
+                .params
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect::<std::collections::HashMap<_, _>>();
+
+            let inferred_working_dir = container_config
+                .working_dir
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if !params.contains_key("working_dir")
+                && fragment.schema.params.contains_key("working_dir")
+                && inferred_working_dir.is_some()
+            {
+                params.insert(
+                    "working_dir".to_owned(),
+                    toml::Value::String(inferred_working_dir.unwrap().to_owned()),
+                );
+            }
+
             Ok(ServiceDeclaration {
                 name: name.clone(),
                 catalog: service.catalog.clone(),
-                params: service
-                    .params
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect(),
+                params,
                 variant: service.variant.clone(),
                 config: service
                     .config

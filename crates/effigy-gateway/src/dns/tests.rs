@@ -24,7 +24,7 @@ fn route_table_with(domain: &str) -> Arc<RwLock<RouteTable>> {
     let mut table = RouteTable::new();
     table.upsert(crate::routes::Route {
         domain: domain.to_string(),
-        target: "127.0.0.1:8080".to_string(),
+        target: Some("127.0.0.1:8080".to_string()),
         dns_ip: None,
         source: crate::routes::RouteSource::Container,
         project: "/tmp/test".to_string(),
@@ -38,7 +38,7 @@ fn route_table_with_dns_ip(domain: &str, dns_ip: Ipv4Addr) -> Arc<RwLock<RouteTa
     let mut table = RouteTable::new();
     table.upsert(crate::routes::Route {
         domain: domain.to_string(),
-        target: "127.0.0.1:8080".to_string(),
+        target: Some("127.0.0.1:8080".to_string()),
         dns_ip: Some(dns_ip),
         source: crate::routes::RouteSource::Container,
         project: "/tmp/test".to_string(),

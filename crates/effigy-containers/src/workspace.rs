@@ -1,13 +1,21 @@
+#[cfg(test)]
+use std::cell::RefCell;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
-use effigy_manifest::ManifestWorkspaceConfig;
+use effigy_manifest::{
+    ManifestContainerConfig, ManifestContainerServiceConfig, ManifestWorkspaceConfig,
+};
 
 use crate::{ContainerPolicyError, EffectiveContainerPolicy};
+
+const PHP_FPM_COMPOSER_HOME_TARGET: &str = "/home/dev/.config/composer";
 
 pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     repo_root: &Path,
     container_name: &str,
+    config: &ManifestContainerConfig,
     workspace: &ManifestWorkspaceConfig,
     working_dir: &Path,
     primary_service: &str,
@@ -19,6 +27,7 @@ pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     let rewritten = rewrite_workspace_mounts_for_direct_compose(
         repo_root,
         container_name,
+        config,
         workspace,
         primary_service,
         &source_compose,
@@ -85,6 +94,7 @@ struct RenderedWorkspaceMount {
 fn rewrite_workspace_mounts_for_direct_compose(
     repo_root: &Path,
     container_name: &str,
+    config: &ManifestContainerConfig,
     workspace: &ManifestWorkspaceConfig,
     primary_service: &str,
     source_compose: &Path,
@@ -131,8 +141,14 @@ fn rewrite_workspace_mounts_for_direct_compose(
                 source_compose.display()
             ))
         })?;
-    let injected_mounts =
-        build_workspace_runtime_mounts(repo_root, container_name, workspace, working_dir)?;
+    let injected_mounts = build_workspace_runtime_mounts(
+        repo_root,
+        container_name,
+        config,
+        workspace,
+        primary_service,
+        working_dir,
+    )?;
     rewrite_workspace_service_volumes(
         service,
         compose_dir,
@@ -164,7 +180,9 @@ fn rewrite_workspace_mounts_for_direct_compose(
 fn build_workspace_runtime_mounts(
     repo_root: &Path,
     container_name: &str,
+    config: &ManifestContainerConfig,
     workspace: &ManifestWorkspaceConfig,
+    primary_service: &str,
     working_dir: &Path,
 ) -> Result<Vec<RenderedWorkspaceMount>, ContainerPolicyError> {
     let workspace_root = working_dir.parent().ok_or_else(|| {
@@ -196,7 +214,108 @@ fn build_workspace_runtime_mounts(
             raw,
         )?);
     }
+    if let Some(mount) = build_host_composer_home_mount(config, primary_service)? {
+        mounts.push(mount);
+    }
     Ok(mounts)
+}
+
+fn build_host_composer_home_mount(
+    config: &ManifestContainerConfig,
+    primary_service: &str,
+) -> Result<Option<RenderedWorkspaceMount>, ContainerPolicyError> {
+    let Some(service) = config.services.get(primary_service) else {
+        return Ok(None);
+    };
+    if service.catalog != "php-fpm"
+        || !service_bool_param(service, "mount_host_composer_home", true)
+    {
+        return Ok(None);
+    }
+    let Some(host_composer_home) = detect_host_composer_home()? else {
+        return Ok(None);
+    };
+    Ok(Some(RenderedWorkspaceMount {
+        target: PHP_FPM_COMPOSER_HOME_TARGET.to_owned(),
+        rendered: format!(
+            "{}:{}",
+            host_composer_home.display(),
+            PHP_FPM_COMPOSER_HOME_TARGET
+        ),
+    }))
+}
+
+fn service_bool_param(service: &ManifestContainerServiceConfig, key: &str, default: bool) -> bool {
+    service
+        .params
+        .get(key)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(default)
+}
+
+fn detect_host_composer_home() -> Result<Option<PathBuf>, ContainerPolicyError> {
+    #[cfg(test)]
+    if let Some(value) = test_host_composer_home_override() {
+        return Ok(value);
+    }
+
+    let output = match ProcessCommand::new("composer")
+        .args(["global", "config", "home", "--absolute"])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "failed to probe host composer home: {error}"
+            )))
+        }
+    };
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+
+    let path = PathBuf::from(raw);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    path.canonicalize().map(Some).or(Ok(Some(path)))
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_HOST_COMPOSER_HOME: RefCell<Option<Option<PathBuf>>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_host_composer_home<T>(path: Option<&Path>, run: impl FnOnce() -> T) -> T {
+    struct ResetGuard(Option<Option<PathBuf>>);
+
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            TEST_HOST_COMPOSER_HOME.with(|slot| {
+                *slot.borrow_mut() = previous;
+            });
+        }
+    }
+
+    let previous =
+        TEST_HOST_COMPOSER_HOME.with(|slot| slot.borrow_mut().replace(path.map(Path::to_path_buf)));
+    let _guard = ResetGuard(previous);
+    run()
+}
+
+#[cfg(test)]
+fn test_host_composer_home_override() -> Option<Option<PathBuf>> {
+    TEST_HOST_COMPOSER_HOME.with(|slot| slot.borrow().clone())
 }
 
 fn parse_workspace_extra_mount(

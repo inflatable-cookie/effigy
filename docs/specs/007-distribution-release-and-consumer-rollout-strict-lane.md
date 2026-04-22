@@ -1,7 +1,7 @@
 # 007 Distribution Release And Consumer Rollout Strict Lane
 
-Status: active
-Updated: 2026-04-20
+Status: queued
+Updated: 2026-04-22
 Roadmap: `g02.007`
 
 ## Context
@@ -118,8 +118,14 @@ claims.
 
 ## Next Task
 
-Stop in planning until explicit release intent is provided.
+This lane is queued behind `g02.020` as of 2026-04-22 (see
+`docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
 
-If release execution is requested, start with:
+Release execution stays gated on explicit operator intent regardless of lane
+ordering. If release execution is requested now, this lane resumes ahead of
+`g02.020` for the duration of the release path and start with:
 
 `cargo run --bin effigy -- release prepare --yes --version 0.3.0 --check-gates`
+
+Otherwise, `g02.020` runs first, then this lane resumes for the deliberate
+`v0.3.0` cut.

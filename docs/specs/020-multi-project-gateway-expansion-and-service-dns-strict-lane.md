@@ -1,7 +1,7 @@
 # 020 Multi-Project Gateway Expansion And Service DNS Strict Lane
 
-Status: staged
-Updated: 2026-04-20
+Status: active
+Updated: 2026-04-22
 Roadmap: `g02.020`
 
 ## Context
@@ -47,7 +47,7 @@ This lane owns:
 
 ## Current Posture
 
-`staged`
+`active`
 
 The product substrate this lane builds on is already real:
 
@@ -55,12 +55,17 @@ The product substrate this lane builds on is already real:
   responder, reverse proxy, and container lifecycle route registration
 - `g02.016` shipped generated-compose host-port auto-allocation, cross-project
   status, route dashboarding, and bounded shared services
-- the active release lane remains `g02.007`
-- the next post-release audit/documentation lane remains `g02.019`
+- `g02.007` is now queued behind this lane, still parked on its own explicit
+  release-intent gate
+- `g02.019` remains planned, queued behind this lane's exit
 
-This lane is intentionally staged behind those higher-priority fronts, but the
-first route-model batch has now landed in a parallel thread so a later resume
-does not need to reconstruct the opening move.
+This lane was re-sequenced ahead of `g02.007` and `g02.019` on 2026-04-22
+because the multi-project port-collision and TCP service DNS gaps are causing
+concrete, daily consumer-repo friction (see
+`docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
+The route-model and loopback-setup batches have now landed, so execution
+resumes from the HTTP registration follow-up without reconstructing earlier
+foundations.
 
 Settled design decisions carried into execution:
 
@@ -82,21 +87,30 @@ This lane should execute in bounded batches:
 - do not let the broader local-network goal reopen release-prep or the
   `g02.019` audit lane
 
-## Staged Continuation Chain
+## Continuation Chain
 
-The intended execution order starts with:
+The execution order on this active lane:
 
 1. `301` — complete. The route-model foundation landed: `dns_ip` is part of
    the route shape, DNS resolution uses it when present, and proxy behavior
    stays honest for HTTP-only routes
-2. `302` — complete. The post-`301` decision point now chooses loopback-IP
+2. `302` — complete. The post-`301` decision point chose loopback-IP
    allocation before HTTP post-start port discovery
-3. `303` — next execution. Land loopback-IP allocation and gateway setup
-   integration on the bounded macOS path
-4. later execution — HTTP post-start published-port discovery for gateway
-   registration
-5. later execution — container registration rewrite for TCP service alias
-   registration and shared-service DNS reuse
+3. `303` — complete. Loopback-IP allocation now persists in gateway state, and
+   the bounded macOS alias range is provisioned during the existing elevated
+   gateway setup path
+4. `306` — complete. HTTP gateway registration now resolves targets from live
+   runtime published ports instead of assuming manifest-declared host ports on
+   the generated-compose path
+5. `307` — complete. Project-owned TCP services now register bounded DNS-only
+   aliases on the loopback-IP foundation
+6. `308` — complete. Shared-service DNS aliases now reuse one bounded
+   loopback-IP identity per shared backing service while explicit manifest
+   routes and project-owned aliases keep precedence
+7. `309` — next execution. Prove the shipped HTTP and TCP service DNS model
+   in one real consumer repo and migrate that repo off hardcoded local
+   service ports where the alias model now covers the runtime path
+8. later — widen consumer-repo migration beyond the first proof repo
 
 ## Exit Condition
 
@@ -110,8 +124,9 @@ This strict lane is complete when:
 
 ## Next Task
 
-Keep `g02.007` as the live lane and `g02.019` as the next post-release audit
-lane.
+Execute `309` — prove the shipped service DNS model in one real consumer repo
+and migrate that repo off hardcoded local service ports where the bounded
+alias path now covers the runtime.
 
-When `g02.020` is resumed after those fronts settle, execute `303` to land the
-loopback-IP allocation and gateway setup foundation.
+See
+`docs/specs/batch-cards/309-prove-service-dns-aliases-in-one-real-project.md`.

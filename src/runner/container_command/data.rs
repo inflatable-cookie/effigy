@@ -220,6 +220,7 @@ mod tests {
             dns_tls: false,
             dns_port: None,
             dns_routes: vec![],
+            service_aliases: vec![],
             declared_ports: vec!["8080:80".to_owned()],
             ports_declared_explicitly: true,
             declared_mounts: vec![],

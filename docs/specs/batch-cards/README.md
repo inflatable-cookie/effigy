@@ -168,8 +168,10 @@ Staged next-lane card:
   is complete. The next bounded `g02.020` move is now explicit: loopback-IP
   allocation comes before HTTP post-start port discovery.
 - [`303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md`](./303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md)
-  is staged. It is the intended next `g02.020` execution card once the live
-  release-prep lane and the queued `g02.019` audit lane have settled.
+  is the active ready card. `g02.020` was re-sequenced ahead of `g02.007` and
+  `g02.019` on 2026-04-22 because the multi-project port-collision gap is now
+  the most pressing operator friction (see
+  `docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
 
 ## Archive Rule
 
@@ -182,7 +184,9 @@ Staged next-lane card:
 
 ## Next Task
 
-Resume `g02.007` at `305`.
+Execute `303` for the `g02.020` loopback-IP allocation and gateway-setup
+foundation. `g02.020` is the active strict lane.
 
-After `g02.019`, the staged next execution move is `303` for the `g02.020`
-loopback-IP allocation and gateway-setup foundation.
+`g02.007` remains queued, still gated on explicit release intent. If release
+execution is requested, it resumes ahead of `g02.020` starting with the
+already-refreshed posture from `305`.

@@ -14,6 +14,11 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
             None,
         ),
         (
+            "effigy bundle",
+            "List shipped bundles and inspect the input schema plus resolved manifest paths for one bundle",
+            Some("bundle"),
+        ),
+        (
             "effigy tasks",
             "List discovered catalogs/task commands and probe routing",
             Some("tasks"),
@@ -45,7 +50,7 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
         ),
         (
             "effigy config",
-            "Show config keys/examples or inspect the effective composed manifest and focused path sources",
+            "Show config keys/examples, bundle schema guidance, or inspect the effective composed manifest and focused path sources",
             None,
         ),
         (

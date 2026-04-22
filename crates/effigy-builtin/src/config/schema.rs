@@ -2,6 +2,7 @@ use super::super::doc_render::{append_doc_lines, render_prefixed_doc};
 use super::super::text_doc::TextDoc;
 use super::docs::{self, ConfigDocProfile};
 use super::request::{ConfigSchemaTarget, ConfigTestRunner};
+use effigy_manifest::{BundleInputSpec, BundleInputType, BundleSpec};
 
 const HEADER_CANONICAL: &str = "# Canonical strict-valid effigy.toml schema template";
 const HEADER_MINIMAL: &str = "# Minimal strict-valid effigy.toml starter";
@@ -56,6 +57,10 @@ pub(super) fn render_builtin_config_schema_target(
     target: ConfigSchemaTarget,
     minimal: bool,
 ) -> String {
+    if target == ConfigSchemaTarget::Bundle {
+        return render_builtin_config_schema_bundle_target(minimal, None, &[]);
+    }
+
     render_prefixed_doc(
         &format!(
             "{} ({} target)",
@@ -64,6 +69,29 @@ pub(super) fn render_builtin_config_schema_target(
         ),
         target_schema_lines(target, minimal),
     )
+}
+
+pub(super) fn render_builtin_config_schema_bundle_target(
+    minimal: bool,
+    bundle: Option<&BundleSpec>,
+    default_paths: &[String],
+) -> String {
+    let header = match bundle {
+        Some(bundle) => format!(
+            "{} (bundle target, bundle: {})",
+            schema_header_prefix(minimal),
+            bundle.name
+        ),
+        None => format!("{} (bundle target)", schema_header_prefix(minimal)),
+    };
+
+    let mut doc = TextDoc::new();
+    doc.line(header);
+    doc.blank();
+    for line in bundle_schema_lines(bundle, default_paths) {
+        doc.line(line);
+    }
+    doc.finish()
 }
 
 pub(super) fn render_builtin_config_schema_test_target(
@@ -119,6 +147,7 @@ fn target_schema_lines(
         ConfigSchemaTarget::Manifest => {
             Box::new(docs::manifest_lines(ConfigDocProfile::Schema).into_iter())
         }
+        ConfigSchemaTarget::Bundle => unreachable!("bundle target is rendered dynamically"),
         ConfigSchemaTarget::Demos => {
             Box::new(docs::demos_lines(ConfigDocProfile::Schema).into_iter())
         }
@@ -138,4 +167,86 @@ fn target_schema_lines(
         ConfigSchemaTarget::Scan => Box::new(docs::scan_lines().iter().copied()),
         ConfigSchemaTarget::Shell => Box::new(docs::shell_lines().iter().copied()),
     }
+}
+
+fn bundle_schema_lines(bundle: Option<&BundleSpec>, default_paths: &[String]) -> Vec<String> {
+    let mut lines = vec![
+        "[bundle]".to_owned(),
+        "name = \"decodelabs\"".to_owned(),
+        "# Bundle name is reserved. All other keys are bundle-defined inputs.".to_owned(),
+    ];
+
+    match bundle {
+        Some(bundle) => {
+            lines.push(format!("# {}", bundle.description));
+            lines.push(String::new());
+            for input in &bundle.inputs {
+                lines.extend(render_bundle_input_lines(input));
+            }
+
+            if !default_paths.is_empty() {
+                lines.push(String::new());
+                lines.push("# Default paths populated by this bundle:".to_owned());
+                for path in default_paths {
+                    lines.push(format!("# - {path}"));
+                }
+            }
+        }
+        None => {
+            lines.push("# Use `effigy bundle list` to discover bundles.".to_owned());
+            lines.push("# Use `effigy bundle inspect <name>` or `effigy config --schema --target bundle --bundle <name>` for the full input surface.".to_owned());
+        }
+    }
+
+    lines
+}
+
+fn render_bundle_input_lines(input: &BundleInputSpec) -> Vec<String> {
+    let mut lines = vec![format!(
+        "# {} [{}{}]",
+        input.description,
+        render_bundle_input_type(input.value_type),
+        if input.required {
+            ", required"
+        } else {
+            ", optional"
+        }
+    )];
+
+    if let Some(example) = &input.example {
+        lines.push(render_bundle_value_line(&input.name, example));
+    } else if let Some(default) = &input.default {
+        lines.push(render_bundle_value_line(&input.name, default));
+    } else {
+        lines.push(render_bundle_placeholder_line(
+            &input.name,
+            input.value_type,
+        ));
+    }
+
+    lines
+}
+
+fn render_bundle_input_type(value_type: BundleInputType) -> &'static str {
+    match value_type {
+        BundleInputType::String => "string",
+        BundleInputType::Integer => "integer",
+        BundleInputType::Bool => "bool",
+        BundleInputType::List => "list",
+    }
+}
+
+fn render_bundle_value_line(name: &str, value: &toml::Value) -> String {
+    format!("{name} = {}", value)
+}
+
+fn render_bundle_placeholder_line(name: &str, value_type: BundleInputType) -> String {
+    let value = match value_type {
+        BundleInputType::String => "\"value\"",
+        BundleInputType::Integer => "1",
+        BundleInputType::Bool => "true",
+        BundleInputType::List => "[]",
+    };
+
+    format!("{name} = {value}")
 }

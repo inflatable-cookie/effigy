@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: In Progress
+Status: Queued
 Owner: Platform
 Created: 2026-04-15
 Depends on: 005, 027
@@ -97,8 +97,13 @@ it is no longer only an Effigy-local product claim.
 
 ## Next Task
 
-Stop in planning until release execution is explicitly requested.
+This roadmap is queued behind `g02.020` as of 2026-04-22 (see
+`docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
 
-If requested, start with:
+Release execution stays gated on explicit operator intent. When release
+execution is explicitly requested, this roadmap resumes ahead of `g02.020`
+for the duration of the release path and starts with:
 
 `cargo run --bin effigy -- release prepare --yes --version 0.3.0 --check-gates`
+
+Otherwise, `g02.020` lands first, then this roadmap resumes.

@@ -9,6 +9,7 @@ mod value_parsing;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Version,
+    Bundle(BundleArgs),
     Changelog(ChangelogArgs),
     Exec(ExecArgs),
     System(SystemArgs),
@@ -44,6 +45,7 @@ pub struct InternalRhaiArgs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpTopic {
     General,
+    Bundle,
     Changelog,
     Exec,
     System,
@@ -306,6 +308,12 @@ pub struct ExecArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BundleArgs {
+    pub subcommand: BundleSubcommand,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatewayArgs {
     pub subcommand: GatewaySubcommand,
     pub output_json: bool,
@@ -410,6 +418,12 @@ pub enum ServiceSubcommand {
         service: String,
         dir: Option<PathBuf>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BundleSubcommand {
+    List,
+    Inspect { bundle: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

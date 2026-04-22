@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+mod bundles;
 mod composition;
 pub mod config_sections;
 pub mod execution_binding;
@@ -17,17 +18,22 @@ mod test_config;
 /// should migrate to this constant when the opportunity arises.
 pub const TASK_MANIFEST_FILE: &str = "effigy.toml";
 
+pub use bundles::{
+    get_bundle, list_bundle_default_paths, list_bundles, render_bundle_defaults, BundleInputSpec,
+    BundleInputType, BundleSpec,
+};
 pub use composition::{
     load_task_manifest_with_inspection, LoadedTaskManifest, ManifestCompositionEdge,
     ManifestCompositionOverride, ManifestCompositionValueSource,
 };
 pub use config_sections::{
-    ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy, ManifestContainerConfig,
-    ManifestContainerDataConfig, ManifestContainerDnsConfig, ManifestContainerDriver,
-    ManifestContainerExecAliasConfig, ManifestContainerExecAliasTableConfig,
-    ManifestContainerOnTaskExit, ManifestContainerServiceConfig, ManifestContainerShutdownMode,
-    ManifestContainerStartup, ManifestContainersConfig, ManifestDemoConfig, ManifestDemoMode,
-    ManifestDemoStatus, ManifestDistributionConfig, ManifestDistributionMetadataConfig,
+    ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy, ManifestBundleConfig,
+    ManifestContainerConfig, ManifestContainerDataConfig, ManifestContainerDnsConfig,
+    ManifestContainerDriver, ManifestContainerExecAliasConfig,
+    ManifestContainerExecAliasTableConfig, ManifestContainerOnTaskExit,
+    ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
+    ManifestContainersConfig, ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus,
+    ManifestDistributionConfig, ManifestDistributionMetadataConfig,
     ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
     ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig,
     ManifestPackageManagerConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
@@ -96,6 +102,8 @@ impl std::error::Error for ManifestError {}
 pub struct TaskManifest {
     #[serde(default)]
     pub catalog: Option<ManifestCatalog>,
+    #[serde(default)]
+    pub bundle: Option<ManifestBundleConfig>,
     #[serde(default)]
     pub defer: Option<ManifestDefer>,
     #[serde(default)]

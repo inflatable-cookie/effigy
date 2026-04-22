@@ -94,7 +94,7 @@ fn demo_route_table() -> RouteTable {
     let mut table = RouteTable::new();
     table.upsert(Route {
         domain: "demo.test".to_owned(),
-        target: "127.0.0.1:41003".to_owned(),
+        target: Some("127.0.0.1:41003".to_owned()),
         dns_ip: None,
         tls: false,
         source: RouteSource::Container,

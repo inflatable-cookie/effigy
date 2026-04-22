@@ -135,6 +135,7 @@ fn render_conditional_depends_on() {
             name: "database".to_string(),
             catalog: "mariadb".to_string(),
             port: Some(3306),
+            params: HashMap::new(),
         },
     );
 
@@ -161,6 +162,45 @@ fn render_conditional_depends_on() {
     let result = renderer.render(template, &ctx, "test").unwrap();
     assert!(result.contains("depends_on:"));
     assert!(result.contains("database:"));
+}
+
+#[test]
+fn render_sibling_params_lookup() {
+    let renderer = TemplateRenderer::new();
+    let mut siblings = HashMap::new();
+    siblings.insert(
+        "db".to_string(),
+        SiblingService {
+            name: "database".to_string(),
+            catalog: "mariadb".to_string(),
+            port: Some(3306),
+            params: {
+                let mut params = HashMap::new();
+                params.insert("root_password".to_string(), Value::from("localdev"));
+                params
+            },
+        },
+    );
+
+    let ctx = TemplateContext {
+        params: {
+            let mut m = HashMap::new();
+            m.insert("database_host".to_string(), Value::from("db"));
+            m
+        },
+        service_name: "dbadmin".to_string(),
+        services: siblings,
+        repo_root: ".".to_string(),
+        catalog_path: "".to_string(),
+        project_name: "test".to_string(),
+        host_uid: 501,
+        host_gid: 20,
+    };
+
+    let template = r#"{% set database_service = services[database_host] %}{{ database_service.params.root_password }}"#;
+
+    let result = renderer.render(template, &ctx, "test").unwrap();
+    assert_eq!(result, "localdev");
 }
 
 #[test]

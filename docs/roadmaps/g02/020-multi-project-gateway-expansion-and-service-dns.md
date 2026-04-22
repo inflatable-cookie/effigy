@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Planned
+Status: Active
 Owner: Platform
 Created: 2026-04-20
 Depends on: 013, 014, 016
@@ -225,8 +225,10 @@ This roadmap is complete when:
 
 ## Next Task
 
-Keep `g02.007` as the active release-prep lane.
+This roadmap is active. `303`, `306`, `307`, and `308` have landed. Execute
+`309` — one real-project proof and migration onto the shipped service DNS
+alias model — as the next bounded execution card.
 
-After the deliberate `v0.3` release-prep path settles and the front-door audit
-work in `g02.019` lands, resume this roadmap from the next bounded execution
-card: `303`, loopback-IP allocation and gateway setup integration.
+`g02.007` and `g02.019` are queued behind this lane as of 2026-04-22. See
+`docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`
+for the re-sequencing rationale.

@@ -3,9 +3,10 @@ use super::{
     load_all_container_policies, load_container_policy, load_inline_workspace_container_policy,
     load_workspace_ownership_targets, resolve_inline_workspace_exec_working_dir, stats_all_report,
     status_all_report, status_report, validate_container_policy, with_test_effigy_home,
-    AllocatedPortsSummary, ContainerDataTransferAction, ContainerDataVolumeEntry,
-    ContainerPolicyError, ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry,
-    ContainerStatusService, EffectiveAttachMode, EffectiveComposeSource, SharedServiceBinding,
+    with_test_host_composer_home, AllocatedPortsSummary, ContainerDataTransferAction,
+    ContainerDataVolumeEntry, ContainerPolicyError, ContainerStatsAllEntry, ContainerStatsService,
+    ContainerStatusAllEntry, ContainerStatusService, EffectiveAttachMode, EffectiveComposeSource,
+    SharedServiceBinding,
 };
 use effigy_catalog::volumes::VolumeClassification;
 use effigy_manifest::ManifestInlineWorkspaceContainerConfig;
@@ -657,6 +658,100 @@ working_dir = "/var/www/html"
         let policy = load_container_policy(&root, Some("web")).expect("policy");
         assert_eq!(policy.workspace_user.as_deref(), Some("dev"));
         assert_eq!(policy.workspace_home.as_deref(), Some("/home/dev"));
+    });
+}
+
+#[test]
+fn generated_services_infer_working_dir_from_container_config() {
+    with_temp_effigy_home("catalog-container-working-dir", |_| {
+        let root = temp_repo("catalog-container-working-dir");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+working_dir = "/var/www/html"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+document_root = "."
+version = "8.4"
+
+[containers.web.services.web]
+catalog = "nginx"
+document_root = "."
+rewrite_all_to = "/vendor/genesis.php"
+asset_fallback = ""
+error_page_404 = "/vendor/genesis.php"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, Some("web")).expect("policy");
+        let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+
+        assert!(
+            compose.contains("working_dir: /var/www/html")
+                || compose.contains("working_dir: \"/var/www/html\""),
+            "generated compose should include the container working_dir: {compose}"
+        );
+        assert!(
+            compose.contains(&format!("{}:/var/www/html", root.display())),
+            "generated compose should mount the repo at the container working_dir: {compose}"
+        );
+    });
+}
+
+#[test]
+fn generated_php_workspace_mounts_host_composer_home_when_enabled() {
+    with_temp_effigy_home("catalog-php-composer-home", |_| {
+        let root = temp_repo("catalog-php-composer-home");
+        let host_composer_home = root.join("host-composer-home");
+        fs::create_dir_all(&host_composer_home).expect("mkdir host composer home");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/var/www/html"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = with_test_host_composer_home(Some(&host_composer_home), || {
+            load_container_policy(&root, Some("web")).expect("policy")
+        });
+        let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+
+        assert!(
+            rewritten.contains(&format!(
+                "{}:/home/dev/.config/composer",
+                host_composer_home.display()
+            )),
+            "rewritten compose should mount the host composer home: {rewritten}"
+        );
     });
 }
 

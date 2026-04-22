@@ -1,15 +1,16 @@
 use super::{command_kind_and_name, help_topic_label};
 use effigy_cli::{
-    BootstrapArgs, Command, ContainerArgs, ContainerSubcommand, ContractsArgs, ContractsSubcommand,
-    DemoArgs, DemoListQuery, DemoSubcommand, DistributionArgs, DistributionSubcommand, DoctorArgs,
-    ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, ReleaseArgs, ReleaseSubcommand,
-    ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs,
-    WorkspaceArgs,
+    BootstrapArgs, BundleArgs, BundleSubcommand, Command, ContainerArgs, ContainerSubcommand,
+    ContractsArgs, ContractsSubcommand, DemoArgs, DemoListQuery, DemoSubcommand, DistributionArgs,
+    DistributionSubcommand, DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic,
+    ReleaseArgs, ReleaseSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand,
+    TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 
 #[test]
 fn help_topic_label_maps_all_topics() {
     assert_eq!(help_topic_label(HelpTopic::General), "general");
+    assert_eq!(help_topic_label(HelpTopic::Bundle), "bundle");
     assert_eq!(help_topic_label(HelpTopic::Changelog), "changelog");
     assert_eq!(help_topic_label(HelpTopic::Exec), "exec");
     assert_eq!(help_topic_label(HelpTopic::System), "system");
@@ -34,6 +35,10 @@ fn help_topic_label_maps_all_topics() {
 #[test]
 fn command_kind_and_name_maps_command_variants() {
     let version = Command::Version;
+    let bundle = Command::Bundle(BundleArgs {
+        subcommand: BundleSubcommand::List,
+        output_json: false,
+    });
     let help = Command::Help(HelpTopic::Doctor);
     let exec = Command::Exec(ExecArgs {
         repo_override: None,
@@ -125,6 +130,10 @@ fn command_kind_and_name_maps_command_variants() {
     assert_eq!(
         command_kind_and_name(&version),
         ("version", "version".to_owned())
+    );
+    assert_eq!(
+        command_kind_and_name(&bundle),
+        ("bundle", "bundle".to_owned())
     );
     assert_eq!(command_kind_and_name(&help), ("help", "doctor".to_owned()));
     assert_eq!(command_kind_and_name(&exec), ("exec", "exec".to_owned()));

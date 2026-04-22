@@ -1,6 +1,7 @@
 use effigy_cli::Command;
 
 use super::super::bootstrap_command::run_bootstrap;
+use super::super::bundle_command::run_bundle;
 use super::super::changelog_command::run_changelog;
 use super::super::container_command::run_container;
 use super::super::contracts_command::run_contracts;
@@ -21,6 +22,7 @@ use crate::runner::error::RunnerError;
 pub(super) fn run_command(cmd: Command) -> Result<String, RunnerError> {
     match cmd {
         Command::Version => Ok(String::new()),
+        Command::Bundle(args) => run_bundle(args),
         Command::Help(_) => Ok(String::new()),
         Command::Changelog(args) => run_changelog(args),
         Command::Exec(args) => run_exec(args),

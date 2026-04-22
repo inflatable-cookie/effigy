@@ -29,7 +29,7 @@ async fn available_udp_port() -> u16 {
 fn test_route(domain: &str, target: &str) -> Route {
     Route {
         domain: domain.to_string(),
-        target: target.to_string(),
+        target: Some(target.to_string()),
         dns_ip: None,
         source: RouteSource::Container,
         project: "/tmp/test".to_string(),
@@ -41,7 +41,7 @@ fn test_route(domain: &str, target: &str) -> Route {
 fn test_route_with_dns_ip(domain: &str, target: &str, dns_ip: Ipv4Addr) -> Route {
     Route {
         domain: domain.to_string(),
-        target: target.to_string(),
+        target: Some(target.to_string()),
         dns_ip: Some(dns_ip),
         source: RouteSource::Container,
         project: "/tmp/test".to_string(),

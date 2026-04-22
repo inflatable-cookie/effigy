@@ -365,6 +365,7 @@ fn handle_gateway_endpoint(
                     serde_json::json!({
                         "domain": r.domain,
                         "target": r.target,
+                        "dns_ip": r.dns_ip,
                         "tls": r.tls,
                         "project": r.project,
                         "registered": r.registered.to_rfc3339(),
@@ -453,7 +454,7 @@ async fn handle_request(
     // Look up the route.
     let target = {
         let table = route_table.read().expect("route table lock poisoned");
-        table.lookup(&host).map(|r| r.target.clone())
+        table.lookup(&host).and_then(|r| r.target.clone())
     };
 
     let target = match target {

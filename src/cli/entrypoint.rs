@@ -54,7 +54,8 @@ pub fn run_cli(raw_args: Vec<String>) {
     match cmd {
         Command::Version => crate::run_version_command(&context),
         Command::Help(topic) => run_help_command(&context, topic),
-        command @ (Command::Changelog(_)
+        command @ (Command::Bundle(_)
+        | Command::Changelog(_)
         | Command::Exec(_)
         | Command::System(_)
         | Command::Workspace(_)

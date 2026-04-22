@@ -23,7 +23,7 @@ shell = "/bin/bash"
 
 [volumes.data]
 mount = "/var/lib/mysql"
-named = true
+named = false
 persist = true
 description = "Database storage"
 

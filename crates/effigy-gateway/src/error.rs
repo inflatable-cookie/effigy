@@ -1,5 +1,6 @@
 //! Error types for the gateway crate.
 
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
 /// Errors that can occur during gateway operations.
@@ -16,6 +17,18 @@ pub enum GatewayError {
     /// The route table file could not be written.
     #[error("failed to write route table at {path}: {reason}")]
     RouteTableWriteError { path: PathBuf, reason: String },
+
+    /// The loopback registry file could not be read.
+    #[error("failed to read loopback registry at {path}: {reason}")]
+    LoopbackRegistryRead { path: PathBuf, reason: String },
+
+    /// The loopback registry file contains invalid JSON.
+    #[error("invalid loopback registry JSON at {path}: {reason}")]
+    LoopbackRegistryParse { path: PathBuf, reason: String },
+
+    /// The loopback registry file could not be written.
+    #[error("failed to write loopback registry at {path}: {reason}")]
+    LoopbackRegistryWrite { path: PathBuf, reason: String },
 
     /// A route for the given domain already exists.
     #[error("route already registered for domain '{domain}'")]
@@ -65,6 +78,17 @@ pub enum GatewayError {
         base: u16,
         range: u16,
     },
+
+    /// The bounded loopback-IP pool is exhausted.
+    #[error("loopback pool exhausted for range {range_start}–{range_end}")]
+    LoopbackPoolExhausted {
+        range_start: Ipv4Addr,
+        range_end: Ipv4Addr,
+    },
+
+    /// Loopback alias provisioning failed.
+    #[error("failed to provision loopback alias {ip}: {reason}")]
+    LoopbackAliasProvision { ip: Ipv4Addr, reason: String },
 
     /// Gateway is not running.
     #[error("gateway is not running")]

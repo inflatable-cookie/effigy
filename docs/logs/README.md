@@ -76,6 +76,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`](./2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md)
 - [`2026-04/20-235500-g02-007-v0-3-release-prep-alignment-checkpoint.md`](./2026-04/20-235500-g02-007-v0-3-release-prep-alignment-checkpoint.md)
 - [`2026-04/20-161156-managed-gateway-seeded-start-and-idle-shutdown-correction.md`](./2026-04/20-161156-managed-gateway-seeded-start-and-idle-shutdown-correction.md)
 - [`2026-04/20-154500-g02-020-route-model-foundation-closeout-and-follow-up-decision.md`](./2026-04/20-154500-g02-020-route-model-foundation-closeout-and-follow-up-decision.md)

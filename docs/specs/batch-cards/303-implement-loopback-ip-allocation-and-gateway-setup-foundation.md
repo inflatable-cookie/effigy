@@ -1,7 +1,7 @@
 # 303 Implement Loopback-IP Allocation And Gateway Setup Foundation
 
-Status: staged
-Updated: 2026-04-20
+Status: landed
+Updated: 2026-04-22
 Roadmap: `g02.020`
 Spec: `docs/specs/020-multi-project-gateway-expansion-and-service-dns-strict-lane.md`
 
@@ -48,10 +48,17 @@ bounded macOS path.
 
 ## Result
 
-Staged. This card is the intended second `g02.020` execution move now that the
-route-model seam from `301` is real.
+Landed. The gateway now owns a dedicated persisted `loopback-ips.json` state
+file for stable `127.1.0.1`–`127.1.0.50` assignment, and the existing elevated
+`gateway up` setup path now provisions that bounded alias range on macOS
+alongside resolver setup.
+
+This batch kept the on-demand gateway lifecycle intact while making the
+loopback-IP substrate real for later TCP-service registration work. The state
+prep path now initializes the loopback registry, and tests cover registry
+persistence plus the bounded alias-setup seam honestly.
 
 ## Next Task
 
-Execute this card when `g02.020` resumes after the deliberate `g02.007` and
-`g02.019` fronts.
+Execute `306` to remove manifest-declared host-port assumptions from HTTP
+gateway registration through post-start published-port discovery.

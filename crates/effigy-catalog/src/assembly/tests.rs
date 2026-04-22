@@ -27,11 +27,13 @@ default = [3306]
         compose_template: String::new(),
         dockerfile: None,
         config_variants: HashMap::new(),
+        param_variants: HashMap::new(),
         source: FragmentSource::Bundled,
     };
     fragments.insert("db".to_string(), (decl, fragment));
 
-    let siblings = ComposeAssembler::build_sibling_map(&fragments);
+    let resolved_params = HashMap::from([("db".to_string(), HashMap::new())]);
+    let siblings = ComposeAssembler::build_sibling_map(&fragments, &resolved_params);
 
     // Accessible by catalog name.
     assert!(siblings.contains_key("mariadb"));
@@ -80,6 +82,7 @@ fn build_compose_document_with_volumes() {
 
     let volumes = vec![VolumeInfo {
         name: "test-data".to_string(),
+        named: true,
         persist: true,
         service: "db".to_string(),
     }];

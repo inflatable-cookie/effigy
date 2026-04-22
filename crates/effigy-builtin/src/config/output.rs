@@ -10,13 +10,14 @@ use super::super::response::{
 use super::reference::{render_config_reference, style_schema_comments};
 use super::request::{ConfigRequest, ConfigSchemaTarget, ConfigTestRunner};
 use super::schema::{
-    render_builtin_config_schema, render_builtin_config_schema_minimal,
-    render_builtin_config_schema_target, render_builtin_config_schema_test_target,
+    render_builtin_config_schema, render_builtin_config_schema_bundle_target,
+    render_builtin_config_schema_minimal, render_builtin_config_schema_target,
+    render_builtin_config_schema_test_target,
 };
 use crate::BuiltinError;
 use effigy_manifest::{
-    load_task_manifest_with_inspection, ManifestCompositionEdge, ManifestCompositionOverride,
-    ManifestCompositionValueSource,
+    get_bundle, list_bundle_default_paths, load_task_manifest_with_inspection,
+    ManifestCompositionEdge, ManifestCompositionOverride, ManifestCompositionValueSource,
 };
 
 pub(super) fn render_config_request(
@@ -41,9 +42,29 @@ pub(super) fn render_config_help_payload(output_json: bool) -> Result<String, Bu
 fn render_schema_payload(request: ConfigRequest) -> Result<Option<String>, BuiltinError> {
     let color_enabled = builtin_output_color_enabled(request.output_json);
     let target = request.target;
+    let bundle = request.bundle.clone();
     let runner = request.runner;
 
     let rendered = match target {
+        Some(ConfigSchemaTarget::Bundle) => {
+            let resolved_bundle = match bundle.as_deref() {
+                Some(name) => Some(get_bundle(name).ok_or_else(|| {
+                    BuiltinError::task_invocation(format!("unknown bundle `{name}`"))
+                })?),
+                None => None,
+            };
+            let default_paths = match bundle.as_deref() {
+                Some(name) => list_bundle_default_paths(name)
+                    .map_err(|error| BuiltinError::task_invocation(error.to_string()))?,
+                None => Vec::new(),
+            };
+
+            render_builtin_config_schema_bundle_target(
+                request.minimal,
+                resolved_bundle.as_ref(),
+                &default_paths,
+            )
+        }
         Some(ConfigSchemaTarget::Test) => {
             render_builtin_config_schema_test_target(request.minimal, runner)
         }
@@ -55,7 +76,7 @@ fn render_schema_payload(request: ConfigRequest) -> Result<Option<String>, Built
     let text = style_schema_comments(rendered, color_enabled);
     render_config_payload(
         request.output_json,
-        ConfigPayload::schema(request.minimal, target, runner, text),
+        ConfigPayload::schema(request.minimal, target, bundle, runner, text),
     )
 }
 
@@ -157,6 +178,7 @@ fn render_config_payload(
     let mode = payload.mode;
     let minimal = payload.minimal;
     let target = payload.target.map(ConfigSchemaTarget::as_str);
+    let bundle = payload.bundle;
     let runner = payload.runner.map(ConfigTestRunner::as_str);
     let manifest_path = payload.manifest_path;
     let evaluation_order = payload.evaluation_order;
@@ -175,6 +197,7 @@ fn render_config_payload(
                 "mode": mode,
                 "minimal": minimal,
                 "target": target,
+                "bundle": bundle,
                 "runner": runner,
                 "manifest_path": manifest_path,
                 "evaluation_order": evaluation_order,
@@ -193,6 +216,7 @@ struct ConfigPayload {
     mode: &'static str,
     minimal: bool,
     target: Option<ConfigSchemaTarget>,
+    bundle: Option<String>,
     runner: Option<ConfigTestRunner>,
     manifest_path: Option<String>,
     evaluation_order: Option<Vec<String>>,
@@ -211,6 +235,7 @@ impl ConfigPayload {
             mode: "reference",
             minimal: false,
             target: None,
+            bundle: None,
             runner: None,
             manifest_path: None,
             evaluation_order: None,
@@ -227,6 +252,7 @@ impl ConfigPayload {
     fn schema(
         minimal: bool,
         target: Option<ConfigSchemaTarget>,
+        bundle: Option<String>,
         runner: Option<ConfigTestRunner>,
         text: String,
     ) -> Self {
@@ -234,6 +260,7 @@ impl ConfigPayload {
             mode: "schema",
             minimal,
             target,
+            bundle,
             runner,
             manifest_path: None,
             evaluation_order: None,
@@ -262,6 +289,7 @@ impl ConfigPayload {
             mode: "inspect",
             minimal: false,
             target: None,
+            bundle: None,
             runner: None,
             manifest_path: Some(manifest_path),
             evaluation_order: Some(evaluation_order),

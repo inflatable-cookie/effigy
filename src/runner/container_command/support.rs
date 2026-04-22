@@ -155,6 +155,7 @@ pub(super) fn annotate_registered_gateway_routes(
                     "action": "registered",
                     "domain": route.domain,
                     "target": route.target,
+                    "dns_ip": route.dns_ip.map(|value| value.to_string()),
                     "tls": route.tls,
                 }))
                 .collect::<Vec<_>>()),
@@ -162,10 +163,20 @@ pub(super) fn annotate_registered_gateway_routes(
     }
     for route in routes {
         report.success_text.push('\n');
-        report.success_text.push_str(&format!(
-            "[gateway] registered {} -> {}",
-            route.domain, route.target
-        ));
+        match route.target.as_deref() {
+            Some(target) => report.success_text.push_str(&format!(
+                "[gateway] registered {} -> {}",
+                route.domain, target
+            )),
+            None => report.success_text.push_str(&format!(
+                "[gateway] registered {} -> dns {}",
+                route.domain,
+                route
+                    .dns_ip
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "default".to_owned())
+            )),
+        }
     }
 }
 
@@ -437,6 +448,7 @@ mod tests {
             dns_tls: false,
             dns_port: None,
             dns_routes: vec![],
+            service_aliases: vec![],
             declared_ports: vec![],
             ports_declared_explicitly: false,
             declared_mounts: vec![],

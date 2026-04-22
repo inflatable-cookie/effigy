@@ -85,3 +85,4 @@ rhai = { version = "1", features = ["serde"] }
 signal-hook = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+minijinja = "2"

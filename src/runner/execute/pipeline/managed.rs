@@ -876,6 +876,7 @@ mod tests {
             dns_tls: false,
             dns_port: None,
             dns_routes: vec![],
+            service_aliases: vec![],
             declared_ports: vec![],
             ports_declared_explicitly: false,
             declared_mounts: vec![],
