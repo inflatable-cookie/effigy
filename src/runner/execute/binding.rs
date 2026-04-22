@@ -119,7 +119,7 @@ pub(in crate::runner) fn resolve_container_execution_binding(
                             mount: inline.mount,
                             extra: Default::default(),
                         },
-                        workdir: binding.workdir,
+                        workdir: binding.working_dir,
                     },
                 ),
                 None => Err(RunnerError::task_invocation(format!(

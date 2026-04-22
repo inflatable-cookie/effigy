@@ -227,7 +227,39 @@ default_workspace = "app"
 
 [systems.dev.workspaces.app]
 container = { image = "node:22", mount = "./:/workspace" }
-workdir = "/workspace"
+working_dir = "/workspace"
+
+[tasks.dev]
+workspace = "app"
+run = "npm run dev"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected no schema findings, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_accepts_working_dir_for_systems_and_workspaces() {
+    let manifest: Value = toml::from_str(
+        r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+working_dir = "/workspace"
+
+[systems.dev.workspaces.app]
+container = { image = "node:22", mount = "./:/workspace" }
+working_dir = "/workspace/app"
 
 [tasks.dev]
 workspace = "app"

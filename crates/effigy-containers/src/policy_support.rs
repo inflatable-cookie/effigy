@@ -10,7 +10,8 @@ use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde_yaml::Value as YamlValue;
 
 use crate::{
-    ContainerPolicyError, SharedServiceBinding, GENERATED_COMPOSE_DIR, SHARED_SERVICE_HOST,
+    ContainerPolicyError, SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR,
+    PROJECT_LOCAL_CATALOG_DIR, SHARED_SERVICE_HOST,
 };
 
 #[cfg(test)]
@@ -104,8 +105,16 @@ pub(crate) fn resolve_compose_source(
         user_global_catalog_dir(),
     );
     let assembler = ComposeAssembler::new(resolver);
-    let mut assembly =
-        assembler.assemble(&services, project_name, &repo_root.display().to_string())?;
+    let generated_catalog_root = format!("{GENERATED_RUNTIME_COMPOSE_DIR}/.effigy-catalog");
+    let (host_uid, host_gid) = host_workspace_identity();
+    let mut assembly = assembler.assemble(
+        &services,
+        project_name,
+        &repo_root.display().to_string(),
+        &generated_catalog_root,
+        host_uid,
+        host_gid,
+    )?;
     apply_shared_service_env_policy(project_name, &shared_services, &mut assembly)?;
     apply_generated_compose_media_policy(
         repo_root,
@@ -139,7 +148,7 @@ pub(crate) fn resolve_compose_source(
         &configured_bindings,
         &mut assembly,
     )?;
-    let output = ComposeOutput::new(repo_root.join(GENERATED_COMPOSE_DIR));
+    let output = ComposeOutput::new(repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR));
     let manifest_cache_key = if effective_ports.is_empty() {
         effective_manifest.to_owned()
     } else {
@@ -230,10 +239,14 @@ fn resolve_shared_service_bindings(
         };
         let resolver = CatalogResolver::new(None, user_global_catalog_dir());
         let assembler = ComposeAssembler::new(resolver);
+        let (host_uid, host_gid) = host_workspace_identity();
         let mut assembly = assembler.assemble(
             &[declaration],
             &shared_project_name,
             &output_dir.display().to_string(),
+            ".effigy-catalog",
+            host_uid,
+            host_gid,
         )?;
         let effective_ports = apply_generated_compose_port_policy(
             &output_dir,
@@ -474,6 +487,7 @@ fn apply_generated_compose_port_policy(
                     .assign_port(
                         project_name,
                         &repo_root.display().to_string(),
+                        &service_name,
                         binding.container,
                     )
                     .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
@@ -568,7 +582,7 @@ fn save_port_registry(registry: &PortRegistry) -> Result<(), ContainerPolicyErro
 }
 
 fn project_local_catalog_dir(repo_root: &Path) -> Option<PathBuf> {
-    let path = repo_root.join(GENERATED_COMPOSE_DIR).join("catalog");
+    let path = repo_root.join(PROJECT_LOCAL_CATALOG_DIR);
     path.is_dir().then_some(path)
 }
 
@@ -585,6 +599,16 @@ fn effigy_home_dir() -> Option<PathBuf> {
 
     let home = std::env::var_os("HOME")?;
     Some(PathBuf::from(home).join(".effigy"))
+}
+
+fn host_workspace_identity() -> (u32, u32) {
+    #[cfg(unix)]
+    {
+        return unsafe { (nix::libc::geteuid(), nix::libc::getegid()) };
+    }
+
+    #[allow(unreachable_code)]
+    (1000, 1000)
 }
 
 #[cfg(test)]

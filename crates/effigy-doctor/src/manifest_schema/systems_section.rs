@@ -29,7 +29,7 @@ pub(super) fn validate_systems_section(context: &mut SchemaContext<'_, '_>, syst
                 "default_workspace",
                 "workspaces",
                 "container",
-                "workdir",
+                "working_dir",
                 "user",
                 "home",
                 "mounts",
@@ -66,7 +66,7 @@ fn validate_workspace_entry(context: &mut SchemaContext<'_, '_>, path: &str, val
         context,
         path,
         table,
-        &["container", "workdir", "user", "home", "mounts"],
+        &["container", "working_dir", "user", "home", "mounts"],
     );
     validate_workspace_fields(context, path, table);
 }
@@ -78,8 +78,8 @@ fn validate_workspace_fields(
 ) {
     validate_optional_non_empty_string_field(
         context,
-        table.get("workdir"),
-        &format!("{path}.workdir"),
+        table.get("working_dir"),
+        &format!("{path}.working_dir"),
     );
     validate_optional_non_empty_string_field(context, table.get("user"), &format!("{path}.user"));
     validate_optional_non_empty_string_field(context, table.get("home"), &format!("{path}.home"));

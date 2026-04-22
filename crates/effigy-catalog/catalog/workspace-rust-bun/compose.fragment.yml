@@ -1,0 +1,32 @@
+services:
+  {{ service_name }}:
+    build:
+      context: {{ repo_root }}
+      dockerfile: {{ catalog_path }}/Dockerfile
+      args:
+        RUST_VERSION: "{{ rust_version }}"
+        BUN_VERSION: "{{ bun_version }}"
+        WORKSPACE_UID: "{{ host_uid }}"
+        WORKSPACE_GID: "{{ host_gid }}"
+        WORKSPACE_MOUNT: "{{ workspace_mount }}"
+    command: ["sleep", "infinity"]
+{% if working_subdir %}
+    working_dir: {{ workspace_mount }}/{{ working_subdir }}
+{% else %}
+    working_dir: {{ workspace_mount }}
+{% endif %}
+    volumes:
+      - {{ project_name }}-{{ service_name }}-cargo-registry:/usr/local/cargo/registry
+      - {{ project_name }}-{{ service_name }}-cargo-git:/usr/local/cargo/git
+{% if host_ports %}
+    ports:
+{% for port in host_ports %}
+      - "{{ port }}"
+{% endfor %}
+{% endif %}
+    healthcheck:
+      test: ["CMD-SHELL", "command -v cargo >/dev/null && command -v bun >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s

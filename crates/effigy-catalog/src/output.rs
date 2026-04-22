@@ -12,7 +12,7 @@ use crate::error::CatalogError;
 
 /// Manages compose file output and lifecycle.
 pub struct ComposeOutput {
-    /// Directory where generated files are written (e.g., `infra/dev/`).
+    /// Directory where generated runtime files are written.
     output_dir: PathBuf,
 }
 
@@ -71,7 +71,8 @@ impl ComposeOutput {
             let compose_matches = std::fs::read_to_string(&compose_path)
                 .map(|existing| existing == result.compose_yaml)
                 .unwrap_or(false);
-            if stored.trim() == current_checksum && compose_matches {
+            let catalog_matches = rendered_catalog_artifacts_match(&self.output_dir, result);
+            if stored.trim() == current_checksum && compose_matches && catalog_matches {
                 return Ok(WriteResult {
                     compose_path,
                     dockerfile_paths: HashMap::new(),
@@ -125,8 +126,13 @@ impl ComposeOutput {
     /// locations that the user owns directly. The generated files and
     /// checksum are removed.
     pub fn eject(&self) -> Result<EjectResult, CatalogError> {
+        self.eject_to(&self.output_dir)
+    }
+
+    /// Eject generated compose output into a user-owned directory.
+    pub fn eject_to(&self, target_dir: &Path) -> Result<EjectResult, CatalogError> {
         let generated_path = self.output_dir.join(".effigy-compose.generated.yml");
-        let permanent_path = self.output_dir.join("docker-compose.yml");
+        let permanent_path = target_dir.join("docker-compose.yml");
 
         if !generated_path.exists() {
             return Err(CatalogError::WriteError {
@@ -136,6 +142,8 @@ impl ComposeOutput {
             });
         }
 
+        std::fs::create_dir_all(target_dir)?;
+
         // Copy compose file to permanent location.
         std::fs::copy(&generated_path, &permanent_path).map_err(|e| CatalogError::WriteError {
             path: permanent_path.clone(),
@@ -144,7 +152,7 @@ impl ComposeOutput {
 
         // Copy Dockerfiles from .effigy-catalog/ to a permanent location.
         let catalog_dir = self.output_dir.join(".effigy-catalog");
-        let permanent_catalog_dir = self.output_dir.join("catalog");
+        let permanent_catalog_dir = target_dir.join("catalog");
         let mut dockerfile_paths = HashMap::new();
         if catalog_dir.is_dir() {
             Self::copy_dir_recursive(&catalog_dir, &permanent_catalog_dir)?;
@@ -171,9 +179,17 @@ impl ComposeOutput {
                 let path = entry.path();
                 if let Some(ext) = path.extension() {
                     if ext == "conf" {
-                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                            config_paths.insert(name.to_string(), path);
-                        }
+                        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                            continue;
+                        };
+                        let permanent_config_path = target_dir.join(name);
+                        std::fs::copy(&path, &permanent_config_path).map_err(|e| {
+                            CatalogError::WriteError {
+                                path: permanent_config_path.clone(),
+                                reason: e.to_string(),
+                            }
+                        })?;
+                        config_paths.insert(name.to_string(), permanent_config_path);
                     }
                 }
             }
@@ -246,6 +262,31 @@ fn simple_checksum(content: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     content.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+fn rendered_catalog_artifacts_match(output_dir: &Path, result: &AssemblyResult) -> bool {
+    let catalog_dir = output_dir.join(".effigy-catalog");
+    for (service_name, dockerfile_content) in &result.dockerfiles {
+        let path = catalog_dir.join(service_name).join("Dockerfile");
+        let matches = std::fs::read_to_string(&path)
+            .map(|existing| existing == *dockerfile_content)
+            .unwrap_or(false);
+        if !matches {
+            return false;
+        }
+    }
+
+    for (config_name, config_content) in &result.config_files {
+        let path = output_dir.join(config_name);
+        let matches = std::fs::read_to_string(&path)
+            .map(|existing| existing == *config_content)
+            .unwrap_or(false);
+        if !matches {
+            return false;
+        }
+    }
+
+    true
 }
 
 #[cfg(test)]

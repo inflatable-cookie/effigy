@@ -146,7 +146,7 @@ pub async fn run_proxy_server(
                                 let cfg = cfg.clone();
                                 let st = Arc::clone(&st);
                                 async move {
-                                    handle_request(req, &table, &st, peer_addr, &cfg).await
+                                    handle_request(req, &table, &st, peer_addr, &cfg, false).await
                                 }
                             });
 
@@ -263,7 +263,7 @@ pub async fn run_tls_proxy_server(
                                 let st = Arc::clone(&st);
                                 let cfg = cfg.clone();
                                 async move {
-                                    handle_request(req, &table, &st, peer_addr, &cfg).await
+                                    handle_request(req, &table, &st, peer_addr, &cfg, true).await
                                 }
                             });
 
@@ -400,6 +400,7 @@ async fn handle_request(
     stats: &Arc<GatewayStats>,
     peer_addr: SocketAddr,
     config: &ProxyConfig,
+    forwarded_https: bool,
 ) -> Result<Response<ProxyBody>, hyper::Error> {
     GatewayStats::inc(&stats.http_requests);
 
@@ -468,7 +469,8 @@ async fn handle_request(
     if is_websocket_upgrade(&req) {
         GatewayStats::inc(&stats.websocket_upgrades);
         debug!(host = %host, target = %target, "WebSocket upgrade");
-        return handle_websocket_upgrade(req, &target, &host, peer_addr, config).await;
+        return handle_websocket_upgrade(req, &target, &host, peer_addr, config, forwarded_https)
+            .await;
     }
 
     debug!(
@@ -479,7 +481,7 @@ async fn handle_request(
         "proxying request"
     );
 
-    match forward_request(req, &target, &host, peer_addr, config).await {
+    match forward_request(req, &target, &host, peer_addr, config, forwarded_https).await {
         Ok(response) => {
             GatewayStats::inc(&stats.proxied_requests);
             Ok(response)
@@ -519,6 +521,7 @@ async fn forward_request(
     original_host: &str,
     peer_addr: SocketAddr,
     config: &ProxyConfig,
+    forwarded_https: bool,
 ) -> Result<Response<ProxyBody>, Box<dyn std::error::Error + Send + Sync>> {
     // Connect to upstream with timeout.
     let stream = tokio::time::timeout(config.connect_timeout, TcpStream::connect(target))
@@ -539,7 +542,7 @@ async fn forward_request(
 
     // Prepare the upstream request.
     strip_hop_by_hop_headers(req.headers_mut());
-    add_forwarding_headers(req.headers_mut(), original_host, peer_addr);
+    add_forwarding_headers(req.headers_mut(), original_host, peer_addr, forwarded_https);
 
     // Send request and wait for response headers with timeout.
     let response = tokio::time::timeout(config.response_timeout, sender.send_request(req))
@@ -566,6 +569,7 @@ async fn handle_websocket_upgrade(
     original_host: &str,
     peer_addr: SocketAddr,
     config: &ProxyConfig,
+    forwarded_https: bool,
 ) -> Result<Response<ProxyBody>, hyper::Error> {
     // Connect to upstream.
     let upstream_stream =
@@ -624,7 +628,12 @@ async fn handle_websocket_upgrade(
             .insert(name.clone(), value.clone());
     }
     strip_hop_by_hop_headers_except_upgrade(upstream_req.headers_mut());
-    add_forwarding_headers(upstream_req.headers_mut(), original_host, peer_addr);
+    add_forwarding_headers(
+        upstream_req.headers_mut(),
+        original_host,
+        peer_addr,
+        forwarded_https,
+    );
 
     let upstream_response = match upstream_sender.send_request(upstream_req).await {
         Ok(r) => r,
@@ -730,6 +739,7 @@ fn add_forwarding_headers(
     headers: &mut hyper::HeaderMap,
     original_host: &str,
     peer_addr: SocketAddr,
+    forwarded_https: bool,
 ) {
     let peer_ip = peer_addr.ip().to_string();
 
@@ -751,7 +761,10 @@ fn add_forwarding_headers(
     }
 
     // X-Forwarded-Proto.
-    headers.insert("x-forwarded-proto", HeaderValue::from_static("http"));
+    headers.insert(
+        "x-forwarded-proto",
+        HeaderValue::from_static(if forwarded_https { "https" } else { "http" }),
+    );
 
     // X-Real-IP (if not already set).
     if !headers.contains_key("x-real-ip") {

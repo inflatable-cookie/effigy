@@ -88,7 +88,7 @@ What is now real in the product surface:
 
 - manifest schema and validation for catalog-backed services
 - container-path compose generation through `effigy-containers`
-- generated compose ownership under `infra/dev/.effigy-compose.generated.yml`
+- generated compose ownership under `.effigy/runtime/compose/.effigy-compose.generated.yml`
 - visible `catalog list`, `catalog extract`, and `container eject` commands
 - permanent compose promotion through `container eject`
 - one real-project proof that brought the generated-compose loop up, inspected

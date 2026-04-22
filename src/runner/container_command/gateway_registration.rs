@@ -6,6 +6,7 @@ use effigy_containers::exec::{
 };
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
+use serde_yaml::Value as YamlValue;
 
 use crate::runner::error::RunnerError;
 use crate::runner::gateway_command::{
@@ -318,9 +319,14 @@ fn selected_host_port_for_route(
     if let Some(port) = dns_route.port {
         return if policy.ports_declared_explicitly {
             selected_declared_host_port(policy, port)
+        } else if let Some(service) = dns_route.service.as_deref() {
+            selected_effective_container_port_for_service(policy, service, port)
         } else {
             selected_effective_container_port(policy, port)
         };
+    }
+    if let Some(service) = dns_route.service.as_deref() {
+        return first_effective_http_host_port_for_service(policy, service);
     }
     if !policy.ports_declared_explicitly {
         return first_effective_http_host_port(policy);
@@ -390,6 +396,95 @@ fn first_effective_http_host_port(policy: &EffectiveContainerPolicy) -> Result<u
             policy.name
         ))
     })
+}
+
+fn selected_effective_container_port_for_service(
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    selected_port: u16,
+) -> Result<u16, RunnerError> {
+    let bindings = service_port_bindings(policy, service)?;
+    if bindings.is_empty() {
+        return selected_effective_container_port(policy, selected_port);
+    }
+    for (host, container) in bindings {
+        if container == selected_port {
+            return Ok(host);
+        }
+    }
+    Err(RunnerError::task_invocation(format!(
+        "container `{}` declares a gateway DNS route for service `{service}` on container port {selected_port} but the generated compose does not expose that port for the selected service",
+        policy.name
+    )))
+}
+
+fn first_effective_http_host_port_for_service(
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+) -> Result<u16, RunnerError> {
+    let bindings = service_port_bindings(policy, service)?;
+    if bindings.is_empty() {
+        return first_effective_http_host_port(policy);
+    }
+    let mut first_binding: Option<u16> = None;
+    for (host, container) in bindings {
+        if first_binding.is_none() {
+            first_binding = Some(host);
+        }
+        if matches!(container, 80 | 3000 | 8025 | 9000 | 9001 | 9200) {
+            return Ok(host);
+        }
+    }
+    first_binding.ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "container `{}` declares a gateway DNS route for service `{service}` but no effective published ports are available for that service",
+            policy.name
+        ))
+    })
+}
+
+fn service_port_bindings(
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+) -> Result<Vec<(u16, u16)>, RunnerError> {
+    for compose_file in &policy.compose_files {
+        let content = match std::fs::read_to_string(compose_file) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        let parsed: YamlValue = match serde_yaml::from_str(&content) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        let Some(services) = parsed
+            .as_mapping()
+            .and_then(|root| root.get(YamlValue::String("services".to_owned())))
+            .and_then(YamlValue::as_mapping)
+        else {
+            continue;
+        };
+        let Some(service_entry) = services
+            .get(YamlValue::String(service.to_owned()))
+            .and_then(YamlValue::as_mapping)
+        else {
+            continue;
+        };
+        let Some(ports) = service_entry
+            .get(YamlValue::String("ports".to_owned()))
+            .and_then(YamlValue::as_sequence)
+        else {
+            return Ok(Vec::new());
+        };
+        let mut bindings = Vec::new();
+        for entry in ports {
+            let Some(raw) = entry.as_str() else {
+                continue;
+            };
+            bindings.push(parse_port_binding(policy, raw)?);
+        }
+        return Ok(bindings);
+    }
+    Ok(Vec::new())
 }
 
 fn parse_host_port(policy: &EffectiveContainerPolicy, raw: &str) -> Result<u16, RunnerError> {
@@ -534,6 +629,43 @@ mod tests {
         let routes = resolve_gateway_routes(&policy).expect("routes");
         let route = routes.first().expect("some route");
         assert_eq!(route.target, "127.0.0.1:8125");
+    }
+
+    #[test]
+    fn uses_service_specific_effective_port_when_multiple_services_publish_same_container_port() {
+        let dir = std::env::temp_dir().join(format!(
+            "effigy-gateway-service-route-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir tempdir");
+        let compose_file = dir.join("docker-compose.yml");
+        std::fs::write(
+            &compose_file,
+            r#"
+services:
+  pma:
+    ports:
+      - "18900:80"
+  web:
+    ports:
+      - "18901:80"
+"#,
+        )
+        .expect("write compose");
+
+        let mut policy = test_policy();
+        policy.compose_source = EffectiveComposeSource::Generated;
+        policy.compose_files = vec![compose_file];
+        policy.ports_declared_explicitly = false;
+        policy.declared_ports = vec!["18900:80".to_owned(), "18901:80".to_owned()];
+        policy.dns_routes[0].service = Some("web".to_owned());
+
+        let routes = resolve_gateway_routes(&policy).expect("routes");
+        let route = routes.first().expect("some route");
+        assert_eq!(route.target, "127.0.0.1:18901");
     }
 
     #[test]

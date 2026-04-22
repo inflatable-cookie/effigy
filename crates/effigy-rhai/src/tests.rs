@@ -107,6 +107,31 @@ fn execute_rhai_script_can_stream_process_output() {
 }
 
 #[test]
+fn execute_rhai_script_can_list_directory_entries() {
+    let root = temp_root("list-dir");
+    let fixture_dir = root.join("fixture");
+    fs::create_dir_all(&fixture_dir).expect("fixture dir");
+    fs::write(fixture_dir.join("b.txt"), "b").expect("file b");
+    fs::write(fixture_dir.join("a.txt"), "a").expect("file a");
+    fs::create_dir_all(fixture_dir.join("subdir")).expect("subdir");
+
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            let entries = list_dir("fixture");
+            if path_file_name(entries[0].to_string()) != "a.txt" { throw("first"); }
+            if path_file_name(entries[1].to_string()) != "b.txt" { throw("second"); }
+            if path_file_name(entries[2].to_string()) != "subdir" { throw("third"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
 fn run_effigy_json_surfaces_callback_errors_as_runtime_errors() {
     let root = temp_root("effigy-json-error");
     let context = ScriptContext {

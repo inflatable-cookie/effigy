@@ -1,0 +1,26 @@
+services:
+  {{ service_name }}:
+    image: phpmyadmin:{{ version }}
+    environment:
+      PMA_HOST: "{{ database_host }}"
+      PMA_PORT: "{{ database_port }}"
+      PMA_USER: "root"
+      PMA_PASSWORD: ""
+      UPLOAD_LIMIT: "128M"
+{% if services.db %}
+    depends_on:
+      {{ services.db.name }}:
+        condition: service_started
+{% elif services.mariadb %}
+    depends_on:
+      {{ services.mariadb.name }}:
+        condition: service_started
+{% endif %}
+    ports:
+      - "80:80"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80/"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s

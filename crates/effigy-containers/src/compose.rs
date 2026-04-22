@@ -51,9 +51,15 @@ pub fn compose_args<'a>(
 /// Build standard detached bring-up args.
 ///
 /// Uses `--build` so compose-backed services track local Dockerfile changes
-/// instead of silently reusing stale tagged images.
+/// instead of silently reusing stale tagged images. Generated compose stacks
+/// also force recreation because some backends keep existing containers on the
+/// previous image even after a successful rebuild of the same local tag.
 pub fn compose_up_args(policy: &EffectiveContainerPolicy) -> Vec<OsString> {
-    compose_args(policy, ["up", "-d", "--build"])
+    let mut args = vec!["up", "-d", "--build"];
+    if policy.compose_source == crate::EffectiveComposeSource::Generated {
+        args.push("--force-recreate");
+    }
+    compose_args(policy, args)
 }
 
 /// Resolve the final program and arguments for a compose invocation.

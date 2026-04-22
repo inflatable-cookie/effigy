@@ -5,6 +5,8 @@ services:
       dockerfile: {{ catalog_path }}/Dockerfile
       args:
         PHP_VERSION: "{{ version }}"
+        WORKSPACE_UID: "{{ host_uid }}"
+        WORKSPACE_GID: "{{ host_gid }}"
 {% if extensions %}
         EXTENSIONS: "{{ extensions | join(' ') }}"
 {% endif %}

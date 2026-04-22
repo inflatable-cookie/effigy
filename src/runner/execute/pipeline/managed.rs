@@ -1,13 +1,13 @@
-use super::super::super::container_command::run_task_workspace_session;
 use super::super::super::container_command::support::validate_running_container_runtime_match;
 use super::super::super::gateway_command::gateway_up_for_managed_task;
 use super::super::super::locking::io::acquire_scopes;
 use super::super::super::locking::model::LockScope;
-use super::super::super::system_command::run_workspace_seeded_session;
+use super::super::super::system_command::{run_workspace, run_workspace_seeded_session};
 use super::super::preflight::ExecutionPreflight;
 use super::super::{resolve_container_execution_binding, ContainerExecutionBinding};
 use crate::runner::error::RunnerError;
 use crate::runner::util::render_passthrough_args;
+use effigy_cli::WorkspaceArgs;
 use effigy_containers::compose::{compose_args, compose_invocation};
 use effigy_containers::session::{
     managed_gateway_command, managed_lifecycle_command, managed_lifecycle_shutdown_command,
@@ -51,18 +51,21 @@ pub(super) fn run_managed_task(
     )?;
     let Some(mut plan) = plan else {
         if let ContainerExecutionBinding::Container { name, .. } = &container_binding {
-            let repo_for_task = selection.catalog.catalog_root.clone();
             let lock_scopes = vec![crate::runner::manifest::task_lock_scope(
                 selection.task,
                 &preflight.selector,
             )];
             let _lock_guards = acquire_scopes(&preflight.resolved.resolved_root, &lock_scopes)?;
-            return run_task_workspace_session(
-                &repo_for_task,
-                &preflight.selector.task_name,
-                name.as_deref(),
-                preflight.output_json,
-            )
+            let _ = name;
+            if container_handoff {
+                return Ok(None);
+            }
+            return run_workspace(WorkspaceArgs {
+                workspace: selection.task.workspace.clone(),
+                system: selection.task.system.clone(),
+                repo_override: preflight.runtime_args_raw.repo_override.clone(),
+                output_json: preflight.output_json,
+            })
             .map(Some);
         }
         if matches!(container_binding, ContainerExecutionBinding::Inline { .. }) {

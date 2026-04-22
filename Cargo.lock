@@ -634,6 +634,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "serde_yaml",
  "signal-hook 0.4.4",
  "tabled",
  "tokio",
@@ -851,6 +852,7 @@ dependencies = [
  "effigy-tasks",
  "indexmap",
  "serde",
+ "tempfile",
  "toml",
 ]
 

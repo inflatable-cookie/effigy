@@ -411,7 +411,7 @@ fn attached_overview_command(
     format!(
         "sh -lc {script}",
         script = shell_quote(&format!(
-            "while true; do printf '\\033[2J\\033[H'; printf 'Container Session\\n\\n'; printf 'container: %s\\n' {session_label}; printf 'owner_task: %s\\n' {task_label}; printf 'primary_service: %s\\n' {primary}; printf 'shutdown_on_exit: %s\\n' {owner_exit}; printf 'shutdown_mode: %s\\n\\n' {shutdown}; {executable} container {name} status --repo {repo}; sleep 2; done",
+            "printf 'Container Session\\n\\n'; printf 'container: %s\\n' {session_label}; printf 'owner_task: %s\\n' {task_label}; printf 'primary_service: %s\\n' {primary}; printf 'shutdown_on_exit: %s\\n' {owner_exit}; printf 'shutdown_mode: %s\\n\\n' {shutdown}; {executable} container {name} status --repo {repo}",
             primary = shell_quote(&policy.primary_service),
             name = shell_quote(&policy.name),
         )),

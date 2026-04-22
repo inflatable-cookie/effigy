@@ -27,12 +27,20 @@ fn list_bundled_fragments() {
     assert!(names.contains(&"redis"), "missing redis: {names:?}");
     assert!(names.contains(&"memcached"), "missing memcached: {names:?}");
     assert!(names.contains(&"mailpit"), "missing mailpit: {names:?}");
+    assert!(
+        names.contains(&"phpmyadmin"),
+        "missing phpmyadmin: {names:?}"
+    );
     assert!(names.contains(&"minio"), "missing minio: {names:?}");
     assert!(
         names.contains(&"elasticsearch"),
         "missing elasticsearch: {names:?}"
     );
     assert!(names.contains(&"node"), "missing node: {names:?}");
+    assert!(
+        names.contains(&"workspace-rust-bun"),
+        "missing workspace-rust-bun: {names:?}"
+    );
 
     // All should be bundled source.
     for f in &fragments {
@@ -134,7 +142,16 @@ fn assemble_php_mariadb_redis_stack() {
         },
     ];
 
-    let result = assembler.assemble(&services, "test-project", ".").unwrap();
+    let result = assembler
+        .assemble(
+            &services,
+            "test-project",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
+        .unwrap();
 
     // Compose YAML should contain all three services.
     assert!(
@@ -237,7 +254,9 @@ fn assemble_full_lemp_stack() {
         },
     ];
 
-    let result = assembler.assemble(&services, "client-x", ".").unwrap();
+    let result = assembler
+        .assemble(&services, "client-x", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
 
     // All five services present.
     for name in &["app", "web", "db", "cache", "sessions"] {
@@ -270,7 +289,16 @@ fn generated_compose_pins_runtime_volume_names() {
         config: None,
     }];
 
-    let result = assembler.assemble(&services, "farmyard-dev", ".").unwrap();
+    let result = assembler
+        .assemble(
+            &services,
+            "farmyard-dev",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
+        .unwrap();
 
     assert!(
         result.compose_yaml.contains("farmyard-dev-db-data:"),
@@ -312,7 +340,7 @@ fn missing_required_param_error() {
     }];
 
     // Should succeed — all params have defaults.
-    let result = assembler.assemble(&services, "test", ".");
+    let result = assembler.assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000);
     assert!(result.is_ok());
 }
 
@@ -329,7 +357,7 @@ fn invalid_variant_error() {
         config: None,
     }];
 
-    let result = assembler.assemble(&services, "test", ".");
+    let result = assembler.assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000);
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -545,7 +573,9 @@ fn full_pipeline_assemble_write_eject() {
     let manifest = "[containers.web]\nservices = [\"php-fpm\", \"mariadb\"]\n";
 
     // Assemble.
-    let assembly = assembler.assemble(&services, "test-proj", ".").unwrap();
+    let assembly = assembler
+        .assemble(&services, "test-proj", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
 
     // Write — should regenerate.
     let write1 = output.write(&assembly, manifest).unwrap();
@@ -642,7 +672,7 @@ fn assembled_yaml_is_structurally_valid_compose() {
                 );
                 p.insert(
                     "document_root".to_string(),
-                    toml::Value::String("public".to_string()),
+                    toml::Value::String(".".to_string()),
                 );
                 p
             },
@@ -699,7 +729,14 @@ fn assembled_yaml_is_structurally_valid_compose() {
     ];
 
     let result = assembler
-        .assemble(&services, "client-project", ".")
+        .assemble(
+            &services,
+            "client-project",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
         .unwrap();
 
     // 1. Validate the YAML parses and has correct structure.
@@ -716,6 +753,15 @@ fn assembled_yaml_is_structurally_valid_compose() {
     assert!(
         app.get("environment").is_some(),
         "app missing 'environment'"
+    );
+    let app_volumes = app.get("volumes").unwrap().as_sequence().unwrap();
+    let app_volume_strings: Vec<&str> = app_volumes
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert!(
+        app_volume_strings.contains(&".:/var/www/html"),
+        "app should mount the repo at the workspace working dir"
     );
 
     // PHP extensions should be in the build args.
@@ -741,6 +787,15 @@ fn assembled_yaml_is_structurally_valid_compose() {
     let web = validate_service(&doc, "web");
     assert!(web.get("image").is_some(), "web missing 'image'");
     assert!(web.get("ports").is_some(), "web missing 'ports'");
+    let web_volumes = web.get("volumes").unwrap().as_sequence().unwrap();
+    let web_volume_strings: Vec<&str> = web_volumes
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert!(
+        web_volume_strings.contains(&".:/var/www/html:ro"),
+        "web should mount the repo read-only at the workspace working dir"
+    );
 
     let db = validate_service(&doc, "db");
     assert!(db.get("image").is_some(), "db missing 'image'");
@@ -784,6 +839,14 @@ fn assembled_yaml_is_structurally_valid_compose() {
     assert!(
         result.dockerfiles["app"].contains("PHP_VERSION"),
         "Dockerfile should reference PHP_VERSION"
+    );
+    assert!(
+        result.dockerfiles["app"].contains("user = dev"),
+        "Dockerfile should reconfigure php-fpm workers onto the dev user"
+    );
+    assert!(
+        result.dockerfiles["app"].contains("id -gn dev"),
+        "Dockerfile should derive the php-fpm group from the dev user's primary group"
     );
 
     assert!(
@@ -830,7 +893,9 @@ fn php_with_both_mariadb_and_redis_produces_valid_depends_on() {
         },
     ];
 
-    let result = assembler.assemble(&services, "test", ".").unwrap();
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
     let doc = validate_compose_structure(&result.compose_yaml);
     let app = validate_service(&doc, "app");
 
@@ -870,7 +935,9 @@ fn rust_postgres_stack_assembles_correctly() {
         },
     ];
 
-    let result = assembler.assemble(&services, "rust-svc", ".").unwrap();
+    let result = assembler
+        .assemble(&services, "rust-svc", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
     let doc = validate_compose_structure(&result.compose_yaml);
 
     let db = validate_service(&doc, "db");
@@ -912,7 +979,7 @@ fn duplicate_service_names_rejected() {
         },
     ];
 
-    let result = assembler.assemble(&services, "test", ".");
+    let result = assembler.assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000);
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -925,7 +992,7 @@ fn empty_services_rejected() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
 
-    let result = assembler.assemble(&[], "test", ".");
+    let result = assembler.assemble(&[], "test", ".", ".effigy-catalog", 1000, 1000);
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -946,7 +1013,9 @@ fn single_service_assembles_without_volumes() {
         config: None,
     }];
 
-    let result = assembler.assemble(&services, "minimal", ".").unwrap();
+    let result = assembler
+        .assemble(&services, "minimal", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
     let doc = validate_compose_structure(&result.compose_yaml);
 
     validate_service(&doc, "cache");
@@ -979,7 +1048,9 @@ fn nginx_config_resolves_php_service_name() {
         },
     ];
 
-    let result = assembler.assemble(&services, "test", ".").unwrap();
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
 
     // The nginx config should reference "php:9000", not "app:9000".
     let config = &result.config_files["web.conf"];
@@ -1029,7 +1100,9 @@ fn nginx_config_resolves_document_root() {
         },
     ];
 
-    let result = assembler.assemble(&services, "test", ".").unwrap();
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
 
     let config = &result.config_files["web.conf"];
     assert!(
@@ -1039,6 +1112,54 @@ fn nginx_config_resolves_document_root() {
     assert!(
         !config.contains("/var/www/html/public"),
         "nginx root should NOT contain default 'public'"
+    );
+}
+
+#[test]
+fn nginx_decodelabs_config_uses_repo_root_and_genesis_rewrite() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![
+        ServiceDeclaration {
+            name: "app".to_string(),
+            catalog: "php-fpm".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "web".to_string(),
+            catalog: "nginx".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "document_root".to_string(),
+                    toml::Value::String(".".to_string()),
+                );
+                p
+            },
+            variant: Some("decodelabs".to_string()),
+            config: None,
+        },
+    ];
+
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+
+    let config = &result.config_files["web.conf"];
+    assert!(
+        config.contains("root /var/www/html;"),
+        "nginx decodelabs root should use the repo root, got:\n{config}"
+    );
+    assert!(
+        config.contains("rewrite .* /vendor/genesis.php last;"),
+        "nginx decodelabs config should rewrite through vendor/genesis.php, got:\n{config}"
+    );
+    assert!(
+        !config.contains("/index.php?$query_string"),
+        "nginx decodelabs config should not route through index.php, got:\n{config}"
     );
 }
 
@@ -1074,7 +1195,9 @@ fn node_fragment_assembles_with_modules_volume() {
         },
     ];
 
-    let result = assembler.assemble(&services, "frontend", ".").unwrap();
+    let result = assembler
+        .assemble(&services, "frontend", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
     let doc = validate_compose_structure(&result.compose_yaml);
     let app = validate_service(&doc, "app");
 
@@ -1111,7 +1234,9 @@ fn mailpit_fragment_assembles() {
         config: None,
     }];
 
-    let result = assembler.assemble(&services, "test", ".").unwrap();
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
     let doc = validate_compose_structure(&result.compose_yaml);
     let mail = validate_service(&doc, "mail");
 
@@ -1128,6 +1253,54 @@ fn mailpit_fragment_assembles() {
 }
 
 #[test]
+fn phpmyadmin_fragment_assembles() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![
+        ServiceDeclaration {
+            name: "db".to_string(),
+            catalog: "mariadb".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "dbadmin".to_string(),
+            catalog: "phpmyadmin".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+    ];
+
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let admin = validate_service(&doc, "dbadmin");
+
+    let image = admin.get("image").unwrap().as_str().unwrap();
+    assert!(
+        image.contains("phpmyadmin"),
+        "image should be phpmyadmin: {image}"
+    );
+    assert!(
+        result.compose_yaml.contains("PMA_HOST: db"),
+        "phpmyadmin should target the db service:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        admin.get("depends_on").is_some(),
+        "phpmyadmin should depend on mariadb"
+    );
+    assert!(
+        admin.get("healthcheck").is_some(),
+        "phpmyadmin should have a healthcheck"
+    );
+}
+
+#[test]
 fn minio_fragment_assembles_with_volume() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
@@ -1140,7 +1313,9 @@ fn minio_fragment_assembles_with_volume() {
         config: None,
     }];
 
-    let result = assembler.assemble(&services, "test", ".").unwrap();
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
     let doc = validate_compose_structure(&result.compose_yaml);
     let storage = validate_service(&doc, "storage");
 
@@ -1177,7 +1352,9 @@ fn elasticsearch_fragment_assembles_with_resource_limits() {
         config: None,
     }];
 
-    let result = assembler.assemble(&services, "test", ".").unwrap();
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
     let doc = validate_compose_structure(&result.compose_yaml);
     let search = validate_service(&doc, "search");
 
@@ -1218,8 +1395,15 @@ fn full_stack_with_all_services() {
         ServiceDeclaration {
             name: "web".to_string(),
             catalog: "nginx".to_string(),
-            params: HashMap::new(),
-            variant: Some("default".to_string()),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "document_root".to_string(),
+                    toml::Value::String(".".to_string()),
+                );
+                p
+            },
+            variant: Some("decodelabs".to_string()),
             config: None,
         },
         ServiceDeclaration {
@@ -1266,7 +1450,9 @@ fn full_stack_with_all_services() {
         },
     ];
 
-    let result = assembler.assemble(&services, "full-stack", ".").unwrap();
+    let result = assembler
+        .assemble(&services, "full-stack", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
     let doc = validate_compose_structure(&result.compose_yaml);
 
     // All 8 services should be present.
@@ -1282,6 +1468,307 @@ fn full_stack_with_all_services() {
     assert!(vol_names.iter().any(|n| n.contains("db")));
     assert!(vol_names.iter().any(|n| n.contains("storage")));
     assert!(vol_names.iter().any(|n| n.contains("search")));
+}
+
+// --- workspace-rust-bun fragment ──────────────────────────────────────
+
+#[test]
+fn resolve_workspace_rust_bun_fragment() {
+    let resolver = bundled_resolver();
+    let fragment = resolver.resolve("workspace-rust-bun").unwrap();
+
+    assert_eq!(fragment.name, "workspace-rust-bun");
+    assert_eq!(fragment.schema.service.name, "workspace-rust-bun");
+    assert!(fragment.dockerfile.is_some(), "should ship a Dockerfile");
+    assert!(!fragment.compose_template.is_empty());
+    assert!(fragment.schema.capabilities.exec_target);
+    assert_eq!(
+        fragment.schema.capabilities.shell.as_deref(),
+        Some("/bin/bash")
+    );
+
+    // Generic cargo caches should be declared as persistent named volumes.
+    let cargo_registry = fragment
+        .schema
+        .volumes
+        .get("cargo-registry")
+        .expect("cargo-registry volume declared");
+    assert_eq!(cargo_registry.mount, "/usr/local/cargo/registry");
+    assert!(cargo_registry.persist);
+    let cargo_git = fragment
+        .schema
+        .volumes
+        .get("cargo-git")
+        .expect("cargo-git volume declared");
+    assert_eq!(cargo_git.mount, "/usr/local/cargo/git");
+    assert!(cargo_git.persist);
+
+    // Dockerfile should carry the rust+bun install shape.
+    let dockerfile = fragment.dockerfile.as_deref().unwrap();
+    assert!(
+        dockerfile.contains("FROM rust:${RUST_VERSION}-bookworm"),
+        "Dockerfile should build on the pinned Rust base image"
+    );
+    assert!(
+        dockerfile.contains("https://bun.sh/install"),
+        "Dockerfile should install Bun"
+    );
+    assert!(
+        dockerfile.contains("useradd --uid \"${WORKSPACE_UID}\""),
+        "Dockerfile should create a non-root `dev` user aligned with host UID/GID"
+    );
+}
+
+#[test]
+fn workspace_rust_bun_assembles_with_defaults() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "workspace".to_string(),
+        catalog: "workspace-rust-bun".to_string(),
+        params: HashMap::new(),
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(&services, "example-dev", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let workspace = validate_service(&doc, "workspace");
+
+    // Build block with pinned arg values for UID/GID.
+    let build = workspace.get("build").expect("build block");
+    let args = build.get("args").expect("build args");
+    assert_eq!(args.get("WORKSPACE_UID").unwrap().as_str().unwrap(), "1000");
+    assert_eq!(args.get("WORKSPACE_GID").unwrap().as_str().unwrap(), "1000");
+    assert_eq!(args.get("RUST_VERSION").unwrap().as_str().unwrap(), "1.88");
+
+    // sleep infinity command (long-running shell target, not a real service).
+    let command = workspace.get("command").expect("command");
+    let command_debug = format!("{command:?}");
+    assert!(
+        command_debug.contains("sleep") && command_debug.contains("infinity"),
+        "command should be sleep infinity, got: {command_debug}"
+    );
+
+    // Default working_dir is workspace_mount itself.
+    assert_eq!(
+        workspace.get("working_dir").unwrap().as_str().unwrap(),
+        "/workspace-root"
+    );
+
+    // Healthcheck proves toolchain availability.
+    let health = workspace.get("healthcheck").expect("healthcheck");
+    let test = format!("{:?}", health.get("test").unwrap());
+    assert!(
+        test.contains("cargo") && test.contains("bun"),
+        "healthcheck should verify cargo and bun are present, got: {test}"
+    );
+
+    // No ports published by default.
+    assert!(
+        workspace.get("ports").is_none(),
+        "no host ports should be published when host_ports param is empty"
+    );
+
+    // Cargo caches declared as named volumes.
+    let vol_names: Vec<&str> = result.volumes.iter().map(|v| v.name.as_str()).collect();
+    assert!(vol_names.contains(&"example-dev-workspace-cargo-registry"));
+    assert!(vol_names.contains(&"example-dev-workspace-cargo-git"));
+
+    // Dockerfile carried alongside assembly output.
+    assert!(result.dockerfiles.contains_key("workspace"));
+}
+
+#[test]
+fn workspace_rust_bun_publishes_host_ports_when_requested() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "workspace".to_string(),
+        catalog: "workspace-rust-bun".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert(
+                "host_ports".to_string(),
+                toml::Value::Array(vec![
+                    toml::Value::String("41001:41001".to_string()),
+                    toml::Value::String("41002:41002".to_string()),
+                    toml::Value::String("41003:41003".to_string()),
+                ]),
+            );
+            p.insert(
+                "working_subdir".to_string(),
+                toml::Value::String("underlay-reference".to_string()),
+            );
+            p
+        },
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(
+            &services,
+            "underlay-dev",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
+        .unwrap();
+
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let workspace = validate_service(&doc, "workspace");
+
+    let ports = workspace
+        .get("ports")
+        .expect("host_ports should materialise in compose")
+        .as_sequence()
+        .expect("ports should be a sequence");
+    let port_strings: Vec<&str> = ports.iter().filter_map(|p| p.as_str()).collect();
+    assert_eq!(
+        port_strings,
+        vec!["41001:41001", "41002:41002", "41003:41003"]
+    );
+
+    // working_subdir shapes the compose working_dir.
+    assert_eq!(
+        workspace.get("working_dir").unwrap().as_str().unwrap(),
+        "/workspace-root/underlay-reference"
+    );
+}
+
+#[test]
+fn underlay_style_stack_assembles_with_bundled_fragments_only() {
+    // This is the proof against underlay-reference: the exact service shape
+    // that repo's `infra/dev/docker-compose.yml` + `workspace.Dockerfile`
+    // carry today can be expressed with only bundled catalog fragments.
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![
+        ServiceDeclaration {
+            name: "workspace".to_string(),
+            catalog: "workspace-rust-bun".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "working_subdir".to_string(),
+                    toml::Value::String("underlay-reference".to_string()),
+                );
+                p.insert(
+                    "host_ports".to_string(),
+                    toml::Value::Array(vec![
+                        toml::Value::String("41001:41001".to_string()),
+                        toml::Value::String("41002:41002".to_string()),
+                        toml::Value::String("41003:41003".to_string()),
+                    ]),
+                );
+                p
+            },
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "postgres".to_string(),
+            catalog: "postgres".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "database".to_string(),
+                    toml::Value::String("acme".to_string()),
+                );
+                p.insert(
+                    "password".to_string(),
+                    toml::Value::String("postgres".to_string()),
+                );
+                p
+            },
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "mailpit".to_string(),
+            catalog: "mailpit".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "minio".to_string(),
+            catalog: "minio".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+    ];
+
+    let result = assembler
+        .assemble(
+            &services,
+            "underlay-reference-dev",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
+        .unwrap();
+    let doc = validate_compose_structure(&result.compose_yaml);
+
+    for name in &["workspace", "postgres", "mailpit", "minio"] {
+        validate_service(&doc, name);
+    }
+
+    // workspace must publish the repo-owned dev server ports.
+    let workspace = validate_service(&doc, "workspace");
+    let workspace_ports: Vec<&str> = workspace
+        .get("ports")
+        .unwrap()
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p.as_str())
+        .collect();
+    assert!(workspace_ports.contains(&"41001:41001"));
+    assert!(workspace_ports.contains(&"41002:41002"));
+    assert!(workspace_ports.contains(&"41003:41003"));
+
+    // postgres comes up with the underlay DB name and pinned password.
+    let postgres = validate_service(&doc, "postgres");
+    let pg_env = postgres.get("environment").unwrap();
+    assert_eq!(pg_env.get("POSTGRES_DB").unwrap().as_str().unwrap(), "acme");
+    assert_eq!(
+        pg_env.get("POSTGRES_PASSWORD").unwrap().as_str().unwrap(),
+        "postgres"
+    );
+
+    // Persistent volumes expected: cargo-registry, cargo-git, postgres data,
+    // minio data. Mailpit has no persistent volume (matches mailpit fragment).
+    let vol_names: std::collections::BTreeSet<&str> =
+        result.volumes.iter().map(|v| v.name.as_str()).collect();
+    for expected in &[
+        "underlay-reference-dev-workspace-cargo-registry",
+        "underlay-reference-dev-workspace-cargo-git",
+        "underlay-reference-dev-postgres-data",
+        "underlay-reference-dev-minio-data",
+    ] {
+        assert!(
+            vol_names.contains(expected),
+            "missing expected volume `{expected}`; got {vol_names:?}"
+        );
+    }
+
+    // Dockerfile for the workspace service must be carried through to the
+    // assembly output so the runtime can write it next to the compose file.
+    assert!(result.dockerfiles.contains_key("workspace"));
+    let dockerfile = &result.dockerfiles["workspace"];
+    assert!(dockerfile.contains("FROM rust:"));
+    assert!(dockerfile.contains("bun.sh/install"));
 }
 
 // --- End-to-end: full pipeline write to disk and validate ─────────────
@@ -1324,7 +1811,7 @@ fn end_to_end_php_stack_written_to_disk() {
                 );
                 p.insert(
                     "document_root".to_string(),
-                    toml::Value::String("public".to_string()),
+                    toml::Value::String(".".to_string()),
                 );
                 p.insert(
                     "node_version".to_string(),
@@ -1338,8 +1825,15 @@ fn end_to_end_php_stack_written_to_disk() {
         ServiceDeclaration {
             name: "web".to_string(),
             catalog: "nginx".to_string(),
-            params: HashMap::new(),
-            variant: Some("default".to_string()),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "document_root".to_string(),
+                    toml::Value::String(".".to_string()),
+                );
+                p
+            },
+            variant: Some("decodelabs".to_string()),
             config: None,
         },
         ServiceDeclaration {
@@ -1394,11 +1888,13 @@ primary_service = "app"
 catalog = "php-fpm"
 version = "8.3"
 extensions = ["pdo_mysql", "gd", "redis", "memcached", "intl", "exif", "zip", "bcmath"]
+document_root = "."
 node_version = "20"
 
 [containers.web.services.web]
 catalog = "nginx"
-variant = "default"
+variant = "decodelabs"
+document_root = "."
 
 [containers.web.services.db]
 catalog = "mariadb"
@@ -1416,7 +1912,14 @@ memory = 128
 
     // 1. Assemble.
     let assembly = assembler
-        .assemble(&services, "client-project", ".")
+        .assemble(
+            &services,
+            "client-project",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
         .unwrap();
 
     // 2. Write to disk.
@@ -1428,6 +1931,30 @@ memory = 128
     assert!(compose_path.exists());
     let compose_content = std::fs::read_to_string(&compose_path).unwrap();
     let doc = validate_compose_structure(&compose_content);
+    let app = validate_service(&doc, "app");
+    let app_volumes = app.get("volumes").unwrap().as_sequence().unwrap();
+    let app_volume_strings: Vec<&str> = app_volumes
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert!(
+        app_volume_strings
+            .iter()
+            .any(|value| value.ends_with(":/var/www/html")),
+        "php app should mount the repo at the workspace working dir"
+    );
+    let web = validate_service(&doc, "web");
+    let web_volumes = web.get("volumes").unwrap().as_sequence().unwrap();
+    let web_volume_strings: Vec<&str> = web_volumes
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert!(
+        web_volume_strings
+            .iter()
+            .any(|value| value.ends_with(":/var/www/html:ro")),
+        "nginx should mount the repo read-only at the workspace working dir"
+    );
 
     // 4. Verify all 5 services are present.
     for svc in &["app", "web", "db", "cache", "sessions"] {
@@ -1451,6 +1978,14 @@ memory = 128
         dockerfile_content.contains("NODE_VERSION"),
         "Dockerfile should support Node.js"
     );
+    assert!(
+        dockerfile_content.contains("user = dev"),
+        "Dockerfile should run php-fpm workers as dev"
+    );
+    assert!(
+        dockerfile_content.contains("id -gn dev"),
+        "Dockerfile should derive the php-fpm group from the dev user's primary group"
+    );
 
     // 6. Verify nginx config was written.
     assert!(write_result.config_paths.contains_key("web.conf"));
@@ -1462,8 +1997,8 @@ memory = 128
         "nginx config should have fastcgi_pass"
     );
     assert!(
-        config_content.contains("try_files"),
-        "nginx config should have try_files for front controller"
+        config_content.contains("rewrite .* /vendor/genesis.php last;"),
+        "nginx decodelabs config should rewrite through vendor/genesis.php"
     );
     assert!(
         config_content.contains("gzip on"),
@@ -1557,7 +2092,9 @@ fn end_to_end_eject_produces_standalone_compose() {
         },
     ];
 
-    let assembly = assembler.assemble(&services, "test", ".").unwrap();
+    let assembly = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
     output.write(&assembly, "manifest").unwrap();
 
     // Eject.

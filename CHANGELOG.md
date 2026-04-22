@@ -9,13 +9,38 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Breaking
 - Move default workspace container config onto `[systems.<name>]` itself,
   replacing the extra `[systems.<name>.workspace_defaults]` layer, and route
-  workspace `workdir`, `user`, `home`, and `mounts` resolution through
+  workspace `working_dir`, `user`, `home`, and `mounts` resolution through
   that system-level config plus per-workspace overrides.
 - Flatten managed dev-task settings onto `[tasks.<name>]` itself and remove
   the nested `[tasks.<name>.managed]` table; `container_lifecycle`, `gateway`,
   `health_wait`, and `ready_message` now live directly on the task.
+- Move generated compose runtime artifacts out of `infra/dev` and into
+  `.effigy/runtime/compose` by default; only user-owned direct-compose output
+  remains under `infra/dev` after an explicit eject.
 
 ### Added
+- Add a bundled `workspace-rust-bun` service catalog fragment: a long-running
+  Rust + Bun dev workspace container (Rust toolchain, Bun, non-root `dev` user
+  aligned with host UID/GID, persistent cargo caches, `sleep infinity` shell
+  target, parameterised host port bindings) so Underlay-style repos can drop
+  their hand-written `workspace.Dockerfile` and `infra/dev/docker-compose.yml`
+  and declare the workspace via `[containers.<name>.services.workspace] catalog
+  = "workspace-rust-bun"` instead.
+- Ship an Underlay starter fragment set under
+  `crates/effigy-catalog/starters/underlay/` (root `effigy.toml`,
+  `effigy.system.toml`, `effigy.bootstrap.toml`, `effigy.tasks.toml`,
+  `scripts/dev/ui-setup.rhai`, plus a README) packaging the reusable
+  Underlay shape on top of `systems` / `workspaces` / generated services /
+  managed `dev`, with a composition proof test under
+  `crates/effigy-manifest/tests/underlay_starter.rs` and an adoption guide at
+  `docs/guides/065-underlay-starter.md`. No starter-init CLI yet; adoption is
+  documented file copy.
+- Add a bundled `phpmyadmin` service catalog fragment so repos can expose a
+  local phpMyAdmin UI for MariaDB/MySQL stacks without carrying a project-local
+  override.
+- Add `list_dir(path)` plus `path_file_name(path)` to the Rhai host helper
+  surface so repo-owned task scripts can inspect local drop folders like
+  timestamped SQL seed bundles without shelling out just to enumerate files.
 - Add the first composed `system`/`workspace` task-runtime contract, including
   manifest-owned `[systems]` definitions, per-system default workspaces,
   task-level `system` and `workspace` binding, named workspace-to-container
@@ -48,6 +73,44 @@ During v0.x, MINOR bumps may include breaking changes.
   transparent per-pane hydration and other pre-run logic directly in
   manifest config instead of relying on hidden runner heuristics.
 ### Fixed
+- Probe the running workspace service architecture before injecting the
+  container-side `effigy` binary, and select the matching Linux GNU artifact
+  (`x86_64` or `aarch64`) instead of always copying the x86_64 build into ARM
+  workspace containers; workspace handoff now also prefers a persisted host
+  source pointer at `~/.effigy/source.toml` before falling back to local repo
+  heuristics or release downloads.
+- Stop non-managed `workspace = ...` tasks from reopening the workspace shell
+  when they are invoked from inside an active workspace handoff, so commands
+  like `effigy seed` run in place instead of trying to call host-only Colima
+  tooling from inside the container.
+- Preserve HTTPS awareness for PHP apps behind the local TLS gateway by
+  forwarding the correct `X-Forwarded-Proto` value from the HTTP vs HTTPS
+  listener and translating forwarded HTTPS into FastCGI `HTTPS`,
+  `REQUEST_SCHEME`, and `SERVER_PORT` values in the bundled nginx configs.
+- Point generated service Dockerfile paths at the actual generated catalog
+  artifact directory under `.effigy/runtime/compose/.effigy-catalog` instead of the stale
+  repo-root `.effigy-catalog` compatibility path, so rebuilt workspace images
+  use the current catalog Dockerfiles.
+- Regenerate catalog-managed Dockerfiles and config files when their rendered
+  contents change even if the manifest checksum and compose YAML stay the same,
+  so bundled service image updates like the PHP workspace `dev` user actually
+  reach generated stacks on the next `up --build`.
+- Force generated compose stacks to recreate services on `up --build`, because
+  some backends keep existing containers pinned to the previous image even
+  after rebuilding the same local tag.
+- Default catalog-backed workspace systems onto a non-root shell identity when
+  the repo does not declare one, using `dev` for bundled `php-fpm` and `node`
+  for bundled `node`, so workspace/dev handoff no longer drops into root on
+  those shipped container shapes by default.
+- Run bundled `php-fpm` HTTP workers as the same `dev` workspace user used for
+  shell handoff, so bind-mounted project runtime paths stay writable from web
+  requests instead of only from the interactive container shell.
+- Remove the `workdir` spelling from `[systems.<name>]` and
+  `[systems.<name>.workspaces.<name>]`; workspace execution config now uses
+  `working_dir` consistently with container and catalog service config.
+- Keep the bundled nginx `default` variant generic and ship the
+  Genesis-style repo-root rewrite routing through a dedicated
+  `decodelabs` config variant instead.
 - Move the implicit Colima profile from `default` to `effigy`, auto-size that
   Effigy-owned profile with a host-aware memory+swap plan, and warn when a
   running workspace profile is still undersized or intentionally sharing

@@ -174,6 +174,12 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
                 .to_string()
         },
     );
+    engine.register_fn("path_file_name", |path: ImmutableString| -> String {
+        Path::new(path.as_str())
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
 
     engine.register_fn(
         "make_temp_dir",
@@ -251,6 +257,23 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
     engine.register_fn("path_exists", move |path: ImmutableString| -> bool {
         resolve_runtime_path(&file_context.cwd, path.as_str()).exists()
     });
+    let file_context = context.clone();
+    engine.register_fn(
+        "list_dir",
+        move |path: ImmutableString| -> Result<Array, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            let mut entries = std::fs::read_dir(&path)
+                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?
+                .map(|entry| {
+                    entry
+                        .map(|entry| entry.path().display().to_string())
+                        .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            entries.sort();
+            Ok(entries.into_iter().map(Into::into).collect())
+        },
+    );
     let file_context = context.clone();
     engine.register_fn("is_file", move |path: ImmutableString| -> bool {
         resolve_runtime_path(&file_context.cwd, path.as_str()).is_file()

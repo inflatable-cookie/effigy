@@ -177,21 +177,71 @@ fn port_map_nonexistent_returns_none() {
 fn assign_port_uses_stable_preferred_offsets() {
     let mut reg = PortRegistry::new();
     assert_eq!(
-        reg.assign_port("client", "/projects/client", 80).unwrap(),
+        reg.assign_port("client", "/projects/client", "web", 80)
+            .unwrap(),
         8100
     );
     assert_eq!(
-        reg.assign_port("client", "/projects/client", 3306).unwrap(),
+        reg.assign_port("client", "/projects/client", "db", 3306)
+            .unwrap(),
         8106
     );
     assert_eq!(
-        reg.assign_port("client", "/projects/client", 8025).unwrap(),
+        reg.assign_port("client", "/projects/client", "mail", 8025)
+            .unwrap(),
         8125
     );
     assert_eq!(
-        reg.assign_port("client", "/projects/client", 80).unwrap(),
+        reg.assign_port("client", "/projects/client", "web", 80)
+            .unwrap(),
         8100
     );
+}
+
+#[test]
+fn assign_port_distinguishes_services_sharing_container_port() {
+    let mut reg = PortRegistry::new();
+
+    assert_eq!(
+        reg.assign_port("client", "/projects/client", "web", 80)
+            .unwrap(),
+        8100
+    );
+    assert_eq!(
+        reg.assign_port("client", "/projects/client", "dbadmin", 80)
+            .unwrap(),
+        8101
+    );
+    assert_eq!(
+        reg.assign_port("client", "/projects/client", "dbadmin", 80)
+            .unwrap(),
+        8101
+    );
+}
+
+#[test]
+fn assign_port_migrates_legacy_container_port_keys_to_first_service_binding() {
+    let mut reg = PortRegistry::new();
+    reg.allocate("client", "/projects/client");
+
+    let allocation = reg.allocations.get_mut("client").expect("allocation");
+    allocation.assigned_ports.insert("80".to_owned(), 8100);
+
+    assert_eq!(
+        reg.assign_port("client", "/projects/client", "web", 80)
+            .unwrap(),
+        8100
+    );
+    assert_eq!(
+        reg.assign_port("client", "/projects/client", "dbadmin", 80)
+            .unwrap(),
+        8101
+    );
+
+    let allocation = reg.allocations.get("client").expect("allocation");
+    assert_eq!(allocation.assigned_ports.get("web:80"), Some(&8100));
+    assert_eq!(allocation.assigned_ports.get("dbadmin:80"), Some(&8101));
+    assert!(!allocation.assigned_ports.contains_key("80"));
 }
 
 // ── Persistence ──────────────────────────────────────────────────

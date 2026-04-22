@@ -6,6 +6,7 @@ use std::thread;
 
 use effigy_containers::{
     compose::{compose_args, compose_invocation},
+    exec::list_running_compose_containers_for_profile,
     EffectiveContainerPolicy,
 };
 
@@ -139,6 +140,12 @@ pub(super) fn resolve_compose_service_container_id(
     ) -> Result<Output, RunnerError>,
     format_args: &dyn Fn(&[OsString]) -> String,
 ) -> Result<OsString, RunnerError> {
+    if let Some(container_name) =
+        resolve_running_service_container_name(repo_root, policy, service)?
+    {
+        return Ok(OsString::from(container_name));
+    }
+
     let mut args = compose_args(policy, ["ps", "-q"]);
     args.push(OsString::from(service));
     let (program, resolved_args) = compose_invocation(policy, &args);
@@ -151,13 +158,57 @@ pub(super) fn resolve_compose_service_container_id(
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         });
     }
-    let container_id = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut container_ids = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let container_id = container_ids.first().cloned().unwrap_or_default();
     if container_id.is_empty() {
         return Err(RunnerError::task_invocation(format!(
             "container service `{service}` is not running"
         )));
     }
+    if container_ids.len() > 1 {
+        container_ids.drain(1..);
+    }
     Ok(OsString::from(container_id))
+}
+
+fn resolve_running_service_container_name(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+) -> Result<Option<String>, RunnerError> {
+    let repo_root = repo_root.to_string_lossy();
+    let rows = list_running_compose_containers_for_profile(&policy.profile)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok(select_running_service_container_name(
+        rows.into_iter(),
+        repo_root.as_ref(),
+        policy,
+        service,
+    ))
+}
+
+fn select_running_service_container_name(
+    rows: impl IntoIterator<Item = effigy_containers::exec::RunningComposeContainer>,
+    repo_root: &str,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+) -> Option<String> {
+    rows.into_iter()
+        .find(|row| {
+            row.project_name.as_deref() == Some(policy.project_name.as_str())
+                && row.service.as_deref() == Some(service)
+                && row
+                    .working_dir
+                    .as_deref()
+                    .is_none_or(|working_dir| working_dir == repo_root)
+        })
+        .map(|row| row.container_name)
 }
 
 fn looks_like_interactive_shell_exec(parsed: &ParsedComposeExec) -> bool {
@@ -202,4 +253,125 @@ fn should_suppress_colima_exec_stderr_line(line: &[u8]) -> bool {
             trimmed.split_once("] ").map(|(_, message)| message),
             Some("exec failed with exit code 1") | Some("exit status 1")
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn resolve_running_service_container_name_prefers_matching_project_service() {
+        let policy = effigy_containers::EffectiveContainerPolicy {
+            name: "web".to_owned(),
+            driver: effigy_manifest::ManifestContainerDriver::Colima,
+            startup: effigy_manifest::ManifestContainerStartup::Detached,
+            profile: "effigy".to_owned(),
+            compose_source: effigy_containers::EffectiveComposeSource::Generated,
+            compose_files: vec![std::path::PathBuf::from("/tmp/docker-compose.yml")],
+            compose_file_display: "docker-compose.yml".to_owned(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: "demo".to_owned(),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            workspace_user: None,
+            workspace_home: None,
+            on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
+            shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+        };
+
+        let rows = vec![
+            effigy_containers::exec::RunningComposeContainer {
+                container_name: "other-pma-1".to_owned(),
+                status: "running".to_owned(),
+                ports: vec![],
+                project_name: Some("demo".to_owned()),
+                working_dir: Some("/tmp/repo".to_owned()),
+                service: Some("pma".to_owned()),
+            },
+            effigy_containers::exec::RunningComposeContainer {
+                container_name: "other-app-1".to_owned(),
+                status: "running".to_owned(),
+                ports: vec![],
+                project_name: Some("other".to_owned()),
+                working_dir: Some("/tmp/repo".to_owned()),
+                service: Some("app".to_owned()),
+            },
+            effigy_containers::exec::RunningComposeContainer {
+                container_name: "demo-app-1".to_owned(),
+                status: "running".to_owned(),
+                ports: vec![],
+                project_name: Some("demo".to_owned()),
+                working_dir: Some("/tmp/repo".to_owned()),
+                service: Some("app".to_owned()),
+            },
+        ];
+
+        let resolved = select_running_service_container_name(rows, "/tmp/repo", &policy, "app");
+
+        assert_eq!(resolved.as_deref(), Some("demo-app-1"));
+    }
+
+    #[test]
+    fn resolve_compose_service_container_id_uses_first_non_empty_line() {
+        let repo_root = Path::new("/tmp/repo");
+        let policy = effigy_containers::EffectiveContainerPolicy {
+            name: "web".to_owned(),
+            driver: effigy_manifest::ManifestContainerDriver::Colima,
+            startup: effigy_manifest::ManifestContainerStartup::Detached,
+            profile: "effigy".to_owned(),
+            compose_source: effigy_containers::EffectiveComposeSource::Generated,
+            compose_files: vec![std::path::PathBuf::from("/tmp/docker-compose.yml")],
+            compose_file_display: "docker-compose.yml".to_owned(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: "demo".to_owned(),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            workspace_user: None,
+            workspace_home: None,
+            on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
+            shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+        };
+
+        let container_id = resolve_compose_service_container_id(
+            repo_root,
+            &policy,
+            "app",
+            &|_, _, _| {
+                Ok(Output {
+                    status: std::process::ExitStatus::from_raw(0),
+                    stdout: b"\nabc123\n\ndef456\n".to_vec(),
+                    stderr: Vec::new(),
+                })
+            },
+            &|_| String::new(),
+        )
+        .expect("container id");
+
+        assert_eq!(container_id.to_string_lossy(), "abc123");
+    }
 }

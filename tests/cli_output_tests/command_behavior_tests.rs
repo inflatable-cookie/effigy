@@ -6861,7 +6861,7 @@ fn write_container_fixture_with_task(
         format!("\n[containers.web.health]\ncheck = \"{check}\"\ntimeout_secs = 2\n")
     });
     let task_block = if include_task {
-        "\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\nworkdir = \"/workspace\"\n\n[tasks.dev]\nworkspace = \"app\"\n"
+        "\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\ndefault_workspace = \"app\"\n\n[systems.dev.workspaces.app]\ncontainer = \"web\"\nworking_dir = \"/workspace\"\n\n[tasks.dev]\nworkspace = \"app\"\n"
     } else {
         ""
     };
@@ -7206,8 +7206,9 @@ fn cli_generated_container_status_json_reports_media_mounts() {
         parsed["result"]["media_mounts"][0],
         "storage/uploads:/var/www/html/storage/uploads"
     );
-    let compose = fs::read_to_string(root.join("infra/dev/.effigy-compose.generated.yml"))
-        .expect("read compose");
+    let compose =
+        fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
+            .expect("read compose");
     let expected = format!(
         "{}:/var/www/html/storage/uploads",
         root.join("storage/uploads").display()

@@ -3,7 +3,7 @@
 //! Renders compose fragment templates with a context containing:
 //! - fragment parameters (from manifest service declaration)
 //! - sibling service info (for depends_on references)
-//! - system variables (repo_root, catalog_path, project_name)
+//! - system variables (repo_root, catalog_path, project_name, host_uid, host_gid)
 
 use std::collections::HashMap;
 
@@ -88,6 +88,8 @@ impl TemplateRenderer {
             "repo_root",
             "catalog_path",
             "project_name",
+            "host_uid",
+            "host_gid",
         ];
         for name in validated.keys() {
             if RESERVED.contains(&name.as_str()) {
@@ -107,6 +109,8 @@ impl TemplateRenderer {
             repo_root: system.repo_root.clone(),
             catalog_path: system.catalog_path.clone(),
             project_name: system.project_name.clone(),
+            host_uid: system.host_uid,
+            host_gid: system.host_gid,
         })
     }
 
@@ -164,6 +168,12 @@ pub struct TemplateContext {
 
     /// Compose project name.
     pub project_name: String,
+
+    /// Host user ID for bind-mounted workspace ownership alignment.
+    pub host_uid: u32,
+
+    /// Host group ID for bind-mounted workspace ownership alignment.
+    pub host_gid: u32,
 }
 
 /// Information about a sibling service in the stack.
@@ -190,6 +200,12 @@ pub struct SystemContext {
 
     /// Compose project name.
     pub project_name: String,
+
+    /// Host user ID for bind-mounted workspace ownership alignment.
+    pub host_uid: u32,
+
+    /// Host group ID for bind-mounted workspace ownership alignment.
+    pub host_gid: u32,
 }
 
 /// Convert a TOML value to a minijinja Value.

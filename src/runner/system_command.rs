@@ -81,7 +81,7 @@ pub(super) fn run_system(args: SystemArgs) -> Result<String, RunnerError> {
     result
 }
 
-pub(super) fn run_workspace(args: WorkspaceArgs) -> Result<String, RunnerError> {
+pub(in crate::runner) fn run_workspace(args: WorkspaceArgs) -> Result<String, RunnerError> {
     workspace::run_workspace(args)
 }
 
