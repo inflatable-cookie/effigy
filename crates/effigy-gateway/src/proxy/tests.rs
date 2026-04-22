@@ -58,7 +58,7 @@ fn forwarding_headers_added() {
     let mut headers = hyper::HeaderMap::new();
     let peer: SocketAddr = "192.168.1.100:54321".parse().unwrap();
 
-    add_forwarding_headers(&mut headers, "myapp.test", peer);
+    add_forwarding_headers(&mut headers, "myapp.test", peer, false);
 
     assert_eq!(
         headers.get("x-forwarded-for").unwrap().to_str().unwrap(),
@@ -79,12 +79,25 @@ fn forwarding_headers_added() {
 }
 
 #[test]
+fn forwarding_headers_mark_https_when_requested() {
+    let mut headers = hyper::HeaderMap::new();
+    let peer: SocketAddr = "192.168.1.100:54321".parse().unwrap();
+
+    add_forwarding_headers(&mut headers, "myapp.test", peer, true);
+
+    assert_eq!(
+        headers.get("x-forwarded-proto").unwrap().to_str().unwrap(),
+        "https"
+    );
+}
+
+#[test]
 fn forwarding_headers_append_to_existing() {
     let mut headers = hyper::HeaderMap::new();
     headers.insert("x-forwarded-for", HeaderValue::from_static("10.0.0.1"));
     let peer: SocketAddr = "192.168.1.100:54321".parse().unwrap();
 
-    add_forwarding_headers(&mut headers, "myapp.test", peer);
+    add_forwarding_headers(&mut headers, "myapp.test", peer, false);
 
     assert_eq!(
         headers.get("x-forwarded-for").unwrap().to_str().unwrap(),

@@ -1,0 +1,23 @@
+# Underlay starter — bootstrap helpers.
+#
+# `bootstrap:deps` fetches Rust crates and Bun modules for every app in
+# the repo before the first `dev` run. The command runs inside the
+# workspace container via `effigy exec`, so it sees the same paths the
+# dev process manager will see.
+#
+# Edit points:
+#   - adjust the chained `cd && bun install` / `cargo fetch` sequence to
+#     match your repo's app layout.
+
+[bootstrap]
+setup = ["bootstrap:deps"]
+start = "dev"
+
+[tasks."bootstrap:deps"]
+host = true
+run = """
+effigy container up --detach && \
+effigy exec sh -lc '\
+  cd /workspace-root/underlay-app && \
+  cargo fetch'\
+"""

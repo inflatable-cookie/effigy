@@ -305,7 +305,7 @@ container = "app"
 
 [systems.dev.workspaces.node]
 container = "app"
-workdir = "/workspace/frontend"
+working_dir = "/workspace/frontend"
 
 [tasks.test]
 run = "cargo test"
@@ -449,7 +449,7 @@ mount = "./:/workspace"
 
 [systems.dev.workspaces.app]
 container = "app"
-workdir = "/workspace"
+working_dir = "/workspace"
 
 [tasks.dev]
 workspace = "app"

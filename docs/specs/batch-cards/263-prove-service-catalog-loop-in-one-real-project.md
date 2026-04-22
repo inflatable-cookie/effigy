@@ -34,7 +34,7 @@ The proof landed through `/Users/tom/Dev/projects/underlay-reference`.
   `[containers.stack.services.*]`
 - `effigy catalog list --repo ... --json` confirmed the visible catalog surface
 - `effigy container up --repo ... --detach --json` generated and used
-  `infra/dev/.effigy-compose.generated.yml`
+  `.effigy/runtime/compose/.effigy-compose.generated.yml`
 - `effigy container status --repo ... --json` reported the live generated
   compose path and running `postgres`, `minio`, and `mailpit` services
 - `effigy container eject --repo ... --json` exposed one product gap: eject

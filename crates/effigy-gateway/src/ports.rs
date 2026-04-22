@@ -66,9 +66,9 @@ pub struct PortAllocation {
     /// Absolute path to the project directory.
     pub project: String,
 
-    /// Stable container-port to host-port assignments within this range.
+    /// Stable service+container-port to host-port assignments within this range.
     #[serde(default)]
-    pub assigned_ports: HashMap<u16, u16>,
+    pub assigned_ports: HashMap<String, u16>,
 }
 
 impl PortAllocation {
@@ -101,6 +101,14 @@ pub struct PortRegistry {
 }
 
 impl PortRegistry {
+    fn assigned_port_key(service_name: &str, container_port: u16) -> String {
+        format!("{service_name}:{container_port}")
+    }
+
+    fn legacy_port_key(container_port: u16) -> String {
+        container_port.to_string()
+    }
+
     /// Create an empty registry.
     pub fn new() -> Self {
         Self {
@@ -269,27 +277,27 @@ impl PortRegistry {
         self.get(project_name).map(|alloc| PortMap {
             http: alloc
                 .assigned_ports
-                .get(&80)
+                .get("80")
                 .copied()
                 .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::HTTP)),
             mysql: alloc
                 .assigned_ports
-                .get(&3306)
+                .get("3306")
                 .copied()
                 .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::MYSQL)),
             postgres: alloc
                 .assigned_ports
-                .get(&5432)
+                .get("5432")
                 .copied()
                 .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::POSTGRES)),
             redis: alloc
                 .assigned_ports
-                .get(&6379)
+                .get("6379")
                 .copied()
                 .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::REDIS)),
             memcached: alloc
                 .assigned_ports
-                .get(&11211)
+                .get("11211")
                 .copied()
                 .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::MEMCACHED)),
             base: alloc.base,
@@ -301,6 +309,7 @@ impl PortRegistry {
         &mut self,
         project_name: &str,
         project_path: &str,
+        service_name: &str,
         container_port: u16,
     ) -> Result<u16, GatewayError> {
         if !self.allocations.contains_key(project_name) {
@@ -311,8 +320,17 @@ impl PortRegistry {
             .get_mut(project_name)
             .expect("allocation should exist");
 
-        if let Some(host_port) = allocation.assigned_ports.get(&container_port) {
+        let binding_key = Self::assigned_port_key(service_name, container_port);
+        if let Some(host_port) = allocation.assigned_ports.get(&binding_key) {
             return Ok(*host_port);
+        }
+
+        let legacy_key = Self::legacy_port_key(container_port);
+        if let Some(host_port) = allocation.assigned_ports.remove(&legacy_key) {
+            allocation
+                .assigned_ports
+                .insert(binding_key.clone(), host_port);
+            return Ok(host_port);
         }
 
         if let Some(offset) = preferred_offset_for(container_port) {
@@ -322,7 +340,7 @@ impl PortRegistry {
                 .values()
                 .any(|value| *value == host_port)
             {
-                allocation.assigned_ports.insert(container_port, host_port);
+                allocation.assigned_ports.insert(binding_key, host_port);
                 return Ok(host_port);
             }
         }
@@ -342,7 +360,7 @@ impl PortRegistry {
                     allocation.end()
                 ),
             })?;
-        allocation.assigned_ports.insert(container_port, host_port);
+        allocation.assigned_ports.insert(binding_key, host_port);
         Ok(host_port)
     }
 

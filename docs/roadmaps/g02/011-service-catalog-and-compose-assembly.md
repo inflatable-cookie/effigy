@@ -126,7 +126,7 @@ The assembly engine:
 3. Validates parameters against `service.toml` schema.
 4. Substitutes parameters into fragment templates.
 5. Assembles a complete compose file with networking, volumes, depends_on.
-6. Writes to `infra/dev/.effigy-compose.generated.yml`.
+6. Writes to `.effigy/runtime/compose/.effigy-compose.generated.yml`.
 7. Merges with `infra/dev/compose.override.yml` if present.
 8. Caches until manifest checksum changes.
 
@@ -135,6 +135,7 @@ The assembly engine:
 The nginx fragment ships named config variants selected by `variant =`:
 
 - `default` — generic PHP front-controller (try_files to index.php)
+- `decodelabs` — repo-root Genesis rewrite (`/vendor/genesis.php`)
 - `laravel` — Laravel-specific routing
 - `wordpress` — WordPress rewrite rules
 - `spa` — single-page app with API proxy
@@ -143,6 +144,10 @@ Custom configs via `config = "path/to/nginx.conf"` always win over variants.
 
 The `default` variant covers most custom PHP frameworks that use a single
 front-controller entry point with URL rewriting.
+
+The `decodelabs` variant covers Genesis-style PHP apps that rewrite all
+traffic through `/vendor/genesis.php` from the repo root instead of exposing a
+`public/` front controller.
 
 ### 4.6 PHP Extension Strategy
 

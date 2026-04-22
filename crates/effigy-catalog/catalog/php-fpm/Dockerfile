@@ -1,5 +1,7 @@
 ARG PHP_VERSION=8.3
 FROM php:${PHP_VERSION}-fpm
+ARG WORKSPACE_UID=1000
+ARG WORKSPACE_GID=1000
 
 # ── install-php-extensions ────────────────────────────────────────────
 # Community standard tool that handles system-dependency resolution,
@@ -22,6 +24,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # Process management
         procps \
     && rm -rf /var/lib/apt/lists/*
+
+# Create a standard non-root workspace user for interactive shells and
+# workspace-seeded task handoff.
+RUN set -eux; \
+    group_name=dev; \
+    if getent group "${WORKSPACE_GID}" >/dev/null; then \
+        group_name="$(getent group "${WORKSPACE_GID}" | cut -d: -f1)"; \
+    else \
+        groupadd --gid "${WORKSPACE_GID}" "${group_name}"; \
+    fi; \
+    useradd --uid "${WORKSPACE_UID}" --gid "${WORKSPACE_GID}" --create-home --shell /bin/bash dev; \
+    if [ "${group_name}" != "dev" ]; then \
+        usermod --gid "${group_name}" dev; \
+    fi
 
 # ── PHP extensions ────────────────────────────────────────────────────
 # install-php-extensions handles all system dependency resolution,
@@ -73,6 +89,15 @@ RUN { \
     } > /usr/local/etc/php/conf.d/effigy-dev.ini
 
 # ── PHP-FPM tuning ───────────────────────────────────────────────────
+# Run workers as the workspace user so HTTP requests can write to the same
+# bind-mounted paths as the interactive shell.
+RUN set -eux; \
+    workspace_group="$(id -gn dev)"; \
+    sed -i \
+        -e 's/^user = .*/user = dev/' \
+        -e "s/^group = .*/group = ${workspace_group}/" \
+        /usr/local/etc/php-fpm.d/www.conf
+
 # Use a static pool with enough workers for local development.
 RUN { \
         echo '[www]'; \

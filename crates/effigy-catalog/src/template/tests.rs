@@ -33,12 +33,16 @@ fn build_context_with_defaults() {
         repo_root: ".".to_string(),
         catalog_path: "/catalog/test".to_string(),
         project_name: "test-project".to_string(),
+        host_uid: 501,
+        host_gid: 20,
     };
 
     let ctx = TemplateRenderer::build_context(&schema, "app", &params, &siblings, &system).unwrap();
 
     assert_eq!(ctx.service_name, "app");
     assert_eq!(ctx.project_name, "test-project");
+    assert_eq!(ctx.host_uid, 501);
+    assert_eq!(ctx.host_gid, 20);
 }
 
 #[test]
@@ -62,6 +66,8 @@ fn build_context_with_overrides() {
         repo_root: ".".to_string(),
         catalog_path: "/catalog/test".to_string(),
         project_name: "proj".to_string(),
+        host_uid: 501,
+        host_gid: 20,
     };
 
     let ctx = TemplateRenderer::build_context(&schema, "web", &params, &siblings, &system).unwrap();
@@ -80,6 +86,8 @@ fn type_mismatch_rejected() {
         repo_root: ".".to_string(),
         catalog_path: "".to_string(),
         project_name: "".to_string(),
+        host_uid: 501,
+        host_gid: 20,
     };
 
     let result = TemplateRenderer::build_context(&schema, "app", &params, &siblings, &system);
@@ -104,6 +112,8 @@ fn render_simple_template() {
         repo_root: ".".to_string(),
         catalog_path: "/catalog/php-fpm".to_string(),
         project_name: "test".to_string(),
+        host_uid: 501,
+        host_gid: 20,
     };
 
     let template = r#"services:
@@ -135,6 +145,8 @@ fn render_conditional_depends_on() {
         repo_root: ".".to_string(),
         catalog_path: "".to_string(),
         project_name: "test".to_string(),
+        host_uid: 501,
+        host_gid: 20,
     };
 
     let template = r#"services:
@@ -168,6 +180,8 @@ fn render_list_join() {
         repo_root: ".".to_string(),
         catalog_path: "".to_string(),
         project_name: "test".to_string(),
+        host_uid: 501,
+        host_gid: 20,
     };
 
     let template = r#"args:

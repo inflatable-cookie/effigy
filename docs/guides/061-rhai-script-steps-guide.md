@@ -65,6 +65,7 @@ Current v1 helpers:
   - `env(name)`
   - `now_utc()`
   - `path_join(base, child)`
+  - `path_file_name(path)`
 - file helpers:
   - `make_temp_dir(prefix)`
   - `append_file(path, contents)`
@@ -72,6 +73,7 @@ Current v1 helpers:
   - `write_file(path, contents)`
   - `write_lines(path, lines_array)`
   - `path_exists(path)`
+  - `list_dir(path)`
   - `is_file(path)`
   - `is_symlink(path)`
   - `create_dir(path)`

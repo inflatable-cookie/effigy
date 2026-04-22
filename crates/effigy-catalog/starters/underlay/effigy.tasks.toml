@@ -1,0 +1,48 @@
+# Underlay starter — repo-owned task layer.
+#
+# `tasks.dev` is the managed front door. Everything else is an
+# aggregator across the repo's child apps.
+#
+# This file is repo-owned on purpose: tab ordering, concurrent makeup,
+# per-app ready messages, and the list of child apps are all consumer
+# concerns. Keep the `workspace` shell tab and the lifecycle tab — those
+# are the managed-dev contract. Replace the `app-*/dev` entries to match
+# the real apps in your repo.
+
+[tasks.health]
+host = true
+run = [
+  # Replace with the repo's child apps.
+  { task = "app-api/health" },
+  { task = "app-admin/health" },
+  { task = "app-front/health" },
+]
+
+[tasks.validate]
+host = true
+run = [
+  { task = "app-api/validate" },
+  { task = "app-admin/validate" },
+  { task = "app-front/validate" },
+]
+
+[tasks.qa]
+host = true
+run = [
+  { task = "health" },
+  { task = "validate" },
+]
+
+[tasks.dev]
+mode = "tui"
+container_lifecycle = true
+gateway = true
+health_wait = true
+ready_message = "front https://app.test | admin https://admin.app.test | api https://api.app.test | mailpit http://mailpit.app.test | minio http://minio.app.test"
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 5 },
+  { role = "shell", service = "workspace", start = 2, tab = 4 },
+  { task = "app-api/dev", start = 3, tab = 3 },
+  { name = "front", task = "app-front/dev", setup = [{ rhai = "scripts/dev/ui-setup.rhai" }], start = 4, tab = 2 },
+  { name = "admin", task = "app-admin/dev", setup = [{ rhai = "scripts/dev/ui-setup.rhai" }], start = 5, tab = 1 },
+]

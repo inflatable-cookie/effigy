@@ -114,10 +114,25 @@ fn build_compose_document_without_volumes() {
 fn empty_service_list_rejected() {
     let resolver = CatalogResolver::new(None, None);
     let assembler = ComposeAssembler::new(resolver);
-    let result = assembler.assemble(&[], "test", ".");
+    let result = assembler.assemble(&[], "test", ".", ".effigy-catalog", 1000, 1000);
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
         CatalogError::EmptyServiceList
     ));
+}
+
+#[test]
+fn fragment_build_context_path_uses_supplied_catalog_root() {
+    assert_eq!(
+        ComposeAssembler::fragment_build_context_path(
+            ".effigy/runtime/compose/.effigy-catalog",
+            "app"
+        ),
+        ".effigy/runtime/compose/.effigy-catalog/app"
+    );
+    assert_eq!(
+        ComposeAssembler::fragment_build_context_path(".effigy-catalog/", "app"),
+        ".effigy-catalog/app"
+    );
 }

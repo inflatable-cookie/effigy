@@ -15,7 +15,7 @@ pub enum ResolvedTaskExecutionBinding {
 pub struct ResolvedWorkspaceBinding {
     pub system: String,
     pub workspace: String,
-    pub workdir: Option<String>,
+    pub working_dir: Option<String>,
     pub workspace_config: ManifestWorkspaceConfig,
     pub container: Option<ResolvedWorkspaceContainer>,
 }
@@ -157,7 +157,7 @@ pub fn resolve_task_execution_binding_from_parts(
         ResolvedWorkspaceBinding {
             system: resolved_system.clone(),
             workspace: resolved_workspace,
-            workdir: workspace_config.workdir.clone(),
+            working_dir: workspace_config.working_dir.clone(),
             workspace_config: workspace_config.clone(),
             container,
         },
@@ -251,7 +251,7 @@ fn implied_default_workspace_config(
     }
     let mut workspace = ManifestWorkspaceConfig {
         container: system_config.container.clone(),
-        workdir: system_config.workdir.clone(),
+        working_dir: system_config.working_dir.clone(),
         mounts: system_config.mounts.clone(),
         user: system_config.user.clone(),
         home: system_config.home.clone(),
@@ -269,7 +269,7 @@ fn merge_workspace_config(
 ) -> ManifestWorkspaceConfig {
     let mut merged = ManifestWorkspaceConfig {
         container: system_config.container.clone(),
-        workdir: system_config.workdir.clone(),
+        working_dir: system_config.working_dir.clone(),
         mounts: system_config.mounts.clone(),
         user: system_config.user.clone(),
         home: system_config.home.clone(),
@@ -277,8 +277,8 @@ fn merge_workspace_config(
     if workspace.container.is_some() {
         merged.container = workspace.container.clone();
     }
-    if workspace.workdir.is_some() {
-        merged.workdir = workspace.workdir.clone();
+    if workspace.working_dir.is_some() {
+        merged.working_dir = workspace.working_dir.clone();
     }
     if workspace.user.is_some() {
         merged.user = workspace.user.clone();
@@ -363,7 +363,7 @@ default_workspace = "app"
 
 [systems.dev.workspaces.app]
 container = "app"
-workdir = "/workspace"
+working_dir = "/workspace"
 
 [tasks.dev]
 run = "npm run dev"
@@ -378,10 +378,10 @@ run = "npm run dev"
                 ResolvedWorkspaceBinding {
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
-                    workdir: Some("/workspace".to_owned()),
+                    working_dir: Some("/workspace".to_owned()),
                     workspace_config: ManifestWorkspaceConfig {
                         container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
-                        workdir: Some("/workspace".to_owned()),
+                        working_dir: Some("/workspace".to_owned()),
                         mounts: vec![],
                         user: None,
                         home: None,
@@ -403,7 +403,7 @@ primary_service = "workspace"
 
 [systems.dev.workspaces.app]
 container = "app"
-workdir = "/workspace"
+working_dir = "/workspace"
 
 [tasks.dev]
 run = "npm run dev"
@@ -418,10 +418,10 @@ run = "npm run dev"
                 ResolvedWorkspaceBinding {
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
-                    workdir: Some("/workspace".to_owned()),
+                    working_dir: Some("/workspace".to_owned()),
                     workspace_config: ManifestWorkspaceConfig {
                         container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
-                        workdir: Some("/workspace".to_owned()),
+                        working_dir: Some("/workspace".to_owned()),
                         mounts: vec![],
                         user: None,
                         home: None,
@@ -442,7 +442,7 @@ compose_file = "infra/dev/docker-compose.yml"
 primary_service = "workspace"
 
 [systems.dev.workspaces.app]
-workdir = "/workspace"
+working_dir = "/workspace"
 
 [tasks.dev]
 run = "npm run dev"
@@ -457,10 +457,10 @@ run = "npm run dev"
                 ResolvedWorkspaceBinding {
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
-                    workdir: Some("/workspace".to_owned()),
+                    working_dir: Some("/workspace".to_owned()),
                     workspace_config: ManifestWorkspaceConfig {
                         container: None,
-                        workdir: Some("/workspace".to_owned()),
+                        working_dir: Some("/workspace".to_owned()),
                         mounts: vec![],
                         user: None,
                         home: None,
@@ -495,10 +495,10 @@ run = "npm run dev"
                 ResolvedWorkspaceBinding {
                     system: "dev".to_owned(),
                     workspace: "default".to_owned(),
-                    workdir: None,
+                    working_dir: None,
                     workspace_config: ManifestWorkspaceConfig {
                         container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
-                        workdir: None,
+                        working_dir: None,
                         mounts: vec![],
                         user: None,
                         home: None,
@@ -557,7 +557,7 @@ run = "npm run dev"
                 ResolvedWorkspaceBinding {
                     system: "dev".to_owned(),
                     workspace: "app".to_owned(),
-                    workdir: None,
+                    working_dir: None,
                     workspace_config: ManifestWorkspaceConfig {
                         container: Some(ManifestWorkspaceContainerRef::Inline(
                             ManifestInlineWorkspaceContainerConfig {
@@ -571,7 +571,7 @@ run = "npm run dev"
                                 .collect(),
                             }
                         )),
-                        workdir: None,
+                        working_dir: None,
                         mounts: vec![],
                         user: None,
                         home: None,

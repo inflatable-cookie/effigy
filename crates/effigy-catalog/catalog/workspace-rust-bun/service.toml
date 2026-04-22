@@ -1,0 +1,44 @@
+[service]
+name = "workspace-rust-bun"
+description = "Long-running Rust + Bun dev workspace container — used as a shell target and command runner for repo tasks, not as a long-running service."
+
+[params.rust_version]
+type = "string"
+default = "1.88"
+description = "Rust toolchain version (used as the `rust:<version>-bookworm` base image tag)"
+
+[params.bun_version]
+type = "string"
+default = ""
+description = "Bun version tag to install (e.g. '1.1.18'). Empty string installs the latest stable Bun."
+
+[params.workspace_mount]
+type = "string"
+default = "/workspace-root"
+description = "Mount point for the workspace root inside the container. The Effigy system layer binds the consumer repo and any extra workspace mounts into subdirectories of this path."
+
+[params.working_subdir]
+type = "string"
+default = ""
+description = "Subdirectory of `workspace_mount` to use as the compose `working_dir`. Empty means `workspace_mount` itself. The Effigy system layer overrides the exec working dir at task time via `systems.<name>.working_dir`; this only affects the compose default."
+
+[params.host_ports]
+type = "list"
+default = []
+description = "Host port bindings to publish on the workspace container, as strings (e.g. [\"41001:41001\", \"41002:41002\"]). Typically used to expose repo-owned dev servers that run inside the workspace."
+
+[capabilities]
+exec_target = true
+shell = "/bin/bash"
+
+[volumes.cargo-registry]
+mount = "/usr/local/cargo/registry"
+named = true
+persist = true
+description = "Cargo crates registry cache — preserves `cargo fetch` results across container rebuilds"
+
+[volumes.cargo-git]
+mount = "/usr/local/cargo/git"
+named = true
+persist = true
+description = "Cargo git dependency cache"

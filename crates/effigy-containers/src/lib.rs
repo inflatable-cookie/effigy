@@ -37,7 +37,9 @@ use effigy_manifest::{
 pub(crate) const DEFAULT_COLIMA_PROFILE: &str = "effigy";
 const DEFAULT_ATTACH_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_HEALTH_TIMEOUT_SECS: u64 = 60;
-const GENERATED_COMPOSE_DIR: &str = "infra/dev";
+const GENERATED_RUNTIME_COMPOSE_DIR: &str = ".effigy/runtime/compose";
+const PROJECT_LOCAL_CATALOG_DIR: &str = "infra/dev/catalog";
+const EJECTED_COMPOSE_DIR: &str = "infra/dev";
 const SHARED_SERVICE_HOST: &str = "host.docker.internal";
 const RUNTIME_DNS_FALLBACK_SERVERS: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
 
@@ -379,7 +381,7 @@ pub fn resolve_inline_workspace_exec_working_dir(
     }
     let mount = container.mount.as_deref().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
-            "inline workspace container `{synthetic_name}` must declare `mount` or workspace `workdir` for exec CWD mapping"
+            "inline workspace container `{synthetic_name}` must declare `mount` or workspace `working_dir` for exec CWD mapping"
         ))
     })?;
     let (_source, target, _options) = parse_mount_parts(mount).ok_or_else(|| {
@@ -502,6 +504,8 @@ fn build_effective_policy(
     let data = config.data.as_ref().cloned().unwrap_or_default();
     let health = config.health.as_ref().cloned().unwrap_or_default();
     let lifecycle = config.lifecycle.as_ref();
+    let default_workspace_identity =
+        default_workspace_identity_for_primary_service(config, &primary_service);
     let _ = containers;
 
     Ok(EffectiveContainerPolicy {
@@ -535,12 +539,14 @@ fn build_effective_policy(
             .and_then(|value| value.user.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(str::to_owned),
+            .map(str::to_owned)
+            .or_else(|| default_workspace_identity.map(|(user, _)| user.to_owned())),
         workspace_home: workspace
             .and_then(|value| value.home.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(str::to_owned),
+            .map(str::to_owned)
+            .or_else(|| default_workspace_identity.map(|(_, home)| home.to_owned())),
         on_task_exit: lifecycle
             .and_then(|value| value.on_task_exit)
             .unwrap_or(ManifestContainerOnTaskExit::Stop),
@@ -551,6 +557,18 @@ fn build_effective_policy(
             .and_then(|value| value.detach_timeout_secs)
             .unwrap_or(DEFAULT_ATTACH_TIMEOUT_SECS),
     })
+}
+
+fn default_workspace_identity_for_primary_service(
+    config: &ManifestContainerConfig,
+    primary_service: &str,
+) -> Option<(&'static str, &'static str)> {
+    let service = config.services.get(primary_service)?;
+    match service.catalog.as_str() {
+        "php-fpm" => Some(("dev", "/home/dev")),
+        "node" => Some(("node", "/home/node")),
+        _ => None,
+    }
 }
 
 fn default_project_name_base(manifest: &effigy_manifest::TaskManifest, repo_root: &Path) -> String {
@@ -702,7 +720,7 @@ fn resolve_container_exec_working_dir(
     workspace: Option<&ManifestWorkspaceConfig>,
 ) -> Result<PathBuf, ContainerPolicyError> {
     if let Some(workdir) = workspace
-        .and_then(|workspace| workspace.workdir.as_deref())
+        .and_then(|workspace| workspace.working_dir.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
@@ -944,8 +962,8 @@ pub fn eject_generated_compose(
         )));
     }
 
-    let output = ComposeOutput::new(repo_root.join(GENERATED_COMPOSE_DIR));
-    let eject = output.eject()?;
+    let output = ComposeOutput::new(repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR));
+    let eject = output.eject_to(&repo_root.join(EJECTED_COMPOSE_DIR))?;
     Ok(ContainerEjectResult {
         compose_path: eject.compose_path,
         dockerfile_count: eject.dockerfile_paths.len(),

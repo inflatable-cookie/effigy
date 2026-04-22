@@ -50,7 +50,7 @@ What shipped:
   `[containers.<name>.services.<service>]` with flattened fragment params.
 - `effigy-containers` now owns both compose-source modes:
   direct `compose_file` and generated catalog-backed compose under
-  `infra/dev/.effigy-compose.generated.yml`, including override-file pickup.
+  `.effigy/runtime/compose/.effigy-compose.generated.yml`, including override-file pickup.
 - `effigy-doctor` schema validation now accepts the new service declaration
   shape.
 - the root runner stayed adapter-light; only the container-error bridge needed

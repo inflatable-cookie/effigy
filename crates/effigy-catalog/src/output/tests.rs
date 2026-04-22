@@ -95,6 +95,76 @@ fn write_creates_dockerfiles_and_configs() {
 }
 
 #[test]
+fn write_regenerates_when_dockerfile_changes_under_same_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = ComposeOutput::new(dir.path().to_path_buf());
+
+    let mut first_dockerfiles = HashMap::new();
+    first_dockerfiles.insert("app".to_string(), "FROM php:8.3-fpm".to_string());
+    let first = crate::assembly::AssemblyResult {
+        compose_yaml: "services:\n  app:\n    image: test\n".to_string(),
+        dockerfiles: first_dockerfiles,
+        config_files: HashMap::new(),
+        volumes: Vec::new(),
+    };
+
+    let mut second_dockerfiles = HashMap::new();
+    second_dockerfiles.insert(
+        "app".to_string(),
+        "FROM php:8.3-fpm\nRUN useradd dev".to_string(),
+    );
+    let second = crate::assembly::AssemblyResult {
+        compose_yaml: "services:\n  app:\n    image: test\n".to_string(),
+        dockerfiles: second_dockerfiles,
+        config_files: HashMap::new(),
+        volumes: Vec::new(),
+    };
+
+    let write1 = output.write(&first, "manifest-v1").unwrap();
+    assert!(write1.regenerated);
+
+    let write2 = output.write(&second, "manifest-v1").unwrap();
+    assert!(write2.regenerated);
+
+    let stored =
+        std::fs::read_to_string(dir.path().join(".effigy-catalog/app/Dockerfile")).unwrap();
+    assert_eq!(stored, second.dockerfiles["app"]);
+}
+
+#[test]
+fn write_regenerates_when_config_changes_under_same_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = ComposeOutput::new(dir.path().to_path_buf());
+
+    let mut first_configs = HashMap::new();
+    first_configs.insert("web.conf".to_string(), "server { return 200; }".to_string());
+    let first = crate::assembly::AssemblyResult {
+        compose_yaml: "services:\n  web:\n    image: nginx\n".to_string(),
+        dockerfiles: HashMap::new(),
+        config_files: first_configs,
+        volumes: Vec::new(),
+    };
+
+    let mut second_configs = HashMap::new();
+    second_configs.insert("web.conf".to_string(), "server { return 204; }".to_string());
+    let second = crate::assembly::AssemblyResult {
+        compose_yaml: "services:\n  web:\n    image: nginx\n".to_string(),
+        dockerfiles: HashMap::new(),
+        config_files: second_configs,
+        volumes: Vec::new(),
+    };
+
+    let write1 = output.write(&first, "manifest-v1").unwrap();
+    assert!(write1.regenerated);
+
+    let write2 = output.write(&second, "manifest-v1").unwrap();
+    assert!(write2.regenerated);
+
+    let stored = std::fs::read_to_string(dir.path().join("web.conf")).unwrap();
+    assert_eq!(stored, second.config_files["web.conf"]);
+}
+
+#[test]
 fn eject_copies_and_cleans_up() {
     let dir = tempfile::tempdir().unwrap();
     let output = ComposeOutput::new(dir.path().to_path_buf());
@@ -140,6 +210,37 @@ fn eject_without_generated_file_fails() {
     let output = ComposeOutput::new(dir.path().to_path_buf());
     let result = output.eject();
     assert!(result.is_err());
+}
+
+#[test]
+fn eject_to_promotes_into_explicit_target_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+    let output = ComposeOutput::new(dir.path().to_path_buf());
+
+    let mut dockerfiles = HashMap::new();
+    dockerfiles.insert("app".to_string(), "FROM php:8.3-fpm".to_string());
+
+    let mut config_files = HashMap::new();
+    config_files.insert("web.conf".to_string(), "server { }".to_string());
+
+    let result = crate::assembly::AssemblyResult {
+        compose_yaml: "services:\n  app:\n    image: test\n".to_string(),
+        dockerfiles,
+        config_files,
+        volumes: Vec::new(),
+    };
+
+    output.write(&result, "manifest").unwrap();
+    let eject_result = output.eject_to(target.path()).unwrap();
+
+    assert_eq!(
+        eject_result.compose_path,
+        target.path().join("docker-compose.yml")
+    );
+    assert!(target.path().join("catalog/app/Dockerfile").exists());
+    assert!(target.path().join("web.conf").exists());
+    assert!(!output.generated_compose_path().exists());
 }
 
 #[test]

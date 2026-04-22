@@ -102,6 +102,7 @@ catalog/
     service.toml
     configs/
       default.conf              # generic PHP front-controller passthrough
+      decodelabs.conf           # repo-root Genesis rewrite bootstrap
       laravel.conf              # Laravel try_files + front controller
       wordpress.conf            # WordPress rewrite rules
       spa.conf                  # SPA with API proxy
@@ -170,7 +171,7 @@ catalog = "memcached"
 2. Load matching catalog fragments (project-local > user-global > bundled).
 3. Substitute parameters into fragment templates.
 4. Assemble into a complete compose file.
-5. Write to `infra/dev/.effigy-compose.generated.yml` (gitignored).
+5. Write to `.effigy/runtime/compose/.effigy-compose.generated.yml` (gitignored).
 6. If `infra/dev/compose.override.yml` exists, merge via Docker Compose
    multi-file (`-f generated.yml -f override.yml`).
 7. Regenerate on manifest change (checksum comparison).
@@ -217,8 +218,9 @@ What this explicitly does NOT absorb from DDEV:
 
 ### Nginx config flexibility
 
-The nginx fragment ships named config variants (default, laravel, wordpress,
-spa) selected via `variant =` in the manifest. For custom frameworks, the user
+The nginx fragment ships named config variants (default, decodelabs, laravel,
+wordpress, spa) selected via `variant =` in the manifest. For custom
+frameworks, the user
 either:
 
 - provides their own config via `config = "infra/nginx.conf"`
@@ -232,12 +234,15 @@ works for most custom frameworks using `mod_rewrite`-style routing:
 location / {
     try_files $uri $uri/ /index.php?$query_string;
 }
+```
 
-location ~ \.php$ {
-    fastcgi_pass app:9000;
-    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-    include fastcgi_params;
-}
+The `decodelabs.conf` variant roots the site at the repo root and rewrites
+every request through `/vendor/genesis.php` for Genesis-style apps that do not
+use a `public/` front controller:
+
+```nginx
+root /var/www/html;
+rewrite .* /vendor/genesis.php last;
 ```
 
 ## 2. Container Context and Transparent Execution

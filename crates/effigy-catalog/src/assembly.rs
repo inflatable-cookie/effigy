@@ -90,6 +90,9 @@ impl ComposeAssembler {
         services: &[ServiceDeclaration],
         project_name: &str,
         repo_root: &str,
+        catalog_root: &str,
+        host_uid: u32,
+        host_gid: u32,
     ) -> Result<AssemblyResult, CatalogError> {
         if services.is_empty() {
             return Err(CatalogError::EmptyServiceList);
@@ -120,8 +123,10 @@ impl ComposeAssembler {
         for (name, (decl, fragment)) in &fragments {
             let system = SystemContext {
                 repo_root: repo_root.to_string(),
-                catalog_path: Self::fragment_build_context_path(name),
+                catalog_path: Self::fragment_build_context_path(catalog_root, name),
                 project_name: project_name.to_string(),
+                host_uid,
+                host_gid,
             };
 
             let ctx = TemplateRenderer::build_context(
@@ -332,8 +337,8 @@ impl ComposeAssembler {
     ///
     /// When the assembler writes Dockerfiles to the build directory, this
     /// returns the relative path that the compose file should reference.
-    fn fragment_build_context_path(service_name: &str) -> String {
-        format!(".effigy-catalog/{service_name}")
+    fn fragment_build_context_path(catalog_root: &str, service_name: &str) -> String {
+        format!("{}/{}", catalog_root.trim_end_matches('/'), service_name)
     }
 }
 

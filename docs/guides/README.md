@@ -64,6 +64,9 @@ pages only when you need more detail.
   for the full architecture design (service catalog, transparent execution,
   gateway, data lifecycle).
 - [`063-container-system-guide.md`](./063-container-system-guide.md)
+- [`065-underlay-starter.md`](./065-underlay-starter.md) for the reusable
+  Underlay shape (Rust + Bun workspace container, bundled dev services,
+  managed `dev` TUI) built on the current system/workspace/catalog model.
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 

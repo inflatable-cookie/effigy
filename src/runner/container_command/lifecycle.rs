@@ -4,7 +4,7 @@ use std::path::Path;
 
 use effigy_catalog::volumes::classify_for_reset;
 use effigy_containers::{
-    compose::{compose_args, compose_up_args},
+    compose::{compose_args, compose_up_args, resolve_compose_backend, ComposeBackend},
     down_report, effective_attach_mode, eject_generated_compose, eject_report,
     exec::{
         capture_compose_ps, colima_is_running, colima_profile_warnings, ensure_colima_running,
@@ -36,56 +36,6 @@ use crate::runner::exec_command::{
 
 const DEFAULT_CONTAINER_SHELL: &str = "sh";
 const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1";
-
-pub(in crate::runner) fn run_task_workspace_session(
-    repo_root: &Path,
-    task_name: &str,
-    container_name: Option<&str>,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    if output_json {
-        return Err(RunnerError::task_invocation(format!(
-            "task `{task_name}` resolves to an attached workspace container session and does not support `--json` because the session is interactive"
-        )));
-    }
-
-    let stop_requested = install_stop_requested_flag()?;
-    let policy = load_container_policy(
-        repo_root,
-        normalize_task_container_reference(container_name),
-    )?;
-    validate_container_policy(repo_root, &policy)?;
-    emit_colima_profile_warnings(repo_root, &policy);
-    if stop_requested.load(std::sync::atomic::Ordering::Relaxed) {
-        return render_attached_session_closeout(repo_root, &policy, false, "signal");
-    }
-    let colima_started = ensure_colima_running(&policy, repo_root)?;
-    if stop_requested.load(std::sync::atomic::Ordering::Relaxed) {
-        return render_attached_session_closeout(repo_root, &policy, colima_started, "signal");
-    }
-    run_docker_capture(
-        repo_root,
-        &policy,
-        &compose_up_args(&policy),
-        "docker compose up",
-    )?;
-    if stop_requested.load(std::sync::atomic::Ordering::Relaxed) {
-        return render_attached_session_closeout(repo_root, &policy, colima_started, "signal");
-    }
-    let health = wait_for_container_ready(&policy, Some(stop_requested.as_ref()))?;
-    if stop_requested.load(std::sync::atomic::Ordering::Relaxed) {
-        return render_attached_session_closeout(repo_root, &policy, colima_started, "signal");
-    }
-    run_attached_container_session(repo_root, &policy, colima_started, health, Some(task_name))
-}
-
-fn normalize_task_container_reference(container_name: Option<&str>) -> Option<&str> {
-    match container_name.map(str::trim) {
-        Some("default") => None,
-        Some("") => None,
-        other => other,
-    }
-}
 
 pub(super) fn run_container_up(
     repo_root: &Path,
@@ -252,11 +202,173 @@ pub(super) fn run_container_reset(
             )?;
         }
     }
+    remove_generated_runtime_artifacts(repo_root, &policy)?;
+    remove_generated_service_images(repo_root, &policy)?;
     let removed_gateway_domains = deregister_gateway_routes_for_container(&policy)?;
     let mut report = reset_report(&policy, colima_running, keep_data, volume_actions.as_ref());
     annotate_left_running_shared_services(&mut report, &policy);
     annotate_removed_gateway_routes(&mut report, &removed_gateway_domains);
     Ok(render_container_report(report, output_json))
+}
+
+fn remove_generated_runtime_artifacts(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    if policy.compose_source != EffectiveComposeSource::Generated {
+        return Ok(());
+    }
+
+    let runtime_dir = repo_root.join(".effigy/runtime/compose");
+    if !runtime_dir.exists() {
+        return Ok(());
+    }
+
+    std::fs::remove_dir_all(&runtime_dir).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to remove generated runtime directory {}: {error}",
+            runtime_dir.display()
+        ))
+    })
+}
+
+fn remove_generated_service_images(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    if policy.compose_source != EffectiveComposeSource::Generated {
+        return Ok(());
+    }
+
+    let Some(compose_file) = policy.compose_files.first() else {
+        return Ok(());
+    };
+    if !compose_file.exists() {
+        return Ok(());
+    }
+
+    let image_refs = load_generated_service_image_refs(compose_file, &policy.project_name)?;
+    for image_ref in image_refs {
+        remove_runtime_image_allow_missing(repo_root, policy, &image_ref)?;
+    }
+    Ok(())
+}
+
+fn load_generated_service_image_refs(
+    compose_file: &Path,
+    project_name: &str,
+) -> Result<Vec<String>, RunnerError> {
+    let content = std::fs::read_to_string(compose_file).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to read generated compose file {} while resolving built images: {error}",
+            compose_file.display()
+        ))
+    })?;
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to parse generated compose file {} while resolving built images: {error}",
+            compose_file.display()
+        ))
+    })?;
+    Ok(select_generated_service_image_refs(&parsed, project_name))
+}
+
+fn select_generated_service_image_refs(
+    parsed: &serde_yaml::Value,
+    project_name: &str,
+) -> Vec<String> {
+    let Some(services) = parsed
+        .get("services")
+        .and_then(serde_yaml::Value::as_mapping)
+    else {
+        return Vec::new();
+    };
+
+    services
+        .iter()
+        .filter_map(|(service_name, service_def)| {
+            let service_name = service_name.as_str()?;
+            let service_def = service_def.as_mapping()?;
+            service_def.get("build")?;
+            if let Some(image) = service_def
+                .get("image")
+                .and_then(serde_yaml::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                return Some(image.to_owned());
+            }
+            Some(format!("{project_name}-{service_name}:latest"))
+        })
+        .collect()
+}
+
+fn remove_runtime_image_allow_missing(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    image_ref: &str,
+) -> Result<(), RunnerError> {
+    let (program, args) = match resolve_compose_backend() {
+        ComposeBackend::Docker => (
+            "docker",
+            vec![
+                OsString::from("image"),
+                OsString::from("rm"),
+                OsString::from("-f"),
+                OsString::from(image_ref),
+            ],
+        ),
+        ComposeBackend::ColimaNerdctl => (
+            "colima",
+            vec![
+                OsString::from("nerdctl"),
+                OsString::from("--profile"),
+                OsString::from(policy.profile.as_str()),
+                OsString::from("--"),
+                OsString::from("image"),
+                OsString::from("rm"),
+                OsString::from("-f"),
+                OsString::from(image_ref),
+            ],
+        ),
+    };
+
+    let output = std::process::Command::new(program)
+        .current_dir(repo_root)
+        .args(&args)
+        .output()
+        .map_err(|error| RunnerError::TaskCommandLaunch {
+            command: format!(
+                "remove generated image `{image_ref}` ({program} {})",
+                format_os_args(&args)
+            ),
+            error,
+        })?;
+    if output.status.success() || image_remove_failure_is_missing(&output) {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(format!(
+        "failed to remove generated image `{image_ref}` (code {:?})\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )))
+}
+
+fn image_remove_failure_is_missing(output: &std::process::Output) -> bool {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+    combined.contains("no such image")
+        || combined.contains("not found")
+        || combined.contains("no such object")
+}
+
+fn format_os_args(args: &[OsString]) -> String {
+    args.iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub(super) fn run_container_eject(
@@ -378,7 +490,15 @@ pub(super) fn run_container_shell(
     } else {
         format!("/bin/{DEFAULT_CONTAINER_SHELL}")
     };
-    let args = build_container_shell_args(&policy, &service, command, &working_dir, &shell);
+    let workspace_identity = resolve_workspace_exec_identity(repo_root, &policy, &service)?;
+    let args = build_container_shell_args(
+        &policy,
+        &service,
+        command,
+        &working_dir,
+        &shell,
+        workspace_identity.as_ref(),
+    );
     let status = run_compose_exec(repo_root, &policy, &args, false, "docker compose exec")?.status;
     if should_fail_container_shell_exit(command.is_some(), status.success()) {
         return Err(RunnerError::task_invocation(format!(
@@ -404,12 +524,14 @@ pub(in crate::runner) fn run_container_shell_session(
 ) -> Result<String, RunnerError> {
     let (policy, service, working_dir) = resolve_container_shell_session(repo_root, name, service)?;
     let shell = probe_container_capabilities(repo_root, &policy, &service)?.shell;
+    let workspace_identity = resolve_workspace_exec_identity(repo_root, &policy, &service)?;
     let args = build_interactive_container_shell_args(
         &policy,
         &service,
         initial_command,
         &working_dir,
         &shell,
+        workspace_identity.as_ref(),
     );
     let status = run_compose_exec(repo_root, &policy, &args, false, "docker compose exec")?.status;
     if should_fail_container_shell_exit(initial_command.is_some(), status.success()) {
@@ -430,11 +552,6 @@ pub(in crate::runner) fn run_container_shell_session(
 
 fn should_fail_container_shell_exit(command_mode: bool, success: bool) -> bool {
     command_mode && !success
-}
-
-fn emit_colima_profile_warnings(repo_root: &Path, policy: &EffectiveContainerPolicy) {
-    let warnings = colima_profile_warnings(policy, repo_root);
-    emit_warning_lines(&warnings);
 }
 
 fn emit_warning_lines(warnings: &[String]) {
@@ -471,6 +588,7 @@ fn build_container_shell_args(
     command: Option<&str>,
     working_dir: &Path,
     shell: &str,
+    workspace_identity: Option<&ResolvedWorkspaceExecIdentity>,
 ) -> Vec<OsString> {
     if let Some(command) = command {
         let mut args = compose_args(policy, ["exec", "-T", "-w"]);
@@ -487,7 +605,7 @@ fn build_container_shell_args(
 
     let mut args = compose_args(policy, ["exec", "-w"]);
     args.push(OsString::from(working_dir));
-    append_workspace_exec_identity(&mut args, policy);
+    append_workspace_exec_identity(&mut args, workspace_identity);
     append_color_exec_env(&mut args, true);
     args.push(OsString::from("-e"));
     args.push(OsString::from(CONTAINER_HANDOFF_ENV));
@@ -503,10 +621,11 @@ fn build_interactive_container_shell_args(
     initial_command: Option<&str>,
     working_dir: &Path,
     shell: &str,
+    workspace_identity: Option<&ResolvedWorkspaceExecIdentity>,
 ) -> Vec<OsString> {
     let mut args = compose_args(policy, ["exec", "-w"]);
     args.push(OsString::from(working_dir));
-    append_workspace_exec_identity(&mut args, policy);
+    append_workspace_exec_identity(&mut args, workspace_identity);
     append_color_exec_env(&mut args, true);
     args.push(OsString::from("-e"));
     args.push(OsString::from(CONTAINER_HANDOFF_ENV));
@@ -524,15 +643,59 @@ fn build_interactive_container_shell_args(
     args
 }
 
-fn append_workspace_exec_identity(args: &mut Vec<OsString>, policy: &EffectiveContainerPolicy) {
-    if let Some(user) = policy.workspace_user.as_deref() {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedWorkspaceExecIdentity {
+    user: String,
+    home: Option<String>,
+}
+
+fn append_workspace_exec_identity(
+    args: &mut Vec<OsString>,
+    workspace_identity: Option<&ResolvedWorkspaceExecIdentity>,
+) {
+    if let Some(user) = workspace_identity.map(|identity| identity.user.as_str()) {
         args.push(OsString::from("-u"));
         args.push(OsString::from(user));
     }
-    if let Some(home) = policy.workspace_home.as_deref() {
+    if let Some(home) = workspace_identity.and_then(|identity| identity.home.as_deref()) {
         args.push(OsString::from("-e"));
         args.push(OsString::from(format!("HOME={home}")));
     }
+}
+
+fn resolve_workspace_exec_identity(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+) -> Result<Option<ResolvedWorkspaceExecIdentity>, RunnerError> {
+    let Some(user) = policy.workspace_user.as_deref() else {
+        return Ok(None);
+    };
+
+    let mut args = compose_args(policy, ["exec", "-T", service, "sh", "-lc"]);
+    args.push(OsString::from(format!(
+        "id -u {} >/dev/null 2>&1",
+        shell_quote(user)
+    )));
+    let output = run_compose_exec(
+        repo_root,
+        policy,
+        &args,
+        true,
+        "docker compose exec user probe",
+    )?;
+    if output.status.success() {
+        return Ok(Some(ResolvedWorkspaceExecIdentity {
+            user: user.to_owned(),
+            home: policy.workspace_home.clone(),
+        }));
+    }
+
+    emit_warning_lines(&[format!(
+        "workspace user `{user}` is not present in running service `{service}` for container `{}`; falling back to root shell",
+        policy.name
+    )]);
+    Ok(None)
 }
 
 fn render_interactive_shell_session_command(initial_command: &str, shell: &str) -> String {
@@ -560,7 +723,7 @@ mod tests {
         annotate_left_running_shared_services, annotate_shared_service_notes,
         build_container_shell_args, build_interactive_container_shell_args,
         finish_container_up_failure, render_interactive_shell_session_command, run_container_eject,
-        run_container_reset, should_fail_container_shell_exit,
+        run_container_reset, select_generated_service_image_refs, should_fail_container_shell_exit,
     };
     use crate::runner::RunnerError;
     use effigy_containers::{
@@ -646,6 +809,7 @@ mod tests {
             Some("echo hi"),
             Path::new("/tmp/work"),
             "/bin/sh",
+            None,
         );
         let rendered = args
             .iter()
@@ -681,6 +845,7 @@ mod tests {
             None,
             Path::new("/workspace-root/repo"),
             "/bin/bash",
+            None,
         );
         let rendered = args
             .iter()
@@ -714,6 +879,7 @@ mod tests {
             Some("effigy dev"),
             Path::new("/workspace-root/repo"),
             "/bin/bash",
+            None,
         );
         let rendered = args
             .iter()
@@ -769,11 +935,39 @@ variant = "default"
         assert!(rendered.contains("ejected catalog-backed compose ownership"));
         assert!(root.join("infra/dev/docker-compose.yml").exists());
         assert!(!root
-            .join("infra/dev/.effigy-compose.generated.yml")
+            .join(".effigy/runtime/compose/.effigy-compose.generated.yml")
             .exists());
         let manifest = fs::read_to_string(root.join("effigy.toml")).expect("read manifest");
         assert!(manifest.contains("compose_file = \"infra/dev/docker-compose.yml\""));
         assert!(!manifest.contains("[containers.web.services.app]"));
+    }
+
+    #[test]
+    fn select_generated_service_image_refs_returns_built_service_images_only() {
+        let parsed: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+services:
+  app:
+    build:
+      context: .
+      dockerfile: .effigy/runtime/compose/.effigy-catalog/app/Dockerfile
+  web:
+    image: nginx:alpine
+  worker:
+    build:
+      context: .
+      dockerfile: .effigy/runtime/compose/.effigy-catalog/worker/Dockerfile
+    image: custom-worker:dev
+"#,
+        )
+        .expect("parse compose");
+
+        let refs = select_generated_service_image_refs(&parsed, "demo");
+
+        assert_eq!(
+            refs,
+            vec!["demo-app:latest".to_owned(), "custom-worker:dev".to_owned()]
+        );
     }
 
     #[test]

@@ -1,7 +1,12 @@
 let container_name = "linux-release";
 let image_name = "effigy-linux-release-builder:latest";
 let host_artifacts_dir = path_join(repo_root, ".effigy/linux-release/artifacts");
-let copied_binary = path_join(host_artifacts_dir, "effigy-x86_64-unknown-linux-gnu");
+let release_triple = if env("EFFIGY_LINUX_RELEASE_TRIPLE") == "" {
+    "x86_64-unknown-linux-gnu"
+} else {
+    env("EFFIGY_LINUX_RELEASE_TRIPLE")
+};
+let copied_binary = path_join(host_artifacts_dir, "effigy-" + release_triple);
 let proof_log = path_join(host_artifacts_dir, "rehearsal.txt");
 
 fn run_effigy_checked(label, process_args) {
@@ -64,10 +69,11 @@ let build_script =
     + "printf '%s\\n\\n' \"$smoke_output\"\n"
     + "glibc_output=$(\"${CARGO_TARGET_DIR}/release/effigy\" distribution check-glibc-floor --binary \"${CARGO_TARGET_DIR}/release/effigy\" --max-glibc 2.35)\n"
     + "printf '%s\\n' \"$glibc_output\"\n"
-    + "cp \"${CARGO_TARGET_DIR}/release/effigy\" /workspace/.effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu\n"
+    + "cp \"${CARGO_TARGET_DIR}/release/effigy\" \"/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + "\"\n"
     + "{\n"
     + "  echo \"binary=${CARGO_TARGET_DIR}/release/effigy\"\n"
-    + "  echo \"copied_binary=/workspace/.effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu\"\n"
+    + "  echo \"copied_binary=/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + "\"\n"
+    + "  echo \"release_triple=" + release_triple + "\"\n"
     + "  echo \"completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n"
     + "} > /workspace/.effigy/linux-release/artifacts/rehearsal.txt\n";
 

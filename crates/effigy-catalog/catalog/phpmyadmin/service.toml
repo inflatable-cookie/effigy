@@ -1,0 +1,28 @@
+[service]
+name = "phpmyadmin"
+description = "phpMyAdmin web UI for local MariaDB and MySQL access"
+
+[params.version]
+type = "string"
+default = "latest"
+description = "phpMyAdmin image tag"
+
+[params.database_host]
+type = "string"
+default = "db"
+description = "Database host name"
+
+[params.database_port]
+type = "integer"
+default = 3306
+description = "Database port"
+
+[capabilities]
+exec_target = false
+
+[depends_on]
+optional = ["mariadb", "postgres"]
+
+[ports]
+default = [80]
+description = "HTTP port"

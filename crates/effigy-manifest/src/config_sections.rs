@@ -319,7 +319,7 @@ pub struct ManifestSystemConfig {
     #[serde(default)]
     pub container: Option<ManifestWorkspaceContainerRef>,
     #[serde(default)]
-    pub workdir: Option<String>,
+    pub working_dir: Option<String>,
     #[serde(default)]
     pub mounts: Vec<String>,
     #[serde(default)]
@@ -334,7 +334,7 @@ pub struct ManifestWorkspaceConfig {
     #[serde(default)]
     pub container: Option<ManifestWorkspaceContainerRef>,
     #[serde(default)]
-    pub workdir: Option<String>,
+    pub working_dir: Option<String>,
     #[serde(default)]
     pub mounts: Vec<String>,
     #[serde(default)]
@@ -1091,7 +1091,7 @@ user = "dev"
 home = "/home/dev"
 
 [systems.dev.workspaces.app]
-workdir = "/workspace-root/app"
+working_dir = "/workspace-root/app"
 mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
 "#,
         )
@@ -1111,13 +1111,40 @@ mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
         assert_eq!(system.user.as_deref(), Some("dev"));
         assert_eq!(system.home.as_deref(), Some("/home/dev"));
         let workspace = system.workspaces.get("app").expect("app workspace");
-        assert_eq!(workspace.workdir.as_deref(), Some("/workspace-root/app"));
+        assert_eq!(
+            workspace.working_dir.as_deref(),
+            Some("/workspace-root/app")
+        );
         assert_eq!(
             workspace.mounts,
             vec![
                 "../underlay".to_owned(),
                 "../poodle:/workspace-root/poodle".to_owned()
             ]
+        );
+    }
+
+    #[test]
+    fn systems_config_accepts_working_dir() {
+        let parsed: SystemWrapper = toml::from_str(
+            r#"
+[systems.dev]
+container = "stack"
+working_dir = "/workspace-root"
+
+[systems.dev.workspaces.app]
+working_dir = "/workspace-root/app"
+"#,
+        )
+        .expect("parse systems");
+
+        let system = parsed.systems.systems.get("dev").expect("dev system");
+        assert_eq!(system.working_dir.as_deref(), Some("/workspace-root"));
+
+        let workspace = system.workspaces.get("app").expect("app workspace");
+        assert_eq!(
+            workspace.working_dir.as_deref(),
+            Some("/workspace-root/app")
         );
     }
 
@@ -1215,7 +1242,7 @@ user = "dev"
 home = "/home/dev"
 
 [systems.dev.workspaces.app]
-workdir = "/workspace"
+working_dir = "/workspace"
 "#,
         )
         .expect("parse systems");
@@ -1224,7 +1251,7 @@ workdir = "/workspace"
         let dev = parsed.systems.systems.get("dev").expect("dev system");
         assert_eq!(dev.default_workspace.as_deref(), Some("app"));
         let app = dev.workspaces.get("app").expect("app workspace");
-        assert_eq!(app.workdir.as_deref(), Some("/workspace"));
+        assert_eq!(app.working_dir.as_deref(), Some("/workspace"));
         assert_eq!(app.user, None);
         match dev.container.as_ref().expect("workspace default container") {
             ManifestWorkspaceContainerRef::Named(name) => assert_eq!(name, "app"),

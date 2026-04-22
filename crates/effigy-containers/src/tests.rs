@@ -415,7 +415,7 @@ variant = "default"
             policy.compose_file_display
         );
 
-        let compose_path = root.join("infra/dev/.effigy-compose.generated.yml");
+        let compose_path = root.join(".effigy/runtime/compose/.effigy-compose.generated.yml");
         assert_eq!(policy.compose_files[0], compose_path);
         assert!(compose_path.exists(), "generated compose file should exist");
 
@@ -466,8 +466,9 @@ variant = "default"
         .expect("write manifest");
 
         let policy = load_container_policy(&root, None).expect("policy");
-        let compose = fs::read_to_string(root.join("infra/dev/.effigy-compose.generated.yml"))
-            .expect("compose");
+        let compose =
+            fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
+                .expect("compose");
 
         assert!(compose.contains("18080:80"));
         assert!(compose.contains("13306:3306"));
@@ -570,6 +571,96 @@ variant = "default"
 }
 
 #[test]
+fn generated_compose_auto_allocates_distinct_ports_for_multiple_http_services() {
+    with_temp_effigy_home("catalog-auto-ports-multi-http", |_| {
+        let root = temp_repo("catalog-auto-ports-multi-http");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.db]
+catalog = "mariadb"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+
+[containers.web.services.dbadmin]
+catalog = "phpmyadmin"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, None).expect("policy");
+        let compose =
+            fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
+                .expect("read generated compose");
+
+        let http_ports = policy
+            .declared_ports
+            .iter()
+            .filter_map(|value| value.split_once(':'))
+            .filter(|(_, container)| *container == "80")
+            .map(|(host, _)| host.parse::<u16>().expect("host port"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(http_ports.len(), 2, "expected two HTTP services: {compose}");
+        assert_ne!(
+            http_ports[0], http_ports[1],
+            "HTTP services should not share a host port:\n{compose}"
+        );
+        for port in &http_ports {
+            assert!(
+                compose.contains(&format!("- {port}:80")),
+                "generated compose should include HTTP port {port}:\n{compose}"
+            );
+        }
+    });
+}
+
+#[test]
+fn generated_php_workspace_defaults_to_non_root_identity() {
+    with_temp_effigy_home("catalog-php-workspace-user", |_| {
+        let root = temp_repo("catalog-php-workspace-user");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/var/www/html"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, Some("web")).expect("policy");
+        assert_eq!(policy.workspace_user.as_deref(), Some("dev"));
+        assert_eq!(policy.workspace_home.as_deref(), Some("/home/dev"));
+    });
+}
+
+#[test]
 fn generated_compose_rewrites_shared_backing_services() {
     with_temp_effigy_home("catalog-shared-db", |home| {
         let root = temp_repo("catalog-shared-db");
@@ -605,8 +696,9 @@ variant = "default"
         assert_eq!(shared.catalog, "mariadb");
         assert_eq!(shared.container_port, 3306);
 
-        let compose = fs::read_to_string(root.join("infra/dev/.effigy-compose.generated.yml"))
-            .expect("compose");
+        let compose =
+            fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
+                .expect("compose");
         assert!(!compose.contains("\n  db:\n"));
         assert!(compose.contains("DB_HOST: host.docker.internal"));
         assert!(compose.contains(&format!("DB_PORT: '{}'", shared.host_port)));
@@ -757,7 +849,7 @@ default = "stack"
 container = "stack"
 user = "dev"
 home = "/home/dev"
-workdir = "/workspace-root/underlay-reference"
+working_dir = "/workspace-root/underlay-reference"
 mounts = ["../underlay", "../poodle"]
 
 [containers.stack]
@@ -854,7 +946,7 @@ default = "stack"
 container = "stack"
 user = "dev"
 home = "/home/dev"
-workdir = "/workspace-root/underlay-reference"
+working_dir = "/workspace-root/underlay-reference"
 mounts = ["../underlay"]
 
 [containers.stack]
@@ -918,7 +1010,7 @@ variant = "default"
     .expect("write manifest");
 
     let policy = load_container_policy(&root, None).expect("policy");
-    let generated = root.join("infra/dev/.effigy-compose.generated.yml");
+    let generated = root.join(".effigy/runtime/compose/.effigy-compose.generated.yml");
     assert!(
         generated.exists(),
         "generated compose should exist before eject"
