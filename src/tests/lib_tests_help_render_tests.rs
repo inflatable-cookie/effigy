@@ -342,8 +342,10 @@ fn render_watch_help_shows_phase_scope() {
 fn render_init_help_shows_phase_scope() {
     let rendered = render_help_text(HelpTopic::Init);
     assert!(rendered.contains("init Help"));
-    assert!(rendered.contains("effigy init [--dry-run] [--force] [--json]"));
-    assert!(rendered.contains("generate minimal valid effigy.toml"));
+    assert!(rendered.contains("effigy init [<name>] [--dry-run] [--force] [--json]"));
+    assert!(rendered.contains("effigy init --list [--json]"));
+    assert!(rendered.contains("default `minimal` starter"));
+    assert!(rendered.contains("--list"));
     assert!(rendered.contains("--dry-run"));
     assert!(rendered.contains("--force"));
 }

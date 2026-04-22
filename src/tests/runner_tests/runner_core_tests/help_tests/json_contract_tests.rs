@@ -31,7 +31,7 @@ fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_an
             "init",
             &["--help", "--json", "--wat"],
             "init",
-            "effigy init [--dry-run] [--force] [--json]",
+            "effigy init [<name>] [--dry-run] [--force] [--json]",
         ),
         builtin_help_json_case(
             "builtin-watch-help-json-contract",
