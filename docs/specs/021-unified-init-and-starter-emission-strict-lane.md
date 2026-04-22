@@ -1,6 +1,6 @@
 # 021 Unified Init And Starter Emission Strict Lane
 
-Status: staged
+Status: complete
 Updated: 2026-04-22
 Roadmap: `g02.021` (productization slice promoted from `g01.029` Wave 5)
 
@@ -56,7 +56,21 @@ Out of scope:
 
 ## Current Posture
 
-`staged`
+`complete` — all three batches shipped on `main`:
+
+- batch 1 (`394d37a1`) promoted the baseline scaffold into an embedded
+  `minimal` starter under `crates/effigy-catalog/starters/minimal/` with a
+  `starter.toml` descriptor, keeping `effigy init` output byte-for-byte
+  identical.
+- batch 2 (`33684e59`) extended the CLI surface with positional `<name>`
+  (defaulting to `minimal`) and `--list [--json]`, added the `starter`
+  field to `effigy.init.v1`, and shipped the `effigy.init.list.v1`
+  contract.
+- batch 3 (`6b0ad3a5`) registered `underlay` as a five-file starter,
+  generalized the emitter to handle multi-file pre-scan + per-file
+  overwrite semantics + nested parent-dir creation, reshaped the
+  `effigy.init.v1` payload to `files[]` + `guidance`, and rewrote
+  guide 065 around `effigy init underlay`.
 
 Substrate already in place:
 
@@ -134,7 +148,7 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute batch 1: promote the baseline scaffold into
-`crates/effigy-catalog/starters/minimal/`, define the `starter.toml`
-descriptor shape, and refactor `init/scaffold.rs` to load via `rust-embed`
-while preserving current `effigy init` output byte-for-byte.
+Lane closed. A Northstar-shaped starter is the natural follow-up content
+slot once the Northstar adoption-kit work (`g01.029`) returns to active
+execution — it lands as a pure content PR against the stable loader,
+not as a separate command lane.

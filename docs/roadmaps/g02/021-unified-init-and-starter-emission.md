@@ -2,9 +2,10 @@
 
 Generation: `g02`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-04-22
+Completed: 2026-04-22
 Depends on: 011
 
 ## Vision Alignment
@@ -206,12 +207,43 @@ This roadmap is complete when:
   `g01.029` Wave 5 records the `init --northstar`-shaped candidate as
   resolved by this lane's `init <name>` form
 
+## Delivery Record
+
+All three workstreams shipped on `main`:
+
+- **Workstream 1 — Storage & Loader** landed in `394d37a1`. The baseline
+  scaffold now lives at `crates/effigy-catalog/starters/minimal/` with a
+  `starter.toml` descriptor and is loaded via `rust-embed` through
+  `StarterResolver`. `effigy init` output stayed byte-for-byte identical.
+- **Workstream 2 — CLI Surface** landed in `33684e59`. `effigy init`
+  accepts a positional `<name>` (defaulting to `minimal`) and a
+  `--list [--json]` mode, shipping the new `effigy.init.list.v1` JSON
+  contract and adding a `starter` field to `effigy.init.v1`.
+- **Workstream 3 — Underlay Starter** landed in `6b0ad3a5`. `underlay`
+  is registered with a five-file descriptor and guidance; the init
+  emitter generalizes to multi-file starters with per-file conflict
+  pre-scan, nested-dir creation, and `--dry-run` file fencing. The
+  `effigy.init.v1` payload now carries a `files[]` array plus a
+  top-level `guidance` string (Breaking — CHANGELOG records the
+  reshape). Guide 065 is rewritten around `effigy init underlay`.
+
+Test coverage:
+
+- `crates/effigy-catalog/src/starter.rs` — resolver unit tests cover
+  `minimal`, `underlay`, listing order, and not-found vs.
+  missing-descriptor paths.
+- `src/tests/runner_tests/runner_core_tests/init_migrate_tests/init_tests.rs` —
+  17 integration tests cover both starters end-to-end including
+  positional/`--list`/`--dry-run`/`--force`/`--json` modes and
+  multi-file conflict handling.
+- `src/tests/json_contract_tests/builtin_contract_tests.rs` asserts the
+  reshaped `effigy.init.v1` contract.
+
+`g01.029` Wave 5 records this lane as resolving the
+`effigy init --northstar`-shaped candidate; a Northstar-specific starter
+lands separately as content once that roadmap resumes.
+
 ## Next Task
 
-Keep `g02.007` as the active release-prep lane and `g02.019` as the next
-post-release audit lane.
-
-When this roadmap is picked up, execute workstream 1: promote the baseline
-scaffold into `crates/effigy-catalog/starters/minimal/`, define the
-`starter.toml` descriptor shape, and refactor `init/scaffold.rs` to load via
-`rust-embed` while preserving current `effigy init` output byte-for-byte.
+Lane closed. `g02.007` remains the active release-prep lane and
+`g02.019` the next post-release audit lane.

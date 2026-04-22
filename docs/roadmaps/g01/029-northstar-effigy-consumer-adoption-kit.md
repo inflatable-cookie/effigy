@@ -394,10 +394,16 @@ Decide which adoption-kit parts should become first-class Effigy features.
 
 Candidate product surfaces:
 
-- `effigy init --northstar` or equivalent scaffold path — resolved by
-  `g02.021`, which folds starter emission into `effigy init <name>` rather
-  than shipping a parallel `effigy starter` command surface; the Northstar
-  starter itself remains a content follow-up slot on top of that surface
+- `effigy init --northstar` or equivalent scaffold path — **shipped** as
+  `effigy init <name>` by `g02.021` (complete). The unified init surface
+  now emits named starters from `crates/effigy-catalog/starters/<name>/`
+  with `--dry-run` / `--force` / `--json` and `--list [--json]`; multi-file
+  starters (e.g. `underlay`) emit nested file trees plus optional
+  post-emission guidance via the `effigy.init.v1` payload's `files[]` and
+  `guidance` fields. A Northstar starter is a content follow-up slot on
+  top of that surface — land it as
+  `crates/effigy-catalog/starters/northstar/` with a `starter.toml`
+  descriptor; no command work is required.
 - reusable consumer `[docs_policy]` starter blocks
 - explicit repo-contract validation command family
 - release/changelog starter generation
