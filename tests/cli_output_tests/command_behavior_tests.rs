@@ -6742,6 +6742,13 @@ fn write_container_fixture(root: &std::path::Path, health_check: Option<&str>, m
 
 fn write_generated_container_volume_fixture(root: &std::path::Path) {
     fs::create_dir_all(root.join("app")).expect("mkdir app dir");
+    // NOTE: the `db` service uses `elasticsearch` (not `mariadb`) because
+    // mariadb/postgres catalogs now bind-mount their data dirs onto the
+    // host under `.effigy/runtime/data/<service>/...` and no longer
+    // register a managed named volume. This fixture needs a service that
+    // still declares `[volumes.data] named = true` so the managed-volume
+    // surface (`container data list/export/import`) has something to
+    // operate on — elasticsearch retains that shape.
     fs::write(
         root.join("effigy.toml"),
         r#"
@@ -6760,7 +6767,7 @@ catalog = "node"
 version = "22"
 
 [containers.web.services.db]
-catalog = "mariadb"
+catalog = "elasticsearch"
 "#,
     )
     .expect("write generated container manifest");
@@ -7591,6 +7598,7 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
 
 #[test]
 fn cli_task_workspace_binding_stops_environment_on_sigint() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("task-workspace-binding");
     write_container_fixture_with_task(&root, None, "./app:/workspace", true);
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
