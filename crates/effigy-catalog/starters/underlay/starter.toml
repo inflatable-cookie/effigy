@@ -1,0 +1,46 @@
+[starter]
+name = "underlay"
+description = "Underlay-style manifest shape: systems.dev workspace container + bundled services + managed dev task."
+
+[[files]]
+target = "effigy.toml"
+
+[[files]]
+target = "effigy.system.toml"
+
+[[files]]
+target = "effigy.bootstrap.toml"
+
+[[files]]
+target = "effigy.tasks.toml"
+
+[[files]]
+target = "scripts/dev/ui-setup.rhai"
+
+[guidance]
+text = """
+Next steps:
+
+1. In `effigy.system.toml`:
+   - set `systems.dev.working_dir` to `/workspace-root/<repo-name>`
+   - adjust `systems.dev.mounts` for any sibling checkouts
+   - rename `containers.stack.project_name`
+   - rename the DNS `domain` values to the project's real domains
+   - set `containers.stack.services.workspace.working_subdir` to the
+     repo's directory name under `workspace_mount`
+   - align `host_ports` with the repo's app dev-server ports
+
+2. In `effigy.tasks.toml`:
+   - replace the `app-api/dev`, `app-admin/dev`, `app-front/dev`
+     entries with the repo's real child apps
+   - update the `ready_message`, tab ordering, and aggregator task
+     lists to match
+
+3. In `effigy.bootstrap.toml`, rewrite the `bootstrap:deps` command to
+   match the repo's dependency-fetch sequence.
+
+4. In `scripts/dev/ui-setup.rhai`, edit the `shell_targets` block so
+   it hydrates the repo's real frontend packages.
+
+Then run `effigy tasks` to see what the starter wired up.
+"""

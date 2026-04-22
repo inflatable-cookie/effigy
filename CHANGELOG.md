@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Reshape the `effigy.init.v1` JSON payload to carry a `files[]` array
+  (with per-file `target` / `path` / `contents` / `existed` / `written`) plus
+  a top-level `guidance` string, replacing the single-file `path`/`content`
+  fields. Adopters consuming `--json` output need to read from `files[0]`
+  for the minimal starter.
 - Move default workspace container config onto `[systems.<name>]` itself,
   replacing the extra `[systems.<name>.workspace_defaults]` layer, and route
   workspace `working_dir`, `user`, `home`, and `mounts` resolution through
@@ -19,6 +24,15 @@ During v0.x, MINOR bumps may include breaking changes.
   remains under `infra/dev` after an explicit eject.
 
 ### Added
+- Register the `underlay` starter with `effigy init`: `effigy init underlay`
+  now emits the five-file Underlay manifest shape (root `effigy.toml`,
+  `effigy.system.toml`, `effigy.bootstrap.toml`, `effigy.tasks.toml`, and
+  `scripts/dev/ui-setup.rhai`) and prints a post-emission edit checklist.
+  Multi-file starters share one pre-scan: any existing target refuses the
+  run without `--force`, every conflict is listed, and nested parent
+  directories (e.g. `scripts/dev/`) are created automatically.
+  `--dry-run` emits each file under a `=== <target> ===` header; `--json`
+  surfaces per-file records plus the starter's guidance string.
 - Extend `effigy init` into a named-starter surface: accept a positional
   `<name>` (defaulting to `minimal`) and a `--list [--json]` mode that reports
   registered starters. The emit payload now includes a `starter` field and a
@@ -40,8 +54,8 @@ During v0.x, MINOR bumps may include breaking changes.
   Underlay shape on top of `systems` / `workspaces` / generated services /
   managed `dev`, with a composition proof test under
   `crates/effigy-manifest/tests/underlay_starter.rs` and an adoption guide at
-  `docs/guides/065-underlay-starter.md`. No starter-init CLI yet; adoption is
-  documented file copy.
+  `docs/guides/065-underlay-starter.md`. Emission is now wired into
+  `effigy init underlay` (see above).
 - Add a bundled `phpmyadmin` service catalog fragment so repos can expose a
   local phpMyAdmin UI for MariaDB/MySQL stacks without carrying a project-local
   override.
@@ -106,6 +120,11 @@ During v0.x, MINOR bumps may include breaking changes.
   config, so repo manifests can derive commands like `mysql` from the actual
   DB service database/password params instead of copying credentials into a
   second static alias string.
+- Add layered Composer-home support for bundled `php-fpm` workspaces: repos
+  can opt PHP services into host Composer-home mounting when available, while
+  the image still carries a fallback internal Composer home plus configurable
+  global packages such as the legacy `decodelabs/effigy` PHP tool for
+  DecodeLabs-era projects.
 - Point generated service Dockerfile paths at the actual generated catalog
   artifact directory under `.effigy/runtime/compose/.effigy-catalog` instead of the stale
   repo-root `.effigy-catalog` compatibility path, so rebuilt workspace images

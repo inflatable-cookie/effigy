@@ -114,12 +114,22 @@ fn builtin_init_json_contract_has_versioned_shape() {
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["written"], true);
     assert_eq!(parsed["dry_run"], false);
-    assert!(parsed["path"]
+    assert_eq!(parsed["overwritten"], false);
+    assert_eq!(parsed["starter"], "minimal");
+    let files = parsed["files"]
+        .as_array()
+        .expect("files array is required in effigy.init.v1 payloads");
+    assert_eq!(files.len(), 1, "minimal starter emits exactly one file");
+    let first = &files[0];
+    assert_eq!(first["target"], "effigy.toml");
+    assert!(first["path"]
         .as_str()
         .is_some_and(|path| path.ends_with("effigy.toml")));
-    assert!(parsed["content"]
+    assert!(first["contents"]
         .as_str()
         .is_some_and(|text| text.contains("[tasks]")));
+    assert_eq!(first["written"], true);
+    assert_eq!(first["existed"], false);
 }
 
 #[test]
