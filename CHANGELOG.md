@@ -19,6 +19,13 @@ During v0.x, MINOR bumps may include breaking changes.
   remains under `infra/dev` after an explicit eject.
 
 ### Added
+- Extend `effigy init` into a named-starter surface: accept a positional
+  `<name>` (defaulting to `minimal`) and a `--list [--json]` mode that reports
+  registered starters. The emit payload now includes a `starter` field and a
+  new list contract ships as `effigy.init.list.v1`. The `minimal` starter is
+  now sourced from the embedded catalog under
+  `crates/effigy-catalog/starters/minimal/` via a `starter.toml` descriptor
+  rather than a hardcoded inline scaffold.
 - Add a bundled `workspace-rust-bun` service catalog fragment: a long-running
   Rust + Bun dev workspace container (Rust toolchain, Bun, non-root `dev` user
   aligned with host UID/GID, persistent cargo caches, `sleep infinity` shell
@@ -87,6 +94,18 @@ During v0.x, MINOR bumps may include breaking changes.
   forwarding the correct `X-Forwarded-Proto` value from the HTTP vs HTTPS
   listener and translating forwarded HTTPS into FastCGI `HTTPS`,
   `REQUEST_SCHEME`, and `SERVER_PORT` values in the bundled nginx configs.
+- Change bundled MariaDB and Postgres storage from hidden Docker named volumes
+  to repo-local bind mounts under `.effigy/runtime/data/<service>/...`, so DB
+  state stays visible and project-scoped by default instead of living in
+  runtime-owned volume state.
+- Let the bundled `phpmyadmin` service inherit a sibling MariaDB/MySQL root
+  password by default, with an explicit override still available when needed,
+  so local DB admin UI access stays aligned with the actual database service
+  config instead of duplicating passwords in two service blocks.
+- Let container exec alias commands render against declared sibling service
+  config, so repo manifests can derive commands like `mysql` from the actual
+  DB service database/password params instead of copying credentials into a
+  second static alias string.
 - Point generated service Dockerfile paths at the actual generated catalog
   artifact directory under `.effigy/runtime/compose/.effigy-catalog` instead of the stale
   repo-root `.effigy-catalog` compatibility path, so rebuilt workspace images

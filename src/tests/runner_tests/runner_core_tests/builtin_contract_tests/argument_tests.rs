@@ -58,7 +58,7 @@ fn run_manifest_task_builtin_argument_contract_matrix_is_stable() {
             "builtin-arg-contract-init-unknown",
             "init",
             &["--wat"],
-            &["unknown argument(s) for built-in `init`: --wat"],
+            &["`init` received unknown flag(s): --wat"],
         ),
         builtin_contract_error_case(
             "builtin-arg-contract-migrate-missing-from",

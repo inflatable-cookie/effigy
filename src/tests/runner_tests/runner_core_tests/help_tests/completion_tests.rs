@@ -10,7 +10,11 @@ fn run_manifest_task_builtin_help_topics_render_expected_content() {
             "builtin-init-help",
             "init",
             &["--help"],
-            &["init Help", "effigy init [--dry-run] [--force] [--json]"],
+            &[
+                "init Help",
+                "effigy init [<name>] [--dry-run] [--force] [--json]",
+                "effigy init --list [--json]",
+            ],
         ),
         builtin_help_case(
             "builtin-migrate-help-json",
