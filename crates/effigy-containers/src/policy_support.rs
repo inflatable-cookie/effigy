@@ -287,12 +287,20 @@ fn resolve_shared_service_bindings(
             )?,
             &mut assembly,
         )?;
-        if effective_ports.len() != 1 {
+        if effective_ports.is_empty() {
             return Err(ContainerPolicyError::TaskInvocation(format!(
-                "shared service `{service_name}` must expose exactly one published port on the bounded shared-service path"
+                "shared service `{service_name}` must expose at least one published port on the bounded shared-service path"
             )));
         }
-        let binding = parse_port_binding(&effective_ports[0])?;
+        let parsed_bindings = effective_ports
+            .iter()
+            .map(|raw| parse_port_binding(raw))
+            .collect::<Result<Vec<_>, _>>()?;
+        let binding = parsed_bindings
+            .iter()
+            .copied()
+            .find(|binding| binding.host != binding.container)
+            .unwrap_or(parsed_bindings[0]);
         let output = ComposeOutput::new(output_dir);
         let write = output.write(&assembly, &shared_project_name)?;
         bindings.push(SharedServiceBinding {
