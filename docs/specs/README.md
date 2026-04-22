@@ -32,6 +32,7 @@ Historical command-reference rule:
 Staged next-lane specs:
 
 - [`020-multi-project-gateway-expansion-and-service-dns-strict-lane.md`](./020-multi-project-gateway-expansion-and-service-dns-strict-lane.md)
+- [`021-unified-init-and-starter-emission-strict-lane.md`](./021-unified-init-and-starter-emission-strict-lane.md)
 
 Paused but still useful:
 
