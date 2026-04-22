@@ -8,8 +8,9 @@ pub(crate) fn render_init_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<
     render_info_notices(
         renderer,
         &[
-            "Generate an `effigy.toml` scaffold from a named starter.",
+            "Emit a named starter's file set into the current repo.",
             "Defaults to the `minimal` starter when no name is supplied.",
+            "Multi-file starters (e.g. `underlay`) write every declared target; nested parent directories are created automatically.",
         ],
     )?;
     render_usage_section(
@@ -45,8 +46,10 @@ pub(crate) fn render_init_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<
         "init scope",
         &[
             "default `minimal` starter emits a baseline `effigy.toml` with commented examples",
+            "`underlay` starter emits the Underlay system/workspace/managed-dev shape across five files",
             "`--list` reports available starters in human and JSON shapes",
-            "safe file existence handling (`--dry-run`/`--force`)",
+            "safe file existence handling (`--dry-run`/`--force`) checks every target before writing",
+            "starters can ship post-emission guidance, printed after `Created ...` lines",
         ],
     )?;
     Ok(())

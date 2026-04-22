@@ -9,12 +9,15 @@ Use this when a repo wants the Underlay local-dev shape without copying
 `docker-compose.yml`, `workspace.Dockerfile`, and large system/container
 overrides from an existing Underlay repo.
 
-## What the starter is
+## Emit the starter
 
-A set of reference manifest fragments shipped with Effigy at
-`crates/effigy-catalog/starters/underlay/`:
+```
+effigy init underlay
+```
 
-| File                        | What it carries                                                                              |
+Emits five files into the current repo:
+
+| File                        | Purpose                                                                                      |
 |-----------------------------|----------------------------------------------------------------------------------------------|
 | `effigy.toml`               | Root manifest. `[catalog]` alias, `[package_manager]`, `[manifest].include` for the shape.   |
 | `effigy.system.toml`        | `systems.dev` + `containers.stack` + bundled service declarations + gateway DNS routes.      |
@@ -22,12 +25,60 @@ A set of reference manifest fragments shipped with Effigy at
 | `effigy.tasks.toml`         | Managed `tasks.dev` concurrent shape + `health` / `validate` / `qa` aggregators.             |
 | `scripts/dev/ui-setup.rhai` | Starter-seeded frontend hydration helper, consumer-owned thereafter.                         |
 
-The starter builds on the stable Effigy model only:
+Nested parent directories (e.g. `scripts/dev/`) are created as needed.
+
+Supported flags mirror the rest of `effigy init`:
+
+- `--dry-run` — print each file's content under a `=== <target> ===`
+  header without touching disk.
+- `--force` — overwrite existing targets. Without `--force`, `init`
+  refuses to clobber any target that already exists and lists every
+  conflicting path.
+- `--json` — emit the `effigy.init.v1` contract (see
+  [guide 017](./017-json-output-contracts.md)) with a per-file
+  `files[]` array and a top-level `guidance` string.
+
+After emission the text output prints the post-emission guidance block
+embedded in the starter descriptor (edit checklist below).
+
+## Post-emission edit checklist
+
+The `effigy init underlay` output already prints this list; keeping a
+copy here so users can refer back without re-emitting.
+
+1. In `effigy.system.toml`:
+   - set `systems.dev.working_dir` to `/workspace-root/<repo-name>`
+   - adjust `systems.dev.mounts` for any sibling checkouts
+   - rename `containers.stack.project_name`
+   - rename the DNS `domain` values to the project's real domains
+   - set `containers.stack.services.workspace.working_subdir` to the
+     repo's directory name under `workspace_mount`
+   - align `host_ports` with the repo's app dev-server ports
+
+2. In `effigy.tasks.toml`:
+   - replace the `app-api/dev`, `app-admin/dev`, `app-front/dev`
+     entries with the repo's real child apps
+   - update the `ready_message`, tab ordering, and aggregator task
+     lists to match
+
+3. In `effigy.bootstrap.toml`, rewrite the `bootstrap:deps` command to
+   match the repo's dependency-fetch sequence.
+
+4. In `scripts/dev/ui-setup.rhai`, edit the `shell_targets` block so
+   it hydrates the repo's real frontend packages.
+
+After the edit pass, the consumer repo carries **no** `docker-compose.yml`
+and **no** workspace Dockerfile — the compose output is generated from
+bundled catalog fragments each run.
+
+## What the starter is built on
+
+The starter uses only the stable Effigy model:
 
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
   for `systems` / `workspaces` / managed `dev`.
-- [`063-container-system-guide.md`](./063-container-system-guide.md) for the
-  generated service catalog and `[containers.<name>.services.*]`.
+- [`063-container-system-guide.md`](./063-container-system-guide.md) for
+  the generated service catalog and `[containers.<name>.services.*]`.
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
   for `[manifest].include` composition.
 
@@ -67,63 +118,6 @@ System-layer overrides still apply on top:
 - `systems.<name>.mounts` are injected into the workspace service's
   compose `volumes` at runtime.
 
-## Adoption
-
-There is no `effigy starter init` CLI yet — see
-[Known gap](#known-gap-no-cli-emission) below. For now, adoption is
-manual file copy with a small edit pass:
-
-1. Copy the starter directory into the consumer repo, preserving paths:
-
-   ```
-   effigy.toml
-   effigy.system.toml
-   effigy.bootstrap.toml
-   effigy.tasks.toml
-   scripts/dev/ui-setup.rhai
-   ```
-
-2. In `effigy.system.toml`:
-   - set `systems.dev.working_dir` to `/workspace-root/<repo-name>`
-   - adjust `systems.dev.mounts` for any sibling checkouts
-   - rename `containers.stack.project_name`
-   - rename the DNS `domain` values to the project's real domains
-   - set `containers.stack.services.workspace.working_subdir` to the
-     repo's directory name under `workspace_mount`
-   - align `host_ports` with the repo's app dev-server ports
-
-3. In `effigy.tasks.toml`:
-   - replace the `app-api/dev`, `app-admin/dev`, `app-front/dev`
-     entries with the repo's real child apps
-   - update the `ready_message`, tab ordering, and aggregator task
-     lists to match
-
-4. In `effigy.bootstrap.toml`, rewrite the `bootstrap:deps` command to
-   match the repo's dependency-fetch sequence.
-
-5. In `scripts/dev/ui-setup.rhai`, edit the `shell_targets` block so
-   it hydrates the repo's real frontend packages.
-
-After adoption, the consumer repo carries **no** `docker-compose.yml`
-and **no** workspace Dockerfile — the compose output is generated from
-bundled catalog fragments each run.
-
-## Known gap: no CLI emission
-
-Effigy currently has no `effigy starter init <name>` subcommand. The
-starter ships as authored source files + this guide + the proof test
-under `crates/effigy-manifest/tests/underlay_starter.rs`. A follow-up
-lane should add:
-
-1. a small `starter` command layer in `crates/effigy-cli` that embeds
-   the `starters/<name>/` directory tree (via `rust-embed` the same way
-   the catalog does) and emits it into a target directory, with a plan
-   / confirm / emit flow consistent with `effigy release prepare`.
-2. post-emission guidance: what to edit, with the same checklist as
-   "Adoption" above.
-
-Until that lane lands, adoption is a documented copy.
-
 ## What stays consumer-owned
 
 - Per-app `effigy.toml` in each child app (cargo/bun build commands,
@@ -142,6 +136,8 @@ The integration suite covers both the fragment and the starter:
   - `workspace_rust_bun_assembles_with_defaults`
   - `workspace_rust_bun_publishes_host_ports_when_requested`
   - `underlay_style_stack_assembles_with_bundled_fragments_only`
+- `crates/effigy-catalog/src/starter.rs`
+  - `underlay_starter_resolves_with_all_declared_files_and_guidance`
 - `crates/effigy-manifest/tests/underlay_starter.rs`
   - verifies the starter composes into a single manifest via
     `[manifest].include`
@@ -151,3 +147,9 @@ The integration suite covers both the fragment and the starter:
   - verifies `tasks.dev` wires both `role = "lifecycle"` and
     `role = "shell" service = "workspace"` runtime-contract entries
   - verifies the `bootstrap:deps` / aggregator tasks are present
+- `src/tests/runner_tests/runner_core_tests/init_migrate_tests/init_tests.rs`
+  - `run_manifest_task_builtin_init_underlay_emits_all_declared_files_and_guidance`
+  - `run_manifest_task_builtin_init_underlay_refuses_overwrite_without_force`
+  - `run_manifest_task_builtin_init_underlay_force_overwrites_all_targets`
+  - `run_manifest_task_builtin_init_underlay_dry_run_prints_fenced_sections_without_writing`
+  - `run_manifest_task_builtin_init_underlay_json_reports_files_array_and_guidance`

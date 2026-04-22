@@ -248,21 +248,23 @@ mod tests {
     }
 
     #[test]
-    fn list_reports_minimal_and_skips_directories_without_descriptor() {
+    fn list_reports_registered_starters_sorted_by_name() {
         let resolver = StarterResolver::new();
         let listing = resolver.list();
 
+        let names: Vec<&str> = listing.iter().map(|info| info.name.as_str()).collect();
         assert!(
-            listing.iter().any(|info| info.name == "minimal"),
+            names.contains(&"minimal"),
             "minimal should be listed; got {listing:?}"
         );
-        // Reference-only starter trees (no starter.toml yet) must not leak
-        // into the listing. `underlay` currently sits as a reference tree
-        // and will be registered in a later batch.
         assert!(
-            listing.iter().all(|info| info.name != "underlay"),
-            "underlay should stay unlisted until it ships a starter.toml; got {listing:?}"
+            names.contains(&"underlay"),
+            "underlay should be listed; got {listing:?}"
         );
+        // Listing is sorted so `--list` output is stable.
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "listing is expected to be sorted by name");
     }
 
     #[test]
@@ -275,16 +277,27 @@ mod tests {
     }
 
     #[test]
-    fn resolve_reference_only_starter_returns_missing_descriptor() {
-        // `underlay` currently has files but no starter.toml; until batch 3
-        // registers it, resolving should surface MissingDescriptor so the
-        // misconfiguration is distinguishable from NotFound.
+    fn underlay_starter_resolves_with_all_declared_files_and_guidance() {
         let resolver = StarterResolver::new();
-        match resolver.resolve("underlay") {
-            Err(StarterError::MissingDescriptor { name }) => assert_eq!(name, "underlay"),
-            // If a later batch registers underlay this test should fail loudly
-            // so the reference-only contract gets revisited on purpose.
-            other => panic!("expected MissingDescriptor for unregistered underlay, got {other:?}"),
+        let starter = resolver
+            .resolve("underlay")
+            .expect("underlay starter should resolve");
+
+        assert_eq!(starter.name, "underlay");
+        let targets: Vec<&str> = starter.files.iter().map(|f| f.target.as_str()).collect();
+        for expected in [
+            "effigy.toml",
+            "effigy.system.toml",
+            "effigy.bootstrap.toml",
+            "effigy.tasks.toml",
+            "scripts/dev/ui-setup.rhai",
+        ] {
+            assert!(
+                targets.contains(&expected),
+                "expected underlay to declare {expected}; got {targets:?}"
+            );
         }
+        let guidance = starter.guidance.expect("underlay ships guidance text");
+        assert!(guidance.contains("systems.dev.working_dir"));
     }
 }

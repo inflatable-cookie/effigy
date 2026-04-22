@@ -73,7 +73,11 @@ fn run_manifest_task_builtin_init_json_reports_write_status() {
             "\"starter\": \"minimal\"",
             "\"written\": true",
             "\"dry_run\": false",
-            "\"content\":",
+            "\"overwritten\": false",
+            "\"files\":",
+            "\"target\": \"effigy.toml\"",
+            "\"contents\":",
+            "\"existed\": false",
         ],
     );
     assert_path_exists(&root.join("effigy.toml"), "init json manifest");
@@ -172,4 +176,121 @@ fn run_manifest_task_builtin_init_list_rejects_force_or_dry_run() {
         err,
         &["--list", "cannot be combined with `--force` or `--dry-run`"],
     );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_underlay_emits_all_declared_files_and_guidance() {
+    let root = temp_workspace("builtin-init-underlay-emit");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["underlay"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "Created effigy.toml",
+            "Created effigy.system.toml",
+            "Created effigy.bootstrap.toml",
+            "Created effigy.tasks.toml",
+            "Created scripts/dev/ui-setup.rhai",
+            "Next steps:",
+            "systems.dev.working_dir",
+        ],
+    );
+    assert_path_exists(&root.join("effigy.toml"), "underlay root manifest");
+    assert_path_exists(&root.join("effigy.system.toml"), "underlay system manifest");
+    assert_path_exists(
+        &root.join("effigy.bootstrap.toml"),
+        "underlay bootstrap manifest",
+    );
+    assert_path_exists(&root.join("effigy.tasks.toml"), "underlay tasks manifest");
+    assert_path_exists(
+        &root.join("scripts/dev/ui-setup.rhai"),
+        "underlay ui-setup rhai helper (nested dirs must be created)",
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_underlay_refuses_overwrite_without_force() {
+    let root = temp_workspace("builtin-init-underlay-refuse-overwrite");
+    // Pre-populate one of the underlay targets so the pre-scan trips.
+    write_root_manifest(&root, "[tasks]\nold = \"printf old\"\n");
+
+    let err = run_builtin_err(root.to_path_buf(), "init", &["underlay"]);
+    assert_task_invocation_error_contains(
+        err,
+        &[
+            "already exists",
+            "effigy.toml",
+            "`effigy init --force`",
+            "`effigy init --dry-run`",
+        ],
+    );
+    // Existing file must be untouched and no new underlay files should land.
+    assert_file_text_contains_all(&root.join("effigy.toml"), &["old = \"printf old\""]);
+    assert_path_missing(
+        &root.join("effigy.system.toml"),
+        "underlay refuse-overwrite must not write peer files",
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_underlay_force_overwrites_all_targets() {
+    let root = temp_workspace("builtin-init-underlay-force");
+    write_root_manifest(&root, "[tasks]\nold = \"printf old\"\n");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["underlay", "--force"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "Overwrote effigy.toml",
+            "Created effigy.system.toml",
+            "Created scripts/dev/ui-setup.rhai",
+        ],
+    );
+    assert_file_text_excludes_all(&root.join("effigy.toml"), &["old = \"printf old\""]);
+    assert_path_exists(&root.join("effigy.system.toml"), "underlay system manifest");
+}
+
+#[test]
+fn run_manifest_task_builtin_init_underlay_dry_run_prints_fenced_sections_without_writing() {
+    let root = temp_workspace("builtin-init-underlay-dry-run");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["underlay", "--dry-run"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "=== effigy.toml ===",
+            "=== effigy.system.toml ===",
+            "=== scripts/dev/ui-setup.rhai ===",
+        ],
+    );
+    assert_path_missing(
+        &root.join("effigy.toml"),
+        "underlay dry-run must not write the root manifest",
+    );
+    assert_path_missing(
+        &root.join("scripts/dev/ui-setup.rhai"),
+        "underlay dry-run must not write nested rhai helper",
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_underlay_json_reports_files_array_and_guidance() {
+    let root = temp_workspace("builtin-init-underlay-json");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["underlay", "--json"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "\"schema\": \"effigy.init.v1\"",
+            "\"starter\": \"underlay\"",
+            "\"written\": true",
+            "\"overwritten\": false",
+            "\"files\":",
+            "\"target\": \"effigy.toml\"",
+            "\"target\": \"scripts/dev/ui-setup.rhai\"",
+            "\"guidance\":",
+            "systems.dev.working_dir",
+        ],
+    );
+    assert_path_exists(&root.join("effigy.toml"), "underlay json root manifest");
 }

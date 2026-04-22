@@ -1,37 +1,65 @@
-use std::path::Path;
+use std::path::PathBuf;
 
-use effigy_catalog::StarterInfo;
+use effigy_catalog::{Starter, StarterInfo};
 use serde_json::json;
 
 use super::super::response::render_optional_text_with_schema_fields_lazy;
 use crate::BuiltinError;
-use effigy_manifest::TASK_MANIFEST_FILE;
 
+/// Aggregate outcome of one `effigy init` emission.
 pub(super) struct InitOutcome {
-    pub(super) manifest_exists: bool,
+    /// True when any file was written (i.e. not a dry-run).
+    pub(super) written: bool,
+    /// True when the caller asked for a dry-run (no writes).
+    pub(super) dry_run: bool,
+}
+
+/// Per-file emission record passed from `init.rs` into the renderer.
+pub(super) struct EmittedFile {
+    /// Path relative to the target repo root (from the starter descriptor).
+    pub(super) target: String,
+    /// Absolute path on disk the file was (or would have been) written to.
+    pub(super) path: PathBuf,
+    /// File contents — always populated so dry-run can echo them and the
+    /// JSON contract can carry per-file bodies.
+    pub(super) contents: String,
+    /// True when the target path already existed before emission.
+    pub(super) existed: bool,
+    /// True when we actually wrote the file in this run.
     pub(super) written: bool,
 }
 
 pub(super) fn render_init_response(
     output_json: bool,
-    starter_name: &str,
-    manifest_path: &Path,
-    scaffold: String,
+    starter: &Starter,
+    files: Vec<EmittedFile>,
     outcome: InitOutcome,
 ) -> Result<Option<String>, BuiltinError> {
-    let payload_path = manifest_path.display().to_string();
     render_optional_text_with_schema_fields_lazy(
         output_json,
         "effigy.init.v1",
-        || render_init_text(manifest_path, &scaffold, &outcome),
+        || render_init_text(starter, &files, &outcome),
         |_| {
+            let overwritten = files.iter().any(|f| f.existed && f.written);
+            let entries: Vec<serde_json::Value> = files
+                .iter()
+                .map(|f| {
+                    json!({
+                        "target": f.target,
+                        "path": f.path.display().to_string(),
+                        "contents": f.contents,
+                        "existed": f.existed,
+                        "written": f.written,
+                    })
+                })
+                .collect();
             json!({
-                "starter": starter_name,
-                "path": payload_path,
-                "dry_run": !outcome.written,
+                "starter": starter.name,
+                "dry_run": outcome.dry_run,
                 "written": outcome.written,
-                "overwritten": outcome.manifest_exists && outcome.written,
-                "content": scaffold,
+                "overwritten": overwritten,
+                "files": entries,
+                "guidance": starter.guidance,
             })
         },
     )
@@ -61,22 +89,49 @@ pub(super) fn render_init_list_response(
     )
 }
 
-fn render_init_text(manifest_path: &Path, scaffold: &str, outcome: &InitOutcome) -> String {
-    if !outcome.written {
-        return scaffold.to_owned();
+fn render_init_text(starter: &Starter, files: &[EmittedFile], outcome: &InitOutcome) -> String {
+    if outcome.dry_run {
+        return render_dry_run_text(files);
     }
-    if outcome.manifest_exists {
-        return format!(
-            "Overwrote {} at {}.\nRun `effigy tasks` to inspect available tasks.",
-            TASK_MANIFEST_FILE,
-            manifest_path.display()
-        );
+
+    let mut out = String::new();
+    for file in files {
+        let verb = if file.existed { "Overwrote" } else { "Created" };
+        out.push_str(&format!(
+            "{} {} at {}.\n",
+            verb,
+            file.target,
+            file.path.display()
+        ));
     }
-    format!(
-        "Created {} at {}.\nRun `effigy tasks` to inspect available tasks.",
-        TASK_MANIFEST_FILE,
-        manifest_path.display()
-    )
+    out.push_str("Run `effigy tasks` to inspect available tasks.\n");
+    if let Some(text) = starter.guidance.as_deref() {
+        out.push('\n');
+        out.push_str(text.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
+fn render_dry_run_text(files: &[EmittedFile]) -> String {
+    // Single-file dry-runs echo the raw scaffold so existing callers that
+    // scrape the content continue to work; multi-file dry-runs fence each
+    // file with a header so the output is parseable.
+    if files.len() == 1 {
+        return files[0].contents.clone();
+    }
+    let mut out = String::new();
+    for (i, file) in files.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format!("=== {} ===\n", file.target));
+        out.push_str(&file.contents);
+        if !file.contents.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    out
 }
 
 fn render_init_list_text(starters: &[StarterInfo]) -> String {
