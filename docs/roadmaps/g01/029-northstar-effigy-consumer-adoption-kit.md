@@ -394,7 +394,10 @@ Decide which adoption-kit parts should become first-class Effigy features.
 
 Candidate product surfaces:
 
-- `effigy init --northstar` or equivalent scaffold path
+- `effigy init --northstar` or equivalent scaffold path — resolved by
+  `g02.021`, which folds starter emission into `effigy init <name>` rather
+  than shipping a parallel `effigy starter` command surface; the Northstar
+  starter itself remains a content follow-up slot on top of that surface
 - reusable consumer `[docs_policy]` starter blocks
 - explicit repo-contract validation command family
 - release/changelog starter generation
