@@ -173,10 +173,10 @@ fn parse_bundle_list<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
-    let mut args = args.into_iter();
+    let args = args.into_iter();
     let mut output_json = false;
 
-    while let Some(arg) = args.next() {
+    for arg in args {
         match arg.as_str() {
             "--json" => output_json = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),
@@ -203,7 +203,7 @@ where
 
     let mut output_json = false;
 
-    while let Some(arg) = args.next() {
+    for arg in args {
         match arg.as_str() {
             "--json" => output_json = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),

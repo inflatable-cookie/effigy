@@ -21,8 +21,11 @@ use effigy_ui::OutputMode;
 use super::gateway_registration::{
     deregister_gateway_routes_for_container, register_gateway_routes_for_container,
 };
-use super::session::{render_attached_session_closeout, run_attached_container_session};
-use super::signals::{install_stop_requested_flag, run_docker_capture, spawn_docker_inherit};
+use super::session::run_attached_container_session;
+use super::signals::{
+    install_stop_requested_flag, run_compose_inherit_with_stop_flag, run_docker_capture,
+    spawn_docker_inherit, ComposeRunOutcome,
+};
 use super::support::{
     annotate_left_running_shared_services, annotate_registered_gateway_routes,
     annotate_removed_gateway_routes, annotate_shared_service_notes, annotate_warning_lines,
@@ -50,43 +53,44 @@ pub(super) fn run_container_up(
         ));
     }
 
-    let startup_stop_requested = install_stop_requested_flag()?;
+    let stop_flag = install_stop_requested_flag()?;
     let policy = load_container_policy(repo_root, name)?;
     validate_container_policy(repo_root, &policy)?;
     let warnings = colima_profile_warnings(&policy, repo_root);
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
-    let stop_requested = if attach_mode == EffectiveAttachMode::Attached {
-        Some(startup_stop_requested)
-    } else {
-        None
-    };
     let colima_started = ensure_colima_running(&policy, repo_root)?;
-    if stop_requested
-        .as_ref()
-        .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
-    {
-        return render_attached_session_closeout(repo_root, &policy, colima_started, "signal");
+    if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+        return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
     }
     let shared_service_notes = ensure_shared_services_running(&policy)?;
-    run_docker_capture(
+    match run_compose_inherit_with_stop_flag(
         repo_root,
         &policy,
         &compose_up_args(&policy),
         "docker compose up",
-    )?;
-    if stop_requested
-        .as_ref()
-        .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
-    {
-        return render_attached_session_closeout(repo_root, &policy, colima_started, "signal");
+        &stop_flag,
+    )? {
+        ComposeRunOutcome::Succeeded => {}
+        ComposeRunOutcome::Interrupted => {
+            return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
+        }
+        ComposeRunOutcome::Failed(status) => {
+            let cleanup_result = cleanup_failed_container_up(repo_root, &policy);
+            return Err(finish_container_up_failure(
+                RunnerError::task_invocation(format!(
+                    "docker compose up exited with status {status}"
+                )),
+                cleanup_result,
+            ));
+        }
     }
-    let health = wait_for_container_ready(&policy, stop_requested.as_deref())?;
-    if stop_requested
-        .as_ref()
-        .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
-    {
-        return render_attached_session_closeout(repo_root, &policy, colima_started, "signal");
+    if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+        return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
+    }
+    let health = wait_for_container_ready(&policy, Some(&stop_flag))?;
+    if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+        return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
     }
     let gateway_routes = match register_gateway_routes_for_container(repo_root, &policy) {
         Ok(routes) => routes,
@@ -140,6 +144,53 @@ fn finish_container_up_failure(
             "{startup_error}\ncontainer up cleanup also failed: {cleanup_error}"
         )),
     }
+}
+
+/// Render a clean closeout when the user interrupts `effigy container up`
+/// (via Ctrl+C / SIGTERM). We always stop the containers and deregister
+/// gateway routes regardless of `on_task_exit`, because the user
+/// explicitly asked to abort the bring-up.
+fn render_interrupted_up_closeout(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    colima_started: bool,
+    attach_mode: EffectiveAttachMode,
+) -> Result<String, RunnerError> {
+    let cleanup_result = cleanup_failed_container_up(repo_root, policy);
+    Ok(render_interrupted_up_closeout_text(
+        policy,
+        colima_started,
+        attach_mode,
+        cleanup_result.as_ref().err().map(ToString::to_string),
+    ))
+}
+
+fn render_interrupted_up_closeout_text(
+    policy: &EffectiveContainerPolicy,
+    colima_started: bool,
+    attach_mode: EffectiveAttachMode,
+    cleanup_error: Option<String>,
+) -> String {
+    let mode_label = match attach_mode {
+        EffectiveAttachMode::Attached => "attached",
+        EffectiveAttachMode::Detached => "detached",
+    };
+    let mut lines = Vec::new();
+    if colima_started {
+        lines.push(format!("[ok] started Colima profile `{}`", policy.profile));
+    }
+    lines.push(format!(
+        "[ok] container `{}` {mode_label} bring-up interrupted by Ctrl+C; stopped cleanly",
+        policy.name
+    ));
+    if let Some(error) = cleanup_error {
+        lines.push(format!("[warn] cleanup after interrupt: {error}"));
+    }
+    lines.push(format!(
+        "[next] rerun `effigy container {} up` when ready",
+        policy.name
+    ));
+    lines.join("\n")
 }
 
 pub(super) fn run_container_down(
@@ -722,8 +773,9 @@ mod tests {
     use super::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
         build_container_shell_args, build_interactive_container_shell_args,
-        finish_container_up_failure, render_interactive_shell_session_command, run_container_eject,
-        run_container_reset, select_generated_service_image_refs, should_fail_container_shell_exit,
+        finish_container_up_failure, render_interactive_shell_session_command,
+        render_interrupted_up_closeout_text, run_container_eject, run_container_reset,
+        select_generated_service_image_refs, should_fail_container_shell_exit, EffectiveAttachMode,
     };
     use crate::runner::RunnerError;
     use effigy_containers::{
@@ -1028,6 +1080,35 @@ services:
                 ]
             })
         );
+    }
+
+    #[test]
+    fn interrupted_up_closeout_mentions_mode_and_clean_stop() {
+        let policy = test_policy(vec![]);
+        let rendered =
+            render_interrupted_up_closeout_text(&policy, true, EffectiveAttachMode::Detached, None);
+        assert!(rendered.contains("[ok] started Colima profile `effigy`"));
+        assert!(rendered.contains(
+            "[ok] container `web` detached bring-up interrupted by Ctrl+C; stopped cleanly"
+        ));
+        assert!(rendered.contains("[next] rerun `effigy container web up` when ready"));
+        assert!(!rendered.contains("[warn]"));
+    }
+
+    #[test]
+    fn interrupted_up_closeout_surfaces_cleanup_failures_as_warning() {
+        let policy = test_policy(vec![]);
+        let rendered = render_interrupted_up_closeout_text(
+            &policy,
+            false,
+            EffectiveAttachMode::Attached,
+            Some("docker compose down failed".to_owned()),
+        );
+        assert!(!rendered.contains("[ok] started Colima profile"));
+        assert!(rendered.contains(
+            "[ok] container `web` attached bring-up interrupted by Ctrl+C; stopped cleanly"
+        ));
+        assert!(rendered.contains("[warn] cleanup after interrupt: docker compose down failed"));
     }
 
     #[test]
