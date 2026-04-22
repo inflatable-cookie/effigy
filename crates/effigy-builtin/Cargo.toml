@@ -6,6 +6,7 @@ license = "MIT"
 description = "Built-in command layer for Effigy (registry, dispatch, ports, all built-in arms)"
 
 [dependencies]
+effigy-catalog = { path = "../effigy-catalog" }
 effigy-cli = { path = "../effigy-cli" }
 effigy-core = { path = "../effigy-core" }
 effigy-env = { path = "../effigy-env" }

@@ -80,7 +80,7 @@ default = "dev"
 default_workspace = "app"
 
 [systems.dev.workspaces.app]
-workdir = "/workspace"
+working_dir = "/workspace"
 container = "web"
 
 [containers]
@@ -121,7 +121,7 @@ default = "dev"
 default_workspace = "app"
 
 [systems.dev.workspaces.app]
-workdir = "/workspace"
+working_dir = "/workspace"
 container = "web"
 
 [containers]
@@ -161,7 +161,7 @@ default = "dev"
 default_workspace = "app"
 
 [systems.dev.workspaces.app]
-workdir = "."
+working_dir = "."
 container = { image = "alpine:latest", mount = "./:/workspace" }
 "#,
     );
@@ -188,7 +188,7 @@ default = "dev"
 default_workspace = "app"
 
 [systems.dev.workspaces.app]
-workdir = "/workspace"
+working_dir = "/workspace"
 container = "web"
 
 [containers]
@@ -232,7 +232,7 @@ default = "dev"
 default_workspace = "app"
 
 [systems.dev.workspaces.app]
-workdir = "/workspace"
+working_dir = "/workspace"
 container = "web"
 
 [containers]
