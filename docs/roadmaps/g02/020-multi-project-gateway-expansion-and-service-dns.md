@@ -225,9 +225,10 @@ This roadmap is complete when:
 
 ## Next Task
 
-This roadmap is active. `303`, `306`, `307`, and `308` have landed. Execute
-`309` — one real-project proof and migration onto the shipped service DNS
-alias model — as the next bounded execution card.
+This roadmap is active. `303`, `306`, `307`, and `308` have landed, and `309`
+is active on the first consumer-repo proof. Execute `310` next — loopback-
+bound TCP port publication on the generated-compose path — then resume the
+proof once the runtime matches the DNS-only alias contract.
 
 `g02.007` and `g02.019` are queued behind this lane as of 2026-04-22. See
 `docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`

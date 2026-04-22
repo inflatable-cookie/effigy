@@ -629,6 +629,62 @@ catalog = "phpmyadmin"
 }
 
 #[test]
+fn generated_compose_binds_local_tcp_alias_ports_on_project_loopback_ip() {
+    with_temp_effigy_home("catalog-loopback-tcp-aliases", |_| {
+        let root = temp_repo("catalog-loopback-tcp-aliases");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "workspace"
+
+[containers.stack.services.workspace]
+catalog = "workspace-rust-bun"
+host_ports = ["41001:41001"]
+
+[containers.stack.services.postgres]
+catalog = "postgres"
+database = "acme"
+password = "postgres"
+
+[containers.stack.services.mailpit]
+catalog = "mailpit"
+
+[containers.stack.services.minio]
+catalog = "minio"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, None).expect("policy");
+        let compose =
+            fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
+                .expect("compose");
+
+        assert!(compose.contains("127.1.0.1:5432:5432"), "{compose}");
+        assert!(compose.contains("127.1.0.1:1025:1025"), "{compose}");
+        assert!(compose.contains("127.1.0.1:9000:9000"), "{compose}");
+        assert!(compose.contains(":8025"), "{compose}");
+        assert!(compose.contains(":9001"), "{compose}");
+        assert!(policy
+            .declared_ports
+            .iter()
+            .any(|value| value == "5432:5432"));
+        assert!(policy
+            .declared_ports
+            .iter()
+            .any(|value| value == "1025:1025"));
+        assert!(policy
+            .declared_ports
+            .iter()
+            .any(|value| value == "9000:9000"));
+    });
+}
+
+#[test]
 fn generated_php_workspace_defaults_to_non_root_identity() {
     with_temp_effigy_home("catalog-php-workspace-user", |_| {
         let root = temp_repo("catalog-php-workspace-user");
@@ -834,6 +890,51 @@ shared = true
         assert!(error
             .to_string()
             .contains("unsupported shared catalog `php-fpm`"));
+    });
+}
+
+#[test]
+fn shared_service_compose_keeps_runtime_host_port_and_adds_loopback_binding() {
+    with_temp_effigy_home("catalog-shared-loopback-binding", |home| {
+        let root = temp_repo("catalog-shared-loopback-binding");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.db]
+catalog = "mariadb"
+shared = true
+version = "10.11"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, None).expect("policy");
+        let shared = &policy.shared_services[0];
+        let shared_compose = fs::read_to_string(&shared.compose_file).expect("read shared compose");
+
+        assert!(
+            shared_compose.contains("127.1.0.1:3306:3306"),
+            "{shared_compose}"
+        );
+        assert!(
+            shared_compose.contains(&format!("{}:3306", shared.host_port)),
+            "{shared_compose}"
+        );
+        assert!(home.join("gateway").join("loopback-ips.json").exists());
     });
 }
 

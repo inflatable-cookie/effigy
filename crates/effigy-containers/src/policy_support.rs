@@ -5,6 +5,7 @@ use effigy_catalog::{
     assembly::ServiceDeclaration, volumes::ManagedVolume, CatalogResolver, ComposeAssembler,
     ComposeOutput,
 };
+use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::ports::PortRegistry;
 use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde_yaml::Value as YamlValue;
@@ -146,6 +147,7 @@ pub(crate) fn resolve_compose_source(
         repo_root,
         project_name,
         &configured_bindings,
+        &project_loopback_port_rules(repo_root, project_name, config)?,
         &mut assembly,
     )?;
     let output = ComposeOutput::new(repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR));
@@ -214,14 +216,15 @@ fn build_service_declarations(
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty());
-            if !params.contains_key("working_dir")
-                && fragment.schema.params.contains_key("working_dir")
-                && inferred_working_dir.is_some()
-            {
-                params.insert(
-                    "working_dir".to_owned(),
-                    toml::Value::String(inferred_working_dir.unwrap().to_owned()),
-                );
+            if let Some(working_dir) = inferred_working_dir {
+                if !params.contains_key("working_dir")
+                    && fragment.schema.params.contains_key("working_dir")
+                {
+                    params.insert(
+                        "working_dir".to_owned(),
+                        toml::Value::String(working_dir.to_owned()),
+                    );
+                }
             }
 
             Ok(ServiceDeclaration {
@@ -276,6 +279,12 @@ fn resolve_shared_service_bindings(
             &output_dir,
             &shared_project_name,
             &[],
+            &shared_service_loopback_port_rules(
+                &output_dir,
+                &shared_project_name,
+                service_name,
+                service,
+            )?,
             &mut assembly,
         )?;
         if effective_ports.len() != 1 {
@@ -453,6 +462,7 @@ fn apply_generated_compose_port_policy(
     repo_root: &Path,
     project_name: &str,
     explicit_bindings: &[PortBinding],
+    loopback_rules: &[LoopbackPortRule],
     assembly: &mut effigy_catalog::assembly::AssemblyResult,
 ) -> Result<Vec<String>, ContainerPolicyError> {
     let mut parsed: YamlValue =
@@ -500,12 +510,36 @@ fn apply_generated_compose_port_policy(
             continue;
         };
 
+        let mut rewritten_ports = Vec::new();
         for port in ports.iter_mut() {
             let Some(raw) = port.as_str() else {
+                rewritten_ports.push(port.clone());
                 continue;
             };
             let binding = parse_port_binding(raw)?;
-            let host_port = if explicit_bindings.is_empty() {
+            let loopback_rule = loopback_rules.iter().find(|rule| {
+                rule.service_name == service_name && rule.container_port == binding.container
+            });
+            if let Some(rule) = loopback_rule {
+                rewritten_ports.push(YamlValue::String(format!(
+                    "{}:{}:{}",
+                    rule.loopback_ip, binding.container, binding.container
+                )));
+                effective_ports.push(format!("{}:{}", binding.container, binding.container));
+            }
+            let explicit = explicit_bindings
+                .iter()
+                .find(|candidate| candidate.container == binding.container);
+            let keep_runtime_binding = loopback_rule
+                .is_none_or(|rule| rule.keep_runtime_host_binding)
+                || explicit.is_some();
+            if !keep_runtime_binding {
+                continue;
+            }
+            let host_port = if let Some(explicit) = explicit {
+                used_explicit_ports.insert(explicit.container);
+                explicit.host
+            } else {
                 let registry = registry.as_mut().expect("registry exists");
                 registry
                     .assign_port(
@@ -515,19 +549,14 @@ fn apply_generated_compose_port_policy(
                         binding.container,
                     )
                     .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
-            } else {
-                let Some(explicit) = explicit_bindings
-                    .iter()
-                    .find(|candidate| candidate.container == binding.container)
-                else {
-                    continue;
-                };
-                used_explicit_ports.insert(explicit.container);
-                explicit.host
             };
-            *port = YamlValue::String(format!("{host_port}:{}", binding.container));
+            rewritten_ports.push(YamlValue::String(format!(
+                "{host_port}:{}",
+                binding.container
+            )));
             effective_ports.push(format!("{host_port}:{}", binding.container));
         }
+        *ports = rewritten_ports;
     }
 
     if let Some(registry) = registry.as_ref() {
@@ -560,6 +589,105 @@ fn apply_generated_compose_port_policy(
 struct PortBinding {
     host: u16,
     container: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LoopbackPortRule {
+    loopback_ip: std::net::Ipv4Addr,
+    service_name: String,
+    container_port: u16,
+    keep_runtime_host_binding: bool,
+}
+
+fn project_loopback_port_rules(
+    repo_root: &Path,
+    project_name: &str,
+    config: &ManifestContainerConfig,
+) -> Result<Vec<LoopbackPortRule>, ContainerPolicyError> {
+    let Some(loopback_ip) =
+        load_or_allocate_loopback_ip(project_name, &repo_root.display().to_string())?
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(config
+        .services
+        .iter()
+        .filter(|(_service_name, service)| !service.shared.unwrap_or(false))
+        .filter_map(|(service_name, service)| {
+            service_alias_contract(&service.catalog).and_then(|(_label, container_port)| {
+                let keep_runtime_host_binding = matches!(
+                    service.catalog.as_str(),
+                    "mail" | "mailpit" | "minio" | "s3"
+                );
+                Some(LoopbackPortRule {
+                    loopback_ip,
+                    service_name: service_name.clone(),
+                    container_port,
+                    keep_runtime_host_binding,
+                })
+            })
+        })
+        .collect())
+}
+
+fn shared_service_loopback_port_rules(
+    output_dir: &Path,
+    project_name: &str,
+    service_name: &str,
+    service: &ManifestContainerServiceConfig,
+) -> Result<Vec<LoopbackPortRule>, ContainerPolicyError> {
+    let Some((_label, container_port)) = service_alias_contract(&service.catalog) else {
+        return Ok(Vec::new());
+    };
+    let Some(loopback_ip) = load_or_allocate_loopback_ip(
+        &format!("shared:{project_name}"),
+        &output_dir.display().to_string(),
+    )?
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(vec![LoopbackPortRule {
+        loopback_ip,
+        service_name: service_name.to_owned(),
+        container_port,
+        keep_runtime_host_binding: true,
+    }])
+}
+
+fn load_or_allocate_loopback_ip(
+    identity: &str,
+    source: &str,
+) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
+    let Some(home) = effigy_home_dir() else {
+        return Ok(None);
+    };
+    let path = home.join("gateway").join("loopback-ips.json");
+    let mut registry = LoopbackRegistry::load(&path)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    if let Some(existing) = registry.get(identity) {
+        return Ok(Some(existing.ip));
+    }
+    let assignment = registry
+        .allocate(identity, source)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
+        .ip;
+    registry
+        .save(&path)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    Ok(Some(assignment))
+}
+
+fn service_alias_contract(catalog: &str) -> Option<(&'static str, u16)> {
+    match catalog {
+        "postgres" => Some(("db", 5432)),
+        "mariadb" | "mysql" => Some(("db", 3306)),
+        "redis" => Some(("redis", 6379)),
+        "memcached" => Some(("memcached", 11211)),
+        "elasticsearch" => Some(("search", 9200)),
+        "minio" | "s3" => Some(("s3", 9000)),
+        "mail" | "mailpit" => Some(("smtp", 1025)),
+        _ => None,
+    }
 }
 
 fn parse_port_binding(raw: &str) -> Result<PortBinding, ContainerPolicyError> {

@@ -1,6 +1,6 @@
 # 309 Prove Service DNS Aliases In One Real Project
 
-Status: next
+Status: active
 Updated: 2026-04-22
 Roadmap: `g02.020`
 Spec: `docs/specs/020-multi-project-gateway-expansion-and-service-dns-strict-lane.md`
@@ -43,11 +43,36 @@ runner tests inside Effigy alone.
 
 ## Result
 
-Next. `308` finished the bounded shared-service reuse substrate, so the next
-honest move is a real-project proof instead of more isolated internal
-refinement.
+Active. The first proof repo migration is underway in
+`/Users/tom/Dev/projects/underlay-reference`.
+
+What the proof established so far:
+
+- migrating the repo off its hand-written `compose_file` and onto bundled
+  generated services is feasible on the shipped path
+- HTTP route registration still works honestly on the generated path, with
+  `acme.test`, `admin.acme.test`, `api.acme.test`, `mailpit.acme.test`, and
+  `minio.acme.test` all re-registered against live runtime published ports
+- the current lane code does derive and register DNS-only TCP aliases
+  `db.acme.test`, `smtp.acme.test`, and `s3.acme.test` with `dns_ip:
+  127.1.0.1`
+
+What the proof exposed:
+
+- generated compose still publishes the actual TCP listeners on auto-allocated
+  host ports like `19932:5432`, `19926:1025`, and `19940:9000`
+- after the current gateway is restarted on the in-repo binary, direct DNS
+  queries do resolve those service aliases to `127.1.0.1`
+- host-side connections to `127.1.0.1:5432`, `127.1.0.1:1025`, and
+  `127.1.0.1:9000` are still refused because nothing is bound there yet
+
+That means the remaining gap is no longer route registration or DNS answers.
+It is the missing generated-compose port-publication step that needs to bind
+shipped TCP service ports onto the assigned loopback IP instead of only onto
+auto-allocated localhost ports.
 
 ## Next Task
 
-Execute this card in the first consumer repo on the lane continuation chain:
-`/Users/tom/Dev/projects/underlay-reference`.
+Execute `310` to land the proof-exposed loopback-bound TCP port publication
+work, then resume this card and rerun the `underlay-reference` proof on that
+updated runtime path.
