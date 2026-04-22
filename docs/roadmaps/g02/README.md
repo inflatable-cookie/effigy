@@ -32,6 +32,8 @@ Current milestones:
   but the number is intentionally left vacant for traceability
 - [`019-v0-3-surface-audit-and-ux-simplification.md`](./019-v0-3-surface-audit-and-ux-simplification.md) (planned; the `v0.3` audit follow-up will align front-door docs, release refs, and local-dev UX around the shipped surface without widening product scope)
 - [`020-multi-project-gateway-expansion-and-service-dns.md`](./020-multi-project-gateway-expansion-and-service-dns.md) (planned; the post-`v0.3` multi-project networking follow-up will add per-route DNS targets, project/shared loopback-IP service routing, and HTTP post-start port discovery without replacing the current gateway model)
+- [`021-unified-init-and-starter-emission.md`](./021-unified-init-and-starter-emission.md) (planned; folds starter emission into `effigy init` so scaffolding has one discovery point, promotes the baseline scaffold into an embedded `minimal` starter, and lands `underlay` as the second starter — resolves the `g01.029` Wave 5 `effigy init --northstar`-shaped candidate as `effigy init <name>`)
+
 Container infrastructure design document:
 
 - [`../architecture/020-container-infrastructure-design.md`](../architecture/020-container-infrastructure-design.md)

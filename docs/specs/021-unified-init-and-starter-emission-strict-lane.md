@@ -2,7 +2,7 @@
 
 Status: staged
 Updated: 2026-04-22
-Roadmap: TBD (productization slice promoted from `g01.029` Wave 5)
+Roadmap: `g02.021` (productization slice promoted from `g01.029` Wave 5)
 
 ## Context
 
