@@ -58,6 +58,7 @@ fn resolve_php_fpm_fragment() {
     assert!(fragment.dockerfile.is_some());
     assert!(!fragment.compose_template.is_empty());
     assert!(fragment.schema.capabilities.exec_target);
+    assert!(fragment.param_variants.is_empty());
     assert_eq!(
         fragment.schema.capabilities.shell.as_deref(),
         Some("/bin/bash")
@@ -176,6 +177,13 @@ fn assemble_php_mariadb_redis_stack() {
         "missing extensions:\n{}",
         result.compose_yaml
     );
+    assert!(
+        result
+            .compose_yaml
+            .contains("COMPOSER_HOME: /home/dev/.config/composer"),
+        "missing composer home environment:\n{}",
+        result.compose_yaml
+    );
 
     // PHP service should depend on MariaDB.
     assert!(
@@ -184,20 +192,12 @@ fn assemble_php_mariadb_redis_stack() {
         result.compose_yaml
     );
 
-    // MariaDB should have a volume.
+    // MariaDB should bind data into the repo-local .effigy tree.
     assert!(
-        result.compose_yaml.contains("volumes:"),
-        "missing volumes section:\n{}",
-        result.compose_yaml
-    );
-    assert!(
-        result.compose_yaml.contains("test-project-db-data"),
-        "missing named volume:\n{}",
-        result.compose_yaml
-    );
-    assert!(
-        result.compose_yaml.contains("name: test-project-db-data"),
-        "missing explicit runtime volume name:\n{}",
+        result
+            .compose_yaml
+            .contains("./.effigy/runtime/data/db/mysql:/var/lib/mysql"),
+        "missing repo-local MariaDB bind mount:\n{}",
         result.compose_yaml
     );
 
@@ -205,10 +205,249 @@ fn assemble_php_mariadb_redis_stack() {
     assert!(result.dockerfiles.contains_key("app"));
     assert!(result.dockerfiles["app"].contains("PHP_VERSION"));
 
-    // Should have volume info.
-    assert_eq!(result.volumes.len(), 1);
-    assert_eq!(result.volumes[0].service, "db");
-    assert!(result.volumes[0].persist);
+    // Bind-mounted DB storage should not surface as a managed named volume.
+    assert!(result.volumes.is_empty());
+}
+
+#[test]
+fn php_fpm_supports_container_composer_global_fallbacks() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "app".to_string(),
+        catalog: "php-fpm".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert(
+                "composer_global_packages".to_string(),
+                toml::Value::Array(vec![toml::Value::String("phpunit/phpunit".to_string())]),
+            );
+            p
+        },
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(
+            &services,
+            "test-project",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
+        .unwrap();
+
+    assert!(
+        result
+            .compose_yaml
+            .contains("COMPOSER_GLOBAL_PACKAGES: phpunit/phpunit"),
+        "compose should pass composer fallback packages:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result.dockerfiles["app"].contains("composer global require"),
+        "php-fpm dockerfile should install configured composer globals"
+    );
+    assert!(
+        result.dockerfiles["app"]
+            .contains("composer global config --no-plugins allow-plugins true"),
+        "php-fpm dockerfile should trust composer plugins during fallback global installs"
+    );
+    assert!(
+        !result.compose_yaml.contains("COMPOSER_GLOBAL_PACKAGES")
+            || result.compose_yaml.contains("COMPOSER_GLOBAL_PACKAGES: phpunit/phpunit"),
+        "php-fpm compose should only pass composer global packages when fallback installs are active:\n{}",
+        result.compose_yaml
+    );
+}
+
+#[test]
+fn php_fpm_skips_container_composer_globals_when_host_mount_is_enabled() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "app".to_string(),
+        catalog: "php-fpm".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert(
+                "mount_host_composer_home".to_string(),
+                toml::Value::Boolean(true),
+            );
+            p.insert(
+                "composer_global_packages".to_string(),
+                toml::Value::Array(vec![toml::Value::String("decodelabs/effigy".to_string())]),
+            );
+            p
+        },
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(
+            &services,
+            "test-project",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
+        .unwrap();
+
+    assert!(
+        !result.compose_yaml.contains("COMPOSER_GLOBAL_PACKAGES:"),
+        "php-fpm compose should bypass container fallback globals when host composer home mounting is enabled:\n{}",
+        result.compose_yaml
+    );
+}
+
+#[test]
+fn php_fpm_supports_node_globals_and_pnpm_tooling() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "app".to_string(),
+        catalog: "php-fpm".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert(
+                "node_version".to_string(),
+                toml::Value::String("20".to_string()),
+            );
+            p.insert(
+                "node_global_packages".to_string(),
+                toml::Value::Array(vec![toml::Value::String("eclint".to_string())]),
+            );
+            p
+        },
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(
+            &services,
+            "test-project",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
+        .unwrap();
+
+    assert!(
+        result.compose_yaml.contains("NODE_VERSION: '20'")
+            || result.compose_yaml.contains("NODE_VERSION: \"20\"")
+            || result.compose_yaml.contains("NODE_VERSION: 20"),
+        "php-fpm compose should pass the requested Node.js version:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result.compose_yaml.contains("NODE_GLOBAL_PACKAGES: eclint"),
+        "php-fpm compose should pass requested npm globals:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result.dockerfiles["app"].contains("corepack enable"),
+        "php-fpm Dockerfile should enable corepack so pnpm is available"
+    );
+    assert!(
+        result.dockerfiles["app"].contains("npm install -g $NODE_GLOBAL_PACKAGES"),
+        "php-fpm Dockerfile should install requested npm globals"
+    );
+}
+
+#[test]
+fn php_fpm_supports_explicit_decodelabs_style_service_params() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "app".to_string(),
+        catalog: "php-fpm".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert(
+                "version".to_string(),
+                toml::Value::String("8.4".to_string()),
+            );
+            p.insert(
+                "document_root".to_string(),
+                toml::Value::String(".".to_string()),
+            );
+            p.insert(
+                "node_version".to_string(),
+                toml::Value::String("20".to_string()),
+            );
+            p.insert(
+                "node_global_packages".to_string(),
+                toml::Value::Array(vec![toml::Value::String("eclint".to_string())]),
+            );
+            p.insert(
+                "composer_global_packages".to_string(),
+                toml::Value::Array(vec![toml::Value::String("decodelabs/effigy".to_string())]),
+            );
+            p.insert(
+                "extensions".to_string(),
+                toml::Value::Array(vec![
+                    toml::Value::String("pdo_mysql".to_string()),
+                    toml::Value::String("intl".to_string()),
+                    toml::Value::String("exif".to_string()),
+                    toml::Value::String("zip".to_string()),
+                    toml::Value::String("gd".to_string()),
+                    toml::Value::String("redis".to_string()),
+                    toml::Value::String("memcached".to_string()),
+                    toml::Value::String("opcache".to_string()),
+                ]),
+            );
+            p
+        },
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(
+            &services,
+            "test-project",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
+        .unwrap();
+
+    assert!(
+        result
+            .compose_yaml
+            .contains("COMPOSER_GLOBAL_PACKAGES: decodelabs/effigy"),
+        "php-fpm explicit params should apply Composer globals:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result.compose_yaml.contains("NODE_GLOBAL_PACKAGES: eclint"),
+        "php-fpm explicit params should apply npm globals:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result
+            .compose_yaml
+            .contains("EXTENSIONS: pdo_mysql intl exif zip gd redis memcached opcache"),
+        "php-fpm explicit params should apply extension defaults:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result.compose_yaml.contains("DOCUMENT_ROOT: '.'")
+            || result.compose_yaml.contains("DOCUMENT_ROOT: ."),
+        "php-fpm explicit params should apply the repo-root document root:\n{}",
+        result.compose_yaml
+    );
 }
 
 #[test]
@@ -301,13 +540,15 @@ fn generated_compose_pins_runtime_volume_names() {
         .unwrap();
 
     assert!(
-        result.compose_yaml.contains("farmyard-dev-db-data:"),
-        "missing top-level volume key:\n{}",
+        result
+            .compose_yaml
+            .contains("./.effigy/runtime/data/db/mysql:/var/lib/mysql"),
+        "missing repo-local MariaDB bind mount:\n{}",
         result.compose_yaml
     );
     assert!(
-        result.compose_yaml.contains("name: farmyard-dev-db-data"),
-        "missing explicit runtime volume name:\n{}",
+        !result.compose_yaml.contains("farmyard-dev-db-data"),
+        "unexpected MariaDB named volume output:\n{}",
         result.compose_yaml
     );
 }
@@ -950,11 +1191,14 @@ fn rust_postgres_stack_assembles_correctly() {
         "myapp"
     );
 
-    // Postgres volume should exist (named {project}-{service}-{key}).
-    assert_eq!(result.volumes.len(), 1);
-    assert_eq!(result.volumes[0].name, "rust-svc-db-data");
-    assert_eq!(result.volumes[0].service, "db");
-    assert!(result.volumes[0].persist);
+    assert!(
+        result
+            .compose_yaml
+            .contains("./.effigy/runtime/data/db/postgres:/var/lib/postgresql/data"),
+        "missing repo-local Postgres bind mount:\n{}",
+        result.compose_yaml
+    );
+    assert!(result.volumes.is_empty());
 }
 
 #[test]
@@ -1116,7 +1360,7 @@ fn nginx_config_resolves_document_root() {
 }
 
 #[test]
-fn nginx_decodelabs_config_uses_repo_root_and_genesis_rewrite() {
+fn nginx_supports_genesis_rewrite_params_without_variant() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
 
@@ -1137,9 +1381,21 @@ fn nginx_decodelabs_config_uses_repo_root_and_genesis_rewrite() {
                     "document_root".to_string(),
                     toml::Value::String(".".to_string()),
                 );
+                p.insert(
+                    "rewrite_all_to".to_string(),
+                    toml::Value::String("/vendor/genesis.php".to_string()),
+                );
+                p.insert(
+                    "asset_fallback".to_string(),
+                    toml::Value::String(String::new()),
+                );
+                p.insert(
+                    "error_page_404".to_string(),
+                    toml::Value::String("/vendor/genesis.php".to_string()),
+                );
                 p
             },
-            variant: Some("decodelabs".to_string()),
+            variant: None,
             config: None,
         },
     ];
@@ -1151,15 +1407,63 @@ fn nginx_decodelabs_config_uses_repo_root_and_genesis_rewrite() {
     let config = &result.config_files["web.conf"];
     assert!(
         config.contains("root /var/www/html;"),
-        "nginx decodelabs root should use the repo root, got:\n{config}"
+        "nginx root should use the repo root, got:\n{config}"
     );
     assert!(
         config.contains("rewrite .* /vendor/genesis.php last;"),
-        "nginx decodelabs config should rewrite through vendor/genesis.php, got:\n{config}"
+        "nginx config should rewrite through vendor/genesis.php, got:\n{config}"
     );
     assert!(
         !config.contains("/index.php?$query_string"),
-        "nginx decodelabs config should not route through index.php, got:\n{config}"
+        "nginx genesis rewrite config should not route through index.php, got:\n{config}"
+    );
+}
+
+#[test]
+fn nginx_genesis_rewrite_params_apply_without_variant() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "web".to_string(),
+        catalog: "nginx".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert(
+                "document_root".to_string(),
+                toml::Value::String(".".to_string()),
+            );
+            p.insert(
+                "rewrite_all_to".to_string(),
+                toml::Value::String("/vendor/genesis.php".to_string()),
+            );
+            p.insert(
+                "asset_fallback".to_string(),
+                toml::Value::String(String::new()),
+            );
+            p.insert(
+                "error_page_404".to_string(),
+                toml::Value::String("/vendor/genesis.php".to_string()),
+            );
+            p
+        },
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+
+    assert!(
+        result.compose_yaml.contains("- .:/var/www/html:ro"),
+        "nginx params should apply the repo-root working dir preset:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result.config_files["web.conf"].contains("root /var/www/html;"),
+        "nginx params should apply the repo-root document root preset:\n{}",
+        result.config_files["web.conf"]
     );
 }
 
@@ -1291,12 +1595,97 @@ fn phpmyadmin_fragment_assembles() {
         result.compose_yaml
     );
     assert!(
+        result.compose_yaml.contains("PMA_PASSWORD: secret"),
+        "phpmyadmin should inherit the mariadb default root password:\n{}",
+        result.compose_yaml
+    );
+    assert!(
         admin.get("depends_on").is_some(),
         "phpmyadmin should depend on mariadb"
     );
     assert!(
         admin.get("healthcheck").is_some(),
         "phpmyadmin should have a healthcheck"
+    );
+}
+
+#[test]
+fn phpmyadmin_uses_empty_password_when_db_explicitly_sets_empty_password() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![
+        ServiceDeclaration {
+            name: "db".to_string(),
+            catalog: "mariadb".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "root_password".to_string(),
+                    toml::Value::String("".to_string()),
+                );
+                p
+            },
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "dbadmin".to_string(),
+            catalog: "phpmyadmin".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+    ];
+
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+
+    assert!(
+        result.compose_yaml.contains("PMA_PASSWORD: ''"),
+        "phpmyadmin should keep an explicitly empty mariadb password empty:\n{}",
+        result.compose_yaml
+    );
+}
+
+#[test]
+fn phpmyadmin_inherits_mariadb_root_password() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![
+        ServiceDeclaration {
+            name: "db".to_string(),
+            catalog: "mariadb".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "root_password".to_string(),
+                    toml::Value::String("localdev".to_string()),
+                );
+                p
+            },
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "dbadmin".to_string(),
+            catalog: "phpmyadmin".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+    ];
+
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+
+    assert!(
+        result.compose_yaml.contains("PMA_PASSWORD: localdev"),
+        "phpmyadmin should inherit the mariadb root password:\n{}",
+        result.compose_yaml
     );
 }
 
@@ -1401,9 +1790,21 @@ fn full_stack_with_all_services() {
                     "document_root".to_string(),
                     toml::Value::String(".".to_string()),
                 );
+                p.insert(
+                    "rewrite_all_to".to_string(),
+                    toml::Value::String("/vendor/genesis.php".to_string()),
+                );
+                p.insert(
+                    "asset_fallback".to_string(),
+                    toml::Value::String(String::new()),
+                );
+                p.insert(
+                    "error_page_404".to_string(),
+                    toml::Value::String("/vendor/genesis.php".to_string()),
+                );
                 p
             },
-            variant: Some("decodelabs".to_string()),
+            variant: None,
             config: None,
         },
         ServiceDeclaration {
@@ -1831,9 +2232,21 @@ fn end_to_end_php_stack_written_to_disk() {
                     "document_root".to_string(),
                     toml::Value::String(".".to_string()),
                 );
+                p.insert(
+                    "rewrite_all_to".to_string(),
+                    toml::Value::String("/vendor/genesis.php".to_string()),
+                );
+                p.insert(
+                    "asset_fallback".to_string(),
+                    toml::Value::String(String::new()),
+                );
+                p.insert(
+                    "error_page_404".to_string(),
+                    toml::Value::String("/vendor/genesis.php".to_string()),
+                );
                 p
             },
-            variant: Some("decodelabs".to_string()),
+            variant: None,
             config: None,
         },
         ServiceDeclaration {
@@ -1893,8 +2306,10 @@ node_version = "20"
 
 [containers.web.services.web]
 catalog = "nginx"
-variant = "decodelabs"
 document_root = "."
+rewrite_all_to = "/vendor/genesis.php"
+asset_fallback = ""
+error_page_404 = "/vendor/genesis.php"
 
 [containers.web.services.db]
 catalog = "mariadb"
@@ -1998,7 +2413,7 @@ memory = 128
     );
     assert!(
         config_content.contains("rewrite .* /vendor/genesis.php last;"),
-        "nginx decodelabs config should rewrite through vendor/genesis.php"
+        "nginx config should rewrite through vendor/genesis.php"
     );
     assert!(
         config_content.contains("gzip on"),
@@ -2049,10 +2464,8 @@ memory = 128
         "MariaDB should have a healthcheck"
     );
 
-    // Volumes should include MariaDB data.
-    assert_eq!(assembly.volumes.len(), 1);
-    assert_eq!(assembly.volumes[0].name, "client-project-db-data");
-    assert!(assembly.volumes[0].persist);
+    // Repo-local DB bind mounts should not surface as managed named volumes.
+    assert!(assembly.volumes.is_empty());
 
     // 8. Verify second write is cached.
     let write2 = output.write(&assembly, manifest_content).unwrap();

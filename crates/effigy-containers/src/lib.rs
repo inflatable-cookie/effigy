@@ -20,6 +20,8 @@ pub use workspace::load_workspace_ownership_targets;
 pub(crate) use policy_support::with_test_effigy_home;
 use policy_support::{resolve_compose_source, validate_declared_mounts, validate_media_mounts};
 use workspace::materialize_runtime_workspace_mount_rewrite;
+#[cfg(test)]
+pub(crate) use workspace::with_test_host_composer_home;
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -72,6 +74,7 @@ pub struct EffectiveContainerPolicy {
     pub dns_tls: bool,
     pub dns_port: Option<u16>,
     pub dns_routes: Vec<EffectiveDnsRoute>,
+    pub service_aliases: Vec<EffectiveServiceAlias>,
     pub declared_ports: Vec<String>,
     pub ports_declared_explicitly: bool,
     pub declared_mounts: Vec<String>,
@@ -92,6 +95,13 @@ pub struct EffectiveDnsRoute {
     pub tls: bool,
     pub port: Option<u16>,
     pub service: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveServiceAlias {
+    pub service: String,
+    pub domain_label: String,
+    pub container_port: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -355,6 +365,7 @@ pub fn load_inline_workspace_container_policy(
         dns_tls: false,
         dns_port: None,
         dns_routes: Vec::new(),
+        service_aliases: Vec::new(),
         declared_ports: Vec::new(),
         ports_declared_explicitly: false,
         declared_mounts: container.mount.clone().into_iter().collect(),
@@ -472,20 +483,23 @@ fn build_effective_policy(
             "container `{name}` must declare `primary_service`"
         ))
     })?;
-    if config.compose_file.is_some() && driver == ManifestContainerDriver::Colima {
+    if driver == ManifestContainerDriver::Colima {
         if let Some(workspace) = workspace {
             let working_dir =
                 resolve_container_exec_working_dir(repo_root, name, config, Some(workspace))?;
             materialize_runtime_workspace_mount_rewrite(
                 repo_root,
                 name,
+                config,
                 workspace,
                 &working_dir,
                 &primary_service,
                 &mut compose_files,
             )?;
         }
-        materialize_runtime_dns_override(repo_root, name, &profile, &mut compose_files)?;
+        if config.compose_file.is_some() {
+            materialize_runtime_dns_override(repo_root, name, &profile, &mut compose_files)?;
+        }
     }
     let dns = config.dns.as_ref().cloned().unwrap_or_default();
     let mut dns_routes = Vec::new();
@@ -500,6 +514,7 @@ fn build_effective_policy(
             service: route.service.filter(|value| !value.trim().is_empty()),
         });
     }
+    let service_aliases = effective_service_aliases(config);
     let host = config.host.as_ref().cloned().unwrap_or_default();
     let data = config.data.as_ref().cloned().unwrap_or_default();
     let health = config.health.as_ref().cloned().unwrap_or_default();
@@ -528,6 +543,7 @@ fn build_effective_policy(
         dns_tls: dns_routes.first().is_some_and(|route| route.tls),
         dns_port: dns_routes.first().and_then(|route| route.port),
         dns_routes,
+        service_aliases,
         declared_ports: effective_ports,
         ports_declared_explicitly: !host.ports.is_empty(),
         declared_mounts: host.mounts,
@@ -567,6 +583,36 @@ fn default_workspace_identity_for_primary_service(
     match service.catalog.as_str() {
         "php-fpm" => Some(("dev", "/home/dev")),
         "node" => Some(("node", "/home/node")),
+        _ => None,
+    }
+}
+
+fn effective_service_aliases(config: &ManifestContainerConfig) -> Vec<EffectiveServiceAlias> {
+    config
+        .services
+        .iter()
+        .filter(|(_name, service)| !service.shared.unwrap_or(false))
+        .filter_map(|(service_name, service)| {
+            service_alias_contract(&service.catalog).map(|(domain_label, container_port)| {
+                EffectiveServiceAlias {
+                    service: service_name.clone(),
+                    domain_label: domain_label.to_owned(),
+                    container_port,
+                }
+            })
+        })
+        .collect()
+}
+
+fn service_alias_contract(catalog: &str) -> Option<(&'static str, u16)> {
+    match catalog {
+        "postgres" => Some(("db", 5432)),
+        "mariadb" | "mysql" => Some(("db", 3306)),
+        "redis" => Some(("redis", 6379)),
+        "memcached" => Some(("memcached", 11211)),
+        "elasticsearch" => Some(("search", 9200)),
+        "minio" | "s3" => Some(("s3", 9000)),
+        "mail" | "mailpit" => Some(("smtp", 1025)),
         _ => None,
     }
 }

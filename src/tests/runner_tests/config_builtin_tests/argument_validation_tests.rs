@@ -16,6 +16,16 @@ fn run_manifest_task_builtin_config_rejects_invalid_flag_combinations() {
             expected: &["`--runner` requires `--schema`"],
         },
         BuiltinInvocationCase {
+            workspace: "builtin-config-bundle-requires-schema",
+            args: &["--bundle", "decodelabs"],
+            expected: &["`--bundle` requires `--schema`"],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-bundle-requires-bundle-target",
+            args: &["--schema", "--target", "tasks", "--bundle", "decodelabs"],
+            expected: &["`--bundle` requires `--target bundle`"],
+        },
+        BuiltinInvocationCase {
             workspace: "builtin-config-runner-requires-test-target",
             args: &["--schema", "--target", "tasks", "--runner", "vitest"],
             expected: &["`--runner` requires `--target test`"],
@@ -34,6 +44,11 @@ fn run_manifest_task_builtin_config_rejects_invalid_flag_combinations() {
             workspace: "builtin-config-invalid-target",
             args: &["--schema", "--target", "python"],
             expected: &["invalid `--target` value `python`"],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-bundle-requires-value",
+            args: &["--schema", "--target", "bundle", "--bundle"],
+            expected: &["`--bundle` requires a value"],
         },
         BuiltinInvocationCase {
             workspace: "builtin-config-minimal-requires-schema",

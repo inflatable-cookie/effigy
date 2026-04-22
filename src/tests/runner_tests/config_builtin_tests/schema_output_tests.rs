@@ -110,6 +110,48 @@ fn run_manifest_task_builtin_config_schema_target_manifest_prints_composition_sn
 }
 
 #[test]
+fn run_manifest_task_builtin_config_schema_target_bundle_prints_generic_bundle_section() {
+    let root = workspace_with_empty_manifest("builtin-config-schema-target-bundle");
+
+    let out = run_config_ok(root, &["--schema", "--target", "bundle"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "(bundle target)",
+            "[bundle]",
+            "name = \"decodelabs\"",
+            "Bundle name is reserved. All other keys are bundle-defined inputs.",
+            "Use `effigy bundle list` to discover bundles.",
+        ],
+    );
+    assert_output_excludes_all(&out, &["[tasks]"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_config_schema_target_bundle_named_prints_specific_inputs() {
+    let root = workspace_with_empty_manifest("builtin-config-schema-target-bundle-named");
+
+    let out = run_config_ok(
+        root,
+        &["--schema", "--target", "bundle", "--bundle", "decodelabs"],
+    );
+    assert_output_contains_all(
+        &out,
+        &[
+            "(bundle target, bundle: decodelabs)",
+            "[bundle]",
+            "name = \"decodelabs\"",
+            "host = \"contact-patch.legacy.test\"",
+            "project_name = \"contactpatch-dev\"",
+            "database = \"contactpatch\"",
+            "Default paths populated by this bundle:",
+            "containers.web.services.app.catalog",
+        ],
+    );
+    assert_output_excludes_all(&out, &["[tasks]"]);
+}
+
+#[test]
 fn run_manifest_task_builtin_config_schema_target_demos_prints_demo_registry_snippet() {
     let root = workspace_with_empty_manifest("builtin-config-schema-target-demos");
 

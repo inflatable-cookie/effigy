@@ -10,7 +10,7 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
     renderer.section("effigy.toml Reference")?;
     renderer.notice(
         NoticeLevel::Info,
-        "Supported project-level configuration keys for task execution and built-in test behavior",
+        "Supported project-level configuration keys for task execution, bundle defaults, and built-in test behavior",
     )?;
     renderer.notice(
         NoticeLevel::Info,
@@ -20,7 +20,31 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
         NoticeLevel::Info,
         "Add `--path <dotted.path>` to focus inspect output on one effective value, its source, and any override history.",
     )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Use `effigy bundle list` to discover shipped `[bundle]` presets and `effigy bundle inspect <name>` to inspect one bundle's accepted inputs plus default manifest paths.",
+    )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Use `effigy config --schema --target bundle` for the generic `[bundle]` shape, or add `--bundle <name>` to render one bundle's concrete input surface.",
+    )?;
     renderer.text("")?;
+
+    renderer.section("Bundle")?;
+    emit_doc_lines(
+        &mut renderer,
+        color_enabled,
+        [
+            "[bundle]",
+            "# Optional top-level bundle resolver for shipped manifest presets.",
+            "name = \"decodelabs\"",
+            "# Bundle-defined inputs depend on the selected preset.",
+            "# Discover bundles: `effigy bundle list`",
+            "# Inspect one bundle: `effigy bundle inspect decodelabs`",
+            "# Render bundle config schema: `effigy config --schema --target bundle --bundle decodelabs`",
+            "",
+        ],
+    )?;
 
     renderer.section("Global")?;
     emit_doc_lines(

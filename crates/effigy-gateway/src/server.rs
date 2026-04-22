@@ -53,6 +53,9 @@ pub struct GatewayConfig {
     /// Path to the route table JSON file.
     pub route_table_path: PathBuf,
 
+    /// Path to the persisted loopback-IP assignment registry.
+    pub loopback_registry_path: PathBuf,
+
     /// Path to the PID file for lifecycle management.
     pub pid_file_path: PathBuf,
 }
@@ -70,6 +73,7 @@ impl GatewayConfig {
             },
             tls: Some(TlsConfig::new(gateway_dir.join("certs"))),
             route_table_path: gateway_dir.join("routes.json"),
+            loopback_registry_path: gateway_dir.join("loopback-ips.json"),
             pid_file_path: gateway_dir.join("gateway.pid"),
         }
     }

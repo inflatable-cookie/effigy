@@ -4,8 +4,8 @@ use std::path::PathBuf;
 mod distribution;
 
 use crate::{
-    BootstrapArgs, ChangelogArgs, ChangelogSubcommand, Command, ContainerArgs,
-    ContainerDataSubcommand, ContainerSubcommand, ContractsArgs, ContractsCheckMode,
+    BootstrapArgs, BundleArgs, BundleSubcommand, ChangelogArgs, ChangelogSubcommand, Command,
+    ContainerArgs, ContainerDataSubcommand, ContainerSubcommand, ContractsArgs, ContractsCheckMode,
     ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoHistoryOutcome, DemoListGap,
     DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSubcommand, DocsArgs,
     DocsBlockRequirement, DocsSubcommand, DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand,
@@ -29,6 +29,7 @@ where
     match cmd.as_str() {
         "--version" | "version" => parse_version_command(args),
         "--help" | "-h" | "help" => Ok(Command::Help(HelpTopic::General)),
+        "bundle" => parse_bundle_command(args),
         "changelog" => parse_changelog_command(args),
         "exec" => parse_exec_command(args),
         "system" => parse_system_command(args),
@@ -135,6 +136,7 @@ fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
         "init" => Some(HelpTopic::Init),
         "migrate" => Some(HelpTopic::Migrate),
         "exec" => Some(HelpTopic::Exec),
+        "bundle" => Some(HelpTopic::Bundle),
         "system" => Some(HelpTopic::System),
         "workspace" => Some(HelpTopic::Workspace),
         "gateway" => Some(HelpTopic::Gateway),
@@ -148,6 +150,71 @@ fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
         "release" => Some(HelpTopic::Release),
         _ => None,
     }
+}
+
+fn parse_bundle_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Ok(Command::Help(HelpTopic::Bundle));
+    };
+
+    match subcmd.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Bundle)),
+        "list" => parse_bundle_list(args),
+        "inspect" => parse_bundle_inspect(args),
+        other => Err(unknown_argument(other)),
+    }
+}
+
+fn parse_bundle_list<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut output_json = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Bundle(BundleArgs {
+        subcommand: BundleSubcommand::List,
+        output_json,
+    }))
+}
+
+fn parse_bundle_inspect<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(bundle) = args.next() else {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "<BUNDLE>".to_owned(),
+        });
+    };
+
+    let mut output_json = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Bundle(BundleArgs {
+        subcommand: BundleSubcommand::Inspect { bundle },
+        output_json,
+    }))
 }
 
 fn parse_gateway_command<I>(args: I) -> Result<Command, CliParseError>

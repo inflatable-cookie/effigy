@@ -7,7 +7,7 @@ services:
     ports:
       - "3306:3306"
     volumes:
-      - {{ project_name }}-{{ service_name }}-data:/var/lib/mysql
+      - {{ repo_root }}/.effigy/runtime/data/{{ service_name }}/mysql:/var/lib/mysql
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s

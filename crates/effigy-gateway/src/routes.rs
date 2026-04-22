@@ -25,8 +25,13 @@ pub struct Route {
     /// The domain name (e.g., "myproject.test").
     pub domain: String,
 
-    /// Upstream target (e.g., "127.0.0.1:8080").
-    pub target: String,
+    /// Optional upstream target (e.g., "127.0.0.1:8080").
+    ///
+    /// DNS-only TCP service aliases intentionally leave this unset so the DNS
+    /// layer can resolve them without making the HTTP proxy treat them as an
+    /// upstream route.
+    #[serde(default)]
+    pub target: Option<String>,
 
     /// Optional DNS IP override for this route.
     ///

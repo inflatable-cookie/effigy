@@ -40,7 +40,10 @@ Container infrastructure design document:
 
 Active strict planning lanes:
 
-- `g02.007` is now the active release-prep lane
+- `g02.020` is the active strict lane as of 2026-04-22 (multi-project gateway
+  expansion and service DNS); `g02.007` and `g02.019` are queued behind it
+  (see
+  `docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`)
 - the `g02.013` dev front door strict lane is now complete through card `300`
 - the `g02.015` persistent data strict lane is now complete through card `290`
 - the `g02.014` gateway strict lane is now complete through card `270`
@@ -61,16 +64,16 @@ Rules:
 
 ## Next Task
 
-`g02.007` is back in planning with a clean `v0.3.0` prep checkpoint.
+`g02.020` is the active strict lane. Execute batch card `303` — loopback-IP
+allocation and gateway setup integration — as the next bounded execution
+move.
 
-Wait for explicit human approval before any irreversible release action. If
-requested, start with:
+`g02.007` remains queued, with its `v0.3.0` prep checkpoint still clean.
+Release execution is gated on explicit human approval regardless of lane
+ordering. If release execution is requested, `g02.007` resumes ahead of
+`g02.020` for the duration of the release path starting with:
 
 `cargo run --bin effigy -- release prepare --yes --version 0.3.0 --check-gates`
 
-After the `g02.007` release move settles, move to `g02.019` for the surfaced
-audit cleanup and UX-simplification batch.
-
-After `g02.019`, queue `g02.020` for the multi-project gateway and service-DNS
-expansion lane at `303`, the loopback-IP allocation and gateway-setup
-foundation batch.
+After `g02.020` lands and the release cut settles, `g02.019` picks up the
+post-audit alignment batch.

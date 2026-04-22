@@ -20,8 +20,8 @@ use elevation::build_gateway_elevated_shell_command;
 use elevation::{
     ensure_gateway_up_privileges, gateway_down_requires_elevation, gateway_invocation_is_escalated,
     gateway_setup_tls_requires_elevation, gateway_up_requires_elevation,
-    install_resolver_if_needed, prepare_gateway_state_for_elevated_run, run_gateway_elevated,
-    uninstall_resolver_if_needed,
+    install_resolver_if_needed, prepare_gateway_state_for_elevated_run,
+    provision_loopback_aliases_if_needed, run_gateway_elevated, uninstall_resolver_if_needed,
 };
 
 #[path = "gateway_command/daemon.rs"]
@@ -112,7 +112,8 @@ fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
 
     spawn_gateway_daemon(&config)?;
     wait_for_pid_file(&config)?;
-    let warnings = install_resolver_if_needed(&config);
+    let mut warnings = install_resolver_if_needed(&config);
+    warnings.extend(provision_loopback_aliases_if_needed(&config));
     let status = server::get_status(&config)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let route_table = RouteTable::load(&config.route_table_path)
@@ -430,7 +431,8 @@ fn gateway_addr_from_env(key: &str) -> Result<Option<SocketAddr>, RunnerError> {
 #[derive(Debug, Clone)]
 struct GatewayRouteDashboardEntry {
     domain: String,
-    target: String,
+    target: Option<String>,
+    dns_ip: Option<std::net::Ipv4Addr>,
     source: String,
     project: String,
     tls: bool,
@@ -442,7 +444,10 @@ fn render_route_line(route: &GatewayRouteDashboardEntry) -> String {
     format!(
         "- {} -> {} [source={}, project={}, tls={}]",
         route.domain,
-        route.target,
+        route.target.clone().unwrap_or_else(|| format!(
+            "dns {}",
+            route.dns_ip.unwrap_or(std::net::Ipv4Addr::LOCALHOST)
+        )),
         route.source,
         route.project,
         if !route.tls {
@@ -462,6 +467,7 @@ fn render_routes_json(routes: &[GatewayRouteDashboardEntry]) -> Vec<serde_json::
             json!({
                 "domain": route.domain,
                 "target": route.target,
+                "dns_ip": route.dns_ip.map(|value| value.to_string()),
                 "source": route.source,
                 "project": route.project,
                 "tls": route.tls,
@@ -488,6 +494,7 @@ fn gateway_route_dashboard(
             GatewayRouteDashboardEntry {
                 domain: route.domain.clone(),
                 target: route.target.clone(),
+                dns_ip: route.dns_ip,
                 source: format!("{:?}", route.source).to_lowercase(),
                 project: route.project.clone(),
                 tls: route.tls,
@@ -624,6 +631,7 @@ enum GatewayUpState {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use effigy_gateway::loopback::LoopbackRegistry;
     use effigy_gateway::routes::{Route, RouteSource};
 
     fn tls_summary() -> GatewayTlsSummary {
@@ -644,7 +652,7 @@ mod tests {
                 "demo.test".to_owned(),
                 Route {
                     domain: "demo.test".to_owned(),
-                    target: "127.0.0.1:8080".to_owned(),
+                    target: Some("127.0.0.1:8080".to_owned()),
                     dns_ip: None,
                     source: RouteSource::Manual,
                     project: "/tmp/demo".to_owned(),
@@ -733,6 +741,28 @@ mod tests {
         )
         .expect("render");
         assert!(rendered.contains("[warn] resolver setup skipped"));
+    }
+
+    #[test]
+    fn prepare_gateway_state_creates_loopback_registry_file() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-gateway-state-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create temp root");
+
+        let config = GatewayConfig::standard(root.join("gateway"));
+        prepare_gateway_state_for_elevated_run(&config).expect("prepare");
+
+        let registry = LoopbackRegistry::load(&config.loopback_registry_path).expect("registry");
+        assert!(registry.is_empty());
+        assert!(config.loopback_registry_path.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[cfg(target_os = "macos")]

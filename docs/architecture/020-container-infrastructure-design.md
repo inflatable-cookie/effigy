@@ -102,7 +102,6 @@ catalog/
     service.toml
     configs/
       default.conf              # generic PHP front-controller passthrough
-      decodelabs.conf           # repo-root Genesis rewrite bootstrap
       laravel.conf              # Laravel try_files + front controller
       wordpress.conf            # WordPress rewrite rules
       spa.conf                  # SPA with API proxy
@@ -218,10 +217,9 @@ What this explicitly does NOT absorb from DDEV:
 
 ### Nginx config flexibility
 
-The nginx fragment ships named config variants (default, decodelabs, laravel,
-wordpress, spa) selected via `variant =` in the manifest. For custom
-frameworks, the user
-either:
+The nginx fragment ships named config variants (default, laravel, wordpress,
+spa) selected via `variant =` in the manifest, plus explicit params for
+rewrite/fallback behavior. For custom frameworks, the user either:
 
 - provides their own config via `config = "infra/nginx.conf"`
 - extracts the default variant and modifies it
@@ -236,13 +234,16 @@ location / {
 }
 ```
 
-The `decodelabs.conf` variant roots the site at the repo root and rewrites
-every request through `/vendor/genesis.php` for Genesis-style apps that do not
-use a `public/` front controller:
+Genesis-style apps that do not use a `public/` front controller can stay on
+the generic nginx config and set explicit params instead, for example:
 
-```nginx
-root /var/www/html;
-rewrite .* /vendor/genesis.php last;
+```toml
+[containers.web.services.web]
+catalog = "nginx"
+document_root = "."
+rewrite_all_to = "/vendor/genesis.php"
+asset_fallback = ""
+error_page_404 = "/vendor/genesis.php"
 ```
 
 ## 2. Container Context and Transparent Execution

@@ -30,6 +30,9 @@ pub struct CatalogFragment {
     /// Available config variants (filename stem -> contents).
     pub config_variants: HashMap<String, String>,
 
+    /// Available parameter preset variants (filename stem -> param table).
+    pub param_variants: HashMap<String, HashMap<String, toml::Value>>,
+
     /// Which layer this fragment was loaded from.
     pub source: FragmentSource,
 }
@@ -161,6 +164,7 @@ impl CatalogResolver {
 
         // Config variants (optional)
         let config_variants = Self::load_config_variants_from_dir(&dir.join("configs"));
+        let param_variants = Self::load_param_variants_from_dir(&dir.join("variants"), name)?;
 
         Ok(CatalogFragment {
             name: name.to_string(),
@@ -168,6 +172,7 @@ impl CatalogResolver {
             compose_template,
             dockerfile,
             config_variants,
+            param_variants,
             source,
         })
     }
@@ -221,6 +226,25 @@ impl CatalogResolver {
                 Some((stem.to_string(), content.to_string()))
             })
             .collect();
+        let variants_prefix = format!("{name}/variants/");
+        let mut param_variants = HashMap::new();
+        for path in BundledCatalog::iter().filter(|path| path.starts_with(&variants_prefix)) {
+            let Some(filename) = path.strip_prefix(&variants_prefix) else {
+                continue;
+            };
+            let stem = filename.strip_suffix(".toml").unwrap_or(filename);
+            let Some(data) = BundledCatalog::get(&path) else {
+                continue;
+            };
+            let contents = std::str::from_utf8(data.data.as_ref()).map_err(|_| {
+                CatalogError::InvalidServiceToml {
+                    name: name.to_string(),
+                    reason: format!("invalid UTF-8 in variant preset `{stem}`"),
+                }
+            })?;
+            let parsed = Self::parse_param_variant(name, stem, contents)?;
+            param_variants.insert(stem.to_string(), parsed);
+        }
 
         Ok(CatalogFragment {
             name: name.to_string(),
@@ -228,6 +252,7 @@ impl CatalogResolver {
             compose_template,
             dockerfile,
             config_variants,
+            param_variants,
             source: FragmentSource::Bundled,
         })
     }
@@ -248,6 +273,55 @@ impl CatalogResolver {
             }
         }
         variants
+    }
+
+    fn load_param_variants_from_dir(
+        variants_dir: &Path,
+        fragment_name: &str,
+    ) -> Result<HashMap<String, HashMap<String, toml::Value>>, CatalogError> {
+        let mut variants = HashMap::new();
+        if let Ok(entries) = std::fs::read_dir(variants_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                let contents = std::fs::read_to_string(&path).map_err(|error| {
+                    CatalogError::InvalidServiceToml {
+                        name: fragment_name.to_string(),
+                        reason: format!(
+                            "failed to read variant preset `{stem}` from {}: {error}",
+                            path.display()
+                        ),
+                    }
+                })?;
+                variants.insert(
+                    stem.to_string(),
+                    Self::parse_param_variant(fragment_name, stem, &contents)?,
+                );
+            }
+        }
+        Ok(variants)
+    }
+
+    fn parse_param_variant(
+        fragment_name: &str,
+        variant_name: &str,
+        contents: &str,
+    ) -> Result<HashMap<String, toml::Value>, CatalogError> {
+        let table = toml::from_str::<toml::Table>(contents).map_err(|error| {
+            CatalogError::InvalidServiceToml {
+                name: fragment_name.to_string(),
+                reason: format!("invalid variant preset `{variant_name}`: {error}"),
+            }
+        })?;
+        Ok(table
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect())
     }
 
     /// List fragments from a filesystem directory.
@@ -323,6 +397,21 @@ impl CatalogResolver {
             std::fs::create_dir_all(&configs_dir)?;
             for (variant_name, content) in &fragment.config_variants {
                 std::fs::write(configs_dir.join(format!("{variant_name}.conf")), content)?;
+            }
+        }
+
+        if !fragment.param_variants.is_empty() {
+            let variants_dir = fragment_dir.join("variants");
+            std::fs::create_dir_all(&variants_dir)?;
+            for (variant_name, params) in &fragment.param_variants {
+                let encoded =
+                    toml::to_string(params).map_err(|error| CatalogError::InvalidServiceToml {
+                        name: name.to_string(),
+                        reason: format!(
+                            "failed to serialize extracted variant preset `{variant_name}`: {error}"
+                        ),
+                    })?;
+                std::fs::write(variants_dir.join(format!("{variant_name}.toml")), encoded)?;
             }
         }
 

@@ -4,7 +4,7 @@ use std::net::Ipv4Addr;
 fn test_route(domain: &str, target: &str) -> Route {
     Route {
         domain: domain.to_string(),
-        target: target.to_string(),
+        target: Some(target.to_string()),
         dns_ip: None,
         source: RouteSource::Container,
         project: "/tmp/test".to_string(),
@@ -28,7 +28,7 @@ fn register_and_lookup() {
 
     assert_eq!(table.len(), 1);
     let found = table.lookup("myapp.test").unwrap();
-    assert_eq!(found.target, "127.0.0.1:8080");
+    assert_eq!(found.target.as_deref(), Some("127.0.0.1:8080"));
 }
 
 #[test]
@@ -53,7 +53,10 @@ fn upsert_replaces_existing() {
     table.upsert(test_route("myapp.test", "127.0.0.1:9090"));
 
     assert_eq!(table.len(), 1);
-    assert_eq!(table.lookup("myapp.test").unwrap().target, "127.0.0.1:9090");
+    assert_eq!(
+        table.lookup("myapp.test").unwrap().target.as_deref(),
+        Some("127.0.0.1:9090")
+    );
 }
 
 #[test]
@@ -64,7 +67,7 @@ fn deregister_removes_route() {
         .unwrap();
 
     let removed = table.deregister("myapp.test").unwrap();
-    assert_eq!(removed.target, "127.0.0.1:8080");
+    assert_eq!(removed.target.as_deref(), Some("127.0.0.1:8080"));
     assert!(table.is_empty());
 }
 
@@ -104,8 +107,14 @@ fn save_and_load_roundtrip() {
 
     let loaded = RouteTable::load(&path).unwrap();
     assert_eq!(loaded.len(), 2);
-    assert_eq!(loaded.lookup("app.test").unwrap().target, "127.0.0.1:8080");
-    assert_eq!(loaded.lookup("api.test").unwrap().target, "127.0.0.1:3000");
+    assert_eq!(
+        loaded.lookup("app.test").unwrap().target.as_deref(),
+        Some("127.0.0.1:8080")
+    );
+    assert_eq!(
+        loaded.lookup("api.test").unwrap().target.as_deref(),
+        Some("127.0.0.1:3000")
+    );
 }
 
 #[test]
@@ -145,7 +154,10 @@ fn save_is_atomic() {
 
     // Should have the latest value.
     let loaded = RouteTable::load(&path).unwrap();
-    assert_eq!(loaded.lookup("app.test").unwrap().target, "127.0.0.1:9090");
+    assert_eq!(
+        loaded.lookup("app.test").unwrap().target.as_deref(),
+        Some("127.0.0.1:9090")
+    );
 }
 
 #[test]
@@ -169,7 +181,7 @@ fn json_format_is_human_readable() {
 fn route_serialization_format() {
     let route = Route {
         domain: "test.test".to_string(),
-        target: "127.0.0.1:8080".to_string(),
+        target: Some("127.0.0.1:8080".to_string()),
         dns_ip: Some(Ipv4Addr::new(127, 1, 0, 7)),
         source: RouteSource::Container,
         project: "/tmp/proj".to_string(),
@@ -218,7 +230,10 @@ fn live_route_table_read() {
     let live = LiveRouteTable::new(path).unwrap();
     let guard = live.read();
     assert_eq!(guard.len(), 1);
-    assert_eq!(guard.lookup("app.test").unwrap().target, "127.0.0.1:8080");
+    assert_eq!(
+        guard.lookup("app.test").unwrap().target.as_deref(),
+        Some("127.0.0.1:8080")
+    );
 }
 
 #[test]
@@ -244,5 +259,23 @@ fn live_route_table_reload() {
     live.reload().unwrap();
     let guard = live.read();
     assert_eq!(guard.len(), 2);
-    assert_eq!(guard.lookup("app.test").unwrap().target, "127.0.0.1:9090");
+    assert_eq!(
+        guard.lookup("app.test").unwrap().target.as_deref(),
+        Some("127.0.0.1:9090")
+    );
+}
+
+#[test]
+fn route_deserialization_defaults_missing_target() {
+    let json = r#"{
+  "domain": "db.test",
+  "dns_ip": "127.1.0.7",
+  "source": "container",
+  "project": "/tmp/proj",
+  "tls": false,
+  "registered": "2026-04-16T10:00:00Z"
+}"#;
+
+    let parsed: Route = serde_json::from_str(json).unwrap();
+    assert_eq!(parsed.target, None);
 }

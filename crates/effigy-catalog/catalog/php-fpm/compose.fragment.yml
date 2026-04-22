@@ -7,17 +7,25 @@ services:
         PHP_VERSION: "{{ version }}"
         WORKSPACE_UID: "{{ host_uid }}"
         WORKSPACE_GID: "{{ host_gid }}"
+        COMPOSER_HOME: "/home/dev/.config/composer"
 {% if extensions %}
         EXTENSIONS: "{{ extensions | join(' ') }}"
 {% endif %}
 {% if node_version %}
         NODE_VERSION: "{{ node_version }}"
 {% endif %}
+{% if node_global_packages %}
+        NODE_GLOBAL_PACKAGES: "{{ node_global_packages | join(' ') }}"
+{% endif %}
+{% if composer_global_packages and not mount_host_composer_home %}
+        COMPOSER_GLOBAL_PACKAGES: "{{ composer_global_packages | join(' ') }}"
+{% endif %}
     volumes:
       - {{ repo_root }}:{{ working_dir }}
     working_dir: {{ working_dir }}
     environment:
       DOCUMENT_ROOT: "{{ document_root }}"
+      COMPOSER_HOME: "/home/dev/.config/composer"
 {% if services.mariadb or services.postgres or services.redis or services.memcached %}
     depends_on:
 {% endif %}

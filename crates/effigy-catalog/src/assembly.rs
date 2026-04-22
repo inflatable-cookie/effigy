@@ -17,7 +17,7 @@ use serde_yaml::Value as YamlValue;
 
 use crate::error::CatalogError;
 use crate::fragment::{CatalogFragment, CatalogResolver};
-use crate::template::{SiblingService, SystemContext, TemplateRenderer};
+use crate::template::{toml_to_minijinja, SiblingService, SystemContext, TemplateRenderer};
 
 /// A service declaration from the manifest.
 #[derive(Debug, Clone)]
@@ -61,6 +61,9 @@ pub struct AssemblyResult {
 pub struct VolumeInfo {
     /// Volume name (project-prefixed).
     pub name: String,
+
+    /// Whether this is a named Docker volume.
+    pub named: bool,
 
     /// Whether this volume should persist across resets.
     pub persist: bool,
@@ -111,8 +114,15 @@ impl ComposeAssembler {
             fragments.insert(decl.name.clone(), (decl.clone(), fragment));
         }
 
-        // 2. Build sibling service map for cross-references.
-        let siblings = Self::build_sibling_map(&fragments);
+        // 2. Resolve effective params, then build sibling service map for
+        // cross-references.
+        let resolved_params = fragments
+            .iter()
+            .map(|(name, (decl, fragment))| {
+                (name.clone(), Self::resolve_service_params(decl, fragment))
+            })
+            .collect::<HashMap<_, _>>();
+        let siblings = Self::build_sibling_map(&fragments, &resolved_params);
 
         // 3. Render each fragment, parse the YAML, and collect artifacts.
         let mut merged_services = serde_yaml::Mapping::new();
@@ -121,6 +131,10 @@ impl ComposeAssembler {
         let mut all_volumes: Vec<VolumeInfo> = Vec::new();
 
         for (name, (decl, fragment)) in &fragments {
+            let params = resolved_params
+                .get(name)
+                .cloned()
+                .unwrap_or_else(HashMap::new);
             let system = SystemContext {
                 repo_root: repo_root.to_string(),
                 catalog_path: Self::fragment_build_context_path(catalog_root, name),
@@ -132,7 +146,7 @@ impl ComposeAssembler {
             let ctx = TemplateRenderer::build_context(
                 &fragment.schema,
                 name,
-                &decl.params,
+                &params,
                 &siblings,
                 &system,
             )?;
@@ -165,9 +179,13 @@ impl ComposeAssembler {
 
             // Collect volume declarations from schema.
             for (vol_key, vol_schema) in &fragment.schema.volumes {
+                if !vol_schema.named {
+                    continue;
+                }
                 let vol_name = format!("{project_name}-{name}-{vol_key}");
                 all_volumes.push(VolumeInfo {
                     name: vol_name,
+                    named: true,
                     persist: vol_schema.persist,
                     service: name.clone(),
                 });
@@ -273,6 +291,7 @@ impl ComposeAssembler {
     /// Build a sibling service map from all declared services.
     fn build_sibling_map(
         fragments: &IndexMap<String, (ServiceDeclaration, CatalogFragment)>,
+        resolved_params: &HashMap<String, HashMap<String, toml::Value>>,
     ) -> HashMap<String, SiblingService> {
         let mut siblings = HashMap::new();
 
@@ -281,6 +300,12 @@ impl ComposeAssembler {
                 name: name.clone(),
                 catalog: decl.catalog.clone(),
                 port: fragment.schema.ports.default.first().copied(),
+                params: resolved_params
+                    .get(name)
+                    .into_iter()
+                    .flat_map(|params| params.iter())
+                    .map(|(key, value)| (key.clone(), toml_to_minijinja(value)))
+                    .collect(),
             };
 
             // Register under the catalog name so fragments can reference
@@ -313,11 +338,18 @@ impl ComposeAssembler {
 
         // Named variant.
         if let Some(ref variant) = decl.variant {
-            if let Some(content) = fragment.config_variants.get(variant) {
-                return Ok(Some(content.clone()));
+            let config_content = fragment.config_variants.get(variant).cloned();
+            if config_content.is_some() || fragment.param_variants.contains_key(variant) {
+                return Ok(config_content);
             }
-            let mut available: Vec<String> = fragment.config_variants.keys().cloned().collect();
+            let mut available: Vec<String> = fragment
+                .config_variants
+                .keys()
+                .chain(fragment.param_variants.keys())
+                .cloned()
+                .collect();
             available.sort();
+            available.dedup();
             return Err(CatalogError::VariantNotFound {
                 name: fragment.name.clone(),
                 variant: variant.clone(),
@@ -339,6 +371,20 @@ impl ComposeAssembler {
     /// returns the relative path that the compose file should reference.
     fn fragment_build_context_path(catalog_root: &str, service_name: &str) -> String {
         format!("{}/{}", catalog_root.trim_end_matches('/'), service_name)
+    }
+
+    fn resolve_service_params(
+        decl: &ServiceDeclaration,
+        fragment: &CatalogFragment,
+    ) -> HashMap<String, toml::Value> {
+        let mut params = HashMap::new();
+        if let Some(variant) = decl.variant.as_ref() {
+            if let Some(preset) = fragment.param_variants.get(variant) {
+                params.extend(preset.clone());
+            }
+        }
+        params.extend(decl.params.clone());
+        params
     }
 }
 

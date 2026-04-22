@@ -27,6 +27,21 @@ type = "string"
 default = ""
 description = "Node.js major version to install (e.g., 20, 22). Empty to skip."
 
+[params.node_global_packages]
+type = "list"
+default = []
+description = "npm packages to install globally when Node.js is enabled (e.g., eclint)"
+
+[params.mount_host_composer_home]
+type = "bool"
+default = false
+description = "Mount the host Composer home into the workspace container when explicitly enabled and available"
+
+[params.composer_global_packages]
+type = "list"
+default = []
+description = "Composer packages to install globally in the container image as a fallback when no host Composer home is mounted"
+
 [capabilities]
 exec_target = true
 shell = "/bin/bash"

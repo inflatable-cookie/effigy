@@ -5,7 +5,14 @@ services:
       PMA_HOST: "{{ database_host }}"
       PMA_PORT: "{{ database_port }}"
       PMA_USER: "root"
+{% set database_service = services[database_host] %}
+{% if database_password %}
+      PMA_PASSWORD: "{{ database_password }}"
+{% elif database_service and database_service.params.root_password %}
+      PMA_PASSWORD: "{{ database_service.params.root_password }}"
+{% else %}
       PMA_PASSWORD: ""
+{% endif %}
       UPLOAD_LIMIT: "128M"
 {% if services.db %}
     depends_on:

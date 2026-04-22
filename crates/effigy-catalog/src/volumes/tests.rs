@@ -140,6 +140,7 @@ fn reset_commands_all_volumes() {
 fn from_volume_info() {
     let info = VolumeInfo {
         name: "proj-db-data".to_string(),
+        named: true,
         persist: true,
         service: "db".to_string(),
     };

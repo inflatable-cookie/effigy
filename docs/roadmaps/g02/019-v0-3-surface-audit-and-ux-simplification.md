@@ -210,8 +210,12 @@ discoverable without inventing a new product scope.
 
 ## Next Task
 
-Keep `g02.007` as the active release-prep lane until the deliberate `v0.3`
-release path is settled.
+`g02.020` is the active lane as of 2026-04-22 (see
+`docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
+`g02.007` release-prep stays queued, still gated on explicit operator intent.
 
-Then use this roadmap to execute the post-audit alignment batch across the
-front-door guides, release refs, and CLI help surfaces.
+Wait for `g02.020` to land the gateway/DNS surface changes, then wait for the
+deliberate `v0.3` release path to settle, then use this roadmap to execute
+the post-audit alignment batch across the front-door guides, release refs, and
+CLI help surfaces. Running the audit after both `g02.020` and the release cut
+keeps the audited surfaces honest.

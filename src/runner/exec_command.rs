@@ -58,7 +58,8 @@ pub(in crate::runner) fn try_run_exec_alias(
         Err(error) if exec_alias_surface_absent(&error) => return Ok(None),
         Err(error) => return Err(error),
     };
-    let alias = match build_alias_table(&surface.config).resolve_command(alias_name, extra_args) {
+    let alias_table = build_alias_table(&surface.config)?;
+    let alias = match alias_table.resolve_command(alias_name, extra_args) {
         Ok(alias) => alias,
         Err(effigy_exec::ExecError::AliasNotFound { .. }) => return Ok(None),
         Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
@@ -467,7 +468,8 @@ working_dir = "{working_dir}"
             health: None,
             host: None,
             data: None,
-        });
+        })
+        .expect("alias table");
         let resolved = aliases
             .resolve_command("artisan", &["migrate".to_owned()])
             .expect("alias");
@@ -501,7 +503,8 @@ working_dir = "{working_dir}"
             health: None,
             host: None,
             data: None,
-        });
+        })
+        .expect("alias table");
         let resolved = aliases
             .resolve_command("psql", &["-U".to_owned(), "dev".to_owned()])
             .expect("alias");
@@ -625,6 +628,74 @@ working_dir = "{working_dir}"
                 OsString::from("sh"),
                 OsString::from("-lc"),
                 OsString::from("pwd"),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_alias_table_renders_service_param_templates() {
+        let aliases = build_alias_table(&ManifestContainerConfig {
+            driver: None,
+            startup: None,
+            context: Some("dev".to_owned()),
+            profile: None,
+            compose_file: Some("infra/dev/docker-compose.yml".to_owned()),
+            project_name: None,
+            primary_service: Some("app".to_owned()),
+            services: [(
+                "db".to_owned(),
+                effigy_manifest::ManifestContainerServiceConfig {
+                    catalog: "mariadb".to_owned(),
+                    variant: None,
+                    config: None,
+                    shared: None,
+                    params: [
+                        (
+                            "database".to_owned(),
+                            toml::Value::String("contactpatch".to_owned()),
+                        ),
+                        (
+                            "root_password".to_owned(),
+                            toml::Value::String("localdev".to_owned()),
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+            working_dir: None,
+            aliases: [(
+                "mysql".to_owned(),
+                effigy_manifest::ManifestContainerExecAliasConfig::Config(
+                    effigy_manifest::ManifestContainerExecAliasTableConfig {
+                        service: "db".to_owned(),
+                        command: Some(
+                            "mysql -uroot{% if services.db.params.root_password %} -p{{ services.db.params.root_password }}{% endif %} {{ services.db.params.database }}".to_owned(),
+                        ),
+                    },
+                ),
+            )]
+            .into_iter()
+            .collect(),
+            dns: None,
+            lifecycle: None,
+            health: None,
+            host: None,
+            data: None,
+        })
+        .expect("alias table");
+
+        let resolved = aliases.resolve_command("mysql", &[]).expect("alias");
+        assert_eq!(resolved.service, "db");
+        assert_eq!(
+            resolved.command,
+            vec![
+                "mysql".to_owned(),
+                "-uroot".to_owned(),
+                "-plocaldev".to_owned(),
+                "contactpatch".to_owned()
             ]
         );
     }

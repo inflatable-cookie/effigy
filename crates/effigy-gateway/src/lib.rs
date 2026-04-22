@@ -25,6 +25,7 @@
 
 pub mod dns;
 pub mod error;
+pub mod loopback;
 pub mod ports;
 pub mod proxy;
 pub mod registration;

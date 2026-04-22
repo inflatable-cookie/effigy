@@ -4,7 +4,8 @@ use std::process::Command;
 use effigy_containers::exec::{
     list_running_compose_containers_for_profile, RunningComposeContainer,
 };
-use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute};
+use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute, SharedServiceBinding};
+use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
 use serde_yaml::Value as YamlValue;
 
@@ -16,7 +17,8 @@ use crate::runner::gateway_command::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct RegisteredGatewayRoute {
     pub(in crate::runner) domain: String,
-    pub(in crate::runner) target: String,
+    pub(in crate::runner) target: Option<String>,
+    pub(in crate::runner) dns_ip: Option<std::net::Ipv4Addr>,
     pub(in crate::runner) tls: bool,
     pub(in crate::runner) service: Option<String>,
 }
@@ -25,7 +27,18 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    let routes = resolve_gateway_routes(policy)?;
+    let rows = list_running_compose_containers_for_profile(&policy.profile)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?;
+    let project_alias_routes = resolve_gateway_service_alias_routes(repo_root, policy, true)?;
+    let shared_alias_routes = resolve_gateway_shared_service_alias_routes(
+        repo_root,
+        policy,
+        true,
+        &project_alias_routes,
+    )?;
+    routes.extend(project_alias_routes);
+    routes.extend(shared_alias_routes);
     validate_gateway_routes_against_runtime(repo_root, policy, &routes)?;
     for route in &routes {
         if route.tls {
@@ -42,7 +55,16 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
 pub(in crate::runner) fn deregister_gateway_routes_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {
-    let routes = resolve_gateway_routes(policy)?;
+    let mut routes = resolve_gateway_routes(policy)?;
+    let project_alias_routes = resolve_gateway_service_alias_routes(Path::new("."), policy, false)?;
+    let shared_alias_routes = resolve_gateway_shared_service_alias_routes(
+        Path::new("."),
+        policy,
+        false,
+        &project_alias_routes,
+    )?;
+    routes.extend(project_alias_routes);
+    routes.extend(shared_alias_routes);
     if routes.is_empty() {
         return Ok(Vec::new());
     }
@@ -66,7 +88,7 @@ fn register_gateway_route_at(
         &RouteRegistration {
             domain: route.domain.clone(),
             target: route.target.clone(),
-            dns_ip: None,
+            dns_ip: route.dns_ip,
             tls: route.tls,
             project_path: repo_root.display().to_string(),
             source: effigy_gateway::routes::RouteSource::Container,
@@ -88,9 +110,110 @@ fn resolve_gateway_routes(
         let host_port = selected_host_port_for_route(policy, dns_route)?;
         routes.push(RegisteredGatewayRoute {
             domain: dns_route.domain.clone(),
-            target: format!("127.0.0.1:{host_port}"),
+            target: Some(format!("127.0.0.1:{host_port}")),
+            dns_ip: None,
             tls: dns_route.tls,
             service: dns_route.service.clone(),
+        });
+    }
+    Ok(routes)
+}
+
+fn resolve_gateway_routes_against_rows(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    rows: &[RunningComposeContainer],
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+    let mut routes = Vec::new();
+    for dns_route in &policy.dns_routes {
+        let host_port = runtime_host_port_for_route(repo_root, policy, dns_route, rows)?
+            .unwrap_or(selected_host_port_for_route(policy, dns_route)?);
+        routes.push(RegisteredGatewayRoute {
+            domain: dns_route.domain.clone(),
+            target: Some(format!("127.0.0.1:{host_port}")),
+            dns_ip: None,
+            tls: dns_route.tls,
+            service: dns_route.service.clone(),
+        });
+    }
+    Ok(routes)
+}
+
+fn resolve_gateway_service_alias_routes(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    allocate_if_missing: bool,
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+    if policy.service_aliases.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(base_domain) = project_base_domain(policy) else {
+        return Ok(Vec::new());
+    };
+    let Some(loopback_ip) =
+        load_or_allocate_project_loopback_ip(repo_root, policy, allocate_if_missing)?
+    else {
+        return Ok(Vec::new());
+    };
+    let explicit_domains = policy
+        .dns_routes
+        .iter()
+        .map(|route| route.domain.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    Ok(policy
+        .service_aliases
+        .iter()
+        .filter(|alias| {
+            let domain = format!("{}.{}", alias.domain_label, base_domain);
+            !explicit_domains.contains(domain.as_str())
+        })
+        .map(|alias| RegisteredGatewayRoute {
+            domain: format!("{}.{}", alias.domain_label, base_domain),
+            target: None,
+            dns_ip: Some(loopback_ip),
+            tls: false,
+            service: Some(alias.service.clone()),
+        })
+        .collect())
+}
+
+fn resolve_gateway_shared_service_alias_routes(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    allocate_if_missing: bool,
+    project_alias_routes: &[RegisteredGatewayRoute],
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+    if policy.shared_services.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(base_domain) = project_base_domain(policy) else {
+        return Ok(Vec::new());
+    };
+    let occupied_domains = occupied_service_alias_domains(policy, project_alias_routes);
+    let mut routes = Vec::new();
+    for shared in &policy.shared_services {
+        let Some((domain_label, container_port)) = shared_service_alias_contract(&shared.catalog)
+        else {
+            continue;
+        };
+        if shared.container_port != container_port {
+            continue;
+        }
+        let domain = format!("{domain_label}.{base_domain}");
+        if occupied_domains.contains(domain.as_str()) {
+            continue;
+        }
+        let Some(loopback_ip) =
+            load_or_allocate_shared_loopback_ip(repo_root, shared, allocate_if_missing)?
+        else {
+            continue;
+        };
+        routes.push(RegisteredGatewayRoute {
+            domain,
+            target: None,
+            dns_ip: Some(loopback_ip),
+            tls: false,
+            service: Some(shared.service_name.clone()),
         });
     }
     Ok(routes)
@@ -110,6 +233,84 @@ fn validate_gateway_routes_against_runtime(
     validate_gateway_routes_against_host_listeners(policy, routes)
 }
 
+fn runtime_host_port_for_route(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    dns_route: &EffectiveDnsRoute,
+    rows: &[RunningComposeContainer],
+) -> Result<Option<u16>, RunnerError> {
+    let matching_rows: Vec<&RunningComposeContainer> = rows
+        .iter()
+        .filter(|row| row_matches_policy_project(row, repo_root, policy))
+        .filter(|row| {
+            dns_route
+                .service
+                .as_deref()
+                .is_none_or(|service| row.service.as_deref() == Some(service))
+        })
+        .collect();
+    if matching_rows.is_empty() {
+        return Ok(None);
+    }
+
+    if let Some(selected_port) = dns_route.port {
+        for row in &matching_rows {
+            if let Some(host_port) = runtime_host_port_for_selected_port(row, selected_port)? {
+                return Ok(Some(host_port));
+            }
+        }
+    }
+
+    for row in &matching_rows {
+        if let Some(host_port) = first_runtime_http_host_port(row)? {
+            return Ok(Some(host_port));
+        }
+    }
+
+    Ok(None)
+}
+
+fn runtime_host_port_for_selected_port(
+    row: &RunningComposeContainer,
+    selected_port: u16,
+) -> Result<Option<u16>, RunnerError> {
+    let mut container_match = None;
+    for raw in &row.ports {
+        let ((host_start, host_end), (container_start, container_end)) =
+            parse_runtime_port_binding_range(raw)?;
+        if host_start == selected_port && host_end == selected_port {
+            return Ok(Some(host_start));
+        }
+        if container_start == selected_port
+            && container_end == selected_port
+            && host_start == host_end
+        {
+            container_match = Some(host_start);
+        }
+    }
+    Ok(container_match)
+}
+
+fn first_runtime_http_host_port(row: &RunningComposeContainer) -> Result<Option<u16>, RunnerError> {
+    let mut first_binding = None;
+    for raw in &row.ports {
+        let ((host_start, host_end), (container_start, container_end)) =
+            parse_runtime_port_binding_range(raw)?;
+        if host_start != host_end {
+            continue;
+        }
+        if first_binding.is_none() {
+            first_binding = Some(host_start);
+        }
+        if container_start == container_end
+            && matches!(container_start, 80 | 3000 | 8025 | 9000 | 9001 | 9200)
+        {
+            return Ok(Some(host_start));
+        }
+    }
+    Ok(first_binding)
+}
+
 fn validate_gateway_routes_against_rows(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -117,7 +318,14 @@ fn validate_gateway_routes_against_rows(
     rows: &[RunningComposeContainer],
 ) -> Result<(), RunnerError> {
     for route in routes {
-        let target_port = parse_target_host_port(&route.target)?;
+        let Some(target_port) = route
+            .target
+            .as_deref()
+            .map(parse_target_host_port)
+            .transpose()?
+        else {
+            continue;
+        };
         if rows
             .iter()
             .filter(|row| row_matches_policy_project(row, repo_root, policy))
@@ -129,7 +337,7 @@ fn validate_gateway_routes_against_rows(
         return Err(RunnerError::task_invocation(format!(
             "container `{}` selected gateway target `{}` for domain `{}` but no running container in project `{}`{} publishes host port {}; gateway registration refuses to target an unrelated runtime binding",
             policy.name,
-            route.target,
+            route.target.as_deref().unwrap_or("<dns-only>"),
             route.domain,
             policy.project_name,
             route
@@ -148,13 +356,24 @@ fn validate_gateway_routes_against_host_listeners(
     routes: &[RegisteredGatewayRoute],
 ) -> Result<(), RunnerError> {
     for route in routes {
-        let target_port = parse_target_host_port(&route.target)?;
+        let Some(target_port) = route
+            .target
+            .as_deref()
+            .map(parse_target_host_port)
+            .transpose()?
+        else {
+            continue;
+        };
         let Some(listener_command) = non_runtime_listener_for_port(target_port)? else {
             continue;
         };
         return Err(RunnerError::task_invocation(format!(
             "container `{}` selected gateway target `{}` for domain `{}` but host port {} is already held by `{}`; gateway registration refuses to target an unrelated host listener",
-            policy.name, route.target, route.domain, target_port, listener_command
+            policy.name,
+            route.target.as_deref().unwrap_or("<dns-only>"),
+            route.domain,
+            target_port,
+            listener_command
         )));
     }
     Ok(())
@@ -173,6 +392,94 @@ fn parse_target_host_port(target: &str) -> Result<u16, RunnerError> {
             ))
         })?;
     Ok(port)
+}
+
+fn project_base_domain(policy: &EffectiveContainerPolicy) -> Option<String> {
+    let domain = policy.dns_domain.as_deref()?.trim();
+    let mut labels = domain
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if labels.len() < 2 {
+        return None;
+    }
+    if labels.len() > 2 {
+        labels.remove(0);
+    }
+    Some(labels.join("."))
+}
+
+fn load_or_allocate_project_loopback_ip(
+    _repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    allocate_if_missing: bool,
+) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
+    load_or_allocate_loopback_ip(
+        &policy.project_name,
+        &policy.project_name,
+        allocate_if_missing,
+    )
+}
+
+fn load_or_allocate_shared_loopback_ip(
+    _repo_root: &Path,
+    shared: &SharedServiceBinding,
+    allocate_if_missing: bool,
+) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
+    load_or_allocate_loopback_ip(
+        &format!("shared:{}", shared.project_name),
+        &shared.compose_file.display().to_string(),
+        allocate_if_missing,
+    )
+}
+
+fn load_or_allocate_loopback_ip(
+    identity: &str,
+    source: &str,
+    allocate_if_missing: bool,
+) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
+    let path = gateway_dir()?.join("loopback-ips.json");
+    let mut registry = LoopbackRegistry::load(&path)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if let Some(existing) = registry.get(identity) {
+        return Ok(Some(existing.ip));
+    }
+    if !allocate_if_missing {
+        return Ok(None);
+    }
+    let assignment = registry
+        .allocate(identity, source)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        .ip;
+    registry
+        .save(&path)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok(Some(assignment))
+}
+
+fn occupied_service_alias_domains<'a>(
+    policy: &'a EffectiveContainerPolicy,
+    project_alias_routes: &'a [RegisteredGatewayRoute],
+) -> std::collections::BTreeSet<&'a str> {
+    let mut occupied = policy
+        .dns_routes
+        .iter()
+        .map(|route| route.domain.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    for route in project_alias_routes {
+        occupied.insert(route.domain.as_str());
+    }
+    occupied
+}
+
+fn shared_service_alias_contract(catalog: &str) -> Option<(&'static str, u16)> {
+    match catalog {
+        "postgres" => Some(("db", 5432)),
+        "mariadb" | "mysql" => Some(("db", 3306)),
+        "redis" => Some(("redis", 6379)),
+        "memcached" => Some(("memcached", 11211)),
+        _ => None,
+    }
 }
 
 fn row_matches_policy_project(
@@ -207,18 +514,28 @@ fn row_matches_route_service(
 }
 
 fn parse_published_host_port_range(raw: &str) -> Result<(u16, u16), RunnerError> {
-    let Some(published) = raw.split("->").next() else {
+    parse_runtime_port_binding_range(raw).map(|(host, _container)| host)
+}
+
+fn parse_runtime_port_binding_range(raw: &str) -> Result<((u16, u16), (u16, u16)), RunnerError> {
+    let Some((published, container)) = raw.split_once("->") else {
         return Err(RunnerError::task_invocation(format!(
             "runtime port mapping `{raw}` is missing a published-port segment"
         )));
     };
-    let candidate = published.rsplit(':').next().unwrap_or_default().trim();
-    let (start, end) = parse_port_range(candidate).map_err(|error| {
+    let host_candidate = published.rsplit(':').next().unwrap_or_default().trim();
+    let container_candidate = container.split('/').next().unwrap_or_default().trim();
+    let host = parse_port_range(host_candidate).map_err(|error| {
         RunnerError::task_invocation(format!(
             "runtime port mapping `{raw}` does not expose a valid published host port: {error}"
         ))
     })?;
-    Ok((start, end))
+    let container = parse_port_range(container_candidate).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "runtime port mapping `{raw}` does not expose a valid container port: {error}"
+        ))
+    })?;
+    Ok((host, container))
 }
 
 fn parse_port_range(raw: &str) -> Result<(u16, u16), String> {
@@ -526,12 +843,45 @@ fn gateway_route_table_path() -> Result<PathBuf, RunnerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use effigy_containers::EffectiveComposeSource;
+    use effigy_containers::{EffectiveComposeSource, EffectiveServiceAlias, SharedServiceBinding};
     use effigy_gateway::routes::RouteTable;
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
         ManifestContainerStartup,
     };
+    use std::sync::{Mutex, OnceLock};
+
+    fn with_test_home<T>(name: &str, op: impl FnOnce() -> T) -> T {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock test home");
+        let original_home = std::env::var_os("HOME");
+        let temp_home = std::env::temp_dir().join(format!(
+            "effigy-gateway-registration-home-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_home).expect("mkdir temp home");
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+        let result = op();
+        if let Some(value) = original_home {
+            unsafe {
+                std::env::set_var("HOME", value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&temp_home);
+        result
+    }
 
     fn test_policy() -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
@@ -555,6 +905,11 @@ mod tests {
                 port: None,
                 service: None,
             }],
+            service_aliases: vec![EffectiveServiceAlias {
+                service: "db".to_owned(),
+                domain_label: "db".to_owned(),
+                container_port: 5432,
+            }],
             declared_ports: vec!["8080:80".to_owned()],
             ports_declared_explicitly: true,
             declared_mounts: vec![],
@@ -570,12 +925,31 @@ mod tests {
         }
     }
 
+    fn shared_service(
+        service_name: &str,
+        catalog: &str,
+        project_name: &str,
+        host_port: u16,
+        container_port: u16,
+    ) -> SharedServiceBinding {
+        SharedServiceBinding {
+            service_name: service_name.to_owned(),
+            catalog: catalog.to_owned(),
+            project_name: project_name.to_owned(),
+            compose_file: PathBuf::from(format!("/tmp/{project_name}/docker-compose.shared.yml")),
+            host: "127.0.0.1".to_owned(),
+            host_port,
+            container_port,
+        }
+    }
+
     #[test]
     fn resolves_gateway_route_from_first_declared_host_port() {
         let routes = resolve_gateway_routes(&test_policy()).expect("routes");
         let route = routes.first().expect("some route");
         assert_eq!(route.domain, "clientname.test");
-        assert_eq!(route.target, "127.0.0.1:8080");
+        assert_eq!(route.target.as_deref(), Some("127.0.0.1:8080"));
+        assert_eq!(route.dns_ip, None);
         assert!(route.tls);
         assert_eq!(route.service, None);
     }
@@ -605,7 +979,7 @@ mod tests {
 
         let routes = resolve_gateway_routes(&policy).expect("routes");
         let route = routes.first().expect("some route");
-        assert_eq!(route.target, "127.0.0.1:9001");
+        assert_eq!(route.target.as_deref(), Some("127.0.0.1:9001"));
     }
 
     #[test]
@@ -628,7 +1002,7 @@ mod tests {
 
         let routes = resolve_gateway_routes(&policy).expect("routes");
         let route = routes.first().expect("some route");
-        assert_eq!(route.target, "127.0.0.1:8125");
+        assert_eq!(route.target.as_deref(), Some("127.0.0.1:8125"));
     }
 
     #[test]
@@ -665,7 +1039,7 @@ services:
 
         let routes = resolve_gateway_routes(&policy).expect("routes");
         let route = routes.first().expect("some route");
-        assert_eq!(route.target, "127.0.0.1:18901");
+        assert_eq!(route.target.as_deref(), Some("127.0.0.1:18901"));
     }
 
     #[test]
@@ -687,7 +1061,7 @@ services:
         register_gateway_route_at(&route_table_path, &repo_root, route).expect("register");
         let table = RouteTable::load(&route_table_path).expect("load registered route table");
         let registered = table.lookup("clientname.test").expect("registered route");
-        assert_eq!(registered.target, "127.0.0.1:8080");
+        assert_eq!(registered.target.as_deref(), Some("127.0.0.1:8080"));
         assert!(registered.tls);
 
         deregister_gateway_route_at(&route_table_path, "clientname.test").expect("deregister");
@@ -711,9 +1085,9 @@ services:
         let routes = resolve_gateway_routes(&policy).expect("routes");
         assert_eq!(routes.len(), 2);
         assert_eq!(routes[0].domain, "clientname.test");
-        assert_eq!(routes[0].target, "127.0.0.1:8080");
+        assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:8080"));
         assert_eq!(routes[1].domain, "admin.clientname.test");
-        assert_eq!(routes[1].target, "127.0.0.1:9001");
+        assert_eq!(routes[1].target.as_deref(), Some("127.0.0.1:9001"));
         assert_eq!(routes[1].service.as_deref(), Some("admin"));
     }
 
@@ -828,5 +1202,204 @@ services:
         assert!(listener_command_looks_runtime_managed("docker-proxy"));
         assert!(listener_command_looks_runtime_managed("colima"));
         assert!(!listener_command_looks_runtime_managed("Python"));
+    }
+
+    #[test]
+    fn resolves_gateway_routes_from_runtime_ephemeral_host_port() {
+        let mut policy = test_policy();
+        policy.ports_declared_explicitly = false;
+        policy.declared_ports = vec!["0:80".to_owned()];
+        let repo_root = PathBuf::from("/tmp/repo");
+        let rows = vec![RunningComposeContainer {
+            container_name: "demo-web-dev-app-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: vec!["0.0.0.0:41001->80/tcp".to_owned()],
+            project_name: Some("demo-web-dev".to_owned()),
+            working_dir: Some("/tmp/repo".to_owned()),
+            service: Some("app".to_owned()),
+        }];
+
+        let routes =
+            resolve_gateway_routes_against_rows(&repo_root, &policy, &rows).expect("routes");
+        assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:41001"));
+    }
+
+    #[test]
+    fn resolves_gateway_routes_from_runtime_service_specific_ephemeral_host_port() {
+        let mut policy = test_policy();
+        policy.ports_declared_explicitly = false;
+        policy.declared_ports = vec!["0:80".to_owned(), "0:9001".to_owned()];
+        policy.dns_routes[0].service = Some("web".to_owned());
+        let repo_root = PathBuf::from("/tmp/repo");
+        let rows = vec![
+            RunningComposeContainer {
+                container_name: "demo-web-dev-admin-1".to_owned(),
+                status: "Up 10 seconds".to_owned(),
+                ports: vec!["0.0.0.0:41001->80/tcp".to_owned()],
+                project_name: Some("demo-web-dev".to_owned()),
+                working_dir: Some("/tmp/repo".to_owned()),
+                service: Some("admin".to_owned()),
+            },
+            RunningComposeContainer {
+                container_name: "demo-web-dev-web-1".to_owned(),
+                status: "Up 10 seconds".to_owned(),
+                ports: vec!["0.0.0.0:41002->80/tcp".to_owned()],
+                project_name: Some("demo-web-dev".to_owned()),
+                working_dir: Some("/tmp/repo".to_owned()),
+                service: Some("web".to_owned()),
+            },
+        ];
+
+        let routes =
+            resolve_gateway_routes_against_rows(&repo_root, &policy, &rows).expect("routes");
+        assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:41002"));
+    }
+
+    #[test]
+    fn parse_runtime_port_binding_range_tracks_host_and_container_ports() {
+        assert_eq!(
+            parse_runtime_port_binding_range("0.0.0.0:41001->80/tcp").expect("binding"),
+            ((41001, 41001), (80, 80))
+        );
+        assert_eq!(
+            parse_runtime_port_binding_range("0.0.0.0:41001-41003->80-82/tcp")
+                .expect("binding range"),
+            ((41001, 41003), (80, 82))
+        );
+    }
+
+    #[test]
+    fn resolves_dns_only_service_alias_routes_on_project_loopback_ip() {
+        with_test_home("service-alias-loopback", || {
+            let policy = test_policy();
+            let repo_root = PathBuf::from("/tmp/repo");
+
+            let routes = resolve_gateway_service_alias_routes(&repo_root, &policy, true)
+                .expect("service alias routes");
+            assert_eq!(routes.len(), 1);
+            assert_eq!(routes[0].domain, "db.clientname.test");
+            assert_eq!(routes[0].target, None);
+            assert_eq!(
+                routes[0].dns_ip,
+                Some(std::net::Ipv4Addr::new(127, 1, 0, 1))
+            );
+        });
+    }
+
+    #[test]
+    fn explicit_dns_routes_win_over_derived_service_alias_domains() {
+        with_test_home("service-alias-explicit", || {
+            let mut policy = test_policy();
+            policy
+                .dns_routes
+                .push(effigy_containers::EffectiveDnsRoute {
+                    domain: "db.clientname.test".to_owned(),
+                    tls: false,
+                    port: Some(9001),
+                    service: Some("dbadmin".to_owned()),
+                });
+
+            let routes =
+                resolve_gateway_service_alias_routes(Path::new("/tmp/repo"), &policy, true)
+                    .expect("service alias routes");
+            assert!(routes.is_empty());
+        });
+    }
+
+    #[test]
+    fn shared_service_aliases_reuse_one_loopback_ip_across_project_domains() {
+        with_test_home("shared-service-alias-reuse", || {
+            let repo_root = PathBuf::from("/tmp/repo");
+
+            let mut first = test_policy();
+            first.dns_domain = Some("app1.test".to_owned());
+            first.service_aliases.clear();
+            first.shared_services = vec![shared_service(
+                "postgres",
+                "postgres",
+                "shared-postgres-dev",
+                5432,
+                5432,
+            )];
+            let first_project_routes =
+                resolve_gateway_service_alias_routes(&repo_root, &first, true)
+                    .expect("project routes");
+            let first_routes = resolve_gateway_shared_service_alias_routes(
+                &repo_root,
+                &first,
+                true,
+                &first_project_routes,
+            )
+            .expect("shared routes");
+
+            let mut second = test_policy();
+            second.dns_domain = Some("app2.test".to_owned());
+            second.project_name = "demo-api-dev".to_owned();
+            second.service_aliases.clear();
+            second.shared_services = vec![shared_service(
+                "postgres",
+                "postgres",
+                "shared-postgres-dev",
+                15432,
+                5432,
+            )];
+            let second_project_routes =
+                resolve_gateway_service_alias_routes(&repo_root, &second, true)
+                    .expect("project routes");
+            let second_routes = resolve_gateway_shared_service_alias_routes(
+                &repo_root,
+                &second,
+                true,
+                &second_project_routes,
+            )
+            .expect("shared routes");
+
+            assert_eq!(first_routes.len(), 1);
+            assert_eq!(second_routes.len(), 1);
+            assert_eq!(first_routes[0].domain, "db.app1.test");
+            assert_eq!(second_routes[0].domain, "db.app2.test");
+            assert_eq!(first_routes[0].target, None);
+            assert_eq!(second_routes[0].target, None);
+            assert_eq!(first_routes[0].dns_ip, second_routes[0].dns_ip);
+            assert_eq!(
+                first_routes[0].dns_ip,
+                Some(std::net::Ipv4Addr::new(127, 1, 0, 1))
+            );
+        });
+    }
+
+    #[test]
+    fn explicit_dns_routes_win_over_derived_shared_service_alias_domains() {
+        with_test_home("shared-service-alias-explicit", || {
+            let mut policy = test_policy();
+            policy.service_aliases.clear();
+            policy.shared_services = vec![shared_service(
+                "postgres",
+                "postgres",
+                "shared-postgres-dev",
+                5432,
+                5432,
+            )];
+            policy
+                .dns_routes
+                .push(effigy_containers::EffectiveDnsRoute {
+                    domain: "db.clientname.test".to_owned(),
+                    tls: false,
+                    port: Some(9001),
+                    service: Some("dbadmin".to_owned()),
+                });
+
+            let project_routes =
+                resolve_gateway_service_alias_routes(Path::new("/tmp/repo"), &policy, true)
+                    .expect("project routes");
+            let routes = resolve_gateway_shared_service_alias_routes(
+                Path::new("/tmp/repo"),
+                &policy,
+                true,
+                &project_routes,
+            )
+            .expect("shared routes");
+            assert!(routes.is_empty());
+        });
     }
 }

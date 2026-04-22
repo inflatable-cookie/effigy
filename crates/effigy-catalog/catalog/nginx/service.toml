@@ -12,6 +12,26 @@ type = "string"
 default = "/var/www/html"
 description = "Container working directory (must match the app service)"
 
+[params.front_controller_fallback]
+type = "string"
+default = "/index.php?$query_string"
+description = "Fallback target for location / when requests miss real files. Empty disables the fallback."
+
+[params.asset_fallback]
+type = "string"
+default = "/index.php?$query_string"
+description = "Fallback target for missing static assets. Empty disables the asset fallback."
+
+[params.rewrite_all_to]
+type = "string"
+default = ""
+description = "Optional rewrite target applied to every request in location /. Empty keeps normal try_files handling."
+
+[params.error_page_404]
+type = "string"
+default = "/index.php"
+description = "Target used for nginx 404 error_page handling."
+
 [ports]
 default = [80]
 description = "HTTP port"

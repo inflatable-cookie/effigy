@@ -2,13 +2,56 @@ use crate::tests::prelude::{
     parse_command, Command, ContainerArgs, ContainerSubcommand, ExecArgs, HelpTopic, PathBuf,
     ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand, WorkspaceArgs,
 };
-use effigy_cli::ContainerDataSubcommand;
+use effigy_cli::{BundleArgs, BundleSubcommand, ContainerDataSubcommand};
 
 #[test]
 fn parse_service_help_is_scoped() {
     let cmd = parse_command(vec!["service".to_owned(), "--help".to_owned()])
         .expect("parse should succeed");
     assert_eq!(cmd, Command::Help(HelpTopic::Service));
+}
+
+#[test]
+fn parse_bundle_help_is_scoped() {
+    let cmd = parse_command(vec!["bundle".to_owned(), "--help".to_owned()])
+        .expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Bundle));
+}
+
+#[test]
+fn parse_bundle_list_supports_json() {
+    let cmd = parse_command(vec![
+        "bundle".to_owned(),
+        "list".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Bundle(BundleArgs {
+            subcommand: BundleSubcommand::List,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_bundle_inspect_is_supported() {
+    let cmd = parse_command(vec![
+        "bundle".to_owned(),
+        "inspect".to_owned(),
+        "decodelabs".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Bundle(BundleArgs {
+            subcommand: BundleSubcommand::Inspect {
+                bundle: "decodelabs".to_owned(),
+            },
+            output_json: false,
+        })
+    );
 }
 
 #[test]

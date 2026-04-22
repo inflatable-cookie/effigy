@@ -17,6 +17,11 @@ type = "integer"
 default = 3306
 description = "Database port"
 
+[params.database_password]
+type = "string"
+default = ""
+description = "Database password for the root user"
+
 [capabilities]
 exec_target = false
 

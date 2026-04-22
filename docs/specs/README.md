@@ -26,12 +26,12 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md)
+- [`020-multi-project-gateway-expansion-and-service-dns-strict-lane.md`](./020-multi-project-gateway-expansion-and-service-dns-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
-Staged next-lane specs:
+Queued next-lane specs:
 
-- [`020-multi-project-gateway-expansion-and-service-dns-strict-lane.md`](./020-multi-project-gateway-expansion-and-service-dns-strict-lane.md)
+- [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md) — still gated on explicit release intent; resumes ahead of `020` whenever release execution is requested
 
 Paused but still useful:
 
@@ -49,9 +49,14 @@ Recently completed:
 
 ## Next Task
 
-`g02.007` is back in planning.
+`g02.020` is the active strict lane as of 2026-04-22 (see
+`docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
 
-Wait for explicit release intent before any irreversible action. If requested,
-start with:
+Execute batch card `303` — loopback-IP allocation and gateway setup
+integration. See
+[`batch-cards/303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md`](./batch-cards/303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md).
+
+`g02.007` remains queued, still gated on explicit release intent. If release
+execution is requested, it resumes ahead of `g02.020` with:
 
 `cargo run --bin effigy -- release prepare --yes --version 0.3.0 --check-gates`

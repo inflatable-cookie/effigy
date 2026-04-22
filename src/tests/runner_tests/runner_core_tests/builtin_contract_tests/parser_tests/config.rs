@@ -30,6 +30,7 @@ fn builtin_config_parser_contracts_are_stable() {
             minimal: true,
             output_json: true,
             target: Some("test"),
+            bundle: None,
             runner: Some("cargo-nextest"),
         }
     );
@@ -44,6 +45,7 @@ fn builtin_config_parser_contracts_are_stable() {
             minimal: false,
             output_json: false,
             target: None,
+            bundle: None,
             runner: None,
         }
     );
@@ -67,6 +69,26 @@ fn builtin_config_parser_contracts_are_stable() {
             minimal: false,
             output_json: true,
             target: None,
+            bundle: None,
+            runner: None,
+        }
+    );
+
+    let parsed = parse_config_contract_request(
+        &task,
+        &string_args(&["--schema", "--target", "bundle", "--bundle", "decodelabs"]),
+    )
+    .expect("config parse");
+    assert_eq!(
+        parsed,
+        ConfigParseContract {
+            inspect: false,
+            inspect_path: None,
+            schema: true,
+            minimal: false,
+            output_json: false,
+            target: Some("bundle"),
+            bundle: Some("decodelabs".to_owned()),
             runner: None,
         }
     );
