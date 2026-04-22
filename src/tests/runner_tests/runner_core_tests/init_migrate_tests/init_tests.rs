@@ -130,7 +130,15 @@ fn run_manifest_task_builtin_init_list_text_reports_registered_starters() {
     let root = temp_workspace("builtin-init-list-text");
 
     let out = run_builtin_ok(root.to_path_buf(), "init", &["--list"]);
-    assert_output_contains_all(&out, &["Available starters:", "- minimal"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "Available starters:",
+            "- minimal",
+            "- northstar",
+            "- underlay",
+        ],
+    );
     assert_path_missing(
         &root.join("effigy.toml"),
         "`--list` must not emit a manifest",
@@ -293,4 +301,140 @@ fn run_manifest_task_builtin_init_underlay_json_reports_files_array_and_guidance
         ],
     );
     assert_path_exists(&root.join("effigy.toml"), "underlay json root manifest");
+}
+
+#[test]
+fn run_manifest_task_builtin_init_northstar_emits_full_consumer_contract_and_guidance() {
+    let root = temp_workspace("builtin-init-northstar-emit");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["northstar"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "Created effigy.toml",
+            "Created README.md",
+            "Created AGENTS.md",
+            "Created CHANGELOG.md",
+            "Created docs/README.md",
+            "Created docs/vision/README.md",
+            "Created docs/vision/001-product-vision.md",
+            "Created docs/roadmaps/README.md",
+            "Created docs/logs/README.md",
+            "Created docs/policy/vision-next-task-verbs.txt",
+            "Next steps:",
+            "<PROJECT_NAME>",
+        ],
+    );
+    assert_path_exists(&root.join("effigy.toml"), "northstar root manifest");
+    assert_path_exists(&root.join("AGENTS.md"), "northstar agent contract");
+    assert_path_exists(
+        &root.join("docs/vision/001-product-vision.md"),
+        "northstar first vision document (nested dirs must be created)",
+    );
+    assert_path_exists(
+        &root.join("docs/policy/vision-next-task-verbs.txt"),
+        "northstar next-task verb allowlist (nested dirs must be created)",
+    );
+    // Starter docs_policy wiring + qa:northstar bundle should be present
+    // in the emitted manifest.
+    assert_file_text_contains_all(
+        &root.join("effigy.toml"),
+        &[
+            "[docs_policy.indexes.vision]",
+            "[docs_policy.next_actions.vision]",
+            "qa:northstar",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_northstar_refuses_overwrite_without_force() {
+    let root = temp_workspace("builtin-init-northstar-refuse-overwrite");
+    // Pre-populate one of the northstar targets so the pre-scan trips.
+    write_root_manifest(&root, "[tasks]\nold = \"printf old\"\n");
+
+    let err = run_builtin_err(root.to_path_buf(), "init", &["northstar"]);
+    assert_task_invocation_error_contains(
+        err,
+        &[
+            "already exists",
+            "effigy.toml",
+            "`effigy init --force`",
+            "`effigy init --dry-run`",
+        ],
+    );
+    assert_file_text_contains_all(&root.join("effigy.toml"), &["old = \"printf old\""]);
+    assert_path_missing(
+        &root.join("AGENTS.md"),
+        "northstar refuse-overwrite must not write peer files",
+    );
+    assert_path_missing(
+        &root.join("docs/README.md"),
+        "northstar refuse-overwrite must not create nested dirs",
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_northstar_force_overwrites_all_targets() {
+    let root = temp_workspace("builtin-init-northstar-force");
+    write_root_manifest(&root, "[tasks]\nold = \"printf old\"\n");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["northstar", "--force"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "Overwrote effigy.toml",
+            "Created AGENTS.md",
+            "Created docs/vision/001-product-vision.md",
+        ],
+    );
+    assert_file_text_excludes_all(&root.join("effigy.toml"), &["old = \"printf old\""]);
+    assert_path_exists(&root.join("docs/logs/README.md"), "northstar logs index");
+}
+
+#[test]
+fn run_manifest_task_builtin_init_northstar_dry_run_prints_fenced_sections_without_writing() {
+    let root = temp_workspace("builtin-init-northstar-dry-run");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["northstar", "--dry-run"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "=== effigy.toml ===",
+            "=== AGENTS.md ===",
+            "=== docs/vision/001-product-vision.md ===",
+            "=== docs/policy/vision-next-task-verbs.txt ===",
+        ],
+    );
+    assert_path_missing(
+        &root.join("effigy.toml"),
+        "northstar dry-run must not write the root manifest",
+    );
+    assert_path_missing(
+        &root.join("docs/vision/001-product-vision.md"),
+        "northstar dry-run must not write nested docs",
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_northstar_json_reports_files_array_and_guidance() {
+    let root = temp_workspace("builtin-init-northstar-json");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["northstar", "--json"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "\"schema\": \"effigy.init.v1\"",
+            "\"starter\": \"northstar\"",
+            "\"written\": true",
+            "\"overwritten\": false",
+            "\"files\":",
+            "\"target\": \"effigy.toml\"",
+            "\"target\": \"docs/vision/001-product-vision.md\"",
+            "\"target\": \"docs/policy/vision-next-task-verbs.txt\"",
+            "\"guidance\":",
+            "<PROJECT_NAME>",
+        ],
+    );
+    assert_path_exists(&root.join("AGENTS.md"), "northstar json agent contract");
 }

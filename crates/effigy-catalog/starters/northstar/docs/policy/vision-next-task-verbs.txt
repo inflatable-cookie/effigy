@@ -1,0 +1,6 @@
+ship
+review
+execute
+define
+document
+validate

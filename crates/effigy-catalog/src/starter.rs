@@ -258,6 +258,10 @@ mod tests {
             "minimal should be listed; got {listing:?}"
         );
         assert!(
+            names.contains(&"northstar"),
+            "northstar should be listed; got {listing:?}"
+        );
+        assert!(
             names.contains(&"underlay"),
             "underlay should be listed; got {listing:?}"
         );
@@ -299,5 +303,36 @@ mod tests {
         }
         let guidance = starter.guidance.expect("underlay ships guidance text");
         assert!(guidance.contains("systems.dev.working_dir"));
+    }
+
+    #[test]
+    fn northstar_starter_resolves_with_all_declared_files_and_guidance() {
+        let resolver = StarterResolver::new();
+        let starter = resolver
+            .resolve("northstar")
+            .expect("northstar starter should resolve");
+
+        assert_eq!(starter.name, "northstar");
+        let targets: Vec<&str> = starter.files.iter().map(|f| f.target.as_str()).collect();
+        for expected in [
+            "effigy.toml",
+            "README.md",
+            "AGENTS.md",
+            "CHANGELOG.md",
+            "docs/README.md",
+            "docs/vision/README.md",
+            "docs/vision/001-product-vision.md",
+            "docs/roadmaps/README.md",
+            "docs/logs/README.md",
+            "docs/policy/vision-next-task-verbs.txt",
+        ] {
+            assert!(
+                targets.contains(&expected),
+                "expected northstar to declare {expected}; got {targets:?}"
+            );
+        }
+        let guidance = starter.guidance.expect("northstar ships guidance text");
+        assert!(guidance.contains("<PROJECT_NAME>"));
+        assert!(guidance.contains("qa:northstar"));
     }
 }
