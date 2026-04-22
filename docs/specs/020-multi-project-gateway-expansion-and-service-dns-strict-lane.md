@@ -107,10 +107,14 @@ The execution order on this active lane:
 6. `308` — complete. Shared-service DNS aliases now reuse one bounded
    loopback-IP identity per shared backing service while explicit manifest
    routes and project-owned aliases keep precedence
-7. `309` — next execution. Prove the shipped HTTP and TCP service DNS model
-   in one real consumer repo and migrate that repo off hardcoded local
-   service ports where the alias model now covers the runtime path
-8. later — widen consumer-repo migration beyond the first proof repo
+7. `309` — active. The first consumer-repo proof established that generated
+   compose now registers DNS-only TCP aliases honestly, but also exposed that
+   the actual TCP listeners still publish on auto-allocated localhost ports
+   instead of the assigned loopback IP
+8. `310` — next execution. Bind shipped TCP service ports onto the assigned
+   loopback IP on the generated-compose path, then resume the real-project
+   proof on that updated runtime
+9. later — widen consumer-repo migration beyond the first proof repo
 
 ## Exit Condition
 
@@ -124,9 +128,8 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute `309` — prove the shipped service DNS model in one real consumer repo
-and migrate that repo off hardcoded local service ports where the bounded
-alias path now covers the runtime.
+Execute `310` — bind shipped TCP service ports onto the assigned loopback IP
+on the generated-compose path, then resume the `underlay-reference` proof.
 
 See
-`docs/specs/batch-cards/309-prove-service-dns-aliases-in-one-real-project.md`.
+`docs/specs/batch-cards/310-implement-loopback-bound-tcp-port-publication-foundation.md`.
