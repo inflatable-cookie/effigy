@@ -658,6 +658,7 @@ name = "effigy-builtin"
 version = "0.1.0"
 dependencies = [
  "anstyle",
+ "effigy-catalog",
  "effigy-cli",
  "effigy-core",
  "effigy-env",

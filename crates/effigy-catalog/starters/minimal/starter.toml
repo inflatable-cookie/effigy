@@ -1,0 +1,14 @@
+# Starter descriptor for the built-in `minimal` starter.
+#
+# This is the default starter emitted by `effigy init` when no name is
+# supplied. It promotes the historical hardcoded baseline scaffold into
+# the embedded starter catalog so every starter (current and future)
+# flows through one loader and one emission path.
+
+[starter]
+name = "minimal"
+description = "Baseline effigy.toml scaffold with commented managed dev and DAG examples."
+
+[[files]]
+target = "effigy.toml"
+# `source` defaults to `target` when omitted.

@@ -186,7 +186,7 @@ fn resolve_running_service_container_name(
     let rows = list_running_compose_containers_for_profile(&policy.profile)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     Ok(select_running_service_container_name(
-        rows.into_iter(),
+        rows,
         repo_root.as_ref(),
         policy,
         service,

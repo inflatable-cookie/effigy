@@ -17,6 +17,7 @@ pub mod error;
 pub mod fragment;
 pub mod output;
 pub mod schema;
+pub mod starter;
 pub mod template;
 pub mod volumes;
 
@@ -25,4 +26,5 @@ pub use error::CatalogError;
 pub use fragment::{CatalogFragment, CatalogResolver};
 pub use output::ComposeOutput;
 pub use schema::{ParamSchema, ParamType, ServiceSchema};
+pub use starter::{Starter, StarterError, StarterFile, StarterInfo, StarterResolver};
 pub use template::TemplateRenderer;

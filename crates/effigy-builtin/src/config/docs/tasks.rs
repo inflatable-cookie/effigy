@@ -47,7 +47,7 @@ const SECTION_TASKS_CANONICAL_PREFIX: &[&str] = &[
     "",
     "[systems.dev.workspaces.app]",
     "container = \"web\"",
-    "workdir = \".\"",
+    "working_dir = \".\"",
     "",
     "[tasks.container-dev]",
     "# Optional repo-owned task alias for an attached named workspace shell.",

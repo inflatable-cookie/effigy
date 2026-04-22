@@ -31,7 +31,7 @@ fn run_init_request(
     request: request::InitRequest,
     target_root: &Path,
 ) -> Result<Option<String>, BuiltinError> {
-    let scaffold = scaffold::render_init_scaffold();
+    let scaffold = scaffold::render_init_scaffold()?;
     let manifest_path = target_root.join(TASK_MANIFEST_FILE);
     let mut probe = PathPresenceCache::new();
     let manifest_exists = probe.exists(&manifest_path);
