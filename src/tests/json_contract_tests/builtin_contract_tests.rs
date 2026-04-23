@@ -27,6 +27,39 @@ fn builtin_config_json_contract_has_versioned_shape() {
 }
 
 #[test]
+fn bootstrap_deps_json_contract_has_versioned_shape() {
+    let _lock = test_lock().lock().expect("lock");
+    let root = temp_workspace("deps-json-contract");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[package_manager]\njs = \"bun\"\n",
+    );
+    fs::create_dir_all(root.join("ui")).expect("mkdir ui");
+    fs::write(root.join("ui/package.json"), "{}\n").expect("write package");
+    fs::create_dir_all(root.join("bin")).expect("mkdir bin");
+    fs::write(root.join("bin/bun"), "#!/bin/sh\nprintf bun > bun.marker\n").expect("write bun");
+    let mut perms = fs::metadata(root.join("bin/bun"))
+        .expect("stat bun")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(root.join("bin/bun"), perms).expect("chmod bun");
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let _env = EnvGuard::set_many(&[(
+        "PATH",
+        Some(format!("{}:{}", root.join("bin").display(), original_path)),
+    )]);
+
+    let parsed = run_invocation_json(root, "bootstrap", &["deps", "sync", "ui", "--json"]);
+    assert_schema_v1(&parsed, "effigy.bootstrap.deps.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["mode"], "both");
+    assert!(parsed["operations"].is_array());
+    assert_eq!(parsed["operations"][0]["path"], "ui");
+    assert_eq!(parsed["operations"][0]["kind"], "js");
+    assert_eq!(parsed["operations"][0]["command"], "bun install");
+}
+
+#[test]
 fn builtin_config_inspect_json_contract_has_versioned_shape() {
     let root = temp_workspace("config-inspect-json-contract");
     write_manifest(

@@ -4,13 +4,14 @@ use std::path::PathBuf;
 mod distribution;
 
 use crate::{
-    BootstrapArgs, BundleArgs, BundleSubcommand, ChangelogArgs, ChangelogSubcommand, Command,
-    ContainerArgs, ContainerDataSubcommand, ContainerSubcommand, ContractsArgs, ContractsCheckMode,
-    ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoHistoryOutcome, DemoListGap,
-    DemoListGroupBy, DemoListMode, DemoListQuery, DemoListStatus, DemoSubcommand, DocsArgs,
-    DocsBlockRequirement, DocsSubcommand, DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand,
-    HelpTopic, InternalGatewayArgs, InternalRhaiArgs, ReleaseArgs, ReleaseSubcommand, ServiceArgs,
-    ServiceSubcommand, SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
+    BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand, BundleArgs, BundleSubcommand,
+    ChangelogArgs, ChangelogSubcommand, Command, ContainerArgs, ContainerDataSubcommand,
+    ContainerSubcommand, ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode,
+    ContractsSubcommand, DemoArgs, DemoHistoryOutcome, DemoListGap, DemoListGroupBy, DemoListMode,
+    DemoListQuery, DemoListStatus, DemoSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand,
+    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, InternalGatewayArgs,
+    InternalRhaiArgs, ReleaseArgs, ReleaseSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs,
+    SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 use distribution::parse_distribution_command;
 
@@ -1089,16 +1090,25 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let mut repo_url: Option<String> = None;
+    let Some(first) = args.next() else {
+        return Ok(Command::Help(HelpTopic::Bootstrap));
+    };
+    if matches!(first.as_str(), "--help" | "-h") {
+        return Ok(Command::Help(HelpTopic::Bootstrap));
+    }
+    if first == "deps" {
+        return parse_bootstrap_deps(args);
+    }
+
     let mut path: Option<PathBuf> = None;
     let mut branch: Option<String> = None;
     let mut start = false;
     let mut plan = false;
     let mut output_json = false;
+    let repo_url = first;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bootstrap)),
             "--json" => output_json = true,
             "--start" => start = true,
             "--plan" => plan = true,
@@ -1119,26 +1129,73 @@ where
                 )?);
             }
             other if other.starts_with('-') => return Err(unknown_argument(other)),
-            _ if repo_url.is_none() => repo_url = Some(arg),
             _ => return Err(unknown_argument(arg)),
         }
     }
 
-    let Some(repo_url) = repo_url else {
-        if plan || path.is_some() || branch.is_some() || start || output_json {
-            return Err(CliParseError::MissingFlagValue {
-                flag: "<GIT_URL>".to_owned(),
-            });
-        }
+    Ok(Command::Bootstrap(BootstrapArgs {
+        subcommand: BootstrapSubcommand::Clone {
+            repo_url,
+            path,
+            branch,
+            start,
+            plan,
+        },
+        output_json,
+    }))
+}
+
+fn parse_bootstrap_deps<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcommand) = args.next() else {
         return Ok(Command::Help(HelpTopic::Bootstrap));
     };
+    match subcommand.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Bootstrap)),
+        "sync" => parse_bootstrap_deps_sync(args),
+        other => Err(CliParseError::UnknownArgument(other.to_owned())),
+    }
+}
+
+fn parse_bootstrap_deps_sync<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut output_json = false;
+    let mut mode = BootstrapDepsSyncMode::Both;
+    let mut paths = Vec::<String>::new();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bootstrap)),
+            "--json" => output_json = true,
+            "--js-only" => {
+                if mode == BootstrapDepsSyncMode::RustOnly {
+                    return Err(CliParseError::UnknownArgument(arg.to_owned()));
+                }
+                mode = BootstrapDepsSyncMode::JsOnly;
+            }
+            "--rust-only" => {
+                if mode == BootstrapDepsSyncMode::JsOnly {
+                    return Err(CliParseError::UnknownArgument(arg.to_owned()));
+                }
+                mode = BootstrapDepsSyncMode::RustOnly;
+            }
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => paths.push(arg),
+        }
+    }
+
+    if paths.is_empty() {
+        paths.push(".".to_owned());
+    }
 
     Ok(Command::Bootstrap(BootstrapArgs {
-        repo_url,
-        path,
-        branch,
-        start,
-        plan,
+        subcommand: BootstrapSubcommand::DepsSync { mode, paths },
         output_json,
     }))
 }

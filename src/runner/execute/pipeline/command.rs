@@ -7,7 +7,7 @@ use effigy_env::resolver::ResolvedEnv;
 use effigy_managed::run_spec::{render_task_run_spec, RunSpecContext};
 use effigy_manifest::TaskSelection;
 
-pub(super) fn build_task_command(
+pub(in crate::runner) fn build_task_command(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
     env_schema_resolved: &Option<ResolvedEnv>,

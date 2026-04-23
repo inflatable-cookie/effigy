@@ -358,12 +358,30 @@ pub struct WorkspaceArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootstrapArgs {
-    pub repo_url: String,
-    pub path: Option<PathBuf>,
-    pub branch: Option<String>,
-    pub start: bool,
-    pub plan: bool,
+    pub subcommand: BootstrapSubcommand,
     pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootstrapSubcommand {
+    Clone {
+        repo_url: String,
+        path: Option<PathBuf>,
+        branch: Option<String>,
+        start: bool,
+        plan: bool,
+    },
+    DepsSync {
+        mode: BootstrapDepsSyncMode,
+        paths: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootstrapDepsSyncMode {
+    Both,
+    JsOnly,
+    RustOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

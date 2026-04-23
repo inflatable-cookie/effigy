@@ -513,7 +513,10 @@ Notes:
 
 ```toml
 [bootstrap]
-setup = ["bootstrap:local", "doctor"]
+run = [
+  { run = "bun install" },
+  { task = "doctor" },
+]
 start = "dev"
 submodules = "recursive"
 
@@ -521,21 +524,20 @@ submodules = "recursive"
 path = "aura"
 repo = "git@github.com:inflatable-cookie/aura.git"
 branch = "main"
-setup = ["install"]
-required = true
-
-[tasks."bootstrap:local"]
 run = "bun install"
+required = true
 ```
 
 Use this when the repo should be able to describe its own first-run bring-up
 path after `effigy bootstrap <git-url>`.
 
 Behavior:
-- root setup tasks run in the cloned or updated root repo
-- child setup tasks run inside each child repo
+- root bootstrap `run` executes in the cloned or updated root repo
+- child bootstrap `run` executes inside each child repo
 - `start` only runs when the operator supplies `--start`
 - child `path` values are always relative to the root repo
+- sibling repos via `../underlay`-style paths are allowed when they stay under
+  the root repo's parent directory
 - optional children (`required = false`) degrade to warnings instead of failing
   the whole bootstrap
 - existing dirty or mismatched checkouts fail fast instead of being silently

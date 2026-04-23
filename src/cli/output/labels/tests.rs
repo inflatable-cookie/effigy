@@ -1,10 +1,10 @@
 use super::{command_kind_and_name, help_topic_label};
 use effigy_cli::{
-    BootstrapArgs, BundleArgs, BundleSubcommand, Command, ContainerArgs, ContainerSubcommand,
-    ContractsArgs, ContractsSubcommand, DemoArgs, DemoListQuery, DemoSubcommand, DistributionArgs,
-    DistributionSubcommand, DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic,
-    ReleaseArgs, ReleaseSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand,
-    TaskInvocation, TasksArgs, WorkspaceArgs,
+    BootstrapArgs, BootstrapSubcommand, BundleArgs, BundleSubcommand, Command, ContainerArgs,
+    ContainerSubcommand, ContractsArgs, ContractsSubcommand, DemoArgs, DemoListQuery,
+    DemoSubcommand, DistributionArgs, DistributionSubcommand, DoctorArgs, ExecArgs, GatewayArgs,
+    GatewaySubcommand, HelpTopic, ReleaseArgs, ReleaseSubcommand, ServiceArgs, ServiceSubcommand,
+    SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 
 #[test]
@@ -95,11 +95,13 @@ fn command_kind_and_name_maps_command_variants() {
         output_json: false,
     });
     let bootstrap = Command::Bootstrap(BootstrapArgs {
-        repo_url: "git@github.com:inflatable-cookie/effigy.git".to_owned(),
-        path: None,
-        branch: None,
-        start: false,
-        plan: true,
+        subcommand: BootstrapSubcommand::Clone {
+            repo_url: "git@github.com:inflatable-cookie/effigy.git".to_owned(),
+            path: None,
+            branch: None,
+            start: false,
+            plan: true,
+        },
         output_json: false,
     });
     let container = Command::Container(ContainerArgs {

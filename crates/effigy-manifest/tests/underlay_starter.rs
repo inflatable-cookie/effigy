@@ -12,7 +12,7 @@
 //!   mailpit + minio)
 //! - wires the managed `dev` task with the `lifecycle` + `shell` roles
 //!   Effigy's dev runtime expects
-//! - carries `bootstrap.setup = ["bootstrap:deps"]`
+//! - carries a bootstrap-local managed `run` plus `start = "dev"`
 
 use std::path::{Path, PathBuf};
 
@@ -67,7 +67,10 @@ fn starter_composes_into_single_manifest() {
     let bootstrap = manifest
         .bootstrap
         .expect("starter declares [bootstrap] via bootstrap fragment");
-    assert_eq!(bootstrap.setup, vec!["bootstrap:deps".to_string()]);
+    assert!(
+        bootstrap.run.is_some(),
+        "starter declares bootstrap-local run"
+    );
     assert_eq!(bootstrap.start.as_deref(), Some("dev"));
 }
 
@@ -239,12 +242,11 @@ fn starter_health_validate_qa_aggregators_exist() {
         );
     }
 
-    let bootstrap_deps = manifest
-        .tasks
-        .get("bootstrap:deps")
-        .expect("starter declares bootstrap:deps task");
-    assert_eq!(
-        bootstrap_deps.run_in(),
-        effigy_manifest::ManifestTaskRunIn::Host
+    let bootstrap = manifest
+        .bootstrap
+        .expect("starter declares bootstrap config");
+    assert!(
+        bootstrap.run.is_some(),
+        "starter should declare bootstrap-local run"
     );
 }

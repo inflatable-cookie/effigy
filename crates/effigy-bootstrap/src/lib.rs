@@ -1,7 +1,9 @@
 use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
-use effigy_manifest::{ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy};
+use effigy_manifest::{
+    ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy, ManifestManagedRun,
+};
 use serde_json::json;
 
 pub const TASK_MANIFEST_FILE: &str = "effigy.toml";
@@ -25,7 +27,7 @@ pub struct BootstrapExecutionResult {
     pub bootstrap_contract_found: bool,
     pub submodules_policy: ManifestBootstrapSubmodulesPolicy,
     pub submodules_applied: bool,
-    pub root_setup: Vec<String>,
+    pub root_run: Option<String>,
     pub child_results: Vec<BootstrapChildResult>,
     pub start_task: Option<String>,
     pub start_ran: bool,
@@ -40,7 +42,7 @@ pub struct BootstrapChildResult {
     pub branch: Option<String>,
     pub required: bool,
     pub repo_state: &'static str,
-    pub setup: Vec<String>,
+    pub run: Option<String>,
     pub warning: Option<String>,
 }
 
@@ -103,13 +105,15 @@ pub fn resolve_bootstrap_request(
     })
 }
 
-pub fn execute_bootstrap_request<LoadBootstrap, RunTask>(
+pub fn execute_bootstrap_request<LoadBootstrap, RunBootstrapRun, RunTask>(
     request: &BootstrapResolution,
     mut load_bootstrap: LoadBootstrap,
+    mut run_bootstrap_run: RunBootstrapRun,
     mut run_task: RunTask,
 ) -> Result<BootstrapExecutionResult, BootstrapError>
 where
     LoadBootstrap: FnMut(&Path) -> Result<Option<ManifestBootstrapConfig>, BootstrapError>,
+    RunBootstrapRun: FnMut(&Path, &ManifestManagedRun, &str) -> Result<(), BootstrapError>,
     RunTask: FnMut(&Path, &str, &str) -> Result<(), BootstrapError>,
 {
     let root_repo_state = sync_repo_checkout(
@@ -137,11 +141,11 @@ where
         let child_destination = resolve_child_destination(&request.destination, &child.path)?;
         match sync_repo_checkout(&child.repo, &child_destination, child.branch.as_deref()) {
             Ok(repo_state) => {
-                let setup = run_bootstrap_tasks(
-                    &mut run_task,
+                let run = run_bootstrap_run_if_present(
+                    &mut run_bootstrap_run,
                     &child_destination,
-                    &child.setup,
-                    &format!("bootstrap child `{}` setup", child.path),
+                    child.run.as_ref(),
+                    &format!("bootstrap child `{}` run", child.path),
                 )?;
                 child_results.push(BootstrapChildResult {
                     path: child.path.clone(),
@@ -150,7 +154,7 @@ where
                     branch: child.branch.clone(),
                     required: child.required,
                     repo_state,
-                    setup,
+                    run,
                     warning: None,
                 });
             }
@@ -164,7 +168,7 @@ where
                     branch: child.branch.clone(),
                     required: false,
                     repo_state: "failed",
-                    setup: Vec::new(),
+                    run: None,
                     warning: Some(warning),
                 });
             }
@@ -177,11 +181,11 @@ where
         }
     }
 
-    let root_setup = run_bootstrap_tasks(
-        &mut run_task,
+    let root_run = run_bootstrap_run_if_present(
+        &mut run_bootstrap_run,
         &request.destination,
-        &bootstrap.setup,
-        "bootstrap root",
+        bootstrap.run.as_ref(),
+        "bootstrap root run",
     )?;
 
     let mut start_ran = false;
@@ -204,7 +208,7 @@ where
         bootstrap_contract_found,
         submodules_policy,
         submodules_applied,
-        root_setup,
+        root_run,
         child_results,
         start_task,
         start_ran,
@@ -292,7 +296,7 @@ pub fn render_bootstrap_plan(request: &BootstrapResolution, output_json: bool) -
         .map_or("default remote HEAD".to_owned(), |branch| branch.to_owned());
     let start_line = if request.start_requested { "yes" } else { "no" };
     format!(
-        "[planned] bootstrap request resolved\nrepo: {}\ndestination: {}\nbranch: {}\nstart after setup: {}",
+        "[planned] bootstrap request resolved\nrepo: {}\ndestination: {}\nbranch: {}\nstart after bootstrap run: {}",
         request.repo_url,
         request.destination.display(),
         branch_line,
@@ -338,17 +342,17 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
             "requested_branch": child.branch,
             "required": child.required,
             "repo_state": child.repo_state,
-            "setup": child.setup,
+            "run": child.run,
             "warning": child.warning,
         })).collect::<Vec<_>>(),
-        "setup": {
-            "root": result.root_setup,
+        "run": {
+            "root": result.root_run,
             "children": result.child_results.iter().map(|child| json!({
                 "path": child.path,
                 "repo": child.repo,
                 "required": child.required,
                 "repo_state": child.repo_state,
-                "setup": child.setup,
+                "run": child.run,
                 "warning": child.warning,
             })).collect::<Vec<_>>(),
         },
@@ -383,10 +387,10 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
             }
         ),
     ];
-    if !result.root_setup.is_empty() {
-        lines.push(format!("root setup: {}", result.root_setup.join(", ")));
+    if let Some(run) = result.root_run.as_deref() {
+        lines.push(format!("root run: {run}"));
     } else if result.bootstrap_contract_found {
-        lines.push("root setup: none".to_owned());
+        lines.push("root run: none".to_owned());
     } else if result.manifest_found {
         lines.push(format!(
             "manifest: {} present, but no [bootstrap] contract was found",
@@ -398,10 +402,10 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
     if !result.child_results.is_empty() {
         for child in &result.child_results {
             let mut line = format!("child {}: {}", child.path, child.repo_state);
-            if !child.setup.is_empty() {
-                line.push_str(&format!("; setup {}", child.setup.join(", ")));
+            if let Some(run) = child.run.as_deref() {
+                line.push_str(&format!("; run {run}"));
             } else if child.warning.is_none() {
-                line.push_str("; setup none");
+                line.push_str("; run none");
             }
             if let Some(branch) = child.branch.as_deref() {
                 line.push_str(&format!("; branch {branch}"));
@@ -435,21 +439,27 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
     lines.join("\n")
 }
 
-fn run_bootstrap_tasks<RunTask>(
-    run_task: &mut RunTask,
+fn run_bootstrap_run_if_present<RunBootstrapRun>(
+    run_bootstrap_run: &mut RunBootstrapRun,
     repo_root: &Path,
-    selectors: &[String],
+    run: Option<&ManifestManagedRun>,
     phase: &str,
-) -> Result<Vec<String>, BootstrapError>
+) -> Result<Option<String>, BootstrapError>
 where
-    RunTask: FnMut(&Path, &str, &str) -> Result<(), BootstrapError>,
+    RunBootstrapRun: FnMut(&Path, &ManifestManagedRun, &str) -> Result<(), BootstrapError>,
 {
-    let mut ran = Vec::new();
-    for selector in selectors {
-        run_task(repo_root, selector, phase)?;
-        ran.push(selector.clone());
+    let Some(run) = run else {
+        return Ok(None);
+    };
+    run_bootstrap_run(repo_root, run, phase)?;
+    Ok(Some(describe_bootstrap_run(run)))
+}
+
+fn describe_bootstrap_run(run: &ManifestManagedRun) -> String {
+    match run {
+        ManifestManagedRun::Command(_) => "command".to_owned(),
+        ManifestManagedRun::Sequence(steps) => format!("sequence:{}", steps.len()),
     }
-    Ok(ran)
 }
 
 fn resolve_child_destination(root: &Path, child_path: &str) -> Result<PathBuf, BootstrapError> {
@@ -460,26 +470,36 @@ fn resolve_child_destination(root: &Path, child_path: &str) -> Result<PathBuf, B
         ));
     }
 
-    let mut normalized = PathBuf::new();
+    let mut normalized = root.to_path_buf();
     for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::Normal(segment) => normalized.push(segment),
+            Component::ParentDir => {
+                normalized.pop();
+            }
             _ => {
                 return Err(BootstrapError::task_invocation(
-                    "bootstrap child paths cannot include parent traversal or prefixes",
+                    "bootstrap child paths cannot include platform prefixes",
                 ));
             }
         }
     }
 
-    if normalized.as_os_str().is_empty() {
+    if normalized == root {
         return Err(BootstrapError::task_invocation(
             "bootstrap child paths cannot be empty",
         ));
     }
 
-    Ok(root.join(normalized))
+    let parent = root.parent().unwrap_or(root);
+    if !normalized.starts_with(parent) {
+        return Err(BootstrapError::task_invocation(
+            "bootstrap child paths cannot escape the root repo parent directory",
+        ));
+    }
+
+    Ok(normalized)
 }
 
 fn apply_submodule_policy(

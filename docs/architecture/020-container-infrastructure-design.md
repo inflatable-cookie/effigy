@@ -242,7 +242,7 @@ the generic nginx config and set explicit params instead, for example:
 catalog = "nginx"
 document_root = "."
 rewrite_all_to = "/vendor/genesis.php"
-asset_fallback = ""
+asset_fallback = "/vendor/genesis.php"
 error_page_404 = "/vendor/genesis.php"
 ```
 

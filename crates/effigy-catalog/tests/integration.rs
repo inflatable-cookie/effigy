@@ -1397,7 +1397,7 @@ fn nginx_supports_genesis_rewrite_params_without_variant() {
                 );
                 p.insert(
                     "asset_fallback".to_string(),
-                    toml::Value::String(String::new()),
+                    toml::Value::String("/vendor/genesis.php".to_string()),
                 );
                 p.insert(
                     "error_page_404".to_string(),
@@ -1424,8 +1424,8 @@ fn nginx_supports_genesis_rewrite_params_without_variant() {
         "nginx config should rewrite through vendor/genesis.php, got:\n{config}"
     );
     assert!(
-        !config.contains("/index.php?$query_string"),
-        "nginx genesis rewrite config should not route through index.php, got:\n{config}"
+        config.contains("try_files $uri /vendor/genesis.php;"),
+        "nginx config should route missing assets through vendor/genesis.php, got:\n{config}"
     );
 }
 
@@ -1449,7 +1449,7 @@ fn nginx_genesis_rewrite_params_apply_without_variant() {
             );
             p.insert(
                 "asset_fallback".to_string(),
-                toml::Value::String(String::new()),
+                toml::Value::String("/vendor/genesis.php".to_string()),
             );
             p.insert(
                 "error_page_404".to_string(),

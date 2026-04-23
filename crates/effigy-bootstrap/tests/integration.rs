@@ -2,8 +2,9 @@
 //!
 //! These exercise `execute_bootstrap_request` end-to-end against real git
 //! remotes via `sh` scripts. The callbacks provide just enough glue — parse
-//! the manifest via `effigy-manifest`, run the task's `run` command through
-//! `sh -c` — to drive the contract without pulling in the runner.
+//! the manifest via `effigy-manifest`, run bootstrap-local managed runs
+//! through `sh -c`, and run explicit start tasks — to drive the contract
+//! without pulling in the runner.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -18,7 +19,7 @@ use effigy_bootstrap::{
 };
 use effigy_manifest::{
     load_task_manifest, ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy,
-    ManifestManagedRun,
+    ManifestManagedRun, ManifestManagedRunStep,
 };
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -170,7 +171,7 @@ fn create_child_remote(name: &str) -> PathBuf {
     fs::write(worktree.join("README.md"), format!("# {name}\n")).expect("write child readme");
     fs::write(
         worktree.join("effigy.toml"),
-        r#"[tasks."bootstrap:child"]
+        r#"[bootstrap]
 run = "sh ./scripts/child-setup.sh"
 "#,
     )
@@ -200,17 +201,14 @@ fn create_root_remote_with_bootstrap(child_remote: &Path) -> PathBuf {
         worktree.join("effigy.toml"),
         format!(
             r#"[bootstrap]
-setup = ["bootstrap:root"]
+run = "sh ./scripts/root-setup.sh"
 start = "bootstrap:start"
 
 [[bootstrap.children]]
 path = "child-app"
 repo = "{}"
-setup = ["bootstrap:child"]
+run = "sh ./scripts/child-setup.sh"
 required = true
-
-[tasks."bootstrap:root"]
-run = "sh ./scripts/root-setup.sh"
 
 [tasks."bootstrap:start"]
 run = "sh ./scripts/start.sh"
@@ -245,22 +243,57 @@ run = "sh ./scripts/start.sh"
     remote
 }
 
+fn create_root_remote_with_sibling_child(child_remote: &Path) -> PathBuf {
+    let worktree = temp_dir("root-sibling-worktree");
+    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        worktree.join("effigy.toml"),
+        format!(
+            r#"[bootstrap]
+run = "sh ./scripts/root-setup.sh"
+
+[[bootstrap.children]]
+path = "../child-app"
+repo = "{}"
+run = "sh ./scripts/child-setup.sh"
+required = true
+"#,
+            child_remote.display()
+        ),
+    )
+    .expect("write manifest");
+    fs::write(
+        worktree.join("scripts/root-setup.sh"),
+        "#!/bin/sh\nset -eu\nprintf root-setup > root-setup.txt\n",
+    )
+    .expect("write root setup");
+    let script = worktree.join("scripts/root-setup.sh");
+    let mut perms = fs::metadata(&script)
+        .expect("script metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&script, perms).expect("chmod script");
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init root sibling child");
+    let remote = bare_remote_path("root-sibling-bare");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    remote
+}
+
 fn create_root_remote_with_optional_missing_child() -> PathBuf {
     let worktree = temp_dir("root-optional-child-worktree");
     fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
     fs::write(
         worktree.join("effigy.toml"),
         r#"[bootstrap]
-setup = ["bootstrap:root"]
+run = "sh ./scripts/root-setup.sh"
 
 [[bootstrap.children]]
 path = "missing-child"
 repo = "/definitely/not/a/real/repo.git"
-setup = ["bootstrap:child"]
+run = "sh ./scripts/child-setup.sh"
 required = false
-
-[tasks."bootstrap:root"]
-run = "sh ./scripts/root-setup.sh"
 "#,
     )
     .expect("write manifest");
@@ -301,6 +334,50 @@ fn load_bootstrap_from_manifest(
     let manifest =
         load_task_manifest(path).map_err(|e| BootstrapError::task_invocation(e.to_string()))?;
     Ok(manifest.bootstrap)
+}
+
+fn run_bootstrap_run_via_sh(
+    repo_root: &Path,
+    run: &ManifestManagedRun,
+    phase: &str,
+) -> Result<(), BootstrapError> {
+    match run {
+        ManifestManagedRun::Command(command) => run_shell_command(repo_root, command, phase),
+        ManifestManagedRun::Sequence(steps) => {
+            for step in steps {
+                match step {
+                    ManifestManagedRunStep::Command(command) => {
+                        run_shell_command(repo_root, command, phase)?
+                    }
+                    ManifestManagedRunStep::Step(table) => {
+                        let Some(command) = table.run.as_deref() else {
+                            return Err(BootstrapError::task_invocation(format!(
+                                "{phase}: bootstrap integration test shim only supports shell `run` steps"
+                            )));
+                        };
+                        run_shell_command(repo_root, command, phase)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn run_shell_command(repo_root: &Path, command: &str, phase: &str) -> Result<(), BootstrapError> {
+    let output = ProcessCommand::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| BootstrapError::task_invocation(format!("{phase}: spawn sh: {e}")))?;
+    if !output.status.success() {
+        return Err(BootstrapError::task_invocation(format!(
+            "{phase}: shell command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    Ok(())
 }
 
 /// Resolve `selector` to a shell command via the repo's `effigy.toml` and run
@@ -344,8 +421,13 @@ fn execute_bootstrap_request_clones_root_and_runs_setup_and_children() {
         resolve_bootstrap_request(&cwd, &root_remote.display().to_string(), None, None, false)
             .expect("resolve request");
 
-    let result = execute_bootstrap_request(&request, load_bootstrap_from_manifest, run_task_via_sh)
-        .expect("execute bootstrap");
+    let result = execute_bootstrap_request(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+    )
+    .expect("execute bootstrap");
     assert_eq!(result.root_repo_state, "cloned");
     assert!(result.manifest_found);
     assert!(result.bootstrap_contract_found);
@@ -353,7 +435,7 @@ fn execute_bootstrap_request_clones_root_and_runs_setup_and_children() {
         result.submodules_policy,
         ManifestBootstrapSubmodulesPolicy::None
     );
-    assert_eq!(result.root_setup, vec!["bootstrap:root".to_owned()]);
+    assert_eq!(result.root_run.as_deref(), Some("command"));
     assert_eq!(result.child_results.len(), 1);
     assert_eq!(result.child_results[0].repo_state, "cloned");
     assert_eq!(
@@ -382,8 +464,13 @@ fn execute_bootstrap_request_fails_for_existing_remote_mismatch() {
         start_requested: false,
     };
 
-    let err = execute_bootstrap_request(&request, load_bootstrap_from_manifest, run_task_via_sh)
-        .expect_err("remote mismatch should fail");
+    let err = execute_bootstrap_request(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+    )
+    .expect_err("remote mismatch should fail");
     let message = err.to_string();
     assert!(message.contains("bootstrap destination remote mismatch"));
 }
@@ -403,8 +490,13 @@ fn execute_bootstrap_request_fails_for_existing_dirty_checkout() {
         start_requested: false,
     };
 
-    let err = execute_bootstrap_request(&request, load_bootstrap_from_manifest, run_task_via_sh)
-        .expect_err("dirty checkout should fail");
+    let err = execute_bootstrap_request(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+    )
+    .expect_err("dirty checkout should fail");
     let message = err.to_string();
     assert!(message.contains("bootstrap destination has uncommitted changes"));
 }
@@ -417,8 +509,13 @@ fn execute_bootstrap_request_warns_for_optional_child_failures() {
         resolve_bootstrap_request(&cwd, &root_remote.display().to_string(), None, None, false)
             .expect("resolve request");
 
-    let result = execute_bootstrap_request(&request, load_bootstrap_from_manifest, run_task_via_sh)
-        .expect("execute bootstrap");
+    let result = execute_bootstrap_request(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+    )
+    .expect("execute bootstrap");
     assert_eq!(result.child_results.len(), 1);
     assert_eq!(result.child_results[0].repo_state, "failed");
     assert!(!result.child_results[0].required);
@@ -427,8 +524,33 @@ fn execute_bootstrap_request_warns_for_optional_child_failures() {
         .as_deref()
         .expect("optional child warning")
         .contains("optional child `missing-child` failed"));
-    assert_eq!(result.root_setup, vec!["bootstrap:root".to_owned()]);
+    assert_eq!(result.root_run.as_deref(), Some("command"));
     assert_eq!(result.warnings.len(), 1);
+}
+
+#[test]
+fn execute_bootstrap_request_allows_sibling_child_paths_under_root_parent() {
+    let child_remote = create_child_remote("child-app-sibling");
+    let root_remote = create_root_remote_with_sibling_child(&child_remote);
+    let cwd = temp_dir("bootstrap-sibling-child");
+    let request =
+        resolve_bootstrap_request(&cwd, &root_remote.display().to_string(), None, None, false)
+            .expect("resolve request");
+
+    let result = execute_bootstrap_request(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+    )
+    .expect("execute bootstrap");
+    assert_eq!(result.child_results.len(), 1);
+    assert_eq!(result.child_results[0].repo_state, "cloned");
+    assert_eq!(result.child_results[0].destination, cwd.join("child-app"));
+    assert_eq!(
+        fs::read_to_string(cwd.join("child-app/child-setup.txt")).expect("child setup file"),
+        "child-setup"
+    );
 }
 
 #[test]
@@ -439,11 +561,16 @@ fn execute_bootstrap_request_reports_missing_bootstrap_contract_cleanly() {
         resolve_bootstrap_request(&cwd, &root_remote.display().to_string(), None, None, false)
             .expect("resolve request");
 
-    let result = execute_bootstrap_request(&request, load_bootstrap_from_manifest, run_task_via_sh)
-        .expect("execute bootstrap");
+    let result = execute_bootstrap_request(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+    )
+    .expect("execute bootstrap");
     assert!(!result.manifest_found);
     assert!(!result.bootstrap_contract_found);
-    assert!(result.root_setup.is_empty());
+    assert!(result.root_run.is_none());
     assert!(result.child_results.is_empty());
     let text = render_bootstrap_result(&result, false);
     assert!(text.contains("no effigy.toml bootstrap contract found"));

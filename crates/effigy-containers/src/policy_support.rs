@@ -533,13 +533,6 @@ fn apply_generated_compose_port_policy(
             let loopback_rule = loopback_rules.iter().find(|rule| {
                 rule.service_name == service_name && rule.container_port == binding.container
             });
-            if let Some(rule) = loopback_rule {
-                rewritten_ports.push(YamlValue::String(format!(
-                    "{}:{}:{}",
-                    rule.loopback_ip, binding.container, binding.container
-                )));
-                effective_ports.push(format!("{}:{}", binding.container, binding.container));
-            }
             let explicit = explicit_bindings
                 .iter()
                 .find(|candidate| candidate.container == binding.container);

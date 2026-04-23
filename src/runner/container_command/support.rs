@@ -187,7 +187,7 @@ pub(super) fn install_primary_service_tcp_alias_hosts(
     policy: &EffectiveContainerPolicy,
     routes: &[RegisteredGatewayRoute],
 ) -> Result<Vec<String>, RunnerError> {
-    let pairs = tcp_alias_host_pairs(routes);
+    let pairs = tcp_alias_host_pairs(policy, routes);
     if pairs.is_empty() {
         return Ok(Vec::new());
     }
@@ -213,11 +213,19 @@ pub(super) fn install_primary_service_tcp_alias_hosts(
 
     Ok(pairs
         .into_iter()
-        .map(|(domain, service)| format!("{domain} -> {service}"))
+        .map(|(domain, host)| format!("{domain} -> {host}"))
         .collect())
 }
 
-fn tcp_alias_host_pairs(routes: &[RegisteredGatewayRoute]) -> Vec<(String, String)> {
+fn tcp_alias_host_pairs(
+    policy: &EffectiveContainerPolicy,
+    routes: &[RegisteredGatewayRoute],
+) -> Vec<(String, String)> {
+    let shared_hosts = policy
+        .shared_services
+        .iter()
+        .map(|shared| (shared.service_name.as_str(), shared.host.as_str()))
+        .collect::<std::collections::BTreeMap<_, _>>();
     let mut pairs = std::collections::BTreeSet::new();
     for route in routes {
         let Some(service) = route.service.as_deref() else {
@@ -226,7 +234,8 @@ fn tcp_alias_host_pairs(routes: &[RegisteredGatewayRoute]) -> Vec<(String, Strin
         if route.tcp_port.is_none() {
             continue;
         }
-        pairs.insert((route.domain.clone(), service.to_owned()));
+        let host = shared_hosts.get(service).copied().unwrap_or(service);
+        pairs.insert((route.domain.clone(), host.to_owned()));
     }
     pairs.into_iter().collect()
 }
@@ -581,6 +590,14 @@ mod tests {
         }
     }
 
+    fn test_policy_with_shared_services(
+        shared_services: Vec<effigy_containers::SharedServiceBinding>,
+    ) -> EffectiveContainerPolicy {
+        let mut policy = test_policy();
+        policy.shared_services = shared_services;
+        policy
+    }
+
     #[test]
     fn runtime_mismatch_detects_stale_project_name_for_same_repo_service() {
         let mismatch = running_container_runtime_mismatch(
@@ -641,6 +658,7 @@ mod tests {
 
     #[test]
     fn tcp_alias_host_pairs_use_gateway_tcp_routes_only() {
+        let policy = test_policy();
         let routes = vec![
             super::RegisteredGatewayRoute {
                 domain: "api.demo.test".to_owned(),
@@ -663,8 +681,36 @@ mod tests {
         ];
 
         assert_eq!(
-            tcp_alias_host_pairs(&routes),
+            tcp_alias_host_pairs(&policy, &routes),
             vec![("db.demo.test".to_owned(), "postgres".to_owned())]
+        );
+    }
+
+    #[test]
+    fn tcp_alias_host_pairs_rewrite_shared_service_targets_to_shared_host() {
+        let policy =
+            test_policy_with_shared_services(vec![effigy_containers::SharedServiceBinding {
+                service_name: "db".to_owned(),
+                catalog: "mariadb".to_owned(),
+                project_name: "effigy-shared-mariadb-deadbeef".to_owned(),
+                compose_file: PathBuf::from("/tmp/shared-db/docker-compose.yml"),
+                host: "host.docker.internal".to_owned(),
+                host_port: 23306,
+                container_port: 3306,
+            }]);
+        let routes = vec![super::RegisteredGatewayRoute {
+            domain: "db.demo.test".to_owned(),
+            target: None,
+            dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 7)),
+            tcp_port: Some(3306),
+            tcp_target: Some("127.0.0.1:23306".to_owned()),
+            tls: false,
+            service: Some("db".to_owned()),
+        }];
+
+        assert_eq!(
+            tcp_alias_host_pairs(&policy, &routes),
+            vec![("db.demo.test".to_owned(), "host.docker.internal".to_owned())]
         );
     }
 

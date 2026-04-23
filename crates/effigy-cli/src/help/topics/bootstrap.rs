@@ -9,7 +9,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
         renderer,
         &[
             "Bootstrap a repo into the current working tree from a git URL, then follow the repo-owned `[bootstrap]` contract.",
-            "Phase 1 ships root clone/update, optional submodule sync, child repo checkout, declared setup tasks, and explicit `--start` execution.",
+            "Phase 1 ships root clone/update, optional submodule sync, child repo checkout, bootstrap-local `run` steps, and explicit `--start` execution.",
         ],
     )?;
     render_usage_section(
@@ -32,7 +32,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--start",
-                "Run the repo's configured bootstrap start task after setup completes",
+                "Run the repo's configured bootstrap start task after bootstrap run completes",
             ),
             (
                 "--plan",

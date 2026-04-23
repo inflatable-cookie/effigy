@@ -1,6 +1,6 @@
 use super::{
     derive_repo_name, normalize_bootstrap_repo_url, resolve_bootstrap_request,
-    submodule_policy_label,
+    resolve_child_destination, submodule_policy_label,
 };
 use effigy_manifest::ManifestBootstrapSubmodulesPolicy;
 use std::path::{Path, PathBuf};
@@ -83,4 +83,20 @@ fn submodule_policy_label_matches_manifest_variants() {
         submodule_policy_label(ManifestBootstrapSubmodulesPolicy::Recursive),
         "recursive"
     );
+}
+
+#[test]
+fn resolve_child_destination_allows_sibling_paths_under_root_parent() {
+    let root = Path::new("/tmp/dev/effigy");
+    let resolved = resolve_child_destination(root, "../underlay").expect("resolve child");
+    assert_eq!(resolved, Path::new("/tmp/dev/underlay"));
+}
+
+#[test]
+fn resolve_child_destination_rejects_escape_above_root_parent() {
+    let root = Path::new("/tmp/dev/effigy");
+    let error = resolve_child_destination(root, "../../outside").expect_err("should reject");
+    assert!(error
+        .to_string()
+        .contains("cannot escape the root repo parent directory"));
 }

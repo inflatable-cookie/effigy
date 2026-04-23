@@ -60,7 +60,10 @@ What each flag means:
 
 ```toml
 [bootstrap]
-setup = ["bootstrap:local", "doctor"]
+run = [
+  { task = "bootstrap deps sync" },
+  { task = "doctor" },
+]
 start = "dev"
 submodules = "recursive"
 ```
@@ -69,8 +72,7 @@ This means:
 
 - clone or update the root repo
 - sync submodules recursively
-- run `bootstrap:local`
-- run `doctor`
+- execute the bootstrap `run` sequence
 - if `--start` was supplied, run `dev`
 
 ## Child Repos
@@ -79,29 +81,33 @@ Use child repos when the working environment needs more than the root checkout.
 
 ```toml
 [bootstrap]
-setup = ["bootstrap:local"]
+run = { task = "bootstrap deps sync" }
 start = "aura/dev"
 
 [[bootstrap.children]]
 path = "aura"
 repo = "git@github.com:inflatable-cookie/aura.git"
 branch = "main"
-setup = ["install"]
+run = { task = "bootstrap deps sync" }
 required = true
 
 [[bootstrap.children]]
 path = "chorus"
 repo = "git@github.com:inflatable-cookie/chorus.git"
-setup = ["bootstrap:local"]
+run = { task = "bootstrap deps sync" }
 required = false
 ```
 
 Rules:
 
 - `path` is always relative to the root repo
-- child setup runs inside the child repo after clone or update
+- sibling repos via `../underlay`-style paths are allowed when they stay under
+  the root repo's parent directory
+- child `run` executes inside the child repo after clone or update
 - optional children (`required = false`) report warnings instead of failing the
   whole bootstrap
+- `bootstrap deps sync` is the typed bootstrap dependency surface for repo-owned
+  `package.json` and `Cargo.toml` paths
 
 ## Safety Rules
 
@@ -128,7 +134,7 @@ What ships now:
 - `[bootstrap]` manifest loading
 - submodule policy (`none`, `init`, `recursive`)
 - child repo clone or update
-- setup task execution for root and children
+- bootstrap-local `run` execution for root and children
 - explicit `--start`
 - plan mode and JSON payloads
 - explicit reporting for root/child checkout state, requested branch behavior,
@@ -145,7 +151,7 @@ What is still later work:
 After this guide, you should be able to:
 
 - bootstrap a repo from any local directory without machine-global config
-- encode root setup, child repos, and start behavior in `[bootstrap]`
+- encode root bootstrap run, child repos, and start behavior in `[bootstrap]`
 - preview or run the same bootstrap flow from text or JSON mode
 
 ## Related Guides

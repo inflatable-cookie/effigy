@@ -63,6 +63,20 @@ During v0.x, MINOR bumps may include breaking changes.
 - Move Underlay error-reporting smoke, metrics, and validation helpers into
   the shipped `underlay` bundle as bundled Rhai tasks, so consumer repos do not
   need to carry their own `scripts/error-reporting.rhai` copy.
+- Route Decodelabs bundle asset requests through `/vendor/genesis.php` instead
+  of leaving `asset_fallback` empty, so browser subresource loads do not get a
+  framework body wrapped in an nginx 404 status.
+- Let `[bootstrap]` and `[[bootstrap.children]]` declare bootstrap-local
+  `run = ...` definitions using the normal managed run grammar, with
+  `setup = ...` retained as a compatibility alias. Bootstrap setup no longer
+  needs to be modeled as task selectors in the task catalog.
+- Allow `[[bootstrap.children]].path` to target sibling repos such as
+  `../underlay`, as long as the resolved child stays within the root repo's
+  parent directory.
+- Add `bootstrap deps sync` for bootstrap-local dependency hydration,
+  covering `package.json` installs through the nearest manifest's
+  `[package_manager].js` and `Cargo.toml` fetches without shelling out to
+  ad hoc `bun install && cargo fetch ...` chains.
 - Refresh the guides hub (`docs/guides/README.md`) and primary surface-area
   guides (012, 017, 022, 025, 026, 062, 063, 064, 065) to document the
   shipped v0.3+ surface: flattened `[systems.<name>]` substrate config,

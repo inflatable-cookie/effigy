@@ -1,4 +1,7 @@
-use crate::tests::prelude::{parse_command, BootstrapArgs, Command, HelpTopic, PathBuf};
+use crate::tests::prelude::{
+    parse_command, BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand, Command, HelpTopic,
+    PathBuf,
+};
 
 #[test]
 fn parse_bootstrap_help_is_scoped() {
@@ -25,11 +28,38 @@ fn parse_bootstrap_plan_with_path_branch_and_start() {
     assert_eq!(
         cmd,
         Command::Bootstrap(BootstrapArgs {
-            repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-            path: Some(PathBuf::from("./loophole")),
-            branch: Some("main".to_owned()),
-            start: true,
-            plan: true,
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+                path: Some(PathBuf::from("./loophole")),
+                branch: Some("main".to_owned()),
+                start: true,
+                plan: true,
+            },
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_bootstrap_deps_sync_subcommand() {
+    let cmd = parse_command(vec![
+        "bootstrap".to_owned(),
+        "deps".to_owned(),
+        "sync".to_owned(),
+        "../underlay".to_owned(),
+        "api".to_owned(),
+        "--rust-only".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Bootstrap(BootstrapArgs {
+            subcommand: BootstrapSubcommand::DepsSync {
+                mode: BootstrapDepsSyncMode::RustOnly,
+                paths: vec!["../underlay".to_owned(), "api".to_owned()],
+            },
             output_json: true,
         })
     );

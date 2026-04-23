@@ -1077,11 +1077,7 @@ fn process_result_map(output: std::process::Output) -> Map {
 }
 
 fn reject_recursive_effigy_process(program: &str) -> Result<(), Box<EvalAltResult>> {
-    let program_name = Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(program);
-    if program_name == "effigy" {
+    if program == "effigy" || program == "effigy.exe" {
         return Err(rhai_runtime_error(
             "Rhai scripts must not call `run_process(\"effigy\", ...)`; use a typed host helper or add a new Rhai host surface",
         ));
