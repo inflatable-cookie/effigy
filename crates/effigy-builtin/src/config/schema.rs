@@ -170,10 +170,18 @@ fn target_schema_lines(
 }
 
 fn bundle_schema_lines(bundle: Option<&BundleSpec>, default_paths: &[String]) -> Vec<String> {
+    let bundle_name = bundle
+        .map(|bundle| bundle.name.as_str())
+        .unwrap_or("decodelabs");
     let mut lines = vec![
         "[bundle]".to_owned(),
-        "name = \"decodelabs\"".to_owned(),
-        "# Bundle name is reserved. All other keys are bundle-defined inputs.".to_owned(),
+        format!("base = \"{bundle_name}\""),
+        "# Bundle base selects a shipped preset to import. Legacy `name` is accepted as an alias.".to_owned(),
+        "# To import a repo-local bundle directory instead, omit `base` and set `base_path = \"bundles/acme\"`.".to_owned(),
+        "# Local bundle directories contain `bundle.toml` metadata plus an `effigy.toml` defaults template.".to_owned(),
+        "# Local bundle templates can reference bundled scripts and assets with `{{ bundle.root }}`.".to_owned(),
+        "# Repo-owned run steps can also reference the active bundle root with `{{ bundle.root }}`.".to_owned(),
+        "# All other keys are bundle-defined inputs.".to_owned(),
     ];
 
     match bundle {

@@ -96,6 +96,8 @@ fn demo_route_table() -> RouteTable {
         domain: "demo.test".to_owned(),
         target: Some("127.0.0.1:41003".to_owned()),
         dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
         tls: false,
         source: RouteSource::Container,
         project: "/tmp/demo".to_owned(),

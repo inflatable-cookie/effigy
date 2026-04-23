@@ -28,6 +28,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use effigy_catalog::{volumes::ManagedVolume, CatalogError, ComposeOutput};
+use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_manifest::{
     load_task_manifest_with_inspection, resolve_task_execution_binding, ManifestContainerConfig,
     ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
@@ -312,6 +313,10 @@ pub fn load_inline_workspace_container_policy(
         .join(".effigy")
         .join("inline-workspaces")
         .join(synthetic_name);
+    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
+        path: repo_root.join(".gitignore"),
+        error,
+    })?;
     std::fs::create_dir_all(&compose_dir).map_err(|error| ContainerPolicyError::Read {
         path: compose_dir.clone(),
         error,
@@ -343,6 +348,7 @@ pub fn load_inline_workspace_container_policy(
         repo_root,
         synthetic_name,
         DEFAULT_COLIMA_PROFILE,
+        &RuntimeDnsOverrideRoutes::default(),
         &mut compose_files,
     )?;
     Ok(EffectiveContainerPolicy {
@@ -497,9 +503,6 @@ fn build_effective_policy(
                 &mut compose_files,
             )?;
         }
-        if config.compose_file.is_some() {
-            materialize_runtime_dns_override(repo_root, name, &profile, &mut compose_files)?;
-        }
     }
     let dns = config.dns.as_ref().cloned().unwrap_or_default();
     let mut dns_routes = Vec::new();
@@ -515,6 +518,16 @@ fn build_effective_policy(
         });
     }
     let service_aliases = effective_service_aliases(config);
+    if driver == ManifestContainerDriver::Colima {
+        let runtime_routes = runtime_route_domains(&dns_routes, &service_aliases);
+        materialize_runtime_dns_override(
+            repo_root,
+            name,
+            &profile,
+            &runtime_routes,
+            &mut compose_files,
+        )?;
+    }
     let host = config.host.as_ref().cloned().unwrap_or_default();
     let data = config.data.as_ref().cloned().unwrap_or_default();
     let health = config.health.as_ref().cloned().unwrap_or_default();
@@ -872,6 +885,7 @@ fn materialize_runtime_dns_override(
     repo_root: &Path,
     container_name: &str,
     profile: &str,
+    routes: &RuntimeDnsOverrideRoutes,
     compose_files: &mut Vec<PathBuf>,
 ) -> Result<(), ContainerPolicyError> {
     let services = collect_compose_service_names(compose_files)?;
@@ -879,16 +893,22 @@ fn materialize_runtime_dns_override(
         return Ok(());
     }
     let dns_servers = resolve_runtime_dns_servers(profile);
-    if dns_servers.is_empty() {
+    let gateway_address = resolve_runtime_gateway_address(profile);
+    if dns_servers.is_empty() && routes.is_empty() {
         return Ok(());
     }
     let override_dir = repo_root.join(".effigy").join("runtime").join("dns");
+    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
+        path: repo_root.join(".gitignore"),
+        error,
+    })?;
     std::fs::create_dir_all(&override_dir).map_err(|error| ContainerPolicyError::Read {
         path: override_dir.clone(),
         error,
     })?;
     let override_path = override_dir.join(format!("{container_name}.compose.override.yml"));
-    let override_yaml = render_runtime_dns_override(&services, &dns_servers);
+    let override_yaml =
+        render_runtime_dns_override(&services, &dns_servers, gateway_address.as_deref(), routes);
     std::fs::write(&override_path, override_yaml).map_err(|error| ContainerPolicyError::Read {
         path: override_path.clone(),
         error,
@@ -975,6 +995,21 @@ fn resolve_runtime_dns_servers(profile: &str) -> Vec<String> {
     }
 }
 
+fn resolve_runtime_gateway_address(profile: &str) -> Option<String> {
+    let colima_home = colima_home_dir()?;
+    let config_path = colima_home.join(profile).join("colima.yaml");
+    let content = std::fs::read_to_string(&config_path).ok()?;
+    let parsed = serde_yaml::from_str::<serde_yaml::Value>(&content).ok()?;
+    parsed
+        .get("network")
+        .and_then(|network| network.get("gatewayAddress"))
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| Some("192.168.5.2".to_owned()))
+}
+
 fn colima_home_dir() -> Option<PathBuf> {
     if let Some(home) = std::env::var_os("COLIMA_HOME").map(PathBuf::from) {
         return Some(home);
@@ -984,14 +1019,106 @@ fn colima_home_dir() -> Option<PathBuf> {
         .map(|home| home.join(".colima"))
 }
 
-fn render_runtime_dns_override(services: &[String], dns_servers: &[String]) -> String {
+#[derive(Debug, Default)]
+struct RuntimeDnsOverrideRoutes {
+    host_gateway_domains: Vec<String>,
+    service_alias_domains: BTreeMap<String, Vec<String>>,
+}
+
+impl RuntimeDnsOverrideRoutes {
+    fn is_empty(&self) -> bool {
+        self.host_gateway_domains.is_empty() && self.service_alias_domains.is_empty()
+    }
+}
+
+fn runtime_route_domains(
+    dns_routes: &[EffectiveDnsRoute],
+    service_aliases: &[EffectiveServiceAlias],
+) -> RuntimeDnsOverrideRoutes {
+    let mut host_gateway_domains = std::collections::BTreeSet::new();
+    let mut service_alias_domains = BTreeMap::<String, Vec<String>>::new();
+    let base_domain = dns_routes
+        .first()
+        .and_then(|route| base_domain_from_route(&route.domain));
+
+    for route in dns_routes {
+        let domain = route.domain.trim();
+        if !domain.is_empty() {
+            host_gateway_domains.insert(domain.to_owned());
+        }
+    }
+
+    if let Some(base_domain) = base_domain {
+        let explicit_domains = dns_routes
+            .iter()
+            .map(|route| route.domain.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        for alias in service_aliases {
+            let domain = format!("{}.{}", alias.domain_label, base_domain);
+            if !explicit_domains.contains(domain.as_str()) {
+                service_alias_domains
+                    .entry(alias.service.clone())
+                    .or_default()
+                    .push(domain);
+            }
+        }
+    }
+
+    RuntimeDnsOverrideRoutes {
+        host_gateway_domains: host_gateway_domains.into_iter().collect(),
+        service_alias_domains,
+    }
+}
+
+fn base_domain_from_route(domain: &str) -> Option<&str> {
+    let domain = domain.trim();
+    if domain.is_empty() {
+        return None;
+    }
+    let mut labels = domain.split('.').filter(|part| !part.is_empty());
+    labels.next()?;
+    labels.next()?;
+    Some(domain)
+}
+
+fn render_runtime_dns_override(
+    services: &[String],
+    dns_servers: &[String],
+    gateway_address: Option<&str>,
+    routes: &RuntimeDnsOverrideRoutes,
+) -> String {
     let mut out = String::new();
     out.push_str("services:\n");
     for service in services {
         out.push_str(&format!("  {service}:\n"));
-        out.push_str("    dns:\n");
-        for server in dns_servers {
-            out.push_str(&format!("      - \"{}\"\n", server.replace('"', "\\\"")));
+        if !dns_servers.is_empty() {
+            out.push_str("    dns:\n");
+            for server in dns_servers {
+                out.push_str(&format!("      - \"{}\"\n", server.replace('"', "\\\"")));
+            }
+        }
+        if let Some(gateway_address) =
+            gateway_address.filter(|_| !routes.host_gateway_domains.is_empty())
+        {
+            out.push_str("    extra_hosts:\n");
+            for domain in &routes.host_gateway_domains {
+                out.push_str(&format!(
+                    "      - \"{}:{}\"\n",
+                    domain.replace('"', "\\\""),
+                    gateway_address.replace('"', "\\\"")
+                ));
+            }
+        }
+        if let Some(domains) = routes.service_alias_domains.get(service) {
+            out.push_str("    networks:\n");
+            out.push_str("      default:\n");
+            out.push_str("        aliases:\n");
+            for domain in domains {
+                out.push_str(&format!(
+                    "          - \"{}\"\n",
+                    domain.replace('"', "\\\"")
+                ));
+            }
         }
     }
     out

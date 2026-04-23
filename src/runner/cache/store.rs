@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::model::TaskCacheEntry;
 use crate::runner::error::RunnerError;
+use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct TaskCacheStore {
@@ -41,6 +42,12 @@ pub(super) fn save_cache_store(
     store: &TaskCacheStore,
 ) -> Result<(), RunnerError> {
     let cache_root = workspace_root.join(super::CACHE_DIR);
+    ensure_effigy_ignored_in_git_root(workspace_root).map_err(|error| {
+        RunnerError::TaskManifestRead {
+            path: workspace_root.join(".gitignore"),
+            error,
+        }
+    })?;
     fs::create_dir_all(&cache_root).map_err(|error| RunnerError::TaskManifestRead {
         path: cache_root.clone(),
         error,

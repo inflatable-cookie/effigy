@@ -1,5 +1,9 @@
 # 053 - Legacy Release Wrapper Retirement Record Template
 
+> Status: Archived
+> Superseded by: [`../051-release-orchestration.md`](../051-release-orchestration.md) and [`../054-release-checkpoint-log-template.md`](../054-release-checkpoint-log-template.md)
+> Kept for: historical link preservation
+
 Historical note:
 - Effigy's compatibility-only release wrapper scripts have already been retired.
 - This guide remains only so historical logs that linked here do not dead-end.

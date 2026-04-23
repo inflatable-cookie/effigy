@@ -48,6 +48,10 @@ For narrative workflow guidance instead of lookup, start with:
   `effigy demo`.
 - Need a host-clean local web/service environment or data lifecycle tools: use
   `effigy container`.
+- Need substrate lifecycle (VM + compose + gateway + workspace handoff) for the
+  repo's declared system: use `effigy system` and `effigy workspace`.
+- Need to discover or inspect a shipped or local bundle before adopting it: use
+  `effigy bundle`.
 - Need release workflows: use `effigy release`.
 - Need distribution validation, GLIBC checks, artifact validation, or
   first-publish evidence: use `effigy distribution`.
@@ -66,12 +70,15 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
 | `effigy distribution` | Run distribution preflight, GLIBC floor validation, first-publish evidence capture, artifact validation, and closeout generation | `preflight`, `validate-metadata`, `check-glibc-floor`, `first-publish`, `validate-artifacts`, `generate-closeout`, `write-summary`, `--repo`, `--tag`, `--skip-docs`, `--skip-smoke`, `--skip-homebrew`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `062-distribution-system-guide.md` |
 | `effigy container` | Operate manifest-defined Colima-backed local environments, data lifecycle, shared-service reuse, and cross-project status views | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `--repo`, `--attach`, `--detach`, `--service`, `--command`, `--follow`, `--all`, `--keep-data`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1` | `063-container-system-guide.md` |
+| `effigy system` | Operate the manifest's declared default system substrate (VM + compose + gateway) with lifecycle, log streaming, and recovery surfaces | `up`, `down`, `status`, `logs`, `repair`, `reset-runtime`, `--system`, `--repo`, `--follow`, `--json` | `effigy.system.recover.v1` | `064-system-workspace-and-dev-contract.md` |
+| `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
+| `effigy bundle` | Discover, inspect, and export shipped top-level bundles referenced from `[bundle]` in `effigy.toml` | `list`, `inspect`, `export`, `--path`, `--json` | `effigy.bundle.list.v1`, `effigy.bundle.inspect.v1`, `effigy.bundle.export.v1` | `065-underlay-starter.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, and optionally start the declared dev task | `<git-url>`, `--path`, `--branch`, `--start`, `--plan`, `--json` | `effigy.bootstrap.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Run built-in or explicit `tasks.test` test orchestration | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
-| `effigy init` | Scaffold baseline `effigy.toml` | `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-foundation.md` |
+| `effigy init` | Scaffold baseline `effigy.toml` from a named starter (e.g. `minimal`, `underlay`, `northstar`) or list available starters | `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy config` | Render config reference/schema snippets or inspect the effective composed manifest | `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy unlock` | Clear lock scopes manually | `--all`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
@@ -150,6 +157,16 @@ effigy container <NAME> logs [--repo <PATH>] [--service <NAME>] [--follow] [--js
 effigy container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>]
 effigy container <NAME> reset [--repo <PATH>] [--keep-data] [--json]
 effigy container <NAME> eject [--repo <PATH>] [--json]
+effigy system up [--system <NAME>] [--repo <PATH>] [--json]
+effigy system down [--system <NAME>] [--repo <PATH>] [--json]
+effigy system status [--system <NAME>] [--repo <PATH>] [--json]
+effigy system logs [--system <NAME>] [--repo <PATH>] [--follow]
+effigy system repair [--system <NAME>] [--repo <PATH>] [--json]
+effigy system reset-runtime [--system <NAME>] [--repo <PATH>] [--json]
+effigy workspace [<WORKSPACE>] [--system <NAME>] [--repo <PATH>]
+effigy bundle list [--json]
+effigy bundle inspect <BUNDLE> [--json]
+effigy bundle export <BUNDLE> --path <DIR> [--json]
 effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--start] [--plan] [--json]
 effigy demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>] [--json]
 effigy demo browser [--group-by <FIELD>] [--repo <PATH>]
@@ -212,6 +229,25 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
 - generated-compose data lifecycle commands (`data list`, `data export`,
   `data import`, `data pull-production`, `reset --keep-data`) stay on the
   product-owned path and do not widen direct `compose_file` ownership.
+- `system` resolves the manifest's default system (`[systems].default`) or
+  accepts an explicit `--system <NAME>` when multiple systems are declared.
+- `system logs` is a streaming surface; `--follow` keeps it attached and
+  `--json` is intentionally not accepted there.
+- `system repair` and `system reset-runtime` are recovery surfaces; both emit
+  `effigy.system.recover.v1` under `--json` and are the canonical way to
+  recover from half-up substrate state before falling back to manual cleanup.
+- `workspace` is interactive by design and does not support `--json`; it opens
+  the resolved workspace shell after ensuring the selected system is up.
+- `workspace <NAME>` selects a named workspace; without a name it resolves
+  `[systems.<system>].default_workspace`, the sole declared workspace, or an
+  implied `default` workspace in that order.
+- `bundle list` shows all shipped top-level bundles referenced from `[bundle]`
+  in `effigy.toml`; `bundle inspect <BUNDLE>` shows the accepted input schema
+  and manifest paths that bundle injects by default; `bundle export <BUNDLE>
+  --path <DIR>` writes a local `base_path` bundle directory for repo-owned
+  modifications.
+- `init --list` enumerates available starter manifests; `init <name>` writes
+  the named starter (shipped names include `minimal`, `underlay`, `northstar`).
 - `bootstrap` is stateless by default: destination is cwd-relative unless `--path`
   is supplied.
 - `bootstrap` runs `start` only when `--start` is supplied.

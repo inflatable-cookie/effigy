@@ -169,6 +169,7 @@ fn apply_from_step_profile_resolution_uses_env_schema_defaults_before_dotenv() {
         alias: "root".to_owned(),
         catalog_root: root.clone(),
         manifest_path,
+        bundle_root: None,
         manifest,
         defer_run: None,
         deferred_builtins: std::collections::BTreeSet::new(),

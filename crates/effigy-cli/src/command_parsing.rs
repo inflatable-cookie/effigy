@@ -165,6 +165,7 @@ where
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Bundle)),
         "list" => parse_bundle_list(args),
         "inspect" => parse_bundle_inspect(args),
+        "export" => parse_bundle_export(args),
         other => Err(unknown_argument(other)),
     }
 }
@@ -213,6 +214,48 @@ where
 
     Ok(Command::Bundle(BundleArgs {
         subcommand: BundleSubcommand::Inspect { bundle },
+        output_json,
+    }))
+}
+
+fn parse_bundle_export<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(bundle) = args.next() else {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "<BUNDLE>".to_owned(),
+        });
+    };
+
+    let mut output_json = false;
+    let mut path = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--json" => output_json = true,
+            "--path" => {
+                let Some(value) = args.next() else {
+                    return Err(CliParseError::MissingFlagValue {
+                        flag: "--path".to_owned(),
+                    });
+                };
+                path = Some(PathBuf::from(value));
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    let Some(path) = path else {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "--path".to_owned(),
+        });
+    };
+
+    Ok(Command::Bundle(BundleArgs {
+        subcommand: BundleSubcommand::Export { bundle, path },
         output_json,
     }))
 }

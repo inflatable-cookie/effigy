@@ -28,9 +28,11 @@ use super::signals::{
 };
 use super::support::{
     annotate_left_running_shared_services, annotate_registered_gateway_routes,
-    annotate_removed_gateway_routes, annotate_shared_service_notes, annotate_warning_lines,
-    ensure_shared_services_running, remove_reset_volumes, rewrite_manifest_for_ejected_compose,
-    validate_running_container_runtime_match, wait_for_container_ready,
+    annotate_removed_gateway_routes, annotate_shared_service_notes, annotate_tcp_alias_host_notes,
+    annotate_warning_lines, ensure_shared_services_running,
+    install_primary_service_tcp_alias_hosts, remove_reset_volumes,
+    rewrite_manifest_for_ejected_compose, validate_running_container_runtime_match,
+    wait_for_container_ready,
 };
 use super::{render_container_report, RunnerError};
 use crate::runner::exec_command::{
@@ -64,26 +66,40 @@ pub(super) fn run_container_up(
         return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
     }
     let shared_service_notes = ensure_shared_services_running(&policy)?;
-    match run_compose_inherit_with_stop_flag(
-        repo_root,
-        &policy,
-        &compose_up_args(&policy),
-        "docker compose up",
-        &stop_flag,
-    )? {
-        ComposeRunOutcome::Succeeded => {}
-        ComposeRunOutcome::Interrupted => {
-            return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
+    if attach_mode == EffectiveAttachMode::Attached {
+        match run_compose_inherit_with_stop_flag(
+            repo_root,
+            &policy,
+            &compose_up_args(&policy),
+            "docker compose up",
+            &stop_flag,
+        )? {
+            ComposeRunOutcome::Succeeded => {}
+            ComposeRunOutcome::Interrupted => {
+                return render_interrupted_up_closeout(
+                    repo_root,
+                    &policy,
+                    colima_started,
+                    attach_mode,
+                );
+            }
+            ComposeRunOutcome::Failed(status) => {
+                let cleanup_result = cleanup_failed_container_up(repo_root, &policy);
+                return Err(finish_container_up_failure(
+                    RunnerError::task_invocation(format!(
+                        "docker compose up exited with status {status}"
+                    )),
+                    cleanup_result,
+                ));
+            }
         }
-        ComposeRunOutcome::Failed(status) => {
-            let cleanup_result = cleanup_failed_container_up(repo_root, &policy);
-            return Err(finish_container_up_failure(
-                RunnerError::task_invocation(format!(
-                    "docker compose up exited with status {status}"
-                )),
-                cleanup_result,
-            ));
-        }
+    } else {
+        run_docker_capture(
+            repo_root,
+            &policy,
+            &compose_up_args(&policy),
+            "docker compose up",
+        )?;
     }
     if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
         return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
@@ -99,11 +115,14 @@ pub(super) fn run_container_up(
             return Err(finish_container_up_failure(error, cleanup_result));
         }
     };
+    let tcp_alias_host_notes =
+        install_primary_service_tcp_alias_hosts(repo_root, &policy, &gateway_routes)?;
 
     if attach_mode == EffectiveAttachMode::Detached {
         let mut report = up_detached_report(&policy, colima_started, health);
         annotate_shared_service_notes(&mut report, &shared_service_notes);
         annotate_registered_gateway_routes(&mut report, &gateway_routes);
+        annotate_tcp_alias_host_notes(&mut report, &tcp_alias_host_notes);
         annotate_warning_lines(&mut report, &warnings);
         return Ok(render_container_report(report, output_json));
     }

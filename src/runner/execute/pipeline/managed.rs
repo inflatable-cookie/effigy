@@ -13,7 +13,9 @@ use effigy_containers::session::{
     managed_gateway_command, managed_lifecycle_command, managed_lifecycle_shutdown_command,
     managed_shell_command, managed_standard_exec_command, resolve_effigy_invocation_prefix,
 };
-use effigy_containers::{load_container_exec_working_dir, load_container_policy};
+use effigy_containers::{
+    load_container_exec_working_dir, load_container_policy, EffectiveContainerPolicy,
+};
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
@@ -329,17 +331,23 @@ fn materialize_special_managed_processes(
         }
         _ => None,
     };
+    let named_policy = if inline_policy.is_none() {
+        container_binding.load_effective_policy(repo_root)?
+    } else {
+        None
+    };
     if !container_handoff {
         if let Some(policy) = inline_policy.as_ref() {
             validate_running_container_runtime_match(repo_root, policy)?;
-        } else if let Some(requested_container_name) =
-            container_binding.requested_container_name().flatten()
-        {
-            let policy = load_container_policy(repo_root, Some(requested_container_name))
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            validate_running_container_runtime_match(repo_root, &policy)?;
+        } else if let Some(policy) = named_policy.as_ref() {
+            validate_running_container_runtime_match(repo_root, policy)?;
         }
     }
+    let ready_message = managed_ready_message(
+        selection.task.ready_message.as_deref(),
+        inline_policy.as_ref().or(named_policy.as_ref()),
+    );
+    let dns_route_lines = managed_dns_route_lines(inline_policy.as_ref().or(named_policy.as_ref()));
     let container_repo_root = match &container_binding {
         ContainerExecutionBinding::Inline { .. } => {
             container_binding.exec_working_dir(repo_root)?
@@ -361,7 +369,8 @@ fn materialize_special_managed_processes(
                         container_binding.container_name().unwrap_or("default"),
                         &preflight.selector.task_name,
                         selection.task.health_wait.unwrap_or(false),
-                        selection.task.ready_message.as_deref(),
+                        ready_message.as_deref(),
+                        &dns_route_lines,
                         &[],
                     )
                 } else if let Some(policy) = inline_policy.as_ref() {
@@ -370,7 +379,8 @@ fn materialize_special_managed_processes(
                         policy,
                         &preflight.selector.task_name,
                         selection.task.health_wait.unwrap_or(false),
-                        selection.task.ready_message.as_deref(),
+                        ready_message.as_deref(),
+                        &dns_route_lines,
                         &[],
                     )
                 } else {
@@ -379,7 +389,8 @@ fn materialize_special_managed_processes(
                         container_binding.container_name(),
                         &preflight.selector.task_name,
                         selection.task.health_wait.unwrap_or(false),
-                        selection.task.ready_message.as_deref(),
+                        ready_message.as_deref(),
+                        &dns_route_lines,
                         &[],
                         &executable,
                     )
@@ -445,6 +456,97 @@ fn materialize_special_managed_processes(
         }
     }
     Ok(())
+}
+
+fn managed_ready_message(
+    explicit_ready_message: Option<&str>,
+    policy: Option<&EffectiveContainerPolicy>,
+) -> Option<String> {
+    if let Some(ready_message) = explicit_ready_message
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(ready_message.to_owned());
+    }
+
+    let policy = policy?;
+    let mut seen = std::collections::HashSet::new();
+    let urls = policy
+        .dns_routes
+        .iter()
+        .filter_map(|route| {
+            let scheme = if route.tls { "https" } else { "http" };
+            let url = format!("{scheme}://{}", route.domain);
+            seen.insert(url.clone()).then_some(url)
+        })
+        .collect::<Vec<_>>();
+
+    if urls.is_empty() {
+        None
+    } else {
+        Some(format!("routes: {}", urls.join(" | ")))
+    }
+}
+
+fn managed_dns_route_lines(policy: Option<&EffectiveContainerPolicy>) -> Vec<String> {
+    let Some(policy) = policy else {
+        return Vec::new();
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    let mut routes = Vec::new();
+    for route in &policy.dns_routes {
+        let domain = route.domain.trim();
+        if domain.is_empty() {
+            continue;
+        }
+        let scheme = if route.tls { "https" } else { "http" };
+        let service = route.service.as_deref().unwrap_or(&policy.primary_service);
+        let mut line = format!("{scheme}://{domain} -> {service}");
+        if let Some(port) = route.port {
+            line.push_str(&format!(":{port}"));
+        }
+        if seen.insert(line.clone()) {
+            routes.push(line);
+        }
+    }
+
+    let Some(base_domain) = policy
+        .dns_routes
+        .first()
+        .and_then(|route| base_domain_from_dns_route(&route.domain))
+    else {
+        return routes;
+    };
+
+    let explicit_domains = policy
+        .dns_routes
+        .iter()
+        .map(|route| route.domain.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    for alias in &policy.service_aliases {
+        let domain = format!("{}.{}", alias.domain_label, base_domain);
+        if explicit_domains.contains(domain.as_str()) {
+            continue;
+        }
+        let line = format!("{domain}:{} -> {}", alias.container_port, alias.service);
+        if seen.insert(line.clone()) {
+            routes.push(line);
+        }
+    }
+
+    routes
+}
+
+fn base_domain_from_dns_route(domain: &str) -> Option<&str> {
+    let domain = domain.trim();
+    if domain.is_empty() {
+        return None;
+    }
+    let mut labels = domain.split('.').filter(|part| !part.is_empty());
+    labels.next()?;
+    labels.next()?;
+    Some(domain)
 }
 
 fn inside_container_handoff() -> bool {
@@ -531,6 +633,7 @@ fn render_handoff_managed_lifecycle_command(
     owner_task: &str,
     health_wait: bool,
     ready_message: Option<&str>,
+    dns_route_lines: &[String],
     setup_commands: &[String],
 ) -> String {
     let lifecycle_state = managed_lifecycle_state_path(repo_root, container_label, owner_task);
@@ -545,16 +648,18 @@ fn render_handoff_managed_lifecycle_command(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("workspace container `{container_label}` is ready"));
+    let dns_routes_section = render_managed_lifecycle_dns_routes_section(dns_route_lines);
     let setup_sequence = render_managed_lifecycle_setup_sequence(setup_commands);
     let idle_wait = managed_lifecycle_idle_wait_command();
     format!(
         "sh -lc {}",
         shell_quote(&format!(
-            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; cleanup() {{ printf '%s\\n' stopped > \"$state_path\"; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; printf '[info] lifecycle owner is idle; workspace container handoff is already active.\\n'; {idle_wait}",
+            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; cleanup() {{ printf '%s\\n' stopped > \"$state_path\"; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; printf '[info] lifecycle owner is idle; workspace container handoff is already active.\\n'; {idle_wait}",
             label = shell_quote(container_label),
             owner_task = shell_quote(owner_task),
             readiness_status = shell_quote(readiness_status),
             ready_banner = shell_quote(&ready_banner),
+            dns_routes_section = dns_routes_section,
             setup_sequence = setup_sequence,
             idle_wait = idle_wait,
         ))
@@ -567,6 +672,7 @@ fn render_inline_managed_lifecycle_command(
     owner_task: &str,
     health_wait: bool,
     ready_message: Option<&str>,
+    dns_route_lines: &[String],
     setup_commands: &[String],
 ) -> String {
     let lifecycle_state = managed_lifecycle_state_path(repo_root, &policy.name, owner_task);
@@ -588,20 +694,34 @@ fn render_inline_managed_lifecycle_command(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("container `{}` is ready", policy.name));
+    let dns_routes_section = render_managed_lifecycle_dns_routes_section(dns_route_lines);
     let setup_sequence = render_managed_lifecycle_setup_sequence(setup_commands);
     let idle_wait = managed_lifecycle_idle_wait_command();
     format!(
         "sh -lc {}",
         shell_quote(&format!(
-            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; {idle_wait}",
+            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; {idle_wait}",
             label = shell_quote(&policy.name),
             owner_task = shell_quote(owner_task),
             readiness_status = shell_quote(readiness_status),
             ready_banner = shell_quote(&ready_banner),
+            dns_routes_section = dns_routes_section,
             setup_sequence = setup_sequence,
             idle_wait = idle_wait,
         ))
     )
+}
+
+fn render_managed_lifecycle_dns_routes_section(dns_route_lines: &[String]) -> String {
+    if dns_route_lines.is_empty() {
+        return "printf 'dns_routes: none\\n\\n'; ".to_owned();
+    }
+    let mut section = "printf 'dns_routes:\\n'; ".to_owned();
+    for line in dns_route_lines {
+        section.push_str(&format!("printf '  - %s\\n' {}; ", shell_quote(line)));
+    }
+    section.push_str("printf '\\n'; ");
+    section
 }
 
 fn render_inline_managed_shell_command(
@@ -761,12 +881,14 @@ fn shell_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_handoff_managed_shell_run, finish_managed_task,
+        default_handoff_managed_shell_run, finish_managed_task, managed_dns_route_lines,
         render_handoff_managed_standard_command, render_inline_managed_standard_exec_command,
         render_managed_lifecycle_cleanup_notice, render_workspace_seeded_task_command,
     };
     use crate::runner::error::RunnerError;
-    use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
+    use effigy_containers::{
+        EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveServiceAlias,
+    };
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
         ManifestContainerStartup,
@@ -857,6 +979,42 @@ mod tests {
             .find("bun run dev")
             .expect("attach command should be present");
         assert!(setup_index < attach_index, "got: {rendered}");
+    }
+
+    #[test]
+    fn managed_dns_route_lines_include_http_routes_and_service_aliases() {
+        let mut policy = test_policy();
+        policy.primary_service = "app".to_owned();
+        policy.dns_routes = vec![
+            EffectiveDnsRoute {
+                domain: "project.test".to_owned(),
+                tls: false,
+                port: None,
+                service: None,
+            },
+            EffectiveDnsRoute {
+                domain: "admin.project.test".to_owned(),
+                tls: true,
+                port: Some(41002),
+                service: Some("admin".to_owned()),
+            },
+        ];
+        policy.service_aliases = vec![EffectiveServiceAlias {
+            service: "postgres".to_owned(),
+            domain_label: "db".to_owned(),
+            container_port: 5432,
+        }];
+
+        let routes = managed_dns_route_lines(Some(&policy));
+
+        assert_eq!(
+            routes,
+            vec![
+                "http://project.test -> app".to_owned(),
+                "https://admin.project.test -> admin:41002".to_owned(),
+                "db.project.test:5432 -> postgres".to_owned(),
+            ]
+        );
     }
 
     fn test_policy() -> EffectiveContainerPolicy {

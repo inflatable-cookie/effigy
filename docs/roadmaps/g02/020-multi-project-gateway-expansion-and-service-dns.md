@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-04-20
 Depends on: 013, 014, 016
@@ -225,10 +225,10 @@ This roadmap is complete when:
 
 ## Next Task
 
-This roadmap is active. `303`, `306`, `307`, and `308` have landed, and `309`
-is active on the first consumer-repo proof. Execute `310` next — loopback-
-bound TCP port publication on the generated-compose path — then resume the
-proof once the runtime matches the DNS-only alias contract.
+This roadmap is complete. `303`, `306`, `307`, `308`, `309`, and `310` have
+all landed. The lane now has both sides of the real-project proof:
+`underlay-reference` for project-owned aliases and `contactpatch` for shared
+service aliases.
 
 `g02.007` and `g02.019` are queued behind this lane as of 2026-04-22. See
 `docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`

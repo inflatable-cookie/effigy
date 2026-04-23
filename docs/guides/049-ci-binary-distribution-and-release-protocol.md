@@ -473,12 +473,15 @@ Historical workflow audit:
 
 ## 8b) Wrapper Retirement Record
 
-When maintainers decide whether to retire the release compatibility wrappers,
-record the decision in the release checkpoint log or closeout note using the
-template in guide [`053-release-wrapper-retirement-record-template.md`](./053-release-wrapper-retirement-record-template.md):
+Effigy's compatibility-only release wrappers are already retired. The historical
+retirement-record template lives at
+[`archive/053-release-wrapper-retirement-record-template.md`](./archive/053-release-wrapper-retirement-record-template.md)
+and is kept only so old logs linking to it do not dead-end.
 
-Do not retire the wrappers without writing that record. The point is to make
-the retirement decision reviewable and reversible, not to rely on memory.
+If a new wrapper layer is ever retired in the future, record the decision in
+the dated release checkpoint log
+([`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md))
+rather than reviving the retired template.
 
 Current operating stance:
 - prefer built-in release commands for operator-driven runs

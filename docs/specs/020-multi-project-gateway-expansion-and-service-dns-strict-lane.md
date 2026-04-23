@@ -1,6 +1,6 @@
 # 020 Multi-Project Gateway Expansion And Service DNS Strict Lane
 
-Status: active
+Status: complete
 Updated: 2026-04-22
 Roadmap: `g02.020`
 
@@ -107,13 +107,13 @@ The execution order on this active lane:
 6. `308` — complete. Shared-service DNS aliases now reuse one bounded
    loopback-IP identity per shared backing service while explicit manifest
    routes and project-owned aliases keep precedence
-7. `309` — active. The first consumer-repo proof established that generated
-   compose now registers DNS-only TCP aliases honestly, but also exposed that
-   the actual TCP listeners still publish on auto-allocated localhost ports
-   instead of the assigned loopback IP
-8. `310` — next execution. Bind shipped TCP service ports onto the assigned
-   loopback IP on the generated-compose path, then resume the real-project
-   proof on that updated runtime
+7. `309` — complete. `underlay-reference` proves the project-owned alias path
+   and `contactpatch` proves the shared-service alias path on the live bounded
+   runtime, including full multi-label alias domains and stale-route pruning
+8. `310` — complete. Generated compose now emits loopback-bound TCP port
+   mappings, keeps a dynamic runtime upstream where needed, and the host
+   gateway owns the bounded TCP alias fallback when Colima/nerdctl does not
+   expose `127.1.x.x:<service-port>` directly
 9. later — widen consumer-repo migration beyond the first proof repo
 
 ## Exit Condition
@@ -128,8 +128,8 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute `310` — bind shipped TCP service ports onto the assigned loopback IP
-on the generated-compose path, then resume the `underlay-reference` proof.
+This lane is complete. Stop in planning and choose the next queued roadmap
+lane instead of continuing execution here.
 
 See
-`docs/specs/batch-cards/310-implement-loopback-bound-tcp-port-publication-foundation.md`.
+`docs/roadmaps/g02/020-multi-project-gateway-expansion-and-service-dns.md`.

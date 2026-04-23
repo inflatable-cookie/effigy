@@ -106,6 +106,12 @@ Rules:
 
 ## Manifest Contract
 
+Two shapes are supported. Use catalog-driven services (the modern path)
+whenever possible; fall back to an explicit `compose_file` only when the repo
+needs direct compose ownership.
+
+### Catalog-Driven (Generated Compose)
+
 ```toml
 [containers]
 default = "web"
@@ -114,35 +120,78 @@ default = "web"
 driver = "colima"
 startup = "attached"
 profile = "effigy"
-compose_file = "infra/dev/docker-compose.yml"
 project_name = "my-app-dev"
 primary_service = "app"
+
+[containers.web.services.app]
+catalog = "workspace-rust-bun"
+
+[containers.web.services.db]
+catalog = "postgres"
+
+[containers.web.services.cache]
+catalog = "redis"
+
+[containers.web.dns]
+domain = "my-app.test"
+tls = true
 
 [containers.web.lifecycle]
 on_task_exit = "stop"
 shutdown = "graceful"
 detach_timeout_secs = 10
 
-[containers.web.health]
-check = "http://localhost:8080/health"
-timeout_secs = 60
+[containers.web.host]
+mounts = ["./:/workspace"]
+```
+
+Effigy generates the compose file under `.effigy/runtime/compose/`:
+
+- `.effigy/runtime/compose/.effigy-compose.generated.yml`
+- `.effigy/runtime/compose/.effigy-catalog/<service>/Dockerfile` (when a
+  catalog service ships a Dockerfile)
+- `.effigy/runtime/compose/.effigy-catalog/<service>/` (catalog-owned config)
+
+This directory is runtime-only: it is rewritten every time the manifest
+changes, and should be ignored by git.
+
+Catalog services currently ship for: `workspace-rust-bun`, `postgres`,
+`pgweb`, `mariadb`, `redis`, `memcached`, `mailpit`, `minio`, `elasticsearch`,
+`phpmyadmin`, `nginx`, and `php-fpm`. See the catalog services reference for
+the supported input surface for each.
+
+### User-Owned `compose_file` (Escape Hatch)
+
+```toml
+[containers.web]
+driver = "colima"
+startup = "attached"
+profile = "effigy"
+compose_file = "infra/dev/docker-compose.yml"
+project_name = "my-app-dev"
+primary_service = "app"
 
 [containers.web.host]
 ports = ["8080:80", "3306:3306"]
 mounts = ["./:/workspace"]
 ```
 
-Current v1 rules:
+Use this when the repo already maintains its own compose file or has escaped
+the catalog path via `effigy container <name> eject`.
+
+Current v1 rules (both shapes):
 
 - `driver` is effectively Colima-only
-- `compose_file` must stay repo-relative
+- `compose_file` (when used) must stay repo-relative
 - `primary_service` is required
 - `host.mounts` must stay repo-relative and may not escape the repo root
-- host access is explicit through declared `ports`
+- host access is explicit through declared `ports` on the user-owned path;
+  catalog-driven services own their own published-port metadata
 - readiness may be declared through one environment `health.check`
 - gateway route ownership stays explicit through `[containers.<name>.dns]`
-- the richer data lifecycle commands stay on the generated-compose path instead
-  of widening direct `compose_file` ownership
+- the richer data lifecycle commands (`data list`, `data export`, etc.) stay
+  on the generated-compose path instead of widening direct `compose_file`
+  ownership
 
 ## Runtime Behavior
 
@@ -242,6 +291,37 @@ Gateway integration is now part of the shipped path:
 - `[containers.<name>.dns].tls = true` works with `effigy gateway setup-tls`
   and the route-owned certificate path
 
+### TCP DNS Aliases and Loopback IPs
+
+Catalog-driven services that speak a TCP protocol (postgres, mariadb, redis,
+memcached) automatically get a TCP-level gateway alias on a deterministic
+loopback IP. No manifest flag is required: Effigy inspects the catalog type
+and allocates one loopback IP per project/service identity.
+
+Example resulting route visible in `effigy gateway status`:
+
+```
+- db.my-app.test -> tcp 127.1.0.1:5432 -> 127.0.0.1:15432 [source=container, project=my-app-dev, tls=off]
+```
+
+What this means operationally:
+
+- `db.my-app.test:5432` resolves on the host without needing a `/etc/hosts`
+  edit; the gateway's local resolver answers the alias
+- the service is reachable at a stable loopback IP (`127.1.0.1`) even if the
+  published host port (`15432`) shifts between projects
+- each project+service identity gets its own IP from the pool `127.1.0.1`
+  through `127.1.0.50`, so two repos can run `postgres` at the same time
+  without port collisions
+- allocations are persisted at `~/.effigy/gateway/loopback-ips.json`; delete
+  that file only when you intentionally want to re-assign identities
+- the alias hostname is also patched into the primary service container's
+  `/etc/hosts` so app code inside the dev container can reach `db.my-app.test`
+  over the same alias it uses on the host
+
+Loopback IP allocation runs through the gateway even when the system uses a
+user-owned `compose_file`; declare `[containers.<name>.dns]` to opt in.
+
 Effigy itself now also uses this surface for local Linux release rehearsal:
 
 - `release:linux:env` opens the named `linux-release` container as an attached
@@ -262,12 +342,11 @@ Still explicitly open:
 - no richer per-service health DSL yet
 - generated-compose-only data lifecycle and shared-service widening; direct
   `compose_file` ownership stays intentionally narrower
-- the front-door local-dev story still needs guide alignment so the shipped
-  `service` -> `container` -> `gateway` -> `exec` -> managed-task chain reads
-  cleanly everywhere
 
 ## Related
 
+- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
+- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
 - [`docs/roadmaps/g02/006-colima-container-environment-contract.md`](../roadmaps/g02/006-colima-container-environment-contract.md)

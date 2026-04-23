@@ -1,5 +1,9 @@
 # 032 - Docs Consistency Sweep and Changelog
 
+> Status: Archived
+> Superseded by: [`../039-docs-drift-monitoring.md`](../039-docs-drift-monitoring.md)
+> Kept for: historical record of the 2026-03-01 sweep
+
 Date: 2026-03-01
 
 This note captures the docs consistency sweep across primary entry points.

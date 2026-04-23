@@ -37,6 +37,31 @@ Some of those commands are already broadly reusable. Others still reflect
 Effigy's self-hosting defaults and are being moved toward a manifest-driven
 optional contract.
 
+### Subcommand Matrix
+
+| Subcommand | Purpose | Key Flags | JSON Schema |
+| --- | --- | --- | --- |
+| `preflight` | Run pre-publish checks (docs, smoke, metadata) and write a `.env`-style preflight report for downstream tooling | `--tag`, `--skip-docs`, `--skip-smoke`, `--output`, `--json` | `effigy.distribution.preflight.v1` |
+| `validate-metadata` | Validate declared `[distribution.metadata]` file expectations for the release tag | `--tag`, `--json` | `effigy.distribution.metadata.v1` |
+| `check-glibc-floor` | Check a compiled Linux binary's required GLIBC floor against a policy max | `--binary`, `--max-glibc`, `--json` | (command envelope; no dedicated payload schema) |
+| `first-publish` | Side-effecting primary publish orchestration: verify-install, cargo publish, optional Homebrew tap update, summary write, artifact validation | `--tag`, `--crate-version`, `--repo-url`, `--brew-formula`, `--skip-homebrew`, `--artifacts-dir`, `--json` | (emits command-envelope JSON with per-step logs) |
+| `validate-artifacts` | Check that the `--artifacts-dir` contains the expected per-channel logs and a distribution summary | `--artifacts-dir`, `--expect-homebrew`, `--json` | `effigy.distribution.artifacts.v1` |
+| `generate-closeout` | Generate the dated release closeout log from captured per-channel logs | `--tag`, `--artifacts-dir`, `--output`, `--owner`, `--expect-homebrew`, `--json` | `effigy.distribution.closeout.v1` |
+| `write-summary` | Write `distribution-summary.env` into `--artifacts-dir` from the given tag/channel evidence | `--tag`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.summary.v1` |
+
+Execution order for the full first-publish cycle:
+
+1. `effigy distribution preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env`
+2. `effigy distribution first-publish --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+3. `effigy distribution validate-artifacts --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+4. `effigy distribution generate-closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+
+`first-publish` internally runs `effigy release verify-install`, writes
+`distribution-summary.env` through `write-summary`, and runs
+`validate-artifacts` before returning success, so the outer validate/closeout
+calls are evidence and sign-off surfaces rather than gates on the publish
+itself.
+
 ## Minimal Manifest Contract
 
 Repos can now start shaping distribution policy in `effigy.toml` with an

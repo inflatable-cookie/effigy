@@ -433,6 +433,8 @@ struct GatewayRouteDashboardEntry {
     domain: String,
     target: Option<String>,
     dns_ip: Option<std::net::Ipv4Addr>,
+    tcp_port: Option<u16>,
+    tcp_target: Option<String>,
     source: String,
     project: String,
     tls: bool,
@@ -441,13 +443,22 @@ struct GatewayRouteDashboardEntry {
 }
 
 fn render_route_line(route: &GatewayRouteDashboardEntry) -> String {
+    let rendered_target = route.target.clone().unwrap_or_else(|| {
+        if let (Some(ip), Some(port), Some(upstream)) =
+            (route.dns_ip, route.tcp_port, &route.tcp_target)
+        {
+            format!("tcp {ip}:{port} -> {upstream}")
+        } else {
+            format!(
+                "dns {}",
+                route.dns_ip.unwrap_or(std::net::Ipv4Addr::LOCALHOST)
+            )
+        }
+    });
     format!(
         "- {} -> {} [source={}, project={}, tls={}]",
         route.domain,
-        route.target.clone().unwrap_or_else(|| format!(
-            "dns {}",
-            route.dns_ip.unwrap_or(std::net::Ipv4Addr::LOCALHOST)
-        )),
+        rendered_target,
         route.source,
         route.project,
         if !route.tls {
@@ -468,6 +479,8 @@ fn render_routes_json(routes: &[GatewayRouteDashboardEntry]) -> Vec<serde_json::
                 "domain": route.domain,
                 "target": route.target,
                 "dns_ip": route.dns_ip.map(|value| value.to_string()),
+                "tcp_port": route.tcp_port,
+                "tcp_target": route.tcp_target,
                 "source": route.source,
                 "project": route.project,
                 "tls": route.tls,
@@ -495,6 +508,8 @@ fn gateway_route_dashboard(
                 domain: route.domain.clone(),
                 target: route.target.clone(),
                 dns_ip: route.dns_ip,
+                tcp_port: route.tcp_port,
+                tcp_target: route.tcp_target.clone(),
                 source: format!("{:?}", route.source).to_lowercase(),
                 project: route.project.clone(),
                 tls: route.tls,
@@ -654,6 +669,8 @@ mod tests {
                     domain: "demo.test".to_owned(),
                     target: Some("127.0.0.1:8080".to_owned()),
                     dns_ip: None,
+                    tcp_port: None,
+                    tcp_target: None,
                     source: RouteSource::Manual,
                     project: "/tmp/demo".to_owned(),
                     tls: false,

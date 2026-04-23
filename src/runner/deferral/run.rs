@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use effigy_cli::TaskInvocation;
 
+use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
 
 use super::policy::DEFER_DEPTH_ENV;
@@ -209,6 +210,9 @@ fn load_persisted_composer_home_cache(workspace_root: &Path, key: &str) -> Optio
 
 fn save_persisted_composer_home_cache(workspace_root: &Path, key: &str, value: &Path) {
     let cache_root = workspace_root.join(".effigy/cache");
+    if ensure_effigy_ignored_in_git_root(workspace_root).is_err() {
+        return;
+    }
     if fs::create_dir_all(&cache_root).is_err() {
         return;
     }

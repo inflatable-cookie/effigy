@@ -739,6 +739,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tempfile",
  "toml",
 ]
 
@@ -852,8 +853,10 @@ dependencies = [
 name = "effigy-manifest"
 version = "0.1.0"
 dependencies = [
+ "effigy-core",
  "effigy-tasks",
  "indexmap",
+ "minijinja",
  "serde",
  "tempfile",
  "toml",

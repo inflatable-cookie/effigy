@@ -41,6 +41,15 @@ pub struct Route {
     #[serde(default)]
     pub dns_ip: Option<Ipv4Addr>,
 
+    /// Optional TCP bind port for a DNS-only service alias listener owned by
+    /// the host gateway.
+    #[serde(default)]
+    pub tcp_port: Option<u16>,
+
+    /// Optional upstream target for a DNS-only service alias listener.
+    #[serde(default)]
+    pub tcp_target: Option<String>,
+
     /// How this route was registered.
     pub source: RouteSource,
 

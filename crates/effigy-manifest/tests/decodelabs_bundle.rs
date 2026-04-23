@@ -8,7 +8,7 @@ fn decodelabs_bundle_resolves_defaults_and_allows_block_overrides() {
         &manifest_path,
         r#"
 [bundle]
-name = "decodelabs"
+base = "decodelabs"
 host = "contact-patch.legacy.test"
 project_name = "contactpatch-dev"
 database = "contactpatch"
@@ -27,7 +27,7 @@ run = [{ rhai = "infra/dev/seed-latest-db-dump.rhai" }]
     let manifest = loaded.manifest;
 
     let bundle = manifest.bundle.expect("bundle");
-    assert_eq!(bundle.name, "decodelabs");
+    assert_eq!(bundle.base.as_deref(), Some("decodelabs"));
 
     let containers = manifest.containers.expect("containers");
     assert_eq!(containers.default.as_deref(), Some("web"));
@@ -75,4 +75,25 @@ run = [{ rhai = "infra/dev/seed-latest-db-dump.rhai" }]
 
     let task = manifest.tasks.get("seed").expect("seed task");
     assert_eq!(task.workspace.as_deref(), Some("app"));
+}
+
+#[test]
+fn decodelabs_bundle_accepts_legacy_name_alias() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+name = "decodelabs"
+host = "contact-patch.legacy.test"
+project_name = "contactpatch-dev"
+database = "contactpatch"
+"#,
+    )
+    .expect("write manifest");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let bundle = loaded.manifest.bundle.expect("bundle");
+    assert_eq!(bundle.base.as_deref(), Some("decodelabs"));
 }

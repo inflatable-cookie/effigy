@@ -1,7 +1,7 @@
 # 309 Prove Service DNS Aliases In One Real Project
 
-Status: active
-Updated: 2026-04-22
+Status: landed
+Updated: 2026-04-23
 Roadmap: `g02.020`
 Spec: `docs/specs/020-multi-project-gateway-expansion-and-service-dns-strict-lane.md`
 
@@ -43,36 +43,51 @@ runner tests inside Effigy alone.
 
 ## Result
 
-Active. The first proof repo migration is underway in
-`/Users/tom/Dev/projects/underlay-reference`.
+Landed. The real-project proof now covers both sides of the shipped contract:
 
-What the proof established so far:
-
-- migrating the repo off its hand-written `compose_file` and onto bundled
+- `/Users/tom/Dev/projects/underlay-reference` proves the project-owned path
+  on generated services
+- `/Users/tom/Dev/legacy/sites/contactpatch` proves the shared-service path
+  on a bundle-driven generated stack
+- migrating a repo off its hand-written `compose_file` and onto bundled
   generated services is feasible on the shipped path
 - HTTP route registration still works honestly on the generated path, with
-  `acme.test`, `admin.acme.test`, `api.acme.test`, `mailpit.acme.test`, and
-  `minio.acme.test` all re-registered against live runtime published ports
-- the current lane code does derive and register DNS-only TCP aliases
-  `db.acme.test`, `smtp.acme.test`, and `s3.acme.test` with `dns_ip:
-  127.1.0.1`
-
-What the proof exposed:
-
-- generated compose still publishes the actual TCP listeners on auto-allocated
-  host ports like `19932:5432`, `19926:1025`, and `19940:9000`
-- after the current gateway is restarted on the in-repo binary, direct DNS
-  queries do resolve those service aliases to `127.1.0.1`
-- host-side connections to `127.1.0.1:5432`, `127.1.0.1:1025`, and
-  `127.1.0.1:9000` are still refused because nothing is bound there yet
-
-That means the remaining gap is no longer route registration or DNS answers.
-It is the missing generated-compose port-publication step that needs to bind
-shipped TCP service ports onto the assigned loopback IP instead of only onto
-auto-allocated localhost ports.
+  `acme.test`, `admin.acme.test`, `api.acme.test`,
+  `contact-patch.legacy.test`, and `pma.contact-patch.legacy.test`
+  all re-registered against live runtime published ports
+- the current lane code derives and registers DNS-only TCP aliases for both
+  project-owned and shared-service stacks, and those aliases are now reachable
+  on the host through the shipped gateway fallback path
+- `underlay-reference/acme-api/effigy.toml` now wires API and jobs runtime
+  config through app-owned `.env` / `config/local.toml`; the task file is
+  plain orchestration again, and the app runtime uses `db.acme.test`,
+  `smtp.acme.test`, and `s3.acme.test` instead of internal container
+  hostnames
+- `underlay-reference` now uses `[bundle].base = "underlay"` and carries no
+  root or `infra/dev` compose/Dockerfile runtime ownership; generated bundle
+  compose is the only stack source
+- `contactpatch/config/DataConnections.php` now honors injected `DB_HOST` /
+  `DB_PORT` when the bundle-injected MariaDB service is flipped onto the
+  shared backing-service path
+- the repo README now documents the same alias-first runtime wiring instead of
+  the old direct `postgres` / `mailpit` / `minio` container names
+- multi-label project hosts now keep their full alias domain shape
+  (`db.contact-patch.legacy.test`, not `db.legacy.test`)
+- gateway registration now prunes stale container routes for a project before
+  writing the current route set, so proof reruns do not leave orphaned old
+  alias domains behind
+- 2026-04-23 reproved the bundle-backed `underlay-reference` path:
+  `effigy container up --detach --repo /Users/tom/Dev/projects/underlay-reference`
+  reported all HTTP routes and installed `db/smtp/s3` container TCP aliases;
+  `effigy container status --repo /Users/tom/Dev/projects/underlay-reference`
+  showed all four services running under project `underlay-reference-dev`;
+  `effigy gateway status --json` showed `db.acme.test:5432`,
+  `smtp.acme.test:1025`, and `s3.acme.test:9000` registered on `127.1.0.1`
+  with runtime TCP targets; direct workspace-container probes resolved all
+  three aliases and opened all three TCP ports; `acme-api/db:migrate`
+  completed successfully.
 
 ## Next Task
 
-Execute `310` to land the proof-exposed loopback-bound TCP port publication
-work, then resume this card and rerun the `underlay-reference` proof on that
-updated runtime path.
+No further execution on this card. Continue planning outside `g02.020` or pick
+up the next queued roadmap lane.

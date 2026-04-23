@@ -126,7 +126,7 @@ If any channel fails:
 - [`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
 - [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
 - [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
-- [`043-wrapper-channel-evaluation-and-policy.md`](./043-wrapper-channel-evaluation-and-policy.md)
+- [`archive/043-wrapper-channel-evaluation-and-policy.md`](./archive/043-wrapper-channel-evaluation-and-policy.md)
 
 ## Next Step
 

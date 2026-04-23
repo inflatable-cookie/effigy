@@ -119,8 +119,11 @@ fn run_manifest_task_builtin_config_schema_target_bundle_prints_generic_bundle_s
         &[
             "(bundle target)",
             "[bundle]",
-            "name = \"decodelabs\"",
-            "Bundle name is reserved. All other keys are bundle-defined inputs.",
+            "base = \"decodelabs\"",
+            "Bundle base selects a shipped preset to import.",
+            "base_path = \"bundles/acme\"",
+            "Local bundle directories contain `bundle.toml` metadata plus an `effigy.toml` defaults template.",
+            "All other keys are bundle-defined inputs.",
             "Use `effigy bundle list` to discover bundles.",
         ],
     );
@@ -140,12 +143,36 @@ fn run_manifest_task_builtin_config_schema_target_bundle_named_prints_specific_i
         &[
             "(bundle target, bundle: decodelabs)",
             "[bundle]",
-            "name = \"decodelabs\"",
+            "base = \"decodelabs\"",
             "host = \"contact-patch.legacy.test\"",
             "project_name = \"contactpatch-dev\"",
             "database = \"contactpatch\"",
             "Default paths populated by this bundle:",
             "containers.web.services.app.catalog",
+        ],
+    );
+    assert_output_excludes_all(&out, &["[tasks]"]);
+}
+
+#[test]
+fn run_manifest_task_builtin_config_schema_target_bundle_underlay_prints_current_surface() {
+    let root = workspace_with_empty_manifest("builtin-config-schema-target-bundle-underlay");
+
+    let out = run_config_ok(
+        root,
+        &["--schema", "--target", "bundle", "--bundle", "underlay"],
+    );
+    assert_output_contains_all(
+        &out,
+        &[
+            "(bundle target, bundle: underlay)",
+            "[bundle]",
+            "base = \"underlay\"",
+            "host = \"acme.test\"",
+            "workspace_subdir = \"underlay-reference\"",
+            "api_port = 41001",
+            "containers.stack.services.postgres.catalog",
+            "containers.stack.dns.routes",
         ],
     );
     assert_output_excludes_all(&out, &["[tasks]"]);

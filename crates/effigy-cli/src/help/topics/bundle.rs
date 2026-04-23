@@ -17,14 +17,20 @@ pub(crate) fn render_bundle_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
         &[
             "effigy bundle list [--json]",
             "effigy bundle inspect <BUNDLE> [--json]",
+            "effigy bundle export <BUNDLE> --path <DIR> [--json]",
             "effigy --json bundle list",
             "effigy --json bundle inspect decodelabs",
+            "effigy --json bundle export underlay --path bundles/underlay",
         ],
     )?;
     render_options_section(
         renderer,
         &[
             ("--json", "Render machine-readable bundle payloads"),
+            (
+                "--path <DIR>",
+                "Export a shipped bundle as a local bundle directory",
+            ),
             ("-h, --help", "Print command help"),
         ],
     )?;
@@ -35,6 +41,7 @@ pub(crate) fn render_bundle_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
         &[
             "effigy bundle list",
             "effigy bundle inspect decodelabs",
+            "effigy bundle export underlay --path bundles/underlay",
             "effigy --json bundle inspect decodelabs",
         ],
     )?;

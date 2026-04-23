@@ -29,6 +29,8 @@ For first-time local bring-up from outside this repo:
 Default local rule:
 - do not add a current-directory repo override when already running inside the target repo
 - use `--repo <PATH>` only when intentionally targeting a different repo
+- do not add `package.json` scripts that re-export Effigy tasks; run
+  `effigy <task>` directly and keep package scripts package-native
 
 ## Changelog
 

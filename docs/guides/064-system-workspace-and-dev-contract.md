@@ -1,10 +1,15 @@
 # 064 - System, Workspace, and Dev Contract
 
-Use this guide when the question is "what should the container-backed dev UX
-mean?" rather than "what does the current `effigy container` implementation do?"
+Use this guide when the question is "what does the container-backed dev UX
+mean?" — what the public contract is for `system`, `workspace`, and `dev`, and
+how they fit together.
 
-This is a contract-direction page. It defines the intended public model that
-later command and runtime work should implement.
+This started as a contract-direction page. The contract is now shipped: the
+public `effigy system ...` surface exists, `effigy workspace` opens the
+resolved workspace shell, and managed `mode = "tui"` tasks (usually `dev`)
+bind to systems through the manifest. The `effigy container ...` surface is
+retained as the direct compose-lifecycle operator surface and coexists with
+`system`; see the "Current Shipped State" section below for the division.
 
 ## Vision Alignment
 
@@ -17,18 +22,42 @@ later command and runtime work should implement.
 
 Use this page when you want to answer any of these:
 
-- should `dev` keep owning the app runtime?
-- how should a repo bring infra up without launching the whole app stack?
-- where should package installs, updates, migrations, and one-off Linux-native
+- does `dev` keep owning the app runtime?
+- how does a repo bring infra up without launching the whole app stack?
+- where do package installs, updates, migrations, and one-off Linux-native
   maintenance happen?
-- do we keep both `container` and `system` as public commands?
+- what is the relationship between `container` and `system` as public
+  commands?
 
 Short answer:
 
 - `dev` keeps its historic role as the repo-owned concurrent runner
-- `system` becomes the public substrate lifecycle surface
+- `system` is the public substrate lifecycle surface
 - `shell` and `workspace` are the interactive Linux-native maintenance surface
-- `container` goes away as a public command family once `system` replaces it
+- `container` remains as a direct compose-lifecycle surface (see "Current
+  Shipped State" below)
+
+## Current Shipped State
+
+This contract is live in the shipped product with one nuance: `container` and
+`system` coexist as public command families, with a clear division of labor:
+
+- `effigy system ...` owns the whole substrate — VM + compose + gateway +
+  workspace handoff, resolved from `[systems.<name>]`
+- `effigy container ...` operates directly against the compose lifecycle for
+  repos that declare `[containers.<name>]` without a surrounding system, and
+  for data-lifecycle commands (`data export`, `data import`, `reset`, `eject`)
+  that remain compose-scoped
+- `effigy workspace` is the DX shortcut that ensures the selected system is up,
+  then opens the resolved workspace shell
+- managed `mode = "tui"` tasks (usually `dev`) bind to a system via
+  `system = "..."` / `workspace = "..."` / `container_lifecycle = true` /
+  `gateway = true` / `health_wait = true` / `ready_message = "..."`
+
+New repos should prefer the `[systems.<name>]` shape and use
+`effigy system` + `effigy workspace` as the top-level operator surface.
+`[containers.<name>]` remains supported and is the right choice when the repo
+has a single compose environment with no surrounding system wiring.
 
 ## 1) Problem
 
@@ -530,25 +559,31 @@ task-level field.
 
 ## 9) Command Family Decision
 
-This contract chooses one public substrate concept:
+The shipped product keeps both `system` and `container` as public command
+families with non-overlapping responsibilities:
 
-- keep `system`
-- remove `container` as a public command family
+- `system` owns substrate lifecycle for manifests that declare
+  `[systems.<name>]` — VM/profile, compose, gateway, workspace handoff, and
+  recovery (`repair`, `reset-runtime`)
+- `container` owns direct compose lifecycle (`up`, `down`, `status`, `logs`,
+  `shell`, `reset`, `eject`) and data lifecycle (`data list`, `data export`,
+  `data import`, `data pull-production`) for manifests that declare
+  `[containers.<name>]`
 
-Rationale:
+Rationale for the division:
 
-- one public command family avoids competing mental models
-- `system` describes the operator-facing responsibility better than
-  `container`
-- `system` does not overfit the current implementation
-- future substrate changes do not require another public rename
+- substrate responsibility is bigger than compose — `system` also owns gateway
+  state and workspace handoff, which operators should be able to address
+  directly without learning compose semantics
+- direct compose lifecycle is still a useful operator surface for data
+  export/import and for repos that do not need a surrounding system
+- cross-project views (`container status --all`, `container stats --all`) are
+  intentionally compose-scoped and belong on `container`
 
-Transitional implementation detail is allowed:
-
-- `container` can remain as an internal or temporary compatibility shim while
-  `system` is introduced
-
-But the public docs, help, and examples should converge on `system` only.
+Public docs and examples should lead with `system` + `workspace` for new
+container-backed repos, and should only introduce `container` directly when
+the manifest uses the `[containers.<name>]` shape without a surrounding
+system.
 
 ## 10) Workspace-In-Container Behavior
 
@@ -650,6 +685,10 @@ container-backed repos:
 
 ## Next Step
 
-Use this contract to replace `effigy container` with `effigy system` in the
-public command/help/docs surface, then implement ownership-aware auto-start and
-auto-stop behavior for `dev`, `shell`, and `workspace`.
+Use this contract as the source of truth when deciding whether a new
+container-backed repo should lead with `[systems.<name>]` + `effigy system`
+(preferred for multi-service substrate) or `[containers.<name>]` +
+`effigy container` (preferred for a single compose environment with no
+surrounding system wiring). Cross-link from the repo's front-door guide
+([`012-dev-process-manager-tui.md`](./012-dev-process-manager-tui.md)) when
+tuning the developer-first experience.

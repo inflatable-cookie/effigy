@@ -55,6 +55,29 @@ fn parse_bundle_inspect_is_supported() {
 }
 
 #[test]
+fn parse_bundle_export_requires_path() {
+    let cmd = parse_command(vec![
+        "bundle".to_owned(),
+        "export".to_owned(),
+        "underlay".to_owned(),
+        "--path".to_owned(),
+        "bundles/underlay".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Bundle(BundleArgs {
+            subcommand: BundleSubcommand::Export {
+                bundle: "underlay".to_owned(),
+                path: PathBuf::from("bundles/underlay"),
+            },
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_exec_supports_repo_service_and_json() {
     let cmd = parse_command(vec![
         "exec".to_owned(),

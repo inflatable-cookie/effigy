@@ -7586,7 +7586,7 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
     assert!(output.status.success(), "startup sigint failed: {output:?}");
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(
-        stdout.contains("attached container session for `web` finished (signal)"),
+        stdout.contains("attached bring-up interrupted by Ctrl+C; stopped cleanly"),
         "got: {stdout}"
     );
     let docker_invocations = fs::read_to_string(&docker_args).unwrap_or_default();

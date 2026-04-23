@@ -81,15 +81,11 @@ Policy:
 }
 ```
 
-### After (direct binary)
+### After (direct binary, no package script re-export)
 
-```json
-{
-  "scripts": {
-    "tasks:list": "effigy tasks",
-    "doctor": "effigy doctor"
-  }
-}
+```sh
+effigy tasks
+effigy doctor
 ```
 
 Migration steps:
@@ -97,6 +93,7 @@ Migration steps:
 2. Replace `bun effigy ...` calls with direct `effigy ...`.
 3. Keep a short rollback window with wrapper scripts on a separate branch/tag.
 4. Remove wrapper script entries once CI and local smoke checks are stable.
+5. Do not add `package.json` scripts that re-export Effigy tasks.
 
 ## 5) Rollback and Fallback
 
@@ -110,7 +107,8 @@ Migration steps:
 - `effigy --help` runs in CI after install.
 - One core command suite runs via installed binary (`tasks`, `doctor`, `test --plan`).
 - Release-gate install validation passes for the pinned tag.
-- Wrapper references are removed from `package.json` scripts in migrated repos.
+- Wrapper and Effigy task re-export references are removed from `package.json`
+  scripts in migrated repos.
 
 ## Related Guides
 

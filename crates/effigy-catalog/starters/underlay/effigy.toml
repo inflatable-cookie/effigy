@@ -1,28 +1,34 @@
 # Underlay starter — root manifest.
 #
 # This file is the root `effigy.toml` for an Underlay-style consumer repo.
-# It composes the reusable shape via `[manifest].include` so the
-# repo-local glue stays small: system/container wiring, managed `dev`
-# orchestration, and optional bootstrap helpers are each carried in their
-# own fragment file.
+# It keeps the repo-owned glue small by pulling the stable system/container
+# shape from Effigy's shipped `underlay` bundle, then layering bootstrap and
+# task orchestration through `[manifest].include`.
 #
 # Edit points for a new consumer repo:
-#   - rename/adjust `systems.dev` + `containers.stack` in `effigy.system.toml`
+#   - update `[bundle]` inputs for your domains, project name, repo path, and database
+#   - add `systems.dev.mounts` when sibling checkouts must be visible in the workspace
 #   - retitle/replace the per-app dev tabs in `effigy.tasks.toml`
 #   - repoint the bootstrap deps command in `effigy.bootstrap.toml`
 #
-# Everything else (image build, cargo/bun toolchain, service assembly)
-# comes from Effigy's bundled catalog.
+# Everything else (workspace service, postgres/mailpit/minio, gateway
+# routes, alias publication) comes from Effigy's bundled defaults.
 
 [catalog]
 alias = "underlay-app"
 
-[package_manager]
-js = "bun"
+[bundle]
+base = "underlay"
+host = "app.test"
+project_name = "underlay-app-dev"
+workspace_subdir = "underlay-app"
+database = "acme"
+
+[systems.dev]
+mounts = []
 
 [manifest]
 include = [
-  "effigy.system.toml",
   "effigy.bootstrap.toml",
   "effigy.tasks.toml",
 ]

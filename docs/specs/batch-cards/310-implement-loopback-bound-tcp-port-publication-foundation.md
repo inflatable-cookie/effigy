@@ -1,6 +1,6 @@
 # 310 Implement Loopback-Bound TCP Port Publication Foundation
 
-Status: next
+Status: landed
 Updated: 2026-04-22
 Roadmap: `g02.020`
 Spec: `docs/specs/020-multi-project-gateway-expansion-and-service-dns-strict-lane.md`
@@ -52,11 +52,37 @@ actually there.
 
 ## Result
 
-Next. `309` proved that route registration and DNS answers are now real, but
-also exposed that generated compose still publishes TCP listeners on
-auto-allocated localhost ports instead of the assigned loopback IP.
+Landed. The generated-compose rewrite now emits loopback-bound TCP service
+ports on the product path, and the host gateway now carries the bounded
+fallback the live Colima/nerdctl path needed:
+
+- local project-owned TCP alias ports are rewritten onto `127.1.0.1`
+- project-owned alias services also keep one dynamic runtime host binding so
+  the host still has a reachable upstream when Colima refuses the direct
+  loopback-bound publication
+- shared-service compose keeps its dynamic host binding while adding the
+  loopback-bound standard port
+- gateway registration accepts the new `127.1.0.1:<host>:<container>` port
+  syntax during compose-file inspection
+- DNS-only service routes now persist `tcp_port` plus runtime-discovered
+  `tcp_target` metadata in the gateway route table
+- the host gateway daemon now owns bounded TCP listeners on the assigned
+  `127.1.x.x:<service-port>` address and forwards them to the runtime
+  published port
+
+Live proof after restarting the gateway on the new binary:
+
+- `db.acme.test`, `smtp.acme.test`, and `s3.acme.test` all resolve to
+  `127.1.0.1`
+- direct host connections to `127.1.0.1:5432`, `127.1.0.1:1025`, and
+  `127.1.0.1:9000` now succeed on the bounded macOS path
+- `minio.acme.test` still registers to the real HTTP console target instead of
+  the S3 TCP alias port
+- the `underlay-reference` generated path now shows the honest split:
+  loopback-bound alias port plus dynamic runtime host binding where the host
+  gateway needs one
 
 ## Next Task
 
-Execute this card in `crates/effigy-containers/src/policy_support.rs` first,
-then resume `309` in `/Users/tom/Dev/projects/underlay-reference`.
+Resume `309` and finish the remaining real-project proof work now that the
+runtime publication gap is closed.

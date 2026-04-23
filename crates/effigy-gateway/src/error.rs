@@ -46,6 +46,22 @@ pub enum GatewayError {
     #[error("HTTP proxy failed to bind on {addr}: {reason}")]
     ProxyBindError { addr: String, reason: String },
 
+    /// TCP alias listener failed to bind.
+    #[error("TCP alias listener failed to bind on {addr}: {reason}")]
+    TcpAliasBindError { addr: String, reason: String },
+
+    /// TCP alias target is invalid.
+    #[error("TCP alias target `{target}` is invalid: {reason}")]
+    TcpAliasTargetInvalid { target: String, reason: String },
+
+    /// TCP alias failed to connect to its upstream target.
+    #[error("TCP alias failed to connect to upstream `{target}`: {reason}")]
+    TcpAliasConnectError { target: String, reason: String },
+
+    /// TCP alias stream forwarding failed.
+    #[error("TCP alias stream forwarding failed for `{target}`: {reason}")]
+    TcpAliasIoError { target: String, reason: String },
+
     /// Failed to connect to upstream target.
     #[error("failed to connect to upstream {target} for domain '{domain}': {reason}")]
     UpstreamConnectError {

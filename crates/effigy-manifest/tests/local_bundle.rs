@@ -1,0 +1,248 @@
+use effigy_manifest::{load_task_manifest_with_inspection, ManifestManagedRun};
+
+#[test]
+fn local_bundle_base_path_resolves_templated_defaults() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bundle_dir = tmp.path().join("bundles/acme");
+    std::fs::create_dir_all(&bundle_dir).expect("mkdir bundle");
+    std::fs::write(
+        bundle_dir.join("bundle.toml"),
+        r#"
+[bundle]
+name = "acme"
+description = "Local Acme defaults."
+
+[[inputs]]
+name = "host"
+type = "string"
+required = true
+description = "Primary host."
+
+[[inputs]]
+name = "port"
+type = "integer"
+default = 4100
+description = "API port."
+"#,
+    )
+    .expect("write descriptor");
+    std::fs::write(
+        bundle_dir.join("effigy.toml"),
+        r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+project_name = "{{ inputs.host | replace('.', '-') }}-dev"
+primary_service = "api"
+
+[containers.stack.dns]
+routes = [
+  { domain = "{{ inputs.host }}", port = {{ inputs.port }}, service = "api" },
+]
+
+[tasks.dev]
+run = "serve {{ inputs.host }}:{{ inputs.port }}"
+
+[tasks.bundle_path]
+run = "bundle {{ bundle.name }} {{ bundle.root }}/scripts/setup.rhai"
+"#,
+    )
+    .expect("write defaults");
+    std::fs::write(
+        tmp.path().join("effigy.toml"),
+        r#"
+[bundle]
+base_path = "bundles/acme"
+host = "acme.test"
+"#,
+    )
+    .expect("write manifest");
+
+    let loaded =
+        load_task_manifest_with_inspection(&tmp.path().join("effigy.toml")).expect("load manifest");
+    let container_source = loaded
+        .value_sources
+        .iter()
+        .find(|source| source.path == "containers.stack.project_name")
+        .expect("bundle source");
+    assert!(container_source
+        .source
+        .ends_with("bundles/acme/effigy.toml"));
+    let manifest = loaded.manifest;
+
+    let bundle = manifest.bundle.expect("bundle");
+    assert_eq!(bundle.base_path.as_deref(), Some("bundles/acme"));
+
+    let containers = manifest.containers.expect("containers");
+    let stack = containers.environments.get("stack").expect("stack");
+    assert_eq!(stack.project_name.as_deref(), Some("acme-test-dev"));
+    let dns = stack.dns.as_ref().expect("dns");
+    assert_eq!(dns.routes[0].domain, "acme.test");
+    assert_eq!(dns.routes[0].port, Some(4100));
+
+    let task = manifest.tasks.get("dev").expect("dev task");
+    assert!(matches!(
+        task.run.as_ref().expect("run"),
+        ManifestManagedRun::Command(command) if command == "serve acme.test:4100"
+    ));
+    let bundle_path_task = manifest.tasks.get("bundle_path").expect("bundle path task");
+    let expected_bundle_path = format!("bundle acme {}/scripts/setup.rhai", bundle_dir.display());
+    assert!(matches!(
+        bundle_path_task.run.as_ref().expect("run"),
+        ManifestManagedRun::Command(command) if command == &expected_bundle_path
+    ));
+}
+
+#[test]
+fn exported_underlay_bundle_can_be_used_as_base_path() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bundle_dir = tmp.path().join("bundles/underlay");
+    effigy_manifest::export_bundle("underlay", &bundle_dir).expect("export underlay bundle");
+
+    std::fs::write(
+        tmp.path().join("effigy.toml"),
+        r#"[bundle]
+base_path = "bundles/underlay"
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "underlay-reference"
+database = "acme"
+"#,
+    )
+    .expect("write manifest");
+
+    let loaded = load_task_manifest_with_inspection(&tmp.path().join("effigy.toml"))
+        .expect("exported bundle should load");
+    let stack = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("stack"))
+        .expect("stack container");
+    assert_eq!(
+        stack.services.get("pgweb").expect("pgweb service").catalog,
+        "pgweb"
+    );
+    let domains = stack
+        .dns
+        .as_ref()
+        .expect("dns")
+        .routes
+        .iter()
+        .map(|route| route.domain.as_str())
+        .collect::<Vec<_>>();
+    assert!(domains.contains(&"pgweb.acme.test"), "got {domains:?}");
+    assert!(bundle_dir.join("scripts/dev/ui-setup.rhai").exists());
+}
+
+#[test]
+fn exported_decodelabs_bundle_can_be_used_as_base_path() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bundle_dir = tmp.path().join("bundles/decodelabs");
+    effigy_manifest::export_bundle("decodelabs", &bundle_dir).expect("export decodelabs bundle");
+
+    std::fs::write(
+        tmp.path().join("effigy.toml"),
+        r#"[bundle]
+base_path = "bundles/decodelabs"
+host = "legacy.test"
+project_name = "legacy-dev"
+database = "legacy"
+"#,
+    )
+    .expect("write manifest");
+
+    let loaded = load_task_manifest_with_inspection(&tmp.path().join("effigy.toml"))
+        .expect("exported bundle should load");
+    let web = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("web"))
+        .expect("web container");
+    assert_eq!(
+        web.services.get("pma").expect("pma service").catalog,
+        "phpmyadmin"
+    );
+    assert_eq!(
+        web.services.get("db").expect("db service").catalog,
+        "mariadb"
+    );
+    let domains = web
+        .dns
+        .as_ref()
+        .expect("dns")
+        .routes
+        .iter()
+        .map(|route| route.domain.as_str())
+        .collect::<Vec<_>>();
+    assert!(domains.contains(&"pma.legacy.test"), "got {domains:?}");
+}
+
+#[test]
+fn local_bundle_rejects_unknown_inputs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bundle_dir = tmp.path().join("bundle");
+    std::fs::create_dir_all(&bundle_dir).expect("mkdir bundle");
+    std::fs::write(
+        bundle_dir.join("bundle.toml"),
+        r#"
+[bundle]
+name = "strict"
+
+[[inputs]]
+name = "host"
+type = "string"
+required = true
+"#,
+    )
+    .expect("write descriptor");
+    std::fs::write(
+        bundle_dir.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"ok\"\n",
+    )
+    .expect("write defaults");
+    std::fs::write(
+        tmp.path().join("effigy.toml"),
+        r#"
+[bundle]
+base_path = "bundle"
+host = "acme.test"
+typo = "nope"
+"#,
+    )
+    .expect("write manifest");
+
+    let error = load_task_manifest_with_inspection(&tmp.path().join("effigy.toml"))
+        .expect_err("unknown input should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("local bundle `strict` does not declare input `typo`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn bundle_selectors_are_mutually_exclusive() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        tmp.path().join("effigy.toml"),
+        r#"
+[bundle]
+base = "underlay"
+base_path = "bundle"
+"#,
+    )
+    .expect("write manifest");
+
+    let error = load_task_manifest_with_inspection(&tmp.path().join("effigy.toml"))
+        .expect_err("mixed selectors should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot set both `base` and `base_path`"),
+        "{error}"
+    );
+}

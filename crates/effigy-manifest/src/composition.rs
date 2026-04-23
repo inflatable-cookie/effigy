@@ -5,7 +5,7 @@ use serde::Deserialize;
 use toml::Value;
 
 use super::TaskManifest;
-use crate::bundles::{apply_bundle_defaults, bundle_source_path};
+use crate::bundles::apply_bundle_defaults;
 use crate::ManifestError;
 
 #[derive(Debug)]
@@ -18,6 +18,7 @@ pub struct LoadedTaskManifest {
     pub overridden_paths: Vec<ManifestCompositionOverride>,
     pub value_sources: Vec<ManifestCompositionValueSource>,
     pub effective_manifest: String,
+    pub bundle_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -87,12 +88,12 @@ pub fn load_task_manifest_with_inspection(
 ) -> Result<LoadedTaskManifest, ManifestError> {
     let mut session = CompositionSession::default();
     let mut composed = load_composed_value(manifest_path, &mut session)?;
-    let bundle_name = apply_bundle_defaults(manifest_path, &mut composed.value)?;
-    if let Some(bundle_name) = bundle_name.as_deref() {
+    let bundle_defaults = apply_bundle_defaults(manifest_path, &mut composed.value)?;
+    if let Some(bundle_defaults) = bundle_defaults.as_ref() {
         record_missing_bundle_sources(
             "",
             &composed.value,
-            &bundle_source_path(bundle_name),
+            &bundle_defaults.source_path,
             &mut composed.source_map,
         );
     }
@@ -126,6 +127,7 @@ pub fn load_task_manifest_with_inspection(
         overridden_paths: session.overridden_paths,
         value_sources,
         effective_manifest,
+        bundle_root: bundle_defaults.map(|defaults| defaults.bundle_root),
     })
 }
 

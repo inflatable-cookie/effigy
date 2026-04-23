@@ -195,24 +195,21 @@ fn run_manifest_task_builtin_init_underlay_emits_all_declared_files_and_guidance
         &out,
         &[
             "Created effigy.toml",
-            "Created effigy.system.toml",
             "Created effigy.bootstrap.toml",
             "Created effigy.tasks.toml",
-            "Created scripts/dev/ui-setup.rhai",
             "Next steps:",
-            "systems.dev.working_dir",
+            "[bundle].host",
         ],
     );
     assert_path_exists(&root.join("effigy.toml"), "underlay root manifest");
-    assert_path_exists(&root.join("effigy.system.toml"), "underlay system manifest");
     assert_path_exists(
         &root.join("effigy.bootstrap.toml"),
         "underlay bootstrap manifest",
     );
     assert_path_exists(&root.join("effigy.tasks.toml"), "underlay tasks manifest");
-    assert_path_exists(
-        &root.join("scripts/dev/ui-setup.rhai"),
-        "underlay ui-setup rhai helper (nested dirs must be created)",
+    assert_file_text_contains_all(
+        &root.join("effigy.tasks.toml"),
+        &["{{ bundle.root }}/scripts/dev/ui-setup.rhai"],
     );
 }
 
@@ -235,7 +232,7 @@ fn run_manifest_task_builtin_init_underlay_refuses_overwrite_without_force() {
     // Existing file must be untouched and no new underlay files should land.
     assert_file_text_contains_all(&root.join("effigy.toml"), &["old = \"printf old\""]);
     assert_path_missing(
-        &root.join("effigy.system.toml"),
+        &root.join("effigy.bootstrap.toml"),
         "underlay refuse-overwrite must not write peer files",
     );
 }
@@ -250,12 +247,15 @@ fn run_manifest_task_builtin_init_underlay_force_overwrites_all_targets() {
         &out,
         &[
             "Overwrote effigy.toml",
-            "Created effigy.system.toml",
-            "Created scripts/dev/ui-setup.rhai",
+            "Created effigy.bootstrap.toml",
+            "Created effigy.tasks.toml",
         ],
     );
     assert_file_text_excludes_all(&root.join("effigy.toml"), &["old = \"printf old\""]);
-    assert_path_exists(&root.join("effigy.system.toml"), "underlay system manifest");
+    assert_path_exists(
+        &root.join("effigy.bootstrap.toml"),
+        "underlay bootstrap manifest",
+    );
 }
 
 #[test]
@@ -267,8 +267,8 @@ fn run_manifest_task_builtin_init_underlay_dry_run_prints_fenced_sections_withou
         &out,
         &[
             "=== effigy.toml ===",
-            "=== effigy.system.toml ===",
-            "=== scripts/dev/ui-setup.rhai ===",
+            "=== effigy.bootstrap.toml ===",
+            "=== effigy.tasks.toml ===",
         ],
     );
     assert_path_missing(
@@ -276,8 +276,8 @@ fn run_manifest_task_builtin_init_underlay_dry_run_prints_fenced_sections_withou
         "underlay dry-run must not write the root manifest",
     );
     assert_path_missing(
-        &root.join("scripts/dev/ui-setup.rhai"),
-        "underlay dry-run must not write nested rhai helper",
+        &root.join("effigy.tasks.toml"),
+        "underlay dry-run must not write tasks",
     );
 }
 
@@ -295,9 +295,9 @@ fn run_manifest_task_builtin_init_underlay_json_reports_files_array_and_guidance
             "\"overwritten\": false",
             "\"files\":",
             "\"target\": \"effigy.toml\"",
-            "\"target\": \"scripts/dev/ui-setup.rhai\"",
+            "\"target\": \"effigy.tasks.toml\"",
             "\"guidance\":",
-            "systems.dev.working_dir",
+            "[bundle].host",
         ],
     );
     assert_path_exists(&root.join("effigy.toml"), "underlay json root manifest");

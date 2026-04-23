@@ -167,6 +167,7 @@ pub(super) fn render_demo_run_command(
             args_rendered: "",
             args_raw: &[],
             repo_root,
+            bundle_root: loaded.bundle_root.as_deref(),
             catalogs: &catalogs,
             task_scope_cwd: repo_root,
             runtime_env_schema_override: None,

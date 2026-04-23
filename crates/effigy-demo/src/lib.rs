@@ -49,6 +49,7 @@ pub use runtime::{
 use effigy_core::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
 };
+use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_manifest::ManifestDemoConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
@@ -383,6 +384,8 @@ pub fn append_attempt_history(
 ) -> Result<(), DemoStateError> {
     let path = effective_attempt_history_path(repo_root, demo_id);
     if let Some(parent) = path.parent() {
+        ensure_effigy_ignored_in_git_root(repo_root)
+            .map_err(|error| DemoStateError::new(failed_to_write_path(&repo_root.join(".gitignore"), error)))?;
         fs::create_dir_all(parent)
             .map_err(|error| DemoStateError::new(failed_to_write_path(parent, error)))?;
     }

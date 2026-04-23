@@ -51,12 +51,13 @@ fn colima_start_command_applies_managed_resources_for_effigy_profile() {
         );
     }
     let cmd = colima_start_command(&test_policy("effigy"));
+    let expected = managed_colima_profile_resources("effigy").expect("managed resources");
     unsafe {
         std::env::remove_var("EFFIGY_INTERNAL_HOST_MEMORY_BYTES");
     }
 
     assert!(cmd.args.contains(&"--memory".to_string()));
-    assert!(cmd.args.contains(&"32".to_string()));
+    assert!(cmd.args.contains(&expected.memory_gib.to_string()));
     assert!(!cmd.args.contains(&"--swap".to_string()));
 }
 

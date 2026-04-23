@@ -141,10 +141,13 @@ Escalate to docs cleanup work when any of these occur:
 ## Related Guides
 
 - [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
-- [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md)
+- [`archive/032-docs-consistency-sweep-and-changelog.md`](./archive/032-docs-consistency-sweep-and-changelog.md)
 - [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
 - [`038-docs-ia-snapshot.md`](./038-docs-ia-snapshot.md)
 
 ## Next Step
 
-After each monthly run, update the latest findings in [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md) and link the dated log.
+After each monthly run, record findings in a dated log under `docs/logs/YYYY-MM/`
+and link it from the drift-monitoring section of this guide. The historical
+`032-docs-consistency-sweep-and-changelog.md` is archived; dated logs are now
+the canonical drift record.

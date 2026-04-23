@@ -9,14 +9,24 @@ use effigy_core::shell::shell_quote;
 
 pub fn render_task_command(command: &str, context: RunSpecContext<'_>) -> String {
     wrap_command_with_task_env(
-        render_command_template(command, context.repo_root, context.args_rendered),
+        render_command_template(
+            command,
+            context.repo_root,
+            context.bundle_root,
+            context.args_rendered,
+        ),
         context.task_env,
         context.repo_root,
     )
 }
 
 pub fn render_step_command(command: &str, context: RunSpecContext<'_>) -> String {
-    render_command_template(command, context.repo_root, context.args_rendered)
+    render_command_template(
+        command,
+        context.repo_root,
+        context.bundle_root,
+        context.args_rendered,
+    )
 }
 
 pub fn render_rhai_step_invocation(
@@ -36,7 +46,8 @@ pub fn render_rhai_step_invocation(
         ),
     ];
 
-    let command = format!("__rhai-step --file {}", shell_quote(script_path));
+    let rendered_script_path = render_bundle_template_tokens(script_path, context.bundle_root);
+    let command = format!("__rhai-step --file {}", shell_quote(&rendered_script_path));
 
     let env_rendered = env_pairs
         .into_iter()
@@ -67,12 +78,18 @@ pub fn wrap_command_with_cwd(cwd: &Path, command: &str) -> String {
     )
 }
 
-pub fn render_command_template(command: &str, repo_root: &Path, args_rendered: &str) -> String {
+pub fn render_command_template(
+    command: &str,
+    repo_root: &Path,
+    bundle_root: Option<&Path>,
+    args_rendered: &str,
+) -> String {
     let repo_rendered = shell_quote(&repo_root.display().to_string());
-    command
+    let rendered = command
         .replace("{project}", &repo_rendered)
         .replace("{repo}", &repo_rendered)
-        .replace("{args}", args_rendered)
+        .replace("{args}", args_rendered);
+    render_bundle_template_tokens(&rendered, bundle_root)
 }
 
 pub fn wrap_command_with_task_env(
@@ -100,6 +117,16 @@ fn render_task_env_value(value: &str, project_root: &Path) -> String {
     value
         .replace("{project}", &project_rendered)
         .replace("{repo}", &project_rendered)
+}
+
+fn render_bundle_template_tokens(value: &str, bundle_root: Option<&Path>) -> String {
+    let Some(bundle_root) = bundle_root else {
+        return value.to_owned();
+    };
+    let bundle_root = bundle_root.display().to_string();
+    value
+        .replace("{{ bundle.root }}", &bundle_root)
+        .replace("{{bundle}}", &bundle_root)
 }
 
 fn resolve_effigy_invocation_prefix() -> Result<String, ManagedError> {
@@ -134,4 +161,26 @@ fn resolve_effigy_invocation_prefix() -> Result<String, ManagedError> {
         ));
     }
     Ok(shell_quote(&executable.display().to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::render_command_template;
+
+    #[test]
+    fn command_template_expands_bundle_root_tokens() {
+        let rendered = render_command_template(
+            "printf '{{ bundle.root }}/scripts/setup.rhai {{bundle}}/asset {args}'",
+            Path::new("/repo"),
+            Some(Path::new("/repo/.effigy/runtime/bundles/underlay/hash")),
+            "--flag",
+        );
+
+        assert_eq!(
+            rendered,
+            "printf '/repo/.effigy/runtime/bundles/underlay/hash/scripts/setup.rhai /repo/.effigy/runtime/bundles/underlay/hash/asset --flag'"
+        );
+    }
 }

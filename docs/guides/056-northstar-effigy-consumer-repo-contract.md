@@ -95,6 +95,10 @@ Treat that as a first-class contract shape, not as drift.
 The root `effigy.toml` should expose one obvious operator path for discovery,
 health, testing, validation, and release readiness.
 
+Do not duplicate that surface through `package.json` scripts. `package.json`
+scripts should stay package-native; agents and humans should run
+`effigy <task>` directly.
+
 ### Required command semantics
 
 - `effigy tasks`

@@ -154,6 +154,7 @@ pub fn managed_lifecycle_command(
     owner_task: &str,
     health_wait: bool,
     ready_message: Option<&str>,
+    dns_route_lines: &[String],
     setup_commands: &[String],
     executable: &str,
 ) -> String {
@@ -179,19 +180,33 @@ pub fn managed_lifecycle_command(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("container `{label}` is ready"));
+    let dns_routes_section = render_managed_lifecycle_dns_routes_section(dns_route_lines);
     let setup_sequence = render_managed_lifecycle_setup_sequence(setup_commands);
     let idle_wait = managed_lifecycle_idle_wait_command();
     format!(
         "sh -lc {script}",
         script = shell_quote(&format!(
-            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; printf 'ready_message: %s\\n\\n' {ready_banner}; {status} || true; printf '\\n[info] lifecycle owner is idle; use `effigy container {label} status` to refresh.\\n'; {idle_wait}",
+            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; {status} || true; printf '\\n[info] lifecycle owner is idle; use `effigy container {label} status` to refresh.\\n'; {idle_wait}",
             label = shell_quote(label),
             readiness_status = shell_quote(readiness_status),
             ready_banner = shell_quote(&ready_banner),
+            dns_routes_section = dns_routes_section,
             setup_sequence = setup_sequence,
             idle_wait = idle_wait,
         )),
     )
+}
+
+fn render_managed_lifecycle_dns_routes_section(dns_route_lines: &[String]) -> String {
+    if dns_route_lines.is_empty() {
+        return "printf 'dns_routes: none\\n\\n'; ".to_owned();
+    }
+    let mut section = "printf 'dns_routes:\\n'; ".to_owned();
+    for line in dns_route_lines {
+        section.push_str(&format!("printf '  - %s\\n' {}; ", shell_quote(line)));
+    }
+    section.push_str("printf '\\n'; ");
+    section
 }
 
 pub fn managed_lifecycle_shutdown_command(
@@ -506,6 +521,7 @@ mod tests {
             true,
             Some("http://project.test"),
             &[],
+            &[],
             "effigy",
         );
 
@@ -544,6 +560,7 @@ mod tests {
             "dev",
             true,
             Some("http://project.test"),
+            &[],
             &[String::from(
                 "effigy exec --repo /tmp/repo -- sh -lc 'cd /workspace/app && bun install'",
             )],

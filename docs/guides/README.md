@@ -64,10 +64,17 @@ pages only when you need more detail.
   for the full architecture design (service catalog, transparent execution,
   gateway, data lifecycle).
 - [`063-container-system-guide.md`](./063-container-system-guide.md)
-- [`065-underlay-starter.md`](./065-underlay-starter.md) for the reusable
-  Underlay shape (Rust + Bun workspace container, bundled dev services,
-  managed `dev` TUI) built on the current system/workspace/catalog model
-  and emitted via `effigy init underlay`.
+- [`065-underlay-starter.md`](./065-underlay-starter.md) for the shipped
+  `underlay` and `decodelabs` bundles (Rust + Bun or PHP-native stacks)
+  built on the current system/workspace/catalog model, adopted via
+  `effigy init underlay` or `base = "decodelabs"` in `[bundle]`.
+- [`066-local-manifest-bundles.md`](./066-local-manifest-bundles.md) for
+  defining repo-local bundle directories with `bundle.toml` metadata and
+  templated Effigy defaults.
+- [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
+  for the full shipped catalog of service fragments (postgres, pgweb, mariadb,
+  redis, memcached, mailpit, minio, elasticsearch, phpmyadmin, nginx,
+  php-fpm, workspace-rust-bun) with inputs, ports, and gateway eligibility.
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 
@@ -197,6 +204,9 @@ Details:
 - [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
 - [`063-container-system-guide.md`](./063-container-system-guide.md)
+- [`065-underlay-starter.md`](./065-underlay-starter.md)
+- [`066-local-manifest-bundles.md`](./066-local-manifest-bundles.md)
+- [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
@@ -207,7 +217,6 @@ Details:
 - [`050-env-schema-integration.md`](./050-env-schema-integration.md)
 - [`051-release-orchestration.md`](./051-release-orchestration.md)
 - [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
-- [`053-release-wrapper-retirement-record-template.md`](./053-release-wrapper-retirement-record-template.md)
 - [`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
@@ -217,8 +226,6 @@ Details:
 
 - [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
 - [`030-contributor-onboarding-15-minutes.md`](./030-contributor-onboarding-15-minutes.md)
-- [`031-docs-navigation-cleanup.md`](./031-docs-navigation-cleanup.md)
-- [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md)
 - [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
 - [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
 - [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
@@ -232,7 +239,6 @@ Details:
 
 - [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
 - [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
-- [`043-wrapper-channel-evaluation-and-policy.md`](./043-wrapper-channel-evaluation-and-policy.md)
 - [`044-distribution-first-publish-execution-runbook.md`](./044-distribution-first-publish-execution-runbook.md)
 - [`045-vision-next-task-allowlist-maintenance.md`](./045-vision-next-task-allowlist-maintenance.md)
 - [`046-vision-next-task-allowlist-pr-checklist-snippet.md`](./046-vision-next-task-allowlist-pr-checklist-snippet.md)
@@ -240,6 +246,18 @@ Details:
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
+
+### Archive
+
+Deprecated/superseded guides live under
+[`archive/`](./archive/README.md). Inbound links still resolve, but these
+guides are no longer part of primary onboarding:
+
+- [`archive/028-docs-flow-map.md`](./archive/028-docs-flow-map.md) — superseded by this hub's "By Goal" section
+- [`archive/031-docs-navigation-cleanup.md`](./archive/031-docs-navigation-cleanup.md) — historical docs-cleanup change record
+- [`archive/032-docs-consistency-sweep-and-changelog.md`](./archive/032-docs-consistency-sweep-and-changelog.md) — superseded by `039-docs-drift-monitoring.md`
+- [`archive/043-wrapper-channel-evaluation-and-policy.md`](./archive/043-wrapper-channel-evaluation-and-policy.md) — superseded by `041-distribution-ci-pinning-and-wrapper-migration.md` + `042-homebrew-tap-and-release-automation.md`
+- [`archive/053-release-wrapper-retirement-record-template.md`](./archive/053-release-wrapper-retirement-record-template.md) — superseded by `051-release-orchestration.md` + `054-release-checkpoint-log-template.md`
 
 ## Standards Used In These Guides
 
