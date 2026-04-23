@@ -11,6 +11,7 @@ use effigy_core::path_error_text::{failed_to_read_path, failed_to_write_path};
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Position, Scope};
+use serde_json::{json, Value};
 #[cfg(unix)]
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 #[cfg(unix)]
@@ -25,9 +26,14 @@ static RHAI_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 type TaskRunner = Arc<dyn Fn(&Path, &str, &[String]) -> Result<String, String> + Send + Sync>;
 type EffigyRunner =
     Arc<dyn Fn(&Path, &[String], bool) -> Result<String, EffigyCommandError> + Send + Sync>;
+type FeatureRunner =
+    Arc<dyn Fn(&Path, &str, Value) -> Result<String, EffigyCommandError> + Send + Sync>;
 type ContainerUpRunner = Arc<dyn Fn(&Path, &str, bool) -> Result<String, String> + Send + Sync>;
 type ContainerDownRunner = Arc<dyn Fn(&Path, &str) -> Result<String, String> + Send + Sync>;
 type ContainerShellRunner = Arc<dyn Fn(&Path, &str, &str) -> Result<String, String> + Send + Sync>;
+type ContainerExecRunner = Arc<
+    dyn Fn(&Path, &str, Option<&str>, &[String]) -> Result<HostCommandOutput, String> + Send + Sync,
+>;
 
 #[derive(Debug, Clone)]
 pub struct RhaiHostError {
@@ -62,15 +68,25 @@ pub struct ScriptContext {
 pub struct HostCallbacks {
     pub run_task: TaskRunner,
     pub run_effigy: EffigyRunner,
+    pub run_feature: FeatureRunner,
     pub container_up: ContainerUpRunner,
     pub container_down: ContainerDownRunner,
     pub container_shell: ContainerShellRunner,
+    pub container_exec: ContainerExecRunner,
 }
 
 #[derive(Debug, Clone)]
 pub struct EffigyCommandError {
     pub message: String,
     pub rendered_output: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct HostCommandOutput {
+    pub status: i64,
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 pub fn load_script(path: &Path, cwd: &Path) -> Result<String, RhaiHostError> {
@@ -280,6 +296,17 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
     });
     let file_context = context.clone();
     engine.register_fn(
+        "search_files",
+        move |root: ImmutableString,
+              pattern: ImmutableString,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
+            let root = resolve_runtime_path(&file_context.cwd, root.as_str());
+            search_files(&root, pattern.as_str(), options)
+        },
+    );
+    let file_context = context.clone();
+    engine.register_fn(
         "is_symlink",
         move |path: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
             let path = resolve_runtime_path(&file_context.cwd, path.as_str());
@@ -383,6 +410,7 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
     engine.register_fn(
         "run_process",
         move |program: ImmutableString, args: Array| -> Result<Map, Box<EvalAltResult>> {
+            reject_recursive_effigy_process(program.as_str())?;
             let mut process = ProcessCommand::new(program.as_str());
             process.args(dynamic_array_to_strings(&args)?);
             process.current_dir(&process_context.cwd);
@@ -397,6 +425,7 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
     engine.register_fn(
         "run_process_stream",
         move |program: ImmutableString, args: Array| -> Result<Map, Box<EvalAltResult>> {
+            reject_recursive_effigy_process(program.as_str())?;
             let mut process = ProcessCommand::new(program.as_str());
             process.args(dynamic_array_to_strings(&args)?);
             process.current_dir(&process_context.cwd);
@@ -408,6 +437,33 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
                 .status()
                 .map_err(|error| rhai_runtime_error(error.to_string()))?;
             Ok(process_status_map(status))
+        },
+    );
+    engine.register_fn(
+        "http_request",
+        move |method: ImmutableString,
+              url: ImmutableString,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
+            run_http_request(method.as_str(), url.as_str(), options)
+        },
+    );
+    engine.register_fn(
+        "http_get",
+        move |url: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+            run_http_request("GET", url.as_str(), Map::new())
+        },
+    );
+    engine.register_fn(
+        "http_post",
+        move |url: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+            run_http_request("POST", url.as_str(), Map::new())
+        },
+    );
+    engine.register_fn(
+        "http_post",
+        move |url: ImmutableString, options: Map| -> Result<Map, Box<EvalAltResult>> {
+            run_http_request("POST", url.as_str(), options)
         },
     );
 
@@ -453,6 +509,419 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
         },
     );
 
+    register_feature_no_args(
+        engine,
+        "config_effective",
+        "config.effective",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_no_args(
+        engine,
+        "config_raw",
+        "config.raw",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_get_value(
+        engine,
+        "config_get",
+        "config.get",
+        "path",
+        context.clone(),
+        callbacks.clone(),
+    );
+
+    register_feature_no_args(
+        engine,
+        "tasks_list",
+        "tasks.list",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "tasks_list",
+        "tasks.list",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_string(
+        engine,
+        "task_resolve",
+        "tasks.resolve",
+        "selector",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_string(
+        engine,
+        "task_info",
+        "tasks.info",
+        "selector",
+        context.clone(),
+        callbacks.clone(),
+    );
+
+    register_feature_no_args(
+        engine,
+        "container_status_all",
+        "container.status_all",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_string(
+        engine,
+        "container_status",
+        "container.status",
+        "name",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_string_options(
+        engine,
+        "container_logs",
+        "container.logs",
+        "name",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_string_options(
+        engine,
+        "container_reset",
+        "container.reset",
+        "name",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_string(
+        engine,
+        "container_data_list",
+        "container.data_list",
+        "name",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_three_strings(
+        engine,
+        "container_data_export",
+        "container.data_export",
+        ["name", "volume", "path"],
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_three_strings(
+        engine,
+        "container_data_import",
+        "container.data_import",
+        ["name", "volume", "path"],
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_string_options(
+        engine,
+        "container_data_pull_production",
+        "container.data_pull_production",
+        "name",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_string(
+        engine,
+        "container_eject",
+        "container.eject",
+        "name",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_no_args(
+        engine,
+        "container_stats_all",
+        "container.stats_all",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "container_stats_all",
+        "container.stats_all",
+        context.clone(),
+        callbacks.clone(),
+    );
+
+    register_feature_options(
+        engine,
+        "docs_check_links",
+        "docs.check_links",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "docs_check_json_examples",
+        "docs.check_json_examples",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "docs_check_headings",
+        "docs.check_headings",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "docs_check_paths",
+        "docs.check_paths",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "docs_check_contains",
+        "docs.check_contains",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "docs_check_forbidden",
+        "docs.check_forbidden",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "docs_check_index",
+        "docs.check_index",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "docs_check_next_action",
+        "docs.check_next_action",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "docs_check_workflow_paths",
+        "docs.check_workflow_paths",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "docs_add_log_index",
+        "docs.add_log_index",
+        context.clone(),
+        callbacks.clone(),
+    );
+
+    register_feature_no_args(
+        engine,
+        "bundle_list",
+        "bundle.list",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_string(
+        engine,
+        "bundle_inspect",
+        "bundle.inspect",
+        "bundle",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_two_strings(
+        engine,
+        "bundle_export",
+        "bundle.export",
+        ["bundle", "path"],
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_no_args(
+        engine,
+        "service_list",
+        "service.list",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_string_options(
+        engine,
+        "service_extract",
+        "service.extract",
+        "service",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_no_args(
+        engine,
+        "catalog_tasks",
+        "catalog.tasks",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "catalog_tasks",
+        "catalog.tasks",
+        context.clone(),
+        callbacks.clone(),
+    );
+
+    register_feature_no_args(
+        engine,
+        "gateway_status",
+        "gateway.status",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_no_args(
+        engine,
+        "gateway_setup_tls",
+        "gateway.setup_tls",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "gateway_setup_tls",
+        "gateway.setup_tls",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_no_args(
+        engine,
+        "gateway_up",
+        "gateway.up",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "gateway_up",
+        "gateway.up",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_no_args(
+        engine,
+        "gateway_down",
+        "gateway.down",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "gateway_down",
+        "gateway.down",
+        context.clone(),
+        callbacks.clone(),
+    );
+
+    register_feature_no_args(
+        engine,
+        "doctor",
+        "doctor.run",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "doctor",
+        "doctor.run",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "scan_god_files",
+        "scan.god_files",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "scan_large_files",
+        "scan.god_files",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "scan_generated",
+        "scan.generated_assets",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "scan_generated_assets",
+        "scan.generated_assets",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "scan_generated_in_src",
+        "scan.generated_in_src",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "scan_duplicate_blocks",
+        "scan.duplicate_blocks",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "scan_comment_ratio",
+        "scan.comment_ratio",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "scan_attention_markers",
+        "scan.attention_markers",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "scan_stale_suppressions",
+        "scan.stale_suppressions",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_no_args(
+        engine,
+        "cache_inspect",
+        "cache.inspect",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "cache_inspect",
+        "cache.inspect",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "cache_invalidate",
+        "cache.invalidate",
+        context.clone(),
+        callbacks.clone(),
+    );
+
     let container_context = context.clone();
     let container_callbacks = callbacks.clone();
     engine.register_fn(
@@ -472,6 +941,41 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
         },
     );
     let container_context = context;
+    let container_exec_context = container_context.clone();
+    let container_exec_callbacks = callbacks.clone();
+    engine.register_fn(
+        "container_exec",
+        move |name: ImmutableString,
+              service: ImmutableString,
+              command: Array|
+              -> Result<Map, Box<EvalAltResult>> {
+            Ok(host_command_output_map(
+                (container_exec_callbacks.container_exec)(
+                    &container_exec_context.repo_root,
+                    name.as_str(),
+                    Some(service.as_str()),
+                    &dynamic_array_to_strings(&command)?,
+                )
+                .map_err(rhai_runtime_error)?,
+            ))
+        },
+    );
+    let container_exec_context = container_context.clone();
+    let container_exec_callbacks = callbacks.clone();
+    engine.register_fn(
+        "container_exec",
+        move |name: ImmutableString, command: Array| -> Result<Map, Box<EvalAltResult>> {
+            Ok(host_command_output_map(
+                (container_exec_callbacks.container_exec)(
+                    &container_exec_context.repo_root,
+                    name.as_str(),
+                    None,
+                    &dynamic_array_to_strings(&command)?,
+                )
+                .map_err(rhai_runtime_error)?,
+            ))
+        },
+    );
     engine.register_fn(
         "container_shell",
         move |name: ImmutableString,
@@ -572,6 +1076,121 @@ fn process_result_map(output: std::process::Output) -> Map {
     map
 }
 
+fn reject_recursive_effigy_process(program: &str) -> Result<(), Box<EvalAltResult>> {
+    let program_name = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program);
+    if program_name == "effigy" {
+        return Err(rhai_runtime_error(
+            "Rhai scripts must not call `run_process(\"effigy\", ...)`; use a typed host helper or add a new Rhai host surface",
+        ));
+    }
+    Ok(())
+}
+
+fn search_files(root: &Path, pattern: &str, options: Map) -> Result<Map, Box<EvalAltResult>> {
+    let options = map_to_json_object(options)?;
+    let glob = json_object_string_option(&options, "glob")?;
+    let literal = json_object_bool_option(&options, "literal")?.unwrap_or(false);
+    let matcher = if literal {
+        None
+    } else {
+        Some(regex::Regex::new(pattern).map_err(|error| rhai_runtime_error(error.to_string()))?)
+    };
+    let mut matches = Vec::<Value>::new();
+    for path in search_candidate_files(root, glob.as_deref())? {
+        let contents = std::fs::read_to_string(&path)
+            .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
+        for (index, line) in contents.lines().enumerate() {
+            let matched = if let Some(matcher) = &matcher {
+                matcher.is_match(line)
+            } else {
+                line.contains(pattern)
+            };
+            if matched {
+                matches.push(json!({
+                    "path": path.display().to_string(),
+                    "line": index + 1,
+                    "text": line,
+                }));
+            }
+        }
+    }
+
+    let stdout = matches
+        .iter()
+        .filter_map(|entry| {
+            Some(format!(
+                "{}:{}:{}",
+                entry.get("path")?.as_str()?,
+                entry.get("line")?.as_u64()?,
+                entry.get("text")?.as_str()?
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut map = Map::new();
+    map.insert(
+        "status".into(),
+        Dynamic::from_int(if matches.is_empty() { 1 } else { 0 }),
+    );
+    map.insert("success".into(), Dynamic::from_bool(!matches.is_empty()));
+    map.insert(
+        "count".into(),
+        Dynamic::from_int(i64::try_from(matches.len()).unwrap_or(i64::MAX)),
+    );
+    map.insert("stdout".into(), stdout.into());
+    map.insert("stderr".into(), String::new().into());
+    map.insert(
+        "matches".into(),
+        rhai::serde::to_dynamic(Value::Array(matches))
+            .map_err(|error| rhai_runtime_error(error.to_string()))?,
+    );
+    Ok(map)
+}
+
+fn search_candidate_files(
+    root: &Path,
+    glob: Option<&str>,
+) -> Result<Vec<PathBuf>, Box<EvalAltResult>> {
+    if root.is_file() {
+        return Ok(vec![root.to_path_buf()]);
+    }
+    if !root.is_dir() {
+        return Err(rhai_runtime_error(format!(
+            "search root not found: {}",
+            root.display()
+        )));
+    }
+    let mut files = Vec::new();
+    for entry in walkdir::WalkDir::new(root) {
+        let entry = entry.map_err(|error| rhai_runtime_error(error.to_string()))?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if let Some(glob) = glob {
+            if !path_matches_simple_glob(path, glob) {
+                continue;
+            }
+        }
+        files.push(path.to_path_buf());
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn path_matches_simple_glob(path: &Path, glob: &str) -> bool {
+    let rendered = path.display().to_string();
+    if let Some(suffix) = glob.strip_prefix('*') {
+        return rendered.ends_with(suffix);
+    }
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == glob)
+}
+
 fn process_status_map(status: std::process::ExitStatus) -> Map {
     let mut map = Map::new();
     map.insert(
@@ -582,6 +1201,313 @@ fn process_status_map(status: std::process::ExitStatus) -> Map {
     map.insert("stdout".into(), String::new().into());
     map.insert("stderr".into(), String::new().into());
     map
+}
+
+fn run_http_request(method: &str, url: &str, options: Map) -> Result<Map, Box<EvalAltResult>> {
+    let options = map_to_json_object(options)?;
+    let timeout_ms = json_object_usize_option(&options, "timeout_ms")?.unwrap_or(30_000);
+    let mut builder =
+        reqwest::blocking::Client::builder().timeout(Duration::from_millis(timeout_ms as u64));
+    if json_object_bool_option(&options, "danger_accept_invalid_certs")?.unwrap_or(false) {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+    let client = builder
+        .build()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let method = reqwest::Method::from_bytes(method.as_bytes())
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let mut request = client.request(method, url);
+    if let Some(headers) = options.get("headers") {
+        let headers = headers.as_object().ok_or_else(|| {
+            rhai_runtime_error("`headers` must be a map of string names to string values")
+        })?;
+        for (name, value) in headers {
+            let value = value
+                .as_str()
+                .ok_or_else(|| rhai_runtime_error("`headers` values must be strings"))?;
+            request = request.header(name, value);
+        }
+    }
+    if let Some(body) = options.get("body") {
+        let body = body
+            .as_str()
+            .ok_or_else(|| rhai_runtime_error("`body` must be a string"))?;
+        request = request.body(body.to_owned());
+    }
+    if let Some(json_body) = options.get("json") {
+        let body = serde_json::to_string(json_body)
+            .map_err(|error| rhai_runtime_error(error.to_string()))?;
+        request = request
+            .header("content-type", "application/json")
+            .body(body);
+    }
+    let response = request
+        .send()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let status = response.status();
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_owned(),
+                Value::String(value.to_str().unwrap_or_default().to_owned()),
+            )
+        })
+        .collect::<serde_json::Map<String, Value>>();
+    let body = response
+        .text()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let mut map = Map::new();
+    map.insert(
+        "status".into(),
+        Dynamic::from_int(i64::from(status.as_u16())),
+    );
+    map.insert("success".into(), Dynamic::from_bool(status.is_success()));
+    map.insert("body".into(), body.into());
+    map.insert(
+        "headers".into(),
+        rhai::serde::to_dynamic(Value::Object(headers))
+            .map_err(|error| rhai_runtime_error(error.to_string()))?,
+    );
+    Ok(map)
+}
+
+fn host_command_output_map(output: HostCommandOutput) -> Map {
+    let mut map = Map::new();
+    map.insert("status".into(), Dynamic::from_int(output.status));
+    map.insert("success".into(), Dynamic::from_bool(output.success));
+    map.insert("stdout".into(), output.stdout.into());
+    map.insert("stderr".into(), output.stderr.into());
+    map
+}
+
+fn register_feature_no_args(
+    engine: &mut Engine,
+    function: &'static str,
+    feature: &'static str,
+    context: Arc<ScriptContext>,
+    callbacks: HostCallbacks,
+) {
+    engine.register_fn(function, move || -> Result<Dynamic, Box<EvalAltResult>> {
+        run_feature_dynamic(&context, &callbacks, feature, json!({}))
+    });
+}
+
+fn register_feature_options(
+    engine: &mut Engine,
+    function: &'static str,
+    feature: &'static str,
+    context: Arc<ScriptContext>,
+    callbacks: HostCallbacks,
+) {
+    engine.register_fn(
+        function,
+        move |options: Map| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_feature_dynamic(&context, &callbacks, feature, map_to_json(options)?)
+        },
+    );
+}
+
+fn register_feature_string(
+    engine: &mut Engine,
+    function: &'static str,
+    feature: &'static str,
+    key: &'static str,
+    context: Arc<ScriptContext>,
+    callbacks: HostCallbacks,
+) {
+    engine.register_fn(
+        function,
+        move |value: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_feature_dynamic(
+                &context,
+                &callbacks,
+                feature,
+                json!({ key: value.as_str() }),
+            )
+        },
+    );
+}
+
+fn register_feature_get_value(
+    engine: &mut Engine,
+    function: &'static str,
+    feature: &'static str,
+    key: &'static str,
+    context: Arc<ScriptContext>,
+    callbacks: HostCallbacks,
+) {
+    engine.register_fn(
+        function,
+        move |value: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
+            let output = (callbacks.run_feature)(
+                &context.repo_root,
+                feature,
+                json!({ key: value.as_str() }),
+            )
+            .map_err(|error| rhai_runtime_error(error.message))?;
+            let value: serde_json::Value = serde_json::from_str(&output)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            let Some(value) = value.get("value") else {
+                return Ok(Dynamic::UNIT);
+            };
+            if value.is_null() {
+                return Ok(Dynamic::UNIT);
+            }
+            rhai::serde::to_dynamic(value.clone())
+                .map_err(|error| rhai_runtime_error(error.to_string()))
+        },
+    );
+}
+
+fn register_feature_string_options(
+    engine: &mut Engine,
+    function: &'static str,
+    feature: &'static str,
+    key: &'static str,
+    context: Arc<ScriptContext>,
+    callbacks: HostCallbacks,
+) {
+    let no_options_context = context.clone();
+    let no_options_callbacks = callbacks.clone();
+    engine.register_fn(
+        function,
+        move |value: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_feature_dynamic(
+                &no_options_context,
+                &no_options_callbacks,
+                feature,
+                json!({ key: value.as_str() }),
+            )
+        },
+    );
+    engine.register_fn(
+        function,
+        move |value: ImmutableString, options: Map| -> Result<Dynamic, Box<EvalAltResult>> {
+            let mut options = map_to_json_object(options)?;
+            options.insert(key.to_owned(), json!(value.as_str()));
+            run_feature_dynamic(&context, &callbacks, feature, Value::Object(options))
+        },
+    );
+}
+
+fn register_feature_two_strings(
+    engine: &mut Engine,
+    function: &'static str,
+    feature: &'static str,
+    keys: [&'static str; 2],
+    context: Arc<ScriptContext>,
+    callbacks: HostCallbacks,
+) {
+    engine.register_fn(
+        function,
+        move |first: ImmutableString,
+              second: ImmutableString|
+              -> Result<Dynamic, Box<EvalAltResult>> {
+            run_feature_dynamic(
+                &context,
+                &callbacks,
+                feature,
+                json!({ keys[0]: first.as_str(), keys[1]: second.as_str() }),
+            )
+        },
+    );
+}
+
+fn register_feature_three_strings(
+    engine: &mut Engine,
+    function: &'static str,
+    feature: &'static str,
+    keys: [&'static str; 3],
+    context: Arc<ScriptContext>,
+    callbacks: HostCallbacks,
+) {
+    engine.register_fn(
+        function,
+        move |first: ImmutableString,
+              second: ImmutableString,
+              third: ImmutableString|
+              -> Result<Dynamic, Box<EvalAltResult>> {
+            run_feature_dynamic(
+                &context,
+                &callbacks,
+                feature,
+                json!({
+                    keys[0]: first.as_str(),
+                    keys[1]: second.as_str(),
+                    keys[2]: third.as_str(),
+                }),
+            )
+        },
+    );
+}
+
+fn run_feature_dynamic(
+    context: &ScriptContext,
+    callbacks: &HostCallbacks,
+    feature: &str,
+    options: Value,
+) -> Result<Dynamic, Box<EvalAltResult>> {
+    let output = (callbacks.run_feature)(&context.repo_root, feature, options)
+        .map_err(|error| rhai_runtime_error(error.message))?;
+    if output.trim().is_empty() {
+        return rhai::serde::to_dynamic(json!({ "ok": true }))
+            .map_err(|error| rhai_runtime_error(error.to_string()));
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(&output).map_err(|error| rhai_runtime_error(error.to_string()))?;
+    rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
+}
+
+fn map_to_json(options: Map) -> Result<Value, Box<EvalAltResult>> {
+    Ok(Value::Object(map_to_json_object(options)?))
+}
+
+fn map_to_json_object(options: Map) -> Result<serde_json::Map<String, Value>, Box<EvalAltResult>> {
+    let dynamic = Dynamic::from_map(options);
+    let value: serde_json::Value = rhai::serde::from_dynamic(&dynamic)
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    match value {
+        Value::Object(map) => Ok(map),
+        _ => Err(rhai_runtime_error("feature options must be a map")),
+    }
+}
+
+fn json_object_bool_option(
+    options: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<bool>, Box<EvalAltResult>> {
+    match options.get(key) {
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => Err(rhai_runtime_error(format!("`{key}` must be a bool"))),
+    }
+}
+
+fn json_object_string_option(
+    options: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, Box<EvalAltResult>> {
+    match options.get(key) {
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => Err(rhai_runtime_error(format!("`{key}` must be a string"))),
+    }
+}
+
+fn json_object_usize_option(
+    options: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<usize>, Box<EvalAltResult>> {
+    match options.get(key) {
+        Some(Value::Number(value)) => value
+            .as_u64()
+            .map(|value| Some(value as usize))
+            .ok_or_else(|| rhai_runtime_error(format!("`{key}` must be a usize"))),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => Err(rhai_runtime_error(format!("`{key}` must be a usize"))),
+    }
 }
 
 fn dynamic_array_to_strings(args: &Array) -> Result<Vec<String>, Box<EvalAltResult>> {

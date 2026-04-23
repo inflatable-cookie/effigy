@@ -33,6 +33,29 @@ During v0.x, MINOR bumps may include breaking changes.
   own local modifications explicitly.
 - Automatically add `.effigy` to `.gitignore` when Effigy creates project-local
   runtime state inside a Git root.
+- Add a first-class Rhai `container_exec(...)` host helper that runs commands
+  through Effigy's container transport and returns structured status/stdout/
+  stderr without recursively invoking the Effigy CLI from scripts.
+- Expand the Rhai host API with typed helpers for task discovery, container
+  status/logs/data/reset/eject/stats, docs checks, bundle/service/catalog
+  inspection, gateway status/setup, doctor, scan, and cache operations, plus
+  a maintained audit matrix and static guard against recursive Effigy calls in
+  first-party Rhai scripts.
+- Add Rhai `http_get(...)`, `http_post(...)`, and `http_request(...)` helpers
+  for portable smoke probes without depending on host `curl`.
+- Add Rhai `search_files(...)` for portable source audits without depending on
+  host `rg`, shell, or `awk`.
+- Reject recursive `run_process("effigy", ...)` and
+  `run_process_stream("effigy", ...)` calls from Rhai scripts so missing
+  runtime surface is handled by adding typed host helpers.
+- Add a static first-party Rhai process-call allowlist so new
+  `run_process(...)` dependencies are reviewed instead of added accidentally.
+- Add Rhai `config_raw()`, `config_effective()`, and `config_get(path)` helpers
+  so scripts can read Effigy's raw and composed/bundle-expanded manifest view
+  without parsing `effigy.toml` themselves.
+- Move Underlay error-reporting smoke, metrics, and validation helpers into
+  the shipped `underlay` bundle as bundled Rhai tasks, so consumer repos do not
+  need to carry their own `scripts/error-reporting.rhai` copy.
 - Refresh the guides hub (`docs/guides/README.md`) and primary surface-area
   guides (012, 017, 022, 025, 026, 062, 063, 064, 065) to document the
   shipped v0.3+ surface: flattened `[systems.<name>]` substrate config,
@@ -50,6 +73,14 @@ During v0.x, MINOR bumps may include breaking changes.
   from active guides have been redirected through `archive/`.
 
 ### Added
+- Add configurability knobs for the shipped `underlay` and `decodelabs`
+  bundles: `system_name`, `container_name`, `workspace_service_name`, and
+  `default_workspace` are now optional `[bundle]` inputs (defaulting to
+  the existing hardcoded values — `dev`/`stack`/`workspace`/`app` for
+  underlay and `dev`/`web`/`app`/`app` for decodelabs) so consumer repos
+  can rename the rendered system, container, workspace service, and
+  default workspace without forking the bundle or switching to a local
+  `base_path` copy.
 - Add `dbgate` catalog fragment (`dbgate/dbgate:latest`) with row editing,
   foreign-key lookups, and spreadsheet-style grid view, and promote it as the
   default database UI in the shipped `underlay` bundle (published at

@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::Path;
+use std::process::Output;
 
 use effigy_catalog::volumes::classify_for_reset;
 use effigy_containers::{
@@ -584,6 +585,29 @@ pub(super) fn run_container_shell(
         ),
         policy.name
     ))
+}
+
+pub(in crate::runner) fn run_container_exec_capture(
+    repo_root: &Path,
+    name: Option<&str>,
+    service: Option<&str>,
+    command: &[String],
+) -> Result<Output, RunnerError> {
+    if command.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "container_exec requires at least one command argument",
+        ));
+    }
+
+    let (policy, service, working_dir) = resolve_container_shell_session(repo_root, name, service)?;
+    let mut args = compose_args(&policy, ["exec", "-T", "-w"]);
+    args.push(OsString::from(working_dir));
+    append_color_exec_env(&mut args, false);
+    args.push(OsString::from("-e"));
+    args.push(OsString::from(CONTAINER_HANDOFF_ENV));
+    args.push(OsString::from(service));
+    args.extend(command.iter().map(OsString::from));
+    run_compose_exec(repo_root, &policy, &args, true, "docker compose exec")
 }
 
 pub(in crate::runner) fn run_container_shell_session(

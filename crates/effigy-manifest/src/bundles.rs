@@ -495,6 +495,38 @@ fn decodelabs_spec() -> BundleSpec {
                 default: None,
                 example: Some(Value::String("contactpatch".to_owned())),
             },
+            BundleInputSpec {
+                name: "system_name".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Name of the `[systems.<name>]` block rendered by the bundle.".to_owned(),
+                default: Some(Value::String("dev".to_owned())),
+                example: None,
+            },
+            BundleInputSpec {
+                name: "container_name".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Name of the `[containers.<name>]` block that hosts the stack (also used as the default container).".to_owned(),
+                default: Some(Value::String("web".to_owned())),
+                example: None,
+            },
+            BundleInputSpec {
+                name: "workspace_service_name".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Name of the php-fpm workspace service inside the container (also wired as the `php` alias target and the `composer` service).".to_owned(),
+                default: Some(Value::String("app".to_owned())),
+                example: None,
+            },
+            BundleInputSpec {
+                name: "default_workspace".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Name of the `[systems.<system>.workspaces.<name>]` workspace treated as the system default.".to_owned(),
+                default: Some(Value::String("app".to_owned())),
+                example: None,
+            },
         ],
     }
 }
@@ -506,34 +538,42 @@ fn resolve_decodelabs_bundle(
     let host = required_bundle_string(manifest_path, "decodelabs", inputs, "host")?;
     let project_name = required_bundle_string(manifest_path, "decodelabs", inputs, "project_name")?;
     let database = required_bundle_string(manifest_path, "decodelabs", inputs, "database")?;
+    let system_name =
+        optional_bundle_string(inputs, "system_name").unwrap_or_else(|| "dev".to_owned());
+    let container_name =
+        optional_bundle_string(inputs, "container_name").unwrap_or_else(|| "web".to_owned());
+    let workspace_service_name = optional_bundle_string(inputs, "workspace_service_name")
+        .unwrap_or_else(|| "app".to_owned());
+    let default_workspace =
+        optional_bundle_string(inputs, "default_workspace").unwrap_or_else(|| "app".to_owned());
 
     let template = r#"
 [containers]
-default = "web"
+default = "__CONTAINER_NAME__"
 
-[containers.web]
+[containers.__CONTAINER_NAME__]
 driver = "colima"
 startup = "detached"
 project_name = "__PROJECT_NAME__"
-primary_service = "app"
+primary_service = "__WORKSPACE_SERVICE_NAME__"
 working_dir = "/var/www/html"
 
-[containers.web.lifecycle]
+[containers.__CONTAINER_NAME__.lifecycle]
 on_task_exit = "stop"
 shutdown = "graceful"
 
-[containers.web.dns]
+[containers.__CONTAINER_NAME__.dns]
 routes = [
   { domain = "__HOST__", tls = true, service = "web" },
   { domain = "pma.__HOST__", tls = true, service = "pma" },
 ]
 
-[containers.web.aliases]
-php = "app"
-composer = { service = "app", command = "composer" }
+[containers.__CONTAINER_NAME__.aliases]
+php = "__WORKSPACE_SERVICE_NAME__"
+composer = { service = "__WORKSPACE_SERVICE_NAME__", command = "composer" }
 mysql = { service = "db", command = "mysql -uroot{% if services.db.params.root_password %} -p{{ services.db.params.root_password }}{% endif %} {{ services.db.params.database }}" }
 
-[containers.web.services.app]
+[containers.__CONTAINER_NAME__.services.__WORKSPACE_SERVICE_NAME__]
 catalog = "php-fpm"
 version = "8.4"
 document_root = "."
@@ -551,48 +591,52 @@ extensions = [
   "opcache",
 ]
 
-[containers.web.services.web]
+[containers.__CONTAINER_NAME__.services.web]
 catalog = "nginx"
 document_root = "."
 rewrite_all_to = "/vendor/genesis.php"
 asset_fallback = ""
 error_page_404 = "/vendor/genesis.php"
 
-[containers.web.services.db]
+[containers.__CONTAINER_NAME__.services.db]
 catalog = "mariadb"
 version = "10.11"
 database = "__DATABASE__"
 
-[containers.web.services.pma]
+[containers.__CONTAINER_NAME__.services.pma]
 catalog = "phpmyadmin"
 version = "latest"
 database_host = "db"
 
-[containers.web.services.memcache]
+[containers.__CONTAINER_NAME__.services.memcache]
 catalog = "memcached"
 memory = 128
 
-[containers.web.services.redis]
+[containers.__CONTAINER_NAME__.services.redis]
 catalog = "redis"
 version = "7"
 
 [systems]
-default = "dev"
+default = "__SYSTEM_NAME__"
 
-[systems.dev]
-default_workspace = "app"
+[systems.__SYSTEM_NAME__]
+default_workspace = "__DEFAULT_WORKSPACE__"
 
-[systems.dev.workspaces.app]
-container = "web"
+[systems.__SYSTEM_NAME__.workspaces.__DEFAULT_WORKSPACE__]
+container = "__CONTAINER_NAME__"
 
 [tasks.dev]
-workspace = "app"
+workspace = "__DEFAULT_WORKSPACE__"
 "#;
 
     let rendered = template
         .replace("__HOST__", &host)
         .replace("__PROJECT_NAME__", &project_name)
-        .replace("__DATABASE__", &database);
+        .replace("__DATABASE__", &database)
+        .replace("__SYSTEM_NAME__", &system_name)
+        .replace("__CONTAINER_NAME__", &container_name)
+        .replace("__WORKSPACE_SERVICE_NAME__", &workspace_service_name)
+        .replace("__DEFAULT_WORKSPACE__", &default_workspace);
 
     toml::from_str::<Value>(&rendered).map_err(|error| ManifestError::Parse {
         path: bundle_source_path("decodelabs"),
@@ -661,6 +705,38 @@ fn underlay_spec() -> BundleSpec {
                 default: Some(Value::Integer(41003)),
                 example: None,
             },
+            BundleInputSpec {
+                name: "system_name".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Name of the `[systems.<name>]` block rendered by the bundle.".to_owned(),
+                default: Some(Value::String("dev".to_owned())),
+                example: None,
+            },
+            BundleInputSpec {
+                name: "container_name".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Name of the `[containers.<name>]` block that hosts the stack (also used as the default container).".to_owned(),
+                default: Some(Value::String("stack".to_owned())),
+                example: None,
+            },
+            BundleInputSpec {
+                name: "workspace_service_name".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Name of the long-running workspace service inside the container (referenced by `primary_service` and by the published HTTP routes).".to_owned(),
+                default: Some(Value::String("workspace".to_owned())),
+                example: None,
+            },
+            BundleInputSpec {
+                name: "default_workspace".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Name of the `[systems.<system>.workspaces.<name>]` workspace treated as the system default.".to_owned(),
+                default: Some(Value::String("app".to_owned())),
+                example: None,
+            },
         ],
     }
 }
@@ -677,6 +753,14 @@ fn resolve_underlay_bundle(
     let api_port = optional_bundle_integer(inputs, "api_port").unwrap_or(41001);
     let admin_port = optional_bundle_integer(inputs, "admin_port").unwrap_or(41002);
     let front_port = optional_bundle_integer(inputs, "front_port").unwrap_or(41003);
+    let system_name =
+        optional_bundle_string(inputs, "system_name").unwrap_or_else(|| "dev".to_owned());
+    let container_name =
+        optional_bundle_string(inputs, "container_name").unwrap_or_else(|| "stack".to_owned());
+    let workspace_service_name = optional_bundle_string(inputs, "workspace_service_name")
+        .unwrap_or_else(|| "workspace".to_owned());
+    let default_workspace =
+        optional_bundle_string(inputs, "default_workspace").unwrap_or_else(|| "app".to_owned());
     let bundle_root = materialize_shipped_bundle_assets(manifest_path, "underlay")?;
 
     let template = r#"
@@ -684,31 +768,31 @@ fn resolve_underlay_bundle(
 js = "bun"
 
 [systems]
-default = "dev"
+default = "__SYSTEM_NAME__"
 
-[systems.dev]
-container = "stack"
-default_workspace = "app"
+[systems.__SYSTEM_NAME__]
+container = "__CONTAINER_NAME__"
+default_workspace = "__DEFAULT_WORKSPACE__"
 working_dir = "/workspace-root/__WORKSPACE_SUBDIR__"
 user = "dev"
 home = "/home/dev"
 mounts = []
 
-[systems.dev.workspaces.app]
+[systems.__SYSTEM_NAME__.workspaces.__DEFAULT_WORKSPACE__]
 
 [containers]
-default = "stack"
+default = "__CONTAINER_NAME__"
 
-[containers.stack]
+[containers.__CONTAINER_NAME__]
 startup = "detached"
-context = "dev"
+context = "__SYSTEM_NAME__"
 project_name = "__PROJECT_NAME__"
-primary_service = "workspace"
+primary_service = "__WORKSPACE_SERVICE_NAME__"
 
-[containers.stack.aliases]
+[containers.__CONTAINER_NAME__.aliases]
 psql = "postgres"
 
-[containers.stack.services.workspace]
+[containers.__CONTAINER_NAME__.services.__WORKSPACE_SERVICE_NAME__]
 catalog = "workspace-rust-bun"
 working_subdir = "__WORKSPACE_SUBDIR__"
 host_ports = [
@@ -717,32 +801,44 @@ host_ports = [
   "__FRONT_PORT__:__FRONT_PORT__",
 ]
 
-[containers.stack.services.postgres]
+[containers.__CONTAINER_NAME__.services.postgres]
 catalog = "postgres"
 database = "__DATABASE__"
 password = "postgres"
 
-[containers.stack.services.dbgate]
+[containers.__CONTAINER_NAME__.services.dbgate]
 catalog = "dbgate"
 database_host = "postgres"
 database = "__DATABASE__"
 connection_label = "__PROJECT_NAME__"
 
-[containers.stack.services.mailpit]
+[containers.__CONTAINER_NAME__.services.mailpit]
 catalog = "mailpit"
 
-[containers.stack.services.minio]
+[containers.__CONTAINER_NAME__.services.minio]
 catalog = "minio"
 
-[containers.stack.dns]
+[containers.__CONTAINER_NAME__.dns]
 routes = [
-  { domain = "__HOST__", tls = true, port = __FRONT_PORT__, service = "workspace" },
-  { domain = "admin.__HOST__", tls = true, port = __ADMIN_PORT__, service = "workspace" },
-  { domain = "api.__HOST__", tls = true, port = __API_PORT__, service = "workspace" },
+  { domain = "__HOST__", tls = true, port = __FRONT_PORT__, service = "__WORKSPACE_SERVICE_NAME__" },
+  { domain = "admin.__HOST__", tls = true, port = __ADMIN_PORT__, service = "__WORKSPACE_SERVICE_NAME__" },
+  { domain = "api.__HOST__", tls = true, port = __API_PORT__, service = "__WORKSPACE_SERVICE_NAME__" },
   { domain = "dbgate.__HOST__", tls = true, port = 3000, service = "dbgate" },
   { domain = "mailpit.__HOST__", port = 8025, service = "mailpit" },
   { domain = "minio.__HOST__", port = 9001, service = "minio" },
 ]
+
+[tasks."smoke:error-logging"]
+run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
+host = true
+
+[tasks."metrics:error-log"]
+run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
+host = true
+
+[tasks."validate:error-reporting"]
+run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
+host = true
 "#;
 
     let rendered = render_shipped_bundle_template(
@@ -756,7 +852,11 @@ routes = [
             .replace("__DATABASE__", &database)
             .replace("__API_PORT__", &api_port.to_string())
             .replace("__ADMIN_PORT__", &admin_port.to_string())
-            .replace("__FRONT_PORT__", &front_port.to_string()),
+            .replace("__FRONT_PORT__", &front_port.to_string())
+            .replace("__SYSTEM_NAME__", &system_name)
+            .replace("__CONTAINER_NAME__", &container_name)
+            .replace("__WORKSPACE_SERVICE_NAME__", &workspace_service_name)
+            .replace("__DEFAULT_WORKSPACE__", &default_workspace),
     )?;
 
     toml::from_str::<Value>(&rendered).map_err(|error| ManifestError::Parse {
@@ -813,10 +913,18 @@ struct BundleExportFile {
     contents: String,
 }
 
-const UNDERLAY_ASSETS: &[EmbeddedBundleAsset] = &[EmbeddedBundleAsset {
-    path: "scripts/dev/ui-setup.rhai",
-    contents: include_str!("../../effigy-catalog/starters/underlay/scripts/dev/ui-setup.rhai"),
-}];
+const UNDERLAY_ASSETS: &[EmbeddedBundleAsset] = &[
+    EmbeddedBundleAsset {
+        path: "scripts/dev/ui-setup.rhai",
+        contents: include_str!("../../effigy-catalog/starters/underlay/scripts/dev/ui-setup.rhai"),
+    },
+    EmbeddedBundleAsset {
+        path: "scripts/error-reporting.rhai",
+        contents: include_str!(
+            "../../effigy-catalog/starters/underlay/scripts/error-reporting.rhai"
+        ),
+    },
+];
 
 fn shipped_bundle_export_files(name: &str) -> Result<Vec<BundleExportFile>, ManifestError> {
     let spec = get_bundle(name).ok_or_else(|| ManifestError::Compose {
@@ -911,31 +1019,31 @@ fn bundle_input_type_literal(value_type: BundleInputType) -> &'static str {
 }
 
 const DECODELABS_EXPORT_TEMPLATE: &str = r#"[containers]
-default = "web"
+default = "{{ inputs.container_name }}"
 
-[containers.web]
+[containers.{{ inputs.container_name }}]
 driver = "colima"
 startup = "detached"
 project_name = "{{ inputs.project_name }}"
-primary_service = "app"
+primary_service = "{{ inputs.workspace_service_name }}"
 working_dir = "/var/www/html"
 
-[containers.web.lifecycle]
+[containers.{{ inputs.container_name }}.lifecycle]
 on_task_exit = "stop"
 shutdown = "graceful"
 
-[containers.web.dns]
+[containers.{{ inputs.container_name }}.dns]
 routes = [
   { domain = "{{ inputs.host }}", tls = true, service = "web" },
   { domain = "pma.{{ inputs.host }}", tls = true, service = "pma" },
 ]
 
-[containers.web.aliases]
-php = "app"
-composer = { service = "app", command = "composer" }
+[containers.{{ inputs.container_name }}.aliases]
+php = "{{ inputs.workspace_service_name }}"
+composer = { service = "{{ inputs.workspace_service_name }}", command = "composer" }
 mysql = { service = "db", command = "mysql -uroot{% raw %}{% if services.db.params.root_password %} -p{{ services.db.params.root_password }}{% endif %}{% endraw %} {{ inputs.database }}" }
 
-[containers.web.services.app]
+[containers.{{ inputs.container_name }}.services.{{ inputs.workspace_service_name }}]
 catalog = "php-fpm"
 version = "8.4"
 document_root = "."
@@ -953,66 +1061,66 @@ extensions = [
   "opcache",
 ]
 
-[containers.web.services.web]
+[containers.{{ inputs.container_name }}.services.web]
 catalog = "nginx"
 document_root = "."
-service = "app"
+service = "{{ inputs.workspace_service_name }}"
 
-[containers.web.services.db]
+[containers.{{ inputs.container_name }}.services.db]
 catalog = "mariadb"
 database = "{{ inputs.database }}"
 
-[containers.web.services.pma]
+[containers.{{ inputs.container_name }}.services.pma]
 catalog = "phpmyadmin"
 database_host = "db"
 
-[containers.web.services.memcache]
+[containers.{{ inputs.container_name }}.services.memcache]
 catalog = "memcached"
 memory = 128
 
-[containers.web.services.redis]
+[containers.{{ inputs.container_name }}.services.redis]
 catalog = "redis"
 
 [systems]
-default = "dev"
+default = "{{ inputs.system_name }}"
 
-[systems.dev]
-default_workspace = "app"
-container = "web"
+[systems.{{ inputs.system_name }}]
+default_workspace = "{{ inputs.default_workspace }}"
+container = "{{ inputs.container_name }}"
 
 [tasks.dev]
-workspace = "app"
+workspace = "{{ inputs.default_workspace }}"
 "#;
 
 const UNDERLAY_EXPORT_TEMPLATE: &str = r#"[package_manager]
 js = "bun"
 
 [systems]
-default = "dev"
+default = "{{ inputs.system_name }}"
 
-[systems.dev]
-container = "stack"
-default_workspace = "app"
+[systems.{{ inputs.system_name }}]
+container = "{{ inputs.container_name }}"
+default_workspace = "{{ inputs.default_workspace }}"
 working_dir = "/workspace-root/{{ inputs.workspace_subdir }}"
 user = "dev"
 home = "/home/dev"
 mounts = []
 
-[systems.dev.workspaces.app]
+[systems.{{ inputs.system_name }}.workspaces.{{ inputs.default_workspace }}]
 
 [containers]
-default = "stack"
+default = "{{ inputs.container_name }}"
 
-[containers.stack]
+[containers.{{ inputs.container_name }}]
 startup = "detached"
-context = "dev"
+context = "{{ inputs.system_name }}"
 project_name = "{{ inputs.project_name }}"
-primary_service = "workspace"
+primary_service = "{{ inputs.workspace_service_name }}"
 
-[containers.stack.aliases]
+[containers.{{ inputs.container_name }}.aliases]
 psql = "postgres"
 
-[containers.stack.services.workspace]
+[containers.{{ inputs.container_name }}.services.{{ inputs.workspace_service_name }}]
 catalog = "workspace-rust-bun"
 working_subdir = "{{ inputs.workspace_subdir }}"
 host_ports = [
@@ -1021,32 +1129,44 @@ host_ports = [
   "{{ inputs.front_port }}:{{ inputs.front_port }}",
 ]
 
-[containers.stack.services.postgres]
+[containers.{{ inputs.container_name }}.services.postgres]
 catalog = "postgres"
 database = "{{ inputs.database }}"
 password = "postgres"
 
-[containers.stack.services.dbgate]
+[containers.{{ inputs.container_name }}.services.dbgate]
 catalog = "dbgate"
 database_host = "postgres"
 database = "{{ inputs.database }}"
 connection_label = "{{ inputs.project_name }}"
 
-[containers.stack.services.mailpit]
+[containers.{{ inputs.container_name }}.services.mailpit]
 catalog = "mailpit"
 
-[containers.stack.services.minio]
+[containers.{{ inputs.container_name }}.services.minio]
 catalog = "minio"
 
-[containers.stack.dns]
+[containers.{{ inputs.container_name }}.dns]
 routes = [
-  { domain = "{{ inputs.host }}", tls = true, port = {{ inputs.front_port }}, service = "workspace" },
-  { domain = "admin.{{ inputs.host }}", tls = true, port = {{ inputs.admin_port }}, service = "workspace" },
-  { domain = "api.{{ inputs.host }}", tls = true, port = {{ inputs.api_port }}, service = "workspace" },
+  { domain = "{{ inputs.host }}", tls = true, port = {{ inputs.front_port }}, service = "{{ inputs.workspace_service_name }}" },
+  { domain = "admin.{{ inputs.host }}", tls = true, port = {{ inputs.admin_port }}, service = "{{ inputs.workspace_service_name }}" },
+  { domain = "api.{{ inputs.host }}", tls = true, port = {{ inputs.api_port }}, service = "{{ inputs.workspace_service_name }}" },
   { domain = "dbgate.{{ inputs.host }}", tls = true, port = 3000, service = "dbgate" },
   { domain = "mailpit.{{ inputs.host }}", port = 8025, service = "mailpit" },
   { domain = "minio.{{ inputs.host }}", port = 9001, service = "minio" },
 ]
+
+[tasks."smoke:error-logging"]
+run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
+host = true
+
+[tasks."metrics:error-log"]
+run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
+host = true
+
+[tasks."validate:error-reporting"]
+run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
+host = true
 "#;
 
 fn materialize_shipped_bundle_assets(
@@ -1210,6 +1330,15 @@ fn required_bundle_string(
 
 fn optional_bundle_integer(inputs: &BTreeMap<String, Value>, key: &str) -> Option<i64> {
     inputs.get(key).and_then(Value::as_integer)
+}
+
+fn optional_bundle_string(inputs: &BTreeMap<String, Value>, key: &str) -> Option<String> {
+    let value = inputs.get(key)?.as_str()?.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_owned())
+    }
 }
 
 fn validate_bundle_input_type(

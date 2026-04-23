@@ -27,6 +27,13 @@ The default frontend hydration helper is a bundled asset referenced from
 `effigy.tasks.toml` through `{{ bundle.root }}/scripts/dev/ui-setup.rhai`.
 It is not emitted into the consumer repo.
 
+The shipped bundle also provides `smoke:error-logging`,
+`metrics:error-log`, and `validate:error-reporting` through a bundled
+`{{ bundle.root }}/scripts/error-reporting.rhai` helper. Override
+`API_BASE_URL`, `SMOKE_ENDPOINT`, `WINDOW_HOURS`,
+`NULL_RATE_THRESHOLD`, or `ERROR_REPORTING_ROUTES_DIR` when the repo's
+API or route layout differs from the defaults.
+
 ## Adoption
 
 Run `effigy init underlay` inside the target repo — see

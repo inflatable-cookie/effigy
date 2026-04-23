@@ -891,10 +891,13 @@ dependencies = [
  "chrono",
  "effigy-core",
  "effigy-ui",
+ "regex",
+ "reqwest",
  "rhai",
  "serde_json",
  "signal-hook 0.4.4",
  "toml",
+ "walkdir",
 ]
 
 [[package]]

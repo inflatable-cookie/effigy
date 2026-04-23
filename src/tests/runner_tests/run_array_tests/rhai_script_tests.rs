@@ -123,20 +123,18 @@ run = [{ rhai = "scripts/rhai/helpers.rhai" }]
 }
 
 #[test]
-fn run_manifest_task_run_array_rhai_steps_support_in_process_effigy_dispatch() {
-    let root = temp_workspace("run-array-rhai-effigy-dispatch");
+fn run_manifest_task_run_array_rhai_steps_support_typed_host_helpers() {
+    let _guard = lock_test();
+    let root = temp_workspace("run-array-rhai-host-helpers");
     fs::create_dir_all(root.join("scripts/rhai")).expect("mkdir rhai script dir");
     fs::write(
         root.join("scripts/rhai/dispatch.rhai"),
         r#"
-let listing = run_effigy(["tasks"]);
-if !listing["success"] {
-    throw "tasks listing failed";
+let bundles = bundle_list();
+if bundles["ok"] == false {
+    throw "bundle list failed";
 }
-write_file("tasks.txt", listing["output"].to_string());
-
-let listing_json = run_effigy_json(["tasks"]);
-write_file("tasks.json", json_stringify(listing_json));
+write_file("bundles.json", json_stringify(bundles));
 "#,
     )
     .expect("write rhai script");
@@ -159,14 +157,12 @@ run = [{ rhai = "scripts/rhai/dispatch.rhai" }]
     )
     .expect("rhai dispatch task should run");
 
-    let tasks_text = fs::read_to_string(root.join("tasks.txt")).expect("read tasks text");
-    assert!(tasks_text.contains("capture"), "got: {tasks_text}");
-    let tasks_json = fs::read_to_string(root.join("tasks.json")).expect("read tasks json");
+    let bundles_json = fs::read_to_string(root.join("bundles.json")).expect("read bundles json");
     assert!(
-        tasks_json.contains("\"schema\": \"effigy.tasks.v1\""),
-        "got: {tasks_json}"
+        bundles_json.contains("\"schema\": \"effigy.bundle.list.v1\""),
+        "got: {bundles_json}"
     );
-    assert!(tasks_json.contains("\"capture\""), "got: {tasks_json}");
+    assert!(bundles_json.contains("\"underlay\""), "got: {bundles_json}");
 }
 
 #[test]
