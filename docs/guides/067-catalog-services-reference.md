@@ -95,9 +95,38 @@ PostgreSQL database server.
 - Gateway: eligible for TCP DNS alias + loopback IP allocation when the
   containing environment declares `[containers.<name>.dns]`.
 
+### `dbgate`
+
+Modern SQL/NoSQL database manager with a spreadsheet-style data grid,
+row editing, foreign-key lookups, form view for wide tables, and a SQL
+editor with history. This is the default database UI in the shipped
+`underlay` bundle.
+
+- Image: `dbgate/dbgate:latest` (override via `version`).
+- Parameters: `version` (`"latest"`), `database_host` (`"postgres"`),
+  `database_port` (`5432`), `database` (`"postgres"`),
+  `database_user` (`"postgres"`), `database_password` (`""`),
+  `engine` (`"postgres@dbgate-plugin-postgres"`),
+  `connection_label` (`"Postgres"`).
+- Exposed port: `3000`.
+- Volume: persistent `data` volume at `/root/.dbgate` for saved queries
+  and settings.
+- Healthcheck: HTTP `GET /` on port 3000.
+- Shell target: no.
+- Depends on: optional `postgres` or `mariadb` service in the same
+  environment. Pulls the target `database` / `password` from the linked
+  service's params when those inputs are left unset.
+- Engine override: set `engine = "mysql@dbgate-plugin-mysql"` (or
+  `"mariadb@dbgate-plugin-mysql"`) to front MariaDB/MySQL instead.
+- Gateway: typically exposed as `dbgate.<host>` via
+  `[containers.<name>.dns]`.
+
 ### `pgweb`
 
-Browser UI for local PostgreSQL access.
+Lightweight browser UI for local PostgreSQL access. Read-oriented — no
+row editor, write operations happen through the built-in SQL query tab.
+Kept in the catalog as a lean alternative to `dbgate` when the heavier
+UI is not needed.
 
 - Image: `sosedoff/pgweb:latest` (override via `version`).
 - Parameters: `version` (`"latest"`), `database_host` (`"postgres"`),
@@ -252,10 +281,10 @@ Services that expose a TCP port are eligible for automatic loopback IP
 allocation and TCP DNS alias registration through the container gateway when
 the environment declares `[containers.<name>.dns]`:
 
-- `postgres` (`5432`), `pgweb` (`8081`), `mariadb` (`3306`), `redis` (`6379`), `memcached`
-  (`11211`), `mailpit` (`1025`, `8025`), `minio` (`9000`, `9001`),
-  `elasticsearch` (`9200`), `phpmyadmin` (`80`), `nginx` (`80`),
-  `workspace-rust-bun` (via `host_ports`).
+- `postgres` (`5432`), `dbgate` (`3000`), `pgweb` (`8081`), `mariadb` (`3306`),
+  `redis` (`6379`), `memcached` (`11211`), `mailpit` (`1025`, `8025`),
+  `minio` (`9000`, `9001`), `elasticsearch` (`9200`), `phpmyadmin` (`80`),
+  `nginx` (`80`), `workspace-rust-bun` (via `host_ports`).
 
 See [`063-container-system-guide.md`](./063-container-system-guide.md) for
 the loopback IP pool, alias hostname behavior, and resolver details.

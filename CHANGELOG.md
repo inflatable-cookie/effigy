@@ -31,6 +31,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add `effigy bundle export <name> --path <dir>` so teams can write a
   compiled-in shipped bundle to a local `base_path` bundle directory and then
   own local modifications explicitly.
+- Automatically add `.effigy` to `.gitignore` when Effigy creates project-local
+  runtime state inside a Git root.
 - Refresh the guides hub (`docs/guides/README.md`) and primary surface-area
   guides (012, 017, 022, 025, 026, 062, 063, 064, 065) to document the
   shipped v0.3+ surface: flattened `[systems.<name>]` substrate config,
@@ -48,9 +50,14 @@ During v0.x, MINOR bumps may include breaking changes.
   from active guides have been redirected through `archive/`.
 
 ### Added
+- Add `dbgate` catalog fragment (`dbgate/dbgate:latest`) with row editing,
+  foreign-key lookups, and spreadsheet-style grid view, and promote it as the
+  default database UI in the shipped `underlay` bundle (published at
+  `dbgate.<host>`). The existing `pgweb` fragment stays in the catalog as a
+  lean read-oriented alternative.
 - Add `docs/guides/067-catalog-services-reference.md` covering the full
-  shipped catalog service surface (postgres, pgweb, mariadb, redis, memcached,
-  mailpit, minio, elasticsearch, phpmyadmin, nginx, php-fpm,
+  shipped catalog service surface (postgres, dbgate, pgweb, mariadb, redis,
+  memcached, mailpit, minio, elasticsearch, phpmyadmin, nginx, php-fpm,
   workspace-rust-bun) with default images, configurable inputs, exposed
   ports, volumes, healthchecks, and gateway eligibility per service.
 - Extend `docs/guides/065-underlay-starter.md` with a full Decodelabs

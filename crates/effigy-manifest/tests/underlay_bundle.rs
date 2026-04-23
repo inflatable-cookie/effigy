@@ -24,6 +24,7 @@ run = "printf seed"
 "#,
     )
     .expect("write manifest");
+    std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
     let stale_bundle_root = tmp
         .path()
         .join(".effigy/runtime/bundles/underlay/stale-hash/scripts/dev");
@@ -31,6 +32,10 @@ run = "printf seed"
     std::fs::write(stale_bundle_root.join("ui-setup.rhai"), "stale").expect("stale asset");
 
     let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join(".gitignore")).expect("gitignore"),
+        ".effigy\n"
+    );
     let bundle_root = loaded.bundle_root.clone().expect("bundle root");
     assert!(bundle_root.starts_with(tmp.path().join(".effigy/runtime/bundles/underlay")));
     assert!(
@@ -107,10 +112,10 @@ run = "printf seed"
             .and_then(|value| value.as_str()),
         Some("acme")
     );
-    let pgweb = stack.services.get("pgweb").expect("pgweb service");
-    assert_eq!(pgweb.catalog, "pgweb");
+    let dbgate = stack.services.get("dbgate").expect("dbgate service");
+    assert_eq!(dbgate.catalog, "dbgate");
     assert_eq!(
-        pgweb
+        dbgate
             .params
             .get("database_host")
             .and_then(|value| value.as_str()),
@@ -127,7 +132,7 @@ run = "printf seed"
         "acme.test",
         "admin.acme.test",
         "api.acme.test",
-        "pgweb.acme.test",
+        "dbgate.acme.test",
         "mailpit.acme.test",
         "minio.acme.test",
     ] {

@@ -1,0 +1,59 @@
+[service]
+name = "dbgate"
+description = "DbGate modern SQL/NoSQL database manager with row editing, foreign-key lookups, and a spreadsheet-style data grid"
+
+[params.version]
+type = "string"
+default = "latest"
+description = "DbGate image tag"
+
+[params.database_host]
+type = "string"
+default = "postgres"
+description = "Primary database service host name"
+
+[params.database_port]
+type = "integer"
+default = 5432
+description = "Primary database service port"
+
+[params.database]
+type = "string"
+default = "postgres"
+description = "Database name for the default connection"
+
+[params.database_user]
+type = "string"
+default = "postgres"
+description = "Database user for the default connection"
+
+[params.database_password]
+type = "string"
+default = ""
+description = "Database password for the default connection (falls back to the referenced service's password/root_password when empty)"
+
+[params.engine]
+type = "string"
+default = "postgres@dbgate-plugin-postgres"
+description = "DbGate engine identifier (for example postgres@dbgate-plugin-postgres or mysql@dbgate-plugin-mysql)"
+
+[params.connection_label]
+type = "string"
+default = "Postgres"
+description = "Label for the pre-wired database connection as shown in the DbGate UI"
+
+[capabilities]
+exec_target = false
+
+[depends_on]
+optional = ["postgres", "mariadb"]
+
+[volumes.data]
+mount = "/root/.dbgate"
+named = true
+persist = true
+description = "DbGate settings, saved queries, and connection cache"
+
+[ports]
+default = [3000]
+description = "HTTP port"

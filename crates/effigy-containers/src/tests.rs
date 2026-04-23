@@ -265,6 +265,7 @@ services:
 #[test]
 fn load_inline_workspace_container_policy_writes_compose_and_derives_exec_dir() {
     let root = temp_repo("inline-workspace-policy");
+    fs::create_dir(root.join(".git")).expect("git dir");
     let inline = ManifestInlineWorkspaceContainerConfig {
         image: Some("node:22".to_owned()),
         mount: Some("./:/workspace".to_owned()),
@@ -273,6 +274,10 @@ fn load_inline_workspace_container_policy_writes_compose_and_derives_exec_dir() 
 
     let policy =
         load_inline_workspace_container_policy(&root, "dev__app", &inline, None).expect("policy");
+    assert_eq!(
+        fs::read_to_string(root.join(".gitignore")).expect("gitignore"),
+        ".effigy\n"
+    );
     let working_dir =
         resolve_inline_workspace_exec_working_dir(&root, "dev__app", &inline, None).expect("cwd");
 

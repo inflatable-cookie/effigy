@@ -9,7 +9,7 @@ use crate::records::DemoEntrypoint;
 use crate::runtime::{DemoActiveAttempt, DemoTerminalTransport};
 use crate::{
     display_repo_path, effective_active_attempt_path, effective_input_handoff_path,
-    effective_resize_handoff_path, now_epoch_ms, DemoStateError,
+    effective_resize_handoff_path, ensure_repo_effigy_ignored, now_epoch_ms, DemoStateError,
 };
 use effigy_core::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
@@ -398,9 +398,7 @@ pub fn write_active_attempt_record(
 ) -> Result<(), DemoStateError> {
     let path = effective_active_attempt_path(repo_root, demo_id);
     if let Some(parent) = path.parent() {
-        effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| {
-            DemoStateError::new(failed_to_write_path(&repo_root.join(".gitignore"), error))
-        })?;
+        ensure_repo_effigy_ignored(repo_root)?;
         fs::create_dir_all(parent)
             .map_err(|error| DemoStateError::new(failed_to_write_path(parent, error)))?;
     }
@@ -439,6 +437,7 @@ pub fn append_demo_terminal_input(
 ) -> Result<(), DemoStateError> {
     let absolute = resolve_repo_relative_path(repo_root, rendered_path);
     if let Some(parent) = absolute.parent() {
+        ensure_repo_effigy_ignored(repo_root)?;
         fs::create_dir_all(parent)
             .map_err(|error| DemoStateError::new(failed_to_write_path(parent, error)))?;
     }
@@ -460,6 +459,7 @@ pub fn append_demo_terminal_resize(
 ) -> Result<(), DemoStateError> {
     let absolute = resolve_repo_relative_path(repo_root, rendered_path);
     if let Some(parent) = absolute.parent() {
+        ensure_repo_effigy_ignored(repo_root)?;
         fs::create_dir_all(parent)
             .map_err(|error| DemoStateError::new(failed_to_write_path(parent, error)))?;
     }
@@ -485,7 +485,7 @@ pub fn prepare_demo_input_handoff(
     demo_id: &str,
 ) -> Result<PathBuf, DemoStateError> {
     let path = effective_input_handoff_path(repo_root, demo_id);
-    prepare_handoff_file(&path)?;
+    prepare_handoff_file(repo_root, &path)?;
     Ok(path)
 }
 
@@ -494,7 +494,7 @@ pub fn prepare_demo_resize_handoff(
     demo_id: &str,
 ) -> Result<PathBuf, DemoStateError> {
     let path = effective_resize_handoff_path(repo_root, demo_id);
-    prepare_handoff_file(&path)?;
+    prepare_handoff_file(repo_root, &path)?;
     Ok(path)
 }
 
@@ -535,8 +535,9 @@ pub fn resolve_repo_relative_path(repo_root: &Path, path: &str) -> PathBuf {
     }
 }
 
-fn prepare_handoff_file(path: &Path) -> Result<(), DemoStateError> {
+fn prepare_handoff_file(repo_root: &Path, path: &Path) -> Result<(), DemoStateError> {
     if let Some(parent) = path.parent() {
+        ensure_repo_effigy_ignored(repo_root)?;
         fs::create_dir_all(parent)
             .map_err(|error| DemoStateError::new(failed_to_write_path(parent, error)))?;
     }

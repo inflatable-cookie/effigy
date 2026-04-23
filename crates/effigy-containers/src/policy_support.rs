@@ -5,6 +5,7 @@ use effigy_catalog::{
     assembly::ServiceDeclaration, volumes::ManagedVolume, CatalogResolver, ComposeAssembler,
     ComposeOutput,
 };
+use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::ports::PortRegistry;
 use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
@@ -151,6 +152,10 @@ pub(crate) fn resolve_compose_source(
         &mut assembly,
     )?;
     let output = ComposeOutput::new(repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR));
+    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
+        path: repo_root.join(".gitignore"),
+        error,
+    })?;
     let manifest_cache_key = if effective_ports.is_empty() {
         effective_manifest.to_owned()
     } else {

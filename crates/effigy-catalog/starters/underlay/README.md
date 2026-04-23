@@ -2,7 +2,7 @@
 
 Reusable manifest shape for Underlay-style repos. The stable
 system/container layer comes from the shipped `underlay` bundle: one
-long-running Rust + Bun workspace container, bundled postgres, pgweb,
+long-running Rust + Bun workspace container, bundled postgres, dbgate,
 mailpit, and minio services, managed gateway routes, and loopback alias
 publication for `db.<host>`, `smtp.<host>`, and `s3.<host>`.
 

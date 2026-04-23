@@ -72,8 +72,8 @@ pages only when you need more detail.
   defining repo-local bundle directories with `bundle.toml` metadata and
   templated Effigy defaults.
 - [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
-  for the full shipped catalog of service fragments (postgres, pgweb, mariadb,
-  redis, memcached, mailpit, minio, elasticsearch, phpmyadmin, nginx,
+  for the full shipped catalog of service fragments (postgres, dbgate, pgweb,
+  mariadb, redis, memcached, mailpit, minio, elasticsearch, phpmyadmin, nginx,
   php-fpm, workspace-rust-bun) with inputs, ports, and gateway eligibility.
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)

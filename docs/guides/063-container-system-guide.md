@@ -156,9 +156,9 @@ This directory is runtime-only: it is rewritten every time the manifest
 changes, and should be ignored by git.
 
 Catalog services currently ship for: `workspace-rust-bun`, `postgres`,
-`pgweb`, `mariadb`, `redis`, `memcached`, `mailpit`, `minio`, `elasticsearch`,
-`phpmyadmin`, `nginx`, and `php-fpm`. See the catalog services reference for
-the supported input surface for each.
+`pgweb`, `dbgate`, `mariadb`, `redis`, `memcached`, `mailpit`, `minio`,
+`elasticsearch`, `phpmyadmin`, `nginx`, and `php-fpm`. See the catalog
+services reference for the supported input surface for each.
 
 ### User-Owned `compose_file` (Escape Hatch)
 

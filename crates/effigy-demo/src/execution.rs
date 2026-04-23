@@ -8,7 +8,7 @@ use serde_json::{json, Value as JsonValue};
 
 use crate::{
     append_attempt_history, display_repo_path, effective_output_log_path, effective_receipt_path,
-    now_epoch_ms, DemoAttemptRecord, DemoStateError,
+    ensure_repo_effigy_ignored, now_epoch_ms, DemoAttemptRecord, DemoStateError,
 };
 
 #[derive(Debug, Clone)]
@@ -33,6 +33,7 @@ impl DemoLogPaths {
         let stdout_absolute = effective_output_log_path(repo_root, demo_id, "stdout");
         let stderr_absolute = effective_output_log_path(repo_root, demo_id, "stderr");
         if let Some(parent) = stdout_absolute.parent() {
+            ensure_repo_effigy_ignored(repo_root)?;
             fs::create_dir_all(parent)
                 .map_err(|error| DemoStateError::new(failed_to_write_path(parent, error)))?;
         }
@@ -51,6 +52,7 @@ impl DemoLogPaths {
     pub fn prepare_pty(repo_root: &Path, demo_id: &str) -> Result<Self, DemoStateError> {
         let stdout_absolute = effective_output_log_path(repo_root, demo_id, "stdout");
         if let Some(parent) = stdout_absolute.parent() {
+            ensure_repo_effigy_ignored(repo_root)?;
             fs::create_dir_all(parent)
                 .map_err(|error| DemoStateError::new(failed_to_write_path(parent, error)))?;
         }
@@ -188,6 +190,7 @@ pub fn write_latest_attempt_receipt(
 ) -> Result<(), DemoStateError> {
     let receipt_path = effective_receipt_path(repo_root, demo_id, demo);
     if let Some(parent) = receipt_path.parent() {
+        ensure_repo_effigy_ignored(repo_root)?;
         fs::create_dir_all(parent)
             .map_err(|error| DemoStateError::new(failed_to_write_path(parent, error)))?;
     }
