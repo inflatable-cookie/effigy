@@ -36,6 +36,12 @@ pub(super) fn run_managed_task(
     let container_handoff = inside_container_handoff();
     let execution_mode = managed_execution_mode();
     let container_binding = resolve_container_execution_binding(
+        selection
+            .catalog
+            .manifest
+            .task_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.run_in),
         selection.catalog.manifest.systems.as_ref(),
         selection.catalog.manifest.containers.as_ref(),
         &preflight.selector.task_name,
@@ -167,6 +173,12 @@ fn build_managed_gateway_command(
     selection: &TaskSelection<'_>,
 ) -> Result<String, RunnerError> {
     let container_binding = resolve_container_execution_binding(
+        selection
+            .catalog
+            .manifest
+            .task_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.run_in),
         selection.catalog.manifest.systems.as_ref(),
         selection.catalog.manifest.containers.as_ref(),
         task_name,
@@ -319,6 +331,12 @@ fn materialize_special_managed_processes(
     let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
     let repo_root = selection.catalog.catalog_root.as_path();
     let container_binding = resolve_container_execution_binding(
+        selection
+            .catalog
+            .manifest
+            .task_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.run_in),
         selection.catalog.manifest.systems.as_ref(),
         selection.catalog.manifest.containers.as_ref(),
         &preflight.selector.task_name,

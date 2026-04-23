@@ -64,9 +64,13 @@ pub fn render_builtin_task_reference_invocation(
     let executable = resolve_effigy_invocation_prefix()?;
     let task = shell_quote(task_ref);
     if args_rendered.is_empty() {
-        Ok(format!("{executable} {task}"))
+        Ok(format!(
+            "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 {executable} {task}"
+        ))
     } else {
-        Ok(format!("{executable} {task} {args_rendered}"))
+        Ok(format!(
+            "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 {executable} {task} {args_rendered}"
+        ))
     }
 }
 
@@ -167,7 +171,7 @@ fn resolve_effigy_invocation_prefix() -> Result<String, ManagedError> {
 mod tests {
     use std::path::Path;
 
-    use super::render_command_template;
+    use super::{render_builtin_task_reference_invocation, render_command_template};
 
     #[test]
     fn command_template_expands_bundle_root_tokens() {
@@ -182,5 +186,15 @@ mod tests {
             rendered,
             "printf '/repo/.effigy/runtime/bundles/underlay/hash/scripts/setup.rhai /repo/.effigy/runtime/bundles/underlay/hash/asset --flag'"
         );
+    }
+
+    #[test]
+    fn builtin_task_reference_invocation_suppresses_child_header() {
+        let rendered = render_builtin_task_reference_invocation("docs check-headings", "--strict")
+            .expect("render task ref");
+
+        assert!(rendered.contains("env EFFIGY_INTERNAL_SUPPRESS_HEADER=1"));
+        assert!(rendered.contains("docs check-headings"));
+        assert!(rendered.ends_with("--strict"));
     }
 }

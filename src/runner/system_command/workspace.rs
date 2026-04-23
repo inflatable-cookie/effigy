@@ -120,6 +120,7 @@ pub(super) fn resolve_public_workspace_container(
         ..Default::default()
     };
     let binding = resolve_container_execution_binding(
+        None,
         manifest.systems.as_ref(),
         manifest.containers.as_ref(),
         surface,

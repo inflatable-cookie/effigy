@@ -12,6 +12,7 @@ pub(super) fn validate_top_level_keys(
         "defer",
         "demos",
         "docs_policy",
+        "task_defaults",
         "bootstrap",
         "containers",
         "systems",

@@ -146,6 +146,7 @@ fn materialize_demo_special_managed_processes(
 ) -> Result<(), RunnerError> {
     let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
     let container_binding = resolve_container_execution_binding(
+        None,
         systems,
         containers,
         task_name,

@@ -289,17 +289,18 @@ mod tests {
 
         assert_eq!(starter.name, "underlay");
         let targets: Vec<&str> = starter.files.iter().map(|f| f.target.as_str()).collect();
-        for expected in [
-            "effigy.toml",
-            "effigy.bootstrap.toml",
-            "effigy.tasks.toml",
-            "scripts/dev/ui-setup.rhai",
-        ] {
+        for expected in ["effigy.toml", "effigy.bootstrap.toml", "effigy.tasks.toml"] {
             assert!(
                 targets.contains(&expected),
                 "expected underlay to declare {expected}; got {targets:?}"
             );
         }
+        // Bundle-owned helpers (e.g. `scripts/dev/ui-setup.rhai`) are materialized
+        // from the runtime bundle cache, not scaffolded into the consumer repo.
+        assert!(
+            !targets.contains(&"scripts/dev/ui-setup.rhai"),
+            "starter should not scaffold bundle-owned Rhai helpers; got {targets:?}"
+        );
         let guidance = starter.guidance.expect("underlay ships guidance text");
         assert!(guidance.contains("[bundle].host"));
     }

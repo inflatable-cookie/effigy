@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::ManifestError;
-use crate::ManifestManagedRun;
+use crate::{ManifestManagedRun, ManifestTaskRunIn};
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 pub struct ManifestBundleConfig {
@@ -12,6 +12,13 @@ pub struct ManifestBundleConfig {
     pub base_path: Option<String>,
     #[serde(flatten)]
     pub inputs: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestTaskDefaultsConfig {
+    #[serde(default)]
+    pub run_in: Option<ManifestTaskRunIn>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]

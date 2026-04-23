@@ -94,13 +94,20 @@ impl ContainerExecutionBinding {
 }
 
 pub(in crate::runner) fn resolve_container_execution_binding(
+    default_run_in: Option<effigy_manifest::ManifestTaskRunIn>,
     systems: Option<&ManifestSystemsConfig>,
     containers: Option<&ManifestContainersConfig>,
     task_name: &str,
     task: &ManifestTask,
     runtime_surface: &str,
 ) -> Result<ContainerExecutionBinding, RunnerError> {
-    match resolve_task_execution_binding_from_parts(systems, containers, task_name, task)
+    match resolve_task_execution_binding_from_parts(
+        default_run_in,
+        systems,
+        containers,
+        task_name,
+        task,
+    )
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
     {
         Some(ResolvedTaskExecutionBinding::Workspace(binding)) => {

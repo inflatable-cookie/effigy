@@ -17,6 +17,7 @@ mod release_section;
 mod scan_section;
 mod systems_section;
 mod tables;
+mod task_defaults_section;
 mod tasks;
 mod test_section;
 mod top_level;
@@ -38,6 +39,7 @@ use release_section::validate_release_section;
 use scan_section::validate_scan_section;
 use systems_section::validate_systems_section;
 use tables::validate_known_table;
+use task_defaults_section::validate_task_defaults_section;
 use tasks::validate_tasks_table;
 use test_section::validate_test_section;
 use top_level::validate_top_level_keys;
@@ -68,6 +70,9 @@ pub fn validate_manifest_schema(manifest_path: &Path, value: &Value, sink: &mut 
     }
     if let Some(docs_policy) = table.get("docs_policy") {
         validate_docs_policy_section(&mut context, docs_policy);
+    }
+    if let Some(task_defaults) = table.get("task_defaults") {
+        validate_task_defaults_section(&mut context, task_defaults);
     }
     if let Some(bootstrap) = table.get("bootstrap") {
         validate_bootstrap_section(&mut context, bootstrap);
