@@ -1,5 +1,6 @@
-use effigy_manifest::config_sections::ManifestJsPackageManager;
+use effigy_manifest::config_sections::{ManifestJsPackageManager, ManifestWorkspaceContainerRef};
 use effigy_manifest::load_task_manifest_with_inspection;
+use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep};
 
 #[test]
 fn underlay_bundle_resolves_defaults_and_allows_repo_overrides() {
@@ -50,6 +51,14 @@ run = "printf seed"
         setup_script_source.contains("unsupported ui setup target"),
         "underlay bundle should materialize its Rhai assets at {}",
         setup_script.display()
+    );
+    let error_reporting_script = bundle_root.join("scripts/error-reporting.rhai");
+    let error_reporting_source =
+        std::fs::read_to_string(&error_reporting_script).expect("error reporting script");
+    assert!(
+        error_reporting_source.contains("smoke:error-logging"),
+        "underlay bundle should materialize error-reporting helpers at {}",
+        error_reporting_script.display()
     );
     let manifest = loaded.manifest;
 
@@ -144,4 +153,94 @@ run = "printf seed"
 
     let seed = manifest.tasks.get("seed").expect("seed task");
     assert_eq!(seed.host, Some(true));
+
+    for task_name in [
+        "smoke:error-logging",
+        "metrics:error-log",
+        "validate:error-reporting",
+    ] {
+        let task = manifest.tasks.get(task_name).expect("error reporting task");
+        assert_eq!(task.host, Some(true), "{task_name} should run on host");
+        let ManifestManagedRun::Sequence(steps) = task.run.as_ref().expect("run steps") else {
+            panic!("{task_name} should use a Rhai run step");
+        };
+        let Some(ManifestManagedRunStep::Step(step)) = steps.first() else {
+            panic!("{task_name} should contain a Rhai step");
+        };
+        assert_eq!(
+            step.rhai.as_deref(),
+            Some(
+                bundle_root
+                    .join("scripts/error-reporting.rhai")
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+    }
+}
+
+#[test]
+fn underlay_bundle_renames_system_container_and_workspace_service() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "underlay-reference-dev"
+workspace_subdir = "underlay-reference"
+database = "acme"
+system_name = "stage"
+container_name = "infra"
+workspace_service_name = "dev-shell"
+default_workspace = "rust"
+"#,
+    )
+    .expect("write manifest");
+    std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let manifest = loaded.manifest;
+
+    let systems = manifest.systems.expect("systems");
+    assert_eq!(systems.default.as_deref(), Some("stage"));
+    let stage = systems.systems.get("stage").expect("systems.stage");
+    assert_eq!(stage.default_workspace.as_deref(), Some("rust"));
+    assert!(stage.workspaces.contains_key("rust"));
+    match stage.container.as_ref().expect("stage container") {
+        ManifestWorkspaceContainerRef::Named(name) => assert_eq!(name, "infra"),
+        other => panic!("expected named container ref, got {other:?}"),
+    }
+
+    let containers = manifest.containers.expect("containers");
+    assert_eq!(containers.default.as_deref(), Some("infra"));
+    let infra = containers.environments.get("infra").expect("infra");
+    assert_eq!(infra.primary_service.as_deref(), Some("dev-shell"));
+    assert!(infra.services.contains_key("dev-shell"));
+    assert!(!infra.services.contains_key("workspace"));
+    // non-workspace services keep their catalog-driven names
+    assert!(infra.services.contains_key("postgres"));
+    assert!(infra.services.contains_key("dbgate"));
+
+    let dns = infra.dns.as_ref().expect("dns");
+    let http_routes: Vec<(&str, Option<&str>)> = dns
+        .routes
+        .iter()
+        .map(|route| (route.domain.as_str(), route.service.as_deref()))
+        .collect();
+    assert!(
+        http_routes.contains(&("acme.test", Some("dev-shell"))),
+        "expected workspace route to point at dev-shell; got {http_routes:?}"
+    );
+    assert!(
+        http_routes.contains(&("admin.acme.test", Some("dev-shell"))),
+        "expected admin route to point at dev-shell; got {http_routes:?}"
+    );
+    // dbgate keeps its own service target, independent of workspace rename
+    assert!(
+        http_routes.contains(&("dbgate.acme.test", Some("dbgate"))),
+        "got {http_routes:?}"
+    );
 }

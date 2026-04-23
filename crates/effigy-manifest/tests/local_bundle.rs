@@ -141,6 +141,47 @@ database = "acme"
 }
 
 #[test]
+fn exported_underlay_bundle_honors_name_overrides() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bundle_dir = tmp.path().join("bundles/underlay");
+    effigy_manifest::export_bundle("underlay", &bundle_dir).expect("export underlay bundle");
+
+    std::fs::write(
+        tmp.path().join("effigy.toml"),
+        r#"[bundle]
+base_path = "bundles/underlay"
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "underlay-reference"
+database = "acme"
+system_name = "stage"
+container_name = "infra"
+workspace_service_name = "dev-shell"
+default_workspace = "rust"
+"#,
+    )
+    .expect("write manifest");
+
+    let loaded = load_task_manifest_with_inspection(&tmp.path().join("effigy.toml"))
+        .expect("exported bundle should load with renamed system/container/workspace");
+    let containers = loaded.manifest.containers.as_ref().expect("containers");
+    assert_eq!(containers.default.as_deref(), Some("infra"));
+    let infra = containers
+        .environments
+        .get("infra")
+        .expect("infra container");
+    assert_eq!(infra.primary_service.as_deref(), Some("dev-shell"));
+    assert!(infra.services.contains_key("dev-shell"));
+    assert!(infra.services.contains_key("dbgate"));
+
+    let systems = loaded.manifest.systems.as_ref().expect("systems");
+    assert_eq!(systems.default.as_deref(), Some("stage"));
+    let stage = systems.systems.get("stage").expect("systems.stage");
+    assert_eq!(stage.default_workspace.as_deref(), Some("rust"));
+    assert!(stage.workspaces.contains_key("rust"));
+}
+
+#[test]
 fn exported_decodelabs_bundle_can_be_used_as_base_path() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle_dir = tmp.path().join("bundles/decodelabs");

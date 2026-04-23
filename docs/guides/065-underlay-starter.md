@@ -58,6 +58,20 @@ The default UI setup script is a bundled asset referenced from
 It is not copied into the consumer repo. If a repo needs custom
 hydration, point the setup step at a repo-owned script instead.
 
+The bundle also publishes error-reporting helper tasks that run a bundled
+Rhai script from `{{ bundle.root }}/scripts/error-reporting.rhai`:
+
+- `smoke:error-logging` posts to `https://api.<host>/v1/dev/error-smoke`
+  by default, then verifies the latest `platform.error_log` row.
+- `metrics:error-log` reports `handler_context` null-rate metrics for
+  recent rows.
+- `validate:error-reporting` combines route-pattern checks, the smoke
+  probe, and metrics.
+
+Set `API_BASE_URL`, `SMOKE_ENDPOINT`, `WINDOW_HOURS`,
+`NULL_RATE_THRESHOLD`, or `ERROR_REPORTING_ROUTES_DIR` when a repo needs
+different defaults.
+
 Supported flags mirror the rest of `effigy init`:
 
 - `--dry-run` — print each file's content under a `=== <target> ===`
@@ -83,6 +97,13 @@ copy here so users can refer back without re-emitting.
    - set `[bundle].workspace_subdir` to the repo's directory name under `/workspace-root`
    - set `[bundle].database` to the repo's dev database name
    - align `[bundle].api_port`, `[bundle].admin_port`, and `[bundle].front_port` if the repo uses different dev-server ports
+   - optionally override the name knobs — `[bundle].system_name`
+     (default `dev`), `[bundle].container_name` (default `stack`),
+     `[bundle].workspace_service_name` (default `workspace`), and
+     `[bundle].default_workspace` (default `app`) — when the defaults
+     collide with existing repo conventions. Keep `effigy.tasks.toml`
+     and any `systems.<name>` override blocks aligned with the new
+     names.
    - adjust `systems.dev.mounts` for any sibling checkouts
 
 2. In `effigy.tasks.toml`:
@@ -176,6 +197,8 @@ System-layer overrides still apply on top:
   `[bundle]` inputs
 - Sibling-checkout layout in `systems.dev.mounts`
 - Custom setup scripts only when the bundled helper is not enough
+- Custom error-reporting scripts only when the bundled helper does not fit
+  the repo's API/error-log shape
 
 ## Proof
 
@@ -222,11 +245,15 @@ project_name = "my-project-dev"
 database = "my_database"
 ```
 
-| Input          | Purpose                                                                      |
-|----------------|------------------------------------------------------------------------------|
-| `host`         | Primary local hostname. Gateway registers the `web` service on `<host>` and `pma.<host>`. |
-| `project_name` | Docker Compose project name for the generated stack.                          |
-| `database`     | Default MariaDB database name. Also wired into the `mysql` workspace alias.   |
+| Input                    | Default     | Purpose                                                                      |
+|--------------------------|-------------|------------------------------------------------------------------------------|
+| `host`                   | _required_  | Primary local hostname. Gateway registers the `web` service on `<host>` and `pma.<host>`. |
+| `project_name`           | _required_  | Docker Compose project name for the generated stack.                          |
+| `database`               | _required_  | Default MariaDB database name. Also wired into the `mysql` workspace alias.   |
+| `system_name`            | `"dev"`     | Name of the `[systems.<name>]` block rendered by the bundle.                  |
+| `container_name`         | `"web"`     | Name of the `[containers.<name>]` block and the default container.            |
+| `workspace_service_name` | `"app"`     | Name of the php-fpm service (also the `php` alias target and the `composer` service). |
+| `default_workspace`      | `"app"`     | `[systems.<system>.workspaces.<name>]` treated as the system default.         |
 
 ### Services composed by the bundle
 
@@ -254,9 +281,10 @@ TLS is enabled by default through `effigy gateway setup-tls`.
 
 ### Default system defaults
 
-- default system: `dev`
-- default container: `web`
-- primary service: `app`
+- default system: `dev` (configurable via `[bundle].system_name`)
+- default container: `web` (configurable via `[bundle].container_name`)
+- primary service: `app` (configurable via `[bundle].workspace_service_name`)
+- default workspace: `app` (configurable via `[bundle].default_workspace`)
 - working directory: `/var/www/html`
 - startup mode: detached
 - lifecycle: `on_task_exit = "stop"`, graceful shutdown

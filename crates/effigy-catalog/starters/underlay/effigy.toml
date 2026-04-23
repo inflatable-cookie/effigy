@@ -7,6 +7,9 @@
 #
 # Edit points for a new consumer repo:
 #   - update `[bundle]` inputs for your domains, project name, repo path, and database
+#   - optionally override `system_name`, `container_name`, `workspace_service_name`,
+#     and `default_workspace` on `[bundle]` if the defaults (`dev`/`stack`/`workspace`/`app`)
+#     don't fit (remember to update `effigy.tasks.toml` + `systems.<name>` overrides to match)
 #   - add `systems.dev.mounts` when sibling checkouts must be visible in the workspace
 #   - retitle/replace the per-app dev tabs in `effigy.tasks.toml`
 #   - repoint the bootstrap deps command in `effigy.bootstrap.toml`

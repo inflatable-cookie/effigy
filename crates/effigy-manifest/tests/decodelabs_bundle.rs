@@ -1,3 +1,4 @@
+use effigy_manifest::config_sections::ManifestWorkspaceContainerRef;
 use effigy_manifest::load_task_manifest_with_inspection;
 
 #[test]
@@ -75,6 +76,64 @@ run = [{ rhai = "infra/dev/seed-latest-db-dump.rhai" }]
 
     let task = manifest.tasks.get("seed").expect("seed task");
     assert_eq!(task.workspace.as_deref(), Some("app"));
+}
+
+#[test]
+fn decodelabs_bundle_renames_system_container_and_workspace_service() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "decodelabs"
+host = "contact-patch.legacy.test"
+project_name = "contactpatch-dev"
+database = "contactpatch"
+system_name = "stage"
+container_name = "shop"
+workspace_service_name = "php"
+default_workspace = "frontend"
+"#,
+    )
+    .expect("write manifest");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let manifest = loaded.manifest;
+
+    let containers = manifest.containers.expect("containers");
+    assert_eq!(containers.default.as_deref(), Some("shop"));
+    let shop = containers.environments.get("shop").expect("shop container");
+    assert_eq!(shop.primary_service.as_deref(), Some("php"));
+    assert!(shop.services.contains_key("php"));
+    assert!(!shop.services.contains_key("app"));
+
+    let composer_alias = shop.aliases.get("composer").expect("composer alias");
+    assert_eq!(composer_alias.service(), "php");
+    let php_alias = shop.aliases.get("php").expect("php alias");
+    assert_eq!(php_alias.service(), "php");
+
+    let systems = manifest.systems.expect("systems");
+    assert_eq!(systems.default.as_deref(), Some("stage"));
+    let stage = systems.systems.get("stage").expect("systems.stage");
+    assert_eq!(stage.default_workspace.as_deref(), Some("frontend"));
+    assert!(stage.workspaces.contains_key("frontend"));
+
+    let stage_frontend = stage
+        .workspaces
+        .get("frontend")
+        .expect("frontend workspace");
+    match stage_frontend
+        .container
+        .as_ref()
+        .expect("frontend container")
+    {
+        ManifestWorkspaceContainerRef::Named(name) => assert_eq!(name, "shop"),
+        other => panic!("expected named container ref, got {other:?}"),
+    }
+
+    let dev_task = manifest.tasks.get("dev").expect("dev task");
+    assert_eq!(dev_task.workspace.as_deref(), Some("frontend"));
 }
 
 #[test]

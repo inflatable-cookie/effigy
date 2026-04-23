@@ -9,40 +9,11 @@ let release_triple = if env("EFFIGY_LINUX_RELEASE_TRIPLE") == "" {
 let copied_binary = path_join(host_artifacts_dir, "effigy-" + release_triple);
 let proof_log = path_join(host_artifacts_dir, "rehearsal.txt");
 
-fn run_effigy_checked(label, process_args) {
-    let result = run_effigy(process_args);
-    if !result["success"] {
-        let status = result["status"].to_string();
-        let stdout = result["output"].to_string();
-        let stderr = result["error"].to_string();
-        throw "[error] " + label + " failed with status " + status
-            + "\nstdout:\n" + stdout + "\nstderr:\n" + stderr;
-    }
-    let stdout = result["output"].to_string();
-    if stdout.trim() != "" {
-        log(stdout);
-    }
-    let stderr = result["rendered_output"].to_string();
-    if stderr.trim() != "" {
-        log_warn(stderr);
-    }
-    result
-}
-
 fn down_container(name) {
     let output = container_down(name);
     if output.trim() != "" {
         log(output);
     }
-}
-
-fn fail_with_cleanup(label, result, name) {
-    down_container(name);
-    let status = result["status"].to_string();
-    let stdout = result["stdout"].to_string();
-    let stderr = result["stderr"].to_string();
-    throw "[error] " + label + " failed with status " + status
-        + "\nstdout:\n" + stdout + "\nstderr:\n" + stderr;
 }
 
 create_dir(host_artifacts_dir);
@@ -77,15 +48,18 @@ let build_script =
     + "  echo \"completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n"
     + "} > /workspace/.effigy/linux-release/artifacts/rehearsal.txt\n";
 
-let shell_result = run_effigy([
-    "container",
-    container_name,
-    "shell",
-    "--command",
-    build_script,
-]);
-if !shell_result["success"] {
-    fail_with_cleanup("linux release rehearsal", shell_result, container_name);
+let shell_error = "";
+try {
+    let output = container_shell(container_name, build_script);
+    if output.trim() != "" {
+        log(output);
+    }
+} catch (error) {
+    shell_error = error.to_string();
+}
+if shell_error != "" {
+    down_container(container_name);
+    throw "[error] linux release rehearsal failed\n" + shell_error;
 }
 
 down_container(container_name);

@@ -16,7 +16,7 @@ use lifecycle::{
     run_container_shell, run_container_status, run_container_up,
 };
 
-pub(in crate::runner) use lifecycle::run_container_shell_session;
+pub(in crate::runner) use lifecycle::{run_container_exec_capture, run_container_shell_session};
 
 mod data;
 mod discovery;

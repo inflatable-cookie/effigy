@@ -20,17 +20,19 @@ pages only when you need more detail.
    surface.
 6. [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md) for
    Effigy-native scripting in Rust-first repos.
-7. [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
+7. [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md) for
+   the first-class Rhai helper coverage matrix.
+8. [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
    for optional distribution built-ins and cross-repo adoption posture.
-8. [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
+9. [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
    for the intended public `system`, `workspace`, and `dev` lifecycle model.
-9. [`063-container-system-guide.md`](./063-container-system-guide.md) for the
+10. [`063-container-system-guide.md`](./063-container-system-guide.md) for the
    current container-backed implementation surface.
-10. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
+11. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
    `effigy.toml` patterns.
-11. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for
+12. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for
    the full command and flag surface.
-12. [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) when the
+13. [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) when the
    job is "clone this repo here and bring it up."
 
 ## By Goal
@@ -95,6 +97,7 @@ pages only when you need more detail.
 ### I want Effigy-native scripting for a Rust-first repo
 
 - [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
+- [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)

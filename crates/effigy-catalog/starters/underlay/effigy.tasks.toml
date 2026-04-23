@@ -8,6 +8,10 @@
 # concerns. Keep the `workspace` shell tab and the lifecycle tab — those
 # are the managed-dev contract. Replace the `app-*/dev` entries to match
 # the real apps in your repo.
+#
+# If you set `[bundle].workspace_service_name` to something other than
+# `workspace`, update the `service = "workspace"` line in the shell role
+# below to match.
 
 [tasks.health]
 host = true
