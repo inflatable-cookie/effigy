@@ -12,32 +12,45 @@ use effigy_containers::{
     },
     EffectiveContainerPolicy,
 };
-
-use crate::runner::manifest::ManifestContainerOnTaskExit;
+use effigy_manifest::ManifestContainerOnTaskExit;
 use effigy_process::ProcessSpec;
 use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
 
-use super::gateway_registration::deregister_gateway_routes_for_container;
-use super::signals::{
+use crate::signals::{
     install_stop_requested_flag, spawn_docker_inherit, terminate_inherited_child_graceful,
 };
-use super::RunnerError;
+use crate::EffigyRuntimeError;
 
-pub(super) fn run_attached_container_session(
+pub fn run_attached_container_session<F>(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     colima_started: bool,
     health: Option<&'static str>,
     owner_task: Option<&str>,
-) -> Result<String, RunnerError> {
+    deregister_gateway_routes: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
+{
     match resolve_attached_session_mode() {
         AttachedSessionMode::Tui => {
             run_attached_container_tui(repo_root, policy, owner_task)?;
-            render_attached_session_closeout(repo_root, policy, colima_started, "tui-exit")
+            render_attached_session_closeout(
+                repo_root,
+                policy,
+                colima_started,
+                "tui-exit",
+                deregister_gateway_routes,
+            )
         }
-        AttachedSessionMode::Stream => {
-            run_attached_container_stream(repo_root, policy, colima_started, health, owner_task)
-        }
+        AttachedSessionMode::Stream => run_attached_container_stream(
+            repo_root,
+            policy,
+            colima_started,
+            health,
+            owner_task,
+            deregister_gateway_routes,
+        ),
     }
 }
 
@@ -45,9 +58,9 @@ fn run_attached_container_tui(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     owner_task: Option<&str>,
-) -> Result<(), RunnerError> {
+) -> Result<(), EffigyRuntimeError> {
     let tab_order = attached_session_tab_order(policy);
-    let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
+    let executable = resolve_effigy_invocation_prefix().map_err(EffigyRuntimeError::Cwd)?;
     let specs = attached_session_process_plans(repo_root, policy, owner_task, &executable)
         .into_iter()
         .map(|plan| ProcessSpec {
@@ -67,7 +80,7 @@ fn run_attached_container_tui(
         MultiProcessTuiOptions::default(),
     )
     .map_err(|error| {
-        RunnerError::Ui(format!(
+        EffigyRuntimeError::Ui(format!(
             "container session runtime failed for `{}`: {error}",
             policy.name
         ))
@@ -75,13 +88,17 @@ fn run_attached_container_tui(
     Ok(())
 }
 
-fn run_attached_container_stream(
+fn run_attached_container_stream<F>(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     colima_started: bool,
     health: Option<&'static str>,
     owner_task: Option<&str>,
-) -> Result<String, RunnerError> {
+    deregister_gateway_routes: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
+{
     let service = policy.primary_service.clone();
     println!(
         "{}",
@@ -108,7 +125,7 @@ fn run_attached_container_stream(
             Ok(Some(_)) => break "logs-exit",
             Ok(None) => thread::sleep(Duration::from_millis(150)),
             Err(error) => {
-                return Err(RunnerError::task_invocation(format!(
+                return Err(EffigyRuntimeError::task_invocation(format!(
                     "failed to monitor attached container session for `{}`: {error}",
                     policy.name
                 )));
@@ -119,20 +136,31 @@ fn run_attached_container_stream(
         terminate_inherited_child_graceful(&mut child);
     }
 
-    render_attached_session_closeout(repo_root, policy, colima_started, termination_reason)
+    render_attached_session_closeout(
+        repo_root,
+        policy,
+        colima_started,
+        termination_reason,
+        deregister_gateway_routes,
+    )
 }
 
-pub(super) fn render_attached_session_closeout(
+fn render_attached_session_closeout<F>(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     colima_started: bool,
     termination_reason: &str,
-) -> Result<String, RunnerError> {
+    deregister_gateway_routes: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
+{
     let mut shutdown_applied = false;
     let mut gateway_domains_removed = Vec::new();
     if policy.on_task_exit == ManifestContainerOnTaskExit::Stop {
-        shutdown_container_via_exec(repo_root, policy)?;
-        gateway_domains_removed = deregister_gateway_routes_for_container(policy)?;
+        shutdown_container_via_exec(repo_root, policy)
+            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+        gateway_domains_removed = deregister_gateway_routes(policy)?;
         shutdown_applied = true;
     }
     let mut rendered = render_attached_session_closeout_text(

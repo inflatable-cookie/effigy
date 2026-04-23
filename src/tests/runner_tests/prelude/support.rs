@@ -39,7 +39,7 @@ pub(in crate::runner::tests) mod builtin_contracts {
 }
 
 pub(in crate::runner::tests) mod execution {
-    pub(in crate::runner::tests) use crate::runner::execute::run_manifest_task_with_cwd;
+    pub(in crate::runner::tests) use crate::runner::execute::api::run_manifest_task_with_cwd;
 }
 
 pub(in crate::runner::tests) mod harness {

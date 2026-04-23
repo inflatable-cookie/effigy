@@ -16,7 +16,7 @@ use effigy_cli::{
 use serde_json::Value;
 
 use super::error::RunnerError;
-use super::execute::run_manifest_task_with_cwd;
+use super::execute::api::run_manifest_task_with_cwd;
 pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<String, RunnerError> {
     execute_repo_rhai_script(
         &required_repo_root(&args)?,

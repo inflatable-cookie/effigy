@@ -20,7 +20,7 @@ use crate::runner::cache::ops;
 use crate::runner::command_context;
 use crate::runner::doctor_ports::RunnerDoctorPorts;
 use crate::runner::error::RunnerError;
-use crate::runner::execute;
+use crate::runner::execute::api;
 use crate::runner::locking::io as locking_io;
 use crate::runner::locking::io::LockGuard;
 use crate::runner::tasks_command;
@@ -68,7 +68,7 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts {
         task: &TaskInvocation,
         cwd: PathBuf,
     ) -> Result<String, BuiltinError> {
-        execute::run_manifest_task_with_cwd(task, cwd).map_err(runner_to_builtin)
+        api::run_manifest_task_with_cwd(task, cwd).map_err(runner_to_builtin)
     }
 
     fn run_doctor(&self, args: DoctorArgs) -> Result<String, BuiltinError> {

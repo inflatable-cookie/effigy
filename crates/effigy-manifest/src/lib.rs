@@ -37,9 +37,8 @@ pub use config_sections::{
     ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
     ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig,
     ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestReleaseConfig,
-    ManifestScanConfig, ManifestShellConfig,
-    ManifestSystemConfig, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
-    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    ManifestScanConfig, ManifestShellConfig, ManifestSystemConfig, ManifestSystemsConfig,
+    ManifestTaskDefaultsConfig, ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,

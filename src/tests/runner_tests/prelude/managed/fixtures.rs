@@ -133,6 +133,32 @@ concurrent = [{ name = "front-only", run = "printf front-ok" }]
     );
 }
 
+pub(in crate::runner::tests) fn write_managed_stream_builtin_test_profile_manifest(
+    root: &Path,
+    suite: &str,
+    test_task_ref: &str,
+    marker: &Path,
+) {
+    write_root_manifest(
+        root,
+        &format!(
+            r#"[test.suites]
+{} = "sh -lc 'printf called > \"{}\"'"
+
+[tasks.dev]
+mode = "tui"
+concurrent = [{{ name = "default-only", run = "printf default-ok" }}]
+
+[tasks.dev.profiles.default]
+concurrent = [{{ name = "tests", task = "{}" }}]
+"#,
+            suite,
+            marker.display(),
+            test_task_ref
+        ),
+    );
+}
+
 pub(in crate::runner::tests) fn write_managed_tui_dev_manifest(root: &Path, concurrent: &str) {
     write_root_manifest(
         root,

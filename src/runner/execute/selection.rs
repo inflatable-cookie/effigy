@@ -5,7 +5,7 @@ mod result;
 
 use effigy_cli::TaskInvocation;
 
-use super::preflight::ExecutionPreflight;
+use super::planning::ExecutionPreflight;
 use crate::runner::error::RunnerError;
 use effigy_routing::select_catalog_and_task;
 

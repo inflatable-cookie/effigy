@@ -1,6 +1,6 @@
 use effigy_cli::TaskInvocation;
 
-use super::super::preflight::ExecutionPreflight;
+use super::super::planning::ExecutionPreflight;
 use super::super::selection::result;
 use super::super::selection::SelectionResolution;
 use crate::runner::builtin_ports::RunnerBuiltinPorts;

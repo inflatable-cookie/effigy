@@ -618,6 +618,7 @@ dependencies = [
  "effigy-release",
  "effigy-rhai",
  "effigy-routing",
+ "effigy-runtime",
  "effigy-scan",
  "effigy-tasks",
  "effigy-tui",
@@ -750,6 +751,7 @@ dependencies = [
  "crossterm",
  "effigy-core",
  "effigy-manifest",
+ "effigy-ui",
  "serde",
  "serde_json",
 ]
@@ -854,7 +856,6 @@ name = "effigy-manifest"
 version = "0.1.0"
 dependencies = [
  "effigy-core",
- "effigy-tasks",
  "indexmap",
  "minijinja",
  "serde",
@@ -904,8 +905,27 @@ dependencies = [
 name = "effigy-routing"
 version = "0.1.0"
 dependencies = [
+ "effigy-core",
  "effigy-manifest",
- "effigy-tasks",
+]
+
+[[package]]
+name = "effigy-runtime"
+version = "0.1.0"
+dependencies = [
+ "anstyle",
+ "effigy-catalog",
+ "effigy-containers",
+ "effigy-core",
+ "effigy-gateway",
+ "effigy-manifest",
+ "effigy-process",
+ "effigy-tui",
+ "effigy-ui",
+ "nix 0.31.2",
+ "serde_json",
+ "serde_yaml",
+ "signal-hook 0.4.4",
 ]
 
 [[package]]
@@ -925,7 +945,12 @@ dependencies = [
 name = "effigy-tasks"
 version = "0.1.0"
 dependencies = [
+ "anstyle",
  "effigy-core",
+ "effigy-manifest",
+ "effigy-routing",
+ "effigy-ui",
+ "serde",
  "serde_json",
 ]
 

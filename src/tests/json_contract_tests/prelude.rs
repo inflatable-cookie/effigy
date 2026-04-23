@@ -31,15 +31,20 @@ pub(crate) mod harness {
 
 pub(crate) mod execution {
     use super::runtime::{PathBuf, RunnerError, TaskInvocation};
+    use effigy_cli::Command;
 
     pub(crate) fn run_manifest_task_with_cwd(
         invocation: &TaskInvocation,
         root: PathBuf,
     ) -> Result<String, RunnerError> {
-        crate::runner::execute::run_manifest_task_with_cwd(invocation, root)
+        crate::runner::execute::api::run_manifest_task_with_cwd(invocation, root)
     }
 
     pub(crate) use super::run_invocation_json;
+
+    pub(crate) fn run_command(command: Command) -> Result<String, RunnerError> {
+        crate::runner::run_command(command)
+    }
 }
 
 pub(crate) mod json {

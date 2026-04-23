@@ -29,56 +29,27 @@ pub(super) fn run_system(args: SystemArgs) -> Result<String, RunnerError> {
         None,
         "system",
     )?;
-    let progress_label = system_progress_label(&args.subcommand);
-
-    let mapped = match args.subcommand {
-        SystemSubcommand::Up => ContainerSubcommand::Up {
-            name: container_name,
-            attach: false,
-            detach: true,
-        },
-        SystemSubcommand::Down => ContainerSubcommand::Down {
-            name: container_name,
-        },
-        SystemSubcommand::Status => ContainerSubcommand::Status {
-            name: container_name,
-            all: false,
-        },
-        SystemSubcommand::Logs { follow } => ContainerSubcommand::Logs {
-            name: container_name,
-            service: None,
-            follow,
-        },
-        SystemSubcommand::Repair => {
-            let policy = load_resolved_container_policy(&repo_root, container_name.as_deref())?;
-            let mut progress = SystemProgressReporter::new(args.output_json, progress_label);
-            let result = render_system_recovery(
-                recover_colima_runtime(&policy, &repo_root).map_err(Into::<RunnerError>::into),
-                args.output_json,
-            );
-            progress.finish(result.is_ok());
-            return result;
-        }
-        SystemSubcommand::ResetRuntime => {
-            let policy = load_resolved_container_policy(&repo_root, container_name.as_deref())?;
-            let mut progress = SystemProgressReporter::new(args.output_json, progress_label);
-            let result = render_system_recovery(
-                reset_colima_runtime(&policy, &repo_root).map_err(Into::<RunnerError>::into),
-                args.output_json,
-            );
-            progress.finish(result.is_ok());
-            return result;
-        }
-    };
-
-    let mut progress = SystemProgressReporter::new(args.output_json, progress_label);
-    let result = run_container(ContainerArgs {
-        subcommand: mapped,
-        repo_override: args.repo_override,
-        output_json: args.output_json,
-    });
-    progress.finish(result.is_ok());
-    result
+    match args.subcommand {
+        SystemSubcommand::Repair => run_system_recovery(
+            &repo_root,
+            container_name.as_deref(),
+            args.output_json,
+            true,
+        ),
+        SystemSubcommand::ResetRuntime => run_system_recovery(
+            &repo_root,
+            container_name.as_deref(),
+            args.output_json,
+            false,
+        ),
+        subcommand => run_system_container_subcommand(
+            &repo_root,
+            container_name,
+            args.repo_override,
+            args.output_json,
+            subcommand,
+        ),
+    }
 }
 
 pub(in crate::runner) fn run_workspace(args: WorkspaceArgs) -> Result<String, RunnerError> {
@@ -154,6 +125,81 @@ fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
         }
         ContainerExecError::Launch { .. } => false,
     }
+}
+
+fn run_system_container_subcommand(
+    repo_root: &Path,
+    container_name: Option<String>,
+    repo_override: Option<std::path::PathBuf>,
+    output_json: bool,
+    subcommand: SystemSubcommand,
+) -> Result<String, RunnerError> {
+    let progress_label = system_progress_label(&subcommand);
+    let mapped = map_system_container_subcommand(container_name, subcommand);
+    let mut progress = SystemProgressReporter::new(output_json, progress_label);
+    let result = run_container(ContainerArgs {
+        subcommand: mapped,
+        repo_override,
+        output_json,
+    });
+    progress.finish(result.is_ok());
+    result
+}
+
+fn map_system_container_subcommand(
+    container_name: Option<String>,
+    subcommand: SystemSubcommand,
+) -> ContainerSubcommand {
+    match subcommand {
+        SystemSubcommand::Up => ContainerSubcommand::Up {
+            name: container_name,
+            attach: false,
+            detach: true,
+        },
+        SystemSubcommand::Down => ContainerSubcommand::Down {
+            name: container_name,
+        },
+        SystemSubcommand::Status => ContainerSubcommand::Status {
+            name: container_name,
+            all: false,
+        },
+        SystemSubcommand::Logs { follow } => ContainerSubcommand::Logs {
+            name: container_name,
+            service: None,
+            follow,
+        },
+        SystemSubcommand::Repair | SystemSubcommand::ResetRuntime => {
+            unreachable!("recovery subcommands are handled separately")
+        }
+    }
+}
+
+fn run_system_recovery(
+    repo_root: &Path,
+    container_name: Option<&str>,
+    output_json: bool,
+    repair: bool,
+) -> Result<String, RunnerError> {
+    let policy = load_resolved_container_policy(repo_root, container_name)?;
+    let progress_label = if repair {
+        system_progress_label(&SystemSubcommand::Repair)
+    } else {
+        system_progress_label(&SystemSubcommand::ResetRuntime)
+    };
+    let mut progress = SystemProgressReporter::new(output_json, progress_label);
+    let result = if repair {
+        render_system_recovery(
+            recover_colima_runtime(&policy, repo_root).map_err(Into::<RunnerError>::into),
+            output_json,
+        )
+    } else {
+        render_system_recovery(
+            reset_colima_runtime(&policy, repo_root).map_err(Into::<RunnerError>::into),
+            output_json,
+        )
+    };
+    progress.finish(result.is_ok());
+    result
 }
 
 fn system_progress_label(subcommand: &SystemSubcommand) -> Option<&'static str> {

@@ -14,7 +14,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use effigy_tasks::{CatalogSelectionMode, TaskSelector};
+use effigy_core::task_selection::{CatalogSelectionMode, TaskSelector};
 
 use crate::task_runtime::ManifestTask;
 use crate::TaskManifest;

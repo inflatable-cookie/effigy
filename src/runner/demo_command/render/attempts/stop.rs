@@ -143,49 +143,12 @@ fn render_demo_stop_result(
         );
     };
     let record = build_demo_record(repo_root, loaded, demo_id, demo)?;
-    if output_json {
-        return encode_json(
-            &json!({
-                "schema": "effigy.demo.stop.v1",
-                "schema_version": 1,
-                "ok": true,
-                "repo_root": repo_root.display().to_string(),
-                "message": format!("demo `{demo_id}` {summary}"),
-                "demo": {
-                    "id": record.id,
-                    "title": record.title,
-                    "owner": record.owner,
-                    "entrypoint": record.entrypoint.to_json(),
-                    "defined_in": record.primary_source,
-                },
-                "active_attempt": reported_active_attempt.to_json(),
-                "active_terminal_session": record.active_terminal_session.to_json(),
-                "latest_attempt": record.latest_attempt.to_json(),
-            }),
-            true,
-        )
-        .map_err(Into::into);
-    }
-
-    let mut renderer = text_renderer();
-    renderer.section("Demo Stop")?;
-    renderer.key_values(&[
-        KeyValue::new("id", record.id.clone()),
-        KeyValue::new("title", record.title.clone()),
-        KeyValue::new("owner", record.owner.clone()),
-        KeyValue::new("state", reported_active_attempt.state_label().to_owned()),
-        KeyValue::new(
-            "stoppable",
-            if reported_active_attempt.stoppable {
-                "yes".to_owned()
-            } else {
-                "no".to_owned()
-            },
-        ),
-    ])?;
-    renderer.text("")?;
-    let message = format!("demo `{demo_id}` {summary}");
-    renderer.notice(NoticeLevel::Info, &message)?;
-    renderer.text("")?;
-    render_utf8(renderer.into_inner()).map_err(Into::into)
+    effigy_demo::render_demo_stop(
+        repo_root,
+        &record,
+        &reported_active_attempt,
+        summary,
+        output_json,
+    )
+    .map_err(Into::into)
 }

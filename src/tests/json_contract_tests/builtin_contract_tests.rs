@@ -1,4 +1,5 @@
 use crate::runner::json_contract_tests::prelude::{execution::*, harness::*, json::*, runtime::*};
+use effigy_cli::{BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand, Command};
 
 #[test]
 fn builtin_help_json_contract_has_versioned_shape() {
@@ -49,7 +50,19 @@ fn bootstrap_deps_json_contract_has_versioned_shape() {
         Some(format!("{}:{}", root.join("bin").display(), original_path)),
     )]);
 
-    let parsed = run_invocation_json(root, "bootstrap", &["deps", "sync", "ui", "--json"]);
+    let original_cwd = std::env::current_dir().expect("current dir");
+    std::env::set_current_dir(&root).expect("set cwd");
+    let parsed = parse_json(
+        &run_command(Command::Bootstrap(BootstrapArgs {
+            subcommand: BootstrapSubcommand::DepsSync {
+                mode: BootstrapDepsSyncMode::Both,
+                paths: vec!["ui".to_owned()],
+            },
+            output_json: true,
+        }))
+        .expect("run bootstrap deps"),
+    );
+    std::env::set_current_dir(original_cwd).expect("restore cwd");
     assert_schema_v1(&parsed, "effigy.bootstrap.deps.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["mode"], "both");

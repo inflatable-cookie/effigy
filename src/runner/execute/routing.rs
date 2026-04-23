@@ -4,7 +4,7 @@ use effigy_manifest::{
     ManifestTaskRunIn,
 };
 
-use super::{resolve_container_execution_binding, ContainerExecutionBinding};
+use super::api::{resolve_container_execution_binding, ContainerExecutionBinding};
 use crate::runner::error::RunnerError;
 
 #[derive(Debug)]

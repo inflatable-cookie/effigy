@@ -1,5 +1,4 @@
-use super::util::parse_task_reference_invocation;
-use crate::runner::error::RunnerError;
+use effigy_tasks::parse_task_reference_invocation;
 
 fn assert_case_table<T>(cases: impl IntoIterator<Item = T>, mut assert_case: impl FnMut(T)) {
     for case in cases {
@@ -75,11 +74,6 @@ fn parse_task_reference_invocation_table_invalid_cases() {
 
     assert_case_table(cases, |(raw, expected)| {
         let err = parse_task_reference_invocation(raw).expect_err("expected parse failure");
-        match err {
-            RunnerError::TaskInvocation(message) => {
-                assert!(message.contains(expected), "raw={raw}, message={message}");
-            }
-            other => panic!("raw={raw}, unexpected error: {other}"),
-        }
+        assert!(err.contains(expected), "raw={raw}, message={err}");
     });
 }

@@ -3,6 +3,8 @@ use effigy_containers::compose::compose_args;
 use effigy_containers::{load_workspace_ownership_targets, EffectiveContainerPolicy};
 use effigy_core::shell::shell_quote;
 use effigy_manifest::ManifestTask;
+use effigy_runtime::shell::run_container_shell_session as run_runtime_container_shell_session;
+use effigy_ui::style_text;
 use effigy_ui::theme::{is_ci_environment, Theme};
 use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 use serde::{Deserialize, Serialize};
@@ -12,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
-use crate::runner::container_command::{run_container, run_container_shell_session};
+use crate::runner::container_command::{run_container, runtime_error_from_runner};
 use crate::runner::exec_command::copy_file_into_service;
-use crate::runner::execute::{resolve_container_execution_binding, ContainerExecutionBinding};
+use crate::runner::execute::api::{resolve_container_execution_binding, ContainerExecutionBinding};
 use crate::runner::gateway_command::gateway_up_for_managed_task;
 use crate::runner::manifest::load_task_manifest;
 
@@ -149,69 +151,29 @@ fn run_workspace_container_session(
     ownership: WorkspaceSessionOwnership,
 ) -> Result<String, RunnerError> {
     let container_name = container_name.map(str::to_owned);
-    let policy = super::load_resolved_container_policy(repo_root, container_name.as_deref())?;
-    emit_workspace_info(
-        &format!(
-            "preparing workspace container `{}` for handoff",
-            policy.name
-        ),
-        false,
-    );
-    let system_was_running = super::is_primary_service_running(repo_root, &policy)?;
-
-    if !system_was_running {
-        run_container(ContainerArgs {
-            subcommand: ContainerSubcommand::Up {
-                name: container_name.clone(),
-                attach: false,
-                detach: true,
-            },
-            repo_override: repo_override.clone(),
-            output_json: false,
-        })?;
-    }
-
-    maybe_start_workspace_gateway(&policy)?;
-
-    ensure_workspace_effigy_available(
+    let policy = load_workspace_session_policy(repo_root, container_name.as_deref())?;
+    let system_was_running = ensure_workspace_container_ready(
         repo_root,
         &policy,
         container_name.as_deref(),
         repo_override.clone(),
     )?;
-    ensure_workspace_permissions_ready(
+    prepare_workspace_handoff(
         repo_root,
         &policy,
         container_name.as_deref(),
         repo_override.clone(),
+        initial_command,
     )?;
-
-    if initial_command.is_some() {
-        println!("{}", render_workspace_handoff_notice(&policy));
-    }
-    if initial_command.is_none() {
-        clear_terminal_for_workspace_handoff()?;
-    }
-
     let shell_result =
-        run_container_shell_session(repo_root, container_name.as_deref(), None, initial_command);
-
-    let cleanup_result =
-        if should_shutdown_started_system(system_was_running, ownership, shell_result.is_ok()) {
-            let mut progress = WorkspaceShutdownProgressReporter::new();
-            run_container(ContainerArgs {
-                subcommand: ContainerSubcommand::Down {
-                    name: container_name,
-                },
-                repo_override,
-                output_json: false,
-            })
-            .inspect(|_| progress.finish(true))
-            .inspect_err(|_| progress.finish(false))
-            .map(|_| ())
-        } else {
-            Ok(())
-        };
+        run_workspace_handoff_shell(repo_root, container_name.as_deref(), initial_command);
+    let cleanup_result = cleanup_workspace_session(
+        system_was_running,
+        ownership,
+        shell_result.is_ok(),
+        container_name,
+        repo_override,
+    );
 
     match (shell_result, cleanup_result) {
         (Ok(output), Ok(())) => Ok(output),
@@ -221,6 +183,141 @@ fn run_workspace_container_session(
             "{shell_error}\nworkspace cleanup also failed: {cleanup_error}"
         ))),
     }
+}
+
+fn load_workspace_session_policy(
+    repo_root: &Path,
+    container_name: Option<&str>,
+) -> Result<EffectiveContainerPolicy, RunnerError> {
+    let policy = super::load_resolved_container_policy(repo_root, container_name)?;
+    emit_workspace_info(
+        &format!(
+            "preparing workspace container `{}` for handoff",
+            policy.name
+        ),
+        false,
+    );
+    Ok(policy)
+}
+
+fn ensure_workspace_container_ready(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_name: Option<&str>,
+    repo_override: Option<PathBuf>,
+) -> Result<bool, RunnerError> {
+    let system_was_running = super::is_primary_service_running(repo_root, policy)?;
+    if system_was_running {
+        return Ok(true);
+    }
+
+    run_container(ContainerArgs {
+        subcommand: ContainerSubcommand::Up {
+            name: container_name.map(str::to_owned),
+            attach: false,
+            detach: true,
+        },
+        repo_override,
+        output_json: false,
+    })?;
+    Ok(false)
+}
+
+fn prepare_workspace_handoff(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_name: Option<&str>,
+    repo_override: Option<PathBuf>,
+    initial_command: Option<&str>,
+) -> Result<(), RunnerError> {
+    maybe_start_workspace_gateway(policy)?;
+    ensure_workspace_effigy_available(repo_root, policy, container_name, repo_override.clone())?;
+    ensure_workspace_permissions_ready(repo_root, policy, container_name, repo_override)?;
+    render_workspace_handoff_transition(policy, initial_command)
+}
+
+fn render_workspace_handoff_transition(
+    policy: &EffectiveContainerPolicy,
+    initial_command: Option<&str>,
+) -> Result<(), RunnerError> {
+    if initial_command.is_some() {
+        println!("{}", render_workspace_handoff_notice(policy));
+        return Ok(());
+    }
+
+    clear_terminal_for_workspace_handoff()
+}
+
+fn run_workspace_handoff_shell(
+    repo_root: &Path,
+    container_name: Option<&str>,
+    initial_command: Option<&str>,
+) -> Result<String, RunnerError> {
+    run_runtime_container_shell_session(
+        repo_root,
+        container_name,
+        None,
+        initial_command,
+        validate_workspace_runtime_match,
+        probe_workspace_shell_capability,
+        run_workspace_shell_exec,
+    )
+    .map_err(Into::into)
+}
+
+fn cleanup_workspace_session(
+    system_was_running: bool,
+    ownership: WorkspaceSessionOwnership,
+    session_succeeded: bool,
+    container_name: Option<String>,
+    repo_override: Option<PathBuf>,
+) -> Result<(), RunnerError> {
+    if !should_shutdown_started_system(system_was_running, ownership, session_succeeded) {
+        return Ok(());
+    }
+
+    let mut progress = WorkspaceShutdownProgressReporter::new();
+    run_container(ContainerArgs {
+        subcommand: ContainerSubcommand::Down {
+            name: container_name,
+        },
+        repo_override,
+        output_json: false,
+    })
+    .inspect(|_| progress.finish(true))
+    .inspect_err(|_| progress.finish(false))
+    .map(|_| ())
+}
+
+fn validate_workspace_runtime_match(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), effigy_runtime::EffigyRuntimeError> {
+    crate::runner::container_command::support::validate_running_container_runtime_match(
+        repo_root, policy,
+    )
+    .map_err(runtime_error_from_runner)
+}
+
+fn probe_workspace_shell_capability(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+) -> Result<String, effigy_runtime::EffigyRuntimeError> {
+    crate::runner::exec_command::probe_container_capabilities(repo_root, policy, service)
+        .map(|capabilities| capabilities.shell)
+        .map_err(runtime_error_from_runner)
+}
+
+fn run_workspace_shell_exec(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    args: &[OsString],
+    capture: bool,
+    label: &str,
+) -> Result<std::process::Output, effigy_runtime::EffigyRuntimeError> {
+    crate::runner::exec_command::run_compose_exec(repo_root, policy, args, capture, label)
+        .map_err(runtime_error_from_runner)
 }
 
 fn should_shutdown_started_system(
@@ -301,7 +398,7 @@ fn render_workspace_handoff_notice(policy: &EffectiveContainerPolicy) -> String 
     );
     format!(
         "{} switching into workspace container `{}`",
-        crate::runner::tasks_view::style_text(color_enabled, Theme::default().warning, "[next]"),
+        style_text(color_enabled, Theme::default().warning, "[next]"),
         policy.name
     )
 }
@@ -692,7 +789,7 @@ fn render_workspace_info(message: &str) -> String {
     );
     format!(
         "{} {}",
-        crate::runner::tasks_view::style_text(color_enabled, Theme::default().label, "[info]"),
+        style_text(color_enabled, Theme::default().label, "[info]"),
         message
     )
 }

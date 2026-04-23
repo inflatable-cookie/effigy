@@ -1,29 +1,27 @@
 //! CLI command handler for `effigy container` subcommands.
 
 use effigy_containers::ContainerCommandReport;
+use effigy_runtime::data::{
+    run_container_data_export, run_container_data_import, run_container_data_list,
+};
+use effigy_runtime::read::{
+    run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
+};
+use effigy_runtime::write::{run_container_down, run_container_reset};
+use effigy_runtime::EffigyRuntimeError;
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use effigy_cli::{ContainerArgs, ContainerDataSubcommand, ContainerSubcommand};
 
 use super::error::RunnerError;
-use data::{
-    run_container_data_export, run_container_data_import, run_container_data_list,
-    run_container_data_pull_production,
-};
-use discovery::{run_container_stats_all, run_container_status_all};
-use lifecycle::{
-    run_container_down, run_container_eject, run_container_logs, run_container_reset,
-    run_container_shell, run_container_status, run_container_up,
-};
+use data::run_container_data_pull_production;
+use lifecycle::{run_container_eject, run_container_shell, run_container_up};
 
 pub(in crate::runner) use lifecycle::{run_container_exec_capture, run_container_shell_session};
 
 mod data;
-mod discovery;
 mod gateway_registration;
 mod lifecycle;
-mod session;
-mod signals;
 pub(in crate::runner) mod support;
 
 pub(super) fn render_container_report(report: ContainerCommandReport, output_json: bool) -> String {
@@ -41,7 +39,7 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
                 "`effigy container status --all` does not accept `--repo`; it discovers running environments across repos",
             ));
         }
-        return run_container_status_all(args.output_json);
+        return run_container_status_all(args.output_json).map_err(Into::into);
     }
     if let ContainerSubcommand::Stats { all: true } = &args.subcommand {
         if args.repo_override.is_some() {
@@ -49,7 +47,7 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
                 "`effigy container stats --all` does not accept `--repo`; it discovers running environments across repos",
             ));
         }
-        return run_container_stats_all(args.output_json);
+        return run_container_stats_all(args.output_json).map_err(Into::into);
     }
 
     let cwd = current_working_dir()?;
@@ -69,10 +67,10 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             args.output_json,
         ),
         ContainerSubcommand::Down { name } => {
-            run_container_down(&repo_root, name.as_deref(), args.output_json)
+            run_container_down_adapter(&repo_root, name.as_deref(), args.output_json)
         }
         ContainerSubcommand::Status { name, all: false } => {
-            run_container_status(&repo_root, name.as_deref(), args.output_json)
+            run_container_status(&repo_root, name.as_deref(), args.output_json).map_err(Into::into)
         }
         ContainerSubcommand::Status { all: true, .. } => unreachable!("handled above"),
         ContainerSubcommand::Stats { all: false } => unreachable!("parser rejects this shape"),
@@ -87,7 +85,8 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             service.as_deref(),
             follow,
             args.output_json,
-        ),
+        )
+        .map_err(Into::into),
         ContainerSubcommand::Shell {
             name,
             service,
@@ -100,16 +99,16 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             args.output_json,
         ),
         ContainerSubcommand::Reset { name, keep_data } => {
-            run_container_reset(&repo_root, name.as_deref(), keep_data, args.output_json)
+            run_container_reset_adapter(&repo_root, name.as_deref(), keep_data, args.output_json)
         }
         ContainerSubcommand::Data {
             name,
             subcommand: ContainerDataSubcommand::List,
-        } => run_container_data_list(&repo_root, name.as_deref(), args.output_json),
+        } => run_container_data_list_adapter(&repo_root, name.as_deref(), args.output_json),
         ContainerSubcommand::Data {
             name,
             subcommand: ContainerDataSubcommand::Export { volume, path },
-        } => run_container_data_export(
+        } => run_container_data_export_adapter(
             &repo_root,
             name.as_deref(),
             &volume,
@@ -119,7 +118,7 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         ContainerSubcommand::Data {
             name,
             subcommand: ContainerDataSubcommand::Import { volume, path },
-        } => run_container_data_import(
+        } => run_container_data_import_adapter(
             &repo_root,
             name.as_deref(),
             &volume,
@@ -142,6 +141,105 @@ fn resolve_archive_path(cwd: &std::path::Path, path: &std::path::Path) -> std::p
     } else {
         cwd.join(path)
     }
+}
+
+fn run_container_down_adapter(
+    repo_root: &std::path::Path,
+    name: Option<&str>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    run_container_down(
+        repo_root,
+        name,
+        output_json,
+        deregister_runtime_gateway_routes,
+    )
+    .map_err(Into::into)
+}
+
+fn run_container_reset_adapter(
+    repo_root: &std::path::Path,
+    name: Option<&str>,
+    keep_data: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    run_container_reset(
+        repo_root,
+        name,
+        keep_data,
+        output_json,
+        deregister_runtime_gateway_routes,
+        |repo_root, policy, classification| {
+            support::remove_reset_volumes(repo_root, policy, classification)
+                .map_err(runtime_error_from_runner)
+        },
+    )
+    .map_err(Into::into)
+}
+
+fn run_container_data_list_adapter(
+    repo_root: &std::path::Path,
+    name: Option<&str>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    run_container_data_list(repo_root, name, output_json, runtime_volume_capture)
+        .map_err(Into::into)
+}
+
+fn run_container_data_export_adapter(
+    repo_root: &std::path::Path,
+    name: Option<&str>,
+    volume_name: &str,
+    archive_path: &std::path::Path,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    run_container_data_export(
+        repo_root,
+        name,
+        volume_name,
+        archive_path,
+        output_json,
+        runtime_volume_capture,
+    )
+    .map_err(Into::into)
+}
+
+fn run_container_data_import_adapter(
+    repo_root: &std::path::Path,
+    name: Option<&str>,
+    volume_name: &str,
+    archive_path: &std::path::Path,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    run_container_data_import(
+        repo_root,
+        name,
+        volume_name,
+        archive_path,
+        output_json,
+        runtime_volume_capture,
+    )
+    .map_err(Into::into)
+}
+
+fn deregister_runtime_gateway_routes(
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) -> Result<Vec<String>, effigy_runtime::EffigyRuntimeError> {
+    gateway_registration::deregister_gateway_routes_for_container(policy)
+        .map_err(runtime_error_from_runner)
+}
+
+fn runtime_volume_capture(
+    repo_root: &std::path::Path,
+    profile: &str,
+    command: &effigy_catalog::volumes::DockerCommand,
+) -> Result<std::process::Output, effigy_runtime::EffigyRuntimeError> {
+    support::run_runtime_volume_capture(repo_root, profile, command)
+        .map_err(runtime_error_from_runner)
+}
+
+pub(in crate::runner) fn runtime_error_from_runner(error: RunnerError) -> EffigyRuntimeError {
+    EffigyRuntimeError::task_invocation(error.to_string())
 }
 
 #[cfg(test)]

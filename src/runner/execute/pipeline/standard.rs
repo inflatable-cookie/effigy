@@ -6,14 +6,14 @@ use super::super::super::exec_command::{
     run_routed_task_container_exec, run_routed_task_container_exec_with_policy,
 };
 use super::super::super::locking::io::acquire_scopes;
+use super::super::api::{resolve_container_execution_binding, ContainerExecutionBinding};
 use super::super::context::ExecutionTaskContext;
-use super::super::preflight::ExecutionPreflight;
+use super::super::planning::ExecutionPreflight;
 use super::super::routing::{route_standard_task_execution, routed_container_target};
-use super::super::{resolve_container_execution_binding, ContainerExecutionBinding};
-use super::{
-    super::cache_hit, super::json_payload, super::process_run, super::sequence_run, command,
-};
+use super::{super::process_run, command};
 use crate::runner::error::RunnerError;
+use crate::runner::execute::nested;
+use crate::runner::execute::render;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
 use effigy_containers::compose::compose_args;
 use effigy_containers::exec::{colima_is_running, ensure_colima_running, run_docker_capture};
@@ -59,7 +59,7 @@ pub(in crate::runner) fn run_standard_task(
         context.command(),
     )?;
     if cache_check.enabled && cache_check.hit {
-        return cache_hit::render_cache_hit_output(
+        return render::render_cache_hit_output(
             preflight.output_json,
             preflight.runtime_args_raw.verbose_root,
             &context,
@@ -95,7 +95,7 @@ pub(in crate::runner) fn run_standard_task(
         );
     }
 
-    if let Some(output) = sequence_run::maybe_run_in_process_sequence(
+    if let Some(output) = nested::maybe_run_in_process_sequence(
         preflight,
         selection,
         &context,
@@ -137,7 +137,7 @@ pub(in crate::runner) fn run_standard_task(
             )?;
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let rendered = json_payload::render_task_command_json(
+            let rendered = render::render_task_command_json(
                 &preflight.selector.task_name,
                 &preflight.selector,
                 context.repo_for_task(),
@@ -222,7 +222,7 @@ fn run_inline_workspace_standard_task(
         let output = output?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let rendered = json_payload::render_task_command_json(
+        let rendered = render::render_task_command_json(
             &preflight.selector.task_name,
             &preflight.selector,
             context.repo_for_task(),

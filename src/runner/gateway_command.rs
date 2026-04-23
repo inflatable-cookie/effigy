@@ -6,6 +6,7 @@ use effigy_cli::{GatewayArgs, GatewaySubcommand, InternalGatewayArgs};
 use effigy_gateway::routes::RouteTable;
 use effigy_gateway::server::{self, GatewayConfig, GatewayStatus};
 use effigy_gateway::tls::TlsConfig;
+use effigy_ui::style_text;
 use effigy_ui::theme::is_ci_environment;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
@@ -264,7 +265,7 @@ fn emit_gateway_startup_notice() {
     }
     eprintln!(
         "{} {}",
-        crate::runner::tasks_view::style_text(
+        style_text(
             resolve_color_enabled(OutputMode::from_env(), std::io::stderr().is_terminal()),
             Theme::default().warning,
             "[gateway]"

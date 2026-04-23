@@ -1,4 +1,4 @@
-use super::super::execute::run_manifest_task_with_cwd;
+use super::super::execute::api::run_manifest_task_with_cwd;
 use crate::contract_test_support::{temp_workspace, write_manifest, EnvGuard};
 use crate::runner::error::RunnerError;
 use effigy_cli::TaskInvocation;

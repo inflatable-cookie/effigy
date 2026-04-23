@@ -1,5 +1,5 @@
 use super::super::error::RunnerError;
-use super::super::execute::run_manifest_task_with_cwd;
+use super::super::execute::api::run_manifest_task_with_cwd;
 use super::super::tasks_command::run_tasks;
 use effigy_cli::{TaskInvocation, TasksArgs};
 use std::fs;

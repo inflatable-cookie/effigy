@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use effigy_cli::TaskInvocation;
 
 use super::pipeline::run_execution_pipeline;
-use super::preflight::build_execution_preflight;
+use super::planning::build_execution_preflight;
 use crate::runner::command_context::current_working_dir;
 use crate::runner::error::RunnerError;
 
