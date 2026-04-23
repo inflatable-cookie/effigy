@@ -593,10 +593,8 @@ extensions = [
 
 [containers.__CONTAINER_NAME__.services.web]
 catalog = "nginx"
+variant = "decodelabs"
 document_root = "."
-rewrite_all_to = "/vendor/genesis.php"
-asset_fallback = "/vendor/genesis.php"
-error_page_404 = "/vendor/genesis.php"
 
 [containers.__CONTAINER_NAME__.services.db]
 catalog = "mariadb"
@@ -1063,11 +1061,9 @@ extensions = [
 
 [containers.{{ inputs.container_name }}.services.web]
 catalog = "nginx"
+variant = "decodelabs"
 document_root = "."
 service = "{{ inputs.workspace_service_name }}"
-rewrite_all_to = "/vendor/genesis.php"
-asset_fallback = "/vendor/genesis.php"
-error_page_404 = "/vendor/genesis.php"
 
 [containers.{{ inputs.container_name }}.services.db]
 catalog = "mariadb"

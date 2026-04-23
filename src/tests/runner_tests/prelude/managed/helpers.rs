@@ -14,7 +14,11 @@ use super::cases::{
     ManagedProfileNotFoundCase, ManagedStreamBuiltinTestCase, ManagedUnlockInvocationErrorCase,
     ManagedUnlockSuccessCase,
 };
-use super::fixtures::{install_fake_container_runtime, write_managed_stream_builtin_test_manifest};
+use super::fixtures::{
+    install_fake_container_runtime, write_managed_stream_builtin_test_manifest,
+    write_managed_stream_builtin_test_profile_manifest,
+};
+use crate::contract_test_support::ExecutableOverrideGuard;
 
 fn task_args(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| (*arg).to_owned()).collect()
@@ -105,6 +109,16 @@ pub(in crate::runner::tests) fn assert_live_dev_lock_conflict(
 
 fn workspace_root(workspace: &str) -> PathBuf {
     super::super::harness::temp_workspace(workspace)
+}
+
+fn compiled_effigy_binary() -> PathBuf {
+    let current_exe = std::env::current_exe().expect("current exe");
+    current_exe
+        .parent()
+        .and_then(|dir| dir.parent())
+        .map(|dir| dir.join("effigy"))
+        .filter(|path| path.is_file())
+        .expect("compiled effigy binary")
 }
 
 fn for_each_workspace_case<T>(
@@ -300,6 +314,8 @@ pub(in crate::runner::tests) fn assert_managed_stream_builtin_test_case_table(
         |root, case| {
             let marker = root.join("builtin-test-called.log");
             write_managed_stream_builtin_test_manifest(&root, case.suite, case.task_ref, &marker);
+            let _exec =
+                ExecutableOverrideGuard::set(compiled_effigy_binary().display().to_string());
 
             let out = run_dev(&root, &["default"])
                 .expect("run managed stream with builtin profile entry");
@@ -307,4 +323,20 @@ pub(in crate::runner::tests) fn assert_managed_stream_builtin_test_case_table(
             assert_path_exists(&marker, "built-in test task ref marker");
         },
     );
+}
+
+pub(in crate::runner::tests) fn assert_managed_stream_builtin_test_profile_entry(
+    workspace: &str,
+    suite: &str,
+    task_ref: &str,
+) {
+    let root = workspace_root(workspace);
+    let marker = root.join("builtin-test-called.log");
+    write_managed_stream_builtin_test_profile_manifest(&root, suite, task_ref, &marker);
+    let _runtime = install_fake_container_runtime(&root);
+    let _exec = ExecutableOverrideGuard::set(compiled_effigy_binary().display().to_string());
+
+    let out = run_dev(&root, &["default"]).expect("run managed stream profile entry");
+    assert_output_contains_all(&out, &["Managed Task Runtime", "root: ok"]);
+    assert_path_exists(&marker, "built-in test task ref marker");
 }

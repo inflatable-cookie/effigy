@@ -16,7 +16,7 @@ use effigy_tasks::TaskSelector;
 
 use crate::runner::deferral;
 use crate::runner::error::RunnerError;
-use crate::runner::execute;
+use crate::runner::execute::api;
 
 #[derive(Debug, Default)]
 pub(in crate::runner) struct RunnerDoctorPorts;
@@ -33,7 +33,7 @@ impl DoctorRuntimePorts for RunnerDoctorPorts {
         invocation: &TaskInvocation,
         cwd: PathBuf,
     ) -> Result<String, DoctorError> {
-        execute::run_manifest_task_with_cwd(invocation, cwd).map_err(runner_to_doctor)
+        api::run_manifest_task_with_cwd(invocation, cwd).map_err(runner_to_doctor)
     }
 
     fn select_deferral(

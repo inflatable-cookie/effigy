@@ -3,18 +3,116 @@ use std::path::Path;
 
 use effigy_containers::{
     exec::{
-        capture_running_container_stats_for_profile, list_running_compose_containers,
-        RunningComposeContainer,
+        capture_compose_ps, capture_running_container_stats_for_profile, colima_is_running,
+        colima_profile_warnings, list_running_compose_containers, RunningComposeContainer,
     },
-    load_all_container_policies, stats_all_report, status_all_report, AllocatedPortsSummary,
+    health::probe_health_status,
+    load_all_container_policies, load_container_policy, logs_report, status_report,
+    validate_container_policy,
+};
+use effigy_containers::{
+    stats_all_report, status_all_report, AllocatedPortsSummary, ContainerCommandReport,
     ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
     EffectiveContainerPolicy,
 };
 use effigy_gateway::ports::PortRegistry;
 
-use super::{render_container_report, RunnerError};
+use crate::signals::{run_docker_capture, spawn_docker_inherit};
+use crate::EffigyRuntimeError;
 
-pub(super) fn run_container_status_all(output_json: bool) -> Result<String, RunnerError> {
+pub fn run_container_status(
+    repo_root: &Path,
+    name: Option<&str>,
+    output_json: bool,
+) -> Result<String, EffigyRuntimeError> {
+    let policy = load_container_policy(repo_root, name)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let colima_running = colima_is_running(&policy, repo_root)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let compose_ps = if colima_running {
+        Some(capture_compose_ps(
+            repo_root,
+            &policy,
+            &effigy_containers::compose::compose_args(&policy, ["ps"]),
+            "docker compose ps",
+        )?)
+    } else {
+        None
+    };
+    let health = if colima_running {
+        probe_health_status(policy.health_check.as_deref())
+    } else {
+        None
+    };
+    let mut report = status_report(&policy, colima_running, health, compose_ps.as_deref());
+    annotate_warning_lines(&mut report, &colima_profile_warnings(&policy, repo_root));
+    Ok(render_container_report(report, output_json))
+}
+
+pub fn run_container_logs(
+    repo_root: &Path,
+    name: Option<&str>,
+    service: Option<&str>,
+    follow: bool,
+    output_json: bool,
+) -> Result<String, EffigyRuntimeError> {
+    if follow && output_json {
+        return Err(EffigyRuntimeError::task_invocation(
+            "`effigy container logs --follow` does not support `--json`",
+        ));
+    }
+
+    let policy = load_container_policy(repo_root, name)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    if !colima_is_running(&policy, repo_root)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?
+    {
+        return Err(EffigyRuntimeError::task_invocation(format!(
+            "Colima profile `{}` is not running for container `{}`",
+            policy.profile, policy.name
+        )));
+    }
+    let service = service.unwrap_or(policy.primary_service.as_str());
+
+    if follow {
+        let mut child = spawn_docker_inherit(
+            repo_root,
+            &policy,
+            &effigy_containers::compose::compose_args(&policy, ["logs", "--follow", service]),
+            "docker compose logs --follow",
+        )?;
+        let status = child
+            .wait()
+            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+        if !status.success() {
+            return Err(EffigyRuntimeError::task_invocation(format!(
+                "docker compose logs --follow exited with status {status}"
+            )));
+        }
+        return Ok(format!(
+            "[ok] finished following logs for `{}` service `{service}`",
+            policy.name
+        ));
+    }
+
+    let output = run_docker_capture(
+        repo_root,
+        &policy,
+        &effigy_containers::compose::compose_args(&policy, ["logs", "--tail", "100", service]),
+        "docker compose logs",
+    )?;
+    let rendered = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok(render_container_report(
+        logs_report(&policy, service, &rendered),
+        output_json,
+    ))
+}
+
+pub fn run_container_status_all(output_json: bool) -> Result<String, EffigyRuntimeError> {
     let registry = load_port_registry();
     let environments = discover_running_environments()?
         .into_iter()
@@ -64,7 +162,7 @@ pub(super) fn run_container_status_all(output_json: bool) -> Result<String, Runn
     ))
 }
 
-pub(super) fn run_container_stats_all(output_json: bool) -> Result<String, RunnerError> {
+pub fn run_container_stats_all(output_json: bool) -> Result<String, EffigyRuntimeError> {
     let environments = discover_running_environments()?;
     let mut stats_warning_lines = Vec::new();
     let mut stats_by_container = BTreeMap::new();
@@ -136,6 +234,27 @@ pub(super) fn run_container_stats_all(output_json: bool) -> Result<String, Runne
     ))
 }
 
+fn render_container_report(report: ContainerCommandReport, output_json: bool) -> String {
+    if output_json {
+        report.json.to_string()
+    } else {
+        report.success_text
+    }
+}
+
+fn annotate_warning_lines(report: &mut ContainerCommandReport, warnings: &[String]) {
+    if warnings.is_empty() {
+        return;
+    }
+    if let Some(json_object) = report.json.as_object_mut() {
+        json_object.insert("warnings".to_owned(), serde_json::json!(warnings));
+    }
+    for warning in warnings {
+        report.success_text.push('\n');
+        report.success_text.push_str(&format!("[warn] {warning}"));
+    }
+}
+
 #[derive(Debug)]
 struct DiscoveredRunningEnvironment {
     repo_root: String,
@@ -143,9 +262,10 @@ struct DiscoveredRunningEnvironment {
     services: Vec<RunningComposeContainer>,
 }
 
-fn discover_running_environments() -> Result<Vec<DiscoveredRunningEnvironment>, RunnerError> {
+fn discover_running_environments() -> Result<Vec<DiscoveredRunningEnvironment>, EffigyRuntimeError>
+{
     let rows = list_running_compose_containers()
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let mut grouped: BTreeMap<(String, String), Vec<_>> = BTreeMap::new();
     for row in rows {
         let Some(project_name) = row.project_name.clone() else {

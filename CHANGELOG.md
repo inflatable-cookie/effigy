@@ -27,6 +27,14 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Changed
+- Add a `decodelabs` nginx config variant and point the `decodelabs` bundle at
+  it. The rendered config now only rewrites every request to
+  `/vendor/genesis.php` and hands off to php-fpm — no try_files, asset
+  caching, or security locations, since DecodeLabs apps handle routing,
+  static assets, and error pages in PHP. The `rewrite_all_to`,
+  `asset_fallback`, and `error_page_404` nginx params are no longer set by
+  the `decodelabs` bundle (consumers of the default config can still set
+  them).
 - Add manifest-scoped `[task_defaults].run_in` so one imported/catalog
   `effigy.toml` can set the default execution context for its own tasks
   without repeating `run_in` per task. Task-level `run_in` still overrides

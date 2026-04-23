@@ -61,13 +61,8 @@ run = [{ rhai = "infra/dev/seed-latest-db-dump.rhai" }]
     );
 
     let web_service = web.services.get("web").expect("web service");
-    assert_eq!(
-        web_service
-            .params
-            .get("asset_fallback")
-            .and_then(|value| value.as_str()),
-        Some("/vendor/genesis.php")
-    );
+    assert_eq!(web_service.catalog, "nginx");
+    assert_eq!(web_service.variant.as_deref(), Some("decodelabs"));
 
     let dns = web.dns.as_ref().expect("dns");
     let domains = dns

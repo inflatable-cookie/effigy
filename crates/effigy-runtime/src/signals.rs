@@ -9,41 +9,40 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use effigy_containers::{
+    compose::compose_invocation, exec::run_docker_capture as run_docker_capture_via_exec,
+    EffectiveContainerPolicy,
+};
 #[cfg(unix)]
 use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
 use nix::unistd::{setpgid, Pid};
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 
-use effigy_containers::{
-    compose::compose_invocation, exec::run_docker_capture as run_docker_capture_via_exec,
-    EffectiveContainerPolicy,
-};
+use crate::EffigyRuntimeError;
 
-use super::RunnerError;
-
-/// Outcome of running a compose command while watching a stop flag.
-pub(super) enum ComposeRunOutcome {
+pub enum ComposeRunOutcome {
     Succeeded,
     Failed(ExitStatus),
     Interrupted,
 }
 
-pub(super) fn run_docker_capture(
+pub fn run_docker_capture(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
     label: &str,
-) -> Result<Output, RunnerError> {
-    run_docker_capture_via_exec(repo_root, policy, args, label).map_err(Into::into)
+) -> Result<Output, EffigyRuntimeError> {
+    run_docker_capture_via_exec(repo_root, policy, args, label)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))
 }
 
-pub(super) fn spawn_docker_inherit(
+pub fn spawn_docker_inherit(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
     label: &str,
-) -> Result<std::process::Child, RunnerError> {
+) -> Result<std::process::Child, EffigyRuntimeError> {
     let (program, args) = compose_invocation(policy, args);
     spawn_command_inherit_os(repo_root, program, &args, label)
 }
@@ -53,7 +52,7 @@ fn spawn_command_inherit_os(
     program: &str,
     args: &[OsString],
     label: &str,
-) -> Result<std::process::Child, RunnerError> {
+) -> Result<std::process::Child, EffigyRuntimeError> {
     let mut command = Command::new(program);
     command
         .current_dir(repo_root)
@@ -70,13 +69,13 @@ fn spawn_command_inherit_os(
     }
     command
         .spawn()
-        .map_err(|error| RunnerError::TaskCommandLaunch {
+        .map_err(|error| EffigyRuntimeError::TaskCommandLaunch {
             command: format!("{label} ({program} {})", format_args(args)),
             error,
         })
 }
 
-pub(super) fn terminate_inherited_child_graceful(child: &mut std::process::Child) {
+pub fn terminate_inherited_child_graceful(child: &mut std::process::Child) {
     #[cfg(unix)]
     {
         let _ = signal_child_process_group(child, Signal::SIGTERM);
@@ -110,22 +109,19 @@ fn signal_child_process_group(
     }
 }
 
-pub(super) fn install_stop_requested_flag() -> Result<Arc<AtomicBool>, RunnerError> {
+pub fn install_stop_requested_flag() -> Result<Arc<AtomicBool>, EffigyRuntimeError> {
     let flag = Arc::new(AtomicBool::new(false));
     #[cfg(unix)]
     {
         signal_hook::flag::register(SIGTERM, Arc::clone(&flag))
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
         signal_hook::flag::register(SIGINT, Arc::clone(&flag))
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     }
     spawn_shutdown_ack_watcher(Arc::clone(&flag));
     Ok(flag)
 }
 
-/// Process-wide latch ensuring we only print the shutdown acknowledgement
-/// once per run, even when multiple stop-flag watchers race to observe the
-/// signal.
 static SHUTDOWN_ACK_PRINTED: AtomicBool = AtomicBool::new(false);
 
 fn spawn_shutdown_ack_watcher(flag: Arc<AtomicBool>) {
@@ -145,17 +141,13 @@ fn spawn_shutdown_ack_watcher(flag: Arc<AtomicBool>) {
     });
 }
 
-/// Spawn a compose command with inherited stdio and watch for either the
-/// stop flag to flip or the child to exit. When the flag fires we route
-/// through `terminate_inherited_child_graceful` so compose gets a chance
-/// to tear down the stack before we fall back to SIGKILL.
-pub(super) fn run_compose_inherit_with_stop_flag(
+pub fn run_compose_inherit_with_stop_flag(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
     label: &str,
     stop_flag: &AtomicBool,
-) -> Result<ComposeRunOutcome, RunnerError> {
+) -> Result<ComposeRunOutcome, EffigyRuntimeError> {
     let mut child = spawn_docker_inherit(repo_root, policy, args, label)?;
     loop {
         if stop_flag.load(Ordering::Relaxed) {
@@ -171,7 +163,7 @@ pub(super) fn run_compose_inherit_with_stop_flag(
             }
             Ok(None) => thread::sleep(Duration::from_millis(120)),
             Err(error) => {
-                return Err(RunnerError::task_invocation(format!(
+                return Err(EffigyRuntimeError::task_invocation(format!(
                     "failed to monitor `{label}`: {error}"
                 )));
             }

@@ -7,7 +7,7 @@ pub(super) mod standard;
 
 use effigy_cli::TaskInvocation;
 
-use super::preflight::ExecutionPreflight;
+use super::planning::ExecutionPreflight;
 use super::selection::{resolve_task_selection, SelectionResolution};
 use crate::runner::error::RunnerError;
 

@@ -9,6 +9,7 @@ use effigy_managed::ManagedError;
 use effigy_manifest::ManifestError;
 use effigy_process::ProcessManagerError;
 use effigy_routing::RoutingError;
+use effigy_runtime::EffigyRuntimeError;
 use effigy_scan::ScanError;
 use effigy_tasks::TaskError;
 
@@ -226,6 +227,19 @@ impl From<ProcessManagerError> for RunnerError {
 impl From<EnvSchemaError> for RunnerError {
     fn from(value: EnvSchemaError) -> Self {
         Self::EnvSchema(value)
+    }
+}
+
+impl From<EffigyRuntimeError> for RunnerError {
+    fn from(value: EffigyRuntimeError) -> Self {
+        match value {
+            EffigyRuntimeError::Cwd(error) => Self::Cwd(error),
+            EffigyRuntimeError::Ui(message) => Self::Ui(message),
+            EffigyRuntimeError::TaskInvocation(message) => Self::TaskInvocation(message),
+            EffigyRuntimeError::TaskCommandLaunch { command, error } => {
+                Self::TaskCommandLaunch { command, error }
+            }
+        }
     }
 }
 

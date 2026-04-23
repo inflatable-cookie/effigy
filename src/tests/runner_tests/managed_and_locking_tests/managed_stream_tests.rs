@@ -2,9 +2,10 @@ use crate::contract_test_support::{wait_for_path_exists, ExecutableOverrideGuard
 use crate::runner::tests::prelude::{
     assert_managed_non_zero_exit_case_table, assert_managed_output_case_table,
     assert_managed_profile_not_found_case_table, assert_managed_stream_builtin_test_case_table,
-    lock_test, managed_stream_env, write_managed_stream_profile_manifest, write_root_manifest,
-    EnvGuard, ManagedInvocation, ManagedNonZeroExitCase, ManagedOutputCase,
-    ManagedProfileNotFoundCase, ManagedStreamBuiltinTestCase, Path,
+    assert_managed_stream_builtin_test_profile_entry, lock_test, managed_stream_env,
+    write_managed_stream_profile_manifest, write_root_manifest, EnvGuard, ManagedInvocation,
+    ManagedNonZeroExitCase, ManagedOutputCase, ManagedProfileNotFoundCase,
+    ManagedStreamBuiltinTestCase, Path,
 };
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -578,14 +579,14 @@ fn run_manifest_task_managed_stream_profile_entry_supports_builtin_test() {
             suite: "vitest",
             task_ref: "test vitest",
         },
-        ManagedStreamBuiltinTestCase {
-            workspace: "managed-stream-builtin-test-profile-entry",
-            suite: "unit",
-            task_ref: "test",
-        },
     ];
 
     assert_managed_stream_builtin_test_case_table(&cases);
+    assert_managed_stream_builtin_test_profile_entry(
+        "managed-stream-builtin-test-profile-entry",
+        "unit",
+        "test",
+    );
 }
 
 #[test]

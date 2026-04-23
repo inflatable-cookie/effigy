@@ -78,34 +78,15 @@ pub(in crate::runner::demo_command) fn render_demo_input(
     };
 
     append_demo_terminal_input(repo_root, input_path, &forwarded_text)?;
-
-    if output_json {
-        return encode_json(
-            &json!({
-                "schema": "effigy.demo.input.v1",
-                "schema_version": 1,
-                "ok": true,
-                "demo_id": demo_id,
-                "input": {
-                    "text": text,
-                    "append_newline": append_newline,
-                    "forwarded_bytes": forwarded_text.len(),
-                },
-                "active_terminal_session": record.active_terminal_session.to_json(),
-            }),
-            true,
-        )
-        .map_err(Into::into);
-    }
-
-    let mut renderer = text_renderer();
-    renderer.section("Demo Terminal Input")?;
-    renderer.key_values(&[
-        KeyValue::new("demo", demo_id.to_owned()),
-        KeyValue::new("append-newline", if append_newline { "yes" } else { "no" }),
-        KeyValue::new("forwarded-bytes", forwarded_text.len().to_string()),
-    ])?;
-    render_utf8(renderer.into_inner()).map_err(Into::into)
+    effigy_demo::render_demo_input_result(
+        demo_id,
+        text,
+        append_newline,
+        forwarded_text.len(),
+        &record.active_terminal_session,
+        output_json,
+    )
+    .map_err(Into::into)
 }
 
 pub(in crate::runner::demo_command) fn render_demo_resize(
@@ -172,31 +153,12 @@ pub(in crate::runner::demo_command) fn render_demo_resize(
 
     update_active_terminal_resize(repo_root, demo_id, cols, rows, resize_path)?;
     let refreshed = build_demo_record(repo_root, loaded, demo_id, demo)?;
-
-    if output_json {
-        return encode_json(
-            &json!({
-                "schema": "effigy.demo.resize.v1",
-                "schema_version": 1,
-                "ok": true,
-                "demo_id": demo_id,
-                "terminal_size": {
-                    "cols": cols,
-                    "rows": rows,
-                },
-                "active_terminal_session": refreshed.active_terminal_session.to_json(),
-            }),
-            true,
-        )
-        .map_err(Into::into);
-    }
-
-    let mut renderer = text_renderer();
-    renderer.section("Demo Terminal Resize")?;
-    renderer.key_values(&[
-        KeyValue::new("demo", demo_id.to_owned()),
-        KeyValue::new("cols", cols.to_string()),
-        KeyValue::new("rows", rows.to_string()),
-    ])?;
-    render_utf8(renderer.into_inner()).map_err(Into::into)
+    effigy_demo::render_demo_resize_result(
+        demo_id,
+        cols,
+        rows,
+        &refreshed.active_terminal_session,
+        output_json,
+    )
+    .map_err(Into::into)
 }

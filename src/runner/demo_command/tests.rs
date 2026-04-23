@@ -1,6 +1,6 @@
 use super::{
     append_demo_terminal_input, append_demo_terminal_resize, browser_terminal_size_override,
-    load_active_attempt, render_demo_execute_text, terminated_demo_attempt, wrap_pty_shell_command,
+    load_active_attempt, terminated_demo_attempt, wrap_pty_shell_command,
     write_active_attempt_record, DemoActiveAttempt, DemoEntrypoint, DemoLogPaths, DemoRecord,
     DemoRuntimeBackend, PersistedDemoActiveAttempt, PersistedDemoActivePhase,
     DEMO_BROWSER_TERMINAL_COLS_ENV, DEMO_BROWSER_TERMINAL_ROWS_ENV,
@@ -9,7 +9,7 @@ use crate::runner::manifest::{ManifestDemoMode, ManifestManagedRun};
 use effigy_demo::read_recent_output_lines;
 use effigy_demo::runtime::{DemoActiveTerminalSession, DemoTerminalTransport};
 use effigy_demo::PersistedDemoTerminalTransport;
-use effigy_demo::{DemoAttemptHistory, DemoLatestAttempt};
+use effigy_demo::{render_demo_execute, DemoAttemptHistory, DemoInvocationKind, DemoLatestAttempt};
 use effigy_manifest::ManifestDemoStatus;
 use std::{
     fs,
@@ -275,8 +275,14 @@ fn render_demo_execute_treats_terminated_attempt_as_non_error_text_result() {
         DemoLogPaths::none(),
     );
 
-    let rendered =
-        render_demo_execute_text(&record, &attempt, "Demo Run").expect("render terminated");
+    let rendered = render_demo_execute(
+        std::path::Path::new("."),
+        &record,
+        &attempt,
+        DemoInvocationKind::Run,
+        false,
+    )
+    .expect("render terminated");
 
     assert!(rendered.contains("outcome: terminated"));
     assert!(!rendered.contains("[error] Task failed"));

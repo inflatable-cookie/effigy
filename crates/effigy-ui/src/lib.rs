@@ -19,3 +19,10 @@ pub use output::{
 pub use plain_renderer::PlainRenderer;
 pub use renderer::{Renderer, SpinnerHandle, UiError, UiResult};
 pub use theme::OutputMode;
+
+pub fn style_text(enabled: bool, style: anstyle::Style, text: &str) -> String {
+    if !enabled {
+        return text.to_owned();
+    }
+    format!("{}{}{}", style.render(), text, style.render_reset())
+}

@@ -10,14 +10,12 @@ use effigy_bootstrap::{
     BootstrapResolution,
 };
 use effigy_cli::{BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand, TaskInvocation};
-use effigy_manifest::{
-    ManifestJsPackageManager, ManifestManagedRun, TASK_MANIFEST_FILE,
-};
+use effigy_manifest::{ManifestJsPackageManager, ManifestManagedRun, TASK_MANIFEST_FILE};
 use serde::Serialize;
 use serde_json::json;
 
 use crate::runner::command_context::current_working_dir;
-use crate::runner::execute::{run_managed_run_with_cwd, run_manifest_task_with_cwd};
+use crate::runner::execute::api::{run_managed_run_with_cwd, run_manifest_task_with_cwd};
 use crate::runner::manifest::{load_task_manifest, load_task_manifest_with_inspection};
 
 use super::error::RunnerError;
@@ -224,6 +222,12 @@ fn resolve_bootstrap_sync_path(
     root_parent: &Path,
     path_raw: &str,
 ) -> Result<PathBuf, RunnerError> {
+    let canonical_repo_root = repo_root
+        .canonicalize()
+        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?;
+    let canonical_root_parent = root_parent
+        .canonicalize()
+        .map_err(|error| RunnerError::task_invocation_failed_read(root_parent, error))?;
     let candidate = repo_root.join(path_raw);
     let metadata = std::fs::metadata(&candidate)
         .map_err(|error| RunnerError::task_invocation_failed_read(&candidate, error))?;
@@ -235,7 +239,8 @@ fn resolve_bootstrap_sync_path(
     let canonical = candidate
         .canonicalize()
         .map_err(|error| RunnerError::task_invocation_failed_read(&candidate, error))?;
-    if canonical.starts_with(repo_root) || canonical.starts_with(root_parent) {
+    if canonical.starts_with(&canonical_repo_root) || canonical.starts_with(&canonical_root_parent)
+    {
         return Ok(canonical);
     }
     Err(RunnerError::task_invocation(format!(
@@ -244,15 +249,16 @@ fn resolve_bootstrap_sync_path(
 }
 
 fn find_nearest_manifest_path(start: &Path, root_parent: &Path) -> Option<PathBuf> {
+    let canonical_root_parent = root_parent.canonicalize().ok()?;
     for ancestor in start.ancestors() {
-        if !ancestor.starts_with(root_parent) {
+        if !ancestor.starts_with(&canonical_root_parent) {
             break;
         }
         let manifest_path = ancestor.join(TASK_MANIFEST_FILE);
         if manifest_path.is_file() {
             return Some(manifest_path);
         }
-        if ancestor == root_parent {
+        if ancestor == canonical_root_parent {
             break;
         }
     }

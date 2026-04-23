@@ -4,8 +4,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod active;
 pub mod browser;
+pub mod build;
 pub mod execution;
 pub mod process;
+pub mod read;
 pub mod records;
 pub mod runtime;
 
@@ -18,6 +20,7 @@ pub use active::{
     DemoStopDecision, PersistedDemoActiveAttempt, PersistedDemoActivePhase,
     PersistedDemoTerminalTransport,
 };
+pub use build::build_demo_record;
 pub use execution::{
     failed_demo_attempt, parse_task_backed_attempt_json, persist_demo_attempt_logs,
     run_attempt_from_output, successful_demo_attempt, terminated_demo_attempt,
@@ -32,6 +35,11 @@ pub use process::{
     DEMO_BROWSER_TERMINAL_ROWS_ENV, DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS,
 };
 pub mod projection;
+pub use read::{
+    render_demo_execute, render_demo_history, render_demo_input_result, render_demo_inspect,
+    render_demo_list, render_demo_resize_result, render_demo_stop, DemoHistoryRequest,
+    DemoListRequest,
+};
 pub use records::{
     build_demo_groups, demo_run_preview, derive_gap_class, find_historical_attempt,
     history_attempt_to_json, history_attempts_with_limit, history_attempts_with_outcome,
@@ -42,8 +50,9 @@ pub use runtime::{
     concurrent_runner_projected_process_summary, concurrent_runner_projection_shape,
     concurrent_runner_runtime_backend, concurrent_runner_supports_browser_live_attach,
     load_active_terminal_session, render_non_zero_exits, task_is_concurrent_runner_backed,
-    DemoConcurrentRuntimeState, DEMO_ACTIVE_TERMINAL_RECENT_LINES,
-    DEMO_MANAGED_EVENT_POLL_INTERVAL_MS, DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT,
+    DemoActiveAttempt, DemoConcurrentRuntimeState, DemoRuntimeBackend,
+    DEMO_ACTIVE_TERMINAL_RECENT_LINES, DEMO_MANAGED_EVENT_POLL_INTERVAL_MS,
+    DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT,
 };
 
 use effigy_core::path_error_text::{

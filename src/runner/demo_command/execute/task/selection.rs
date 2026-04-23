@@ -1,5 +1,5 @@
 use super::*;
-use crate::runner::execute::{resolve_container_execution_binding, ContainerExecutionBinding};
+use crate::runner::execute::api::{resolve_container_execution_binding, ContainerExecutionBinding};
 use effigy_containers::compose::{compose_args, compose_invocation};
 use effigy_containers::load_container_exec_working_dir;
 use effigy_containers::session::{

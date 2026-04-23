@@ -1,8 +1,8 @@
 //! Task-reference invocation parsing.
 //!
 //! Moved out of `src/runner/util/parsing/reference.rs` in batch 241 so
-//! `effigy-managed` (and the runner's `tasks_probe`) can reach these
-//! helpers from a shared crate.
+//! `effigy-managed`, the runner, and task-domain presentation surfaces
+//! can reach these helpers from a shared crate.
 //!
 //! The error channel matches the rest of `effigy-tasks::parsing` —
 //! string messages that callers wrap into their own error types

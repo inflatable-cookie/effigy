@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use super::super::error::RoutingError;
+use effigy_core::task_selection::CatalogSelectionMode;
 use effigy_manifest::LoadedCatalog;
-use effigy_tasks::CatalogSelectionMode;
 
 pub(super) fn select_unprefixed_catalog<'a>(
     cwd: &Path,

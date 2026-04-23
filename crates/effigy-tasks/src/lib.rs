@@ -1,14 +1,25 @@
+mod error;
+mod listing;
 mod parsing;
+mod probe;
 mod reference;
 pub mod testing;
+mod view;
 
 use std::path::PathBuf;
 
 pub use effigy_core::resolver::ResolutionMode;
+pub use effigy_core::task_selection::{CatalogSelectionMode, TaskSelector};
+pub use error::EffigyTasksError;
+pub use listing::{
+    list_tasks, render_task_listing_json, render_task_listing_text, ListTasksRequest,
+    ListTasksResult,
+};
 pub use parsing::{
     normalize_builtin_test_suite, parse_task_runtime_args, parse_task_selector,
     render_task_selector,
 };
+pub use probe::{probe_task_resolution, ProbeTaskResolutionRequest, TaskResolutionProbe};
 pub use reference::{parse_task_reference_invocation, render_passthrough_args};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,19 +55,6 @@ impl std::fmt::Display for TaskError {
 }
 
 impl std::error::Error for TaskError {}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskSelector {
-    pub prefix: Option<String>,
-    pub task_name: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CatalogSelectionMode {
-    ExplicitPrefix,
-    CwdNearest,
-    RootShallowest,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRuntimeArgs {

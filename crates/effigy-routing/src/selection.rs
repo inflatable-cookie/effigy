@@ -6,8 +6,8 @@ mod strategy;
 use std::path::Path;
 
 use super::error::RoutingError;
+use effigy_core::task_selection::{CatalogSelectionMode, TaskSelector};
 use effigy_manifest::{LoadedCatalog, TaskSelection};
-use effigy_tasks::{CatalogSelectionMode, TaskSelector};
 
 pub fn select_catalog_and_task<'a>(
     selector: &TaskSelector,

@@ -6,5 +6,5 @@ license = "MIT"
 description = "Task catalog discovery and selection routing for Effigy"
 
 [dependencies]
+effigy-core = { path = "../effigy-core" }
 effigy-manifest = { path = "../effigy-manifest" }
-effigy-tasks = { path = "../effigy-tasks" }
