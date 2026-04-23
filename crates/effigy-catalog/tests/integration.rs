@@ -32,6 +32,7 @@ fn list_bundled_fragments() {
         "missing phpmyadmin: {names:?}"
     );
     assert!(names.contains(&"pgweb"), "missing pgweb: {names:?}");
+    assert!(names.contains(&"dbgate"), "missing dbgate: {names:?}");
     assert!(names.contains(&"minio"), "missing minio: {names:?}");
     assert!(
         names.contains(&"elasticsearch"),
@@ -89,7 +90,7 @@ fn resolve_mariadb_with_volumes() {
     assert_eq!(fragment.schema.volumes.len(), 1);
     let data_vol = &fragment.schema.volumes["data"];
     assert_eq!(data_vol.mount, "/var/lib/mysql");
-    assert!(data_vol.named);
+    assert!(!data_vol.named);
     assert!(data_vol.persist);
 }
 
@@ -543,13 +544,13 @@ fn generated_compose_pins_runtime_volume_names() {
     assert!(
         result
             .compose_yaml
-            .contains("./.effigy/runtime/data/db/mysql:/var/lib/mysql"),
-        "missing repo-local MariaDB bind mount:\n{}",
+            .contains("./.effigy/runtime/data/db/postgres:/var/lib/postgresql/data"),
+        "missing repo-local Postgres bind mount:\n{}",
         result.compose_yaml
     );
     assert!(
         !result.compose_yaml.contains("farmyard-dev-db-data"),
-        "unexpected MariaDB named volume output:\n{}",
+        "unexpected Postgres named volume output:\n{}",
         result.compose_yaml
     );
 }
@@ -1064,14 +1065,23 @@ fn assembled_yaml_is_structurally_valid_compose() {
     let cmd_str = format!("{sessions_cmd:?}");
     assert!(cmd_str.contains("128"), "memcached should use 128MB memory");
 
-    // 3. Validate volumes section.
-    let volumes = doc.get("volumes").unwrap().as_mapping().unwrap();
+    // 3. Validate persistent database storage is repo-local, not a named
+    // Docker volume.
     assert!(
-        volumes
-            .keys()
-            .any(|k| { k.as_str().map(|s| s.contains("db-data")).unwrap_or(false) }),
-        "should have a mariadb data volume"
+        result
+            .compose_yaml
+            .contains("./.effigy/runtime/data/db/mysql:/var/lib/mysql"),
+        "should have a repo-local mariadb bind mount:\n{}",
+        result.compose_yaml
     );
+    if let Some(volumes) = doc.get("volumes").and_then(|value| value.as_mapping()) {
+        assert!(
+            !volumes
+                .keys()
+                .any(|k| { k.as_str().map(|s| s.contains("db-data")).unwrap_or(false) }),
+            "mariadb should not emit a named data volume"
+        );
+    }
 
     // 4. Validate artifacts.
     assert!(
@@ -1100,10 +1110,9 @@ fn assembled_yaml_is_structurally_valid_compose() {
         "nginx config should have fastcgi_pass"
     );
 
-    // 5. Validate volume metadata.
-    assert_eq!(result.volumes.len(), 1);
-    assert!(result.volumes[0].persist);
-    assert_eq!(result.volumes[0].service, "db");
+    // 5. Validate volume metadata. MariaDB uses a repo-local bind mount, so
+    // this stack has no named volumes.
+    assert!(result.volumes.is_empty());
 }
 
 #[test]
@@ -1596,8 +1605,8 @@ fn phpmyadmin_fragment_assembles() {
         result.compose_yaml
     );
     assert!(
-        result.compose_yaml.contains("PMA_PASSWORD: secret"),
-        "phpmyadmin should inherit the mariadb default root password:\n{}",
+        result.compose_yaml.contains("PMA_PASSWORD: ''"),
+        "phpmyadmin should keep an implicit empty password unless configured explicitly:\n{}",
         result.compose_yaml
     );
     assert!(
@@ -1745,6 +1754,90 @@ fn pgweb_fragment_assembles_for_postgres() {
     assert!(
         pgweb.get("healthcheck").is_some(),
         "pgweb should have a healthcheck"
+    );
+}
+
+#[test]
+fn dbgate_fragment_assembles_for_postgres() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![
+        ServiceDeclaration {
+            name: "postgres".to_string(),
+            catalog: "postgres".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "database".to_string(),
+                    toml::Value::String("acme".to_string()),
+                );
+                p.insert(
+                    "password".to_string(),
+                    toml::Value::String("postgres".to_string()),
+                );
+                p
+            },
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "dbgate".to_string(),
+            catalog: "dbgate".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "database".to_string(),
+                    toml::Value::String("acme".to_string()),
+                );
+                p.insert(
+                    "connection_label".to_string(),
+                    toml::Value::String("Acme dev".to_string()),
+                );
+                p
+            },
+            variant: None,
+            config: None,
+        },
+    ];
+
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let dbgate = validate_service(&doc, "dbgate");
+
+    let image = dbgate.get("image").unwrap().as_str().unwrap();
+    assert!(image.contains("dbgate"), "image should be dbgate: {image}");
+    assert!(
+        dbgate.get("depends_on").is_some(),
+        "dbgate should depend on postgres when referenced"
+    );
+    assert!(
+        dbgate.get("healthcheck").is_some(),
+        "dbgate should have a healthcheck"
+    );
+    let env = dbgate
+        .get("environment")
+        .expect("dbgate service declares environment block");
+    assert_eq!(
+        env.get("ENGINE_pg").unwrap().as_str().unwrap(),
+        "postgres@dbgate-plugin-postgres"
+    );
+    assert_eq!(env.get("SERVER_pg").unwrap().as_str().unwrap(), "postgres");
+    assert_eq!(env.get("DATABASE_pg").unwrap().as_str().unwrap(), "acme");
+    assert_eq!(
+        env.get("PASSWORD_pg").unwrap().as_str().unwrap(),
+        "postgres"
+    );
+    assert_eq!(env.get("LABEL_pg").unwrap().as_str().unwrap(), "Acme dev");
+
+    // dbgate persists settings via the named `data` volume.
+    let vol_names: std::collections::BTreeSet<&str> =
+        result.volumes.iter().map(|v| v.name.as_str()).collect();
+    assert!(
+        vol_names.contains("test-dbgate-data"),
+        "missing dbgate data volume; got {vol_names:?}"
     );
 }
 
@@ -1922,12 +2015,19 @@ fn full_stack_with_all_services() {
         validate_service(&doc, name);
     }
 
-    // Should have volumes for db, storage, and search.
-    assert_eq!(result.volumes.len(), 3);
+    // Should have named volumes for storage and search. The database uses a
+    // repo-local bind mount.
+    assert_eq!(result.volumes.len(), 2);
     let vol_names: Vec<&str> = result.volumes.iter().map(|v| v.name.as_str()).collect();
-    assert!(vol_names.iter().any(|n| n.contains("db")));
     assert!(vol_names.iter().any(|n| n.contains("storage")));
     assert!(vol_names.iter().any(|n| n.contains("search")));
+    assert!(
+        result
+            .compose_yaml
+            .contains("./.effigy/runtime/data/db/mysql:/var/lib/mysql"),
+        "should have a repo-local mariadb bind mount:\n{}",
+        result.compose_yaml
+    );
 }
 
 // --- workspace-rust-bun fragment ──────────────────────────────────────
@@ -2153,9 +2253,16 @@ fn underlay_style_stack_assembles_with_bundled_fragments_only() {
             config: None,
         },
         ServiceDeclaration {
-            name: "pgweb".to_string(),
-            catalog: "pgweb".to_string(),
-            params: HashMap::new(),
+            name: "dbgate".to_string(),
+            catalog: "dbgate".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "database".to_string(),
+                    toml::Value::String("acme".to_string()),
+                );
+                p
+            },
             variant: None,
             config: None,
         },
@@ -2187,7 +2294,7 @@ fn underlay_style_stack_assembles_with_bundled_fragments_only() {
         .unwrap();
     let doc = validate_compose_structure(&result.compose_yaml);
 
-    for name in &["workspace", "postgres", "pgweb", "mailpit", "minio"] {
+    for name in &["workspace", "postgres", "dbgate", "mailpit", "minio"] {
         validate_service(&doc, name);
     }
 
@@ -2213,23 +2320,35 @@ fn underlay_style_stack_assembles_with_bundled_fragments_only() {
         pg_env.get("POSTGRES_PASSWORD").unwrap().as_str().unwrap(),
         "postgres"
     );
-    assert!(
-        result
-            .compose_yaml
-            .contains("postgres://postgres:postgres@postgres:5432/acme?sslmode=disable"),
-        "pgweb should inherit the bundled postgres database and password:\n{}",
-        result.compose_yaml
+    // dbgate inherits the bundled postgres database + password through the
+    // fragment's services-map lookup.
+    let dbgate = validate_service(&doc, "dbgate");
+    let dbgate_env = dbgate
+        .get("environment")
+        .expect("dbgate service declares environment block");
+    assert_eq!(
+        dbgate_env.get("SERVER_pg").unwrap().as_str().unwrap(),
+        "postgres"
+    );
+    assert_eq!(
+        dbgate_env.get("DATABASE_pg").unwrap().as_str().unwrap(),
+        "acme"
+    );
+    assert_eq!(
+        dbgate_env.get("PASSWORD_pg").unwrap().as_str().unwrap(),
+        "postgres"
     );
 
-    // Named volumes expected: cargo-registry, cargo-git, and minio data.
-    // Postgres persists through its repo-local bind mount; pgweb and mailpit
-    // have no persistent volume.
+    // Named volumes expected: cargo-registry, cargo-git, minio data, and
+    // dbgate settings. Postgres persists through its repo-local bind mount;
+    // mailpit has no persistent volume.
     let vol_names: std::collections::BTreeSet<&str> =
         result.volumes.iter().map(|v| v.name.as_str()).collect();
     for expected in &[
         "underlay-reference-dev-workspace-cargo-registry",
         "underlay-reference-dev-workspace-cargo-git",
         "underlay-reference-dev-minio-data",
+        "underlay-reference-dev-dbgate-data",
     ] {
         assert!(
             vol_names.contains(expected),

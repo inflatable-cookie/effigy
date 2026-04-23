@@ -121,8 +121,12 @@ database = "acme"
         .and_then(|containers| containers.environments.get("stack"))
         .expect("stack container");
     assert_eq!(
-        stack.services.get("pgweb").expect("pgweb service").catalog,
-        "pgweb"
+        stack
+            .services
+            .get("dbgate")
+            .expect("dbgate service")
+            .catalog,
+        "dbgate"
     );
     let domains = stack
         .dns
@@ -132,7 +136,7 @@ database = "acme"
         .iter()
         .map(|route| route.domain.as_str())
         .collect::<Vec<_>>();
-    assert!(domains.contains(&"pgweb.acme.test"), "got {domains:?}");
+    assert!(domains.contains(&"dbgate.acme.test"), "got {domains:?}");
     assert!(bundle_dir.join("scripts/dev/ui-setup.rhai").exists());
 }
 

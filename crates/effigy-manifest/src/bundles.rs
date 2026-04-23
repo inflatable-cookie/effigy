@@ -603,13 +603,13 @@ workspace = "app"
 fn underlay_spec() -> BundleSpec {
     BundleSpec {
         name: "underlay".to_owned(),
-        description: "Underlay-style Rust + Bun workspace stack with one long-running workspace container, bundled postgres/pgweb/mailpit/minio services, and gateway-published app routes plus loopback alias discovery for db/smtp/s3.".to_owned(),
+        description: "Underlay-style Rust + Bun workspace stack with one long-running workspace container, bundled postgres/dbgate/mailpit/minio services, and gateway-published app routes plus loopback alias discovery for db/smtp/s3.".to_owned(),
         inputs: vec![
             BundleInputSpec {
                 name: "host".to_owned(),
                 value_type: BundleInputType::String,
                 required: true,
-                description: "Primary local hostname for the front-end route; bundle defaults also publish `admin.<host>`, `api.<host>`, `pgweb.<host>`, `mailpit.<host>`, and `minio.<host>`.".to_owned(),
+                description: "Primary local hostname for the front-end route; bundle defaults also publish `admin.<host>`, `api.<host>`, `dbgate.<host>`, `mailpit.<host>`, and `minio.<host>`.".to_owned(),
                 default: None,
                 example: Some(Value::String("acme.test".to_owned())),
             },
@@ -722,9 +722,11 @@ catalog = "postgres"
 database = "__DATABASE__"
 password = "postgres"
 
-[containers.stack.services.pgweb]
-catalog = "pgweb"
+[containers.stack.services.dbgate]
+catalog = "dbgate"
 database_host = "postgres"
+database = "__DATABASE__"
+connection_label = "__PROJECT_NAME__"
 
 [containers.stack.services.mailpit]
 catalog = "mailpit"
@@ -737,7 +739,7 @@ routes = [
   { domain = "__HOST__", tls = true, port = __FRONT_PORT__, service = "workspace" },
   { domain = "admin.__HOST__", tls = true, port = __ADMIN_PORT__, service = "workspace" },
   { domain = "api.__HOST__", tls = true, port = __API_PORT__, service = "workspace" },
-  { domain = "pgweb.__HOST__", tls = true, port = 8081, service = "pgweb" },
+  { domain = "dbgate.__HOST__", tls = true, port = 3000, service = "dbgate" },
   { domain = "mailpit.__HOST__", port = 8025, service = "mailpit" },
   { domain = "minio.__HOST__", port = 9001, service = "minio" },
 ]
@@ -1024,9 +1026,11 @@ catalog = "postgres"
 database = "{{ inputs.database }}"
 password = "postgres"
 
-[containers.stack.services.pgweb]
-catalog = "pgweb"
+[containers.stack.services.dbgate]
+catalog = "dbgate"
 database_host = "postgres"
+database = "{{ inputs.database }}"
+connection_label = "{{ inputs.project_name }}"
 
 [containers.stack.services.mailpit]
 catalog = "mailpit"
@@ -1039,7 +1043,7 @@ routes = [
   { domain = "{{ inputs.host }}", tls = true, port = {{ inputs.front_port }}, service = "workspace" },
   { domain = "admin.{{ inputs.host }}", tls = true, port = {{ inputs.admin_port }}, service = "workspace" },
   { domain = "api.{{ inputs.host }}", tls = true, port = {{ inputs.api_port }}, service = "workspace" },
-  { domain = "pgweb.{{ inputs.host }}", tls = true, port = 8081, service = "pgweb" },
+  { domain = "dbgate.{{ inputs.host }}", tls = true, port = 3000, service = "dbgate" },
   { domain = "mailpit.{{ inputs.host }}", port = 8025, service = "mailpit" },
   { domain = "minio.{{ inputs.host }}", port = 9001, service = "minio" },
 ]

@@ -60,6 +60,14 @@ const DEMO_LOGS_DIR: &str = ".effigy/demo/logs";
 const DEMO_HISTORY_DIR: &str = ".effigy/demo/history";
 pub const DEMO_ATTEMPT_HISTORY_LIMIT: usize = 10;
 
+pub(crate) fn ensure_repo_effigy_ignored(repo_root: &Path) -> Result<(), DemoStateError> {
+    ensure_effigy_ignored_in_git_root(repo_root)
+        .map_err(|error| {
+            DemoStateError::new(failed_to_write_path(&repo_root.join(".gitignore"), error))
+        })
+        .map(|_| ())
+}
+
 #[derive(Debug, Clone)]
 pub struct DemoStateError {
     message: String,
@@ -384,8 +392,7 @@ pub fn append_attempt_history(
 ) -> Result<(), DemoStateError> {
     let path = effective_attempt_history_path(repo_root, demo_id);
     if let Some(parent) = path.parent() {
-        ensure_effigy_ignored_in_git_root(repo_root)
-            .map_err(|error| DemoStateError::new(failed_to_write_path(&repo_root.join(".gitignore"), error)))?;
+        ensure_repo_effigy_ignored(repo_root)?;
         fs::create_dir_all(parent)
             .map_err(|error| DemoStateError::new(failed_to_write_path(parent, error)))?;
     }

@@ -8,7 +8,7 @@
 //! - parses cleanly via `[manifest].include`
 //! - resolves the shipped `underlay` bundle into the expected
 //!   `systems.dev` + `containers.stack` shape
-//! - declares the catalog-sourced services (workspace + postgres + pgweb +
+//! - declares the catalog-sourced services (workspace + postgres + dbgate +
 //!   mailpit + minio)
 //! - wires the managed `dev` task with the `lifecycle` + `shell` roles
 //!   Effigy's dev runtime expects
@@ -134,7 +134,7 @@ fn starter_generates_services_via_bundled_catalog() {
     let expected: &[(&str, &str)] = &[
         ("workspace", "workspace-rust-bun"),
         ("postgres", "postgres"),
-        ("pgweb", "pgweb"),
+        ("dbgate", "dbgate"),
         ("mailpit", "mailpit"),
         ("minio", "minio"),
     ];
@@ -175,7 +175,7 @@ fn starter_generates_services_via_bundled_catalog() {
         "app.test",
         "admin.app.test",
         "api.app.test",
-        "pgweb.app.test",
+        "dbgate.app.test",
         "mailpit.app.test",
         "minio.app.test",
     ] {

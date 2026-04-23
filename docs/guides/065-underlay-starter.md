@@ -3,7 +3,7 @@
 This guide covers the two shipped top-level bundles that consumer repos can
 adopt through `[bundle]` in `effigy.toml`:
 
-- **`underlay`** — Rust + Bun workspace container + postgres + pgweb +
+- **`underlay`** — Rust + Bun workspace container + postgres + dbgate +
   mailpit + minio, intended for native apps that want one long-running workspace
   container plus an opinionated gateway route set. An `effigy init underlay`
   starter is shipped.
@@ -31,7 +31,7 @@ effigy bundle export underlay --path bundles/underlay
 
 Reusable Effigy manifest shape for Underlay-style consumer repos. The
 stable system/container layer comes from the shipped `underlay` bundle:
-one long-running Rust + Bun workspace container, bundled postgres, pgweb,
+one long-running Rust + Bun workspace container, bundled postgres, dbgate,
 mailpit, and minio services, a gateway-fronted domain set, and loopback
 alias publication for `db.<host>`, `smtp.<host>`, and `s3.<host>`.
 
@@ -131,13 +131,13 @@ It ships:
   routes (`api_port`, `admin_port`, `front_port`)
 - a healthcheck that verifies cargo and bun are on `PATH`
 
-The same bundle also declares the bundled `postgres`, `pgweb`, `mailpit`,
+The same bundle also declares the bundled `postgres`, `dbgate`, `mailpit`,
 and `minio` services plus the default gateway routes:
 
 - `https://<host>`
 - `https://admin.<host>`
 - `https://api.<host>`
-- `https://pgweb.<host>`
+- `https://dbgate.<host>`
 - `http://mailpit.<host>`
 - `http://minio.<host>`
 

@@ -1,0 +1,40 @@
+services:
+  {{ service_name }}:
+    image: dbgate/dbgate:{{ version }}
+{% set database_service = services[database_host] %}
+{% set resolved_database = database %}
+{% if database == "postgres" and database_service and database_service.params.database %}
+{% set resolved_database = database_service.params.database %}
+{% endif %}
+{% set resolved_password = database_password %}
+{% if not database_password and database_service and database_service.params.password %}
+{% set resolved_password = database_service.params.password %}
+{% elif not database_password and database_service and database_service.params.root_password %}
+{% set resolved_password = database_service.params.root_password %}
+{% endif %}
+    environment:
+      CONNECTIONS: "pg"
+      LABEL_pg: "{{ connection_label }}"
+      SERVER_pg: "{{ database_host }}"
+      PORT_pg: "{{ database_port }}"
+      USER_pg: "{{ database_user }}"
+      PASSWORD_pg: "{{ resolved_password }}"
+      DATABASE_pg: "{{ resolved_database }}"
+      ENGINE_pg: "{{ engine }}"
+{% if services[database_host] %}
+    depends_on:
+      {{ services[database_host].name }}:
+        condition: service_started
+{% elif services.postgres %}
+    depends_on:
+      {{ services.postgres.name }}:
+        condition: service_started
+{% endif %}
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
