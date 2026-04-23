@@ -1,7 +1,7 @@
 use super::prelude::{
-    apply_global_json_flag, command_requests_json, BootstrapArgs, Command, DemoArgs, DemoListQuery,
-    DemoSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, ReleaseArgs, ReleaseSubcommand,
-    TaskInvocation, TasksArgs,
+    apply_global_json_flag, command_requests_json, BootstrapArgs, BootstrapSubcommand, Command,
+    DemoArgs, DemoListQuery, DemoSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand,
+    ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
 };
 
 #[test]
@@ -65,11 +65,13 @@ fn command_requests_json_checks_task_or_global_mode() {
         output_json: true,
     });
     let cmd_bootstrap = Command::Bootstrap(BootstrapArgs {
-        repo_url: "git@github.com:inflatable-cookie/effigy.git".to_owned(),
-        path: None,
-        branch: None,
-        start: false,
-        plan: true,
+        subcommand: BootstrapSubcommand::Clone {
+            repo_url: "git@github.com:inflatable-cookie/effigy.git".to_owned(),
+            path: None,
+            branch: None,
+            start: false,
+            plan: true,
+        },
         output_json: true,
     });
     let cmd_release = Command::Release(ReleaseArgs {
@@ -113,11 +115,13 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         output_json: false,
     });
     let bootstrap_cmd = Command::Bootstrap(BootstrapArgs {
-        repo_url: "git@github.com:inflatable-cookie/effigy.git".to_owned(),
-        path: None,
-        branch: None,
-        start: false,
-        plan: true,
+        subcommand: BootstrapSubcommand::Clone {
+            repo_url: "git@github.com:inflatable-cookie/effigy.git".to_owned(),
+            path: None,
+            branch: None,
+            start: false,
+            plan: true,
+        },
         output_json: false,
     });
     let release_cmd = Command::Release(ReleaseArgs {

@@ -60,6 +60,15 @@ run = [{ rhai = "infra/dev/seed-latest-db-dump.rhai" }]
         Some("contactpatch")
     );
 
+    let web_service = web.services.get("web").expect("web service");
+    assert_eq!(
+        web_service
+            .params
+            .get("asset_fallback")
+            .and_then(|value| value.as_str()),
+        Some("/vendor/genesis.php")
+    );
+
     let dns = web.dns.as_ref().expect("dns");
     let domains = dns
         .routes

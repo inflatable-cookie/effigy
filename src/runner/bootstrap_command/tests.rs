@@ -6,7 +6,7 @@
 //! integration tests in `crates/effigy-bootstrap/tests/integration.rs`.
 
 use super::run_bootstrap_with_cwd;
-use effigy_cli::BootstrapArgs;
+use effigy_cli::{BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -181,17 +181,14 @@ fn create_root_remote_with_bootstrap(child_remote: &Path) -> PathBuf {
         worktree.join("effigy.toml"),
         format!(
             r#"[bootstrap]
-setup = ["bootstrap:root"]
+run = "sh ./scripts/root-setup.sh"
 start = "bootstrap:start"
 
 [[bootstrap.children]]
 path = "child-app"
 repo = "{}"
-setup = ["bootstrap:child"]
+run = "sh ./scripts/child-setup.sh"
 required = true
-
-[tasks."bootstrap:root"]
-run = "sh ./scripts/root-setup.sh"
 
 [tasks."bootstrap:start"]
 run = "sh ./scripts/start.sh"
@@ -232,16 +229,13 @@ fn create_root_remote_with_optional_missing_child() -> PathBuf {
     fs::write(
         worktree.join("effigy.toml"),
         r#"[bootstrap]
-setup = ["bootstrap:root"]
+run = "sh ./scripts/root-setup.sh"
 
 [[bootstrap.children]]
 path = "missing-child"
 repo = "/definitely/not/a/real/repo.git"
-setup = ["bootstrap:child"]
+run = "sh ./scripts/child-setup.sh"
 required = false
-
-[tasks."bootstrap:root"]
-run = "sh ./scripts/root-setup.sh"
 "#,
     )
     .expect("write manifest");
@@ -271,11 +265,13 @@ fn run_bootstrap_with_cwd_starts_when_requested() {
     let cwd = temp_dir("bootstrap-start");
     let out = run_bootstrap_with_cwd(
         BootstrapArgs {
-            repo_url: root_remote.display().to_string(),
-            path: None,
-            branch: None,
-            start: true,
-            plan: false,
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: None,
+                branch: None,
+                start: true,
+                plan: false,
+            },
             output_json: false,
         },
         cwd.clone(),
@@ -295,11 +291,13 @@ fn run_bootstrap_with_cwd_reports_optional_child_warning_in_text_output() {
     let cwd = temp_dir("bootstrap-optional-child-text");
     let out = run_bootstrap_with_cwd(
         BootstrapArgs {
-            repo_url: root_remote.display().to_string(),
-            path: None,
-            branch: None,
-            start: false,
-            plan: false,
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: None,
+                branch: None,
+                start: false,
+                plan: false,
+            },
             output_json: false,
         },
         cwd,
@@ -308,4 +306,73 @@ fn run_bootstrap_with_cwd_reports_optional_child_warning_in_text_output() {
     assert!(out.contains("[ok] bootstrap completed"));
     assert!(out.contains("child missing-child: failed"));
     assert!(out.contains("[warn] optional child `missing-child` failed"));
+}
+
+#[test]
+fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
+    let root = temp_dir("bootstrap-deps-sync");
+    fs::write(
+        root.join("effigy.toml"),
+        "[package_manager]\njs = \"bun\"\n",
+    )
+    .expect("write manifest");
+
+    let ui = root.join("ui");
+    fs::create_dir_all(&ui).expect("mkdir ui");
+    fs::write(ui.join("package.json"), "{}\n").expect("write ui package");
+
+    let api = root.join("api");
+    fs::create_dir_all(&api).expect("mkdir api");
+    fs::write(
+        api.join("Cargo.toml"),
+        "[package]\nname = \"api\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write api cargo");
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    fs::write(bin_dir.join("bun"), "#!/bin/sh\nprintf bun > bun.marker\n").expect("write bun");
+    fs::write(
+        bin_dir.join("cargo"),
+        "#!/bin/sh\nprintf '%s ' \"$@\" > cargo.args\nprintf cargo > cargo.marker\n",
+    )
+    .expect("write cargo");
+    for name in ["bun", "cargo"] {
+        let script = bin_dir.join(name);
+        let mut perms = fs::metadata(&script).expect("stat script").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("chmod script");
+    }
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    unsafe {
+        std::env::set_var("PATH", format!("{}:{original_path}", bin_dir.display()));
+    }
+    let out = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::DepsSync {
+                mode: BootstrapDepsSyncMode::Both,
+                paths: vec!["ui".to_owned(), "api".to_owned()],
+            },
+            output_json: false,
+        },
+        root.clone(),
+    )
+    .expect("run bootstrap deps sync");
+    unsafe {
+        std::env::set_var("PATH", original_path);
+    }
+
+    assert!(out.contains("bootstrap deps sync completed (2)"));
+    assert!(out.contains("ui [js]: bun install"));
+    assert!(out.contains("api [rust]: cargo fetch --manifest-path Cargo.toml"));
+    assert!(ui.join("bun.marker").is_file(), "bun marker should exist");
+    assert!(
+        api.join("cargo.marker").is_file(),
+        "cargo marker should exist"
+    );
+    assert_eq!(
+        fs::read_to_string(api.join("cargo.args")).expect("read cargo args"),
+        "fetch --manifest-path Cargo.toml "
+    );
 }

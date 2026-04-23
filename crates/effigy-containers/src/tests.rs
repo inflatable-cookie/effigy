@@ -652,8 +652,8 @@ catalog = "phpmyadmin"
 }
 
 #[test]
-fn generated_compose_binds_local_tcp_alias_ports_on_project_loopback_ip() {
-    with_temp_effigy_home("catalog-loopback-tcp-aliases", |_| {
+fn generated_compose_keeps_runtime_ports_for_tcp_alias_services() {
+    with_temp_effigy_home("catalog-loopback-tcp-aliases", |home| {
         let root = temp_repo("catalog-loopback-tcp-aliases");
         fs::write(
             root.join("effigy.toml"),
@@ -687,23 +687,24 @@ catalog = "minio"
             fs::read_to_string(root.join(".effigy/runtime/compose/.effigy-compose.generated.yml"))
                 .expect("compose");
 
-        assert!(compose.contains("127.1.0.1:5432:5432"), "{compose}");
-        assert!(compose.contains("127.1.0.1:1025:1025"), "{compose}");
-        assert!(compose.contains("127.1.0.1:9000:9000"), "{compose}");
+        assert!(!compose.contains("127.1.0.1:5432:5432"), "{compose}");
+        assert!(!compose.contains("127.1.0.1:1025:1025"), "{compose}");
+        assert!(!compose.contains("127.1.0.1:9000:9000"), "{compose}");
         assert!(compose.contains(":8025"), "{compose}");
         assert!(compose.contains(":9001"), "{compose}");
         assert!(policy
             .declared_ports
             .iter()
-            .any(|value| value == "5432:5432"));
+            .any(|value| value.ends_with(":5432")));
         assert!(policy
             .declared_ports
             .iter()
-            .any(|value| value == "1025:1025"));
+            .any(|value| value.ends_with(":1025")));
         assert!(policy
             .declared_ports
             .iter()
-            .any(|value| value == "9000:9000"));
+            .any(|value| value.ends_with(":9000")));
+        assert!(home.join("gateway").join("loopback-ips.json").exists());
     });
 }
 
@@ -763,7 +764,7 @@ version = "8.4"
 catalog = "nginx"
 document_root = "."
 rewrite_all_to = "/vendor/genesis.php"
-asset_fallback = ""
+asset_fallback = "/vendor/genesis.php"
 error_page_404 = "/vendor/genesis.php"
 
 [systems.dev]
@@ -950,7 +951,7 @@ variant = "default"
         let shared_compose = fs::read_to_string(&shared.compose_file).expect("read shared compose");
 
         assert!(
-            shared_compose.contains("127.1.0.1:3306:3306"),
+            !shared_compose.contains("127.1.0.1:3306:3306"),
             "{shared_compose}"
         );
         assert!(

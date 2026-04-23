@@ -36,7 +36,8 @@ pub use config_sections::{
     ManifestDistributionConfig, ManifestDistributionMetadataConfig,
     ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
     ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig,
-    ManifestPackageManagerConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
+    ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestReleaseConfig,
+    ManifestScanConfig, ManifestShellConfig,
     ManifestSystemConfig, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
     ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };

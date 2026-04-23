@@ -26,7 +26,7 @@ use effigy_env::schema_support::{
 use effigy_env::secret::SecretString;
 use effigy_manifest::TaskSelection;
 
-pub(super) fn run_standard_task(
+pub(in crate::runner) fn run_standard_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
 ) -> Result<String, RunnerError> {

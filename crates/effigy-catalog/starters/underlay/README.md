@@ -21,7 +21,7 @@ is a convention built on the stable system/workspace/catalog model.
 |----------------------------|-----------------|------------------------------------------------------------------------------------------|
 | `effigy.toml`              | consumer (root) | Declares `[bundle]`, optional `systems.dev.mounts`, repo alias, and `[manifest].include`. |
 | `effigy.tasks.toml`        | starter         | Managed `tasks.dev` concurrent shape, plus `health`/`validate`/`qa` aggregators.         |
-| `effigy.bootstrap.toml`    | starter         | `bootstrap:deps` and the `[bootstrap]` entry points.                                     |
+| `effigy.bootstrap.toml`    | starter         | bootstrap-local `run` and the `[bootstrap]` entry points.                                |
 
 The default frontend hydration helper is a bundled asset referenced from
 `effigy.tasks.toml` through `{{ bundle.root }}/scripts/dev/ui-setup.rhai`.
@@ -49,8 +49,9 @@ After emission, edit:
    must be visible inside the workspace container.
 3. Replace the `app-*/dev` concurrent entries in `effigy.tasks.toml`
    and the aggregator task lists with the repo's real apps.
-4. Edit the `bootstrap:deps` run command in `effigy.bootstrap.toml` to
-   match the repo's dependency fetch sequence.
+4. Edit the bootstrap `run` sequence in `effigy.bootstrap.toml` to
+   match the repo's dependency sync paths, preferring `bootstrap deps sync ...`
+   over shell hydration.
 5. Keep bundled setup helpers referenced through `{{ bundle.root }}`
    unless the repo intentionally needs to own a forked script.
 

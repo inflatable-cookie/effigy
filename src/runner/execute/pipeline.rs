@@ -3,7 +3,7 @@ mod command;
 #[path = "pipeline/managed.rs"]
 mod managed;
 #[path = "pipeline/standard.rs"]
-mod standard;
+pub(super) mod standard;
 
 use effigy_cli::TaskInvocation;
 

@@ -30,8 +30,9 @@ Next steps:
    - keep bundled setup helpers referenced through `{{ bundle.root }}`
      unless the repo intentionally needs to own a forked script
 
-3. In `effigy.bootstrap.toml`, rewrite the `bootstrap:deps` command to
-   match the repo's dependency-fetch sequence.
+3. In `effigy.bootstrap.toml`, rewrite the bootstrap `run` sequence to
+   match the repo's dependency sync paths, preferring `bootstrap deps sync ...`
+   over shell hydration.
 
 Then run `effigy tasks` to see what the starter wired up.
 """

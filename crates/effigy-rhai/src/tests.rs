@@ -200,6 +200,34 @@ fn execute_rhai_script_rejects_recursive_effigy_process_calls() {
 }
 
 #[test]
+fn execute_rhai_script_allows_explicit_effigy_binary_paths() {
+    let root = temp_root("explicit-effigy-binary-path");
+    let binary = root.join("effigy");
+    fs::write(&binary, "#!/bin/sh\nexit 0\n").expect("write fake effigy binary");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&binary).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&binary, permissions).expect("chmod");
+    }
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+
+    execute_rhai_script(
+        &context,
+        &format!(r#"run_process("{}", ["tasks"]);"#, binary.display()),
+        &[],
+        &callbacks(),
+    )
+    .expect("explicit binary path should be allowed");
+}
+
+#[test]
 fn execute_rhai_script_can_make_http_requests() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");

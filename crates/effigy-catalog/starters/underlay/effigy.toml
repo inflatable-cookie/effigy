@@ -12,7 +12,7 @@
 #     don't fit (remember to update `effigy.tasks.toml` + `systems.<name>` overrides to match)
 #   - add `systems.dev.mounts` when sibling checkouts must be visible in the workspace
 #   - retitle/replace the per-app dev tabs in `effigy.tasks.toml`
-#   - repoint the bootstrap deps command in `effigy.bootstrap.toml`
+#   - repoint the bootstrap `bootstrap deps sync ...` paths in `effigy.bootstrap.toml`
 #
 # Everything else (workspace service, postgres/mailpit/minio, gateway
 # routes, alias publication) comes from Effigy's bundled defaults.

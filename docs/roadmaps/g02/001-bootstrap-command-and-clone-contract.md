@@ -265,7 +265,8 @@ Rules:
 - `--path` may point to a missing directory or an existing repo checkout
 - `path` entries inside `[[bootstrap.children]]` are always relative to the
   cloned root repo
-- child repos may not escape root via `..`
+- sibling child paths such as `../underlay` are allowed when they stay within
+  the cloned root repo's parent directory
 
 ## Plan and JSON Requirements
 

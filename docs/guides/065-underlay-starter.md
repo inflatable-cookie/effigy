@@ -50,7 +50,7 @@ Emits three files into the current repo:
 | File                        | Purpose                                                                                      |
 |-----------------------------|----------------------------------------------------------------------------------------------|
 | `effigy.toml`               | Root manifest. `[bundle]`, optional `systems.dev.mounts`, repo alias, and `[manifest].include`. |
-| `effigy.bootstrap.toml`     | `[bootstrap]` entry points and `bootstrap:deps` task.                                        |
+| `effigy.bootstrap.toml`     | `[bootstrap]` entry points and the bootstrap-local `run` sequence.                           |
 | `effigy.tasks.toml`         | Managed `tasks.dev` concurrent shape + `health` / `validate` / `qa` aggregators.             |
 
 The default UI setup script is a bundled asset referenced from
@@ -113,8 +113,9 @@ copy here so users can refer back without re-emitting.
    - keep bundled setup helpers referenced through `{{ bundle.root }}`
      unless the repo intentionally needs to own a forked script
 
-3. In `effigy.bootstrap.toml`, rewrite the `bootstrap:deps` command to
-   match the repo's dependency-fetch sequence.
+3. In `effigy.bootstrap.toml`, rewrite the bootstrap `run` sequence to
+   match the repo's dependency sync paths, preferring `bootstrap deps sync ...`
+   over shell hydration.
 
 After the edit pass, the consumer repo carries **no** `docker-compose.yml`
 and **no** workspace Dockerfile. The root manifest only chooses bundle
@@ -220,7 +221,7 @@ The integration suite covers both the fragment and the starter:
     catalog fragments
   - verifies `tasks.dev` wires both `role = "lifecycle"` and
     `role = "shell" service = "workspace"` runtime-contract entries
-  - verifies the `bootstrap:deps` / aggregator tasks are present
+  - verifies the bootstrap config and aggregator tasks are present
 - `src/tests/runner_tests/runner_core_tests/init_migrate_tests/init_tests.rs`
   - `run_manifest_task_builtin_init_underlay_emits_all_declared_files_and_guidance`
   - `run_manifest_task_builtin_init_underlay_refuses_overwrite_without_force`
@@ -260,7 +261,7 @@ database = "my_database"
 | Service    | Image                 | Purpose                                                                                     |
 |------------|-----------------------|---------------------------------------------------------------------------------------------|
 | `app`      | `php:8.4-fpm`         | PHP-FPM workspace with Composer, Node 20, and extensions (`pdo_mysql`, `intl`, `exif`, `zip`, `gd`, `redis`, `memcached`, `opcache`). Ships `decodelabs/effigy` globally. |
-| `web`      | `nginx`               | Nginx in front of `app`. Document root `.`, rewrite-all to `/vendor/genesis.php`, 404s route to the same.    |
+| `web`      | `nginx`               | Nginx in front of `app`. Document root `.`, rewrites requests to `/vendor/genesis.php`, and routes missing assets there too. |
 | `db`       | `mariadb:10.11`       | MariaDB with the configured `database` created on first start.                              |
 | `pma`      | `phpmyadmin:latest`   | phpMyAdmin connected to `db`.                                                               |
 | `memcache` | `memcached`           | In-memory cache sized at 128 MB by default.                                                 |

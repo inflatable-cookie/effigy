@@ -90,21 +90,21 @@ pub struct ManifestManagedConcurrentEntry {
     pub shutdown_on_exit: Option<bool>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(untagged)]
 pub enum ManifestManagedRun {
     Command(String),
     Sequence(Vec<ManifestManagedRunStep>),
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(untagged)]
 pub enum ManifestManagedRunStep {
     Command(String),
     Step(Box<ManifestManagedRunStepTable>),
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestManagedRunStepTable {
     #[serde(default)]
@@ -131,14 +131,14 @@ pub struct ManifestManagedRunStepTable {
     pub fail_fast: Option<bool>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(untagged)]
 pub enum ManifestRunStepEnv {
     Inline(BTreeMap<String, String>),
     Profile(String),
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(untagged)]
 pub enum ManifestEnvFileDirective {
     Single(String),

@@ -9,7 +9,10 @@ pub(super) fn validate_bootstrap_section(context: &mut SchemaContext<'_, '_>, va
     };
 
     for key in table.keys() {
-        if !matches!(key.as_str(), "setup" | "start" | "submodules" | "children") {
+        if !matches!(
+            key.as_str(),
+            "run" | "setup" | "start" | "submodules" | "children"
+        ) {
             context.unsupported_nested_key("bootstrap", key);
         }
     }
@@ -27,7 +30,7 @@ pub(super) fn validate_bootstrap_section(context: &mut SchemaContext<'_, '_>, va
             for key in child_table.keys() {
                 if !matches!(
                     key.as_str(),
-                    "path" | "repo" | "branch" | "setup" | "required"
+                    "path" | "repo" | "branch" | "run" | "setup" | "required"
                 ) {
                     context.unsupported_nested_key("bootstrap.children[]", key);
                 }

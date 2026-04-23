@@ -749,8 +749,8 @@ pub struct ManifestDocsPolicyNextActionConfig {
 #[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
 pub struct ManifestBootstrapConfig {
-    #[serde(default)]
-    pub setup: Vec<String>,
+    #[serde(default, alias = "setup")]
+    pub run: Option<ManifestManagedRun>,
     #[serde(default)]
     pub start: Option<String>,
     #[serde(default)]
@@ -775,8 +775,8 @@ pub struct ManifestBootstrapChildConfig {
     pub repo: String,
     #[serde(default)]
     pub branch: Option<String>,
-    #[serde(default)]
-    pub setup: Vec<String>,
+    #[serde(default, alias = "setup")]
+    pub run: Option<ManifestManagedRun>,
     #[serde(default = "default_bootstrap_child_required")]
     pub required: bool,
 }
