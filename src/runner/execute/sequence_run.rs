@@ -344,7 +344,7 @@ fn run_single_step(
         StepAction::Task { invocation, cwd } => {
             ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
             let _env_guard = ScopedEnvOverride::set(&step.env);
-            let output = super::entry::run_manifest_task_with_cwd(&invocation, cwd.to_path_buf())?;
+            let output = super::entry::run_manifest_task_with_cwd(invocation, cwd.to_path_buf())?;
             render_nested_output(&output)
         }
         StepAction::Builtin(command) => {
@@ -359,7 +359,7 @@ fn run_single_step(
             execute_repo_rhai_script(
                 &selection.catalog.catalog_root,
                 task_name,
-                &path,
+                path,
                 passthrough,
             )
         }
