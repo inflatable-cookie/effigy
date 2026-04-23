@@ -1,14 +1,14 @@
 # Underlay starter
 
-Reusable manifest shape for Underlay-style repos — a long-running
-Rust + Bun workspace container, bundled dev services (postgres, mailpit,
-minio), and a managed `dev` TUI task.
+Reusable manifest shape for Underlay-style repos. The stable
+system/container layer comes from the shipped `underlay` bundle: one
+long-running Rust + Bun workspace container, bundled postgres, pgweb,
+mailpit, and minio services, managed gateway routes, and loopback alias
+publication for `db.<host>`, `smtp.<host>`, and `s3.<host>`.
 
 This shape uses only existing Effigy surfaces:
 
-- `[systems]` / `[systems.dev]` / `[systems.dev.workspaces.app]`
-- `[containers.stack]` with `[containers.stack.services.<name>]` entries
-  resolved against the bundled catalog
+- `[bundle]` for the stable Underlay stack defaults
 - managed `tasks.dev` with `role = "lifecycle"` + `role = "shell"`
 - `[manifest].include` composition
 
@@ -19,11 +19,13 @@ is a convention built on the stable system/workspace/catalog model.
 
 | File                       | Ownership       | Purpose                                                                                  |
 |----------------------------|-----------------|------------------------------------------------------------------------------------------|
-| `effigy.toml`              | consumer (root) | Pulls the starter fragments in via `[manifest].include`. Hosts the catalog alias.        |
-| `effigy.system.toml`       | starter         | `systems.dev` + `containers.stack` + bundled service declarations + gateway DNS routes.  |
+| `effigy.toml`              | consumer (root) | Declares `[bundle]`, optional `systems.dev.mounts`, repo alias, and `[manifest].include`. |
 | `effigy.tasks.toml`        | starter         | Managed `tasks.dev` concurrent shape, plus `health`/`validate`/`qa` aggregators.         |
 | `effigy.bootstrap.toml`    | starter         | `bootstrap:deps` and the `[bootstrap]` entry points.                                     |
-| `scripts/dev/ui-setup.rhai`| starter         | Frontend hydration helper invoked from `tasks.dev` concurrent entries as a `setup` step. |
+
+The default frontend hydration helper is a bundled asset referenced from
+`effigy.tasks.toml` through `{{ bundle.root }}/scripts/dev/ui-setup.rhai`.
+It is not emitted into the consumer repo.
 
 ## Adoption
 
@@ -33,31 +35,30 @@ for the full emission contract, including `--dry-run` / `--force` / `--json`.
 
 After emission, edit:
 
-1. `systems.dev.working_dir` in `effigy.system.toml` to match the
-   repo's position inside the workspace root — typically
-   `/workspace-root/<repo-name>`.
-2. `containers.stack.project_name` and the DNS domains to match
-   the consumer's naming.
+1. Update `[bundle]` in `effigy.toml`: `host`, `project_name`,
+   `workspace_subdir`, `database`, and the optional `api_port` /
+   `admin_port` / `front_port` overrides.
+2. Add `systems.dev.mounts` in `effigy.toml` when sibling checkouts
+   must be visible inside the workspace container.
 3. Replace the `app-*/dev` concurrent entries in `effigy.tasks.toml`
    and the aggregator task lists with the repo's real apps.
 4. Edit the `bootstrap:deps` run command in `effigy.bootstrap.toml` to
    match the repo's dependency fetch sequence.
-5. Edit `scripts/dev/ui-setup.rhai` to hydrate the repo's real frontend
-   packages. Sibling-repo hydration is left commented out in the
-   default; re-enable it if the repo relies on sibling checkouts.
+5. Keep bundled setup helpers referenced through `{{ bundle.root }}`
+   unless the repo intentionally needs to own a forked script.
 
 The same checklist is embedded in the starter's `starter.toml`
 `[guidance]` block so `effigy init underlay` prints it on emit.
 
 After adoption, the consumer repo should carry no `docker-compose.yml`
-and no workspace Dockerfile — both are generated from the bundled
-`workspace-rust-bun` / `postgres` / `mailpit` / `minio` catalog
-fragments.
+and no workspace Dockerfile. The root manifest only chooses bundle
+inputs and repo-owned tasks; the stack shape itself stays in Effigy's
+bundled `underlay` defaults and service catalog.
 
 ## What stays consumer-owned
 
-- Per-app `effigy.toml` in each child app (cargo/bun build glue, PORT
-  and env strings, vite flags, migrations, jobs runner, etc.)
+- Per-app `effigy.toml` in each child app (cargo/bun build glue, vite
+  flags, migrations, jobs runner, etc.)
 - Tab ordering and concurrent makeup in `tasks.dev`
-- Project domains, project name, and port numbers
-- The `ui-setup.rhai` helper (starter-seeded, consumer-owned thereafter)
+- Bundle inputs, sibling mounts, and any repo-specific port choices
+- Custom setup scripts only when the bundled helper is not enough

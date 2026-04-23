@@ -6,7 +6,10 @@ use crate::ManifestManagedRun;
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 pub struct ManifestBundleConfig {
-    pub name: String,
+    #[serde(default, alias = "name")]
+    pub base: Option<String>,
+    #[serde(default)]
+    pub base_path: Option<String>,
     #[serde(flatten)]
     pub inputs: BTreeMap<String, toml::Value>,
 }

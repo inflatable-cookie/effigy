@@ -407,7 +407,7 @@ variant = "default"
         assert_eq!(policy.dns_domain.as_deref(), Some("clientname.test"));
         assert!(policy.dns_tls);
         assert_eq!(policy.dns_port, Some(8080));
-        assert_eq!(policy.compose_files.len(), 1);
+        assert_eq!(policy.compose_files.len(), 2);
         assert!(
             policy
                 .compose_file_display
@@ -419,6 +419,23 @@ variant = "default"
         let compose_path = root.join(".effigy/runtime/compose/.effigy-compose.generated.yml");
         assert_eq!(policy.compose_files[0], compose_path);
         assert!(compose_path.exists(), "generated compose file should exist");
+        let dns_override = fs::read_to_string(&policy.compose_files[1]).expect("read dns override");
+        assert!(
+            dns_override.contains("app:\n    dns:"),
+            "dns override should target app service: {dns_override}"
+        );
+        assert!(
+            dns_override.contains("web:\n    dns:"),
+            "dns override should target web service: {dns_override}"
+        );
+        assert!(
+            dns_override.contains("extra_hosts:"),
+            "dns override should include route parity hosts: {dns_override}"
+        );
+        assert!(
+            dns_override.contains("\"clientname.test:192.168.5.2\""),
+            "dns override should route project hostnames to the Colima gateway: {dns_override}"
+        );
 
         let compose = fs::read_to_string(compose_path).expect("read generated compose");
         assert!(compose.contains("services:"));
@@ -564,7 +581,8 @@ variant = "default"
             .declared_ports
             .iter()
             .filter_map(|value| value.split_once(':'))
-            .find(|(_, container)| *container == "3306")
+            .filter(|(host, container)| *container == "3306" && *host != "3306")
+            .next()
             .map(|(host, _)| host.parse::<u16>().expect("host port"))
             .expect("expected generated compose MySQL port");
         assert_eq!(mysql_port, http_port + 6);
@@ -1013,6 +1031,71 @@ services:
         dns_override.contains("\"8.8.8.8\""),
         "dns override: {dns_override}"
     );
+    assert!(
+        !dns_override.contains("extra_hosts:"),
+        "dns override should not invent route parity hosts without domains: {dns_override}"
+    );
+}
+
+#[test]
+fn generated_compose_runtime_dns_override_includes_project_and_alias_domains() {
+    let root = temp_repo("generated-compose-route-parity");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "workspace"
+
+[containers.stack.dns]
+routes = [
+  { domain = "acme.test", tls = false, service = "workspace" },
+  { domain = "api.acme.test", tls = false, service = "workspace", port = 41001 },
+]
+
+[containers.stack.services.workspace]
+catalog = "workspace-rust-bun"
+working_subdir = "generated-compose-route-parity"
+
+[containers.stack.services.postgres]
+catalog = "postgres"
+
+[containers.stack.services.mailpit]
+catalog = "mailpit"
+"#,
+    )
+    .expect("write manifest");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert_eq!(policy.compose_files.len(), 2);
+    let dns_override = fs::read_to_string(&policy.compose_files[1]).expect("read dns override");
+    assert!(
+        dns_override.contains("\"acme.test:192.168.5.2\""),
+        "dns override should include base project domain: {dns_override}"
+    );
+    assert!(
+        dns_override.contains("\"api.acme.test:192.168.5.2\""),
+        "dns override should include explicit subdomain routes: {dns_override}"
+    );
+    assert!(
+        dns_override.contains("postgres:\n    dns:") && dns_override.contains("\"db.acme.test\""),
+        "dns override should include postgres network alias domains: {dns_override}"
+    );
+    assert!(
+        dns_override.contains("mailpit:\n    dns:") && dns_override.contains("\"smtp.acme.test\""),
+        "dns override should include mailpit network alias domains: {dns_override}"
+    );
+    assert!(
+        !dns_override.contains("\"db.acme.test:192.168.5.2\""),
+        "TCP service aliases must not point back at the host gateway: {dns_override}"
+    );
+    assert!(
+        !dns_override.contains("\"smtp.acme.test:192.168.5.2\""),
+        "TCP service aliases must not point back at the host gateway: {dns_override}"
+    );
 }
 
 #[test]
@@ -1407,14 +1490,11 @@ fn generated_compose_policy_includes_managed_volumes() {
 default = "web"
 
 [containers.web]
-primary_service = "app"
+primary_service = "workspace"
 
-[containers.web.services.app]
-catalog = "php-fpm"
-version = "8.3"
-
-[containers.web.services.db]
-catalog = "mariadb"
+[containers.web.services.workspace]
+catalog = "workspace-rust-bun"
+working_subdir = "managed-volumes"
 "#,
     )
     .expect("write manifest");
@@ -1424,7 +1504,7 @@ catalog = "mariadb"
     assert!(policy
         .managed_volumes
         .iter()
-        .any(|volume| volume.name.ends_with("-db-data")));
+        .any(|volume| volume.name.ends_with("cargo-registry")));
     assert!(policy.managed_volumes.iter().any(|volume| volume.persist));
 }
 

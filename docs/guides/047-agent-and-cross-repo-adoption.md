@@ -169,11 +169,13 @@ that the skill/template layer cannot cover the gap cleanly.
 - route CI and recurring local validation through Effigy for supported paths
 - keep standalone scripts only where an explicit external contract is still required
 - pin installed binary or stable channel strategy per repo
+- do not mirror Effigy tasks into `package.json` scripts; call `effigy <task>`
+  directly
 
 ### Wave 5 - Cleanup
 
-- retire obsolete wrappers and cargo aliases once their Effigy-first replacement
-  is stable
+- retire obsolete wrappers, cargo aliases, and package-manager script shims once
+  their Effigy-first replacement is stable
 - keep a short rollback path for release-sensitive repos
 - capture the final adoption state in repo docs
 
@@ -188,6 +190,9 @@ Raw commands are still reasonable when:
 
 When using a fallback, keep the reason explicit in repo docs so agents do not
 learn the wrong default.
+
+`package.json` is not an allowed fallback for re-exporting Effigy tasks. Keep
+Node package scripts for real package-manager workflows only.
 
 ## 7) Release Orchestration Across Repo Types
 

@@ -5,5 +5,6 @@ pub mod path_error_text;
 pub mod path_probe;
 pub mod repo;
 pub mod resolver;
+pub mod runtime_dir;
 pub mod shell;
 pub mod widgets;

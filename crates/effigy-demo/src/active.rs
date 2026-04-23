@@ -398,6 +398,9 @@ pub fn write_active_attempt_record(
 ) -> Result<(), DemoStateError> {
     let path = effective_active_attempt_path(repo_root, demo_id);
     if let Some(parent) = path.parent() {
+        effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| {
+            DemoStateError::new(failed_to_write_path(&repo_root.join(".gitignore"), error))
+        })?;
         fs::create_dir_all(parent)
             .map_err(|error| DemoStateError::new(failed_to_write_path(parent, error)))?;
     }

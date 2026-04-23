@@ -38,6 +38,7 @@ pub(super) fn build_task_command(
             args_rendered: &args_rendered,
             args_raw: &preflight.runtime_args_exec.passthrough,
             repo_root: &selection.catalog.catalog_root,
+            bundle_root: selection.catalog.bundle_root.as_deref(),
             catalogs: &preflight.catalogs,
             task_scope_cwd: &selection.catalog.catalog_root,
             runtime_env_schema_override,

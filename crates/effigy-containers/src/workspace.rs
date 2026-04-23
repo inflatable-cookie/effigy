@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
+use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_manifest::{
     ManifestContainerConfig, ManifestContainerServiceConfig, ManifestWorkspaceConfig,
 };
@@ -160,6 +161,10 @@ fn rewrite_workspace_mounts_for_direct_compose(
     normalize_runtime_rewrite_paths(&mut parsed, compose_dir);
 
     let rewrite_dir = repo_root.join(".effigy").join("runtime").join("compose");
+    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
+        path: repo_root.join(".gitignore"),
+        error,
+    })?;
     std::fs::create_dir_all(&rewrite_dir).map_err(|error| ContainerPolicyError::Read {
         path: rewrite_dir.clone(),
         error,

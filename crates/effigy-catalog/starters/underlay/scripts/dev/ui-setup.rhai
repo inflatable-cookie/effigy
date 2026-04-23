@@ -4,22 +4,15 @@
 // step. Runs before the app's dev server starts and ensures bun
 // dependencies are installed on a fingerprint-controlled basis.
 //
-// This is starter-owned helper glue, not Effigy runtime — adapt it for
-// your repo's frontend layout. The Effigy runtime already supplies
+// This is starter-owned helper glue, not Effigy runtime. It supports the
+// generic `app-*` layout and the Underlay reference `acme-*` layout. The
+// Effigy runtime already supplies
 // `run_process_stream`, `path_join`, `task_name`, and `repo_root` as
 // script bindings.
 //
 // Contract expected by the managed `dev` task:
 //   - `task_name` is the `name` field of the concurrent entry (e.g. "front").
 //   - On failure, throw; the runtime will surface that as a setup error.
-
-let target = if task_name == "front" {
-    "app-front"
-} else if task_name == "admin" {
-    "app-admin"
-} else {
-    throw `unsupported ui setup target '${task_name}'`;
-};
 
 let runtime_root = path_join(repo_root, ".effigy/runtime");
 
@@ -30,7 +23,7 @@ let shell_header = "set -eu\n"
     + "mkdir -p \"$runtime_root\"\n"
     + "stamp_root=\"$runtime_root/ui-hydration\"\n"
     + "mkdir -p \"$stamp_root\"\n"
-    + "target_package='" + target + "'\n"
+    + "setup_task_name='" + task_name + "'\n"
     + "\n"
     + "while ! mkdir \"$lock_dir\" 2>/dev/null; do\n"
     + "  sleep 0.2\n"
@@ -46,6 +39,7 @@ let shell_functions = "package_fingerprint() {\n"
     + "  dir=\"$1\"\n"
     + "  (\n"
     + "    cd \"$dir\"\n"
+    + "    printf 'platform %s %s\\n' \"$(uname -s)\" \"$(uname -m)\"\n"
     + "    if [ -f bun.lock ]; then\n"
     + "      cksum package.json bun.lock\n"
     + "    else\n"
@@ -84,16 +78,41 @@ let shell_functions = "package_fingerprint() {\n"
     + "}\n"
     + "\n";
 
-// Edit this block to match your repo's frontend layout. The Underlay
-// reference repo hydrates two sibling shared packages (`../underlay`,
-// `../poodle`), a shared in-repo package (`acme-client`), and the
-// per-tab target app.
-let shell_targets = "ensure_bun_install \"app-client\" \"app-client\"\n"
-    + "ensure_bun_install \"$target_package\" \"$target_package\"\n";
+let shell_layout_helpers = "ensure_bun_install_if_present() {\n"
+    + "  dir=\"$1\"\n"
+    + "  label=\"$2\"\n"
+    + "  if [ -f \"$dir/package.json\" ]; then\n"
+    + "    ensure_bun_install \"$dir\" \"$label\"\n"
+    + "  fi\n"
+    + "}\n"
+    + "\n"
+    + "ensure_first_bun_install() {\n"
+    + "  label=\"$1\"\n"
+    + "  shift\n"
+    + "  for dir in \"$@\"; do\n"
+    + "    if [ -f \"$dir/package.json\" ]; then\n"
+    + "      ensure_bun_install \"$dir\" \"$label\"\n"
+    + "      return 0\n"
+    + "    fi\n"
+    + "  done\n"
+    + "  printf '[warn] skipping %s; none of these package dirs exist: %s\\n' \"$label\" \"$*\"\n"
+    + "}\n"
+    + "\n";
 
-let shell = shell_header + shell_functions + shell_targets;
+let shell_targets = "ensure_bun_install_if_present \"../underlay\" \"underlay\"\n"
+    + "ensure_bun_install_if_present \"../poodle\" \"poodle\"\n"
+    + "ensure_bun_install_if_present \"app-client\" \"app-client\"\n"
+    + "ensure_bun_install_if_present \"acme-client\" \"acme-client\"\n"
+    + "\n"
+    + "case \"$setup_task_name\" in\n"
+    + "  front) ensure_first_bun_install \"front\" \"app-front\" \"acme-front\" \"front\" ;;\n"
+    + "  admin) ensure_first_bun_install \"admin\" \"app-admin\" \"acme-admin\" \"admin\" ;;\n"
+    + "  *) printf '[error] unsupported ui setup target %s\\n' \"$setup_task_name\"; exit 1 ;;\n"
+    + "esac\n";
+
+let shell = shell_header + shell_functions + shell_layout_helpers + shell_targets;
 
 let result = run_process_stream("sh", ["-lc", shell]);
 if !result["success"] {
-    throw `ui setup failed for ${target}`;
+    throw `ui setup failed for ${task_name}`;
 }

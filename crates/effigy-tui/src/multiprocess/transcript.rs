@@ -14,6 +14,7 @@ pub(super) fn export_active_process_transcript(state: &SessionState) -> io::Resu
         None => String::new(),
     };
     let export_dir = state.repo_root.join(".effigy/exports/managed-tui");
+    effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root(&state.repo_root)?;
     fs::create_dir_all(&export_dir)?;
     let export_path = export_dir.join(format!("{process}.log"));
     fs::write(&export_path, transcript)?;

@@ -1,5 +1,9 @@
 # 043 - Wrapper Channel Evaluation and Policy
 
+> Status: Archived
+> Superseded by: [`../041-distribution-ci-pinning-and-wrapper-migration.md`](../041-distribution-ci-pinning-and-wrapper-migration.md) and [`../042-homebrew-tap-and-release-automation.md`](../042-homebrew-tap-and-release-automation.md)
+> Kept for: historical record of the Phase E wrapper-channel decision
+
 This guide records the decision framework for npm/JS wrapper channels and defines strict delegation rules if a wrapper is retained.
 
 ## 1) Current Decision (Phase E Baseline)

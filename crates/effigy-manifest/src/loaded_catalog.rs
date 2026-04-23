@@ -39,6 +39,7 @@ pub struct LoadedCatalog {
     pub alias: String,
     pub catalog_root: PathBuf,
     pub manifest_path: PathBuf,
+    pub bundle_root: Option<PathBuf>,
     pub manifest: TaskManifest,
     pub defer_run: Option<String>,
     pub deferred_builtins: BTreeSet<String>,

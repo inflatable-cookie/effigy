@@ -424,6 +424,7 @@ pub enum ServiceSubcommand {
 pub enum BundleSubcommand {
     List,
     Inspect { bundle: String },
+    Export { bundle: String, path: PathBuf },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -117,7 +117,7 @@ Pull evidence from:
 - [`014-release-checklist-template.md`](./014-release-checklist-template.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`044-distribution-first-publish-execution-runbook.md`](./044-distribution-first-publish-execution-runbook.md)
-- [`053-release-wrapper-retirement-record-template.md`](./053-release-wrapper-retirement-record-template.md)
+- [`archive/053-release-wrapper-retirement-record-template.md`](./archive/053-release-wrapper-retirement-record-template.md)
 - workflow runs and published release artifacts
 
 ## Related Guides
@@ -126,7 +126,7 @@ Pull evidence from:
 - [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
 - [`044-distribution-first-publish-execution-runbook.md`](./044-distribution-first-publish-execution-runbook.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
-- [`053-release-wrapper-retirement-record-template.md`](./053-release-wrapper-retirement-record-template.md)
+- [`archive/053-release-wrapper-retirement-record-template.md`](./archive/053-release-wrapper-retirement-record-template.md)
 
 ## Next Step
 

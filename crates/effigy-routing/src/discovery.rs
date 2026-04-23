@@ -3,8 +3,8 @@ use std::fs::{self, FileType};
 use std::path::{Path, PathBuf};
 
 use super::error::RoutingError;
-use super::manifest_load::{load_task_manifest, TASK_MANIFEST_FILE};
-use effigy_manifest::{LoadedCatalog, TaskManifest};
+use super::manifest_load::TASK_MANIFEST_FILE;
+use effigy_manifest::{load_task_manifest_with_inspection, LoadedCatalog};
 
 pub fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalog>, RoutingError> {
     let manifest_paths = discover_manifest_paths(workspace_root)?;
@@ -18,7 +18,10 @@ pub fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalog>, Ro
     let mut alias_map: HashMap<String, PathBuf> = HashMap::new();
 
     for manifest_path in manifest_paths {
-        let manifest = load_catalog_manifest(&manifest_path)?;
+        let loaded =
+            load_task_manifest_with_inspection(&manifest_path).map_err(RoutingError::from)?;
+        let bundle_root = loaded.bundle_root;
+        let manifest = loaded.manifest;
 
         let catalog_root = manifest_path
             .parent()
@@ -43,6 +46,7 @@ pub fn discover_catalogs(workspace_root: &Path) -> Result<Vec<LoadedCatalog>, Ro
             depth: catalog_depth(workspace_root, &catalog_root),
             catalog_root,
             manifest_path,
+            bundle_root,
             defer_run: manifest.defer.as_ref().map(|defer| defer.run.clone()),
             deferred_builtins: manifest
                 .defer
@@ -128,10 +132,6 @@ pub fn default_alias(catalog_root: &Path, workspace_root: &Path) -> String {
         .and_then(|n| n.to_str())
         .map(|v| v.to_owned())
         .unwrap_or_else(|| "catalog".to_owned())
-}
-
-fn load_catalog_manifest(manifest_path: &Path) -> Result<TaskManifest, RoutingError> {
-    load_task_manifest(manifest_path)
 }
 
 fn catalog_depth(workspace_root: &Path, catalog_root: &Path) -> usize {

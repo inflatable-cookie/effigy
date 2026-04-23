@@ -101,6 +101,7 @@ fn resolve_process_setup<'a>(
         task.env_file.as_ref(),
         &catalog.manifest.env,
         &catalog.catalog_root,
+        catalog.bundle_root.as_deref(),
         catalogs,
         process_cwd,
         None,

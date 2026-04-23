@@ -35,7 +35,10 @@ Use **Archive** placement when:
 - content exists only for historical traceability
 
 Current practice:
-- legacy navigation map `028-docs-flow-map.md` is supplemental, not primary onboarding.
+- archived guides live in `docs/guides/archive/` with a short index at
+  `docs/guides/archive/README.md`
+- the hub README's `Archive` section lists inbound links one layer deep so old
+  references still resolve without cluttering primary onboarding
 
 ## 4) Entry-Point Rules
 
@@ -99,8 +102,9 @@ Maintain a lightweight archive list in one place (recommended: `docs/guides/READ
 
 ## Related Guides
 
-- [`031-docs-navigation-cleanup.md`](./031-docs-navigation-cleanup.md)
-- [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md)
+- [`archive/README.md`](./archive/README.md)
+- [`archive/031-docs-navigation-cleanup.md`](./archive/031-docs-navigation-cleanup.md)
+- [`archive/032-docs-consistency-sweep-and-changelog.md`](./archive/032-docs-consistency-sweep-and-changelog.md)
 - [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
 - [`039-docs-drift-monitoring.md`](./039-docs-drift-monitoring.md)
 

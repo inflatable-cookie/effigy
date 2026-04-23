@@ -1,0 +1,33 @@
+services:
+  {{ service_name }}:
+    image: sosedoff/pgweb:{{ version }}
+{% set database_service = services[database_host] %}
+{% set resolved_database = database %}
+{% if database == "postgres" and database_service and database_service.params.database %}
+{% set resolved_database = database_service.params.database %}
+{% endif %}
+{% set resolved_password = database_password %}
+{% if not database_password and database_service and database_service.params.password %}
+{% set resolved_password = database_service.params.password %}
+{% endif %}
+    command:
+      - "--bind=0.0.0.0"
+      - "--listen=8081"
+      - "--url=postgres://{{ database_user }}:{{ resolved_password }}@{{ database_host }}:{{ database_port }}/{{ resolved_database }}?sslmode=disable"
+{% if services[database_host] %}
+    depends_on:
+      {{ services[database_host].name }}:
+        condition: service_started
+{% elif services.postgres %}
+    depends_on:
+      {{ services.postgres.name }}:
+        condition: service_started
+{% endif %}
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8081/"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s

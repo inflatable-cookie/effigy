@@ -1,6 +1,12 @@
 # 028 - Docs Flow Map
 
-This page provides one linear docs route for each common goal so readers can move through Effigy docs without guessing what to read next.
+> Status: Archived
+> Superseded by: [`../README.md`](../README.md) "By Goal" section
+> Kept for: historical context and inbound link preservation
+
+This page previously provided one linear docs route for each common goal. The
+hub README now owns goal-driven navigation directly, so this flow map is no
+longer maintained as primary content.
 
 ## 1) Operator Flow
 

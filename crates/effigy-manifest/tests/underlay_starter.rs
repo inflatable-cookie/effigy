@@ -6,8 +6,9 @@
 //! test verifies that the composed manifest:
 //!
 //! - parses cleanly via `[manifest].include`
-//! - yields the expected `systems.dev` + `containers.stack` shape
-//! - declares the four catalog-sourced services (workspace + postgres +
+//! - resolves the shipped `underlay` bundle into the expected
+//!   `systems.dev` + `containers.stack` shape
+//! - declares the catalog-sourced services (workspace + postgres + pgweb +
 //!   mailpit + minio)
 //! - wires the managed `dev` task with the `lifecycle` + `shell` roles
 //!   Effigy's dev runtime expects
@@ -15,7 +16,6 @@
 
 use std::path::{Path, PathBuf};
 
-use effigy_manifest::config_sections::ManifestJsPackageManager;
 use effigy_manifest::{load_task_manifest, ManifestWorkspaceContainerRef};
 
 fn starter_dir() -> PathBuf {
@@ -56,15 +56,12 @@ fn load_starter_manifest() -> (tempfile::TempDir, effigy_manifest::TaskManifest)
 fn starter_composes_into_single_manifest() {
     let (_tmp, manifest) = load_starter_manifest();
 
+    let bundle = manifest.bundle.expect("starter root carries [bundle]");
+    assert_eq!(bundle.base.as_deref(), Some("underlay"));
+
     // Catalog alias is declared in the root.
     let catalog = manifest.catalog.expect("starter root carries [catalog]");
     assert_eq!(catalog.alias.as_deref(), Some("underlay-app"));
-
-    // `[package_manager]` from root.
-    let pm = manifest
-        .package_manager
-        .expect("starter declares package_manager");
-    assert_eq!(pm.js, Some(ManifestJsPackageManager::Bun));
 
     // `[bootstrap]` merged in from effigy.bootstrap.toml.
     let bootstrap = manifest
@@ -91,6 +88,7 @@ fn starter_declares_dev_system_bound_to_stack_container() {
     );
     assert_eq!(dev.user.as_deref(), Some("dev"));
     assert_eq!(dev.home.as_deref(), Some("/home/dev"));
+    assert!(dev.mounts.is_empty(), "starter root defaults mounts to []");
 
     match dev
         .container
@@ -136,6 +134,7 @@ fn starter_generates_services_via_bundled_catalog() {
     let expected: &[(&str, &str)] = &[
         ("workspace", "workspace-rust-bun"),
         ("postgres", "postgres"),
+        ("pgweb", "pgweb"),
         ("mailpit", "mailpit"),
         ("minio", "minio"),
     ];
@@ -176,6 +175,7 @@ fn starter_generates_services_via_bundled_catalog() {
         "app.test",
         "admin.app.test",
         "api.app.test",
+        "pgweb.app.test",
         "mailpit.app.test",
         "minio.app.test",
     ] {
@@ -184,6 +184,11 @@ fn starter_generates_services_via_bundled_catalog() {
             "starter DNS routes should publish `{expected}`; got {domains:?}"
         );
     }
+
+    let published_ports: Vec<u16> = dns.routes.iter().filter_map(|route| route.port).collect();
+    assert!(published_ports.contains(&41001));
+    assert!(published_ports.contains(&41002));
+    assert!(published_ports.contains(&41003));
 }
 
 #[test]

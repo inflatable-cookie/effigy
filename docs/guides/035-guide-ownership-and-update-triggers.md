@@ -92,7 +92,7 @@ effigy docs check-links README.md $(find docs -name '*.md' | sort)
 
 - [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
 - [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
-- [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md)
+- [`archive/032-docs-consistency-sweep-and-changelog.md`](./archive/032-docs-consistency-sweep-and-changelog.md)
 
 ## Next Step
 

@@ -1,5 +1,9 @@
 # 031 - Docs Navigation Cleanup
 
+> Status: Archived
+> Superseded by: no direct replacement; historical change record
+> Kept for: traceability of the March 2026 navigation normalization
+
 This note documents the docs navigation normalization completed in March 2026.
 
 ## What Changed

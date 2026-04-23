@@ -76,10 +76,10 @@ Primary docs entry points:
 | --- | --- | --- | --- |
 | `027` Copy/paste snippets | quick bootstrap fragments | Operator, Contributor | recommended starter patterns change |
 | `028` Migration quick paths | scenario-based migration paths | Operator, Maintainer | migration strategy changes |
-| `031` Docs navigation cleanup | navigation cleanup rules | Maintainer | IA normalization rules change |
-| `032` Docs consistency sweep and changelog | prior docs sweep record | Maintainer | another broad docs sweep lands |
+| `archive/031` Docs navigation cleanup | historical navigation cleanup record | Maintainer | no longer actively maintained |
+| `archive/032` Docs consistency sweep and changelog | historical docs sweep record | Maintainer | no longer actively maintained |
 | `038` Docs IA snapshot | current IA summary | Maintainer, Contributor | primary docs structure changes |
-| `028-docs-flow-map` | legacy navigation reference | Maintainer | only when legacy routing notes need refresh |
+| `archive/028-docs-flow-map` | archived linear-flow navigation map | Maintainer | hub README now owns goal-driven navigation directly |
 
 ## How To Use This Snapshot
 
@@ -97,9 +97,9 @@ Primary docs entry points:
 - `055-everyday-workflows.md` is now part of the main operator path and should
   be kept in sync with any major workflow simplifications or new friction
   points.
-- `028` still intentionally has two guides:
-  - `028-migration-quick-paths.md` as the active path
-  - `028-docs-flow-map.md` as supplemental legacy navigation
+- `028-migration-quick-paths.md` is the sole active guide under number 028.
+  The earlier `028-docs-flow-map.md` duplicated the hub README's goal-driven
+  navigation and now lives in `archive/` per policy 040.
 
 ## Expected Outcome
 
@@ -109,8 +109,8 @@ Primary docs entry points:
 
 ## Related Guides
 
-- [`031-docs-navigation-cleanup.md`](./031-docs-navigation-cleanup.md)
-- [`032-docs-consistency-sweep-and-changelog.md`](./032-docs-consistency-sweep-and-changelog.md)
+- [`archive/031-docs-navigation-cleanup.md`](./archive/031-docs-navigation-cleanup.md)
+- [`archive/032-docs-consistency-sweep-and-changelog.md`](./archive/032-docs-consistency-sweep-and-changelog.md)
 - [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
 - [`037-documentation-contribution-playbook.md`](./037-documentation-contribution-playbook.md)
 

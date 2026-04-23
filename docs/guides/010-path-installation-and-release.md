@@ -64,11 +64,14 @@ linking the real commands.
 
 ## 3) Fallback Strategy
 
-Keep `bun effigy ...` wrapper scripts as compatibility fallback while teams migrate to PATH-first usage.
+Keep `bun effigy ...` wrapper scripts only as a temporary compatibility
+fallback while teams migrate to PATH-first usage. Do not replace them with
+`package.json` scripts that re-export Effigy tasks.
 
 Recommended policy:
 - primary: direct `effigy ...`
-- fallback: `bun effigy ...` wrapper (cargo-run)
+- fallback: temporary `bun effigy ...` wrapper (cargo-run), not package-script
+  shims
 - migration runbook: [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
 
 ## 4) Versioning

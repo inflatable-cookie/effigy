@@ -171,6 +171,10 @@ fn render_suite_lifecycle_sequence(
         task_env_file,
         env_profiles,
         target_root,
+        catalogs
+            .iter()
+            .find(|catalog| catalog.catalog_root == target_root)
+            .and_then(|catalog| catalog.bundle_root.as_deref()),
         catalogs,
         target_root,
         None,

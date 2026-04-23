@@ -23,7 +23,52 @@ During v0.x, MINOR bumps may include breaking changes.
   `.effigy/runtime/compose` by default; only user-owned direct-compose output
   remains under `infra/dev` after an explicit eject.
 
+### Changed
+- Derive the managed lifecycle ready banner from configured container DNS
+  routes when a task does not set `ready_message`, so bundle-backed dev tasks
+  surface their gateway URLs without hand-maintained manifest strings. The
+  lifecycle tab also lists the effective DNS routes and service aliases.
+- Add `effigy bundle export <name> --path <dir>` so teams can write a
+  compiled-in shipped bundle to a local `base_path` bundle directory and then
+  own local modifications explicitly.
+- Refresh the guides hub (`docs/guides/README.md`) and primary surface-area
+  guides (012, 017, 022, 025, 026, 062, 063, 064, 065) to document the
+  shipped v0.3+ surface: flattened `[systems.<name>]` substrate config,
+  flattened managed dev-task fields (`container_lifecycle`, `gateway`,
+  `health_wait`, `ready_message`), the generated-compose runtime location
+  (`.effigy/runtime/compose/`), TCP DNS aliases + loopback IP allocation,
+  the reshaped `effigy.init.v1` / `effigy.init.list.v1` JSON payloads,
+  and the full `effigy system`, `effigy workspace`, and `effigy bundle`
+  command surfaces.
+- Archive five superseded guides under `docs/guides/archive/` with
+  deprecation markers pointing to their replacements: `028-docs-flow-map`,
+  `031-docs-navigation-cleanup`, `032-docs-consistency-sweep-and-changelog`,
+  `043-wrapper-channel-evaluation-and-policy`, and
+  `053-release-wrapper-retirement-record-template`. Inbound references
+  from active guides have been redirected through `archive/`.
+
 ### Added
+- Add `docs/guides/067-catalog-services-reference.md` covering the full
+  shipped catalog service surface (postgres, pgweb, mariadb, redis, memcached,
+  mailpit, minio, elasticsearch, phpmyadmin, nginx, php-fpm,
+  workspace-rust-bun) with default images, configurable inputs, exposed
+  ports, volumes, healthchecks, and gateway eligibility per service.
+- Extend `docs/guides/065-underlay-starter.md` with a full Decodelabs
+  bundle reference (PHP-FPM + nginx + MariaDB + phpMyAdmin + Memcached +
+  Redis stack) so consumer PHP-native repos can adopt `base = "decodelabs"`
+  from one guide without inspecting the bundle source.
+- Add a bounded host-side TCP alias fallback for DNS-only service routes on
+  the macOS Colima/nerdctl path: generated compose now keeps a dynamic runtime
+  host binding for shipped TCP alias services, container route registration
+  persists `tcp_port`/`tcp_target` metadata for DNS-only aliases, and the
+  host gateway daemon now owns `127.1.x.x:<service-port>` listeners that
+  forward to the runtime-discovered host port. This makes aliases such as
+  `db.<app>.test:5432`, `smtp.<app>.test:1025`, and `s3.<app>.test:9000`
+  reachable on the real bounded runtime path instead of only resolving in DNS.
+  Multi-label hosts now keep their full alias domain shape
+  (`db.contact-patch.legacy.test`, not `db.legacy.test`), and gateway
+  registration prunes stale container routes for the same project before
+  writing the current route set.
 - Acknowledge Ctrl+C during `effigy container up` across both attached and
   detached bring-up: SIGINT/SIGTERM now surfaces a visible
   `[info] shutdown requested; stopping container cleanly...` line, and the
@@ -54,12 +99,30 @@ During v0.x, MINOR bumps may include breaking changes.
   `decodelabs` resolver. Bundle defaults are applied after manifest
   composition as lowest-precedence config, so repo-owned `effigy.toml`
   blocks can override the resolved bundle shape directly without a second
-  indirection layer.
+  indirection layer. The canonical selector key is `[bundle].base`; legacy
+  `[bundle].name` remains accepted as a compatibility alias.
+- Add `[bundle].base_path` for repo-local bundle directories. A local bundle
+  carries `bundle.toml` metadata plus a templated `effigy.toml` defaults file,
+  validates declared inputs, and merges rendered defaults with the same
+  lowest-precedence behavior as shipped bundles. Local bundle templates can
+  reference bundled scripts and assets with `{{ bundle.root }}` so those files
+  stay in the bundle source instead of being copied into each consumer repo.
+  Shipped bundles materialize embedded assets under
+  `.effigy/runtime/bundles/<bundle>/<hash>/`, and repo-owned run steps can
+  reference the active bundle root with the same `{{ bundle.root }}` token.
 - Add `effigy bundle list` and `effigy bundle inspect <name>` so users can
   discover shipped bundles and inspect both the accepted `[bundle]` input
   schema and the manifest paths each bundle injects by default, and expose the
   same bundle schema surface through `effigy config --schema --target bundle`
   with optional `--bundle <name>` detail.
+- Add a bundled `underlay` manifest preset beside `decodelabs`. It owns the
+  stable Underlay system/container shape: `package_manager.js = "bun"`,
+  `systems.dev`, the `workspace-rust-bun` workspace service, bundled
+  postgres/pgweb/mailpit/minio services, gateway app routes, and the current
+  loopback-alias surface (`db.<host>`, `smtp.<host>`, `s3.<host>`). The
+  `underlay` starter now emits a bundle-backed root manifest instead of a
+  separate `effigy.system.toml`, so the starter, the config docs, and the
+  `underlay-reference` example all point at one canonical shape.
 - Register the `northstar` starter with `effigy init`: `effigy init northstar`
   now emits the single-repo Northstar + Effigy consumer contract (root
   `effigy.toml` with a starter `[docs_policy]` block and `qa` / `qa:docs` /
@@ -70,12 +133,13 @@ During v0.x, MINOR bumps may include breaking changes.
   edit checklist. Lands as a pure content starter on top of the unified
   `effigy init <name>` loader — no command work was required.
 - Register the `underlay` starter with `effigy init`: `effigy init underlay`
-  now emits the five-file Underlay manifest shape (root `effigy.toml`,
-  `effigy.system.toml`, `effigy.bootstrap.toml`, `effigy.tasks.toml`, and
-  `scripts/dev/ui-setup.rhai`) and prints a post-emission edit checklist.
+  now emits the three-file Underlay manifest shape (root `effigy.toml`,
+  `effigy.bootstrap.toml`, and `effigy.tasks.toml`) and prints a
+  post-emission edit checklist. The default UI setup helper stays in the
+  shipped bundle and is referenced with `{{ bundle.root }}` instead of being
+  copied into each consumer repo.
   Multi-file starters share one pre-scan: any existing target refuses the
-  run without `--force`, every conflict is listed, and nested parent
-  directories (e.g. `scripts/dev/`) are created automatically.
+  run without `--force`, and every conflict is listed.
   `--dry-run` emits each file under a `=== <target> ===` header; `--json`
   surfaces per-file records plus the starter's guidance string.
 - Extend `effigy init` into a named-starter surface: accept a positional
@@ -94,8 +158,7 @@ During v0.x, MINOR bumps may include breaking changes.
   = "workspace-rust-bun"` instead.
 - Ship an Underlay starter fragment set under
   `crates/effigy-catalog/starters/underlay/` (root `effigy.toml`,
-  `effigy.system.toml`, `effigy.bootstrap.toml`, `effigy.tasks.toml`,
-  `scripts/dev/ui-setup.rhai`, plus a README) packaging the reusable
+  `effigy.bootstrap.toml`, `effigy.tasks.toml`, plus a README) packaging the reusable
   Underlay shape on top of `systems` / `workspaces` / generated services /
   managed `dev`, with a composition proof test under
   `crates/effigy-manifest/tests/underlay_starter.rs` and an adoption guide at

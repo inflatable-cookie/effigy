@@ -33,6 +33,12 @@ pub struct RouteRegistration {
     /// Optional DNS IP override for this route.
     pub dns_ip: Option<Ipv4Addr>,
 
+    /// Optional TCP bind port for a DNS-only service alias listener.
+    pub tcp_port: Option<u16>,
+
+    /// Optional upstream target for a DNS-only service alias listener.
+    pub tcp_target: Option<String>,
+
     /// Whether TLS is enabled for this route.
     pub tls: bool,
 
@@ -57,6 +63,8 @@ pub fn register_route(
         domain: registration.domain.clone(),
         target: registration.target.clone(),
         dns_ip: registration.dns_ip,
+        tcp_port: registration.tcp_port,
+        tcp_target: registration.tcp_target.clone(),
         source: registration.source,
         project: registration.project_path.clone(),
         tls: registration.tls,
@@ -131,6 +139,8 @@ pub fn build_registration(
         domain: domain.to_string(),
         target: Some(format!("127.0.0.1:{port}")),
         dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
         tls,
         project_path: project_path.to_string(),
         source: RouteSource::Container,

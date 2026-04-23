@@ -259,6 +259,57 @@ routes = [{ domain = "project.test" }]
     .expect("write docker compose");
 }
 
+fn setup_managed_stream_gateway_without_ready_message(root: &Path) {
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+workspace = "app"
+container_lifecycle = true
+gateway = true
+health_wait = true
+concurrent = [
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 2, tab = 2, shutdown_on_exit = true }
+]
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+working_dir = "/workspace"
+container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+
+[containers.web.host]
+ports = ["8080:80"]
+
+[containers.web.dns]
+routes = [
+  { domain = "project.test" },
+  { domain = "admin.project.test", tls = true }
+]
+"#,
+    );
+    fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
+}
+
 fn setup_managed_stream_container_routed_task_ref(root: &Path) {
     write_root_manifest(
         root,
@@ -664,6 +715,31 @@ fn run_manifest_task_managed_stream_auto_starts_gateway_before_runtime() {
     let log = fs::read_to_string(&log_path).expect("read fake effigy log");
     assert!(log.contains("gateway-up"), "log: {log}");
     assert!(log.contains("up:web"), "log: {log}");
+}
+
+#[test]
+fn run_manifest_task_managed_stream_derives_ready_message_from_dns_routes() {
+    let _guard = lock_test();
+    let _env = managed_stream_env();
+    let root =
+        crate::runner::tests::prelude::temp_workspace("managed-stream-gateway-route-summary");
+    setup_managed_stream_gateway_without_ready_message(&root);
+    let _runtime = write_fake_container_runtime(&root);
+    let fake_effigy = write_fake_effigy(&root);
+    let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
+
+    let out =
+        crate::runner::tests::prelude::run_dev(&root, &[]).expect("managed run should succeed");
+    assert!(
+        out.contains("managed ready: routes: http://project.test | https://admin.project.test"),
+        "got: {out}"
+    );
+    assert!(out.contains("dns_routes:"), "got: {out}");
+    assert!(out.contains("  - http://project.test -> app"), "got: {out}");
+    assert!(
+        out.contains("  - https://admin.project.test -> app"),
+        "got: {out}"
+    );
 }
 
 #[test]

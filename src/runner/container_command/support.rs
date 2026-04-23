@@ -4,13 +4,15 @@ use std::process::Output;
 
 use effigy_catalog::volumes::{reset_commands, DockerCommand, VolumeClassification};
 use effigy_containers::{
-    compose::{resolve_compose_backend, ComposeBackend},
+    compose::{compose_args, resolve_compose_backend, ComposeBackend},
     exec::{
-        list_running_compose_containers_for_profile, ContainerExecError, RunningComposeContainer,
+        list_running_compose_containers_for_profile, run_docker_capture, ContainerExecError,
+        RunningComposeContainer,
     },
     health::wait_for_ready,
     EffectiveContainerPolicy,
 };
+use effigy_core::shell::shell_quote;
 use serde_json::json;
 
 use super::gateway_registration::RegisteredGatewayRoute;
@@ -180,6 +182,94 @@ pub(super) fn annotate_registered_gateway_routes(
     }
 }
 
+pub(super) fn install_primary_service_tcp_alias_hosts(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    routes: &[RegisteredGatewayRoute],
+) -> Result<Vec<String>, RunnerError> {
+    let pairs = tcp_alias_host_pairs(routes);
+    if pairs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let script = render_tcp_alias_hosts_script(&pairs);
+    let tail = vec![
+        "exec",
+        "-T",
+        "--user",
+        "root",
+        policy.primary_service.as_str(),
+        "sh",
+        "-lc",
+        script.as_str(),
+    ];
+    run_docker_capture(
+        repo_root,
+        policy,
+        &compose_args(policy, tail),
+        "docker compose exec tcp alias hosts",
+    )
+    .map_err(RunnerError::from)?;
+
+    Ok(pairs
+        .into_iter()
+        .map(|(domain, service)| format!("{domain} -> {service}"))
+        .collect())
+}
+
+fn tcp_alias_host_pairs(routes: &[RegisteredGatewayRoute]) -> Vec<(String, String)> {
+    let mut pairs = std::collections::BTreeSet::new();
+    for route in routes {
+        let Some(service) = route.service.as_deref() else {
+            continue;
+        };
+        if route.tcp_port.is_none() {
+            continue;
+        }
+        pairs.insert((route.domain.clone(), service.to_owned()));
+    }
+    pairs.into_iter().collect()
+}
+
+fn render_tcp_alias_hosts_script(pairs: &[(String, String)]) -> String {
+    let mut script = String::from(
+        r#"set -eu
+patch_alias() {
+  alias="$1"
+  service="$2"
+  ip="$(getent hosts "$service" | awk 'NR == 1 { print $1 }')"
+  if [ -z "$ip" ]; then
+    printf '[effigy] could not resolve service `%s` for alias `%s`\n' "$service" "$alias" >&2
+    exit 1
+  fi
+  tmp="$(mktemp)"
+  awk -v alias="$alias" '{
+    keep=1
+    for (i = 2; i <= NF; i++) {
+      if ($i == alias) {
+        keep=0
+      }
+    }
+    if (keep) {
+      print
+    }
+  }' /etc/hosts > "$tmp"
+  cat "$tmp" > /etc/hosts
+  rm -f "$tmp"
+  printf '%s %s\n' "$ip" "$alias" >> /etc/hosts
+}
+"#,
+    );
+    for (domain, service) in pairs {
+        script.push_str("patch_alias ");
+        script.push_str(&shell_quote(domain));
+        script.push(' ');
+        script.push_str(&shell_quote(service));
+        script.push('\n');
+    }
+    script
+}
+
 pub(super) fn annotate_removed_gateway_routes(
     report: &mut effigy_containers::ContainerCommandReport,
     domains: &[String],
@@ -261,6 +351,30 @@ pub(super) fn annotate_shared_service_notes(
         report
             .success_text
             .push_str(&format!("[shared] ensured {note}"));
+    }
+}
+
+pub(super) fn annotate_tcp_alias_host_notes(
+    report: &mut effigy_containers::ContainerCommandReport,
+    notes: &[String],
+) {
+    if notes.is_empty() {
+        return;
+    }
+    if let Some(json_object) = report.json.as_object_mut() {
+        json_object.insert(
+            "tcp_alias_hosts".to_owned(),
+            json!({
+                "action": "installed",
+                "aliases": notes,
+            }),
+        );
+    }
+    for note in notes {
+        report.success_text.push('\n');
+        report
+            .success_text
+            .push_str(&format!("[gateway] installed container TCP alias {note}"));
     }
 }
 
@@ -424,7 +538,10 @@ fn format_args(args: &[OsString]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{exec_error_means_runtime_not_running, running_container_runtime_mismatch};
+    use super::{
+        exec_error_means_runtime_not_running, render_tcp_alias_hosts_script,
+        running_container_runtime_mismatch, tcp_alias_host_pairs,
+    };
     use effigy_containers::{
         exec::{ContainerExecError, RunningComposeContainer},
         EffectiveComposeSource, EffectiveContainerPolicy,
@@ -520,5 +637,44 @@ mod tests {
 
         assert!(exec_error_means_runtime_not_running(&colima_stopped));
         assert!(exec_error_means_runtime_not_running(&docker_stopped));
+    }
+
+    #[test]
+    fn tcp_alias_host_pairs_use_gateway_tcp_routes_only() {
+        let routes = vec![
+            super::RegisteredGatewayRoute {
+                domain: "api.demo.test".to_owned(),
+                target: Some("127.0.0.1:19900".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                tls: false,
+                service: Some("workspace".to_owned()),
+            },
+            super::RegisteredGatewayRoute {
+                domain: "db.demo.test".to_owned(),
+                target: None,
+                dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+                tcp_port: Some(5432),
+                tcp_target: Some("127.0.0.1:19932".to_owned()),
+                tls: false,
+                service: Some("postgres".to_owned()),
+            },
+        ];
+
+        assert_eq!(
+            tcp_alias_host_pairs(&routes),
+            vec![("db.demo.test".to_owned(), "postgres".to_owned())]
+        );
+    }
+
+    #[test]
+    fn tcp_alias_hosts_script_rewrites_existing_alias_entries() {
+        let script =
+            render_tcp_alias_hosts_script(&[("db.demo.test".to_owned(), "postgres".to_owned())]);
+
+        assert!(script.contains("patch_alias 'db.demo.test' 'postgres'"));
+        assert!(script.contains("awk -v alias=\"$alias\""));
+        assert!(script.contains("printf '%s %s\\n' \"$ip\" \"$alias\" >> /etc/hosts"));
     }
 }

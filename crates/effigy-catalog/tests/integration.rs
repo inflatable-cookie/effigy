@@ -31,6 +31,7 @@ fn list_bundled_fragments() {
         names.contains(&"phpmyadmin"),
         "missing phpmyadmin: {names:?}"
     );
+    assert!(names.contains(&"pgweb"), "missing pgweb: {names:?}");
     assert!(names.contains(&"minio"), "missing minio: {names:?}");
     assert!(
         names.contains(&"elasticsearch"),
@@ -1690,6 +1691,64 @@ fn phpmyadmin_inherits_mariadb_root_password() {
 }
 
 #[test]
+fn pgweb_fragment_assembles_for_postgres() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![
+        ServiceDeclaration {
+            name: "postgres".to_string(),
+            catalog: "postgres".to_string(),
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "database".to_string(),
+                    toml::Value::String("acme".to_string()),
+                );
+                p.insert(
+                    "password".to_string(),
+                    toml::Value::String("postgres".to_string()),
+                );
+                p
+            },
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
+            name: "pgweb".to_string(),
+            catalog: "pgweb".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+    ];
+
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let pgweb = validate_service(&doc, "pgweb");
+
+    let image = pgweb.get("image").unwrap().as_str().unwrap();
+    assert!(image.contains("pgweb"), "image should be pgweb: {image}");
+    assert!(
+        result
+            .compose_yaml
+            .contains("postgres://postgres:postgres@postgres:5432/acme?sslmode=disable"),
+        "pgweb should inherit the postgres database and password:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        pgweb.get("depends_on").is_some(),
+        "pgweb should depend on postgres"
+    );
+    assert!(
+        pgweb.get("healthcheck").is_some(),
+        "pgweb should have a healthcheck"
+    );
+}
+
+#[test]
 fn minio_fragment_assembles_with_volume() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
@@ -2094,6 +2153,13 @@ fn underlay_style_stack_assembles_with_bundled_fragments_only() {
             config: None,
         },
         ServiceDeclaration {
+            name: "pgweb".to_string(),
+            catalog: "pgweb".to_string(),
+            params: HashMap::new(),
+            variant: None,
+            config: None,
+        },
+        ServiceDeclaration {
             name: "mailpit".to_string(),
             catalog: "mailpit".to_string(),
             params: HashMap::new(),
@@ -2121,7 +2187,7 @@ fn underlay_style_stack_assembles_with_bundled_fragments_only() {
         .unwrap();
     let doc = validate_compose_structure(&result.compose_yaml);
 
-    for name in &["workspace", "postgres", "mailpit", "minio"] {
+    for name in &["workspace", "postgres", "pgweb", "mailpit", "minio"] {
         validate_service(&doc, name);
     }
 
@@ -2147,15 +2213,22 @@ fn underlay_style_stack_assembles_with_bundled_fragments_only() {
         pg_env.get("POSTGRES_PASSWORD").unwrap().as_str().unwrap(),
         "postgres"
     );
+    assert!(
+        result
+            .compose_yaml
+            .contains("postgres://postgres:postgres@postgres:5432/acme?sslmode=disable"),
+        "pgweb should inherit the bundled postgres database and password:\n{}",
+        result.compose_yaml
+    );
 
-    // Persistent volumes expected: cargo-registry, cargo-git, postgres data,
-    // minio data. Mailpit has no persistent volume (matches mailpit fragment).
+    // Named volumes expected: cargo-registry, cargo-git, and minio data.
+    // Postgres persists through its repo-local bind mount; pgweb and mailpit
+    // have no persistent volume.
     let vol_names: std::collections::BTreeSet<&str> =
         result.volumes.iter().map(|v| v.name.as_str()).collect();
     for expected in &[
         "underlay-reference-dev-workspace-cargo-registry",
         "underlay-reference-dev-workspace-cargo-git",
-        "underlay-reference-dev-postgres-data",
         "underlay-reference-dev-minio-data",
     ] {
         assert!(

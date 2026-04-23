@@ -1,5 +1,5 @@
 use effigy_cli::{BundleArgs, BundleSubcommand};
-use effigy_manifest::{get_bundle, list_bundle_default_paths, list_bundles};
+use effigy_manifest::{export_bundle, get_bundle, list_bundle_default_paths, list_bundles};
 use serde_json::json;
 
 use super::error::RunnerError;
@@ -8,6 +8,9 @@ pub(super) fn run_bundle(args: BundleArgs) -> Result<String, RunnerError> {
     match args.subcommand {
         BundleSubcommand::List => run_bundle_list(args.output_json),
         BundleSubcommand::Inspect { bundle } => run_bundle_inspect(&bundle, args.output_json),
+        BundleSubcommand::Export { bundle, path } => {
+            run_bundle_export(&bundle, &path, args.output_json)
+        }
     }
 }
 
@@ -104,6 +107,40 @@ fn run_bundle_inspect(bundle_name: &str, output_json: bool) -> Result<String, Ru
     Ok(lines.join("\n"))
 }
 
+fn run_bundle_export(
+    bundle_name: &str,
+    path: &std::path::Path,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let export = export_bundle(bundle_name, path)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+
+    if output_json {
+        return Ok(json!({
+            "schema": "effigy.bundle.export.v1",
+            "schema_version": 1,
+            "ok": true,
+            "bundle": export.bundle,
+            "path": export.path,
+            "files": export.files,
+        })
+        .to_string());
+    }
+
+    let mut lines = vec![
+        format!(
+            "[bundle] exported `{}` to {}",
+            export.bundle,
+            export.path.display()
+        ),
+        "Use it from a manifest with `[bundle].base_path`.".to_owned(),
+        String::new(),
+        format!("Files ({})", export.files.len()),
+    ];
+    lines.extend(export.files.into_iter().map(|file| format!("- {file}")));
+    Ok(lines.join("\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +150,7 @@ mod tests {
         let rendered = run_bundle_list(false).expect("list");
         assert!(rendered.contains("[bundle]"));
         assert!(rendered.contains("decodelabs"));
+        assert!(rendered.contains("underlay"));
     }
 
     #[test]
@@ -122,5 +160,33 @@ mod tests {
         assert!(rendered.contains("host"));
         assert!(rendered.contains("Default Paths"));
         assert!(rendered.contains("containers.web.services.app.catalog"));
+    }
+
+    #[test]
+    fn bundle_inspect_reports_underlay_alias_surface() {
+        let rendered = run_bundle_inspect("underlay", false).expect("inspect");
+        assert!(rendered.contains("workspace_subdir"));
+        assert!(rendered.contains("containers.stack.services.postgres.catalog"));
+        assert!(rendered.contains("containers.stack.dns.routes"));
+    }
+
+    #[test]
+    fn bundle_export_writes_local_bundle_files() {
+        let tmp = std::env::temp_dir().join(format!(
+            "effigy-bundle-export-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let target = tmp.join("underlay");
+
+        let rendered = run_bundle_export("underlay", &target, false).expect("export");
+
+        assert!(rendered.contains("exported `underlay`"));
+        assert!(target.join("bundle.toml").exists());
+        assert!(target.join("effigy.toml").exists());
+        assert!(target.join("scripts/dev/ui-setup.rhai").exists());
+        let _ = std::fs::remove_dir_all(tmp);
     }
 }

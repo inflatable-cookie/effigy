@@ -143,6 +143,7 @@ fn render_selected_task_run<'a>(
             args_rendered,
             args_raw: &[],
             repo_root: &selection.catalog.catalog_root,
+            bundle_root: selection.catalog.bundle_root.as_deref(),
             catalogs,
             task_scope_cwd: &selection.catalog.catalog_root,
             runtime_env_schema_override,

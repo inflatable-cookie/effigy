@@ -33,6 +33,7 @@ pub mod resolver_setup;
 pub mod routes;
 pub mod server;
 pub mod stats;
+pub mod tcp_alias;
 pub mod tls;
 
 pub use error::GatewayError;

@@ -622,17 +622,13 @@ fn project_loopback_port_rules(
         .iter()
         .filter(|(_service_name, service)| !service.shared.unwrap_or(false))
         .filter_map(|(service_name, service)| {
-            service_alias_contract(&service.catalog).and_then(|(_label, container_port)| {
-                let keep_runtime_host_binding = matches!(
-                    service.catalog.as_str(),
-                    "mail" | "mailpit" | "minio" | "s3"
-                );
-                Some(LoopbackPortRule {
+            service_alias_contract(&service.catalog).map(|(_label, container_port)| {
+                LoopbackPortRule {
                     loopback_ip,
                     service_name: service_name.clone(),
                     container_port,
-                    keep_runtime_host_binding,
-                })
+                    keep_runtime_host_binding: true,
+                }
             })
         })
         .collect())

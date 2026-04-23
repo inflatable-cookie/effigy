@@ -25,6 +25,7 @@ use crate::error::GatewayError;
 use crate::proxy::{run_proxy_server, run_tls_proxy_server, ProxyConfig};
 use crate::routes::{LiveRouteTable, RouteTable};
 use crate::stats::GatewayStats;
+use crate::tcp_alias::run_tcp_alias_manager;
 use crate::tls::{
     server_config_from_resolver, sync_sni_resolver_from_dir, SniCertResolver, TlsConfig,
 };
@@ -264,6 +265,11 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
         shutdown_rx.clone(),
     ));
 
+    let tcp_alias_handle = tokio::spawn(run_tcp_alias_manager(
+        Arc::clone(&shared_table),
+        shutdown_rx.clone(),
+    ));
+
     // Optionally start the HTTPS proxy.
     let (_tls_watcher, tls_handle) =
         if let (Some(tls_addr), Some(tls_config)) = (config.proxy.tls_bind_addr, &config.tls) {
@@ -299,6 +305,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
     tokio::select! {
         result = dns_handle => handle_server_task_result(result, "DNS server")?,
         result = proxy_handle => handle_server_task_result(result, "proxy server")?,
+        result = tcp_alias_handle => handle_server_task_result(result, "TCP alias manager")?,
         result = async {
             if let Some(handle) = tls_handle {
                 handle.await

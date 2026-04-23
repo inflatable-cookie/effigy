@@ -291,7 +291,6 @@ mod tests {
         let targets: Vec<&str> = starter.files.iter().map(|f| f.target.as_str()).collect();
         for expected in [
             "effigy.toml",
-            "effigy.system.toml",
             "effigy.bootstrap.toml",
             "effigy.tasks.toml",
             "scripts/dev/ui-setup.rhai",
@@ -302,7 +301,7 @@ mod tests {
             );
         }
         let guidance = starter.guidance.expect("underlay ships guidance text");
-        assert!(guidance.contains("systems.dev.working_dir"));
+        assert!(guidance.contains("[bundle].host"));
     }
 
     #[test]

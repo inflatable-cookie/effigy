@@ -1,0 +1,43 @@
+[service]
+name = "pgweb"
+description = "pgweb browser UI for local PostgreSQL access"
+
+[params.version]
+type = "string"
+default = "latest"
+description = "pgweb image tag"
+
+[params.database_host]
+type = "string"
+default = "postgres"
+description = "Postgres service host name"
+
+[params.database_port]
+type = "integer"
+default = 5432
+description = "Postgres service port"
+
+[params.database]
+type = "string"
+default = "postgres"
+description = "Postgres database name"
+
+[params.database_user]
+type = "string"
+default = "postgres"
+description = "Postgres user"
+
+[params.database_password]
+type = "string"
+default = ""
+description = "Postgres password"
+
+[capabilities]
+exec_target = false
+
+[depends_on]
+optional = ["postgres"]
+
+[ports]
+default = [8081]
+description = "HTTP port"

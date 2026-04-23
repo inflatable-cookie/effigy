@@ -648,18 +648,52 @@ Read these fields first:
 }
 ```
 
-## 14) Init (`effigy.init.v1`)
+## 14) Init (`effigy.init.v1`, `effigy.init.list.v1`)
+
+`effigy init <name>` / `effigy init --dry-run` / `effigy init --force`:
 
 ```json
 {
   "schema": "effigy.init.v1",
   "schema_version": 1,
   "ok": true,
-  "path": "/workspace/app/effigy.toml",
+  "starter": "minimal",
   "dry_run": false,
   "written": true,
   "overwritten": false,
-  "content": "# Baseline effigy.toml scaffold (phase 1)\n\n[tasks]\nping = \"printf ok\"\n"
+  "files": [
+    {
+      "target": "effigy.toml",
+      "path": "/workspace/app/effigy.toml",
+      "contents": "# Baseline effigy.toml scaffold (phase 1)\n\n[tasks]\nping = \"printf ok\"\n",
+      "existed": false,
+      "written": true
+    }
+  ],
+  "guidance": null
+}
+```
+
+Notes:
+- starters may emit more than one file (for example `underlay` emits one
+  `effigy.toml` plus one starter-owned Rhai fragment); each file has its own
+  `target`/`path`/`contents`/`existed`/`written` entry
+- `guidance` carries optional post-emission text the starter wants operators
+  to see (for example environment variables to export or a follow-up command)
+- `dry_run: true` keeps `written: false` on every file entry; `--force` is
+  the only way to set `overwritten: true`
+
+`effigy init --list`:
+
+```json
+{
+  "schema": "effigy.init.list.v1",
+  "schema_version": 1,
+  "starters": [
+    { "name": "minimal", "description": "Minimal Effigy scaffold" },
+    { "name": "underlay", "description": "Underlay dev-contract starter" },
+    { "name": "northstar", "description": "Northstar-profile starter" }
+  ]
 }
 ```
 

@@ -101,6 +101,7 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.test.results.v1`
 - `effigy.watch.v1`
 - `effigy.init.v1`
+- `effigy.init.list.v1`
 - `effigy.migrate.v1`
 - `effigy.unlock.v1`
 - `effigy.completion.v1`

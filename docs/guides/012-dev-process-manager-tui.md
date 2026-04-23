@@ -227,15 +227,26 @@ concurrent = [
 For repos using the fuller shipped local-dev story, `effigy dev` sits at the
 end of this chain:
 
-1. `effigy service` for bundled service-fragment inspection or extraction
-2. `effigy container` for environment bring-up and data lifecycle
-3. `effigy gateway` for local domains and TLS-backed routes
-4. `effigy exec ...` for one ad-hoc command in the dev container
-5. repo-owned managed task such as `effigy dev` when the repo wants all of
+1. `effigy bundle list` / `effigy bundle inspect` to discover the shipped
+   top-level bundle(s) the repo wants to adopt
+2. `effigy service list` / `effigy service extract` for bundled service
+   fragments when the repo needs to take ownership of one
+3. `effigy system up` / `effigy system status` for substrate lifecycle when
+   the manifest declares `[systems.<name>]`; or `effigy container up` for
+   the `[containers.<name>]` shape without surrounding system wiring
+4. `effigy gateway up` / `effigy gateway status` for local domains and
+   TLS-backed routes (usually auto-started via `gateway = true` on the
+   managed task)
+5. `effigy workspace` for an interactive Linux-native maintenance shell
+   inside the resolved workspace service
+6. `effigy exec ...` for one ad-hoc command inside the dev container
+7. repo-owned managed task such as `effigy dev` when the repo wants all of
    that under one named session front door
 
 That means `effigy dev` should normally be the repo's opinionated aggregator,
-not the only way the substrate can be used.
+not the only way the substrate can be used. Use `effigy system` + `effigy
+workspace` when you want substrate access without launching the whole app
+concurrent; use `effigy dev` for daily runtime.
 
 ## 8) Environment Controls
 
@@ -270,6 +281,7 @@ not the only way the substrate can be used.
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`063-container-system-guide.md`](./063-container-system-guide.md)
+- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 

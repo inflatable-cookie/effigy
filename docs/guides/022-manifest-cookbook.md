@@ -343,12 +343,21 @@ Behavior:
 mode = "tui"
 lock = "dev-stack"
 fail_on_non_zero = true
+# optional managed bindings (flattened, no nested subtables):
+system = "dev"                   # pin this managed task to a declared system
+workspace = "main"               # pin to a specific workspace inside that system
+container_lifecycle = true       # ensure the declared system/containers come up
+gateway = true                   # auto-start the host gateway before the first tab
+health_wait = true               # wait for declared service health gates before ready
+ready_message = "dev up"         # line emitted once the stack is ready to use
 
 concurrent = [
-  { task = "app/api", start = 1, tab = 2 },
+  { role = "lifecycle", task = "app/api", start = 1, tab = 2 },
   { task = "app/worker", start = 2, tab = 3, start_after_ms = 1200 },
   { run = "bun run docs:dev", start = 3, tab = 1, shutdown_on_exit = true },
-  { task = "shell", start = 4, tab = 4 }
+  { role = "shell", service = "workspace", start = 4, tab = 4, setup = [
+    { run = "bun install" }
+  ] }
 ]
 
 [tasks.dev.profiles.admin]
@@ -366,6 +375,28 @@ Lifecycle controls:
   whole managed session when that process exits, even if it exits `0`.
 - Use `shutdown_on_exit` when one process is the natural root of the session,
   such as an Electron window, desktop shell, or primary app process.
+- `system` / `workspace` bind the managed task to a declared substrate from
+  `[systems.<name>]`; without them the task runs on the host.
+- `container_lifecycle = true` ensures the bound system and its declared
+  services are up before the first tab starts, and participates in teardown on
+  exit.
+- `gateway = true` starts (or confirms) the host-native gateway before managed
+  tabs start, so container-owned DNS and TLS routes resolve from tab one.
+- `health_wait = true` blocks the ready signal until declared service health
+  gates pass (see `[systems.<name>.services.<svc>.health]`).
+- `ready_message = "..."` is surfaced by the managed session once the ready
+  signal fires; keep it short and operator-visible.
+
+Concurrent-entry field reference:
+- `role = "lifecycle"` marks an entry whose exit status participates in the
+  managed session's overall lifecycle (non-zero exit fails the session).
+- `role = "shell"` opens an interactive workspace shell in that tab; pair with
+  `service = "<service-name>"` to select the workspace service (usually
+  `workspace` for the rust+bun developer surface).
+- `setup = [{ run = "..." } | { task = "..." } | { rhai = "..." }]` runs
+  ordered pre-steps inside that pane before the main `run`/`task` starts.
+- `name = "..."` / `label = "..."` set the machine-stable identifier and the
+  TUI-visible label; label defaults from `name` or the underlying task id.
 
 Electron-style example:
 
@@ -793,7 +824,61 @@ Behavior:
 - set `[test].cargo_env_match = "prefix-aware"` (default) to include wrapper/prefix forms like `env KEY=value cargo ...`
 - set `[test].cargo_env_match = "shell-aware"` to include shell-wrapped forms like `sh -lc 'cargo test --workspace'`
 
-## 15) Multi-Catalog Monorepo Baseline
+## 18b) Flattened `[systems.<name>]` Substrate
+
+```toml
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "main"
+working_dir = "/workspace"
+user = "dev"
+home = "/home/dev"
+mounts = ["{project}/.effigy/cache:/cache"]
+
+[systems.dev.workspaces.main]
+service = "workspace"
+working_dir = "/workspace"
+user = "dev"
+
+[systems.dev.services.workspace]
+image = "ghcr.io/inflatable-cookie/workspace-rust-bun:latest"
+# workspace role fields live directly here rather than under a nested managed table
+
+[systems.dev.services.postgres]
+catalog = "postgres"
+
+[systems.dev.services.postgres.health]
+tcp = 5432
+timeout_ms = 30000
+```
+
+Use this when one repo should declare a reproducible developer substrate (VM +
+compose + gateway + workspace shell) that `effigy system up`, `effigy workspace`,
+and managed `mode = "tui"` tasks can all bind to.
+
+Shape rules (current v0.3+ form):
+- `[systems.<name>]` is flattened; there is no nested `[systems.<name>.workspace_defaults]`
+  or managed subtable — workspace defaults live directly under the system.
+- `[systems.<name>.services.<svc>]` accepts either inline service definition
+  fields or `catalog = "<catalog-service-name>"` to reuse a shipped catalog
+  fragment (e.g. `postgres`, `redis`, `mariadb`, `workspace-rust-bun`).
+- `[systems.<name>.services.<svc>.health]` declares container health gates
+  (`tcp = <port>`, `http = "<url>"`, `exec = ["..."]`, `timeout_ms = <N>`,
+  `interval_ms = <N>`) used by `health_wait = true` and `effigy system status`.
+- `[systems.<name>.workspaces.<ws>]` picks which service hosts the interactive
+  workspace plus workspace-local overrides; defaults come from the system body.
+- generated compose now lives under `.effigy/runtime/compose/`; `infra/dev/` is
+  only used for user-owned ejected compose files (`effigy container <name> eject`).
+
+Typical commands:
+- `effigy system up` / `effigy system down` / `effigy system status`
+- `effigy system logs --follow`
+- `effigy system repair` or `effigy system reset-runtime` for recovery
+- `effigy workspace` to open the resolved workspace shell after system is up
+
+## 19) Multi-Catalog Monorepo Baseline
 
 Root `effigy.toml`:
 
@@ -851,7 +936,10 @@ Use catalog aliases to keep task ownership local while retaining root-level orch
 - [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
 - [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
+- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
+- [`063-container-system-guide.md`](./063-container-system-guide.md)
+- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
 
 ## Expected Outcome
 

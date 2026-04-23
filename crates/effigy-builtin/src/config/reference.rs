@@ -22,11 +22,15 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy bundle list` to discover shipped `[bundle]` presets and `effigy bundle inspect <name>` to inspect one bundle's accepted inputs plus default manifest paths.",
+        "Use `effigy bundle list` to discover shipped `[bundle]` presets and `effigy bundle inspect <name>` to inspect one shipped bundle's accepted inputs plus default manifest paths.",
     )?;
     renderer.notice(
         NoticeLevel::Info,
         "Use `effigy config --schema --target bundle` for the generic `[bundle]` shape, or add `--bundle <name>` to render one bundle's concrete input surface.",
+    )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Use `[bundle].base_path` for repo-local bundle directories that carry `bundle.toml` metadata plus an `effigy.toml` defaults template.",
     )?;
     renderer.text("")?;
 
@@ -36,12 +40,17 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
         color_enabled,
         [
             "[bundle]",
-            "# Optional top-level bundle resolver for shipped manifest presets.",
-            "name = \"decodelabs\"",
+            "# Optional top-level bundle resolver for shipped or local manifest presets.",
+            "base = \"decodelabs\"",
+            "# Or use a local bundle directory instead of `base`:",
+            "# base_path = \"bundles/acme\"",
             "# Bundle-defined inputs depend on the selected preset.",
             "# Discover bundles: `effigy bundle list`",
             "# Inspect one bundle: `effigy bundle inspect decodelabs`",
             "# Render bundle config schema: `effigy config --schema --target bundle --bundle decodelabs`",
+            "# Define local bundles with `bundle.toml` and `effigy.toml` in the `base_path` directory.",
+            "# Local bundle templates can reference bundled scripts and assets with `{{ bundle.root }}`.",
+            "# Repo-owned run steps can also reference the active bundle root with `{{ bundle.root }}`.",
             "",
         ],
     )?;
