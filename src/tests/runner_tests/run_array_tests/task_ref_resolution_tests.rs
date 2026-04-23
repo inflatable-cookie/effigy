@@ -3,8 +3,9 @@ use crate::runner::tests::prelude::{
     assert_run_array_task_output_derived_case_table, assert_run_array_validate_marker_case_table,
     assert_run_array_validate_task_ref_parse_error_case_table, fs, run_validate_ok, temp_workspace,
     write_capture_task_ref_validate_manifest, write_catalog_builtin_test_suite_manifest,
-    write_manifest, write_validate_manifest, BuiltinTestTaskRefCase, Path, RunArrayTaskOutputCase,
-    RunArrayTaskOutputDerivedCase, RunArrayTaskRefParseErrorCase, RunArrayValidateMarkerCase,
+    write_manifest, write_validate_manifest, write_validate_manifest_template,
+    BuiltinTestTaskRefCase, EnvGuard, Path, RunArrayTaskOutputCase, RunArrayTaskOutputDerivedCase,
+    RunArrayTaskRefParseErrorCase, RunArrayValidateMarkerCase,
 };
 
 fn setup_task_ref_inline_args(root: &Path, marker: &Path) {
@@ -91,6 +92,20 @@ run = [{{ task = "capture" }}]
         "API_URL=https://from-env-schema.test\n",
     )
     .expect("write env schema");
+}
+
+fn setup_dag_task_ref_in_process(root: &Path, marker: &Path) {
+    write_manifest(&root.join("README.md"), "# Hello\n\n## World\n");
+    write_validate_manifest_template(
+        root,
+        r#"[tasks.validate]
+run = [
+  { id = "docs", task = "docs check-headings README.md --require-heading '# Hello' --require-heading '## World'" },
+  { id = "done", run = "printf validate-ok > \"__MARKER__\"", depends_on = ["docs"] }
+]
+"#,
+        &[("__MARKER__", marker)],
+    );
 }
 
 fn expected_env_directive_path(root: &Path) -> String {
@@ -211,4 +226,43 @@ fn run_manifest_task_run_array_task_reference_env_contract_table() {
     ];
 
     assert_run_array_task_output_derived_case_table(&cases);
+}
+
+#[test]
+fn run_manifest_task_run_array_builtin_task_reference_stays_in_process() {
+    let root = temp_workspace("run-array-task-ref-in-process");
+    write_manifest(&root.join("README.md"), "# Hello\n\n## World\n");
+    write_validate_manifest(
+        &root,
+        r#"[tasks.validate]
+run = [{ task = "docs check-headings README.md --require-heading '# Hello' --require-heading '## World'" }]
+"#,
+    );
+
+    let _guard = EnvGuard::set_many(&[(
+        "EFFIGY_EXECUTABLE",
+        Some("/definitely/not/a/real/effigy".to_owned()),
+    )]);
+
+    let out = run_validate_ok(&root, &[]);
+    assert_eq!(out, "");
+}
+
+#[test]
+fn run_manifest_task_run_array_dag_task_reference_stays_in_process() {
+    let root = temp_workspace("run-array-task-ref-dag-in-process");
+    let marker = root.join("task-ref-dag.log");
+    setup_dag_task_ref_in_process(&root, &marker);
+
+    let _guard = EnvGuard::set_many(&[(
+        "EFFIGY_EXECUTABLE",
+        Some("/definitely/not/a/real/effigy".to_owned()),
+    )]);
+
+    let out = run_validate_ok(&root, &[]);
+    assert_eq!(out, "");
+    assert_eq!(
+        fs::read_to_string(marker).expect("read marker"),
+        "validate-ok"
+    );
 }

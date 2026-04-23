@@ -7,7 +7,6 @@ use effigy_manifest::{
 };
 
 use super::RunSpecContext;
-use env_resolution::StepEnvAccumulator;
 use projection::project_run_sequence;
 use rendering::render_projected_run_sequence;
 
@@ -17,6 +16,8 @@ mod env_resolution;
 mod pathing;
 mod projection;
 mod rendering;
+
+pub use env_resolution::StepEnvAccumulator;
 
 pub fn render_run_sequence(
     steps: &[ManifestManagedRunStep],

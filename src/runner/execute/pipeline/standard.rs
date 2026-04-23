@@ -10,7 +10,9 @@ use super::super::context::ExecutionTaskContext;
 use super::super::preflight::ExecutionPreflight;
 use super::super::routing::{route_standard_task_execution, routed_container_target};
 use super::super::{resolve_container_execution_binding, ContainerExecutionBinding};
-use super::{super::cache_hit, super::json_payload, super::process_run, command};
+use super::{
+    super::cache_hit, super::json_payload, super::process_run, super::sequence_run, command,
+};
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
 use effigy_containers::compose::compose_args;
@@ -71,6 +73,12 @@ pub(super) fn run_standard_task(
     let secret_ref = secret_pairs.as_deref();
 
     let container_binding = resolve_container_execution_binding(
+        selection
+            .catalog
+            .manifest
+            .task_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.run_in),
         selection.catalog.manifest.systems.as_ref(),
         selection.catalog.manifest.containers.as_ref(),
         &preflight.selector.task_name,
@@ -87,8 +95,24 @@ pub(super) fn run_standard_task(
         );
     }
 
+    if let Some(output) = sequence_run::maybe_run_in_process_sequence(
+        preflight,
+        selection,
+        &context,
+        &env_schema_resolved,
+        secret_ref,
+    )? {
+        return Ok(output);
+    }
+
     let routed = route_standard_task_execution(
         &preflight.selector.task_name,
+        selection
+            .catalog
+            .manifest
+            .task_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.run_in),
         selection.task,
         selection.catalog.manifest.systems.as_ref(),
         selection.catalog.manifest.containers.as_ref(),

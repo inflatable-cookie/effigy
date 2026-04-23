@@ -60,6 +60,10 @@ pub fn resolve_task_execution_binding(
     task: &ManifestTask,
 ) -> Result<Option<ResolvedTaskExecutionBinding>, ExecutionBindingResolveError> {
     resolve_task_execution_binding_from_parts(
+        manifest
+            .task_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.run_in),
         manifest.systems.as_ref(),
         manifest.containers.as_ref(),
         task_name,
@@ -68,14 +72,16 @@ pub fn resolve_task_execution_binding(
 }
 
 pub fn resolve_task_execution_binding_from_systems(
+    default_run_in: Option<ManifestTaskRunIn>,
     systems: Option<&ManifestSystemsConfig>,
     task_name: &str,
     task: &ManifestTask,
 ) -> Result<Option<ResolvedTaskExecutionBinding>, ExecutionBindingResolveError> {
-    resolve_task_execution_binding_from_parts(systems, None, task_name, task)
+    resolve_task_execution_binding_from_parts(default_run_in, systems, None, task_name, task)
 }
 
 pub fn resolve_task_execution_binding_from_parts(
+    default_run_in: Option<ManifestTaskRunIn>,
     systems: Option<&ManifestSystemsConfig>,
     containers: Option<&ManifestContainersConfig>,
     task_name: &str,
@@ -83,7 +89,11 @@ pub fn resolve_task_execution_binding_from_parts(
 ) -> Result<Option<ResolvedTaskExecutionBinding>, ExecutionBindingResolveError> {
     let has_workspace_binding = task.system.is_some() || task.workspace.is_some();
     let implicit_default_target_available = has_implicit_default_target(containers);
-    if task.run_in() == ManifestTaskRunIn::Host {
+    let effective_run_in = task
+        .run_in
+        .or(default_run_in)
+        .unwrap_or(ManifestTaskRunIn::Either);
+    if effective_run_in == ManifestTaskRunIn::Host {
         if has_workspace_binding {
             return Err(ExecutionBindingResolveError::new(format!(
                 "task `{task_name}` cannot combine `run_in = \"host\"` with container or workspace execution binding"
@@ -628,6 +638,53 @@ workspace = "app"
 
         assert!(error.to_string().contains(
             "cannot combine `run_in = \"host\"` with container or workspace execution binding"
+        ));
+    }
+
+    #[test]
+    fn manifest_task_defaults_run_in_applies_to_tasks_without_explicit_override() {
+        let manifest = parse_manifest(
+            r#"
+[task_defaults]
+run_in = "host"
+
+[tasks.dev]
+run = "npm run dev"
+"#,
+        );
+        let task = manifest.tasks.get("dev").expect("task");
+        let resolved = resolve_task_execution_binding(&manifest, "dev", task).expect("resolve");
+
+        assert_eq!(resolved, Some(ResolvedTaskExecutionBinding::Host));
+    }
+
+    #[test]
+    fn task_run_in_overrides_manifest_task_default() {
+        let manifest = parse_manifest(
+            r#"
+[task_defaults]
+run_in = "host"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "app"
+
+[tasks.dev]
+run_in = "either"
+run = "npm run dev"
+"#,
+        );
+        let task = manifest.tasks.get("dev").expect("task");
+        let resolved = resolve_task_execution_binding(&manifest, "dev", task).expect("resolve");
+
+        assert!(matches!(
+            resolved,
+            Some(ResolvedTaskExecutionBinding::Workspace(_))
         ));
     }
 }

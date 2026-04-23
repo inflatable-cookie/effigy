@@ -17,9 +17,11 @@ mod run_step;
 #[path = "run_spec/sequence/mod.rs"]
 mod sequence;
 
+pub use sequence::StepEnvAccumulator;
+
 use command::{
-    render_builtin_task_reference_invocation, render_task_command, wrap_command_with_cwd,
-    wrap_command_with_task_env,
+    render_builtin_task_reference_invocation, render_command_template, render_task_command,
+    wrap_command_with_cwd, wrap_command_with_task_env,
 };
 
 #[derive(Clone, Copy)]
@@ -68,6 +70,15 @@ pub fn render_builtin_reference_invocation(
     args_rendered: &str,
 ) -> Result<String, ManagedError> {
     render_builtin_task_reference_invocation(task_ref, args_rendered)
+}
+
+pub fn render_step_command_template(
+    command: &str,
+    repo_root: &Path,
+    bundle_root: Option<&Path>,
+    args_rendered: &str,
+) -> String {
+    render_command_template(command, repo_root, bundle_root, args_rendered)
 }
 
 pub fn wrap_reference_command_in_cwd(cwd: &Path, command: &str) -> String {

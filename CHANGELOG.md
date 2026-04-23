@@ -27,6 +27,10 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Changed
+- Add manifest-scoped `[task_defaults].run_in` so one imported/catalog
+  `effigy.toml` can set the default execution context for its own tasks
+  without repeating `run_in` per task. Task-level `run_in` still overrides
+  the manifest default.
 - Derive the managed lifecycle ready banner from configured container DNS
   routes when a task does not set `ready_message`, so bundle-backed dev tasks
   surface their gateway URLs without hand-maintained manifest strings. The

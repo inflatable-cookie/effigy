@@ -14,6 +14,7 @@ pub(in crate::runner) struct RoutedTaskExecution {
 
 pub(in crate::runner) fn route_standard_task_execution(
     command_name: &str,
+    default_run_in: Option<ManifestTaskRunIn>,
     task: &ManifestTask,
     systems: Option<&ManifestSystemsConfig>,
     containers: Option<&ManifestContainersConfig>,
@@ -26,14 +27,23 @@ pub(in crate::runner) fn route_standard_task_execution(
     }
 
     let binding = resolve_container_execution_binding(
+        default_run_in,
         systems,
         containers,
         command_name,
         task,
         "standard task routing",
     )?;
+    if matches!(binding, ContainerExecutionBinding::Inline { .. }) {
+        return Err(RunnerError::task_invocation(format!(
+            "task `{command_name}` standard task routing does not support inline workspace containers"
+        )));
+    }
 
-    let task_run_in = task.run_in();
+    let task_run_in = task
+        .run_in
+        .or(default_run_in)
+        .unwrap_or(ManifestTaskRunIn::Either);
     let binding_is_host = matches!(binding, ContainerExecutionBinding::Host);
     let explicit_container = match binding {
         ContainerExecutionBinding::Container { name, .. } => {
@@ -191,6 +201,7 @@ primary_service = "app"
         );
         let routed = route_standard_task_execution(
             "build",
+            None,
             &manifest_task(),
             None,
             Some(&containers),
@@ -216,6 +227,7 @@ container = "release"
         );
         let routed = route_standard_task_execution(
             "build",
+            None,
             &manifest_task(),
             Some(&systems),
             Some(&containers),
@@ -239,6 +251,7 @@ primary_service = "app"
         );
         let routed = route_standard_task_execution(
             "build",
+            None,
             &manifest_task(),
             None,
             Some(&containers),
@@ -270,8 +283,10 @@ primary_service = "app"
         task.run_in = Some(ManifestTaskRunIn::Host);
 
         let routed =
-            route_standard_task_execution("build", &task, None, Some(&containers), |_| Ok(true))
-                .expect("route");
+            route_standard_task_execution("build", None, &task, None, Some(&containers), |_| {
+                Ok(true)
+            })
+            .expect("route");
         assert!(matches!(routed.decision.target, ExecTarget::Host));
     }
 
@@ -280,7 +295,7 @@ primary_service = "app"
         let mut task = manifest_task();
         task.run_in = Some(ManifestTaskRunIn::Container);
 
-        let error = route_standard_task_execution("build", &task, None, None, |_| Ok(true))
+        let error = route_standard_task_execution("build", None, &task, None, None, |_| Ok(true))
             .expect_err("container override should require a container target");
         assert!(error
             .to_string()
@@ -306,6 +321,7 @@ primary_service = "worker"
 
         let error = route_standard_task_execution(
             "build",
+            None,
             &manifest_task(),
             None,
             Some(&containers),
@@ -349,6 +365,7 @@ container = "jobs"
 
         let routed = route_standard_task_execution(
             "build",
+            None,
             &task,
             Some(&systems),
             Some(&containers),
@@ -362,6 +379,31 @@ container = "jobs"
             routed_container_target(&routed.decision),
             Some(("jobs", "worker"))
         );
+    }
+
+    #[test]
+    fn manifest_default_run_in_host_beats_dev_context() {
+        let containers = containers_toml(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+context = "dev"
+primary_service = "app"
+"#,
+        );
+
+        let routed = route_standard_task_execution(
+            "build",
+            Some(ManifestTaskRunIn::Host),
+            &manifest_task(),
+            None,
+            Some(&containers),
+            |_| Ok(true),
+        )
+        .expect("route");
+        assert!(matches!(routed.decision.target, ExecTarget::Host));
     }
 
     #[test]
@@ -380,10 +422,11 @@ default_workspace = "app"
         let mut task = manifest_task();
         task.workspace = Some("app".to_owned());
 
-        let error = route_standard_task_execution("build", &task, Some(&systems), None, |_| {
-            panic!("routing should fail before runtime lookup")
-        })
-        .expect_err("workspace binding should not route through legacy path");
+        let error =
+            route_standard_task_execution("build", None, &task, Some(&systems), None, |_| {
+                panic!("routing should fail before runtime lookup")
+            })
+            .expect_err("workspace binding should not route through legacy path");
         assert!(error
             .to_string()
             .contains("requires that workspace to declare a backing container"));
@@ -421,6 +464,7 @@ primary_service = "worker"
 
         let routed = route_standard_task_execution(
             "build",
+            None,
             &task,
             Some(&systems),
             Some(&containers),
@@ -456,6 +500,7 @@ primary_service = "workspace"
 
         let routed = route_standard_task_execution(
             "build",
+            None,
             &manifest_task(),
             Some(&systems),
             Some(&containers),
@@ -488,10 +533,11 @@ container = { image = "node:22", mount = "./:/workspace" }
         let mut task = manifest_task();
         task.workspace = Some("app".to_owned());
 
-        let error = route_standard_task_execution("build", &task, Some(&systems), None, |_| {
-            panic!("routing should fail before runtime lookup")
-        })
-        .expect_err("inline workspace container should not route through legacy path");
+        let error =
+            route_standard_task_execution("build", None, &task, Some(&systems), None, |_| {
+                panic!("routing should fail before runtime lookup")
+            })
+            .expect_err("inline workspace container should not route through legacy path");
         assert!(error
             .to_string()
             .contains("standard task routing does not support inline workspace containers"));

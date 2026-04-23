@@ -134,6 +134,10 @@ pub(super) fn manifest_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
         "  { path = \"effigy.docs.toml\", override = [\"docs_policy.indexes.vision\"] },",
         "]",
         "",
+        "[task_defaults]",
+        "# Optional defaults applied to tasks defined in this manifest only.",
+        "run_in = \"either\"",
+        "",
     ]
 }
 

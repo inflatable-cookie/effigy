@@ -22,6 +22,8 @@ mod process_run;
 mod routing;
 #[path = "execute/selection.rs"]
 mod selection;
+#[path = "execute/sequence_run.rs"]
+mod sequence_run;
 
 pub(in crate::runner) use binding::{
     resolve_container_execution_binding, ContainerExecutionBinding,

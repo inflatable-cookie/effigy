@@ -37,8 +37,8 @@ pub use config_sections::{
     ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
     ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig,
     ManifestPackageManagerConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
-    ManifestSystemConfig, ManifestSystemsConfig, ManifestWorkspaceConfig,
-    ManifestWorkspaceContainerRef,
+    ManifestSystemConfig, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
+    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,
@@ -122,6 +122,8 @@ pub struct TaskManifest {
     #[serde(default)]
     pub docs_policy: Option<ManifestDocsPolicyConfig>,
     #[serde(default)]
+    pub task_defaults: Option<ManifestTaskDefaultsConfig>,
+    #[serde(default)]
     pub bootstrap: Option<ManifestBootstrapConfig>,
     #[serde(default)]
     pub containers: Option<ManifestContainersConfig>,
@@ -156,6 +158,15 @@ pub fn load_task_manifest(manifest_path: &Path) -> Result<TaskManifest, Manifest
 }
 
 impl TaskManifest {
+    pub fn task_run_in(&self, task: &ManifestTask) -> ManifestTaskRunIn {
+        task.run_in
+            .or(self
+                .task_defaults
+                .as_ref()
+                .and_then(|defaults| defaults.run_in))
+            .unwrap_or(ManifestTaskRunIn::Either)
+    }
+
     pub fn validate(&self, manifest_path: &Path) -> Result<(), ManifestError> {
         for (demo_id, demo) in &self.demos {
             demo.validate(manifest_path, demo_id)?;

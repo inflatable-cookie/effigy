@@ -253,6 +253,24 @@ fail_on_non_zero = true
 Use full task tables when you need settings (`run_in`, `fail_on_non_zero`, `env`, `mode`, `profiles`, etc.).
 `run_in` accepts `host`, `container`, or `either`; `either` is the default and means use the current/default execution context.
 
+If a whole catalog should share the same task routing default, set it once at
+the manifest level and only override the exceptions:
+
+```toml
+[task_defaults]
+run_in = "either"
+
+[tasks]
+qa = [{ task = "docs check-links README.md" }]
+
+[tasks.dev]
+run_in = "container"
+run = "bun run dev"
+```
+
+`[task_defaults]` only applies to tasks defined in that manifest file. Task-level
+`run_in` still wins when both are present.
+
 ## 4) DAG-Style Validation Flow
 
 ```toml

@@ -30,6 +30,9 @@ fn validate_manifest_schema_accepts_docs_policy_bootstrap_container_distribution
 [catalog]
 alias = "app"
 
+[task_defaults]
+run_in = "either"
+
 [tasks]
 qa = "cargo test"
 
