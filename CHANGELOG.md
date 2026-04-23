@@ -22,6 +22,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Move generated compose runtime artifacts out of `infra/dev` and into
   `.effigy/runtime/compose` by default; only user-owned direct-compose output
   remains under `infra/dev` after an explicit eject.
+- Replace task-level `host = true` with `run_in = "host" | "container" |
+  "either"`. `host` is no longer accepted in `[tasks.<name>]`; `either` is the
+  default transparent routing mode.
 
 ### Changed
 - Derive the managed lifecycle ready banner from configured container DNS

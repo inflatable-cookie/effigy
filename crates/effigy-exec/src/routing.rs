@@ -8,9 +8,10 @@
 //!
 //! 1. If no dev-context container is declared → host (current behavior).
 //! 2. If the command is a host-native built-in → host.
-//! 3. If the task explicitly declares `host = true` → host.
-//! 4. If the task explicitly binds to a specific container → that container.
-//! 6. Otherwise → the dev-context container.
+//! 3. If the task explicitly declares `run_in = "host"` → host.
+//! 4. If the task explicitly declares `run_in = "container"` or binds to a
+//!    specific container → that container.
+//! 5. Otherwise (`run_in = "either"`) → the current/default context.
 
 /// Describes the project's execution context configuration.
 #[derive(Debug, Clone)]
@@ -119,9 +120,9 @@ pub fn route(
         return RoutingDecision::host(format!("'{command_name}' is a host-native command"));
     }
 
-    // 3. Explicit `host = true` override.
+    // 3. Explicit `run_in = "host"` override.
     if task_overrides.host {
-        return RoutingDecision::host("task declares host = true");
+        return RoutingDecision::host("task declares run_in = \"host\"");
     }
 
     // 4. Explicit container target override.

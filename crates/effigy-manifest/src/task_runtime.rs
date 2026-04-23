@@ -8,7 +8,7 @@ pub struct ManifestTask {
     #[serde(default)]
     pub run: Option<ManifestManagedRun>,
     #[serde(default)]
-    pub host: Option<bool>,
+    pub run_in: Option<ManifestTaskRunIn>,
     #[serde(default)]
     pub system: Option<String>,
     #[serde(default)]
@@ -37,6 +37,30 @@ pub struct ManifestTask {
     pub profiles: IndexMap<String, ManifestManagedProfile>,
     #[serde(default)]
     pub cache: Option<ManifestTaskCache>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ManifestTaskRunIn {
+    Host,
+    Container,
+    Either,
+}
+
+impl ManifestTask {
+    pub fn run_in(&self) -> ManifestTaskRunIn {
+        self.run_in.unwrap_or(ManifestTaskRunIn::Either)
+    }
+}
+
+impl ManifestTaskRunIn {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ManifestTaskRunIn::Host => "host",
+            ManifestTaskRunIn::Container => "container",
+            ManifestTaskRunIn::Either => "either",
+        }
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]

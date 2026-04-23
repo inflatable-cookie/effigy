@@ -1,5 +1,6 @@
 use effigy_manifest::config_sections::{ManifestJsPackageManager, ManifestWorkspaceContainerRef};
 use effigy_manifest::load_task_manifest_with_inspection;
+use effigy_manifest::ManifestTaskRunIn;
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep};
 
 #[test]
@@ -20,7 +21,7 @@ database = "acme"
 mounts = ["../underlay", "../poodle"]
 
 [tasks.seed]
-host = true
+run_in = "host"
 run = "printf seed"
 "#,
     )
@@ -152,7 +153,7 @@ run = "printf seed"
     }
 
     let seed = manifest.tasks.get("seed").expect("seed task");
-    assert_eq!(seed.host, Some(true));
+    assert_eq!(seed.run_in(), ManifestTaskRunIn::Host);
 
     for task_name in [
         "smoke:error-logging",
@@ -160,7 +161,11 @@ run = "printf seed"
         "validate:error-reporting",
     ] {
         let task = manifest.tasks.get(task_name).expect("error reporting task");
-        assert_eq!(task.host, Some(true), "{task_name} should run on host");
+        assert_eq!(
+            task.run_in(),
+            ManifestTaskRunIn::Host,
+            "{task_name} should run on host"
+        );
         let ManifestManagedRun::Sequence(steps) = task.run.as_ref().expect("run steps") else {
             panic!("{task_name} should use a Rhai run step");
         };

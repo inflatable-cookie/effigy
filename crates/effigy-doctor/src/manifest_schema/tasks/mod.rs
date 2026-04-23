@@ -41,7 +41,7 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
         };
 
         validate_task_table_keys(context, task_name, task_table);
-        validate_task_host_field(context, task_name, task_table.get("host"));
+        validate_task_run_in_field(context, task_name, task_table.get("run_in"));
         validate_task_lock_field(context, task_name, task_table.get("lock"));
         validate_task_mode(context, task_name, task_table.get("mode"));
         validate_task_run_field(context, task_name, task_table.get("run"));
@@ -97,7 +97,7 @@ fn validate_task_table_keys(
         task_table,
         &[
             "run",
-            "host",
+            "run_in",
             "system",
             "workspace",
             "lock",
@@ -115,12 +115,18 @@ fn validate_task_table_keys(
     );
 }
 
-fn validate_task_host_field(
+fn validate_task_run_in_field(
     context: &mut SchemaContext<'_, '_>,
     task_name: &str,
-    host: Option<&Value>,
+    run_in: Option<&Value>,
 ) {
-    validate_optional_boolean_field(context, host, &format!("tasks.{task_name}.host"));
+    validate_optional_enum_string_field(
+        context,
+        run_in,
+        &format!("tasks.{task_name}.run_in"),
+        &["host", "container", "either"],
+        "expected `host`, `container`, or `either`",
+    );
 }
 
 fn validate_task_lock_field(

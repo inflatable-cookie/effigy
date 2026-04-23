@@ -9,6 +9,8 @@ const SECTION_TASKS_CANONICAL_PREFIX: &[&str] = &[
     "[tasks.dev]",
     "# Managed dev task configuration.",
     "mode = \"tui\"",
+    "# Optional task execution routing: host, container, or either (default).",
+    "run_in = \"either\"",
     "workspace = \"app\"",
     "# Optional shared lock name when multiple tasks should serialize together.",
     "lock = \"dev-stack\"",

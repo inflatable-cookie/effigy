@@ -2,7 +2,7 @@ use crate::config_sections::{
     ManifestContainersConfig, ManifestInlineWorkspaceContainerConfig, ManifestSystemsConfig,
     ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
-use crate::{ManifestTask, TaskManifest};
+use crate::{ManifestTask, ManifestTaskRunIn, TaskManifest};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,10 +83,10 @@ pub fn resolve_task_execution_binding_from_parts(
 ) -> Result<Option<ResolvedTaskExecutionBinding>, ExecutionBindingResolveError> {
     let has_workspace_binding = task.system.is_some() || task.workspace.is_some();
     let implicit_default_target_available = has_implicit_default_target(containers);
-    if task.host.unwrap_or(false) {
+    if task.run_in() == ManifestTaskRunIn::Host {
         if has_workspace_binding {
             return Err(ExecutionBindingResolveError::new(format!(
-                "task `{task_name}` cannot combine `host = true` with container or workspace execution binding"
+                "task `{task_name}` cannot combine `run_in = \"host\"` with container or workspace execution binding"
             )));
         }
         return Ok(Some(ResolvedTaskExecutionBinding::Host));
@@ -619,7 +619,7 @@ default_workspace = "app"
 container = "app"
 
 [tasks.dev]
-host = true
+run_in = "host"
 workspace = "app"
 "#,
         );
@@ -627,7 +627,7 @@ workspace = "app"
         let error = resolve_task_execution_binding(&manifest, "dev", task).expect_err("error");
 
         assert!(error.to_string().contains(
-            "cannot combine `host = true` with container or workspace execution binding"
+            "cannot combine `run_in = \"host\"` with container or workspace execution binding"
         ));
     }
 }

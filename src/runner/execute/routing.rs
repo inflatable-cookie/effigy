@@ -1,6 +1,7 @@
 use effigy_exec::routing::{route, ExecContext, ExecTarget, RoutingDecision, TaskOverrides};
 use effigy_manifest::{
     ManifestContainerConfig, ManifestContainersConfig, ManifestSystemsConfig, ManifestTask,
+    ManifestTaskRunIn,
 };
 
 use super::{resolve_container_execution_binding, ContainerExecutionBinding};
@@ -32,20 +33,8 @@ pub(in crate::runner) fn route_standard_task_execution(
         "standard task routing",
     )?;
 
-    let task_overrides = TaskOverrides {
-        host: task.host.unwrap_or(false) || matches!(binding, ContainerExecutionBinding::Host),
-        container: match &binding {
-            ContainerExecutionBinding::Container { name: None, .. } => Some("default".to_owned()),
-            ContainerExecutionBinding::Container { name: Some(name), .. } => Some(name.clone()),
-            ContainerExecutionBinding::Host => None,
-            ContainerExecutionBinding::Inline { .. } => {
-                return Err(RunnerError::task_invocation(format!(
-                    "task `{command_name}` uses an inline workspace container, but standard task routing does not support inline workspace containers"
-                )))
-            }
-            ContainerExecutionBinding::None => None,
-        },
-    };
+    let task_run_in = task.run_in();
+    let binding_is_host = matches!(binding, ContainerExecutionBinding::Host);
     let explicit_container = match binding {
         ContainerExecutionBinding::Container { name, .. } => {
             name.or_else(|| containers.and_then(|config| config.default.clone()))
@@ -56,6 +45,19 @@ pub(in crate::runner) fn route_standard_task_execution(
 
     let (dev_container, target_container, target_primary_service) =
         resolve_routing_containers(containers, explicit_container.as_deref())?;
+    if task_run_in == ManifestTaskRunIn::Container && target_container.is_none() {
+        return Err(RunnerError::task_invocation(format!(
+            "task `{command_name}` declares `run_in = \"container\"`, but no container target is defined"
+        )));
+    }
+    let task_overrides = TaskOverrides {
+        host: task_run_in == ManifestTaskRunIn::Host || binding_is_host,
+        container: if task_run_in == ManifestTaskRunIn::Container {
+            target_container.clone()
+        } else {
+            explicit_container.clone()
+        },
+    };
     let container_running = match target_container.as_deref() {
         Some(name) => is_container_running(name)?,
         None => false,
@@ -265,12 +267,24 @@ primary_service = "app"
 "#,
         );
         let mut task = manifest_task();
-        task.host = Some(true);
+        task.run_in = Some(ManifestTaskRunIn::Host);
 
         let routed =
             route_standard_task_execution("build", &task, None, Some(&containers), |_| Ok(true))
                 .expect("route");
         assert!(matches!(routed.decision.target, ExecTarget::Host));
+    }
+
+    #[test]
+    fn container_override_requires_container_target() {
+        let mut task = manifest_task();
+        task.run_in = Some(ManifestTaskRunIn::Container);
+
+        let error = route_standard_task_execution("build", &task, None, None, |_| Ok(true))
+            .expect_err("container override should require a container target");
+        assert!(error
+            .to_string()
+            .contains("declares `run_in = \"container\"`, but no container target is defined"));
     }
 
     #[test]

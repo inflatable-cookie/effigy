@@ -39,7 +39,7 @@ The `effigy-exec` crate is shipped as an isolated library with 53 tests:
 
 - **Routing engine** (`routing.rs`): determines host vs container execution
   for any command. Host-native allowlist for management commands (doctor,
-  container, gateway, release, etc.). Per-task overrides: `host = true`,
+  container, gateway, release, etc.). Per-task overrides: `run_in = "host"`,
   plus explicit workspace/container targeting through resolved task binding.
   Container-not-running
   detection with clear user guidance. Decision struct with human-readable
@@ -86,7 +86,7 @@ The bounded continuation chain is now fully landed:
 What is now real in the product path:
 
 - `containers.*.context = "dev"` in the manifest
-- `tasks.*.host = true` as a host-routing override
+- `tasks.*.run_in = "host"` as a host-routing override
 - standard task dispatch routes through `effigy-exec::routing::route()`
 - standard routed tasks execute through the container path instead of assuming
   host-only shell execution
