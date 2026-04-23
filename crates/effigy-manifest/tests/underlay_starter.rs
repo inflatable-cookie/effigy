@@ -243,5 +243,8 @@ fn starter_health_validate_qa_aggregators_exist() {
         .tasks
         .get("bootstrap:deps")
         .expect("starter declares bootstrap:deps task");
-    assert_eq!(bootstrap_deps.host, Some(true));
+    assert_eq!(
+        bootstrap_deps.run_in(),
+        effigy_manifest::ManifestTaskRunIn::Host
+    );
 }

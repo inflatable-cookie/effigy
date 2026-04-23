@@ -102,7 +102,7 @@ Commands that route through the context container:
 
 Individual task overrides:
 
-- `host = true` — forces host execution
+- `run_in = "host"` — forces host execution
 - `workspace = "<name>"` — targets a different resolved workspace/container
 - `system = "<name>"` — switches the task onto another declared system before
   workspace resolution

@@ -279,7 +279,7 @@ Is there a dev-context container declared?
 
 Individual tasks can override:
 
-- `host = true` — forces host execution
+- `run_in = "host"` — forces host execution
 - `workspace = "other"` plus system resolution — targets a different workspace
   and therefore a different backing container
 

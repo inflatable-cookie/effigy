@@ -33,7 +33,7 @@ handoff, or broad CLI churn.
 The first bounded `g02.012` integration slice is now landed.
 
 - manifests can declare `context = "dev"` on a container
-- manifest tasks can declare `host = true`
+- manifest tasks can declare `run_in = "host"`
 - standard task dispatch now calls `effigy-exec::routing::route()`
 - routed standard tasks execute through non-interactive container exec instead
   of ad hoc host-only logic

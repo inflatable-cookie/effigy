@@ -830,15 +830,15 @@ routes = [
 
 [tasks."smoke:error-logging"]
 run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
-host = true
+run_in = "host"
 
 [tasks."metrics:error-log"]
 run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
-host = true
+run_in = "host"
 
 [tasks."validate:error-reporting"]
 run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
-host = true
+run_in = "host"
 "#;
 
     let rendered = render_shipped_bundle_template(
@@ -1158,15 +1158,15 @@ routes = [
 
 [tasks."smoke:error-logging"]
 run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
-host = true
+run_in = "host"
 
 [tasks."metrics:error-log"]
 run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
-host = true
+run_in = "host"
 
 [tasks."validate:error-reporting"]
 run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
-host = true
+run_in = "host"
 "#;
 
 fn materialize_shipped_bundle_assets(

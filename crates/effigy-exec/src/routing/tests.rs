@@ -85,7 +85,7 @@ fn host_override_forces_host() {
     };
     let d = route("test", &running_context(), &overrides);
     assert!(d.is_host());
-    assert!(d.reason.contains("host = true"));
+    assert!(d.reason.contains("run_in = \"host\""));
 }
 
 #[test]

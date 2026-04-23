@@ -14,7 +14,7 @@ setup = ["bootstrap:deps"]
 start = "dev"
 
 [tasks."bootstrap:deps"]
-host = true
+run_in = "host"
 run = """
 effigy container up --detach && \
 effigy exec sh -lc '\

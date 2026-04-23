@@ -246,10 +246,12 @@ Migration note:
 ```toml
 [tasks.build]
 run = "bun run build"
+run_in = "either"
 fail_on_non_zero = true
 ```
 
-Use full task tables when you need settings (`fail_on_non_zero`, `env`, `mode`, `profiles`, etc.).
+Use full task tables when you need settings (`run_in`, `fail_on_non_zero`, `env`, `mode`, `profiles`, etc.).
+`run_in` accepts `host`, `container`, or `either`; `either` is the default and means use the current/default execution context.
 
 ## 4) DAG-Style Validation Flow
 
@@ -343,6 +345,7 @@ Behavior:
 mode = "tui"
 lock = "dev-stack"
 fail_on_non_zero = true
+run_in = "either"               # host, container, or either/current context
 # optional managed bindings (flattened, no nested subtables):
 system = "dev"                   # pin this managed task to a declared system
 workspace = "main"               # pin to a specific workspace inside that system
