@@ -86,14 +86,19 @@ Long-running Rust + Bun workspace container. Used by `[bundle].base =
 PostgreSQL database server.
 
 - Image: `postgres:16-alpine` (override via `version`).
-- Parameters: `version` (`"16"`), `database` (`"app"`), `password`
-  (`"secret"`).
+- Parameters: `version` (`"16"`), `database` (`"app"`), `databases`
+  (string array, optional), `password` (`"secret"`).
 - Exposed port: `5432`.
 - Volume: persistent data volume at `/var/lib/postgresql/data`.
 - Healthcheck: `pg_isready -U postgres`.
 - Shell target: yes (`/bin/bash`).
 - Gateway: eligible for TCP DNS alias + loopback IP allocation when the
   containing environment declares `[containers.<name>.dns]`.
+- Multi-database mode: set `databases = ["app", "app_test", "reporting"]`
+  to create more than one database at startup. The first entry becomes the
+  primary app database (compatible with `database`); all entries are
+  created on first boot. Singular `database` keeps working for single-db
+  stacks.
 
 ### `dbgate`
 
@@ -145,13 +150,17 @@ UI is not needed.
 MariaDB database server.
 
 - Image: `mariadb:10.11` (override via `version`).
-- Parameters: `version` (`"10.11"`), `database` (`"app"`), `root_password`
-  (`"secret"`).
+- Parameters: `version` (`"10.11"`), `database` (`"app"`), `databases`
+  (string array, optional), `root_password` (`"secret"`).
 - Exposed port: `3306`.
 - Volume: persistent data volume at `/var/lib/mysql`.
 - Healthcheck: `healthcheck.sh --connect --innodb_initialized`.
 - Shell target: yes (`/bin/bash`).
 - Gateway: eligible for TCP DNS alias + loopback IP allocation.
+- Multi-database mode: set `databases = ["app", "app_test"]` to create
+  more than one database at startup. The first entry becomes the primary
+  app database (compatible with `database`); all entries are created on
+  first boot.
 
 ### `redis`
 
@@ -252,6 +261,22 @@ Nginx reverse proxy / static web server for PHP-FPM setups.
 - Depends on: optional `php-fpm` service in the same environment.
 - Gateway: typically the primary HTTP route (`<host>`) via
   `[containers.<name>.dns]`.
+
+Config variants (selected via `variant = "<name>"` on the service or via
+the bundle that owns the service):
+
+- `default` — generic PHP front controller. Honors `rewrite_all_to`,
+  `asset_fallback`, `front_controller_fallback`, and `error_page_404`.
+  Includes static-asset caching, deny rules for hidden/sensitive files,
+  gzip, and standard FastCGI tuning.
+- `decodelabs` — minimal monolithic front controller used by the
+  `decodelabs` bundle. Rewrites every request to `/vendor/genesis.php`
+  and hands off to php-fpm. No `try_files`, no asset caching, no security
+  locations — DecodeLabs apps handle routing, asset serving, and error
+  pages in PHP. The `rewrite_all_to`, `asset_fallback`, and
+  `error_page_404` params are not consumed under this variant.
+- `laravel`, `spa`, `wordpress` — additional shipped variants tuned for
+  those framework patterns.
 
 ### `php-fpm`
 

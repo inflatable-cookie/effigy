@@ -75,6 +75,47 @@ This means:
 - execute the bootstrap `run` sequence
 - if `--start` was supplied, run `dev`
 
+## Bootstrap Dependency Sync
+
+`bootstrap deps sync` is the typed dependency surface used inside
+`[bootstrap].run` arrays (and runnable directly) so the manifest does not
+need ad-hoc `bun install` / `cargo fetch` shell chains.
+
+```sh
+effigy bootstrap deps sync [--js-only|--rust-only] [--json] [<path>...]
+```
+
+What it does:
+
+- for each `<path>` (defaults to `.`), checks for `package.json` and
+  `Cargo.toml` and runs the right install command for whichever it finds
+- JS install command is selected from the nearest manifest's
+  `[package_manager].js` (`bun`, `pnpm`, `npm`); `direct` is rejected with
+  a clear error
+- Rust install command is `cargo fetch --manifest-path Cargo.toml`
+- multiple paths run in order; each is resolved relative to the repo root
+  unless absolute
+
+Flags:
+
+- `--js-only` skip Rust paths even when `Cargo.toml` is present
+- `--rust-only` skip JS paths even when `package.json` is present
+- `--json` emit `effigy.bootstrap.deps.v1` inside the normal command envelope
+
+Inside a manifest:
+
+```toml
+[bootstrap]
+run = [
+  { task = "bootstrap deps sync" },
+  { task = "bootstrap deps sync packages/ui" },
+  { task = "doctor" },
+]
+```
+
+For child-repo `run` arrays, declare the same shape inside each child;
+each invocation reads the child's own `[package_manager].js`.
+
 ## Child Repos
 
 Use child repos when the working environment needs more than the root checkout.
