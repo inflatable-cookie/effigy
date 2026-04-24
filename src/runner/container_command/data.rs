@@ -1,10 +1,8 @@
-use std::path::Path;
-
-use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
 use effigy_runtime::data::{
     run_container_data_pull_production as run_runtime_container_data_pull_production,
     RegisteredGatewayRoute,
 };
+use std::path::Path;
 
 use super::gateway_registration::register_gateway_routes_for_container;
 use super::runtime_error_from_runner;
@@ -46,19 +44,6 @@ pub(super) fn run_container_data_pull_production(
         },
     )
     .map_err(Into::into)
-}
-
-fn ensure_generated_data_path(
-    policy: &EffectiveContainerPolicy,
-    action: &str,
-) -> Result<(), RunnerError> {
-    if policy.compose_source != EffectiveComposeSource::Generated {
-        return Err(RunnerError::task_invocation(format!(
-            "container `{}` uses direct `compose_file` ownership; `data {action}` is only supported on the generated-compose path in this batch",
-            policy.name
-        )));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -12,8 +12,8 @@ use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde_yaml::Value as YamlValue;
 
 use crate::{
-    ContainerPolicyError, SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR,
-    PROJECT_LOCAL_CATALOG_DIR, SHARED_SERVICE_HOST,
+    service_alias_contract, ContainerPolicyError, SharedServiceBinding,
+    GENERATED_RUNTIME_COMPOSE_DIR, PROJECT_LOCAL_CATALOG_DIR, SHARED_SERVICE_HOST,
 };
 
 #[cfg(test)]
@@ -677,19 +677,6 @@ fn load_or_allocate_loopback_ip(
         .save(&path)
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
     Ok(Some(assignment))
-}
-
-fn service_alias_contract(catalog: &str) -> Option<(&'static str, u16)> {
-    match catalog {
-        "postgres" => Some(("db", 5432)),
-        "mariadb" | "mysql" => Some(("db", 3306)),
-        "redis" => Some(("redis", 6379)),
-        "memcached" => Some(("memcached", 11211)),
-        "elasticsearch" => Some(("search", 9200)),
-        "minio" | "s3" => Some(("s3", 9000)),
-        "mail" | "mailpit" => Some(("smtp", 1025)),
-        _ => None,
-    }
 }
 
 fn parse_port_binding(raw: &str) -> Result<PortBinding, ContainerPolicyError> {

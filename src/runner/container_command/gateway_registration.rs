@@ -250,7 +250,8 @@ fn resolve_gateway_shared_service_alias_routes(
     let occupied_domains = occupied_service_alias_domains(policy, project_alias_routes);
     let mut routes = Vec::new();
     for shared in &policy.shared_services {
-        let Some((domain_label, container_port)) = shared_service_alias_contract(&shared.catalog)
+        let Some((domain_label, container_port)) =
+            effigy_containers::service_alias_contract(&shared.catalog)
         else {
             continue;
         };
@@ -573,16 +574,6 @@ fn occupied_service_alias_domains<'a>(
         occupied.insert(route.domain.as_str());
     }
     occupied
-}
-
-fn shared_service_alias_contract(catalog: &str) -> Option<(&'static str, u16)> {
-    match catalog {
-        "postgres" => Some(("db", 5432)),
-        "mariadb" | "mysql" => Some(("db", 3306)),
-        "redis" => Some(("redis", 6379)),
-        "memcached" => Some(("memcached", 11211)),
-        _ => None,
-    }
 }
 
 fn row_matches_policy_project(
@@ -1018,7 +1009,7 @@ mod tests {
             }],
             service_aliases: vec![EffectiveServiceAlias {
                 service: "db".to_owned(),
-                domain_label: "db".to_owned(),
+                domain_label: "postgres".to_owned(),
                 container_port: 5432,
             }],
             declared_ports: vec!["8080:80".to_owned()],

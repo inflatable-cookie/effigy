@@ -107,7 +107,7 @@ base_path = "bundles/underlay"
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "underlay-reference"
-database = "acme"
+databases = ["acme", "acme_test"]
 "#,
     )
     .expect("write manifest");
@@ -120,6 +120,25 @@ database = "acme"
         .as_ref()
         .and_then(|containers| containers.environments.get("stack"))
         .expect("stack container");
+    let postgres = stack.services.get("postgres").expect("postgres service");
+    assert_eq!(
+        postgres
+            .params
+            .get("database")
+            .and_then(|value| value.as_str()),
+        Some("acme")
+    );
+    assert_eq!(
+        postgres
+            .params
+            .get("databases")
+            .and_then(|value| value.as_array())
+            .expect("databases list")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["acme", "acme_test"]
+    );
     assert_eq!(
         stack
             .services
@@ -193,7 +212,7 @@ fn exported_decodelabs_bundle_can_be_used_as_base_path() {
 base_path = "bundles/decodelabs"
 host = "legacy.test"
 project_name = "legacy-dev"
-database = "legacy"
+databases = ["legacy", "legacy_test"]
 "#,
     )
     .expect("write manifest");
@@ -213,6 +232,15 @@ database = "legacy"
     assert_eq!(
         web.services.get("db").expect("db service").catalog,
         "mariadb"
+    );
+    assert_eq!(
+        web.services
+            .get("db")
+            .expect("db service")
+            .params
+            .get("database")
+            .and_then(|value| value.as_str()),
+        Some("legacy")
     );
     let domains = web
         .dns

@@ -384,7 +384,40 @@ impl ComposeAssembler {
             }
         }
         params.extend(decl.params.clone());
+        Self::normalize_database_params(&decl.catalog, &mut params);
         params
+    }
+
+    fn normalize_database_params(catalog: &str, params: &mut HashMap<String, toml::Value>) {
+        if !matches!(catalog, "mariadb" | "postgres") {
+            return;
+        }
+
+        let databases = match (params.get("databases"), params.get("database")) {
+            (Some(toml::Value::Array(values)), _) if !values.is_empty() => Some(values.clone()),
+            (None, Some(toml::Value::String(database))) if !database.trim().is_empty() => {
+                Some(vec![toml::Value::String(database.trim().to_owned())])
+            }
+            _ => None,
+        };
+
+        let Some(databases) = databases else {
+            return;
+        };
+
+        params
+            .entry("databases".to_owned())
+            .or_insert_with(|| toml::Value::Array(databases.clone()));
+
+        if !params.contains_key("database") {
+            let Some(primary) = databases.first().and_then(toml::Value::as_str) else {
+                return;
+            };
+            params.insert(
+                "database".to_owned(),
+                toml::Value::String(primary.to_owned()),
+            );
+        }
     }
 }
 

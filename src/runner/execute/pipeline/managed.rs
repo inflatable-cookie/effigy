@@ -1019,7 +1019,7 @@ mod tests {
         ];
         policy.service_aliases = vec![EffectiveServiceAlias {
             service: "postgres".to_owned(),
-            domain_label: "db".to_owned(),
+            domain_label: "postgres".to_owned(),
             container_port: 5432,
         }];
 
@@ -1030,7 +1030,7 @@ mod tests {
             vec![
                 "http://project.test -> app".to_owned(),
                 "https://admin.project.test -> admin:41002".to_owned(),
-                "db.project.test:5432 -> postgres".to_owned(),
+                "postgres.project.test:5432 -> postgres".to_owned(),
             ]
         );
     }

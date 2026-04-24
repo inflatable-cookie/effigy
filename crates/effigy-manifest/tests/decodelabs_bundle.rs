@@ -160,3 +160,44 @@ database = "contactpatch"
     let bundle = loaded.manifest.bundle.expect("bundle");
     assert_eq!(bundle.base.as_deref(), Some("decodelabs"));
 }
+
+#[test]
+fn decodelabs_bundle_hydrates_primary_database_from_databases_list() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "decodelabs"
+host = "contact-patch.legacy.test"
+project_name = "contactpatch-dev"
+databases = ["contactpatch", "contactpatch_test"]
+"#,
+    )
+    .expect("write manifest");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let db = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("web"))
+        .and_then(|web| web.services.get("db"))
+        .expect("db service");
+
+    assert_eq!(
+        db.params.get("database").and_then(|value| value.as_str()),
+        Some("contactpatch")
+    );
+    assert_eq!(
+        db.params
+            .get("databases")
+            .and_then(|value| value.as_array())
+            .expect("databases list")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["contactpatch", "contactpatch_test"]
+    );
+}

@@ -249,3 +249,50 @@ default_workspace = "rust"
         "got {http_routes:?}"
     );
 }
+
+#[test]
+fn underlay_bundle_hydrates_primary_database_from_databases_list() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "underlay-reference-dev"
+workspace_subdir = "underlay-reference"
+databases = ["acme", "acme_test"]
+"#,
+    )
+    .expect("write manifest");
+    std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let postgres = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("stack"))
+        .and_then(|stack| stack.services.get("postgres"))
+        .expect("postgres service");
+
+    assert_eq!(
+        postgres
+            .params
+            .get("database")
+            .and_then(|value| value.as_str()),
+        Some("acme")
+    );
+    assert_eq!(
+        postgres
+            .params
+            .get("databases")
+            .and_then(|value| value.as_array())
+            .expect("databases list")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["acme", "acme_test"]
+    );
+}

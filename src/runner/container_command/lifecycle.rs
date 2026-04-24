@@ -13,10 +13,7 @@ use effigy_containers::{
     validate_container_policy, EffectiveAttachMode, EffectiveContainerPolicy,
 };
 use effigy_runtime::session::run_attached_container_session;
-use effigy_runtime::shell::{
-    run_container_shell as run_runtime_container_shell,
-    run_container_shell_session as run_runtime_container_shell_session,
-};
+use effigy_runtime::shell::run_container_shell as run_runtime_container_shell;
 use effigy_runtime::signals::{
     install_stop_requested_flag, run_compose_inherit_with_stop_flag, run_docker_capture,
     ComposeRunOutcome,
@@ -275,24 +272,6 @@ pub(in crate::runner) fn run_container_exec_capture(
     run_compose_exec(repo_root, &policy, &args, true, "docker compose exec")
 }
 
-pub(in crate::runner) fn run_container_shell_session(
-    repo_root: &Path,
-    name: Option<&str>,
-    service: Option<&str>,
-    initial_command: Option<&str>,
-) -> Result<String, RunnerError> {
-    run_runtime_container_shell_session(
-        repo_root,
-        name,
-        service,
-        initial_command,
-        validate_runtime_shell_match,
-        probe_runtime_shell_capability,
-        run_runtime_shell_exec,
-    )
-    .map_err(Into::into)
-}
-
 fn validate_runtime_shell_match(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -348,27 +327,14 @@ fn resolve_container_shell_session(
     Ok((policy, service, working_dir))
 }
 
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_owned();
-    }
-    if value.bytes().all(|byte| {
-        matches!(
-            byte,
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'/' | b':' | b'.' | b'_' | b'-'
-        )
-    }) {
-        return value.to_owned();
-    }
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_left_running_shared_services, annotate_shared_service_notes,
         finish_container_up_failure, render_interrupted_up_closeout_text, run_container_eject,
         EffectiveAttachMode,
+    };
+    use crate::runner::container_command::support::{
+        annotate_left_running_shared_services, annotate_shared_service_notes,
     };
     use crate::runner::RunnerError;
     use effigy_containers::{

@@ -30,10 +30,10 @@ use effigy_demo::{
     successful_demo_attempt, task_is_concurrent_runner_backed, terminated_demo_attempt,
     update_active_terminal_resize, write_active_attempt_record,
     write_latest_attempt_receipt as persist_latest_demo_attempt_receipt, DemoEntrypoint,
-    DemoExecutionAttempt, DemoHistoricalAttempt, DemoInvocationKind, DemoLaunchMode, DemoLogPaths,
-    DemoRecord, DemoRecordGroupBy, OutputMirror, PersistedDemoActiveAttempt,
-    PersistedDemoActivePhase, DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS,
-    DEMO_MANAGED_EVENT_POLL_INTERVAL_MS, DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT,
+    DemoExecutionAttempt, DemoInvocationKind, DemoLaunchMode, DemoLogPaths, DemoRecord,
+    DemoRecordGroupBy, OutputMirror, PersistedDemoActiveAttempt, PersistedDemoActivePhase,
+    DEMO_DEFAULT_TERMINAL_COLS, DEMO_DEFAULT_TERMINAL_ROWS, DEMO_MANAGED_EVENT_POLL_INTERVAL_MS,
+    DEMO_STREAM_DRAIN_POLLS_AFTER_EXIT,
 };
 #[cfg(test)]
 use effigy_demo::{
@@ -58,7 +58,6 @@ use effigy_cli::{
     DemoArgs, DemoHistoryOutcome, DemoListGroupBy, DemoListQuery, DemoSubcommand, TaskInvocation,
 };
 use effigy_core::shell::with_local_node_bin_path;
-use effigy_core::widgets::{KeyValue, NoticeLevel};
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::run_spec::{render_task_run_spec, RunSpecContext};
 use effigy_manifest::{LoadedCatalog, TaskSelection};
@@ -66,7 +65,7 @@ use effigy_process::{ProcessEventKind, ProcessSpec, ProcessSupervisor};
 use effigy_routing::select_catalog_and_task;
 use effigy_tasks::parse_task_selector;
 use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
-use effigy_ui::{encode_json, render_utf8, text_renderer, PlainRenderer, Renderer};
+use effigy_ui::encode_json;
 
 use super::error::RunnerError;
 pub(in crate::runner) use entry::{demo_error, run_demo};

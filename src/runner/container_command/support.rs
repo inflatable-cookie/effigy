@@ -279,33 +279,6 @@ patch_alias() {
     script
 }
 
-pub(super) fn annotate_removed_gateway_routes(
-    report: &mut effigy_containers::ContainerCommandReport,
-    domains: &[String],
-) {
-    if domains.is_empty() {
-        return;
-    }
-    if let Some(json_object) = report.json.as_object_mut() {
-        json_object.insert(
-            "gateway_routes".to_owned(),
-            json!(domains
-                .iter()
-                .map(|domain| json!({
-                    "action": "removed",
-                    "domain": domain,
-                }))
-                .collect::<Vec<_>>()),
-        );
-    }
-    for domain in domains {
-        report.success_text.push('\n');
-        report
-            .success_text
-            .push_str(&format!("[gateway] removed {domain}"));
-    }
-}
-
 pub(super) fn ensure_shared_services_running(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {
@@ -403,6 +376,7 @@ pub(super) fn annotate_warning_lines(
     }
 }
 
+#[cfg(test)]
 pub(super) fn annotate_left_running_shared_services(
     report: &mut effigy_containers::ContainerCommandReport,
     policy: &EffectiveContainerPolicy,

@@ -27,6 +27,15 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Changed
+- Move `bootstrap:local` onto a dedicated `target/bootstrap-local` Cargo
+  target dir so local binary refreshes stop fighting the shared workspace
+  `target/` cache and remain fast/predictable even when the main build tree
+  is noisy or wedged.
+- Let the shipped `decodelabs` and `underlay` bundles accept
+  `databases = ["main", "test", ...]` alongside the legacy singular
+  `database = "main"` input, hydrating the singular primary database from the
+  first list entry and carrying the full list through to MariaDB/Postgres
+  init-time database creation.
 - Add a `decodelabs` nginx config variant and point the `decodelabs` bundle at
   it. The rendered config now only rewrites every request to
   `/vendor/genesis.php` and hands off to php-fpm — no try_files, asset
@@ -54,6 +63,21 @@ During v0.x, MINOR bumps may include breaking changes.
 - Expand the Rhai host API with typed helpers for task discovery, container
   status/logs/data/reset/eject/stats, docs checks, bundle/service/catalog
   inspection, gateway status/setup, doctor, scan, and cache operations, plus
+
+### Fixed
+- Preserve default workspace `working_dir` inference for container exec/CWD
+  mapping even when repos set `[task_defaults].run_in = "host"`, so
+  bundle-backed stacks like `underlay-reference` still inherit the generated
+  underlay workspace path.
+- Update `bootstrap:local` installs with a temp file plus atomic rename instead
+  of copying over the live `.local-install/bin/effigy` path in place, which
+  avoids corrupting the running local binary during self-hosted refreshes.
+- Finish the postgres/mysql service-alias rename on the runtime and gateway
+  paths so generated stacks register `postgres.<domain>` and `mysql.<domain>`
+  consistently instead of still leaking the old `db.<domain>` alias.
+- Define the forwarded FastCGI variables in the `decodelabs` nginx variant so
+  generated `web` containers start cleanly instead of crashing on unknown
+  `$fastcgi_*` variables during nginx config load.
   a maintained audit matrix and static guard against recursive Effigy calls in
   first-party Rhai scripts.
 - Add Rhai `http_get(...)`, `http_post(...)`, and `http_request(...)` helpers

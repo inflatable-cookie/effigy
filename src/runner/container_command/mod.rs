@@ -17,7 +17,7 @@ use super::error::RunnerError;
 use data::run_container_data_pull_production;
 use lifecycle::{run_container_eject, run_container_shell, run_container_up};
 
-pub(in crate::runner) use lifecycle::{run_container_exec_capture, run_container_shell_session};
+pub(in crate::runner) use lifecycle::run_container_exec_capture;
 
 mod data;
 mod gateway_registration;
