@@ -36,6 +36,12 @@ The shipped bundle also provides `smoke:error-logging`,
 `NULL_RATE_THRESHOLD`, or `ERROR_REPORTING_ROUTES_DIR` when the repo's
 API or route layout differs from the defaults.
 
+The starter bootstrap run also uses the bundled
+`{{ bundle.root }}/scripts/bootstrap-env.rhai` helper before container
+startup. It creates app-local `.env` files only when they are missing,
+deriving local URLs from `[bundle]` / `[bundle.routes]` and generating
+local-only API secrets.
+
 ## Adoption
 
 Run `effigy init underlay` inside the target repo — see

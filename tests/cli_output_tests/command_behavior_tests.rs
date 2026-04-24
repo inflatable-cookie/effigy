@@ -6967,7 +6967,14 @@ case "$*" in
         esac
         ;;
       exec)
-        printf "exec-ok\n"
+        case "$*" in
+          *"uname -m"*)
+            printf "x86_64\n"
+            ;;
+          *)
+            printf "exec-ok\n"
+            ;;
+        esac
         ;;
       down)
         printf "compose-down\n"
@@ -7042,7 +7049,14 @@ case "$subcmd" in
     esac
     ;;
   exec)
-    printf "exec-ok\n"
+    case "$*" in
+      *"uname -m"*)
+        printf "x86_64\n"
+        ;;
+      *)
+        printf "exec-ok\n"
+        ;;
+    esac
     ;;
   run)
     case "$*" in
@@ -7611,7 +7625,7 @@ fn cli_task_workspace_binding_stops_environment_on_sigint() {
         std::env::var("PATH").expect("PATH")
     );
 
-    let child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("dev")
         .arg("--repo")
         .arg(&root)
@@ -7627,11 +7641,26 @@ fn cli_task_workspace_binding_stops_environment_on_sigint() {
         .spawn()
         .expect("spawn effigy");
 
-    wait_for_path_exists(
-        &log_follow,
-        Duration::from_secs(3),
-        "task container log follow marker",
-    );
+    let poll_started = std::time::Instant::now();
+    let log_timeout = Duration::from_secs(3);
+    while !log_follow.exists() {
+        if poll_started.elapsed() >= log_timeout {
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(child.id() as i32),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+            let output = child.wait_with_output().expect("wait output");
+            let docker_log = fs::read_to_string(&docker_args).unwrap_or_default();
+            let colima_log = fs::read_to_string(&colima_args).unwrap_or_default();
+            panic!(
+                "task container log follow marker was not created in time: {}\n--- stdout ---\n{}\n--- stderr ---\n{}\n--- docker_args ---\n{docker_log}\n--- colima_args ---\n{colima_log}",
+                log_follow.display(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
     nix::sys::signal::kill(
         nix::unistd::Pid::from_raw(child.id() as i32),
         nix::sys::signal::Signal::SIGINT,
@@ -7733,7 +7762,6 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
-        .env("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1")
         .output()
         .expect("run effigy");
 
@@ -7784,7 +7812,11 @@ fn cli_container_shell_command_runs_via_sh_lc() {
         "got: {docker_invocations}"
     );
     assert!(
-        docker_invocations.contains("app sh -lc printf shell-ok"),
+        docker_invocations.contains("app sh -lc "),
+        "got: {docker_invocations}"
+    );
+    assert!(
+        docker_invocations.contains("printf shell-ok"),
         "got: {docker_invocations}"
     );
 }

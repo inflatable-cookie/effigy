@@ -79,6 +79,10 @@ During v0.x, MINOR bumps may include breaking changes.
   inspection, gateway status/setup, doctor, scan, and cache operations, plus
 
 ### Fixed
+- Keep seeded bootstrap start tasks and workspace handoff internals pinned to
+  the cloned repo root even when the original `effigy bootstrap ...` command
+  was launched from outside that repo, so the final `dev` start step no longer
+  falls back to resolving container commands from the outer shell cwd.
 - Resolve the underlay bundled `ui-setup.rhai` package-dir probes from the
   owning repo root instead of the launched child process cwd, so explicit
   `[bundle.dirs]` mappings like Acowtancy's `cream` / `dairy` / `froyo`
@@ -178,6 +182,11 @@ During v0.x, MINOR bumps may include breaking changes.
   from active guides have been redirected through `archive/`.
 
 ### Added
+- Add a bundled underlay `bootstrap-env.rhai` helper and wire it into the
+  starter bootstrap run so fresh underlay repos can create missing
+  app-local `.env` files before the first container bring-up. The helper
+  derives local route URLs from `[bundle]` / `[bundle.routes]`, preserves
+  existing files, and generates local-only API auth/encryption secrets.
 - Add configurability knobs for the shipped `underlay` and `decodelabs`
   bundles: `system_name`, `container_name`, `workspace_service_name`, and
   `default_workspace` are now optional `[bundle]` inputs (defaulting to

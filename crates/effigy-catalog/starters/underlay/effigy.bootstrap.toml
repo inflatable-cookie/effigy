@@ -9,6 +9,7 @@
 
 [bootstrap]
 run = [
+  { rhai = "{{ bundle.root }}/scripts/bootstrap-env.rhai" },
   { task = "container up --detach" },
   { task = "bootstrap deps sync underlay-app" },
 ]
