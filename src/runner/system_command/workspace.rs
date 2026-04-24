@@ -353,7 +353,7 @@ fn maybe_start_workspace_gateway(policy: &EffectiveContainerPolicy) -> Result<()
 }
 
 fn ensure_workspace_permissions_ready(
-    _workspace_repo_root: &Path,
+    workspace_repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     container_name: Option<&str>,
     repo_override: Option<PathBuf>,
@@ -372,18 +372,47 @@ fn ensure_workspace_permissions_ready(
         "preparing workspace permissions",
         false,
     );
-    run_container(ContainerArgs {
-        subcommand: ContainerSubcommand::Shell {
-            name: container_name.map(str::to_owned),
-            service: Some(policy.primary_service.clone()),
-            command: Some(render_workspace_permission_command(user, &targets)),
-        },
-        repo_override,
-        output_json: false,
-    })
+    run_workspace_permission_prep(
+        workspace_repo_root,
+        policy,
+        container_name,
+        &render_workspace_permission_command(user, &targets),
+        repo_override.as_deref(),
+    )
     .inspect_err(|_| progress.finish(false))?;
     progress.finish(true);
     Ok(())
+}
+
+fn run_workspace_permission_prep(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    _container_name: Option<&str>,
+    command: &str,
+    repo_override: Option<&Path>,
+) -> Result<String, RunnerError> {
+    let service = policy.primary_service.as_str();
+    let mut args = compose_args(policy, ["exec", "-T", "-u", "0", service, "sh", "-lc"]);
+    args.push(OsString::from(command));
+    let output = crate::runner::exec_command::run_compose_exec(
+        repo_root,
+        policy,
+        &args,
+        false,
+        "docker compose exec",
+    )?;
+    if output.status.success() {
+        return Ok(String::new());
+    }
+
+    Err(RunnerError::task_invocation(match repo_override {
+        Some(repo_override) => format!(
+            "failed to prepare workspace permissions in service `{}` with repo root `{}`",
+            service,
+            repo_override.display()
+        ),
+        None => format!("failed to prepare workspace permissions in service `{service}`"),
+    }))
 }
 
 fn render_workspace_permission_command(user: &str, targets: &[String]) -> String {
