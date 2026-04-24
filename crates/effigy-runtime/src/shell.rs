@@ -220,6 +220,7 @@ fn build_container_shell_args(
     if let Some(command) = command {
         let mut args = compose_args(policy, ["exec", "-T", "-w"]);
         args.push(OsString::from(working_dir));
+        append_workspace_exec_identity(&mut args, workspace_identity);
         append_color_exec_env(&mut args, false);
         args.push(OsString::from("-e"));
         args.push(OsString::from(CONTAINER_HANDOFF_ENV));
@@ -339,7 +340,7 @@ mod tests {
     use super::{
         build_container_shell_args, build_interactive_container_shell_args,
         render_effigy_path_prefixed_command, render_interactive_shell_session_command,
-        should_fail_container_shell_exit,
+        should_fail_container_shell_exit, ResolvedWorkspaceExecIdentity,
     };
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_manifest::{
@@ -407,13 +408,17 @@ mod tests {
     #[test]
     fn command_mode_shell_exec_disables_nested_tty() {
         let policy = test_policy();
+        let workspace_identity = ResolvedWorkspaceExecIdentity {
+            user: "dev".to_owned(),
+            home: Some("/home/dev".to_owned()),
+        };
         let args = build_container_shell_args(
             &policy,
             "app",
             Some("echo hi"),
             Path::new("/tmp/work"),
             "/bin/sh",
-            None,
+            Some(&workspace_identity),
         );
         let rendered = args
             .iter()
@@ -423,6 +428,10 @@ mod tests {
         assert!(rendered
             .windows(2)
             .any(|window| window == ["-w", "/tmp/work"]));
+        assert!(rendered.windows(2).any(|window| window == ["-u", "dev"]));
+        assert!(rendered
+            .windows(2)
+            .any(|window| window == ["-e", "HOME=/home/dev"]));
         assert!(rendered
             .windows(2)
             .any(|window| window == ["-e", "EFFIGY_COLOR=always"]));

@@ -13,7 +13,6 @@ use super::super::run_exec;
 use super::super::run_gateway;
 use super::super::run_internal_gateway;
 use super::super::run_internal_rhai;
-use super::super::run_manifest_task;
 use super::super::run_release;
 use super::super::run_service;
 use super::super::run_system;
@@ -52,6 +51,8 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Tasks(args) => run_tasks(args),
         Command::InternalGateway(args) => run_internal_gateway(args),
         Command::InternalRhai(args) => run_internal_rhai(args),
-        Command::Task(task) => run_manifest_task(&task),
+        Command::Task(task) => {
+            crate::runner::execute::api::run_manifest_task_with_cwd(&task, cwd.to_path_buf())
+        }
     }
 }

@@ -2146,7 +2146,7 @@ fn workspace_rust_bun_assembles_with_defaults() {
     let args = build.get("args").expect("build args");
     assert_eq!(args.get("WORKSPACE_UID").unwrap().as_str().unwrap(), "1000");
     assert_eq!(args.get("WORKSPACE_GID").unwrap().as_str().unwrap(), "1000");
-    assert_eq!(args.get("RUST_VERSION").unwrap().as_str().unwrap(), "1.88");
+    assert_eq!(args.get("RUST_VERSION").unwrap().as_str().unwrap(), "1.91");
 
     // sleep infinity command (long-running shell target, not a real service).
     let command = workspace.get("command").expect("command");

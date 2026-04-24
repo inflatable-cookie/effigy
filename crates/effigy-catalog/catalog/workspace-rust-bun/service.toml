@@ -4,7 +4,7 @@ description = "Long-running Rust + Bun dev workspace container — used as a she
 
 [params.rust_version]
 type = "string"
-default = "1.88"
+default = "1.91"
 description = "Rust toolchain version (used as the `rust:<version>-bookworm` base image tag)"
 
 [params.bun_version]

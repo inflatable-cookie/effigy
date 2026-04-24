@@ -216,7 +216,7 @@ fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
         "got: {args_log}"
     );
     assert!(
-        args_log.contains("app sh -lc printf helper-shell"),
+        args_log.contains("app sh -lc") && args_log.contains("printf helper-shell"),
         "got: {args_log}"
     );
     assert!(

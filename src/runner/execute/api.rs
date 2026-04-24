@@ -5,10 +5,7 @@ use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn, TaskS
 use effigy_tasks::CatalogSelectionMode;
 
 use super::binding::resolve_container_execution_binding as resolve_container_execution_binding_impl;
-use super::entry::{
-    run_manifest_task as run_manifest_task_impl,
-    run_manifest_task_with_cwd as run_manifest_task_with_cwd_impl,
-};
+use super::entry::run_manifest_task_with_cwd as run_manifest_task_with_cwd_impl;
 use crate::runner::error::RunnerError;
 
 pub(in crate::runner) use super::binding::ContainerExecutionBinding;
@@ -29,10 +26,6 @@ pub(in crate::runner) fn resolve_container_execution_binding(
         task,
         runtime_surface,
     )
-}
-
-pub(in crate::runner) fn run_manifest_task(task: &TaskInvocation) -> Result<String, RunnerError> {
-    run_manifest_task_impl(task)
 }
 
 pub(in crate::runner) fn run_manifest_task_with_cwd(

@@ -34,9 +34,9 @@ where
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    ensure_generated_data_path(&policy, "list")?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    ensure_generated_data_path(&policy, "list")?;
 
     let colima_running = colima_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -120,8 +120,6 @@ where
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    validate_container_policy(repo_root, &policy)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     ensure_generated_data_path(
         &policy,
         match action {
@@ -129,6 +127,8 @@ where
             ContainerDataTransferAction::Import => "import",
         },
     )?;
+    validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_transfer_path(archive_path, action)?;
     if !colima_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?
@@ -183,9 +183,9 @@ where
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    ensure_generated_data_path(&policy, "pull-production")?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    ensure_generated_data_path(&policy, "pull-production")?;
     let hook = policy.pull_production_hook.clone().ok_or_else(|| {
         EffigyRuntimeError::task_invocation(format!(
             "container `{}` does not declare `[containers.{}.data].pull_production`",

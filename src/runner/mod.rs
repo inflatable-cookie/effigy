@@ -36,7 +36,6 @@ pub(in crate::runner) use docs_command::run_docs;
 pub use entrypoints::{resolve_command_root, run_command};
 pub use error::RunnerError;
 pub(in crate::runner) use exec_command::run_exec;
-pub(in crate::runner) use execute::api::run_manifest_task;
 pub(in crate::runner) use gateway_command::{run_gateway, run_internal_gateway};
 pub(in crate::runner) use release_command::run_release;
 pub(in crate::runner) use script_command::run_internal_rhai;
