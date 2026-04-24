@@ -27,8 +27,8 @@ use crate::{
 
 const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}";
 const DOCKER_STATS_FORMAT: &str = "{{ json . }}";
-const COLIMA_START_TIMEOUT: Duration = Duration::from_secs(15);
-const COLIMA_STATUS_TIMEOUT: Duration = Duration::from_secs(15);
+const COLIMA_START_TIMEOUT: Duration = Duration::from_secs(90);
+const COLIMA_STATUS_TIMEOUT: Duration = Duration::from_secs(30);
 const COLIMA_STOP_TIMEOUT: Duration = Duration::from_secs(45);
 const COLIMA_STOP_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTAINER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
