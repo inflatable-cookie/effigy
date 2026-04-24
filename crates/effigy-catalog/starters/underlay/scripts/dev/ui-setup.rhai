@@ -32,6 +32,8 @@ fn optional_config_string(path, fallback) {
 let front_dir = optional_config_string("bundle.dirs.front", "");
 let admin_dir = optional_config_string("bundle.dirs.admin", "");
 let ui_dir = optional_config_string("bundle.dirs.ui", "");
+let underlay_dir = path_join(repo_root, "../underlay");
+let poodle_dir = path_join(repo_root, "../poodle");
 
 let shell_header = "set -eu\n"
     + "\n"
@@ -116,29 +118,29 @@ let shell_layout_helpers = "ensure_bun_install_if_present() {\n"
     + "}\n"
     + "\n";
 
-let shell_targets = "ensure_bun_install_if_present \"../underlay\" \"underlay\"\n"
-    + "ensure_bun_install_if_present \"../poodle\" \"poodle\"\n";
+let shell_targets = `ensure_bun_install_if_present "${underlay_dir}" "underlay"\n`
+    + `ensure_bun_install_if_present "${poodle_dir}" "poodle"\n`;
 
 if ui_dir != "" {
-    shell_targets += `ensure_bun_install_if_present "${ui_dir}" "${ui_dir}"\n`;
+    shell_targets += `ensure_bun_install_if_present "${path_join(repo_root, ui_dir)}" "${ui_dir}"\n`;
 } else {
-    shell_targets += "ensure_bun_install_if_present \"app-client\" \"app-client\"\n";
-    shell_targets += "ensure_bun_install_if_present \"acme-client\" \"acme-client\"\n";
+    shell_targets += `ensure_bun_install_if_present "${path_join(repo_root, "app-client")}" "app-client"\n`;
+    shell_targets += `ensure_bun_install_if_present "${path_join(repo_root, "acme-client")}" "acme-client"\n`;
 }
 
 shell_targets += "\ncase \"$setup_task_name\" in\n";
 shell_targets += "  front) ensure_first_bun_install \"front\"";
 if front_dir != "" {
-    shell_targets += ` "${front_dir}"`;
+    shell_targets += ` "${path_join(repo_root, front_dir)}"`;
 } else {
-    shell_targets += " \"app-front\" \"acme-front\" \"front\"";
+    shell_targets += ` "${path_join(repo_root, "app-front")}" "${path_join(repo_root, "acme-front")}" "${path_join(repo_root, "front")}"`;
 }
 shell_targets += " ;;\n";
 shell_targets += "  admin) ensure_first_bun_install \"admin\"";
 if admin_dir != "" {
-    shell_targets += ` "${admin_dir}"`;
+    shell_targets += ` "${path_join(repo_root, admin_dir)}"`;
 } else {
-    shell_targets += " \"app-admin\" \"acme-admin\" \"admin\"";
+    shell_targets += ` "${path_join(repo_root, "app-admin")}" "${path_join(repo_root, "acme-admin")}" "${path_join(repo_root, "admin")}"`;
 }
 shell_targets += " ;;\n";
 shell_targets += "  *) printf '[error] unsupported ui setup target %s\\n' \"$setup_task_name\"; exit 1 ;;\n";

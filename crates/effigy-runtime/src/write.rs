@@ -58,14 +58,14 @@ where
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    validate_container_policy(repo_root, &policy)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     if keep_data && policy.compose_source != EffectiveComposeSource::Generated {
         return Err(EffigyRuntimeError::task_invocation(format!(
             "container `{}` uses direct `compose_file` ownership; `reset --keep-data` is only supported on the generated-compose path in this batch",
             policy.name
         )));
     }
+    validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let colima_running = colima_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let volume_actions = if keep_data {

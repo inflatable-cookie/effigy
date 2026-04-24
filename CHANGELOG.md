@@ -27,6 +27,9 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Changed
+- Bump the default `workspace-rust-bun` catalog toolchain from Rust 1.88 to
+  Rust 1.91 so underlay-style workspace containers can build current AWS SDK
+  crate releases without per-repo toolchain overrides.
 - Move `bootstrap:local` onto a dedicated `target/bootstrap-local` Cargo
   target dir so local binary refreshes stop fighting the shared workspace
   `target/` cache and remain fast/predictable even when the main build tree
@@ -73,6 +76,10 @@ During v0.x, MINOR bumps may include breaking changes.
   inspection, gateway status/setup, doctor, scan, and cache operations, plus
 
 ### Fixed
+- Resolve the underlay bundled `ui-setup.rhai` package-dir probes from the
+  owning repo root instead of the launched child process cwd, so explicit
+  `[bundle.dirs]` mappings like Acowtancy's `cream` / `dairy` / `froyo`
+  hydrate correctly inside workspace containers.
 - Stop in-process builtin task references from reconstructing CLI argv with a
   stale `--repo` global flag path, so bootstrap run steps like
   `container up --detach` execute against the target repo instead of failing
