@@ -7625,7 +7625,7 @@ fn cli_task_workspace_binding_stops_environment_on_sigint() {
         std::env::var("PATH").expect("PATH")
     );
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_effigy"))
+    let child = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("dev")
         .arg("--repo")
         .arg(&root)
@@ -7636,6 +7636,7 @@ fn cli_task_workspace_binding_stops_environment_on_sigint() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
