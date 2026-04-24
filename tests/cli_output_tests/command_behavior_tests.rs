@@ -7733,6 +7733,7 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .env("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1")
         .output()
         .expect("run effigy");
 
