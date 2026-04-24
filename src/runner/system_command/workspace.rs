@@ -417,6 +417,9 @@ fn ensure_workspace_effigy_available(
     container_name: Option<&str>,
     repo_override: Option<PathBuf>,
 ) -> Result<(), RunnerError> {
+    if std::env::var_os("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF").is_some() {
+        return Ok(());
+    }
     let target = probe_workspace_linux_target(workspace_repo_root, policy)?;
     let artifact = ensure_linux_workspace_effigy_artifact(workspace_repo_root, target)?;
     let mut progress = WorkspaceTransientProgressReporter::new(
