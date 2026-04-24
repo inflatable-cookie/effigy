@@ -146,6 +146,26 @@ pub(super) fn resolve_compose_service_container_id(
         return Ok(OsString::from(container_name));
     }
 
+    resolve_compose_service_container_id_via_ps(
+        repo_root,
+        policy,
+        service,
+        run_command_capture_allow_failure,
+        format_args,
+    )
+}
+
+fn resolve_compose_service_container_id_via_ps(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    run_command_capture_allow_failure: &dyn Fn(
+        &Path,
+        &str,
+        &[OsString],
+    ) -> Result<Output, RunnerError>,
+    format_args: &dyn Fn(&[OsString]) -> String,
+) -> Result<OsString, RunnerError> {
     let mut args = compose_args(policy, ["ps", "-q"]);
     args.push(OsString::from(service));
     let (program, resolved_args) = compose_invocation(policy, &args);
@@ -359,7 +379,7 @@ mod tests {
             detach_timeout_secs: 10,
         };
 
-        let container_id = resolve_compose_service_container_id(
+        let container_id = resolve_compose_service_container_id_via_ps(
             repo_root,
             &policy,
             "app",

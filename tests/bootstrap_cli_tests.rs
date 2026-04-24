@@ -144,13 +144,13 @@ fn create_root_remote_with_bootstrap(child_remote: &Path) -> PathBuf {
         worktree.join("effigy.toml"),
         format!(
             r#"[bootstrap]
-setup = ["bootstrap:root"]
+setup = [{{ task = "bootstrap:root" }}]
 start = "bootstrap:start"
 
 [[bootstrap.children]]
 path = "child-app"
 repo = "{}"
-setup = ["bootstrap:child"]
+setup = [{{ task = "bootstrap:child" }}]
 required = true
 
 [tasks."bootstrap:root"]
@@ -213,7 +213,7 @@ fn bootstrap_help_is_command_specific() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("bootstrap Help"));
     assert!(stdout.contains(
-        "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--start] [--plan] [--json]"
+        "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--no-start] [--plan] [--json]"
     ));
     assert!(stdout.contains("child repo checkout"));
     assert!(!stdout.contains("release Help"));
@@ -300,6 +300,7 @@ fn bootstrap_reports_missing_bootstrap_contract_via_binary() {
         .arg("--json")
         .arg("bootstrap")
         .arg(root_remote.display().to_string())
+        .arg("--no-start")
         .env("NO_COLOR", "1")
         .current_dir(&cwd)
         .output()
