@@ -43,6 +43,26 @@ fn colima_start_command_uses_profile() {
 }
 
 #[test]
+fn colima_start_command_adds_arch_and_vm_type_overrides_on_macos() {
+    let mut args = vec!["start".to_owned()];
+    append_colima_platform_overrides(&mut args, "macos", Some("aarch64"), Some("vz"));
+
+    assert!(args
+        .windows(2)
+        .any(|window| window == ["--arch", "aarch64"]));
+    assert!(args.windows(2).any(|window| window == ["--vm-type", "vz"]));
+}
+
+#[test]
+fn colima_start_command_skips_arch_and_vm_type_overrides_on_linux() {
+    let mut args = vec!["start".to_owned()];
+    append_colima_platform_overrides(&mut args, "linux", Some("aarch64"), Some("vz"));
+
+    assert!(!args.iter().any(|value| value == "--arch"));
+    assert!(!args.iter().any(|value| value == "--vm-type"));
+}
+
+#[test]
 fn colima_start_command_applies_managed_resources_for_effigy_profile() {
     unsafe {
         std::env::set_var(
@@ -146,6 +166,23 @@ fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
         .expect("script");
     assert!(script.contains("# effigy-managed-swap"));
     assert!(script.contains("swap_gib=16"));
+}
+
+#[test]
+fn prepare_managed_colima_profile_writes_macos_arch_and_vm_type_overrides() {
+    let mut root = serde_yaml::Mapping::new();
+    upsert_colima_platform_overrides(&mut root, "macos", Some("aarch64"), Some("vz"));
+
+    assert_eq!(
+        root.get(serde_yaml::Value::String("arch".to_owned()))
+            .and_then(serde_yaml::Value::as_str),
+        Some("aarch64")
+    );
+    assert_eq!(
+        root.get(serde_yaml::Value::String("vmType".to_owned()))
+            .and_then(serde_yaml::Value::as_str),
+        Some("vz")
+    );
 }
 
 #[test]

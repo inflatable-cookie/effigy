@@ -19,6 +19,8 @@ const MIN_EFFIGY_MEMORY_GIB: u64 = 4;
 const MAX_EFFIGY_MEMORY_GIB: u64 = 32;
 const MIN_EFFIGY_SWAP_GIB: u64 = 4;
 const MAX_EFFIGY_SWAP_GIB: u64 = 16;
+const COLIMA_ARCH_OVERRIDE_ENV: &str = "EFFIGY_COLIMA_ARCH";
+const COLIMA_VM_TYPE_OVERRIDE_ENV: &str = "EFFIGY_COLIMA_VM_TYPE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColimaResourcePlan {
@@ -75,6 +77,12 @@ pub fn colima_start_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
         args.push("--dns".to_string());
         args.push(server.to_string());
     }
+    append_colima_platform_overrides(
+        &mut args,
+        std::env::consts::OS,
+        colima_arch_override().as_deref(),
+        colima_vm_type_override().as_deref(),
+    );
     CommandSpec {
         program: "colima".to_string(),
         args,
@@ -169,6 +177,12 @@ pub fn prepare_managed_colima_profile(policy: &EffectiveContainerPolicy) -> Resu
         Value::String("memory".to_owned()),
         Value::Number(Number::from(resources.memory_gib)),
     );
+    upsert_colima_platform_overrides(
+        root,
+        std::env::consts::OS,
+        colima_arch_override().as_deref(),
+        colima_vm_type_override().as_deref(),
+    );
     upsert_effigy_swap_provision(root, resources.swap_gib);
 
     let rendered = serde_yaml::to_string(&config).map_err(|error| {
@@ -222,6 +236,62 @@ fn detect_host_memory_bytes_macos() -> Option<u64> {
         .parse::<u64>()
         .ok()
         .filter(|value| *value > 0)
+}
+
+fn append_colima_platform_overrides(
+    args: &mut Vec<String>,
+    host_os: &str,
+    arch_override: Option<&str>,
+    vm_type_override: Option<&str>,
+) {
+    if host_os != "macos" {
+        return;
+    }
+    if let Some(arch) = arch_override.filter(|value| !value.trim().is_empty()) {
+        args.push("--arch".to_owned());
+        args.push(arch.trim().to_owned());
+    }
+    if let Some(vm_type) = vm_type_override.filter(|value| !value.trim().is_empty()) {
+        args.push("--vm-type".to_owned());
+        args.push(vm_type.trim().to_owned());
+    }
+}
+
+fn upsert_colima_platform_overrides(
+    root: &mut Mapping,
+    host_os: &str,
+    arch_override: Option<&str>,
+    vm_type_override: Option<&str>,
+) {
+    if host_os != "macos" {
+        return;
+    }
+    if let Some(arch) = arch_override.filter(|value| !value.trim().is_empty()) {
+        root.insert(
+            Value::String("arch".to_owned()),
+            Value::String(arch.trim().to_owned()),
+        );
+    }
+    if let Some(vm_type) = vm_type_override.filter(|value| !value.trim().is_empty()) {
+        root.insert(
+            Value::String("vmType".to_owned()),
+            Value::String(vm_type.trim().to_owned()),
+        );
+    }
+}
+
+fn colima_arch_override() -> Option<String> {
+    std::env::var(COLIMA_ARCH_OVERRIDE_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn colima_vm_type_override() -> Option<String> {
+    std::env::var(COLIMA_VM_TYPE_OVERRIDE_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn colima_profile_config_path(profile: &str) -> Result<PathBuf, String> {

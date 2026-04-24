@@ -26,12 +26,17 @@ thread_local! {
     static TEST_COMPOSE_BACKEND_OVERRIDE: Cell<Option<ComposeBackend>> = const { Cell::new(None) };
 }
 
+const COMPOSE_BACKEND_OVERRIDE_ENV: &str = "EFFIGY_COMPOSE_BACKEND";
+
 /// Resolve which compose backend to use.
 ///
 /// Prefers `docker` if available on PATH, falls back to Colima nerdctl.
 pub fn resolve_compose_backend() -> ComposeBackend {
     #[cfg(test)]
     if let Some(backend) = TEST_COMPOSE_BACKEND_OVERRIDE.with(Cell::get) {
+        return backend;
+    }
+    if let Some(backend) = compose_backend_override_from_env() {
         return backend;
     }
     if command_exists("docker") {
@@ -49,6 +54,22 @@ pub(crate) fn with_test_compose_backend<T>(backend: ComposeBackend, run: impl Fn
         slot.set(previous);
         result
     })
+}
+
+fn compose_backend_override_from_env() -> Option<ComposeBackend> {
+    match std::env::var(COMPOSE_BACKEND_OVERRIDE_ENV)
+        .ok()?
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "" | "auto" => None,
+        "docker" => Some(ComposeBackend::Docker),
+        "colima" | "colima-nerdctl" | "nerdctl" | "containerd" => {
+            Some(ComposeBackend::ColimaNerdctl)
+        }
+        _ => None,
+    }
 }
 
 /// Build docker compose arguments for a given policy and subcommand.
