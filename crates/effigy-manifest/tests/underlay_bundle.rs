@@ -296,3 +296,55 @@ databases = ["acme", "acme_test"]
         vec!["acme", "acme_test"]
     );
 }
+
+#[test]
+fn underlay_bundle_uses_route_label_overrides() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "underlay"
+host = "acowtancy.test"
+project_name = "acowtancy-dev"
+workspace_subdir = "acowtancy"
+database = "acowtancy"
+
+[bundle.routes]
+front = "cream"
+admin = "dairy"
+api = "farmyard"
+"#,
+    )
+    .expect("write manifest");
+    std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let stack = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("stack"))
+        .expect("stack");
+    let domains = stack
+        .dns
+        .as_ref()
+        .expect("dns")
+        .routes
+        .iter()
+        .map(|route| route.domain.as_str())
+        .collect::<Vec<_>>();
+
+    for expected in [
+        "cream.acowtancy.test",
+        "dairy.acowtancy.test",
+        "farmyard.acowtancy.test",
+    ] {
+        assert!(domains.contains(&expected), "got {domains:?}");
+    }
+    assert!(
+        !domains.contains(&"acowtancy.test"),
+        "front route should move off the bare host when bundle.routes.front is set: {domains:?}"
+    );
+}

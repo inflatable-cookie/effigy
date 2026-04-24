@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+#[cfg(target_os = "macos")]
 use std::net::Ipv4Addr;
 use std::process::Command as ProcessCommand;
 #[cfg(all(unix, not(target_os = "macos")))]

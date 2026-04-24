@@ -36,6 +36,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `database = "main"` input, hydrating the singular primary database from the
   first list entry and carrying the full list through to MariaDB/Postgres
   init-time database creation.
+- Let the shipped `underlay` bundle carry explicit front/admin UI package-dir
+  mapping for the bundled `ui-setup.rhai` helper and optional per-role route
+  labels, so polyrepo consumers can stop relying on the default
+  `app-*` / `acme-*` package-name guesses.
 - Add a `decodelabs` nginx config variant and point the `decodelabs` bundle at
   it. The rendered config now only rewrites every request to
   `/vendor/genesis.php` and hands off to php-fpm — no try_files, asset
@@ -65,6 +69,10 @@ During v0.x, MINOR bumps may include breaking changes.
   inspection, gateway status/setup, doctor, scan, and cache operations, plus
 
 ### Fixed
+- Treat `container_lifecycle = true` as an implicit container run target when
+  a task does not set `run_in`, so manifest-wide `[task_defaults].run_in =
+  "host"` no longer breaks managed dev tasks unless they explicitly opt back to
+  host execution.
 - Preserve default workspace `working_dir` inference for container exec/CWD
   mapping even when repos set `[task_defaults].run_in = "host"`, so
   bundle-backed stacks like `underlay-reference` still inherit the generated

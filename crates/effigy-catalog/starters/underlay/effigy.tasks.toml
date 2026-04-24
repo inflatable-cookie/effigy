@@ -12,6 +12,9 @@
 # If you set `[bundle].workspace_service_name` to something other than
 # `workspace`, update the `service = "workspace"` line in the shell role
 # below to match.
+#
+# The bundled `ui-setup.rhai` helper reads `[bundle.dirs]` when repos
+# need explicit package-directory mapping.
 
 [tasks.health]
 run_in = "host"

@@ -89,10 +89,7 @@ pub fn resolve_task_execution_binding_from_parts(
 ) -> Result<Option<ResolvedTaskExecutionBinding>, ExecutionBindingResolveError> {
     let has_workspace_binding = task.system.is_some() || task.workspace.is_some();
     let implicit_default_target_available = has_implicit_default_target(containers);
-    let effective_run_in = task
-        .run_in
-        .or(default_run_in)
-        .unwrap_or(ManifestTaskRunIn::Either);
+    let effective_run_in = task.effective_run_in(default_run_in);
     if effective_run_in == ManifestTaskRunIn::Host {
         if has_workspace_binding {
             return Err(ExecutionBindingResolveError::new(format!(
@@ -686,5 +683,54 @@ run = "npm run dev"
             resolved,
             Some(ResolvedTaskExecutionBinding::Workspace(_))
         ));
+    }
+
+    #[test]
+    fn container_lifecycle_beats_manifest_task_default_run_in_host() {
+        let manifest = parse_manifest(
+            r#"
+[task_defaults]
+run_in = "host"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "app"
+
+[tasks.dev]
+container_lifecycle = true
+run = "npm run dev"
+"#,
+        );
+        let task = manifest.tasks.get("dev").expect("task");
+        let resolved = resolve_task_execution_binding(&manifest, "dev", task).expect("resolve");
+
+        assert!(matches!(
+            resolved,
+            Some(ResolvedTaskExecutionBinding::Workspace(_))
+        ));
+    }
+
+    #[test]
+    fn explicit_host_run_in_still_beats_container_lifecycle() {
+        let manifest = parse_manifest(
+            r#"
+[task_defaults]
+run_in = "either"
+
+[tasks.dev]
+container_lifecycle = true
+run_in = "host"
+run = "npm run dev"
+"#,
+        );
+        let task = manifest.tasks.get("dev").expect("task");
+        let resolved = resolve_task_execution_binding(&manifest, "dev", task).expect("resolve");
+
+        assert_eq!(resolved, Some(ResolvedTaskExecutionBinding::Host));
     }
 }

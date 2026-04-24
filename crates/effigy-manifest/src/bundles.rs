@@ -391,7 +391,7 @@ fn resolve_local_bundle_inputs(
         .iter()
         .map(|input| (input.name.as_str(), input))
         .collect::<BTreeMap<_, _>>();
-    for key in provided.keys() {
+    for key in bundle_input_paths(provided) {
         if !declared.contains_key(key.as_str()) {
             return Err(ManifestError::Compose {
                 path: manifest_path.to_path_buf(),
@@ -403,7 +403,9 @@ fn resolve_local_bundle_inputs(
     let mut resolved = BTreeMap::new();
     for input in &descriptor.inputs {
         let key = input.name.as_str();
-        let value = provided.get(key).cloned().or_else(|| input.default.clone());
+        let value = bundle_input_value(provided, key)
+            .cloned()
+            .or_else(|| input.default.clone());
         match (value, input.required) {
             (Some(value), _) => {
                 validate_bundle_input_type(
@@ -413,7 +415,7 @@ fn resolve_local_bundle_inputs(
                     input.value_type,
                     &value,
                 )?;
-                resolved.insert(key.to_owned(), value);
+                insert_bundle_input_value(&mut resolved, key, value);
             }
             (None, true) => {
                 return Err(ManifestError::Compose {
@@ -820,6 +822,54 @@ fn underlay_spec() -> BundleSpec {
                 example: None,
             },
             BundleInputSpec {
+                name: "dirs.front".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Front-end package directory for the bundled UI setup helper. When omitted, the helper falls back to the shipped Underlay guesses.".to_owned(),
+                default: None,
+                example: Some(Value::String("cream".to_owned())),
+            },
+            BundleInputSpec {
+                name: "dirs.admin".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Admin package directory for the bundled UI setup helper. When omitted, the helper falls back to the shipped Underlay guesses.".to_owned(),
+                default: None,
+                example: Some(Value::String("dairy".to_owned())),
+            },
+            BundleInputSpec {
+                name: "dirs.ui".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Shared UI package directory the bundled UI setup helper should hydrate before front/admin startup. When omitted, the helper falls back to the shipped Underlay guesses.".to_owned(),
+                default: None,
+                example: Some(Value::String("froyo".to_owned())),
+            },
+            BundleInputSpec {
+                name: "routes.front".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Gateway subdomain label for the front-end route. Empty keeps the bare host.".to_owned(),
+                default: Some(Value::String(String::new())),
+                example: Some(Value::String("cream".to_owned())),
+            },
+            BundleInputSpec {
+                name: "routes.admin".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Gateway subdomain label for the admin route.".to_owned(),
+                default: Some(Value::String("admin".to_owned())),
+                example: Some(Value::String("dairy".to_owned())),
+            },
+            BundleInputSpec {
+                name: "routes.api".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Gateway subdomain label for the API route.".to_owned(),
+                default: Some(Value::String("api".to_owned())),
+                example: Some(Value::String("farmyard".to_owned())),
+            },
+            BundleInputSpec {
                 name: "system_name".to_owned(),
                 value_type: BundleInputType::String,
                 required: false,
@@ -867,6 +917,22 @@ fn resolve_underlay_bundle(
     let api_port = optional_bundle_integer(inputs, "api_port").unwrap_or(41001);
     let admin_port = optional_bundle_integer(inputs, "admin_port").unwrap_or(41002);
     let front_port = optional_bundle_integer(inputs, "front_port").unwrap_or(41003);
+    let front_route_domain = underlay_route_domain(
+        &host,
+        optional_bundle_string(inputs, "routes.front").as_deref(),
+    );
+    let admin_route_domain = underlay_route_domain(
+        &host,
+        optional_bundle_string(inputs, "routes.admin")
+            .as_deref()
+            .or(Some("admin")),
+    );
+    let api_route_domain = underlay_route_domain(
+        &host,
+        optional_bundle_string(inputs, "routes.api")
+            .as_deref()
+            .or(Some("api")),
+    );
     let system_name =
         optional_bundle_string(inputs, "system_name").unwrap_or_else(|| "dev".to_owned());
     let container_name =
@@ -935,9 +1001,9 @@ catalog = "minio"
 
 [containers.__CONTAINER_NAME__.dns]
 routes = [
-  { domain = "__HOST__", tls = true, port = __FRONT_PORT__, service = "__WORKSPACE_SERVICE_NAME__" },
-  { domain = "admin.__HOST__", tls = true, port = __ADMIN_PORT__, service = "__WORKSPACE_SERVICE_NAME__" },
-  { domain = "api.__HOST__", tls = true, port = __API_PORT__, service = "__WORKSPACE_SERVICE_NAME__" },
+  { domain = "__FRONT_ROUTE_DOMAIN__", tls = true, port = __FRONT_PORT__, service = "__WORKSPACE_SERVICE_NAME__" },
+  { domain = "__ADMIN_ROUTE_DOMAIN__", tls = true, port = __ADMIN_PORT__, service = "__WORKSPACE_SERVICE_NAME__" },
+  { domain = "__API_ROUTE_DOMAIN__", tls = true, port = __API_PORT__, service = "__WORKSPACE_SERVICE_NAME__" },
   { domain = "dbgate.__HOST__", tls = true, port = 3000, service = "dbgate" },
   { domain = "mailpit.__HOST__", port = 8025, service = "mailpit" },
   { domain = "minio.__HOST__", port = 9001, service = "minio" },
@@ -965,6 +1031,9 @@ run_in = "host"
             .replace("__PROJECT_NAME__", &project_name)
             .replace("__WORKSPACE_SUBDIR__", &workspace_subdir)
             .replace("__DATABASE__", &database)
+            .replace("__FRONT_ROUTE_DOMAIN__", &front_route_domain)
+            .replace("__ADMIN_ROUTE_DOMAIN__", &admin_route_domain)
+            .replace("__API_ROUTE_DOMAIN__", &api_route_domain)
             .replace(
                 "__DATABASES__",
                 &render_toml_string_list(inputs, "databases"),
@@ -1270,9 +1339,9 @@ catalog = "minio"
 
 [containers.{{ inputs.container_name }}.dns]
 routes = [
-  { domain = "{{ inputs.host }}", tls = true, port = {{ inputs.front_port }}, service = "{{ inputs.workspace_service_name }}" },
-  { domain = "admin.{{ inputs.host }}", tls = true, port = {{ inputs.admin_port }}, service = "{{ inputs.workspace_service_name }}" },
-  { domain = "api.{{ inputs.host }}", tls = true, port = {{ inputs.api_port }}, service = "{{ inputs.workspace_service_name }}" },
+  { domain = "{% if inputs.routes.front %}{{ inputs.routes.front }}.{{ inputs.host }}{% else %}{{ inputs.host }}{% endif %}", tls = true, port = {{ inputs.front_port }}, service = "{{ inputs.workspace_service_name }}" },
+  { domain = "{% if inputs.routes.admin %}{{ inputs.routes.admin }}.{{ inputs.host }}{% else %}{{ inputs.host }}{% endif %}", tls = true, port = {{ inputs.admin_port }}, service = "{{ inputs.workspace_service_name }}" },
+  { domain = "{% if inputs.routes.api %}{{ inputs.routes.api }}.{{ inputs.host }}{% else %}{{ inputs.host }}{% endif %}", tls = true, port = {{ inputs.api_port }}, service = "{{ inputs.workspace_service_name }}" },
   { domain = "dbgate.{{ inputs.host }}", tls = true, port = 3000, service = "dbgate" },
   { domain = "mailpit.{{ inputs.host }}", port = 8025, service = "mailpit" },
   { domain = "minio.{{ inputs.host }}", port = 9001, service = "minio" },
@@ -1428,7 +1497,7 @@ fn required_bundle_string(
     inputs: &BTreeMap<String, Value>,
     key: &str,
 ) -> Result<String, ManifestError> {
-    let Some(value) = inputs.get(key) else {
+    let Some(value) = bundle_input_value(inputs, key) else {
         return Err(ManifestError::Compose {
             path: manifest_path.to_path_buf(),
             detail: format!("bundle `{bundle_name}` requires string input `{key}`"),
@@ -1451,11 +1520,11 @@ fn required_bundle_string(
 }
 
 fn optional_bundle_integer(inputs: &BTreeMap<String, Value>, key: &str) -> Option<i64> {
-    inputs.get(key).and_then(Value::as_integer)
+    bundle_input_value(inputs, key).and_then(Value::as_integer)
 }
 
 fn optional_bundle_string(inputs: &BTreeMap<String, Value>, key: &str) -> Option<String> {
-    let value = inputs.get(key)?.as_str()?.trim();
+    let value = bundle_input_value(inputs, key)?.as_str()?.trim();
     if value.is_empty() {
         None
     } else {
@@ -1464,7 +1533,7 @@ fn optional_bundle_string(inputs: &BTreeMap<String, Value>, key: &str) -> Option
 }
 
 fn render_toml_string_list(inputs: &BTreeMap<String, Value>, key: &str) -> String {
-    let Some(values) = inputs.get(key).and_then(Value::as_array) else {
+    let Some(values) = bundle_input_value(inputs, key).and_then(Value::as_array) else {
         return "[]".to_owned();
     };
     let encoded = values
@@ -1474,6 +1543,86 @@ fn render_toml_string_list(inputs: &BTreeMap<String, Value>, key: &str) -> Strin
         .collect::<Vec<_>>()
         .join(", ");
     format!("[{encoded}]")
+}
+
+fn underlay_route_domain(host: &str, label: Option<&str>) -> String {
+    let label = label.map(str::trim).unwrap_or_default();
+    if label.is_empty() {
+        host.to_owned()
+    } else {
+        format!("{label}.{host}")
+    }
+}
+
+fn bundle_input_value<'a>(inputs: &'a BTreeMap<String, Value>, key: &str) -> Option<&'a Value> {
+    let mut segments = key.split('.');
+    let first = segments.next()?;
+    let mut current = inputs.get(first)?;
+    for segment in segments {
+        current = current.as_table()?.get(segment)?;
+    }
+    Some(current)
+}
+
+fn bundle_input_paths(inputs: &BTreeMap<String, Value>) -> Vec<String> {
+    let mut paths = Vec::new();
+    for (key, value) in inputs {
+        collect_bundle_input_paths(key, value, &mut paths);
+    }
+    paths
+}
+
+fn collect_bundle_input_paths(prefix: &str, value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::Table(table) => {
+            for (key, child) in table {
+                let child_prefix = if prefix.is_empty() {
+                    key.to_owned()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                collect_bundle_input_paths(&child_prefix, child, out);
+            }
+        }
+        _ => out.push(prefix.to_owned()),
+    }
+}
+
+fn insert_bundle_input_value(inputs: &mut BTreeMap<String, Value>, key: &str, value: Value) {
+    fn insert_nested_segments(
+        table: &mut toml::map::Map<String, Value>,
+        segments: &[&str],
+        value: Value,
+    ) {
+        if let Some((head, tail)) = segments.split_first() {
+            if tail.is_empty() {
+                table.insert((*head).to_owned(), value);
+                return;
+            }
+            let entry = table
+                .entry((*head).to_owned())
+                .or_insert_with(|| Value::Table(toml::map::Map::new()));
+            let nested = entry
+                .as_table_mut()
+                .expect("bundle input path prefixes must be tables");
+            insert_nested_segments(nested, tail, value);
+        }
+    }
+
+    let segments = key.split('.').collect::<Vec<_>>();
+    if let Some((head, tail)) = segments.split_first() {
+        if tail.is_empty() {
+            inputs.insert((*head).to_owned(), value);
+            return;
+        }
+        let entry = inputs
+            .entry((*head).to_owned())
+            .or_insert_with(|| Value::Table(toml::map::Map::new()));
+        let nested = entry
+            .as_table_mut()
+            .expect("bundle input path prefixes must be tables");
+        insert_nested_segments(nested, tail, value);
+    }
 }
 
 fn validate_bundle_input_type(

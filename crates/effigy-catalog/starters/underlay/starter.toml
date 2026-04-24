@@ -21,6 +21,8 @@ Next steps:
    - set `[bundle].workspace_subdir` to the repo's directory name under `/workspace-root`
    - set `[bundle].database` to the repo's dev database name
    - align `[bundle].api_port`, `[bundle].admin_port`, and `[bundle].front_port` if the repo uses different dev-server ports
+   - when the repo uses different app package names, set `[bundle.dirs]` (`front`, `admin`, and optional `ui`)
+   - when gateway labels should follow those app names too, set `[bundle.routes]` (`front`, `admin`, `api`)
    - adjust `systems.dev.mounts` for any sibling checkouts
 
 2. In `effigy.tasks.toml`:

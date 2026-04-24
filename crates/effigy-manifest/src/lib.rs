@@ -159,12 +159,11 @@ pub fn load_task_manifest(manifest_path: &Path) -> Result<TaskManifest, Manifest
 
 impl TaskManifest {
     pub fn task_run_in(&self, task: &ManifestTask) -> ManifestTaskRunIn {
-        task.run_in
-            .or(self
-                .task_defaults
+        task.effective_run_in(
+            self.task_defaults
                 .as_ref()
-                .and_then(|defaults| defaults.run_in))
-            .unwrap_or(ManifestTaskRunIn::Either)
+                .and_then(|defaults| defaults.run_in),
+        )
     }
 
     pub fn validate(&self, manifest_path: &Path) -> Result<(), ManifestError> {
