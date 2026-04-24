@@ -348,8 +348,8 @@ fn upsert_effigy_swap_provision_entry(entries: &mut Vec<Value>, swap_gib: u64) {
 
 fn render_effigy_swap_provision_script(swap_gib: u64) -> String {
     format!(
-        r#"#!/bin/bash
-set -euxo pipefail
+        r#"#!/bin/sh
+set -eu
 {marker}
 swap_gib={swap_gib}
 swap_bytes=$((swap_gib * 1024 * 1024 * 1024))
