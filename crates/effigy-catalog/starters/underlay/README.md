@@ -25,7 +25,9 @@ is a convention built on the stable system/workspace/catalog model.
 
 The default frontend hydration helper is a bundled asset referenced from
 `effigy.tasks.toml` through `{{ bundle.root }}/scripts/dev/ui-setup.rhai`.
-It is not emitted into the consumer repo.
+It is not emitted into the consumer repo. The helper reads `[bundle.dirs]`
+when repos need explicit package-directory mapping instead of the default
+`app-*` / `acme-*` guesses.
 
 The shipped bundle also provides `smoke:error-logging`,
 `metrics:error-log`, and `validate:error-reporting` through a bundled
@@ -45,6 +47,10 @@ After emission, edit:
 1. Update `[bundle]` in `effigy.toml`: `host`, `project_name`,
    `workspace_subdir`, `database`, and the optional `api_port` /
    `admin_port` / `front_port` overrides.
+   When the repo uses different app package names, also set
+   `[bundle.dirs]` (`front`, `admin`, and optional `ui`). When the repo
+   wants DNS labels to follow those app names, set `[bundle.routes]`
+   (`front`, `admin`, `api`).
 2. Add `systems.dev.mounts` in `effigy.toml` when sibling checkouts
    must be visible inside the workspace container.
 3. Replace the `app-*/dev` concurrent entries in `effigy.tasks.toml`

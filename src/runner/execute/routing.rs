@@ -40,10 +40,7 @@ pub(in crate::runner) fn route_standard_task_execution(
         )));
     }
 
-    let task_run_in = task
-        .run_in
-        .or(default_run_in)
-        .unwrap_or(ManifestTaskRunIn::Either);
+    let task_run_in = task.effective_run_in(default_run_in);
     let binding_is_host = matches!(binding, ContainerExecutionBinding::Host);
     let explicit_container = match binding {
         ContainerExecutionBinding::Container { name, .. } => {
@@ -300,6 +297,64 @@ primary_service = "app"
         assert!(error
             .to_string()
             .contains("declares `run_in = \"container\"`, but no container target is defined"));
+    }
+
+    #[test]
+    fn container_lifecycle_beats_manifest_default_host_run_in() {
+        let containers = containers_toml(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+context = "dev"
+primary_service = "app"
+"#,
+        );
+        let mut task = manifest_task();
+        task.container_lifecycle = Some(true);
+
+        let routed = route_standard_task_execution(
+            "dev",
+            Some(ManifestTaskRunIn::Host),
+            &task,
+            None,
+            Some(&containers),
+            |_| Ok(true),
+        )
+        .expect("route");
+        assert_eq!(
+            routed_container_target(&routed.decision),
+            Some(("web", "app"))
+        );
+    }
+
+    #[test]
+    fn explicit_host_run_in_still_beats_container_lifecycle() {
+        let containers = containers_toml(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+context = "dev"
+primary_service = "app"
+"#,
+        );
+        let mut task = manifest_task();
+        task.container_lifecycle = Some(true);
+        task.run_in = Some(ManifestTaskRunIn::Host);
+
+        let routed = route_standard_task_execution(
+            "dev",
+            Some(ManifestTaskRunIn::Either),
+            &task,
+            None,
+            Some(&containers),
+            |_| Ok(true),
+        )
+        .expect("route");
+        assert!(matches!(routed.decision.target, ExecTarget::Host));
     }
 
     #[test]

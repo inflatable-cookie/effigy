@@ -55,8 +55,10 @@ Emits three files into the current repo:
 
 The default UI setup script is a bundled asset referenced from
 `effigy.tasks.toml` through `{{ bundle.root }}/scripts/dev/ui-setup.rhai`.
-It is not copied into the consumer repo. If a repo needs custom
-hydration, point the setup step at a repo-owned script instead.
+It is not copied into the consumer repo. The helper reads `[bundle.dirs]`
+when repos need explicit package-directory mapping instead of the default
+`app-*` / `acme-*` guesses. If a repo still needs custom hydration after
+that, point the setup step at a repo-owned script instead.
 
 The bundle also publishes error-reporting helper tasks that run a bundled
 Rhai script from `{{ bundle.root }}/scripts/error-reporting.rhai`:
@@ -97,6 +99,8 @@ copy here so users can refer back without re-emitting.
    - set `[bundle].workspace_subdir` to the repo's directory name under `/workspace-root`
    - set `[bundle].database` to the repo's dev database name
    - align `[bundle].api_port`, `[bundle].admin_port`, and `[bundle].front_port` if the repo uses different dev-server ports
+   - when the repo uses different app package names, set `[bundle.dirs]` (`front`, `admin`, and optional `ui`)
+   - when gateway labels should follow those app names too, set `[bundle.routes]` (`front`, `admin`, `api`)
    - optionally override the name knobs — `[bundle].system_name`
      (default `dev`), `[bundle].container_name` (default `stack`),
      `[bundle].workspace_service_name` (default `workspace`), and

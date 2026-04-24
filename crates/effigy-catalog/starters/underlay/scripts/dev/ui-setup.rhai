@@ -5,8 +5,10 @@
 // dependencies are installed on a fingerprint-controlled basis.
 //
 // This is starter-owned helper glue, not Effigy runtime. It supports the
-// generic `app-*` layout and the Underlay reference `acme-*` layout. The
-// Effigy runtime already supplies
+// generic `app-*` layout and the Underlay reference `acme-*` layout by
+// default, and repos can override the package directories through
+// `[bundle.dirs]`.
+// The Effigy runtime already supplies
 // `run_process_stream`, `path_join`, `task_name`, and `repo_root` as
 // script bindings.
 //
@@ -15,6 +17,21 @@
 //   - On failure, throw; the runtime will surface that as a setup error.
 
 let runtime_root = path_join(repo_root, ".effigy/runtime");
+
+fn optional_config_string(path, fallback) {
+    let value = config_get(path);
+    if value.type_of() == "()" {
+        return fallback;
+    }
+    if value.type_of() != "string" {
+        throw `expected Effigy config string at ${path}, got ${value.type_of()}`;
+    }
+    return value.to_string().trim();
+}
+
+let front_dir = optional_config_string("bundle.dirs.front", "");
+let admin_dir = optional_config_string("bundle.dirs.admin", "");
+let ui_dir = optional_config_string("bundle.dirs.ui", "");
 
 let shell_header = "set -eu\n"
     + "\n"
@@ -100,15 +117,32 @@ let shell_layout_helpers = "ensure_bun_install_if_present() {\n"
     + "\n";
 
 let shell_targets = "ensure_bun_install_if_present \"../underlay\" \"underlay\"\n"
-    + "ensure_bun_install_if_present \"../poodle\" \"poodle\"\n"
-    + "ensure_bun_install_if_present \"app-client\" \"app-client\"\n"
-    + "ensure_bun_install_if_present \"acme-client\" \"acme-client\"\n"
-    + "\n"
-    + "case \"$setup_task_name\" in\n"
-    + "  front) ensure_first_bun_install \"front\" \"app-front\" \"acme-front\" \"front\" ;;\n"
-    + "  admin) ensure_first_bun_install \"admin\" \"app-admin\" \"acme-admin\" \"admin\" ;;\n"
-    + "  *) printf '[error] unsupported ui setup target %s\\n' \"$setup_task_name\"; exit 1 ;;\n"
-    + "esac\n";
+    + "ensure_bun_install_if_present \"../poodle\" \"poodle\"\n";
+
+if ui_dir != "" {
+    shell_targets += `ensure_bun_install_if_present "${ui_dir}" "${ui_dir}"\n`;
+} else {
+    shell_targets += "ensure_bun_install_if_present \"app-client\" \"app-client\"\n";
+    shell_targets += "ensure_bun_install_if_present \"acme-client\" \"acme-client\"\n";
+}
+
+shell_targets += "\ncase \"$setup_task_name\" in\n";
+shell_targets += "  front) ensure_first_bun_install \"front\"";
+if front_dir != "" {
+    shell_targets += ` "${front_dir}"`;
+} else {
+    shell_targets += " \"app-front\" \"acme-front\" \"front\"";
+}
+shell_targets += " ;;\n";
+shell_targets += "  admin) ensure_first_bun_install \"admin\"";
+if admin_dir != "" {
+    shell_targets += ` "${admin_dir}"`;
+} else {
+    shell_targets += " \"app-admin\" \"acme-admin\" \"admin\"";
+}
+shell_targets += " ;;\n";
+shell_targets += "  *) printf '[error] unsupported ui setup target %s\\n' \"$setup_task_name\"; exit 1 ;;\n";
+shell_targets += "esac\n";
 
 let shell = shell_header + shell_functions + shell_layout_helpers + shell_targets;
 

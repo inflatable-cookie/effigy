@@ -51,6 +51,19 @@ impl ManifestTask {
     pub fn run_in(&self) -> ManifestTaskRunIn {
         self.run_in.unwrap_or(ManifestTaskRunIn::Either)
     }
+
+    pub fn effective_run_in(&self, default_run_in: Option<ManifestTaskRunIn>) -> ManifestTaskRunIn {
+        self.run_in
+            .or_else(|| {
+                if self.container_lifecycle.unwrap_or(false) {
+                    Some(ManifestTaskRunIn::Container)
+                } else {
+                    None
+                }
+            })
+            .or(default_run_in)
+            .unwrap_or(ManifestTaskRunIn::Either)
+    }
 }
 
 impl ManifestTaskRunIn {
