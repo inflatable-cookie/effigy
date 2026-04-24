@@ -450,10 +450,22 @@ pub fn validate_container_policy(
             )));
         }
     }
-    validate_compose_backend_host_paths(repo_root, policy)?;
     validate_declared_mounts(repo_root, &policy.name, &policy.declared_mounts)?;
     validate_media_mounts(repo_root, &policy.name, &policy.declared_media_mounts)?;
     Ok(())
+}
+
+/// Verify the resolved compose backend can actually reach the repo host paths.
+///
+/// This is the runtime preflight that rejects Colima-nerdctl fallback runs
+/// against repos living under temp directories the Colima VM may not share.
+/// It is NOT part of static manifest validation — call it only from code
+/// paths that will actually drive `docker compose`.
+pub fn validate_compose_backend_runtime(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), ContainerPolicyError> {
+    validate_compose_backend_host_paths(repo_root, policy)
 }
 
 pub fn effective_attach_mode(

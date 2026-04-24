@@ -46,6 +46,66 @@ pub struct BootstrapChildResult {
     pub warning: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootstrapProgressEvent {
+    RootCheckoutStarted {
+        repo_url: String,
+        destination: PathBuf,
+    },
+    RootCheckoutFinished {
+        repo_state: &'static str,
+        destination: PathBuf,
+    },
+    SubmodulesStarted {
+        destination: PathBuf,
+        policy: ManifestBootstrapSubmodulesPolicy,
+    },
+    SubmodulesFinished {
+        destination: PathBuf,
+        policy: ManifestBootstrapSubmodulesPolicy,
+        applied: bool,
+    },
+    ChildCheckoutStarted {
+        path: String,
+        repo: String,
+        destination: PathBuf,
+    },
+    ChildCheckoutFinished {
+        path: String,
+        repo_state: &'static str,
+        destination: PathBuf,
+    },
+    ChildCheckoutWarning {
+        path: String,
+        warning: String,
+        destination: PathBuf,
+    },
+    ChildRunStarted {
+        path: String,
+        destination: PathBuf,
+    },
+    ChildRunFinished {
+        path: String,
+        destination: PathBuf,
+        run: String,
+    },
+    RootRunStarted {
+        destination: PathBuf,
+    },
+    RootRunFinished {
+        destination: PathBuf,
+        run: String,
+    },
+    StartTaskStarted {
+        destination: PathBuf,
+        selector: String,
+    },
+    StartTaskFinished {
+        destination: PathBuf,
+        selector: String,
+    },
+}
+
 #[derive(Debug)]
 pub enum BootstrapError {
     TaskInvocation(String),
@@ -107,20 +167,55 @@ pub fn resolve_bootstrap_request(
 
 pub fn execute_bootstrap_request<LoadBootstrap, RunBootstrapRun, RunTask>(
     request: &BootstrapResolution,
-    mut load_bootstrap: LoadBootstrap,
-    mut run_bootstrap_run: RunBootstrapRun,
-    mut run_task: RunTask,
+    load_bootstrap: LoadBootstrap,
+    run_bootstrap_run: RunBootstrapRun,
+    run_task: RunTask,
 ) -> Result<BootstrapExecutionResult, BootstrapError>
 where
     LoadBootstrap: FnMut(&Path) -> Result<Option<ManifestBootstrapConfig>, BootstrapError>,
     RunBootstrapRun: FnMut(&Path, &ManifestManagedRun, &str) -> Result<(), BootstrapError>,
     RunTask: FnMut(&Path, &str, &str) -> Result<(), BootstrapError>,
 {
+    execute_bootstrap_request_with_progress(
+        request,
+        load_bootstrap,
+        run_bootstrap_run,
+        run_task,
+        |_event| {},
+    )
+}
+
+pub fn execute_bootstrap_request_with_progress<
+    LoadBootstrap,
+    RunBootstrapRun,
+    RunTask,
+    ReportProgress,
+>(
+    request: &BootstrapResolution,
+    mut load_bootstrap: LoadBootstrap,
+    mut run_bootstrap_run: RunBootstrapRun,
+    mut run_task: RunTask,
+    mut report_progress: ReportProgress,
+) -> Result<BootstrapExecutionResult, BootstrapError>
+where
+    LoadBootstrap: FnMut(&Path) -> Result<Option<ManifestBootstrapConfig>, BootstrapError>,
+    RunBootstrapRun: FnMut(&Path, &ManifestManagedRun, &str) -> Result<(), BootstrapError>,
+    RunTask: FnMut(&Path, &str, &str) -> Result<(), BootstrapError>,
+    ReportProgress: FnMut(BootstrapProgressEvent),
+{
+    report_progress(BootstrapProgressEvent::RootCheckoutStarted {
+        repo_url: request.repo_url.clone(),
+        destination: request.destination.clone(),
+    });
     let root_repo_state = sync_repo_checkout(
         &request.repo_url,
         &request.destination,
         request.branch.as_deref(),
     )?;
+    report_progress(BootstrapProgressEvent::RootCheckoutFinished {
+        repo_state: root_repo_state,
+        destination: request.destination.clone(),
+    });
     let manifest_path = request.destination.join(TASK_MANIFEST_FILE);
     let manifest_found = manifest_path.is_file();
     let bootstrap = if manifest_found {
@@ -133,20 +228,52 @@ where
     let submodules_policy = bootstrap
         .submodules
         .unwrap_or(ManifestBootstrapSubmodulesPolicy::None);
+    report_progress(BootstrapProgressEvent::SubmodulesStarted {
+        destination: request.destination.clone(),
+        policy: submodules_policy,
+    });
     let submodules_applied = apply_submodule_policy(&request.destination, submodules_policy)?;
+    report_progress(BootstrapProgressEvent::SubmodulesFinished {
+        destination: request.destination.clone(),
+        policy: submodules_policy,
+        applied: submodules_applied,
+    });
 
     let mut warnings = Vec::new();
     let mut child_results = Vec::new();
     for child in &bootstrap.children {
         let child_destination = resolve_child_destination(&request.destination, &child.path)?;
+        report_progress(BootstrapProgressEvent::ChildCheckoutStarted {
+            path: child.path.clone(),
+            repo: child.repo.clone(),
+            destination: child_destination.clone(),
+        });
         match sync_repo_checkout(&child.repo, &child_destination, child.branch.as_deref()) {
             Ok(repo_state) => {
+                report_progress(BootstrapProgressEvent::ChildCheckoutFinished {
+                    path: child.path.clone(),
+                    repo_state,
+                    destination: child_destination.clone(),
+                });
+                if child.run.is_some() {
+                    report_progress(BootstrapProgressEvent::ChildRunStarted {
+                        path: child.path.clone(),
+                        destination: child_destination.clone(),
+                    });
+                }
                 let run = run_bootstrap_run_if_present(
                     &mut run_bootstrap_run,
                     &child_destination,
                     child.run.as_ref(),
                     &format!("bootstrap child `{}` run", child.path),
                 )?;
+                if let Some(run) = run.as_ref() {
+                    report_progress(BootstrapProgressEvent::ChildRunFinished {
+                        path: child.path.clone(),
+                        destination: child_destination.clone(),
+                        run: run.clone(),
+                    });
+                }
                 child_results.push(BootstrapChildResult {
                     path: child.path.clone(),
                     repo: child.repo.clone(),
@@ -161,6 +288,11 @@ where
             Err(err) if !child.required => {
                 let warning = format!("optional child `{}` failed: {}", child.path, err);
                 warnings.push(warning.clone());
+                report_progress(BootstrapProgressEvent::ChildCheckoutWarning {
+                    path: child.path.clone(),
+                    warning: warning.clone(),
+                    destination: child_destination.clone(),
+                });
                 child_results.push(BootstrapChildResult {
                     path: child.path.clone(),
                     repo: child.repo.clone(),
@@ -181,12 +313,23 @@ where
         }
     }
 
+    if bootstrap.run.is_some() {
+        report_progress(BootstrapProgressEvent::RootRunStarted {
+            destination: request.destination.clone(),
+        });
+    }
     let root_run = run_bootstrap_run_if_present(
         &mut run_bootstrap_run,
         &request.destination,
         bootstrap.run.as_ref(),
         "bootstrap root run",
     )?;
+    if let Some(run) = root_run.as_ref() {
+        report_progress(BootstrapProgressEvent::RootRunFinished {
+            destination: request.destination.clone(),
+            run: run.clone(),
+        });
+    }
 
     let mut start_ran = false;
     let start_task = bootstrap.start.clone();
@@ -196,7 +339,15 @@ where
                 "bootstrap start was requested but `[bootstrap].start` is not configured",
             )
         })?;
+        report_progress(BootstrapProgressEvent::StartTaskStarted {
+            destination: request.destination.clone(),
+            selector: start_selector.clone(),
+        });
         run_task(&request.destination, start_selector, "bootstrap start")?;
+        report_progress(BootstrapProgressEvent::StartTaskFinished {
+            destination: request.destination.clone(),
+            selector: start_selector.clone(),
+        });
         start_ran = true;
     }
 

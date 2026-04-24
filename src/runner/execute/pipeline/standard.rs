@@ -17,7 +17,9 @@ use crate::runner::execute::render;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
 use effigy_containers::compose::compose_args;
 use effigy_containers::exec::{colima_is_running, ensure_colima_running, run_docker_capture};
-use effigy_containers::{load_container_policy, validate_container_policy};
+use effigy_containers::{
+    load_container_policy, validate_compose_backend_runtime, validate_container_policy,
+};
 use effigy_env::resolver::ResolvedEnv;
 use effigy_env::schema_support::{
     resolve_catalog_env_schema as shared_resolve_env_schema, SchemaSupportConfig,
@@ -188,6 +190,8 @@ fn run_inline_workspace_standard_task(
         .load_effective_policy(repo_root)?
         .ok_or_else(|| RunnerError::task_invocation("missing inline workspace container policy"))?;
     validate_container_policy(repo_root, &policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let working_dir = container_binding
         .exec_working_dir(repo_root)?

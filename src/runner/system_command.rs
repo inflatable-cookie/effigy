@@ -7,7 +7,8 @@ use effigy_containers::{
         colima_is_running, list_running_compose_containers_for_profile, recover_colima_runtime,
         reset_colima_runtime, ColimaRecoveryReport, ContainerExecError, RunningComposeContainer,
     },
-    load_container_policy, validate_container_policy, EffectiveContainerPolicy,
+    load_container_policy, validate_compose_backend_runtime, validate_container_policy,
+    EffectiveContainerPolicy,
 };
 use effigy_ui::theme::is_ci_environment;
 use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
@@ -77,6 +78,8 @@ fn load_resolved_container_policy(
     let policy = load_container_policy(repo_root, container_name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     validate_container_policy(repo_root, &policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     Ok(policy)
 }

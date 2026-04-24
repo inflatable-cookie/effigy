@@ -6,8 +6,8 @@ use effigy_containers::{
     compose::{compose_args, resolve_compose_backend, ComposeBackend},
     down_report,
     exec::{colima_is_running, shutdown_container as shutdown_container_via_exec},
-    load_container_policy, reset_report, validate_container_policy, EffectiveComposeSource,
-    EffectiveContainerPolicy,
+    load_container_policy, reset_report, validate_compose_backend_runtime,
+    validate_container_policy, EffectiveComposeSource, EffectiveContainerPolicy,
 };
 use serde_yaml::{Mapping, Value};
 
@@ -26,6 +26,8 @@ where
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let colima_running = colima_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -65,6 +67,8 @@ where
         )));
     }
     validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let colima_running = colima_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;

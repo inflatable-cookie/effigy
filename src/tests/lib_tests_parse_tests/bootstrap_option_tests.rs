@@ -41,6 +41,53 @@ fn parse_bootstrap_plan_with_path_branch_and_start() {
 }
 
 #[test]
+fn parse_bootstrap_defaults_to_start_when_unspecified() {
+    let cmd = parse_command(vec![
+        "bootstrap".to_owned(),
+        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Bootstrap(BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+                path: None,
+                branch: None,
+                start: true,
+                plan: false,
+            },
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_bootstrap_no_start_disables_default_start() {
+    let cmd = parse_command(vec![
+        "bootstrap".to_owned(),
+        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+        "--no-start".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Bootstrap(BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+                path: None,
+                branch: None,
+                start: false,
+                plan: false,
+            },
+            output_json: false,
+        })
+    );
+}
+
+#[test]
 fn parse_bootstrap_deps_sync_subcommand() {
     let cmd = parse_command(vec![
         "bootstrap".to_owned(),

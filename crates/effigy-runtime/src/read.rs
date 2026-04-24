@@ -8,7 +8,7 @@ use effigy_containers::{
     },
     health::probe_health_status,
     load_all_container_policies, load_container_policy, logs_report, status_report,
-    validate_container_policy,
+    validate_compose_backend_runtime, validate_container_policy,
 };
 use effigy_containers::{
     stats_all_report, status_all_report, AllocatedPortsSummary, ContainerCommandReport,
@@ -28,6 +28,8 @@ pub fn run_container_status(
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let colima_running = colima_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -67,6 +69,8 @@ pub fn run_container_logs(
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     if !colima_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?

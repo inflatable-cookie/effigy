@@ -1102,7 +1102,7 @@ where
 
     let mut path: Option<PathBuf> = None;
     let mut branch: Option<String> = None;
-    let mut start = false;
+    let mut start = true;
     let mut plan = false;
     let mut output_json = false;
     let repo_url = first;
@@ -1111,6 +1111,7 @@ where
         match arg.as_str() {
             "--json" => output_json = true,
             "--start" => start = true,
+            "--no-start" => start = false,
             "--plan" => plan = true,
             "--path" => {
                 path = Some(PathBuf::from(next_required_value(

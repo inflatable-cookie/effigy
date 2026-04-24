@@ -99,7 +99,7 @@ fn command_kind_and_name_maps_command_variants() {
             repo_url: "git@github.com:inflatable-cookie/effigy.git".to_owned(),
             path: None,
             branch: None,
-            start: false,
+            start: true,
             plan: true,
         },
         output_json: false,

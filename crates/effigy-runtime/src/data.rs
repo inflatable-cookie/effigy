@@ -9,8 +9,9 @@ use effigy_catalog::volumes::{
 };
 use effigy_containers::{
     data_list_report, data_transfer_report, exec::colima_is_running, load_container_policy,
-    validate_container_policy, ContainerCommandReport, ContainerDataTransferAction,
-    ContainerDataVolumeEntry, EffectiveComposeSource, EffectiveContainerPolicy,
+    validate_compose_backend_runtime, validate_container_policy, ContainerCommandReport,
+    ContainerDataTransferAction, ContainerDataVolumeEntry, EffectiveComposeSource,
+    EffectiveContainerPolicy,
 };
 
 use crate::EffigyRuntimeError;
@@ -36,6 +37,8 @@ where
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     ensure_generated_data_path(&policy, "list")?;
     validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
 
     let colima_running = colima_is_running(&policy, repo_root)
@@ -129,6 +132,8 @@ where
     )?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_transfer_path(archive_path, action)?;
     if !colima_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?
@@ -185,6 +190,8 @@ where
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     ensure_generated_data_path(&policy, "pull-production")?;
     validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let hook = policy.pull_production_hook.clone().ok_or_else(|| {
         EffigyRuntimeError::task_invocation(format!(
