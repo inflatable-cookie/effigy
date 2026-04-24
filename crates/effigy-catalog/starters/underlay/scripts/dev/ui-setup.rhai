@@ -29,6 +29,13 @@ fn optional_config_string(path, fallback) {
     return value.to_string().trim();
 }
 
+fn optional_repo_dir(configured) {
+    if configured == "" {
+        return "";
+    }
+    return path_join(repo_root, configured);
+}
+
 let front_dir = optional_config_string("bundle.dirs.front", "");
 let admin_dir = optional_config_string("bundle.dirs.admin", "");
 let ui_dir = optional_config_string("bundle.dirs.ui", "");
@@ -42,9 +49,9 @@ let legacy_front_dir = path_join(repo_root, "front");
 let app_admin_dir = path_join(repo_root, "app-admin");
 let acme_admin_dir = path_join(repo_root, "acme-admin");
 let legacy_admin_dir = path_join(repo_root, "admin");
-let ui_abs_dir = if ui_dir != "" { path_join(repo_root, ui_dir) } else { "" };
-let front_abs_dir = if front_dir != "" { path_join(repo_root, front_dir) } else { "" };
-let admin_abs_dir = if admin_dir != "" { path_join(repo_root, admin_dir) } else { "" };
+let ui_abs_dir = optional_repo_dir(ui_dir);
+let front_abs_dir = optional_repo_dir(front_dir);
+let admin_abs_dir = optional_repo_dir(admin_dir);
 
 let shell_header = "set -eu\n"
     + "\n"

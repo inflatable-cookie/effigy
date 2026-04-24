@@ -1114,6 +1114,10 @@ const DECODELABS_ASSETS: &[EmbeddedBundleAsset] = &[EmbeddedBundleAsset {
 
 const UNDERLAY_ASSETS: &[EmbeddedBundleAsset] = &[
     EmbeddedBundleAsset {
+        path: "scripts/bootstrap-env.rhai",
+        contents: include_str!("../../effigy-catalog/starters/underlay/scripts/bootstrap-env.rhai"),
+    },
+    EmbeddedBundleAsset {
         path: "scripts/dev/ui-setup.rhai",
         contents: include_str!("../../effigy-catalog/starters/underlay/scripts/dev/ui-setup.rhai"),
     },

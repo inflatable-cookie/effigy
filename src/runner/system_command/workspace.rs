@@ -150,6 +150,7 @@ fn run_workspace_container_session(
     initial_command: Option<&str>,
     ownership: WorkspaceSessionOwnership,
 ) -> Result<String, RunnerError> {
+    let repo_override = effective_workspace_repo_override(repo_root, repo_override);
     let container_name = container_name.map(str::to_owned);
     let policy = load_workspace_session_policy(repo_root, container_name.as_deref())?;
     let system_was_running = ensure_workspace_container_ready(
@@ -198,6 +199,13 @@ fn load_workspace_session_policy(
         false,
     );
     Ok(policy)
+}
+
+fn effective_workspace_repo_override(
+    repo_root: &Path,
+    repo_override: Option<PathBuf>,
+) -> Option<PathBuf> {
+    repo_override.or_else(|| Some(repo_root.to_path_buf()))
 }
 
 fn ensure_workspace_container_ready(
@@ -424,22 +432,53 @@ fn ensure_workspace_effigy_available(
         CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH,
     )
     .inspect_err(|_| progress.finish(false))?;
-    run_container(ContainerArgs {
-        subcommand: ContainerSubcommand::Shell {
-            name: container_name.map(str::to_owned),
-            service: Some(policy.primary_service.clone()),
-            command: Some(format!(
-                "install -m 0755 {src} {dest} && rm -f {src}",
-                src = CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH,
-                dest = CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH,
-            )),
-        },
-        repo_override,
-        output_json: false,
-    })
+    run_workspace_effigy_install(
+        workspace_repo_root,
+        policy,
+        container_name,
+        repo_override.as_deref(),
+    )
     .inspect_err(|_| progress.finish(false))?;
     progress.finish(true);
     Ok(())
+}
+
+fn run_workspace_effigy_install(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    _container_name: Option<&str>,
+    repo_override: Option<&Path>,
+) -> Result<String, RunnerError> {
+    let service = policy.primary_service.as_str();
+    let mut args = compose_args(policy, ["exec", "-T", "-u", "0", service, "sh", "-lc"]);
+    args.push(OsString::from(render_workspace_effigy_install_command()));
+    let output = crate::runner::exec_command::run_compose_exec(
+        repo_root,
+        policy,
+        &args,
+        false,
+        "docker compose exec",
+    )?;
+    if output.status.success() {
+        return Ok(String::new());
+    }
+
+    Err(RunnerError::task_invocation(match repo_override {
+        Some(repo_override) => format!(
+            "failed to install effigy into workspace service `{}` with repo root `{}`",
+            service,
+            repo_override.display()
+        ),
+        None => format!("failed to install effigy into workspace service `{service}`"),
+    }))
+}
+
+fn render_workspace_effigy_install_command() -> String {
+    format!(
+        "install -m 0755 {src} {dest} && rm -f {src}",
+        src = CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH,
+        dest = CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH,
+    )
 }
 
 fn probe_workspace_linux_target(
@@ -1267,5 +1306,26 @@ primary_service = "workspace"
             WorkspaceSessionOwnership::LeaveSystemRunning,
             true,
         ));
+    }
+
+    #[test]
+    fn effective_workspace_repo_override_falls_back_to_repo_root() {
+        let repo_root = Path::new("/tmp/demo-repo");
+        assert_eq!(
+            effective_workspace_repo_override(repo_root, None),
+            Some(repo_root.to_path_buf())
+        );
+        assert_eq!(
+            effective_workspace_repo_override(repo_root, Some(PathBuf::from("/tmp/explicit"))),
+            Some(PathBuf::from("/tmp/explicit"))
+        );
+    }
+
+    #[test]
+    fn workspace_effigy_install_command_targets_usr_local_bin() {
+        let rendered = render_workspace_effigy_install_command();
+        assert!(rendered.contains("/tmp/effigy-host"));
+        assert!(rendered.contains("/usr/local/bin/effigy"));
+        assert!(rendered.contains("install -m 0755"));
     }
 }

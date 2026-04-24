@@ -54,7 +54,7 @@ fn load_starter_manifest() -> (tempfile::TempDir, effigy_manifest::TaskManifest)
 
 #[test]
 fn starter_composes_into_single_manifest() {
-    let (_tmp, manifest) = load_starter_manifest();
+    let (tmp, manifest) = load_starter_manifest();
 
     let bundle = manifest.bundle.expect("starter root carries [bundle]");
     assert_eq!(bundle.base.as_deref(), Some("underlay"));
@@ -70,6 +70,12 @@ fn starter_composes_into_single_manifest() {
     assert!(
         bootstrap.run.is_some(),
         "starter declares bootstrap-local run"
+    );
+    let effigy_bootstrap = std::fs::read_to_string(tmp.path().join("effigy.bootstrap.toml"))
+        .expect("read starter bootstrap file");
+    assert!(
+        effigy_bootstrap.contains(r#"{{ bundle.root }}/scripts/bootstrap-env.rhai"#),
+        "starter bootstrap should provision app-local env files before startup"
     );
     assert_eq!(bootstrap.start.as_deref(), Some("dev"));
 }

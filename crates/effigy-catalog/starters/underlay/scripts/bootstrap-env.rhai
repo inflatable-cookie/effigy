@@ -1,0 +1,242 @@
+fn optional_config_string(path, fallback) {
+    let value = config_get(path);
+    if value.type_of() == "()" {
+        return fallback;
+    }
+    if value.type_of() != "string" {
+        throw `expected Effigy config string at ${path}, got ${value.type_of()}`;
+    }
+    return value.to_string().trim();
+}
+
+fn bundle_host() {
+    let host = optional_config_string("bundle.host", "");
+    if host == "" {
+        throw "underlay bootstrap env helper requires `[bundle].host`";
+    }
+    return host;
+}
+
+fn route_domain(host, path, fallback_label) {
+    let label = optional_config_string(path, fallback_label);
+    if label == "" {
+        return host;
+    }
+    return label + "." + host;
+}
+
+fn first_existing_dir(candidates) {
+    for relative in candidates {
+        let candidate = path_join(repo_root, relative);
+        if path_exists(candidate) {
+            return candidate;
+        }
+    }
+    return "";
+}
+
+fn resolve_api_dir() {
+    let configured = optional_config_string("bundle.dirs.api", "");
+    if configured != "" {
+        return path_join(repo_root, configured);
+    }
+    return first_existing_dir(["app-api", "acme-api", "api"]);
+}
+
+fn resolve_front_dir() {
+    let configured = optional_config_string("bundle.dirs.front", "");
+    if configured != "" {
+        return path_join(repo_root, configured);
+    }
+    return first_existing_dir(["app-front", "acme-front", "front"]);
+}
+
+fn resolve_admin_dir() {
+    let configured = optional_config_string("bundle.dirs.admin", "");
+    if configured != "" {
+        return path_join(repo_root, configured);
+    }
+    return first_existing_dir(["app-admin", "acme-admin", "admin"]);
+}
+
+fn primary_database_name() {
+    let value = config_get("bundle.databases");
+    if value.type_of() == "array" && value.len() > 0 {
+        let first = value[0];
+        if first.type_of() == "string" {
+            return first.to_string().trim();
+        }
+    }
+    return optional_config_string("bundle.database", "");
+}
+
+fn secondary_database_name() {
+    let value = config_get("bundle.databases");
+    if value.type_of() == "array" && value.len() > 1 {
+        let second = value[1];
+        if second.type_of() == "string" {
+            return second.to_string().trim();
+        }
+    }
+    return "";
+}
+
+fn command_stdout(program, args, label) {
+    let result = run_process(program, args);
+    if result["status"] != 0 {
+        throw label
+            + " failed"
+            + "\nstdout:\n" + result["stdout"].to_string()
+            + "\nstderr:\n" + result["stderr"].to_string();
+    }
+    return result["stdout"].to_string().trim();
+}
+
+fn generated_jwt_env(api_dir) {
+    let cargo_toml = path_join(api_dir, "Cargo.toml");
+    if !path_exists(cargo_toml) {
+        return #{ private_key: "", public_key: "" };
+    }
+
+    let output = command_stdout(
+        "cargo",
+        ["run", "--quiet", "--manifest-path", cargo_toml, "--bin", "generate-jwt-env"],
+        "generate-jwt-env",
+    );
+
+    let private_key = "";
+    let public_key = "";
+    for line in output.split("\n") {
+        let trimmed = line.trim();
+        if trimmed.starts_with("AUTH_JWT_PRIVATE_KEY=") {
+            private_key = trimmed.replace("AUTH_JWT_PRIVATE_KEY=", "");
+        } else if trimmed.starts_with("AUTH_JWT_PUBLIC_KEY=") {
+            public_key = trimmed.replace("AUTH_JWT_PUBLIC_KEY=", "");
+        }
+    }
+
+    if private_key == "" || public_key == "" {
+        throw "generate-jwt-env did not emit both AUTH_JWT_PRIVATE_KEY and AUTH_JWT_PUBLIC_KEY";
+    }
+
+    return #{ private_key: private_key, public_key: public_key };
+}
+
+fn random_base64(label) {
+    return command_stdout("openssl", ["rand", "-base64", "32"], label);
+}
+
+fn ensure_env_file(path, lines, label) {
+    if path_exists(path) {
+        log("[info] preserving existing " + label + " at " + path);
+        return;
+    }
+    write_file(path, lines.join("\n") + "\n");
+    log("[ok] created " + label + " at " + path);
+}
+
+let host = bundle_host();
+let front_domain = route_domain(host, "bundle.routes.front", "");
+let admin_domain = route_domain(host, "bundle.routes.admin", "admin");
+let api_domain = route_domain(host, "bundle.routes.api", "api");
+let postgres_domain = "postgres." + host;
+let smtp_domain = "smtp." + host;
+let database = primary_database_name();
+let test_database = secondary_database_name();
+
+let api_dir = resolve_api_dir();
+let front_dir = resolve_front_dir();
+let admin_dir = resolve_admin_dir();
+
+if api_dir == "" && front_dir == "" && admin_dir == "" {
+    throw "underlay bootstrap env helper could not find api/front/admin directories";
+}
+
+if api_dir != "" {
+    let jwt = generated_jwt_env(api_dir);
+    let oauth_secret = random_base64("openssl rand for AUTH_OAUTH_SECRET_KEY");
+    let encryption_key = random_base64("openssl rand for ENCRYPTION_KEY");
+    let api_env = [
+        "# Underlay API - Local Development",
+        "#",
+        "# NOTE: Generated by Effigy bootstrap. Safe to edit locally; reruns preserve existing files.",
+        "",
+        "# Server",
+        "ENVIRONMENT=local",
+        "HOST=0.0.0.0",
+        "PORT=41001",
+        "PUBLIC_HOST=" + api_domain,
+        "SUPPORT_EMAIL=support@local.invalid",
+        "",
+        "# Database",
+        "DATABASE_URL=postgres://postgres:postgres@" + postgres_domain + ":5432/" + database,
+        if test_database != "" {
+            "TEST_DATABASE_URL=postgres://postgres:postgres@" + postgres_domain + ":5432/" + test_database
+        } else {
+            "# TEST_DATABASE_URL="
+        },
+        "",
+        "# Logging",
+        "#RUST_LOG=debug",
+        "",
+        "# CORS / cookies",
+        "CORS_ORIGINS=https://" + front_domain + ",https://" + admin_domain,
+        "COOKIE_DOMAIN=." + host,
+        "COOKIE_SECURE=true",
+        "COOKIE_PREFIX=app_",
+        "",
+        "# Email",
+        "EMAIL_ADAPTER=smtp",
+        "EMAIL_DEFAULT_FROM=noreply@local.invalid",
+        "SMTP_HOST=" + smtp_domain,
+        "SMTP_PORT=1025",
+        "SMTP_TLS=none",
+        "",
+        "# Blob Storage",
+        "BLOB_STORAGE_DIR=./dev-uploads",
+        "",
+        "# JWT Authentication (generated for local bootstrap only)",
+        "AUTH_JWT_ISSUER=local",
+        "AUTH_JWT_AUDIENCE=local-api",
+        "AUTH_ACCESS_TOKEN_LIFETIME_MINUTES=15",
+        "AUTH_REFRESH_TOKEN_LIFETIME_DAYS=30",
+        "AUTH_JWT_LEEWAY_SECONDS=30",
+        "AUTH_JWT_PRIVATE_KEY=" + jwt["private_key"].to_string(),
+        "AUTH_JWT_PUBLIC_KEY=" + jwt["public_key"].to_string(),
+        "AUTH_OAUTH_SECRET_KEY=" + oauth_secret,
+        "ENCRYPTION_KEY=" + encryption_key,
+    ];
+    ensure_env_file(path_join(api_dir, ".env"), api_env, "api .env");
+} else {
+    log_warn("skipping api .env; no api dir found");
+}
+
+if admin_dir != "" {
+    let admin_env = [
+        "# Underlay Admin - Local Development",
+        "#",
+        "# NOTE: Generated by Effigy bootstrap. Safe to edit locally; reruns preserve existing files.",
+        "",
+        "PUBLIC_API_URL=https://" + api_domain,
+        "PUBLIC_ADMIN_URL=https://" + admin_domain,
+        "PUBLIC_FRONT_URL=https://" + front_domain,
+    ];
+    ensure_env_file(path_join(admin_dir, ".env"), admin_env, "admin .env");
+} else {
+    log_warn("skipping admin .env; no admin dir found");
+}
+
+if front_dir != "" {
+    let front_env = [
+        "# Underlay Front - Local Development",
+        "#",
+        "# NOTE: Generated by Effigy bootstrap. Safe to edit locally; reruns preserve existing files.",
+        "",
+        "PUBLIC_API_URL=https://" + api_domain,
+        "PUBLIC_FRONT_URL=https://" + front_domain,
+        "PUBLIC_ADMIN_URL=https://" + admin_domain,
+    ];
+    ensure_env_file(path_join(front_dir, ".env"), front_env, "front .env");
+} else {
+    log_warn("skipping front .env; no front dir found");
+}
