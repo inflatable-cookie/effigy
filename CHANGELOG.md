@@ -33,6 +33,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add macOS-only `EFFIGY_COLIMA_ARCH` and `EFFIGY_COLIMA_VM_TYPE` overrides
   so Effigy can force Colima startup/profile settings like `aarch64` + `vz`
   without affecting Linux hosts.
+- Raise the Colima startup/status command time budgets so first-run VM boot
+  and provisioning on slower machines do not fail after the old 15s cap.
 - Make `effigy bootstrap <git-url>` run the repo's configured
   `[bootstrap].start` task by default after bootstrap setup completes.
   Pass `--no-start` to skip that final launch step.
