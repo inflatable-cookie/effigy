@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use effigy_containers::{
-    exec::colima_is_running, load_container_policy, validate_container_policy,
-    EffectiveContainerPolicy,
+    exec::colima_is_running, load_container_policy, validate_compose_backend_runtime,
+    validate_container_policy, EffectiveContainerPolicy,
 };
 use effigy_exec::{CwdMapper, ExecAlias, ExecAliasTable};
 use effigy_manifest::{
@@ -43,6 +43,7 @@ pub(super) fn resolve_dev_exec_surface(
     let (container_name, config) = resolve_dev_container_config(&containers)?;
     let policy = load_container_policy(repo_root, Some(&container_name))?;
     validate_container_policy(repo_root, &policy)?;
+    validate_compose_backend_runtime(repo_root, &policy)?;
     ensure_container_running(repo_root, &policy, &container_name)?;
     Ok(ResolvedExecSurface {
         container_name,

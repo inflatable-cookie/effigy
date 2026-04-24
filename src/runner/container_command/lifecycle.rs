@@ -10,7 +10,8 @@ use effigy_containers::{
         shutdown_container as shutdown_container_via_exec,
     },
     load_container_exec_working_dir, load_container_policy, up_detached_report,
-    validate_container_policy, EffectiveAttachMode, EffectiveContainerPolicy,
+    validate_compose_backend_runtime, validate_container_policy, EffectiveAttachMode,
+    EffectiveContainerPolicy,
 };
 use effigy_runtime::session::run_attached_container_session;
 use effigy_runtime::shell::run_container_shell as run_runtime_container_shell;
@@ -52,6 +53,7 @@ pub(super) fn run_container_up(
     let stop_flag = install_stop_requested_flag()?;
     let policy = load_container_policy(repo_root, name)?;
     validate_container_policy(repo_root, &policy)?;
+    validate_compose_backend_runtime(repo_root, &policy)?;
     let warnings = colima_profile_warnings(&policy, repo_root);
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
@@ -312,6 +314,7 @@ fn resolve_container_shell_session(
 ) -> Result<(EffectiveContainerPolicy, String, std::path::PathBuf), RunnerError> {
     let policy = load_container_policy(repo_root, name)?;
     validate_container_policy(repo_root, &policy)?;
+    validate_compose_backend_runtime(repo_root, &policy)?;
     if !colima_is_running(&policy, repo_root)? {
         return Err(RunnerError::task_invocation(format!(
             "Colima profile `{}` is not running for container `{}`",

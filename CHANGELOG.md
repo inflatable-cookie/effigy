@@ -27,6 +27,9 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Changed
+- Make `effigy bootstrap <git-url>` run the repo's configured
+  `[bootstrap].start` task by default after bootstrap setup completes.
+  Pass `--no-start` to skip that final launch step.
 - Bump the default `workspace-rust-bun` catalog toolchain from Rust 1.88 to
   Rust 1.91 so underlay-style workspace containers can build current AWS SDK
   crate releases without per-repo toolchain overrides.
@@ -88,6 +91,15 @@ During v0.x, MINOR bumps may include breaking changes.
   fallback targets a repo under a temp directory like `/tmp` or
   `/private/tmp`, so bootstrap explains the unsupported host path clearly
   instead of surfacing an opaque compose-file ENOENT from inside Colima.
+  The check now runs as a separate `validate_compose_backend_runtime`
+  preflight from the runtime call sites that actually drive `docker
+  compose`, leaving file-only operations like `container eject` free to
+  rewrite manifests under temp directories during tests.
+- Restore explicit empty-catalog rows in the `effigy tasks --json`
+  `catalog_tasks` array (with `task` / `run` set to `null`) and emit
+  manifest paths as absolute paths so JSON consumers can match catalogs by
+  on-disk location, fixing the regression introduced by the recent tasks
+  listing projection refactor.
 - Force workspace handoff shells and in-container Effigy handoff exec to use
   the installed `/usr/local/bin/effigy` path ahead of Composer global bins, so
   legacy Decodelabs sites can still defer missing tasks to the old Composer

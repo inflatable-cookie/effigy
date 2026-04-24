@@ -119,7 +119,8 @@ struct CatalogAliasProjection {
 
 struct CatalogTaskProjection {
     manifest: String,
-    task_row: TaskSignatureProjection,
+    manifest_absolute: String,
+    task_row: Option<TaskSignatureProjection>,
     managed_profiles: Vec<ManagedProfileDisplayRow>,
 }
 
@@ -351,19 +352,26 @@ fn prepare_catalog_listing(
     let catalog_task_rows = ordered_catalogs
         .iter()
         .flat_map(|catalog| {
-            catalog
-                .manifest
-                .tasks
-                .iter()
-                .map(|(task_name, task)| {
-                    project_catalog_task_rows(
-                        relative_display_path(resolved_root, &catalog.manifest_path),
-                        catalog,
-                        task_name,
-                        task,
-                    )
-                })
-                .collect::<Vec<_>>()
+            let manifest = relative_display_path(resolved_root, &catalog.manifest_path);
+            let manifest_absolute = catalog.manifest_path.display().to_string();
+            if catalog.manifest.tasks.is_empty() {
+                vec![project_empty_catalog_row(manifest, manifest_absolute)]
+            } else {
+                catalog
+                    .manifest
+                    .tasks
+                    .iter()
+                    .map(|(task_name, task)| {
+                        project_catalog_task_rows(
+                            manifest.clone(),
+                            manifest_absolute.clone(),
+                            catalog,
+                            task_name,
+                            task,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            }
         })
         .collect();
     let builtin_rows = builtin_task_rows_filtered(deferred_builtins);
@@ -387,6 +395,7 @@ fn prepare_filtered_listing(
         .map(|matched| {
             project_catalog_task_rows(
                 relative_display_path(resolved_root, &matched.catalog.manifest_path),
+                matched.catalog.manifest_path.display().to_string(),
                 matched.catalog,
                 &selector.task_name,
                 matched.task,
@@ -463,26 +472,40 @@ fn builtin_task_rows_filtered(deferred_builtins: &BTreeSet<String>) -> Vec<Built
 
 fn project_catalog_task_rows(
     manifest: String,
+    manifest_absolute: String,
     catalog: &LoadedCatalog,
     task_name: &str,
     task: &ManifestTask,
 ) -> CatalogTaskProjection {
     CatalogTaskProjection {
         manifest,
-        task_row: TaskSignatureProjection {
+        manifest_absolute,
+        task_row: Some(TaskSignatureProjection {
             task: catalog_task_label(catalog, task_name),
             run: task_run_preview(catalog, task_name, task),
-        },
+        }),
         managed_profiles: managed_profile_display_rows(catalog, task_name, task),
+    }
+}
+
+fn project_empty_catalog_row(manifest: String, manifest_absolute: String) -> CatalogTaskProjection {
+    CatalogTaskProjection {
+        manifest,
+        manifest_absolute,
+        task_row: None,
+        managed_profiles: Vec::new(),
     }
 }
 
 fn catalog_task_rows_json(rows: &[CatalogTaskProjection]) -> Vec<CatalogTaskJsonRow> {
     rows.iter()
         .map(|row| CatalogTaskJsonRow {
-            task: Some(row.task_row.task.clone()),
-            run: Some(row.task_row.run.clone()),
-            manifest: row.manifest.clone(),
+            task: row
+                .task_row
+                .as_ref()
+                .map(|signature| signature.task.clone()),
+            run: row.task_row.as_ref().map(|signature| signature.run.clone()),
+            manifest: row.manifest_absolute.clone(),
         })
         .collect()
 }
@@ -495,7 +518,7 @@ fn managed_profile_rows_json(rows: &[CatalogTaskProjection]) -> Vec<ManagedProfi
                 .map(|profile| ManagedProfileJsonRow {
                     task: profile.task.clone(),
                     run: profile.run.clone(),
-                    manifest: row.manifest.clone(),
+                    manifest: row.manifest_absolute.clone(),
                     profile: profile.profile.clone(),
                     invocation: profile.invocation.clone(),
                     parent_task: profile.parent_task.clone(),
@@ -561,14 +584,16 @@ fn render_catalog_task_rows(
     rows: &[CatalogTaskProjection],
 ) -> Result<(), EffigyTasksError> {
     for row in rows {
-        render_task_text_row(
-            renderer,
-            color_enabled,
-            theme,
-            &row.manifest,
-            &row.task_row.task,
-            &row.task_row.run,
-        )?;
+        if let Some(signature) = row.task_row.as_ref() {
+            render_task_text_row(
+                renderer,
+                color_enabled,
+                theme,
+                &row.manifest,
+                &signature.task,
+                &signature.run,
+            )?;
+        }
         for profile_row in &row.managed_profiles {
             render_task_text_row(
                 renderer,

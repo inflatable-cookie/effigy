@@ -34,6 +34,17 @@ let admin_dir = optional_config_string("bundle.dirs.admin", "");
 let ui_dir = optional_config_string("bundle.dirs.ui", "");
 let underlay_dir = path_join(repo_root, "../underlay");
 let poodle_dir = path_join(repo_root, "../poodle");
+let app_client_dir = path_join(repo_root, "app-client");
+let acme_client_dir = path_join(repo_root, "acme-client");
+let app_front_dir = path_join(repo_root, "app-front");
+let acme_front_dir = path_join(repo_root, "acme-front");
+let legacy_front_dir = path_join(repo_root, "front");
+let app_admin_dir = path_join(repo_root, "app-admin");
+let acme_admin_dir = path_join(repo_root, "acme-admin");
+let legacy_admin_dir = path_join(repo_root, "admin");
+let ui_abs_dir = if ui_dir != "" { path_join(repo_root, ui_dir) } else { "" };
+let front_abs_dir = if front_dir != "" { path_join(repo_root, front_dir) } else { "" };
+let admin_abs_dir = if admin_dir != "" { path_join(repo_root, admin_dir) } else { "" };
 
 let shell_header = "set -eu\n"
     + "\n"
@@ -122,25 +133,25 @@ let shell_targets = `ensure_bun_install_if_present "${underlay_dir}" "underlay"\
     + `ensure_bun_install_if_present "${poodle_dir}" "poodle"\n`;
 
 if ui_dir != "" {
-    shell_targets += `ensure_bun_install_if_present "${path_join(repo_root, ui_dir)}" "${ui_dir}"\n`;
+    shell_targets += `ensure_bun_install_if_present "${ui_abs_dir}" "${ui_dir}"\n`;
 } else {
-    shell_targets += `ensure_bun_install_if_present "${path_join(repo_root, "app-client")}" "app-client"\n`;
-    shell_targets += `ensure_bun_install_if_present "${path_join(repo_root, "acme-client")}" "acme-client"\n`;
+    shell_targets += `ensure_bun_install_if_present "${app_client_dir}" "app-client"\n`;
+    shell_targets += `ensure_bun_install_if_present "${acme_client_dir}" "acme-client"\n`;
 }
 
 shell_targets += "\ncase \"$setup_task_name\" in\n";
 shell_targets += "  front) ensure_first_bun_install \"front\"";
 if front_dir != "" {
-    shell_targets += ` "${path_join(repo_root, front_dir)}"`;
+    shell_targets += ` "${front_abs_dir}"`;
 } else {
-    shell_targets += ` "${path_join(repo_root, "app-front")}" "${path_join(repo_root, "acme-front")}" "${path_join(repo_root, "front")}"`;
+    shell_targets += ` "${app_front_dir}" "${acme_front_dir}" "${legacy_front_dir}"`;
 }
 shell_targets += " ;;\n";
 shell_targets += "  admin) ensure_first_bun_install \"admin\"";
 if admin_dir != "" {
-    shell_targets += ` "${path_join(repo_root, admin_dir)}"`;
+    shell_targets += ` "${admin_abs_dir}"`;
 } else {
-    shell_targets += ` "${path_join(repo_root, "app-admin")}" "${path_join(repo_root, "acme-admin")}" "${path_join(repo_root, "admin")}"`;
+    shell_targets += ` "${app_admin_dir}" "${acme_admin_dir}" "${legacy_admin_dir}"`;
 }
 shell_targets += " ;;\n";
 shell_targets += "  *) printf '[error] unsupported ui setup target %s\\n' \"$setup_task_name\"; exit 1 ;;\n";

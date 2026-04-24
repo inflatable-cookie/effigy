@@ -3,7 +3,8 @@ use std::process::Output;
 
 use effigy_cli::ExecArgs;
 use effigy_containers::{
-    load_container_policy, validate_container_policy, EffectiveContainerPolicy,
+    load_container_policy, validate_compose_backend_runtime, validate_container_policy,
+    EffectiveContainerPolicy,
 };
 use effigy_env::secret::SecretString;
 use effigy_exec::detection::determine_strategy;
@@ -262,6 +263,7 @@ fn run_routed_task_exec_internal(
     let config = load_named_container_config(repo_root, container_name)?;
     let policy = load_container_policy(repo_root, Some(container_name))?;
     validate_container_policy(repo_root, &policy)?;
+    validate_compose_backend_runtime(repo_root, &policy)?;
     ensure_container_running(repo_root, &policy, container_name)?;
 
     let mapped_cwd = map_host_cwd(repo_root, invocation_cwd, container_name, &config)?;

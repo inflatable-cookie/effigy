@@ -374,7 +374,7 @@ mounts = ["../outside:/workspace/outside"]
 }
 
 #[test]
-fn validate_container_policy_rejects_temp_root_repo_for_colima_nerdctl() {
+fn validate_compose_backend_runtime_rejects_temp_root_repo_for_colima_nerdctl() {
     let root = temp_repo("temp-root-colima-compose");
     fs::write(
         root.join("effigy.toml"),
@@ -393,7 +393,7 @@ primary_service = "app"
 
     let policy = load_container_policy(&root, None).expect("policy");
     let error = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
-        validate_container_policy(&root, &policy).expect_err("should fail")
+        crate::validate_compose_backend_runtime(&root, &policy).expect_err("should fail")
     });
 
     assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));

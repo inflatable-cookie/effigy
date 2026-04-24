@@ -1,16 +1,19 @@
 use std::collections::BTreeMap;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use effigy_bootstrap::{
-    execute_bootstrap_request as crate_execute_bootstrap,
+    execute_bootstrap_request_with_progress as crate_execute_bootstrap,
     render_bootstrap_plan as crate_render_bootstrap_plan,
     render_bootstrap_result as crate_render_bootstrap_result,
     resolve_bootstrap_request as crate_resolve_bootstrap, BootstrapError, BootstrapExecutionResult,
-    BootstrapResolution,
+    BootstrapProgressEvent, BootstrapResolution,
 };
 use effigy_cli::{BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand, TaskInvocation};
 use effigy_manifest::{ManifestJsPackageManager, ManifestManagedRun, TASK_MANIFEST_FILE};
+use effigy_ui::theme::is_ci_environment;
+use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 use serde::Serialize;
 use serde_json::json;
 
@@ -30,7 +33,7 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
                 return Ok(crate_render_bootstrap_plan(&request, args.output_json));
             }
 
-            let result = execute_bootstrap_request(&request)?;
+            let result = execute_bootstrap_request(&request, args.output_json)?;
             Ok(crate_render_bootstrap_result(&result, args.output_json))
         }
         BootstrapSubcommand::DepsSync { mode, paths } => {
@@ -62,7 +65,9 @@ fn resolve_bootstrap_request(
 
 fn execute_bootstrap_request(
     request: &BootstrapResolution,
+    output_json: bool,
 ) -> Result<BootstrapExecutionResult, RunnerError> {
+    let mut progress = BootstrapProgressReporter::new(output_json);
     crate_execute_bootstrap(
         request,
         |manifest_path| {
@@ -78,8 +83,138 @@ fn execute_bootstrap_request(
             run_bootstrap_task(repo_root, selector, phase)
                 .map_err(|e| BootstrapError::task_invocation(e.to_string()))
         },
+        |event| progress.handle(event),
     )
     .map_err(map_bootstrap_error)
+}
+
+struct BootstrapProgressReporter {
+    spinner: Option<Box<dyn SpinnerHandle>>,
+    enabled: bool,
+}
+
+impl BootstrapProgressReporter {
+    fn new(output_json: bool) -> Self {
+        let enabled = !output_json && std::io::stderr().is_terminal() && !is_ci_environment();
+        Self {
+            spinner: None,
+            enabled,
+        }
+    }
+
+    fn handle(&mut self, event: BootstrapProgressEvent) {
+        match event {
+            BootstrapProgressEvent::RootCheckoutStarted {
+                repo_url,
+                destination,
+            } => {
+                self.start(&format!(
+                    "Bootstrap: pulling {} -> {}",
+                    repo_url,
+                    destination.display()
+                ));
+            }
+            BootstrapProgressEvent::RootCheckoutFinished {
+                repo_state,
+                destination,
+            } => {
+                self.finish_success(&format!(
+                    "[ok] root repo {repo_state}: {}",
+                    destination.display()
+                ));
+            }
+            BootstrapProgressEvent::SubmodulesStarted {
+                destination,
+                policy,
+            } => {
+                self.start(&format!(
+                    "Bootstrap: submodules {} ({})",
+                    destination.display(),
+                    effigy_bootstrap::submodule_policy_label(policy)
+                ));
+            }
+            BootstrapProgressEvent::SubmodulesFinished {
+                destination,
+                policy,
+                applied,
+            } => {
+                let suffix = if applied { "applied" } else { "skipped" };
+                self.finish_success(&format!(
+                    "[ok] submodules {} {} ({})",
+                    suffix,
+                    destination.display(),
+                    effigy_bootstrap::submodule_policy_label(policy)
+                ));
+            }
+            BootstrapProgressEvent::ChildCheckoutStarted {
+                path, destination, ..
+            } => {
+                self.start(&format!(
+                    "Bootstrap: pulling child {} -> {}",
+                    path,
+                    destination.display()
+                ));
+            }
+            BootstrapProgressEvent::ChildCheckoutFinished {
+                path, repo_state, ..
+            } => {
+                self.finish_success(&format!("[ok] child {path} {repo_state}"));
+            }
+            BootstrapProgressEvent::ChildCheckoutWarning { path, warning, .. } => {
+                self.finish_error(&format!("[warn] child {path} skipped: {warning}"));
+            }
+            BootstrapProgressEvent::ChildRunStarted { path, .. } => {
+                self.start(&format!("Bootstrap: running child setup for {path}"));
+            }
+            BootstrapProgressEvent::ChildRunFinished { path, run, .. } => {
+                self.finish_success(&format!("[ok] child {path} setup complete ({run})"));
+            }
+            BootstrapProgressEvent::RootRunStarted { .. } => {
+                self.start("Bootstrap: running root setup");
+            }
+            BootstrapProgressEvent::RootRunFinished { run, .. } => {
+                self.finish_success(&format!("[ok] root setup complete ({run})"));
+            }
+            BootstrapProgressEvent::StartTaskStarted { selector, .. } => {
+                self.start(&format!("Bootstrap: starting {selector}"));
+            }
+            BootstrapProgressEvent::StartTaskFinished { selector, .. } => {
+                self.finish_success(&format!("[ok] start task complete ({selector})"));
+            }
+        }
+    }
+
+    fn start(&mut self, label: &str) {
+        self.finish_clear();
+        if self.enabled {
+            let mut renderer = PlainRenderer::stderr(OutputMode::from_env());
+            self.spinner = renderer.spinner(label).ok();
+        } else {
+            eprintln!("{label}");
+        }
+    }
+
+    fn finish_success(&mut self, message: &str) {
+        if let Some(spinner) = self.spinner.take() {
+            spinner.finish_success(message);
+        } else {
+            eprintln!("{message}");
+        }
+    }
+
+    fn finish_error(&mut self, message: &str) {
+        if let Some(spinner) = self.spinner.take() {
+            spinner.finish_error(message);
+        } else {
+            eprintln!("{message}");
+        }
+    }
+
+    fn finish_clear(&mut self) {
+        if let Some(spinner) = self.spinner.take() {
+            spinner.finish_clear();
+        }
+    }
 }
 
 fn run_bootstrap_run(
