@@ -3,11 +3,13 @@ use super::{
     load_all_container_policies, load_container_exec_working_dir, load_container_policy,
     load_inline_workspace_container_policy, load_workspace_ownership_targets,
     resolve_inline_workspace_exec_working_dir, stats_all_report, status_all_report, status_report,
-    validate_container_policy, with_test_effigy_home, with_test_host_composer_home,
-    AllocatedPortsSummary, ContainerDataTransferAction, ContainerDataVolumeEntry,
-    ContainerPolicyError, ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry,
-    ContainerStatusService, EffectiveAttachMode, EffectiveComposeSource, SharedServiceBinding,
+    validate_container_policy, with_test_compose_backend, with_test_effigy_home,
+    with_test_host_composer_home, AllocatedPortsSummary, ContainerDataTransferAction,
+    ContainerDataVolumeEntry, ContainerPolicyError, ContainerStatsAllEntry, ContainerStatsService,
+    ContainerStatusAllEntry, ContainerStatusService, EffectiveAttachMode, EffectiveComposeSource,
+    SharedServiceBinding,
 };
+use crate::compose::ComposeBackend;
 use effigy_catalog::volumes::VolumeClassification;
 use effigy_manifest::ManifestInlineWorkspaceContainerConfig;
 use std::fs;
@@ -369,6 +371,36 @@ mounts = ["../outside:/workspace/outside"]
     let policy = load_container_policy(&root, None).expect("policy");
     let error = validate_container_policy(&root, &policy).expect_err("should fail");
     assert!(error.to_string().contains("escapes the repo root"));
+}
+
+#[test]
+fn validate_container_policy_rejects_temp_root_repo_for_colima_nerdctl() {
+    let root = temp_repo("temp-root-colima-compose");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let error = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+        validate_container_policy(&root, &policy).expect_err("should fail")
+    });
+
+    assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));
+    assert!(error
+        .to_string()
+        .contains("under a temp directory that Colima may not share"));
+    assert!(error.to_string().contains("/Users/..."));
 }
 
 #[test]

@@ -14,6 +14,7 @@ use effigy_ui::OutputMode;
 use crate::EffigyRuntimeError;
 
 const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1";
+const CONTAINER_WORKSPACE_EFFIGY_BIN_DIR: &str = "/usr/local/bin";
 const CONTAINER_COLOR_ENV: [(&str, &str); 3] = [
     ("EFFIGY_COLOR", "always"),
     ("CLICOLOR_FORCE", "1"),
@@ -225,7 +226,7 @@ fn build_container_shell_args(
         args.push(OsString::from(service));
         args.push(OsString::from("sh"));
         args.push(OsString::from("-lc"));
-        args.push(OsString::from(command));
+        args.push(OsString::from(render_effigy_path_prefixed_command(command)));
         return args;
     }
 
@@ -237,7 +238,10 @@ fn build_container_shell_args(
     args.push(OsString::from(CONTAINER_HANDOFF_ENV));
     args.push(OsString::from(service));
     args.push(OsString::from(shell));
-    args.push(OsString::from("-i"));
+    args.push(OsString::from("-lc"));
+    args.push(OsString::from(render_effigy_path_prefixed_command(
+        &format!("exec {} -i", shell_quote(shell)),
+    )));
     args
 }
 
@@ -265,7 +269,10 @@ fn build_interactive_container_shell_args(
         return args;
     }
     args.push(OsString::from(shell));
-    args.push(OsString::from("-i"));
+    args.push(OsString::from("-lc"));
+    args.push(OsString::from(render_effigy_path_prefixed_command(
+        &format!("exec {} -i", shell_quote(shell)),
+    )));
     args
 }
 
@@ -297,7 +304,17 @@ fn append_color_exec_env(args: &mut Vec<OsString>, tty: bool) {
 }
 
 fn render_interactive_shell_session_command(initial_command: &str, shell: &str) -> String {
-    format!("{initial_command}; exec {} -i", shell_quote(shell))
+    render_effigy_path_prefixed_command(&format!(
+        "{initial_command}; exec {} -i",
+        shell_quote(shell)
+    ))
+}
+
+fn render_effigy_path_prefixed_command(command: &str) -> String {
+    format!(
+        "export PATH={}:$PATH; {command}",
+        shell_quote(CONTAINER_WORKSPACE_EFFIGY_BIN_DIR)
+    )
 }
 
 fn should_fail_container_shell_exit(command_mode: bool, success: bool) -> bool {
@@ -321,7 +338,8 @@ fn style_text(enabled: bool, style: anstyle::Style, text: &str) -> String {
 mod tests {
     use super::{
         build_container_shell_args, build_interactive_container_shell_args,
-        render_interactive_shell_session_command, should_fail_container_shell_exit,
+        render_effigy_path_prefixed_command, render_interactive_shell_session_command,
+        should_fail_container_shell_exit,
     };
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_manifest::{
@@ -333,8 +351,8 @@ mod tests {
     fn test_policy() -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
             name: "demo".to_owned(),
-            driver: ManifestContainerDriver::DockerCompose,
-            startup: ManifestContainerStartup::default(),
+            driver: ManifestContainerDriver::Colima,
+            startup: ManifestContainerStartup::Attached,
             profile: "effigy".to_owned(),
             compose_source: EffectiveComposeSource::Generated,
             compose_files: vec![PathBuf::from("compose.yml")],
@@ -358,7 +376,7 @@ mod tests {
             workspace_user: None,
             workspace_home: None,
             on_task_exit: ManifestContainerOnTaskExit::LeaveRunning,
-            shutdown: ManifestContainerShutdownMode::ComposeDown,
+            shutdown: ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
         }
     }
@@ -366,7 +384,16 @@ mod tests {
     #[test]
     fn interactive_shell_command_reenters_shell() {
         let rendered = render_interactive_shell_session_command("effigy dev", "/bin/custom shell");
-        assert_eq!(rendered, "effigy dev; exec '/bin/custom shell' -i");
+        assert_eq!(
+            rendered,
+            "export PATH='/usr/local/bin':$PATH; effigy dev; exec '/bin/custom shell' -i"
+        );
+    }
+
+    #[test]
+    fn effigy_path_prefixed_command_prepends_workspace_binary_dir() {
+        let rendered = render_effigy_path_prefixed_command("effigy tasks");
+        assert_eq!(rendered, "export PATH='/usr/local/bin':$PATH; effigy tasks");
     }
 
     #[test]
@@ -409,7 +436,7 @@ mod tests {
             "app".to_owned(),
             "sh".to_owned(),
             "-lc".to_owned(),
-            "echo hi".to_owned(),
+            "export PATH='/usr/local/bin':$PATH; echo hi".to_owned(),
         ]));
     }
 
@@ -444,7 +471,14 @@ mod tests {
         assert!(rendered
             .windows(2)
             .any(|window| window == ["-e", "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1"]));
-        assert!(rendered.ends_with(&["app".to_owned(), "/bin/bash".to_owned(), "-i".to_owned(),]));
+        assert!(rendered
+            .windows(3)
+            .any(|window| window == ["app", "/bin/bash", "-lc"]));
+        let command = rendered.last().expect("interactive shell command");
+        assert!(command.contains("export PATH='/usr/local/bin':$PATH;"));
+        assert!(command.contains("exec"));
+        assert!(command.contains("/bin/bash"));
+        assert!(command.contains("-i"));
     }
 
     #[test]
@@ -468,6 +502,11 @@ mod tests {
         assert!(rendered.contains(&"app".to_owned()));
         assert!(rendered.contains(&"/bin/sh".to_owned()));
         assert!(rendered.contains(&"-lc".to_owned()));
-        assert!(rendered.contains(&"effigy dev; exec /bin/sh -i".to_owned()));
+        let command = rendered.last().expect("interactive command");
+        assert!(command.contains("export PATH='/usr/local/bin':$PATH;"));
+        assert!(command.contains("effigy dev;"));
+        assert!(command.contains("exec"));
+        assert!(command.contains("/bin/sh"));
+        assert!(command.contains("-i"));
     }
 }

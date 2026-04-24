@@ -1425,7 +1425,7 @@ services:
             let routes = resolve_gateway_service_alias_routes(&repo_root, &policy, true, None)
                 .expect("service alias routes");
             assert_eq!(routes.len(), 1);
-            assert_eq!(routes[0].domain, "db.clientname.test");
+            assert_eq!(routes[0].domain, "postgres.clientname.test");
             assert_eq!(routes[0].target, None);
             assert_eq!(
                 routes[0].dns_ip,
@@ -1441,7 +1441,7 @@ services:
             policy
                 .dns_routes
                 .push(effigy_containers::EffectiveDnsRoute {
-                    domain: "db.clientname.test".to_owned(),
+                    domain: "postgres.clientname.test".to_owned(),
                     tls: false,
                     port: Some(9001),
                     service: Some("dbadmin".to_owned()),
@@ -1504,8 +1504,8 @@ services:
 
             assert_eq!(first_routes.len(), 1);
             assert_eq!(second_routes.len(), 1);
-            assert_eq!(first_routes[0].domain, "db.app1.test");
-            assert_eq!(second_routes[0].domain, "db.app2.test");
+            assert_eq!(first_routes[0].domain, "postgres.app1.test");
+            assert_eq!(second_routes[0].domain, "postgres.app2.test");
             assert_eq!(first_routes[0].target, None);
             assert_eq!(second_routes[0].target, None);
             assert_eq!(first_routes[0].dns_ip, second_routes[0].dns_ip);
@@ -1526,7 +1526,7 @@ services:
                 resolve_gateway_service_alias_routes(Path::new("/tmp/repo"), &policy, true, None)
                     .expect("service alias routes");
             assert_eq!(routes.len(), 1);
-            assert_eq!(routes[0].domain, "db.contact-patch.legacy.test");
+            assert_eq!(routes[0].domain, "postgres.contact-patch.legacy.test");
         });
     }
 
@@ -1545,7 +1545,7 @@ services:
             policy
                 .dns_routes
                 .push(effigy_containers::EffectiveDnsRoute {
-                    domain: "db.clientname.test".to_owned(),
+                    domain: "postgres.clientname.test".to_owned(),
                     tls: false,
                     port: Some(9001),
                     service: Some("dbadmin".to_owned()),

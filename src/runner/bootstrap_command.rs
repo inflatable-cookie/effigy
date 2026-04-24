@@ -14,17 +14,15 @@ use effigy_manifest::{ManifestJsPackageManager, ManifestManagedRun, TASK_MANIFES
 use serde::Serialize;
 use serde_json::json;
 
-use crate::runner::command_context::current_working_dir;
 use crate::runner::execute::api::{run_managed_run_with_cwd, run_manifest_task_with_cwd};
 use crate::runner::manifest::{load_task_manifest, load_task_manifest_with_inspection};
 
 use super::error::RunnerError;
 
-pub(super) fn run_bootstrap(args: BootstrapArgs) -> Result<String, RunnerError> {
-    run_bootstrap_with_cwd(args, current_working_dir()?)
-}
-
-fn run_bootstrap_with_cwd(args: BootstrapArgs, cwd: PathBuf) -> Result<String, RunnerError> {
+pub(in crate::runner) fn run_bootstrap_with_cwd(
+    args: BootstrapArgs,
+    cwd: PathBuf,
+) -> Result<String, RunnerError> {
     match &args.subcommand {
         BootstrapSubcommand::Clone { plan, .. } => {
             let request = resolve_bootstrap_request(&cwd, &args)?;

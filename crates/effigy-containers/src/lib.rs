@@ -17,6 +17,8 @@ pub use report::{
 pub use workspace::load_workspace_ownership_targets;
 
 #[cfg(test)]
+pub(crate) use compose::with_test_compose_backend;
+#[cfg(test)]
 pub(crate) use policy_support::with_test_effigy_home;
 use policy_support::{resolve_compose_source, validate_declared_mounts, validate_media_mounts};
 use workspace::materialize_runtime_workspace_mount_rewrite;
@@ -448,6 +450,7 @@ pub fn validate_container_policy(
             )));
         }
     }
+    validate_compose_backend_host_paths(repo_root, policy)?;
     validate_declared_mounts(repo_root, &policy.name, &policy.declared_mounts)?;
     validate_media_mounts(repo_root, &policy.name, &policy.declared_media_mounts)?;
     Ok(())
@@ -599,6 +602,41 @@ fn build_effective_policy(
             .and_then(|value| value.detach_timeout_secs)
             .unwrap_or(DEFAULT_ATTACH_TIMEOUT_SECS),
     })
+}
+
+fn validate_compose_backend_host_paths(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), ContainerPolicyError> {
+    if compose::resolve_compose_backend() != compose::ComposeBackend::ColimaNerdctl {
+        return Ok(());
+    }
+    if !is_colima_temp_root_path(repo_root)
+        && !policy
+            .compose_files
+            .iter()
+            .any(|compose_file| is_colima_temp_root_path(compose_file))
+    {
+        return Ok(());
+    }
+    Err(ContainerPolicyError::TaskInvocation(format!(
+        "container `{}` uses the Colima nerdctl compose fallback, but repo `{}` is under a temp directory that Colima may not share into the VM; move the repo under a shared path like `/Users/...` and retry",
+        policy.name,
+        repo_root.display()
+    )))
+}
+
+fn is_colima_temp_root_path(path: &Path) -> bool {
+    let temp_root = std::env::temp_dir();
+    path_is_within(path, &temp_root)
+        || path_is_within(path, Path::new("/tmp"))
+        || path_is_within(path, Path::new("/private/tmp"))
+        || path_is_within(path, Path::new("/var/folders"))
+        || path_is_within(path, Path::new("/private/var/folders"))
+}
+
+fn path_is_within(path: &Path, root: &Path) -> bool {
+    path.starts_with(root)
 }
 
 fn default_workspace_identity_for_primary_service(

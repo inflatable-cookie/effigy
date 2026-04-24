@@ -347,10 +347,10 @@ fn run_single_step(
             let output = super::entry::run_manifest_task_with_cwd(invocation, cwd.to_path_buf())?;
             render_nested_output(&output)
         }
-        StepAction::Builtin(command) => {
+        StepAction::Builtin { command, cwd } => {
             ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
             let _env_guard = ScopedEnvOverride::set(&step.env);
-            let output = crate::runner::run_command(command.clone())?;
+            let output = crate::runner::entrypoints::run_command_with_cwd(command.clone(), cwd)?;
             render_nested_output(&output)
         }
         StepAction::Rhai { path } => {
@@ -373,7 +373,10 @@ enum StepAction {
         invocation: TaskInvocation,
         cwd: PathBuf,
     },
-    Builtin(Command),
+    Builtin {
+        command: Command,
+        cwd: PathBuf,
+    },
     Rhai {
         path: PathBuf,
     },
@@ -389,7 +392,7 @@ impl StepAction {
         match self {
             Self::Command(_) => "command",
             Self::Task { .. } => "task",
-            Self::Builtin(_) => "builtin task",
+            Self::Builtin { .. } => "builtin task",
             Self::Rhai { .. } => "rhai script",
             Self::Noop => "env-only step",
         }
@@ -465,13 +468,15 @@ fn resolve_task_step(
             .iter()
             .any(|(name, _)| *name == selector.task_name)
     {
-        let mut argv = vec![selector.task_name.clone()];
-        argv.extend(args);
-        argv.push("--repo".to_owned());
-        argv.push(selection.catalog.catalog_root.display().to_string());
-        let command =
-            parse_command(argv).map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        return Ok(StepAction::Builtin(command));
+        let command = parse_builtin_step_command(
+            &selector.task_name,
+            &args,
+            &selection.catalog.catalog_root,
+        )?;
+        return Ok(StepAction::Builtin {
+            command,
+            cwd: selection.catalog.catalog_root.clone(),
+        });
     }
     let invocation = TaskInvocation {
         name: render_task_selector(&selector),
@@ -497,6 +502,38 @@ fn render_script_path(path: &str, repo_root: &Path, bundle_root: Option<&Path>) 
             .replace("{{bundle}}", &bundle);
     }
     rendered
+}
+
+fn parse_builtin_step_command(
+    task_name: &str,
+    args: &[String],
+    repo_root: &Path,
+) -> Result<Command, RunnerError> {
+    let mut argv = vec![task_name.to_owned()];
+    argv.extend(args.iter().cloned());
+    let command =
+        parse_command(argv).map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok(apply_builtin_repo_override(command, repo_root))
+}
+
+fn apply_builtin_repo_override(mut command: Command, repo_root: &Path) -> Command {
+    let repo_root = repo_root.to_path_buf();
+    match &mut command {
+        Command::Docs(args) => args.repo_override = Some(repo_root),
+        Command::Demo(args) => args.repo_override = Some(repo_root),
+        Command::Contracts(args) => args.repo_override = Some(repo_root),
+        Command::Exec(args) => args.repo_override = Some(repo_root),
+        Command::Service(args) => args.repo_override = Some(repo_root),
+        Command::Distribution(args) => args.repo_override = Some(repo_root),
+        Command::Container(args) => args.repo_override = Some(repo_root),
+        Command::Release(args) => args.repo_override = Some(repo_root),
+        Command::Doctor(args) => args.repo_override = Some(repo_root),
+        Command::Tasks(args) => args.repo_override = Some(repo_root),
+        Command::System(args) => args.repo_override = Some(repo_root),
+        Command::Workspace(args) => args.repo_override = Some(repo_root),
+        _ => {}
+    }
+    command
 }
 
 fn run_shell_step_with_retry(
@@ -741,5 +778,28 @@ impl Drop for ScopedEnvOverride {
                 None => std::env::remove_var(&key),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_builtin_step_command;
+    use effigy_cli::Command;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn parse_builtin_step_command_applies_repo_override_to_builtin_command() {
+        let command = parse_builtin_step_command(
+            "container",
+            &["up".to_owned(), "--detach".to_owned()],
+            Path::new("/tmp/repo"),
+        )
+        .expect("parse builtin step command");
+
+        assert!(matches!(
+            command,
+            Command::Container(args)
+                if args.repo_override == Some(PathBuf::from("/tmp/repo"))
+        ));
     }
 }

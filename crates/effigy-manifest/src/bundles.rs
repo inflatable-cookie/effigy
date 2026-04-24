@@ -728,6 +728,10 @@ container = "__CONTAINER_NAME__"
 
 [tasks.dev]
 workspace = "__DEFAULT_WORKSPACE__"
+
+[tasks.seed]
+workspace = "__DEFAULT_WORKSPACE__"
+run = [{ rhai = "{{ bundle.root }}/scripts/seed-latest-db-dump.rhai" }]
 "#;
 
     let rendered = template
@@ -1101,6 +1105,13 @@ struct BundleExportFile {
     contents: String,
 }
 
+const DECODELABS_ASSETS: &[EmbeddedBundleAsset] = &[EmbeddedBundleAsset {
+    path: "scripts/seed-latest-db-dump.rhai",
+    contents: include_str!(
+        "../../effigy-catalog/starters/decodelabs/scripts/seed-latest-db-dump.rhai"
+    ),
+}];
+
 const UNDERLAY_ASSETS: &[EmbeddedBundleAsset] = &[
     EmbeddedBundleAsset {
         path: "scripts/dev/ui-setup.rhai",
@@ -1280,6 +1291,10 @@ container = "{{ inputs.container_name }}"
 
 [tasks.dev]
 workspace = "{{ inputs.default_workspace }}"
+
+[tasks.seed]
+workspace = "{{ inputs.default_workspace }}"
+run = [{ rhai = "{{ bundle.root }}/scripts/seed-latest-db-dump.rhai" }]
 "#;
 
 const UNDERLAY_EXPORT_TEMPLATE: &str = r#"[package_manager]
@@ -1453,6 +1468,7 @@ fn prune_stale_materialized_bundle_roots(
 
 fn embedded_bundle_assets(bundle_name: &str) -> &'static [EmbeddedBundleAsset] {
     match bundle_name {
+        "decodelabs" => DECODELABS_ASSETS,
         "underlay" => UNDERLAY_ASSETS,
         _ => &[],
     }
