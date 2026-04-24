@@ -14,6 +14,42 @@ fn resolve_compose_backend_returns_something() {
 }
 
 #[test]
+fn resolve_compose_backend_honors_colima_override_env() {
+    let previous = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+    unsafe {
+        std::env::set_var("EFFIGY_COMPOSE_BACKEND", "containerd");
+    }
+    let backend = resolve_compose_backend();
+    match previous {
+        Some(value) => unsafe {
+            std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
+        },
+        None => unsafe {
+            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+        },
+    }
+    assert_eq!(backend, ComposeBackend::ColimaNerdctl);
+}
+
+#[test]
+fn resolve_compose_backend_honors_docker_override_env() {
+    let previous = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+    unsafe {
+        std::env::set_var("EFFIGY_COMPOSE_BACKEND", "docker");
+    }
+    let backend = resolve_compose_backend();
+    match previous {
+        Some(value) => unsafe {
+            std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
+        },
+        None => unsafe {
+            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+        },
+    }
+    assert_eq!(backend, ComposeBackend::Docker);
+}
+
+#[test]
 fn shutdown_labels() {
     assert_eq!(
         shutdown_label(ManifestContainerShutdownMode::Graceful),
