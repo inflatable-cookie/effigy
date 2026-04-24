@@ -623,6 +623,9 @@ fn validate_compose_backend_host_paths(
     if compose::resolve_compose_backend() != compose::ComposeBackend::ColimaNerdctl {
         return Ok(());
     }
+    if std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK").is_some() {
+        return Ok(());
+    }
     if !is_colima_temp_root_path(repo_root)
         && !policy
             .compose_files
