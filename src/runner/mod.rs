@@ -25,7 +25,6 @@ mod system_command;
 mod tasks_command;
 mod util;
 
-pub(in crate::runner) use bootstrap_command::run_bootstrap;
 pub(in crate::runner) use bundle_command::run_bundle;
 pub(in crate::runner) use changelog_command::run_changelog;
 pub(in crate::runner) use container_command::run_container;

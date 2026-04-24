@@ -174,6 +174,22 @@ run = "sh ./scripts/child-setup.sh"
     remote
 }
 
+fn create_js_child_remote(name: &str) -> PathBuf {
+    let worktree = temp_dir(&format!("{name}-worktree"));
+    fs::write(
+        worktree.join("effigy.toml"),
+        "[package_manager]\njs = \"bun\"\n",
+    )
+    .expect("write manifest");
+    fs::write(worktree.join("package.json"), "{}\n").expect("write package");
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init js child");
+    let remote = bare_remote_path(&format!("{name}-bare"));
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    remote
+}
+
 fn create_root_remote_with_bootstrap(child_remote: &Path) -> PathBuf {
     let worktree = temp_dir("root-worktree");
     fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
@@ -218,6 +234,37 @@ run = "sh ./scripts/start.sh"
     init_git_repo(&worktree);
     commit_all(&worktree, "init root");
     let remote = bare_remote_path("root-bare");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    remote
+}
+
+fn create_root_remote_with_sibling_bootstrap_deps(child_remote: &Path) -> PathBuf {
+    let worktree = temp_dir("root-sibling-deps-worktree");
+    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        worktree.join("effigy.toml"),
+        format!(
+            r#"[package_manager]
+js = "bun"
+
+[bootstrap]
+run = [
+  {{ task = "bootstrap deps sync ../underlay" }}
+]
+
+[[bootstrap.children]]
+path = "../underlay"
+repo = "{}"
+required = true
+"#,
+            child_remote.display()
+        ),
+    )
+    .expect("write manifest");
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init root sibling deps");
+    let remote = bare_remote_path("root-sibling-deps-bare");
     init_bare_remote(&remote);
     attach_remote_and_push(&worktree, &remote);
     remote
@@ -374,5 +421,48 @@ fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
     assert_eq!(
         fs::read_to_string(api.join("cargo.args")).expect("read cargo args"),
         "fetch --manifest-path Cargo.toml "
+    );
+}
+
+#[test]
+fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_root() {
+    let child_remote = create_js_child_remote("underlay-sibling");
+    let root_remote = create_root_remote_with_sibling_bootstrap_deps(&child_remote);
+    let cwd = temp_dir("bootstrap-sibling-deps");
+    let bin_dir = cwd.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    fs::write(bin_dir.join("bun"), "#!/bin/sh\nprintf bun > bun.marker\n").expect("write bun");
+    let mut perms = fs::metadata(bin_dir.join("bun"))
+        .expect("stat bun")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(bin_dir.join("bun"), perms).expect("chmod bun");
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    unsafe {
+        std::env::set_var("PATH", format!("{}:{original_path}", bin_dir.display()));
+    }
+    let out = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: Some(PathBuf::from("underlay-reference")),
+                branch: None,
+                start: false,
+                plan: false,
+            },
+            output_json: false,
+        },
+        cwd.clone(),
+    )
+    .expect("run bootstrap");
+    unsafe {
+        std::env::set_var("PATH", original_path);
+    }
+
+    assert!(out.contains("[ok] bootstrap completed"));
+    assert!(
+        cwd.join("underlay/bun.marker").is_file(),
+        "bun marker should be written under the cloned repo sibling, not the bootstrap parent"
     );
 }

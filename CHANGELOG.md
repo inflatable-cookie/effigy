@@ -40,6 +40,10 @@ During v0.x, MINOR bumps may include breaking changes.
   mapping for the bundled `ui-setup.rhai` helper and optional per-role route
   labels, so polyrepo consumers can stop relying on the default
   `app-*` / `acme-*` package-name guesses.
+- Add a shipped `seed` task to the `decodelabs` bundle, backed by a bundled
+  `seed-latest-db-dump.rhai` helper that imports the newest
+  `.effigy/local/db-seeds/<database>-*.sql` dump into the primary MariaDB
+  database from bundle config.
 - Add a `decodelabs` nginx config variant and point the `decodelabs` bundle at
   it. The rendered config now only rewrites every request to
   `/vendor/genesis.php` and hands off to php-fpm — no try_files, asset
@@ -69,6 +73,27 @@ During v0.x, MINOR bumps may include breaking changes.
   inspection, gateway status/setup, doctor, scan, and cache operations, plus
 
 ### Fixed
+- Stop in-process builtin task references from reconstructing CLI argv with a
+  stale `--repo` global flag path, so bootstrap run steps like
+  `container up --detach` execute against the target repo instead of failing
+  with `unknown argument: --repo`.
+- Fail container-policy validation early when the Colima nerdctl compose
+  fallback targets a repo under a temp directory like `/tmp` or
+  `/private/tmp`, so bootstrap explains the unsupported host path clearly
+  instead of surfacing an opaque compose-file ENOENT from inside Colima.
+- Force workspace handoff shells and in-container Effigy handoff exec to use
+  the installed `/usr/local/bin/effigy` path ahead of Composer global bins, so
+  legacy Decodelabs sites can still defer missing tasks to the old Composer
+  package without that package shadowing the real Effigy binary completely.
+- Run bootstrap builtin steps like `bootstrap deps sync ../underlay` against the
+  cloned repo root instead of the outer invocation cwd, so sibling bootstrap
+  paths resolve relative to the bootstrapped repo rather than the parent
+  directory you launched `effigy bootstrap` from.
+- Mount MariaDB and Postgres extra-database init scripts from the generated
+  `.effigy/runtime/compose/*.conf` path instead of the stale per-project
+  runtime path, so bundle-generated database services no longer bind a
+  directory over `/docker-entrypoint-initdb.d/10-extra-databases.sql` and fail
+  at startup.
 - Treat `container_lifecycle = true` as an implicit container run target when
   a task does not set `run_in`, so manifest-wide `[task_defaults].run_in =
   "host"` no longer breaks managed dev tasks unless they explicitly opt back to

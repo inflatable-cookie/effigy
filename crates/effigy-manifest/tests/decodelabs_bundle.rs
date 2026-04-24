@@ -1,5 +1,6 @@
 use effigy_manifest::config_sections::ManifestWorkspaceContainerRef;
 use effigy_manifest::load_task_manifest_with_inspection;
+use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep};
 
 #[test]
 fn decodelabs_bundle_resolves_defaults_and_allows_block_overrides() {
@@ -16,15 +17,20 @@ database = "contactpatch"
 
 [containers.web.services.db]
 version = "11.0"
-
-[tasks.seed]
-workspace = "app"
-run = [{ rhai = "infra/dev/seed-latest-db-dump.rhai" }]
 "#,
     )
     .expect("write manifest");
+    std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
 
     let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let bundle_root = loaded.bundle_root.clone().expect("bundle root");
+    let seed_script = bundle_root.join("scripts/seed-latest-db-dump.rhai");
+    let seed_script_source = std::fs::read_to_string(&seed_script).expect("seed script");
+    assert!(
+        seed_script_source.contains("reset and seeded database"),
+        "decodelabs bundle should materialize its seed helper at {}",
+        seed_script.display()
+    );
     let manifest = loaded.manifest;
 
     let bundle = manifest.bundle.expect("bundle");
@@ -80,6 +86,18 @@ run = [{ rhai = "infra/dev/seed-latest-db-dump.rhai" }]
 
     let task = manifest.tasks.get("seed").expect("seed task");
     assert_eq!(task.workspace.as_deref(), Some("app"));
+    assert!(matches!(
+        task.run.as_ref().expect("seed run"),
+        ManifestManagedRun::Sequence(steps)
+            if matches!(
+                steps.as_slice(),
+                [ManifestManagedRunStep::Step(step)]
+                    if step
+                        .rhai
+                        .as_deref()
+                        .is_some_and(|path| path.ends_with("/scripts/seed-latest-db-dump.rhai"))
+            )
+    ));
 }
 
 #[test]

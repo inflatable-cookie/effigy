@@ -4,6 +4,8 @@
 //! container-domain decisions about how to invoke Docker/Colima,
 //! not runner shell behavior.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::ffi::OsString;
 
 use crate::EffectiveContainerPolicy;
@@ -19,15 +21,34 @@ pub enum ComposeBackend {
     ColimaNerdctl,
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_COMPOSE_BACKEND_OVERRIDE: Cell<Option<ComposeBackend>> = const { Cell::new(None) };
+}
+
 /// Resolve which compose backend to use.
 ///
 /// Prefers `docker` if available on PATH, falls back to Colima nerdctl.
 pub fn resolve_compose_backend() -> ComposeBackend {
+    #[cfg(test)]
+    if let Some(backend) = TEST_COMPOSE_BACKEND_OVERRIDE.with(Cell::get) {
+        return backend;
+    }
     if command_exists("docker") {
         ComposeBackend::Docker
     } else {
         ComposeBackend::ColimaNerdctl
     }
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_compose_backend<T>(backend: ComposeBackend, run: impl FnOnce() -> T) -> T {
+    TEST_COMPOSE_BACKEND_OVERRIDE.with(|slot| {
+        let previous = slot.replace(Some(backend));
+        let result = run();
+        slot.set(previous);
+        result
+    })
 }
 
 /// Build docker compose arguments for a given policy and subcommand.

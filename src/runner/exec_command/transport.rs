@@ -16,6 +16,7 @@ use crate::runner::error::RunnerError;
 mod colima;
 
 const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF";
+const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 const CONTAINER_COLOR_ENV: [(&str, &str); 3] = [
     ("EFFIGY_COLOR", "always"),
     ("CLICOLOR_FORCE", "1"),
@@ -41,7 +42,7 @@ pub(super) fn build_routed_task_exec_args(
             args.push(OsString::from("-w"));
             args.push(OsString::from(mapped_cwd));
             args.push(OsString::from(service));
-            args.push(OsString::from("effigy"));
+            args.push(OsString::from(CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH));
             args.extend(handoff_args.iter().cloned().map(OsString::from));
         }
         effigy_exec::ExecStrategy::RawExec {

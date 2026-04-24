@@ -633,6 +633,39 @@ working_dir = "{working_dir}"
     }
 
     #[test]
+    fn build_routed_task_exec_args_handoff_uses_installed_effigy_path() {
+        let args = build_routed_task_exec_args(
+            &effigy_exec::ExecStrategy::Handoff {
+                args: vec!["tasks".to_owned(), "--json".to_owned()],
+            },
+            None,
+            "workspace",
+            "/workspace-root/repo",
+        );
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("exec"),
+                OsString::from("-T"),
+                OsString::from("-e"),
+                OsString::from("EFFIGY_COLOR=always"),
+                OsString::from("-e"),
+                OsString::from("CLICOLOR_FORCE=1"),
+                OsString::from("-e"),
+                OsString::from("FORCE_COLOR=3"),
+                OsString::from("-e"),
+                OsString::from("EFFIGY_INTERNAL_CONTAINER_HANDOFF=1"),
+                OsString::from("-w"),
+                OsString::from("/workspace-root/repo"),
+                OsString::from("workspace"),
+                OsString::from("/usr/local/bin/effigy"),
+                OsString::from("tasks"),
+                OsString::from("--json"),
+            ]
+        );
+    }
+
+    #[test]
     fn build_alias_table_renders_service_param_templates() {
         let aliases = build_alias_table(&ManifestContainerConfig {
             driver: None,

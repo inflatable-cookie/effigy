@@ -1064,7 +1064,7 @@ fn assembled_yaml_is_structurally_valid_compose() {
         .collect();
     assert!(
         db_volume_strings
-            .contains(&"./.effigy/runtime/client-project/db.conf:/docker-entrypoint-initdb.d/10-extra-databases.sql:ro"),
+            .contains(&"./.effigy/runtime/compose/db.conf:/docker-entrypoint-initdb.d/10-extra-databases.sql:ro"),
         "mariadb should mount an init script for extra databases: {db_volume_strings:?}"
     );
 
@@ -1231,7 +1231,7 @@ fn rust_postgres_stack_assembles_correctly() {
         .collect();
     assert!(
         db_volume_strings
-            .contains(&"./.effigy/runtime/rust-svc/db.conf:/docker-entrypoint-initdb.d/10-extra-databases.sql:ro"),
+            .contains(&"./.effigy/runtime/compose/db.conf:/docker-entrypoint-initdb.d/10-extra-databases.sql:ro"),
         "postgres should mount an init script for extra databases: {db_volume_strings:?}"
     );
     assert!(
