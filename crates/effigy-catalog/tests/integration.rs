@@ -939,8 +939,11 @@ fn assembled_yaml_is_structurally_valid_compose() {
                     toml::Value::String("10.11".to_string()),
                 );
                 p.insert(
-                    "database".to_string(),
-                    toml::Value::String("clientdb".to_string()),
+                    "databases".to_string(),
+                    toml::Value::Array(vec![
+                        toml::Value::String("clientdb".to_string()),
+                        toml::Value::String("clientdb_test".to_string()),
+                    ]),
                 );
                 p.insert(
                     "root_password".to_string(),
@@ -1054,6 +1057,16 @@ fn assembled_yaml_is_structurally_valid_compose() {
         db_env.get("MYSQL_DATABASE").unwrap().as_str().unwrap(),
         "clientdb"
     );
+    let db_volumes = db.get("volumes").unwrap().as_sequence().unwrap();
+    let db_volume_strings: Vec<&str> = db_volumes
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert!(
+        db_volume_strings
+            .contains(&"./.effigy/runtime/client-project/db.conf:/docker-entrypoint-initdb.d/10-extra-databases.sql:ro"),
+        "mariadb should mount an init script for extra databases: {db_volume_strings:?}"
+    );
 
     let cache = validate_service(&doc, "cache");
     let cache_image = cache.get("image").unwrap().as_str().unwrap();
@@ -1108,6 +1121,14 @@ fn assembled_yaml_is_structurally_valid_compose() {
     assert!(
         result.config_files["web.conf"].contains("fastcgi_pass"),
         "nginx config should have fastcgi_pass"
+    );
+    assert!(
+        result.config_files.contains_key("db.conf"),
+        "should have mariadb init config"
+    );
+    assert!(
+        result.config_files["db.conf"].contains("clientdb_test"),
+        "mariadb init config should create the extra database"
     );
 
     // 5. Validate volume metadata. MariaDB uses a repo-local bind mount, so
@@ -1169,8 +1190,11 @@ fn rust_postgres_stack_assembles_correctly() {
                 let mut p = HashMap::new();
                 p.insert("version".to_string(), toml::Value::String("16".to_string()));
                 p.insert(
-                    "database".to_string(),
-                    toml::Value::String("myapp".to_string()),
+                    "databases".to_string(),
+                    toml::Value::Array(vec![
+                        toml::Value::String("myapp".to_string()),
+                        toml::Value::String("myapp_test".to_string()),
+                    ]),
                 );
                 p
             },
@@ -1199,6 +1223,24 @@ fn rust_postgres_stack_assembles_correctly() {
     assert_eq!(
         db_env.get("POSTGRES_DB").unwrap().as_str().unwrap(),
         "myapp"
+    );
+    let db_volumes = db.get("volumes").unwrap().as_sequence().unwrap();
+    let db_volume_strings: Vec<&str> = db_volumes
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert!(
+        db_volume_strings
+            .contains(&"./.effigy/runtime/rust-svc/db.conf:/docker-entrypoint-initdb.d/10-extra-databases.sql:ro"),
+        "postgres should mount an init script for extra databases: {db_volume_strings:?}"
+    );
+    assert!(
+        result.config_files.contains_key("db.conf"),
+        "should have postgres init config"
+    );
+    assert!(
+        result.config_files["db.conf"].contains("myapp_test"),
+        "postgres init config should create the extra database"
     );
 
     assert!(

@@ -128,7 +128,7 @@ fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
 }
 
 fn run_system_container_subcommand(
-    repo_root: &Path,
+    _repo_root: &Path,
     container_name: Option<String>,
     repo_override: Option<std::path::PathBuf>,
     output_json: bool,

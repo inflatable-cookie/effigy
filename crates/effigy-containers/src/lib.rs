@@ -30,10 +30,10 @@ use std::path::{Path, PathBuf};
 use effigy_catalog::{volumes::ManagedVolume, CatalogError, ComposeOutput};
 use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_manifest::{
-    load_task_manifest_with_inspection, resolve_task_execution_binding, ManifestContainerConfig,
-    ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-    ManifestContainerStartup, ManifestContainersConfig, ManifestError,
-    ManifestInlineWorkspaceContainerConfig, ManifestTask, ManifestWorkspaceConfig,
+    load_task_manifest_with_inspection, resolve_task_execution_binding_from_parts,
+    ManifestContainerConfig, ManifestContainerDriver, ManifestContainerOnTaskExit,
+    ManifestContainerShutdownMode, ManifestContainerStartup, ManifestContainersConfig,
+    ManifestError, ManifestInlineWorkspaceContainerConfig, ManifestTask, ManifestWorkspaceConfig,
     ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer, TASK_MANIFEST_FILE,
 };
 
@@ -114,6 +114,19 @@ pub struct SharedServiceBinding {
     pub host: String,
     pub host_port: u16,
     pub container_port: u16,
+}
+
+pub fn service_alias_contract(catalog: &str) -> Option<(&'static str, u16)> {
+    match catalog {
+        "postgres" => Some(("postgres", 5432)),
+        "mariadb" | "mysql" => Some(("mysql", 3306)),
+        "redis" => Some(("redis", 6379)),
+        "memcached" => Some(("memcached", 11211)),
+        "elasticsearch" => Some(("search", 9200)),
+        "minio" | "s3" => Some(("s3", 9000)),
+        "mail" | "mailpit" => Some(("smtp", 1025)),
+        _ => None,
+    }
 }
 
 impl SharedServiceBinding {
@@ -617,19 +630,6 @@ fn effective_service_aliases(config: &ManifestContainerConfig) -> Vec<EffectiveS
         .collect()
 }
 
-fn service_alias_contract(catalog: &str) -> Option<(&'static str, u16)> {
-    match catalog {
-        "postgres" => Some(("db", 5432)),
-        "mariadb" | "mysql" => Some(("db", 3306)),
-        "redis" => Some(("redis", 6379)),
-        "memcached" => Some(("memcached", 11211)),
-        "elasticsearch" => Some(("search", 9200)),
-        "minio" | "s3" => Some(("s3", 9000)),
-        "mail" | "mailpit" => Some(("smtp", 1025)),
-        _ => None,
-    }
-}
-
 fn default_project_name_base(manifest: &effigy_manifest::TaskManifest, repo_root: &Path) -> String {
     manifest
         .catalog
@@ -724,8 +724,14 @@ fn infer_default_workspace_for_container(
     manifest: &effigy_manifest::TaskManifest,
     requested_container_name: Option<&str>,
 ) -> Option<ManifestWorkspaceConfig> {
-    let binding =
-        resolve_task_execution_binding(manifest, "container", &ManifestTask::default()).ok()?;
+    let binding = resolve_task_execution_binding_from_parts(
+        None,
+        manifest.systems.as_ref(),
+        manifest.containers.as_ref(),
+        "container",
+        &ManifestTask::default(),
+    )
+    .ok()?;
     let ResolvedTaskExecutionBinding::Workspace(binding) = binding? else {
         return None;
     };

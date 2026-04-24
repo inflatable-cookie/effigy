@@ -10,7 +10,12 @@ description = "PostgreSQL version"
 [params.database]
 type = "string"
 default = "app"
-description = "Default database name"
+description = "Primary database name"
+
+[params.databases]
+type = "list"
+default = ["app"]
+description = "Databases to create; the first entry is treated as the primary database"
 
 [params.password]
 type = "string"

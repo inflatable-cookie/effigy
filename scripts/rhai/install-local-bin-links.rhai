@@ -15,7 +15,20 @@ fn ensure_file(path, label) {
     }
 }
 
-fn replace_link(target, link_path) {
+fn run_check(label, program, process_args) {
+    let result = run_process(program, process_args);
+    if result["success"] {
+        return;
+    }
+
+    let status = result["status"].to_string();
+    let stdout = result["stdout"].to_string();
+    let stderr = result["stderr"].to_string();
+    throw "[error] " + label + " failed with status " + status
+        + "\nstdout:\n" + stdout + "\nstderr:\n" + stderr;
+}
+
+fn replace_symlink(target, link_path) {
     if path_exists(link_path) || is_symlink(link_path) {
         if !is_symlink(link_path) {
             throw `[error] refusing to replace non-symlink path: ${link_path}`;
@@ -25,14 +38,26 @@ fn replace_link(target, link_path) {
     create_symlink(target, link_path);
 }
 
+fn replace_wrapper(target, wrapper_path) {
+    if path_exists(wrapper_path) || is_symlink(wrapper_path) {
+        if !is_symlink(wrapper_path) && !is_file(wrapper_path) {
+            throw `[error] refusing to replace unsupported path: ${wrapper_path}`;
+        }
+        remove_path(wrapper_path);
+    }
+    let script = "#!/usr/bin/env bash\nset -euo pipefail\nexec \"" + target + "\" \"$@\"\n";
+    write_file(wrapper_path, script);
+    run_check("mark wrapper executable", "chmod", ["0755", wrapper_path]);
+}
+
 ensure_file(stable_target, "stable effigy binary");
 ensure_file(dev_target, "effigy-dev wrapper");
 
 create_dir(link_dir);
-replace_link(stable_target, stable_link);
-replace_link(dev_target, dev_link);
+replace_wrapper(stable_target, stable_link);
+replace_symlink(dev_target, dev_link);
 
-log(`[ok] linked stable channel: ${stable_link} -> ${stable_target}`);
+log(`[ok] wrote stable channel wrapper: ${stable_link} -> ${stable_target}`);
 log(`[ok] linked dev channel: ${dev_link} -> ${dev_target}`);
 
 let path_value = ":" + env("PATH") + ":";

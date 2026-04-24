@@ -1164,12 +1164,12 @@ fn parse_bootstrap_deps_sync<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
-    let mut args = args.into_iter();
+    let args = args.into_iter();
     let mut output_json = false;
     let mut mode = BootstrapDepsSyncMode::Both;
     let mut paths = Vec::<String>::new();
 
-    while let Some(arg) = args.next() {
+    for arg in args {
         match arg.as_str() {
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bootstrap)),
             "--json" => output_json = true,

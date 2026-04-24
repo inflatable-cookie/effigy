@@ -59,13 +59,21 @@ pub(crate) fn apply_bundle_defaults(
     };
 
     let selection = resolve_bundle_selection(manifest_path, &bundle)?;
+    let mut normalized_inputs = bundle.inputs.clone();
+    let bundle_name = match &selection {
+        BundleSelection::Shipped { name } => name.as_str(),
+        BundleSelection::Local { .. } => "",
+    };
+    if !bundle_name.is_empty() {
+        normalize_database_bundle_inputs(manifest_path, bundle_name, &mut normalized_inputs)?;
+    }
     let (defaults, source_path) = match &selection {
         BundleSelection::Shipped { name } => (
-            resolve_bundle_defaults(manifest_path, name, &bundle.inputs)?,
+            resolve_bundle_defaults(manifest_path, name, &normalized_inputs)?,
             bundle_source_path(name),
         ),
         BundleSelection::Local { path } => {
-            resolve_local_bundle_defaults(manifest_path, path, &bundle.inputs)?
+            resolve_local_bundle_defaults(manifest_path, path, &normalized_inputs)?
         }
     };
     let bundle_root = match &selection {
@@ -416,7 +424,88 @@ fn resolve_local_bundle_inputs(
             (None, false) => {}
         }
     }
+    normalize_database_bundle_inputs(manifest_path, bundle_name, &mut resolved)?;
     Ok(resolved)
+}
+
+fn normalize_database_bundle_inputs(
+    manifest_path: &Path,
+    bundle_name: &str,
+    inputs: &mut BTreeMap<String, Value>,
+) -> Result<(), ManifestError> {
+    let Some(databases) =
+        normalize_database_value(manifest_path, bundle_name, "databases", inputs)?
+    else {
+        return Ok(());
+    };
+
+    if !inputs.contains_key("databases") {
+        inputs.insert("databases".to_owned(), Value::Array(databases.clone()));
+    }
+    if !inputs.contains_key("database") {
+        let Some(primary) = databases.first().and_then(|value| value.as_str()) else {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!("bundle `{bundle_name}` normalized `databases` but found no primary database entry"),
+            });
+        };
+        inputs.insert("database".to_owned(), Value::String(primary.to_owned()));
+    }
+    Ok(())
+}
+
+fn normalize_database_value(
+    manifest_path: &Path,
+    bundle_name: &str,
+    field_name: &str,
+    inputs: &BTreeMap<String, Value>,
+) -> Result<Option<Vec<Value>>, ManifestError> {
+    match (inputs.get("databases"), inputs.get("database")) {
+        (Some(Value::Array(values)), _) => {
+            if values.is_empty() {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!("bundle `{bundle_name}` input `{field_name}` must contain at least one database name"),
+                });
+            }
+            let mut normalized = Vec::with_capacity(values.len());
+            for value in values {
+                let Some(name) = value
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    return Err(ManifestError::Compose {
+                        path: manifest_path.to_path_buf(),
+                        detail: format!("bundle `{bundle_name}` input `{field_name}` must be a list of non-empty strings"),
+                    });
+                };
+                normalized.push(Value::String(name.to_owned()));
+            }
+            Ok(Some(normalized))
+        }
+        (Some(_), _) => Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+                "bundle `{bundle_name}` input `{field_name}` must be a list of non-empty strings"
+            ),
+        }),
+        (None, Some(Value::String(value))) => {
+            let value = value.trim();
+            if value.is_empty() {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!("bundle `{bundle_name}` input `database` must not be empty"),
+                });
+            }
+            Ok(Some(vec![Value::String(value.to_owned())]))
+        }
+        (None, Some(_)) => Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!("bundle `{bundle_name}` input `database` must be a non-empty string"),
+        }),
+        (None, None) => Ok(None),
+    }
 }
 
 fn render_local_bundle_template(
@@ -490,10 +579,21 @@ fn decodelabs_spec() -> BundleSpec {
             BundleInputSpec {
                 name: "database".to_owned(),
                 value_type: BundleInputType::String,
-                required: true,
-                description: "Default MariaDB database name for the app and bundled db alias rendering.".to_owned(),
+                required: false,
+                description: "Primary MariaDB database name for the app and bundled db alias rendering. Kept for backwards compatibility; prefer `databases`.".to_owned(),
                 default: None,
                 example: Some(Value::String("contactpatch".to_owned())),
+            },
+            BundleInputSpec {
+                name: "databases".to_owned(),
+                value_type: BundleInputType::List,
+                required: false,
+                description: "MariaDB databases to create for the stack. The first entry becomes the primary app database.".to_owned(),
+                default: None,
+                example: Some(Value::Array(vec![
+                    Value::String("contactpatch".to_owned()),
+                    Value::String("contactpatch_test".to_owned()),
+                ])),
             },
             BundleInputSpec {
                 name: "system_name".to_owned(),
@@ -600,6 +700,7 @@ document_root = "."
 catalog = "mariadb"
 version = "10.11"
 database = "__DATABASE__"
+databases = __DATABASES__
 
 [containers.__CONTAINER_NAME__.services.pma]
 catalog = "phpmyadmin"
@@ -631,6 +732,10 @@ workspace = "__DEFAULT_WORKSPACE__"
         .replace("__HOST__", &host)
         .replace("__PROJECT_NAME__", &project_name)
         .replace("__DATABASE__", &database)
+        .replace(
+            "__DATABASES__",
+            &render_toml_string_list(inputs, "databases"),
+        )
         .replace("__SYSTEM_NAME__", &system_name)
         .replace("__CONTAINER_NAME__", &container_name)
         .replace("__WORKSPACE_SERVICE_NAME__", &workspace_service_name)
@@ -674,10 +779,21 @@ fn underlay_spec() -> BundleSpec {
             BundleInputSpec {
                 name: "database".to_owned(),
                 value_type: BundleInputType::String,
-                required: true,
-                description: "Default Postgres database name for the bundled postgres service.".to_owned(),
+                required: false,
+                description: "Primary Postgres database name for the bundled postgres service. Kept for backwards compatibility; prefer `databases`.".to_owned(),
                 default: None,
                 example: Some(Value::String("acme".to_owned())),
+            },
+            BundleInputSpec {
+                name: "databases".to_owned(),
+                value_type: BundleInputType::List,
+                required: false,
+                description: "Postgres databases to create for the stack. The first entry becomes the primary app database.".to_owned(),
+                default: None,
+                example: Some(Value::Array(vec![
+                    Value::String("acme".to_owned()),
+                    Value::String("acme_test".to_owned()),
+                ])),
             },
             BundleInputSpec {
                 name: "api_port".to_owned(),
@@ -802,6 +918,7 @@ host_ports = [
 [containers.__CONTAINER_NAME__.services.postgres]
 catalog = "postgres"
 database = "__DATABASE__"
+databases = __DATABASES__
 password = "postgres"
 
 [containers.__CONTAINER_NAME__.services.dbgate]
@@ -848,6 +965,10 @@ run_in = "host"
             .replace("__PROJECT_NAME__", &project_name)
             .replace("__WORKSPACE_SUBDIR__", &workspace_subdir)
             .replace("__DATABASE__", &database)
+            .replace(
+                "__DATABASES__",
+                &render_toml_string_list(inputs, "databases"),
+            )
             .replace("__API_PORT__", &api_port.to_string())
             .replace("__ADMIN_PORT__", &admin_port.to_string())
             .replace("__FRONT_PORT__", &front_port.to_string())
@@ -1068,6 +1189,7 @@ service = "{{ inputs.workspace_service_name }}"
 [containers.{{ inputs.container_name }}.services.db]
 catalog = "mariadb"
 database = "{{ inputs.database }}"
+databases = [{% for database in inputs.databases %}"{{ database }}"{% if not loop.last %}, {% endif %}{% endfor %}]
 
 [containers.{{ inputs.container_name }}.services.pma]
 catalog = "phpmyadmin"
@@ -1131,6 +1253,7 @@ host_ports = [
 [containers.{{ inputs.container_name }}.services.postgres]
 catalog = "postgres"
 database = "{{ inputs.database }}"
+databases = [{% for database in inputs.databases %}"{{ database }}"{% if not loop.last %}, {% endif %}{% endfor %}]
 password = "postgres"
 
 [containers.{{ inputs.container_name }}.services.dbgate]
@@ -1338,6 +1461,19 @@ fn optional_bundle_string(inputs: &BTreeMap<String, Value>, key: &str) -> Option
     } else {
         Some(value.to_owned())
     }
+}
+
+fn render_toml_string_list(inputs: &BTreeMap<String, Value>, key: &str) -> String {
+    let Some(values) = inputs.get(key).and_then(Value::as_array) else {
+        return "[]".to_owned();
+    };
+    let encoded = values
+        .iter()
+        .filter_map(Value::as_str)
+        .map(|value| format!("{value:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{encoded}]")
 }
 
 fn validate_bundle_input_type(

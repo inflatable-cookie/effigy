@@ -1,12 +1,12 @@
 use super::{
     data_list_report, data_transfer_report, effective_attach_mode, eject_generated_compose,
-    load_all_container_policies, load_container_policy, load_inline_workspace_container_policy,
-    load_workspace_ownership_targets, resolve_inline_workspace_exec_working_dir, stats_all_report,
-    status_all_report, status_report, validate_container_policy, with_test_effigy_home,
-    with_test_host_composer_home, AllocatedPortsSummary, ContainerDataTransferAction,
-    ContainerDataVolumeEntry, ContainerPolicyError, ContainerStatsAllEntry, ContainerStatsService,
-    ContainerStatusAllEntry, ContainerStatusService, EffectiveAttachMode, EffectiveComposeSource,
-    SharedServiceBinding,
+    load_all_container_policies, load_container_exec_working_dir, load_container_policy,
+    load_inline_workspace_container_policy, load_workspace_ownership_targets,
+    resolve_inline_workspace_exec_working_dir, stats_all_report, status_all_report, status_report,
+    validate_container_policy, with_test_effigy_home, with_test_host_composer_home,
+    AllocatedPortsSummary, ContainerDataTransferAction, ContainerDataVolumeEntry,
+    ContainerPolicyError, ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry,
+    ContainerStatusService, EffectiveAttachMode, EffectiveComposeSource, SharedServiceBinding,
 };
 use effigy_catalog::volumes::VolumeClassification;
 use effigy_manifest::ManifestInlineWorkspaceContainerConfig;
@@ -90,6 +90,38 @@ primary_service = "app"
         .expect("repo dir name")
         .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
     assert_eq!(policy.project_name, format!("{expected}-dev"));
+}
+
+#[test]
+fn load_container_exec_working_dir_ignores_host_task_defaults_for_workspace_inference() {
+    let root = temp_repo("bundle-host-default-workdir");
+    let manifest_path = root.join("effigy.toml");
+    fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "underlay-reference-dev"
+workspace_subdir = "underlay-reference"
+database = "acme"
+
+[systems.dev]
+mounts = ["../underlay"]
+
+[task_defaults]
+run_in = "host"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir(root.join(".git")).expect("git dir");
+
+    let working_dir = load_container_exec_working_dir(&root, Some("stack")).expect("working dir");
+
+    assert_eq!(
+        working_dir,
+        PathBuf::from("/workspace-root/underlay-reference")
+    );
 }
 
 #[test]
@@ -1087,7 +1119,8 @@ catalog = "mailpit"
         "dns override should include explicit subdomain routes: {dns_override}"
     );
     assert!(
-        dns_override.contains("postgres:\n    dns:") && dns_override.contains("\"db.acme.test\""),
+        dns_override.contains("postgres:\n    dns:")
+            && dns_override.contains("\"postgres.acme.test\""),
         "dns override should include postgres network alias domains: {dns_override}"
     );
     assert!(
@@ -1095,7 +1128,7 @@ catalog = "mailpit"
         "dns override should include mailpit network alias domains: {dns_override}"
     );
     assert!(
-        !dns_override.contains("\"db.acme.test:192.168.5.2\""),
+        !dns_override.contains("\"postgres.acme.test:192.168.5.2\""),
         "TCP service aliases must not point back at the host gateway: {dns_override}"
     );
     assert!(

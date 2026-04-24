@@ -9,7 +9,8 @@ container = "linux-release"
 [tasks]
 "fmt:check" = "cargo fmt --all -- --check"
 "build:release" = "cargo build --release --bin effigy"
-"install:local" = "cargo install --path . --root ./.local-install --force"
+"install:local" = "mkdir -p .local-install/bin && CARGO_TARGET_DIR=target/bootstrap-local cargo build --bin effigy && cp target/bootstrap-local/debug/effigy .local-install/bin/effigy.next && chmod 0755 .local-install/bin/effigy.next && mv -f .local-install/bin/effigy.next .local-install/bin/effigy"
+"install:local:release" = "cargo install --path . --root ./.local-install --force"
 "link:local" = [{ rhai = "scripts/rhai/install-local-bin-links.rhai" }]
 "bootstrap:local" = [{ task = "install:local" }, { task = "link:local" }]
 "dist:metadata" = "cargo run --bin effigy -- distribution validate-metadata"
