@@ -98,6 +98,10 @@ copy here so users can refer back without re-emitting.
    - rename `[bundle].project_name`
    - set `[bundle].workspace_subdir` to the repo's directory name under `/workspace-root`
    - set `[bundle].database` to the repo's dev database name
+   - when the repo needs more than one database, set
+     `[bundle].databases = ["app", "app_test", ...]` instead. The first
+     entry becomes the primary database (compatible with `database`); all
+     entries are created at first boot.
    - align `[bundle].api_port`, `[bundle].admin_port`, and `[bundle].front_port` if the repo uses different dev-server ports
    - when the repo uses different app package names, set `[bundle.dirs]` (`front`, `admin`, and optional `ui`)
    - when gateway labels should follow those app names too, set `[bundle.routes]` (`front`, `admin`, `api`)
@@ -125,6 +129,37 @@ After the edit pass, the consumer repo carries **no** `docker-compose.yml`
 and **no** workspace Dockerfile. The root manifest only chooses bundle
 inputs and repo-owned tasks; the stack shape is generated from Effigy's
 bundled defaults each run.
+
+## Bundle app mapping and route labels
+
+`[bundle.dirs]` tells the bundled `ui-setup.rhai` helper which packages
+back the front, admin, and (optional) shared UI surfaces:
+
+```toml
+[bundle.dirs]
+front = "packages/web"
+admin = "packages/dashboard"
+ui = "packages/ui-kit"
+```
+
+When unset, the helper guesses against `app-*` and `acme-*` package
+names. Set `[bundle.dirs]` explicitly when the repo's package names do
+not follow either convention.
+
+`[bundle.routes]` labels the gateway routes the bundle registers for
+each app surface. Defaults follow the `app-*` guesses; override when the
+gateway should expose more meaningful names:
+
+```toml
+[bundle.routes]
+front = "app"
+admin = "dashboard"
+api = "api"
+```
+
+The labels show up in the managed dev task's lifecycle tab and in
+gateway DNS routes (`<label>.<host>`). Both tables are underlay-bundle
+inputs and have no effect on the decodelabs bundle.
 
 ## What the starter is built on
 
@@ -254,7 +289,7 @@ database = "my_database"
 |--------------------------|-------------|------------------------------------------------------------------------------|
 | `host`                   | _required_  | Primary local hostname. Gateway registers the `web` service on `<host>` and `pma.<host>`. |
 | `project_name`           | _required_  | Docker Compose project name for the generated stack.                          |
-| `database`               | _required_  | Default MariaDB database name. Also wired into the `mysql` workspace alias.   |
+| `database`               | _required_  | Default MariaDB database name. Also wired into the `mysql` workspace alias. Set `databases = ["app", "app_test", ...]` instead when the repo needs more than one. |
 | `system_name`            | `"dev"`     | Name of the `[systems.<name>]` block rendered by the bundle.                  |
 | `container_name`         | `"web"`     | Name of the `[containers.<name>]` block and the default container.            |
 | `workspace_service_name` | `"app"`     | Name of the php-fpm service (also the `php` alias target and the `composer` service). |
@@ -265,7 +300,7 @@ database = "my_database"
 | Service    | Image                 | Purpose                                                                                     |
 |------------|-----------------------|---------------------------------------------------------------------------------------------|
 | `app`      | `php:8.4-fpm`         | PHP-FPM workspace with Composer, Node 20, and extensions (`pdo_mysql`, `intl`, `exif`, `zip`, `gd`, `redis`, `memcached`, `opcache`). Ships `decodelabs/effigy` globally. |
-| `web`      | `nginx`               | Nginx in front of `app`. Document root `.`, rewrites requests to `/vendor/genesis.php`, and routes missing assets there too. |
+| `web`      | `nginx`               | Nginx in front of `app` using the bundled `decodelabs` config variant. Document root `.`, rewrites every request to `/vendor/genesis.php`, and hands off to php-fpm. No `try_files`, asset caching, or security locations — DecodeLabs apps handle routing, asset serving, and error pages in PHP. See guide 067 for the variant reference. |
 | `db`       | `mariadb:10.11`       | MariaDB with the configured `database` created on first start.                              |
 | `pma`      | `phpmyadmin:latest`   | phpMyAdmin connected to `db`.                                                               |
 | `memcache` | `memcached`           | In-memory cache sized at 128 MB by default.                                                 |
@@ -277,6 +312,21 @@ database = "my_database"
 - `https://pma.<host>` -> `pma`
 
 TLS is enabled by default through `effigy gateway setup-tls`.
+
+### Bundled tasks
+
+The bundle ships one ready-to-run task on top of the standard managed
+`dev` task:
+
+- `tasks.seed` — runs the bundled
+  `{{ bundle.root }}/scripts/seed-latest-db-dump.rhai` script, which
+  imports the newest `.sql` dump from `.effigy/local/db-seeds/` into the
+  primary database. Drop a dump named `<database>-<timestamp>.sql` into
+  that directory, then run `effigy run seed`.
+
+To override a bundled script, ship a same-named file under the repo's
+own `scripts/` directory and point the task at the local path instead of
+`{{ bundle.root }}/...`.
 
 ### Workspace aliases
 

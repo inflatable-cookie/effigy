@@ -133,19 +133,78 @@ Exit criteria:
 - no ambiguous shared selectors in CI-critical paths
 - root orchestration tasks compose child tasks successfully
 
-## 5) Risk Controls During Migration
+## 5) Path E: Task Routing Migration (`host = true` -> `run_in`)
+
+When to use:
+- existing manifests use `host = true` on individual tasks
+- `effigy doctor` reports the legacy `host` flag as no longer accepted
+
+Decision path:
+1. Inventory tasks that still set `host = true`.
+2. Replace each with `run_in = "host"`.
+3. If the same default applies to most tasks in the manifest, set
+   `[task_defaults].run_in = "host"` once and only override the exceptions.
+4. Confirm routing through `effigy doctor` and `effigy tasks --resolve <name>`.
+
+Fast commands:
+
+```sh
+grep -RnE '^\s*host\s*=\s*true' --include='effigy*.toml' .
+effigy doctor --verbose
+effigy tasks --resolve <name>
+```
+
+Before:
+
+```toml
+[tasks.setup]
+host = true
+run = "make setup"
+```
+
+After:
+
+```toml
+[tasks.setup]
+run_in = "host"
+run = "make setup"
+```
+
+When most tasks in a manifest want the same default, hoist it once:
+
+```toml
+[task_defaults]
+run_in = "host"
+
+[tasks.dev]
+run_in = "container"
+run = "bun run dev"
+```
+
+`run_in` accepts `host`, `container`, or `either` (the default). `either`
+means use the current/default execution context. `[task_defaults]` only
+applies to tasks defined in that manifest file; task-level `run_in` still
+wins when both are present.
+
+Exit criteria:
+- no remaining `host = true` entries in any manifest fragment
+- `effigy doctor` no longer flags the legacy flag
+- task routing matches the previous behavior on smoke runs
+
+## 6) Risk Controls During Migration
 
 - prefer `--plan` and `--dry-run` modes first (`test --plan`, `init --dry-run`, `migrate` preview)
 - make one migration class at a time (manifest shape, then task routing, then CI JSON)
 - keep lock recovery documented (`effigy unlock ...`) for interrupted dev flows
 - use `effigy doctor --verbose` after each migration chunk
 
-## 6) Quick Selector
+## 7) Quick Selector
 
 - If you have no manifest: choose Path A.
 - If you rely on legacy forwarding: choose Path B.
 - If CI needs machine contracts: choose Path C.
 - If teams split into subdomains: choose Path D.
+- If manifests still set `host = true`: choose Path E.
 
 ## Related Guides
 

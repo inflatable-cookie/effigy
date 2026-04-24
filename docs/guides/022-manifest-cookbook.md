@@ -285,6 +285,23 @@ run = [
 
 Use when you need dependency-aware orchestration, retry policy, and per-step timeouts.
 
+Run-array step fields (in-process executor):
+- `id = "<name>"` step identifier; required when other steps reference it through `depends_on`
+- `run = "<command>"` shell command for the step; mutually exclusive with `task` and `rhai`
+- `task = "<selector>"` invoke another task by selector (catalog-prefixed selectors are accepted)
+- `rhai = "<path>"` run a file-backed Rhai script (see [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md))
+- `depends_on = ["<id>", ...]` block this step until the listed steps finish successfully
+- `timeout_ms = <n>` per-step timeout in milliseconds; the step is cancelled and reported as failed when exceeded
+- `retry = <n>` automatic retry count after a non-zero exit (in addition to the first attempt)
+- `retry_delay_ms = <n>` delay between retries in milliseconds; default `0`
+- `fail_fast = false` allow the array to keep running other independent branches when this step fails; default `true`
+- `env = "<name>" | { KEY = "value" }` apply env directives at this point in the chain (see §4b for full env-step semantics)
+- `env_file = "<path>"` update fallback dotenv sources for subsequent steps
+
+`[task_defaults]` (covered in §3) does not apply at the array-element level;
+it sets the default for whole tasks defined in the same manifest. Per-step
+overrides happen inline on the array entry itself.
+
 ## 4a) Rhai Script Step For Rust-First Glue
 
 ```toml
