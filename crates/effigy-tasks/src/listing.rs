@@ -180,6 +180,15 @@ pub fn render_task_listing_text(result: &ListTasksResult) -> Result<String, Effi
     let mut renderer = plain_renderer(color_enabled);
     let theme = Theme::default();
 
+    // Resolve-only shortcut: `tasks --resolve <selector>` without a filter should
+    // render just the Resolution block, not the full Catalogs/Tasks/Built-in listing.
+    if matches!(result.selection, ListingSelectionResult::Catalog { .. }) {
+        if let Some(probe) = result.resolve_probe.as_ref() {
+            render_resolution_probe_block(&mut renderer, probe, color_enabled, true)?;
+            return render_utf8(renderer.into_inner()).map_err(EffigyTasksError::from);
+        }
+    }
+
     match &result.selection {
         ListingSelectionResult::Catalog {
             catalog_alias_rows,
@@ -240,13 +249,6 @@ pub fn render_task_listing_text(result: &ListTasksResult) -> Result<String, Effi
                     result.resolve_probe.as_ref(),
                 )?;
             }
-        }
-    }
-
-    if matches!(result.selection, ListingSelectionResult::Catalog { .. }) {
-        if let Some(probe) = result.resolve_probe.as_ref() {
-            renderer.text("")?;
-            render_resolution_probe_block(&mut renderer, probe, color_enabled, true)?;
         }
     }
 

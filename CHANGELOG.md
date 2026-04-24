@@ -79,6 +79,11 @@ During v0.x, MINOR bumps may include breaking changes.
   inspection, gateway status/setup, doctor, scan, and cache operations, plus
 
 ### Fixed
+- Restore the resolve-only `tasks --resolve <selector>` text shortcut so that
+  running `effigy tasks --resolve` without a filter renders just the
+  `Resolution:` block instead of the full Catalogs / Tasks / Built-in Tasks
+  listing. The pre-refactor shortcut was lost when tasks listing moved into
+  the `effigy-tasks` crate.
 - Keep seeded bootstrap start tasks and workspace handoff internals pinned to
   the cloned repo root even when the original `effigy bootstrap ...` command
   was launched from outside that repo, so the final `dev` start step no longer
