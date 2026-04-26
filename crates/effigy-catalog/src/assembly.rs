@@ -377,7 +377,12 @@ impl ComposeAssembler {
         decl: &ServiceDeclaration,
         fragment: &CatalogFragment,
     ) -> HashMap<String, toml::Value> {
-        let mut params = HashMap::new();
+        let mut params = fragment
+            .schema
+            .params
+            .iter()
+            .filter_map(|(name, schema)| schema.default.clone().map(|value| (name.clone(), value)))
+            .collect::<HashMap<_, _>>();
         if let Some(variant) = decl.variant.as_ref() {
             if let Some(preset) = fragment.param_variants.get(variant) {
                 params.extend(preset.clone());
