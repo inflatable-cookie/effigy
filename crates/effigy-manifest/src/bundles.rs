@@ -666,7 +666,7 @@ fn decodelabs_spec() -> BundleSpec {
 fn decodelabs_library_spec() -> BundleSpec {
     BundleSpec {
         name: "decodelabs-library".to_owned(),
-        description: "DecodeLabs library workspace with a shared php-fpm dev container, Composer-global legacy Effigy deferral, and no default web/db/gateway services.".to_owned(),
+        description: "DecodeLabs library workspace with a shared php-fpm dev container, explicit container-side Composer-global Effigy deferral, and no default web/db/gateway services.".to_owned(),
         inputs: vec![
             BundleInputSpec {
                 name: "shared_root".to_owned(),

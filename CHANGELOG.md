@@ -10,6 +10,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Remove legacy `[bundle].name` support. The only built-in bundle selector
   keys at manifest level are now `base` for shipped bundles and `base_path`
   for local bundle directories.
+- Remove implicit root deferral based on `composer.json` + `effigy.json`.
+  Legacy PHP repos now need an explicit `[defer]` block or a shipped bundle
+  that provides one; legacy markers alone no longer hide `release` or route
+  missing selectors through Composer-global Effigy automatically.
 - Reshape the `effigy.init.v1` JSON payload to carry a `files[]` array
   (with per-file `target` / `path` / `contents` / `existed` / `written`) plus
   a top-level `guidance` string, replacing the single-file `path`/`content`

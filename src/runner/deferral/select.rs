@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use super::policy::IMPLICIT_ROOT_DEFER_TEMPLATE;
 use effigy_manifest::{DeferredCommand, LoadedCatalog, ManifestTaskRunIn};
 use effigy_tasks::TaskSelector;
 
@@ -19,11 +18,8 @@ pub(in crate::runner) fn select_deferral(
     if let Some(selected) = select_fallback_catalog(catalogs) {
         return Some(selected);
     }
-    infer_implicit_root_deferral(workspace_root)
-}
-
-pub(in crate::runner) fn implicit_root_deferral_is_enabled(workspace_root: &Path) -> bool {
-    workspace_root.join("effigy.json").is_file() && workspace_root.join("composer.json").is_file()
+    let _ = workspace_root;
+    None
 }
 
 fn select_explicit_catalog(
@@ -97,16 +93,4 @@ fn catalog_source(catalog: &LoadedCatalog) -> String {
         catalog.alias,
         catalog.manifest_path.display()
     )
-}
-
-fn infer_implicit_root_deferral(workspace_root: &Path) -> Option<DeferredCommand> {
-    if implicit_root_deferral_is_enabled(workspace_root) {
-        return Some(DeferredCommand {
-            template: IMPLICIT_ROOT_DEFER_TEMPLATE.to_owned(),
-            working_dir: workspace_root.to_path_buf(),
-            source: "implicit root deferral (composer.json + effigy.json)".to_owned(),
-            run_in: ManifestTaskRunIn::Host,
-        });
-    }
-    None
 }
