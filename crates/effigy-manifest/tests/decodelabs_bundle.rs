@@ -1,6 +1,6 @@
 use effigy_manifest::config_sections::ManifestWorkspaceContainerRef;
 use effigy_manifest::load_task_manifest_with_inspection;
-use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep};
+use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, ManifestTaskRunIn};
 
 #[test]
 fn decodelabs_bundle_resolves_defaults_and_allows_block_overrides() {
@@ -98,6 +98,17 @@ version = "11.0"
                         .is_some_and(|path| path.ends_with("/scripts/seed-latest-db-dump.rhai"))
             )
     ));
+
+    let release_task = manifest.tasks.get("release").expect("release task");
+    assert_eq!(release_task.workspace.as_deref(), None);
+    assert!(matches!(
+        release_task.run.as_ref().expect("release run"),
+        ManifestManagedRun::Command(command)
+            if command == "composer global exec effigy -- release"
+    ));
+    let defer = manifest.defer.as_ref().expect("bundle defer");
+    assert_eq!(defer.run, "composer global exec effigy -- {request} {args}");
+    assert_eq!(defer.run_in, Some(ManifestTaskRunIn::Container));
 }
 
 #[test]
@@ -159,7 +170,7 @@ default_workspace = "frontend"
 }
 
 #[test]
-fn decodelabs_bundle_accepts_legacy_name_alias() {
+fn decodelabs_bundle_rejects_legacy_name_key() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
@@ -174,9 +185,14 @@ database = "contactpatch"
     )
     .expect("write manifest");
 
-    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
-    let bundle = loaded.manifest.bundle.expect("bundle");
-    assert_eq!(bundle.base.as_deref(), Some("decodelabs"));
+    let error =
+        load_task_manifest_with_inspection(&manifest_path).expect_err("legacy name should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("must set either `base` for a shipped bundle or `base_path` for a local bundle directory"),
+        "got: {error}"
+    );
 }
 
 #[test]

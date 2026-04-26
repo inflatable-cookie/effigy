@@ -252,6 +252,18 @@ databases = ["legacy", "legacy_test"]
         .collect::<Vec<_>>();
     assert!(domains.contains(&"pma.legacy.test"), "got {domains:?}");
     assert!(bundle_dir.join("scripts/seed-latest-db-dump.rhai").exists());
+    let release_task = loaded.manifest.tasks.get("release").expect("release task");
+    assert!(matches!(
+        release_task.run.as_ref().expect("release run"),
+        effigy_manifest::ManifestManagedRun::Command(command)
+            if command == "composer global exec effigy -- release"
+    ));
+    let defer = loaded.manifest.defer.as_ref().expect("bundle defer");
+    assert_eq!(defer.run, "composer global exec effigy -- {request} {args}");
+    assert_eq!(
+        defer.run_in,
+        Some(effigy_manifest::ManifestTaskRunIn::Container)
+    );
 }
 
 #[test]

@@ -30,6 +30,8 @@ pub enum Command {
     InternalRhai(InternalRhaiArgs),
     #[doc(hidden)]
     InternalGateway(InternalGatewayArgs),
+    #[doc(hidden)]
+    InternalContainerLeaseReaper(InternalContainerLeaseReaperArgs),
     Help(HelpTopic),
 }
 
@@ -40,6 +42,14 @@ pub struct InternalRhaiArgs {
     pub repo_root: Option<PathBuf>,
     pub task_name: Option<String>,
     pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct InternalContainerLeaseReaperArgs {
+    pub repo_root: PathBuf,
+    pub container_name: String,
+    pub token: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -6,7 +6,7 @@ fn optional_config_string(path, fallback) {
     if value.type_of() != "string" {
         throw `expected Effigy config string at ${path}, got ${value.type_of()}`;
     }
-    return value.to_string().trim();
+    return trim_string(value);
 }
 
 fn primary_database_name() {
@@ -14,10 +14,30 @@ fn primary_database_name() {
     if value.type_of() == "array" && value.len() > 0 {
         let first = value[0];
         if first.type_of() == "string" {
-            return first.to_string().trim();
+            return trim_string(first);
         }
     }
     return optional_config_string("bundle.database", "");
+}
+
+fn latest_dump_path(dumps_dir, dump_prefix) {
+    let latest_path = "";
+    let latest_name = "";
+    for entry in list_dir(dumps_dir) {
+        let entry_path = entry.to_string();
+        let entry_name = path_file_name(entry_path);
+        if entry_name == "" {
+            continue;
+        }
+        if !entry_name.starts_with(dump_prefix) || !entry_name.ends_with(".sql") {
+            continue;
+        }
+        if latest_name == "" || entry_name > latest_name {
+            latest_name = entry_name;
+            latest_path = entry_path;
+        }
+    }
+    return latest_path;
 }
 
 let database = primary_database_name();
@@ -26,30 +46,14 @@ if database == "" {
 }
 
 let container_name = optional_config_string("bundle.container_name", "web");
-let db_root_password_path = "containers." + container_name + ".services.db.root_password";
+let db_root_password_path = "containers." + container_name + ".services.db.params.root_password";
 let root_password = optional_config_string(db_root_password_path, "secret");
 let dumps_dir = path_join(repo_root, ".effigy/local/db-seeds");
 let dump_prefix = database + "-";
 
 create_dir(dumps_dir);
 
-let latest_host_path = "";
-for entry in list_dir(dumps_dir) {
-    let path = entry.to_string();
-    let dump_name = path_file_name(path);
-
-    if !is_file(path) {
-        continue;
-    }
-
-    if !dump_name.starts_with(dump_prefix) || !dump_name.ends_with(".sql") {
-        continue;
-    }
-
-    if latest_host_path == "" || path > latest_host_path {
-        latest_host_path = path;
-    }
-}
+let latest_host_path = latest_dump_path(dumps_dir, dump_prefix);
 
 if latest_host_path == "" {
     throw "No SQL dumps found in " + dumps_dir
@@ -58,18 +62,18 @@ if latest_host_path == "" {
 
 let dump_name = path_file_name(latest_host_path);
 let dump_container_path = path_join("/var/www/html/.effigy/local/db-seeds", dump_name);
-let mysql_password_flag = if root_password == "" {
-    ""
+let mysql_prefix = if root_password == "" {
+    "mysql --skip-ssl -h db -uroot"
 } else {
-    " -p" + root_password
+    "mysql --skip-ssl -h db -uroot --password=" + shell_quote_string(root_password)
 };
+let reset_sql = "DROP DATABASE IF EXISTS `" + database + "`; CREATE DATABASE `" + database + "`;";
 
 log("[check] resetting database " + database);
 
 let reset_result = run_process("sh", [
     "-lc",
-    "mysql --skip-ssl -h db -uroot" + mysql_password_flag
-        + " -e \"DROP DATABASE IF EXISTS `" + database + "`; CREATE DATABASE `" + database + "`;\"",
+    mysql_prefix + " -e " + shell_quote_string(reset_sql),
 ]);
 
 if reset_result["status"] != 0 {
@@ -79,7 +83,7 @@ if reset_result["status"] != 0 {
 }
 
 let reset_output = reset_result["stdout"].to_string();
-if reset_output.trim() != "" {
+if trim_string(reset_output) != "" {
     log(reset_output);
 }
 
@@ -87,8 +91,7 @@ log("[check] importing latest SQL dump " + dump_name);
 
 let import_result = run_process("sh", [
     "-lc",
-    "mysql --skip-ssl -h db -uroot" + mysql_password_flag
-        + " `" + database + "` < " + dump_container_path,
+    mysql_prefix + " " + shell_quote_string(database) + " < " + shell_quote_string(dump_container_path),
 ]);
 
 if import_result["status"] != 0 {
@@ -98,7 +101,7 @@ if import_result["status"] != 0 {
 }
 
 let import_output = import_result["stdout"].to_string();
-if import_output.trim() != "" {
+if trim_string(import_output) != "" {
     log(import_output);
 }
 

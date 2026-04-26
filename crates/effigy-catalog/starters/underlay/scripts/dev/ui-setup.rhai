@@ -26,7 +26,7 @@ fn optional_config_string(path, fallback) {
     if value.type_of() != "string" {
         throw `expected Effigy config string at ${path}, got ${value.type_of()}`;
     }
-    return value.to_string().trim();
+    return trim_string(value);
 }
 
 fn optional_repo_dir(configured) {

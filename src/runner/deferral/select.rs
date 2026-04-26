@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::policy::IMPLICIT_ROOT_DEFER_TEMPLATE;
-use effigy_manifest::{DeferredCommand, LoadedCatalog};
+use effigy_manifest::{DeferredCommand, LoadedCatalog, ManifestTaskRunIn};
 use effigy_tasks::TaskSelector;
 
 pub(in crate::runner) fn select_deferral(
@@ -36,6 +36,12 @@ fn select_explicit_catalog(
         template: template.clone(),
         working_dir: catalog.catalog_root.clone(),
         source: catalog_source(catalog),
+        run_in: catalog
+            .manifest
+            .defer
+            .as_ref()
+            .and_then(|defer| defer.run_in)
+            .unwrap_or(ManifestTaskRunIn::Host),
     })
 }
 
@@ -76,6 +82,12 @@ fn defer_command_from_catalog(catalog: &LoadedCatalog) -> Option<DeferredCommand
         template: template.clone(),
         working_dir: catalog.catalog_root.clone(),
         source: catalog_source(catalog),
+        run_in: catalog
+            .manifest
+            .defer
+            .as_ref()
+            .and_then(|defer| defer.run_in)
+            .unwrap_or(ManifestTaskRunIn::Host),
     })
 }
 
@@ -93,6 +105,7 @@ fn infer_implicit_root_deferral(workspace_root: &Path) -> Option<DeferredCommand
             template: IMPLICIT_ROOT_DEFER_TEMPLATE.to_owned(),
             working_dir: workspace_root.to_path_buf(),
             source: "implicit root deferral (composer.json + effigy.json)".to_owned(),
+            run_in: ManifestTaskRunIn::Host,
         });
     }
     None

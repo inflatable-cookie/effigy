@@ -34,6 +34,7 @@ use super::{render_container_report, RunnerError};
 use crate::runner::exec_command::{
     append_color_exec_env, probe_container_capabilities, run_compose_exec,
 };
+use crate::runner::host_container_lease::clear_host_container_lease;
 
 const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1";
 
@@ -113,6 +114,8 @@ pub(super) fn run_container_up(
     };
     let tcp_alias_host_notes =
         install_primary_service_tcp_alias_hosts(repo_root, &policy, &gateway_routes)?;
+
+    clear_host_container_lease(repo_root, &policy.name)?;
 
     if attach_mode == EffectiveAttachMode::Detached {
         let mut report = up_detached_report(&policy, colima_started, health);

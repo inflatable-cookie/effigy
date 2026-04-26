@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use effigy_core::task_selection::{CatalogSelectionMode, TaskSelector};
 
-use crate::task_runtime::ManifestTask;
+use crate::task_runtime::{ManifestTask, ManifestTaskRunIn};
 use crate::TaskManifest;
 
 /// Callback signature for resolving a `TaskSelector` against a slice
@@ -59,4 +59,5 @@ pub struct DeferredCommand {
     pub template: String,
     pub working_dir: PathBuf,
     pub source: String,
+    pub run_in: ManifestTaskRunIn,
 }

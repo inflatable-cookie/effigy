@@ -6,7 +6,7 @@ fn optional_config_string(path, fallback) {
     if value.type_of() != "string" {
         throw `expected Effigy config string at ${path}, got ${value.type_of()}`;
     }
-    return value.to_string().trim();
+    return trim_string(value);
 }
 
 fn bundle_host() {
@@ -64,7 +64,7 @@ fn primary_database_name() {
     if value.type_of() == "array" && value.len() > 0 {
         let first = value[0];
         if first.type_of() == "string" {
-            return first.to_string().trim();
+            return trim_string(first);
         }
     }
     return optional_config_string("bundle.database", "");
@@ -75,7 +75,7 @@ fn secondary_database_name() {
     if value.type_of() == "array" && value.len() > 1 {
         let second = value[1];
         if second.type_of() == "string" {
-            return second.to_string().trim();
+            return trim_string(second);
         }
     }
     return "";
@@ -89,7 +89,7 @@ fn command_stdout(program, args, label) {
             + "\nstdout:\n" + result["stdout"].to_string()
             + "\nstderr:\n" + result["stderr"].to_string();
     }
-    return result["stdout"].to_string().trim();
+    return trim_string(result["stdout"]);
 }
 
 fn generated_jwt_env(api_dir) {
@@ -107,7 +107,7 @@ fn generated_jwt_env(api_dir) {
     let private_key = "";
     let public_key = "";
     for line in output.split("\n") {
-        let trimmed = line.trim();
+        let trimmed = trim_string(line);
         if trimmed.starts_with("AUTH_JWT_PRIVATE_KEY=") {
             private_key = trimmed.replace("AUTH_JWT_PRIVATE_KEY=", "");
         } else if trimmed.starts_with("AUTH_JWT_PUBLIC_KEY=") {
