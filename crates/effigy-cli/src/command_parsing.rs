@@ -1902,7 +1902,32 @@ fn parse_container_down<I>(name: Option<String>, args: I) -> Result<Command, Cli
 where
     I: IntoIterator<Item = String>,
 {
-    parse_named_container_simple_subcommand(name, args, |name| ContainerSubcommand::Down { name })
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut all = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--all" => all = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    if all && name.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container <NAME> down` does not accept `--all`; use `effigy container down --all` for cross-project shutdown".to_owned(),
+        ));
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Down { name, all },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_container_status<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>

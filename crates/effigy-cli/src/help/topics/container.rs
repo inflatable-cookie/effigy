@@ -19,6 +19,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container up [--repo <PATH>] [--attach|--detach] [--json]",
             "effigy container <NAME> up [--repo <PATH>] [--attach|--detach] [--json]",
             "effigy container down [--repo <PATH>] [--json]",
+            "effigy container down --all [--json]",
             "effigy container <NAME> down [--repo <PATH>] [--json]",
             "effigy container status [--repo <PATH>] [--json]",
             "effigy container status --all [--json]",
@@ -57,7 +58,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--all",
-                "For `status` or `stats`, discover running Effigy-managed environments across repos instead of one manifest target",
+                "For `down`, `status`, or `stats`, discover running Effigy-managed environments across repos instead of one manifest target",
             ),
             (
                 "--command <CMD>",
@@ -83,6 +84,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container up",
             "effigy container web up --detach",
             "effigy container web status",
+            "effigy container down --all",
             "effigy container status --all",
             "effigy container stats --all",
             "effigy container web data list",

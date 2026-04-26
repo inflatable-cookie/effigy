@@ -161,6 +161,7 @@ fn map_system_container_subcommand(
         },
         SystemSubcommand::Down => ContainerSubcommand::Down {
             name: container_name,
+            all: false,
         },
         SystemSubcommand::Status => ContainerSubcommand::Status {
             name: container_name,
