@@ -118,6 +118,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy.toml` can set the default execution context for its own tasks
   without repeating `run_in` per task. Task-level `run_in` still overrides
   the manifest default.
+
+### Fixed
+- Make sibling service params in catalog assembly include schema defaults, so
+  generated dependents like phpMyAdmin can inherit defaulted values such as
+  the bundled MariaDB `root_password` instead of seeing them as unset.
 - Derive the managed lifecycle ready banner from configured container DNS
   routes when a task does not set `ready_message`, so bundle-backed dev tasks
   surface their gateway URLs without hand-maintained manifest strings. The

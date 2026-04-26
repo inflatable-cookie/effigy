@@ -1647,8 +1647,8 @@ fn phpmyadmin_fragment_assembles() {
         result.compose_yaml
     );
     assert!(
-        result.compose_yaml.contains("PMA_PASSWORD: ''"),
-        "phpmyadmin should keep an implicit empty password unless configured explicitly:\n{}",
+        result.compose_yaml.contains("PMA_PASSWORD: secret"),
+        "phpmyadmin should inherit the default mariadb root password:\n{}",
         result.compose_yaml
     );
     assert!(
