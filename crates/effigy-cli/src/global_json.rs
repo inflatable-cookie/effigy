@@ -49,6 +49,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Doctor(args) => args.output_json = true,
         Command::InternalGateway(_) => {}
         Command::InternalRhai(_) => {}
+        Command::InternalContainerLeaseReaper(_) => {}
         Command::Help(_) => {}
     }
     cmd
@@ -79,6 +80,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Task(task) => task.args.iter().any(|arg| arg == "--json"),
         Command::InternalGateway(_) => false,
         Command::InternalRhai(_) => false,
+        Command::InternalContainerLeaseReaper(_) => false,
         Command::Help(_) => false,
     }
 }

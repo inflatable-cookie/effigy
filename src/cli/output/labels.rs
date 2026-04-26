@@ -49,6 +49,7 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
         Command::Task(task) => ("task", task.name.clone()),
         Command::InternalGateway(_) => ("task", "__gateway-run".to_owned()),
         Command::InternalRhai(_) => ("task", "__rhai-step".to_owned()),
+        Command::InternalContainerLeaseReaper(_) => ("task", "__container-lease-reaper".to_owned()),
     }
 }
 

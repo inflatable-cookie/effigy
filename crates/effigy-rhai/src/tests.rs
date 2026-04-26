@@ -171,6 +171,46 @@ fn execute_rhai_script_can_stream_process_output() {
 }
 
 #[test]
+fn execute_rhai_script_exposes_trim_string_helper() {
+    let root = temp_root("trim-string");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            let value = trim_string("  hello  ");
+            if value != "hello" { throw("trim string"); }
+            let empty = trim_string(());
+            if empty != "" { throw("trim unit"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
+fn execute_rhai_script_exposes_shell_quote_string_helper() {
+    let root = temp_root("shell-quote-string");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            let simple = shell_quote_string("secret");
+            if simple != "'secret'" { throw("shell quote string"); }
+            let with_quote = shell_quote_string("it's");
+            if with_quote != "'it'\"'\"'s'" { throw("shell quote apostrophe"); }
+            let empty = shell_quote_string(());
+            if empty != "''" { throw("shell quote unit"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
 fn execute_rhai_script_rejects_recursive_effigy_process_calls() {
     let root = temp_root("recursive-effigy-process");
     let context = ScriptContext {
@@ -444,6 +484,18 @@ fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
         "crates/effigy-catalog/starters/underlay/scripts/dev/ui-setup.rhai" => {
             contents.contains("run_process_stream(\"sh\", [\"-lc\", shell])")
         }
+        "crates/effigy-catalog/starters/underlay/scripts/bootstrap-env.rhai" => {
+            contents.contains("run_process(program, args)")
+                || contents.contains("run_process(\n        \"cargo\",")
+                || contents.contains("run_process(\"openssl\",")
+        }
+        "crates/effigy-catalog/starters/decodelabs/scripts/seed-latest-db-dump.rhai" => {
+            contents.contains("run_process(\"sh\", [")
+        }
+        "scripts/rhai/build-local-bin.rhai" => {
+            contents.contains("run_process(program, process_args)")
+        }
+        "scripts/rhai/install-local-bin-links.rhai" => contents.contains("run_process("),
         _ => false,
     }
 }

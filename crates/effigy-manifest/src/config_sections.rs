@@ -6,7 +6,7 @@ use crate::{ManifestManagedRun, ManifestTaskRunIn};
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 pub struct ManifestBundleConfig {
-    #[serde(default, alias = "name")]
+    #[serde(default)]
     pub base: Option<String>,
     #[serde(default)]
     pub base_path: Option<String>,

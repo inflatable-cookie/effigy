@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Remove legacy `[bundle].name` support. The only built-in bundle selector
+  keys at manifest level are now `base` for shipped bundles and `base_path`
+  for local bundle directories.
 - Reshape the `effigy.init.v1` JSON payload to carry a `files[]` array
   (with per-file `target` / `path` / `contents` / `existed` / `written`) plus
   a top-level `guidance` string, replacing the single-file `path`/`content`
@@ -27,6 +30,20 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Changed
+- Show a temporary spinner/progress line when a host-triggered deferred task
+  has to start a stopped container environment before running the deferred
+  command.
+- Add an explicit container-side `[defer]` block to the shipped `decodelabs`
+  bundle and its exported `base_path` template, routing unresolved selectors
+  through `composer global exec effigy -- {request} {args}` inside the
+  workspace container instead of relying on host-side legacy fallback.
+- Let explicit `[defer]` blocks declare `run_in = "host" | "container" | "either"`.
+  Omitted `run_in` stays host-only for backward compatibility. `either`
+  reuses normal workspace-container binding when a default target exists and
+  otherwise falls back to the current host deferral path.
+- Add a bundled `release` task to the shipped `decodelabs` bundle and its
+  exported `base_path` template, delegating to the legacy Composer-global
+  `effigy` binary with `composer global exec effigy -- release`.
 - Add an `EFFIGY_COMPOSE_BACKEND` env override so operators can force
   Effigy onto `docker` or the Colima `nerdctl` / containerd path without
   changing what binaries happen to be on `PATH`.
@@ -87,6 +104,9 @@ During v0.x, MINOR bumps may include breaking changes.
   inspection, gateway status/setup, doctor, scan, and cache operations, plus
 
 ### Fixed
+- Add a Rhai `trim_string(...)` host helper and switch shipped starter
+  scripts onto it so bundle helpers stop breaking on Rhai's in-place
+  `trim()` semantics, which return `()` instead of a trimmed string.
 - Restore the resolve-only `tasks --resolve <selector>` text shortcut so that
   running `effigy tasks --resolve` without a filter renders just the
   `Resolution:` block instead of the full Catalogs / Tasks / Built-in Tasks

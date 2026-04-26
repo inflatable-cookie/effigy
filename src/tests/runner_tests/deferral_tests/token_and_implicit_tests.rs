@@ -1,10 +1,40 @@
 use crate::runner::tests::prelude::{
-    assert_deferred_task_case_table, assert_file_text_equals, assert_implicit_deferral_case_table,
-    fs, implicit_deferral_script, lock_test, reset_composer_home_cache_for_tests,
-    run_task_expect_empty_output, setup_implicit_deferral_stub,
-    workspace_with_optional_defer_manifest, write_implicit_deferral_markers, DeferredTaskCase,
-    ImplicitDeferralCase, ImplicitDeferralExpectation, ImplicitFallbackDisabledCase,
+    assert_deferred_task_case_table, assert_deferred_task_failure_case_table,
+    assert_file_text_equals, assert_implicit_deferral_case_table, fs, implicit_deferral_script,
+    lock_test, reset_composer_home_cache_for_tests, run_task_expect_empty_output,
+    setup_implicit_deferral_stub, temp_workspace, workspace_with_optional_defer_manifest,
+    write_executable, write_implicit_deferral_markers, write_root_manifest, DeferredTaskCase,
+    DeferredTaskFailureCase, EnvGuard, ImplicitDeferralCase, ImplicitDeferralExpectation,
+    ImplicitFallbackDisabledCase,
 };
+
+fn setup_fake_docker_deferral_runtime(root: &std::path::Path) -> (std::path::PathBuf, EnvGuard) {
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
+    let docker_log = root.join("fake-docker.log");
+    write_executable(
+        &bin_dir.join("docker"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = ps ]; then\n  printf 'legacy-dev-app-1\\tUp 2 minutes\\t\\tlegacy-dev\\t{}\\tapp\\n'\n  exit 0\nfi\nexit 0\n",
+            docker_log.display(),
+            root.display()
+        ),
+    );
+    write_executable(
+        &bin_dir.join("colima"),
+        "#!/bin/sh\ncase \"$1\" in\n  status)\n    printf 'INFO[0000] status: Running\\n'\n    exit 0\n    ;;\n  start)\n    printf 'started\\n'\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+    );
+    let old_path = std::env::var("PATH").ok().unwrap_or_default();
+    let env = EnvGuard::set_many(&[
+        ("PATH", Some(format!("{}:{old_path}", bin_dir.display()))),
+        ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        (
+            "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
+            Some("1".to_owned()),
+        ),
+    ]);
+    (docker_log, env)
+}
 
 #[test]
 fn run_manifest_task_defers_when_task_missing_with_token_support() {
@@ -13,24 +43,49 @@ fn run_manifest_task_defers_when_task_missing_with_token_support() {
         DeferredTaskCase {
             workspace: "defer-missing",
             defer_run: "printf deferred",
+            defer_run_in: None,
             request: "unknown-task",
             args: &[],
         },
         DeferredTaskCase {
             workspace: "defer-tokens",
             defer_run: "test {request} = 'unknown-task' && test {args} = '--dry-run'",
+            defer_run_in: None,
             request: "unknown-task",
             args: &["--dry-run"],
         },
         DeferredTaskCase {
             workspace: "defer-path-like-request",
             defer_run: "test {request} = 'services/api/dev' && test {args} = '--watch'",
+            defer_run_in: None,
             request: "services/api/dev",
+            args: &["--watch"],
+        },
+        DeferredTaskCase {
+            workspace: "defer-either-falls-back-to-host",
+            defer_run: "test {request} = 'unknown-task' && test {args} = '--watch'",
+            defer_run_in: Some("either"),
+            request: "unknown-task",
             args: &["--watch"],
         },
     ];
 
     assert_deferred_task_case_table(&cases);
+}
+
+#[test]
+fn run_manifest_task_container_deferral_requires_resolved_container_binding() {
+    let _guard = lock_test();
+    let cases = [DeferredTaskFailureCase {
+        workspace: "defer-container-without-container-target",
+        defer_run: "printf deferred",
+        defer_run_in: "container",
+        request: "unknown-task",
+        args: &[],
+        expected_message: "no default workspace container binding could be resolved",
+    }];
+
+    assert_deferred_task_failure_case_table(&cases);
 }
 
 #[test]
@@ -100,7 +155,7 @@ fn run_manifest_task_implicit_deferral_matrix() {
 #[test]
 fn run_manifest_task_implicit_deferral_caches_composer_home_per_process() {
     let _guard = lock_test();
-    let root = workspace_with_optional_defer_manifest("implicit-root-defer-cached", None);
+    let root = workspace_with_optional_defer_manifest("implicit-root-defer-cached", None, None);
     write_implicit_deferral_markers(&root, true, true, false);
 
     let marker = root.join("defer-args.log");
@@ -115,4 +170,121 @@ fn run_manifest_task_implicit_deferral_caches_composer_home_per_process() {
     assert_file_text_equals(&marker, "version\n--dry-run\n");
     let composer_log = fs::read_to_string(&composer_log).expect("read composer invocation log");
     assert_eq!(composer_log.lines().count(), 1);
+}
+
+#[test]
+fn run_manifest_task_decodelabs_bundle_defers_inside_container() {
+    let _guard = lock_test();
+    let root = temp_workspace("decodelabs-container-deferral");
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    write_root_manifest(
+        &root,
+        r#"[bundle]
+base = "decodelabs"
+host = "legacy.test"
+project_name = "legacy-dev"
+database = "legacy"
+"#,
+    );
+    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root);
+
+    run_task_expect_empty_output(
+        &root,
+        "missing-task",
+        &["--watch"],
+        "decodelabs bundle container deferral should succeed",
+    );
+
+    let log = fs::read_to_string(&docker_log).expect("read fake docker log");
+    assert!(
+        log.contains("compose"),
+        "expected docker compose invocation, got {log}"
+    );
+    assert!(log.contains("up"), "expected docker compose up, got {log}");
+    assert!(
+        log.contains("exec"),
+        "expected docker compose exec, got {log}"
+    );
+    assert!(
+        log.contains("app sh -lc"),
+        "expected workspace service exec, got {log}"
+    );
+    assert!(
+        log.contains("EFFIGY_COLOR=always"),
+        "expected forced color env, got {log}"
+    );
+    assert!(
+        log.contains("FORCE_COLOR=3"),
+        "expected force-color env, got {log}"
+    );
+    assert!(
+        log.contains("unset NO_COLOR; export EFFIGY_COLOR=always CLICOLOR_FORCE=1 FORCE_COLOR=3"),
+        "expected deferred shell command to clear NO_COLOR and force color, got {log}"
+    );
+    assert!(
+        log.contains("composer global exec effigy -- missing-task --watch"),
+        "expected deferred command in container exec, got {log}"
+    );
+    let lease_token =
+        crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
+            &root, "web",
+        )
+        .expect("read lease token");
+    assert!(
+        lease_token.is_some(),
+        "expected active host-container lease"
+    );
+}
+
+#[test]
+fn run_manifest_task_decodelabs_container_lease_reaper_shuts_down_expired_env() {
+    let _guard = lock_test();
+    let root = temp_workspace("decodelabs-container-deferral-reaper");
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    write_root_manifest(
+        &root,
+        r#"[bundle]
+base = "decodelabs"
+host = "legacy.test"
+project_name = "legacy-dev"
+database = "legacy"
+"#,
+    );
+    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root);
+    let _timeout = EnvGuard::set_many(&[(
+        "EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS",
+        Some("0".to_owned()),
+    )]);
+
+    run_task_expect_empty_output(
+        &root,
+        "missing-task",
+        &["--watch"],
+        "decodelabs bundle container deferral should succeed",
+    );
+
+    let token = crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
+        &root, "web",
+    )
+    .expect("read lease token")
+    .expect("lease token");
+    crate::runner::host_container_lease::run_host_container_lease_reaper_for_tests(
+        &root, "web", &token,
+    )
+    .expect("run reaper");
+
+    let log = fs::read_to_string(&docker_log).expect("read fake docker log");
+    assert!(
+        log.contains("down"),
+        "expected docker compose down, got {log}"
+    );
+    let lease_token =
+        crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
+            &root, "web",
+        )
+        .expect("read lease token after reaper");
+    assert!(
+        lease_token.is_none(),
+        "expected cleared host-container lease"
+    );
 }

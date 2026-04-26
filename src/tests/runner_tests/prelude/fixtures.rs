@@ -85,10 +85,17 @@ pub(in crate::runner::tests) fn run_task_in_workspace(
     )
 }
 
-pub(in crate::runner::tests) fn write_defer_manifest(root: &Path, defer_run: &str) {
+pub(in crate::runner::tests) fn write_defer_manifest(
+    root: &Path,
+    defer_run: &str,
+    run_in: Option<&str>,
+) {
+    let run_in = run_in
+        .map(|value| format!("run_in = \"{value}\"\n"))
+        .unwrap_or_default();
     write_manifest(
         &root.join("effigy.toml"),
-        &format!("[defer]\nrun = \"{defer_run}\"\n"),
+        &format!("[defer]\nrun = \"{defer_run}\"\n{run_in}"),
     );
 }
 

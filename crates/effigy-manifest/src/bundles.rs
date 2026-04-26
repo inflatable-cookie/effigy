@@ -354,7 +354,7 @@ fn validate_local_bundle_descriptor(
                 detail: format!("local bundle `{name}` has an empty input name"),
             });
         }
-        if matches!(input_name, "base" | "base_path" | "name") {
+        if matches!(input_name, "base" | "base_path") {
             return Err(ManifestError::Compose {
                 path: manifest_path.to_path_buf(),
                 detail: format!(
@@ -732,6 +732,13 @@ workspace = "__DEFAULT_WORKSPACE__"
 [tasks.seed]
 workspace = "__DEFAULT_WORKSPACE__"
 run = [{ rhai = "{{ bundle.root }}/scripts/seed-latest-db-dump.rhai" }]
+
+[tasks.release]
+run = "composer global exec effigy -- release"
+
+[defer]
+run = "composer global exec effigy -- {request} {args}"
+run_in = "container"
 "#;
 
     let rendered = template
@@ -1299,6 +1306,13 @@ workspace = "{{ inputs.default_workspace }}"
 [tasks.seed]
 workspace = "{{ inputs.default_workspace }}"
 run = [{ rhai = "{{ bundle.root }}/scripts/seed-latest-db-dump.rhai" }]
+
+[tasks.release]
+run = "composer global exec effigy -- release"
+
+[defer]
+run = "composer global exec effigy -- {request} {args}"
+run_in = "container"
 "#;
 
 const UNDERLAY_EXPORT_TEMPLATE: &str = r#"[package_manager]

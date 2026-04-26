@@ -150,6 +150,8 @@ pub struct ManifestCatalog {
 pub struct ManifestDefer {
     pub run: String,
     #[serde(default)]
+    pub run_in: Option<ManifestTaskRunIn>,
+    #[serde(default)]
     pub builtins: Vec<String>,
 }
 

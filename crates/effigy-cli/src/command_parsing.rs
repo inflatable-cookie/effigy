@@ -9,9 +9,10 @@ use crate::{
     ContainerSubcommand, ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode,
     ContractsSubcommand, DemoArgs, DemoHistoryOutcome, DemoListGap, DemoListGroupBy, DemoListMode,
     DemoListQuery, DemoListStatus, DemoSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand,
-    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, InternalGatewayArgs,
-    InternalRhaiArgs, ReleaseArgs, ReleaseSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs,
-    SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
+    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic,
+    InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalRhaiArgs, ReleaseArgs,
+    ReleaseSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand,
+    TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 use distribution::parse_distribution_command;
 
@@ -48,9 +49,65 @@ where
         "tasks" | "catalogs" => parse_tasks(args),
         "__rhai-step" => parse_internal_rhai_command(args),
         "__gateway-run" => Ok(Command::InternalGateway(InternalGatewayArgs)),
+        "__container-lease-reaper" => parse_internal_container_lease_reaper_command(args),
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
+}
+
+fn parse_internal_container_lease_reaper_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_root = None;
+    let mut container_name = None;
+    let mut token = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo-root" => {
+                repo_root = Some(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--repo-root".to_owned(),
+                    },
+                )?));
+            }
+            "--container" => {
+                container_name = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--container".to_owned(),
+                    },
+                )?);
+            }
+            "--token" => {
+                token = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--token".to_owned(),
+                    },
+                )?);
+            }
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::InternalContainerLeaseReaper(
+        InternalContainerLeaseReaperArgs {
+            repo_root: repo_root.ok_or_else(|| CliParseError::MissingFlagValue {
+                flag: "--repo-root".to_owned(),
+            })?,
+            container_name: container_name.ok_or_else(|| CliParseError::MissingFlagValue {
+                flag: "--container".to_owned(),
+            })?,
+            token: token.ok_or_else(|| CliParseError::MissingFlagValue {
+                flag: "--token".to_owned(),
+            })?,
+        },
+    ))
 }
 
 fn parse_internal_rhai_command<I>(args: I) -> Result<Command, CliParseError>

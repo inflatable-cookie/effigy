@@ -8,6 +8,7 @@ use std::{thread, time::Duration};
 use anstyle::Style;
 use chrono::Utc;
 use effigy_core::path_error_text::{failed_to_read_path, failed_to_write_path};
+use effigy_core::shell::shell_quote;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Position, Scope};
@@ -195,6 +196,20 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default()
+    });
+    engine.register_fn("trim_string", |value: Dynamic| -> String {
+        if value.is_unit() {
+            String::new()
+        } else {
+            value.to_string().trim().to_owned()
+        }
+    });
+    engine.register_fn("shell_quote_string", |value: Dynamic| -> String {
+        if value.is_unit() {
+            shell_quote("")
+        } else {
+            shell_quote(&value.to_string())
+        }
     });
 
     engine.register_fn(
