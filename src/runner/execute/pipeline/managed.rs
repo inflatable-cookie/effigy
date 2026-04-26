@@ -58,16 +58,20 @@ pub(super) fn run_managed_task(
         &effigy_routing::resolve_task_selection,
     )?;
     let Some(mut plan) = plan else {
-        if let ContainerExecutionBinding::Container { name, .. } = &container_binding {
+        if should_open_workspace_shell_for_non_managed_task(
+            selection.task.run.is_some(),
+            &container_binding,
+            container_handoff,
+        ) {
+            let ContainerExecutionBinding::Container { name, .. } = &container_binding else {
+                unreachable!("workspace shell guard should only match named containers");
+            };
             let lock_scopes = vec![crate::runner::manifest::task_lock_scope(
                 selection.task,
                 &preflight.selector,
             )];
             let _lock_guards = acquire_scopes(&preflight.resolved.resolved_root, &lock_scopes)?;
             let _ = name;
-            if container_handoff {
-                return Ok(None);
-            }
             return run_workspace(WorkspaceArgs {
                 workspace: selection.task.workspace.clone(),
                 system: selection.task.system.clone(),
@@ -164,6 +168,21 @@ pub(super) fn run_managed_task(
     finish_managed_task(
         result.map(Some).map_err(Into::into),
         lifecycle_cleanup.as_deref(),
+    )
+}
+
+fn should_open_workspace_shell_for_non_managed_task(
+    has_run_command: bool,
+    container_binding: &ContainerExecutionBinding,
+    container_handoff: bool,
+) -> bool {
+    if container_handoff || has_run_command {
+        return false;
+    }
+
+    matches!(
+        container_binding,
+        ContainerExecutionBinding::Container { .. }
     )
 }
 
@@ -902,6 +921,7 @@ mod tests {
         default_handoff_managed_shell_run, finish_managed_task, managed_dns_route_lines,
         render_handoff_managed_standard_command, render_inline_managed_standard_exec_command,
         render_managed_lifecycle_cleanup_notice, render_workspace_seeded_task_command,
+        should_open_workspace_shell_for_non_managed_task, ContainerExecutionBinding,
     };
     use crate::runner::error::RunnerError;
     use effigy_containers::{
@@ -964,6 +984,30 @@ mod tests {
         );
 
         assert_eq!(rendered, "effigy dev 'front' '--' '--host' '0.0.0.0'");
+    }
+
+    #[test]
+    fn non_managed_container_task_with_run_skips_workspace_shell_handoff() {
+        assert!(!should_open_workspace_shell_for_non_managed_task(
+            true,
+            &ContainerExecutionBinding::Container {
+                name: Some("web".to_owned()),
+                workspace: None,
+            },
+            false,
+        ));
+    }
+
+    #[test]
+    fn non_managed_container_task_without_run_opens_workspace_shell() {
+        assert!(should_open_workspace_shell_for_non_managed_task(
+            false,
+            &ContainerExecutionBinding::Container {
+                name: Some("web".to_owned()),
+                workspace: None,
+            },
+            false,
+        ));
     }
 
     #[test]
