@@ -11,6 +11,9 @@ fn setup_fake_docker_deferral_runtime(
     let bin_dir = root.join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
     let docker_log = root.join("fake-docker.log");
+    let composer_log = root.join("fake-composer.log");
+    fs::write(&docker_log, "").expect("seed fake docker log");
+    fs::write(&composer_log, "").expect("seed fake composer log");
     let runtime_state = root.join("fake-docker-running");
     if service_running {
         fs::write(&runtime_state, "running\n").expect("seed fake runtime state");
@@ -29,6 +32,13 @@ fn setup_fake_docker_deferral_runtime(
     write_executable(
         &bin_dir.join("colima"),
         "#!/bin/sh\ncase \"$1\" in\n  status)\n    printf 'INFO[0000] status: Running\\n'\n    exit 0\n    ;;\n  start)\n    printf 'started\\n'\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+    );
+    write_executable(
+        &bin_dir.join("composer"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+            composer_log.display(),
+        ),
     );
     let old_path = std::env::var("PATH").ok().unwrap_or_default();
     let lease_home = root.join("lease-home");
@@ -179,6 +189,44 @@ database = "legacy"
     assert!(
         lease_token.is_some(),
         "expected active host-container lease"
+    );
+}
+
+#[test]
+fn run_manifest_task_decodelabs_bundle_defers_locally_inside_handoff_container() {
+    let _guard = lock_test();
+    let root = temp_workspace("decodelabs-container-deferral-handoff");
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    std::fs::create_dir_all(root.join("app")).expect("app dir");
+    write_root_manifest(
+        &root,
+        r#"[bundle]
+base = "decodelabs"
+host = "legacy.test"
+project_name = "legacy-dev"
+database = "legacy"
+"#,
+    );
+    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    let _handoff =
+        EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", Some("1".to_owned()))]);
+
+    run_task_expect_empty_output(
+        &root,
+        "missing-task",
+        &["--watch"],
+        "decodelabs bundle handoff-local deferral should succeed",
+    );
+
+    let docker = fs::read_to_string(&docker_log).expect("read fake docker log");
+    assert!(
+        !docker.contains("compose"),
+        "expected no docker compose usage inside handoff container, got {docker}"
+    );
+    let composer = fs::read_to_string(root.join("fake-composer.log")).expect("read composer log");
+    assert!(
+        composer.contains("global exec effigy -- missing-task --watch"),
+        "expected local composer deferral inside handoff container, got {composer}"
     );
 }
 

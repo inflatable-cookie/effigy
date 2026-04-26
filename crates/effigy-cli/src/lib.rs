@@ -11,6 +11,7 @@ pub enum Command {
     Version,
     Bundle(BundleArgs),
     Changelog(ChangelogArgs),
+    Defer(DeferArgs),
     Exec(ExecArgs),
     System(SystemArgs),
     Workspace(WorkspaceArgs),
@@ -315,6 +316,13 @@ pub struct ExecArgs {
     pub output_json: bool,
     pub service: Option<String>,
     pub command: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferArgs {
+    pub task: TaskInvocation,
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

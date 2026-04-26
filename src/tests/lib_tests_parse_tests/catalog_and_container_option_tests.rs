@@ -1,6 +1,7 @@
 use crate::tests::prelude::{
-    parse_command, Command, ContainerArgs, ContainerSubcommand, ExecArgs, HelpTopic, PathBuf,
-    ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand, WorkspaceArgs,
+    parse_command, Command, ContainerArgs, ContainerSubcommand, DeferArgs, ExecArgs, HelpTopic,
+    PathBuf, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand, TaskInvocation,
+    WorkspaceArgs,
 };
 use effigy_cli::{BundleArgs, BundleSubcommand, ContainerDataSubcommand};
 
@@ -227,6 +228,30 @@ fn parse_container_down_all_is_supported() {
                 all: true,
             },
             repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_defer_command_is_supported() {
+    let cmd = parse_command(vec![
+        "defer".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/demo".to_owned(),
+        "--json".to_owned(),
+        "prep".to_owned(),
+        "--watch".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Defer(DeferArgs {
+            task: TaskInvocation {
+                name: "prep".to_owned(),
+                args: vec!["--watch".to_owned()],
+            },
+            repo_override: Some(PathBuf::from("/tmp/demo")),
             output_json: true,
         })
     );

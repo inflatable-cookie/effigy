@@ -56,6 +56,7 @@ pub fn run_cli(raw_args: Vec<String>) {
         Command::Help(topic) => run_help_command(&context, topic),
         command @ (Command::Bundle(_)
         | Command::Changelog(_)
+        | Command::Defer(_)
         | Command::Exec(_)
         | Command::System(_)
         | Command::Workspace(_)

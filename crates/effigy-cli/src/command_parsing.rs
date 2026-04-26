@@ -7,9 +7,9 @@ use crate::{
     BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand, BundleArgs, BundleSubcommand,
     ChangelogArgs, ChangelogSubcommand, Command, ContainerArgs, ContainerDataSubcommand,
     ContainerSubcommand, ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode,
-    ContractsSubcommand, DemoArgs, DemoHistoryOutcome, DemoListGap, DemoListGroupBy, DemoListMode,
-    DemoListQuery, DemoListStatus, DemoSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand,
-    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic,
+    ContractsSubcommand, DeferArgs, DemoArgs, DemoHistoryOutcome, DemoListGap, DemoListGroupBy,
+    DemoListMode, DemoListQuery, DemoListStatus, DemoSubcommand, DocsArgs, DocsBlockRequirement,
+    DocsSubcommand, DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic,
     InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalRhaiArgs, ReleaseArgs,
     ReleaseSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand,
     TaskInvocation, TasksArgs, WorkspaceArgs,
@@ -33,6 +33,7 @@ where
         "--help" | "-h" | "help" => Ok(Command::Help(HelpTopic::General)),
         "bundle" => parse_bundle_command(args),
         "changelog" => parse_changelog_command(args),
+        "defer" => parse_defer_command(args),
         "exec" => parse_exec_command(args),
         "system" => parse_system_command(args),
         "workspace" => parse_workspace_command(args),
@@ -53,6 +54,47 @@ where
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
+}
+
+fn parse_defer_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut request: Option<String> = None;
+    let mut request_args = Vec::new();
+
+    while let Some(arg) = args.next() {
+        if request.is_none() {
+            match arg.as_str() {
+                "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+                "--json" => output_json = true,
+                "--help" | "-h" => return Ok(Command::Help(HelpTopic::General)),
+                other if other.starts_with('-') => return Err(unknown_argument(other)),
+                _ => {
+                    request = Some(arg);
+                    request_args.extend(args);
+                    break;
+                }
+            }
+        } else {
+            request_args.push(arg);
+            request_args.extend(args);
+            break;
+        }
+    }
+
+    let request = request.ok_or(CliParseError::MissingTaskNameValue)?;
+    Ok(Command::Defer(DeferArgs {
+        task: TaskInvocation {
+            name: request,
+            args: request_args,
+        },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_internal_container_lease_reaper_command<I>(args: I) -> Result<Command, CliParseError>
