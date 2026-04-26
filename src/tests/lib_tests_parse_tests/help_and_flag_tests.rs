@@ -86,6 +86,13 @@ fn parse_release_help_is_scoped() {
 }
 
 #[test]
+fn parse_defer_help_is_scoped() {
+    let cmd =
+        parse_command(vec!["defer".to_owned(), "--help".to_owned()]).expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Defer));
+}
+
+#[test]
 fn parse_demo_help_is_scoped() {
     let cmd =
         parse_command(vec!["demo".to_owned(), "--help".to_owned()]).expect("parse should succeed");

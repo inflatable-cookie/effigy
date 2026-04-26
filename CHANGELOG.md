@@ -45,6 +45,8 @@ During v0.x, MINOR bumps may include breaking changes.
   explicit deferral surface automatic fallback uses, and make container-side
   deferral short-circuit to local execution when already inside an Effigy
   container handoff instead of trying to open a nested container session.
+  The builtin now also has a dedicated `effigy defer --help` panel and is
+  listed in general command help.
 - Add a shipped `decodelabs-library` bundle for shared DecodeLabs library
   repos: one php-fpm workspace container, no default web/db/gateway services,
   and the same container-side Composer-global Effigy deferral contract as

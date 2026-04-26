@@ -29,6 +29,11 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
             Some("service"),
         ),
         (
+            "effigy defer",
+            "Run the configured `[defer]` fallback explicitly instead of relying on selector miss routing",
+            Some("defer"),
+        ),
+        (
             "effigy exec",
             "Run one ad-hoc command inside the manifest's dev-context container",
             None,

@@ -71,7 +71,7 @@ where
             match arg.as_str() {
                 "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
                 "--json" => output_json = true,
-                "--help" | "-h" => return Ok(Command::Help(HelpTopic::General)),
+                "--help" | "-h" => return Ok(Command::Help(HelpTopic::Defer)),
                 other if other.starts_with('-') => return Err(unknown_argument(other)),
                 _ => {
                     request = Some(arg);
@@ -235,6 +235,7 @@ fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
         "watch" => Some(HelpTopic::Watch),
         "init" => Some(HelpTopic::Init),
         "migrate" => Some(HelpTopic::Migrate),
+        "defer" => Some(HelpTopic::Defer),
         "exec" => Some(HelpTopic::Exec),
         "bundle" => Some(HelpTopic::Bundle),
         "system" => Some(HelpTopic::System),
