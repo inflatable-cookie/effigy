@@ -4,16 +4,26 @@ use crate::runner::tests::prelude::{
     write_executable, write_root_manifest, DeferredTaskCase, DeferredTaskFailureCase, EnvGuard,
 };
 
-fn setup_fake_docker_deferral_runtime(root: &std::path::Path) -> (std::path::PathBuf, EnvGuard) {
+fn setup_fake_docker_deferral_runtime(
+    root: &std::path::Path,
+    service_running: bool,
+) -> (std::path::PathBuf, EnvGuard) {
     let bin_dir = root.join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
     let docker_log = root.join("fake-docker.log");
+    let runtime_state = root.join("fake-docker-running");
+    if service_running {
+        fs::write(&runtime_state, "running\n").expect("seed fake runtime state");
+    }
     write_executable(
         &bin_dir.join("docker"),
         &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = ps ]; then\n  printf 'legacy-dev-app-1\\tUp 2 minutes\\t\\tlegacy-dev\\t{}\\tapp\\n'\n  exit 0\nfi\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = ps ]; then\n  if [ -f '{}' ]; then\n    printf 'legacy-dev-app-1\\tUp 2 minutes\\t\\tlegacy-dev\\t{}\\tapp\\n'\n  fi\n  exit 0\nfi\nif [ \"$1\" = compose ]; then\n  for arg in \"$@\"; do\n    case \"$arg\" in\n      up)\n        printf 'running\\n' > '{}'\n        exit 0\n        ;;\n      down)\n        rm -f '{}'\n        exit 0\n        ;;\n    esac\n  done\nfi\nexit 0\n",
             docker_log.display(),
-            root.display()
+            runtime_state.display(),
+            root.display(),
+            runtime_state.display(),
+            runtime_state.display(),
         ),
     );
     write_executable(
@@ -122,7 +132,7 @@ project_name = "legacy-dev"
 database = "legacy"
 "#,
     );
-    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root);
+    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
 
     run_task_expect_empty_output(
         &root,
@@ -186,7 +196,7 @@ project_name = "legacy-dev"
 database = "legacy"
 "#,
     );
-    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root);
+    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
     let _timeout = EnvGuard::set_many(&[(
         "EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS",
         Some("0".to_owned()),
@@ -256,7 +266,7 @@ shared_root = "{}"
             shared_root.display()
         ),
     );
-    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root);
+    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
 
     run_task_expect_empty_output(
         &repo_a,
@@ -273,6 +283,10 @@ shared_root = "{}"
         &repo_b, "web",
     )
     .expect("read lease token for repo b");
+    assert!(
+        token_a.is_some(),
+        "expected shared library repos to see an active host-container lease"
+    );
     assert_eq!(
         token_a, token_b,
         "expected shared library repos to see the same host-container lease"
