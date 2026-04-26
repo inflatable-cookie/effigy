@@ -26,6 +26,8 @@ use crate::runner::host_container_lease::{
 use effigy_manifest::DeferredCommand;
 use effigy_tasks::TaskRuntimeArgs;
 
+const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF";
+
 enum DeferredExecutionPlan {
     HostCommand(String),
     Completed(String),
@@ -118,6 +120,26 @@ fn run_deferred_request_on_host(
     current_depth: u8,
     command: &str,
 ) -> Result<String, RunnerError> {
+    run_deferred_request_locally(
+        task,
+        runtime_args,
+        deferral,
+        cause,
+        current_depth,
+        command,
+        &deferral.working_dir,
+    )
+}
+
+fn run_deferred_request_locally(
+    task: &TaskInvocation,
+    runtime_args: &TaskRuntimeArgs,
+    deferral: &DeferredCommand,
+    cause: &RunnerError,
+    current_depth: u8,
+    command: &str,
+    working_dir: &Path,
+) -> Result<String, RunnerError> {
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -131,9 +153,9 @@ fn run_deferred_request_on_host(
     process
         .arg(shell_arg)
         .arg(command)
-        .current_dir(&deferral.working_dir)
+        .current_dir(working_dir)
         .env(DEFER_DEPTH_ENV, (current_depth + 1).to_string());
-    with_local_node_bin_path(&mut process, &deferral.working_dir);
+    with_local_node_bin_path(&mut process, working_dir);
     let status = process
         .status()
         .map_err(|error| RunnerError::TaskCommandLaunch {
@@ -210,6 +232,29 @@ fn run_deferred_request_with_binding(
             )))
         }
         ContainerExecutionBinding::Container { .. } | ContainerExecutionBinding::Inline { .. } => {
+            let exec_working_dir = binding
+                .exec_working_dir(&deferral.working_dir)?
+                .ok_or_else(|| {
+                    RunnerError::task_invocation(format!(
+                        "deferred command from {} resolved a container binding, but no exec working directory was available",
+                        deferral.source
+                    ))
+                })?;
+            let command = build_deferred_command(task, runtime_args, deferral, &exec_working_dir)?;
+            if std::env::var_os(CONTAINER_HANDOFF_ENV).is_some() {
+                let local_working_dir =
+                    std::env::current_dir().unwrap_or_else(|_| deferral.working_dir.clone());
+                let output = run_deferred_request_locally(
+                    task,
+                    runtime_args,
+                    deferral,
+                    cause,
+                    current_depth,
+                    &command,
+                    &local_working_dir,
+                )?;
+                return Ok(DeferredExecutionPlan::Completed(output));
+            }
             let policy = binding
                 .load_effective_policy(&deferral.working_dir)?
                 .ok_or_else(|| {
@@ -252,15 +297,6 @@ fn run_deferred_request_with_binding(
             if had_active_lease || !was_running {
                 refresh_host_container_lease(&deferral.working_dir, &policy)?;
             }
-            let exec_working_dir = binding
-                .exec_working_dir(&deferral.working_dir)?
-                .ok_or_else(|| {
-                    RunnerError::task_invocation(format!(
-                        "deferred command from {} resolved a container binding, but no exec working directory was available",
-                        deferral.source
-                    ))
-                })?;
-            let command = build_deferred_command(task, runtime_args, deferral, &exec_working_dir)?;
             let tty = std::io::stdout().is_terminal() || std::io::stderr().is_terminal();
             let args = build_deferred_container_command_args(
                 &policy,

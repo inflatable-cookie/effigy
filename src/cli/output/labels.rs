@@ -32,6 +32,7 @@ pub fn command_kind_and_name(cmd: &Command) -> (&'static str, String) {
         Command::Bundle(_) => ("bundle", "bundle".to_owned()),
         Command::Help(topic) => ("help", help_topic_label(*topic).to_owned()),
         Command::Changelog(_) => ("changelog", "changelog".to_owned()),
+        Command::Defer(args) => ("defer", args.task.name.clone()),
         Command::Exec(_) => ("exec", "exec".to_owned()),
         Command::System(_) => ("system", "system".to_owned()),
         Command::Workspace(_) => ("workspace", "workspace".to_owned()),

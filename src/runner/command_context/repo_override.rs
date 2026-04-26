@@ -7,6 +7,7 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
         Command::Version => None,
         Command::Bundle(_) => None,
         Command::Changelog(_) => None,
+        Command::Defer(args) => args.repo_override.clone(),
         Command::Exec(args) => args.repo_override.clone(),
         Command::System(args) => args.repo_override.clone(),
         Command::Workspace(args) => args.repo_override.clone(),

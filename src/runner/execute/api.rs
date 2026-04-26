@@ -6,6 +6,9 @@ use effigy_tasks::CatalogSelectionMode;
 
 use super::binding::resolve_container_execution_binding as resolve_container_execution_binding_impl;
 use super::entry::run_manifest_task_with_cwd as run_manifest_task_with_cwd_impl;
+use super::planning::{
+    build_execution_preflight as build_execution_preflight_impl, ExecutionPreflight,
+};
 use crate::runner::error::RunnerError;
 
 pub(in crate::runner) use super::binding::ContainerExecutionBinding;
@@ -33,6 +36,13 @@ pub(in crate::runner) fn run_manifest_task_with_cwd(
     cwd: PathBuf,
 ) -> Result<String, RunnerError> {
     run_manifest_task_with_cwd_impl(task, cwd)
+}
+
+pub(in crate::runner) fn build_execution_preflight(
+    task: &TaskInvocation,
+    cwd: PathBuf,
+) -> Result<ExecutionPreflight, RunnerError> {
+    build_execution_preflight_impl(task, cwd)
 }
 
 pub(in crate::runner) fn run_managed_run_with_cwd(

@@ -6,6 +6,7 @@ use super::super::run_bundle;
 use super::super::run_changelog;
 use super::super::run_container;
 use super::super::run_contracts;
+use super::super::run_defer;
 use super::super::run_demo;
 use super::super::run_distribution;
 use super::super::run_docs;
@@ -31,6 +32,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Bundle(args) => run_bundle(args),
         Command::Help(_) => Ok(String::new()),
         Command::Changelog(args) => run_changelog(args),
+        Command::Defer(args) => run_defer(args),
         Command::Exec(args) => run_exec(args),
         Command::System(args) => run_system(args),
         Command::Workspace(args) => run_workspace(args),
