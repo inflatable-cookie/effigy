@@ -155,6 +155,9 @@ fn run_deferred_request_locally(
         .arg(command)
         .current_dir(working_dir)
         .env(DEFER_DEPTH_ENV, (current_depth + 1).to_string());
+    if let Some(path_override) = preferred_local_deferral_path(command) {
+        process.env("PATH", path_override);
+    }
     with_local_node_bin_path(&mut process, working_dir);
     let status = process
         .status()
@@ -176,6 +179,24 @@ fn run_deferred_request_locally(
         stdout: String::new(),
         stderr: String::new(),
     })
+}
+
+fn preferred_local_deferral_path(command: &str) -> Option<String> {
+    let trimmed = command.trim_start();
+    if !trimmed.starts_with("composer global exec ") {
+        return None;
+    }
+
+    let composer_home = std::env::var_os("COMPOSER_HOME").or_else(|| {
+        std::env::var_os("HOME").map(|home| {
+            let mut path = std::path::PathBuf::from(home);
+            path.push(".config/composer");
+            path.into_os_string()
+        })
+    })?;
+    let composer_bin = std::path::PathBuf::from(composer_home).join("vendor/bin");
+    let existing = std::env::var("PATH").ok().unwrap_or_default();
+    Some(format!("{}:{existing}", composer_bin.display()))
 }
 
 fn run_deferred_request_with_binding(

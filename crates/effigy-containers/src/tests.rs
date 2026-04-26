@@ -11,7 +11,7 @@ use super::{
 };
 use crate::compose::ComposeBackend;
 use effigy_catalog::volumes::VolumeClassification;
-use effigy_manifest::ManifestInlineWorkspaceContainerConfig;
+use effigy_manifest::{load_task_manifest, ManifestInlineWorkspaceContainerConfig};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -873,6 +873,61 @@ primary_service = "app"
 [containers.web.services.app]
 catalog = "php-fpm"
 version = "8.3"
+mount_host_composer_home = true
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/var/www/html"
+"#,
+        )
+        .expect("write manifest");
+
+        let manifest = load_task_manifest(&root.join("effigy.toml")).expect("load manifest");
+        let composer_mount_flag = manifest
+            .containers
+            .as_ref()
+            .and_then(|containers| containers.environments.get("web"))
+            .and_then(|container| container.services.get("app"))
+            .and_then(|service| service.params.get("mount_host_composer_home"))
+            .and_then(|value| value.as_bool());
+        assert_eq!(composer_mount_flag, Some(true));
+
+        let policy = with_test_host_composer_home(Some(&host_composer_home), || {
+            load_container_policy(&root, Some("web")).expect("policy")
+        });
+        let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+
+        assert!(
+            rewritten.contains(&format!(
+                "{}:/home/dev/.config/composer",
+                host_composer_home.display()
+            )),
+            "rewritten compose should mount the host composer home: {rewritten}"
+        );
+    });
+}
+
+#[test]
+fn generated_php_workspace_does_not_mount_host_composer_home_by_default() {
+    with_temp_effigy_home("catalog-php-composer-home-default-off", |_| {
+        let root = temp_repo("catalog-php-composer-home-default-off");
+        let host_composer_home = root.join("host-composer-home");
+        fs::create_dir_all(&host_composer_home).expect("mkdir host composer home");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
 
 [systems.dev]
 default_workspace = "app"
@@ -890,11 +945,72 @@ working_dir = "/var/www/html"
         let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
 
         assert!(
-            rewritten.contains(&format!(
+            !rewritten.contains(&format!(
                 "{}:/home/dev/.config/composer",
                 host_composer_home.display()
             )),
-            "rewritten compose should mount the host composer home: {rewritten}"
+            "rewritten compose should not mount the host composer home by default: {rewritten}"
+        );
+        assert!(
+            rewritten.contains("/shared/composer/auth.json:/home/dev/.config/composer/auth.json"),
+            "rewritten compose should mount shared composer auth by default: {rewritten}"
+        );
+        assert!(
+            rewritten
+                .contains("/shared/composer/config.json:/home/dev/.config/composer/config.json"),
+            "rewritten compose should mount shared composer config by default: {rewritten}"
+        );
+        assert!(
+            rewritten.contains("/shared/composer-cache:/home/dev/.cache/composer"),
+            "rewritten compose should mount shared composer cache by default: {rewritten}"
+        );
+    });
+}
+
+#[test]
+fn generated_php_workspace_can_disable_shared_composer_state_mounts() {
+    with_temp_effigy_home("catalog-php-composer-shared-state-opt-out", |_| {
+        let root = temp_repo("catalog-php-composer-shared-state-opt-out");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+mount_shared_composer_auth = false
+mount_shared_composer_cache = false
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/var/www/html"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, Some("web")).expect("policy");
+        let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+
+        assert!(
+            !rewritten.contains("/shared/composer/auth.json:/home/dev/.config/composer/auth.json"),
+            "rewritten compose should not mount shared composer auth when disabled: {rewritten}"
+        );
+        assert!(
+            !rewritten
+                .contains("/shared/composer/config.json:/home/dev/.config/composer/config.json"),
+            "rewritten compose should not mount shared composer config when disabled: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains("/shared/composer-cache:/home/dev/.cache/composer"),
+            "rewritten compose should not mount shared composer cache when disabled: {rewritten}"
         );
     });
 }

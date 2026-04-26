@@ -143,10 +143,35 @@ During v0.x, MINOR bumps may include breaking changes.
   inspection, gateway status/setup, doctor, scan, and cache operations, plus
 
 ### Fixed
+- Give `php-fpm` workspace containers an Effigy-managed shared Composer auth
+  / config / cache layer by default instead of mounting the host Composer
+  home. This keeps GitHub tokens and cache reusable across containers without
+  tying container tools to host-side Composer installs.
+- Stop mounting the host Composer home into `php-fpm` workspace containers
+  unless `mount_host_composer_home = true` is set explicitly. This keeps
+  container-side global Composer tools available even after legacy host-side
+  Composer installs are removed.
 - Stop non-managed container-backed tasks with a real `run` command from
   being intercepted into the workspace shell handoff path. Bundle tasks like
   `decodelabs` `seed` now execute their configured command inside the
   container instead of just opening the container shell from the host.
+- Make the bundled `decodelabs` seed helper choose the latest `.sql` dump in
+  `.effigy/local/db-seeds` by filename sort order instead of requiring dump
+  names to start with the local project or database name.
+- Prefer Composer's global `vendor/bin` ahead of the workspace-installed
+  Effigy binary when running handoff-local deferred commands like
+  `composer global exec effigy -- ...` inside legacy container shells, so
+  DecodeLabs deferral targets resolve to the intended legacy handler instead
+  of looping back into the real Effigy binary.
+- Refuse automatic nested deferral whenever `EFFIGY_DEFER_DEPTH` is already
+  set, so handoff-local deferred commands that accidentally resolve back to
+  the real Effigy binary fail as plain missing-task lookups instead of
+  tripping the deferral loop error again.
+- Switch the shipped `decodelabs` and `decodelabs-library` legacy handoff
+  commands from `composer global exec effigy -- ...` to the direct Composer
+  global bin path `${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy`
+  so in-container `prep`/`release` style deferrals bypass Composer's own
+  command resolution layer and hit the intended legacy Effigy handler.
 - Add a Rhai `trim_string(...)` host helper and switch shipped starter
   scripts onto it so bundle helpers stop breaking on Rhai's in-place
   `trim()` semantics, which return `()` instead of a trimmed string.

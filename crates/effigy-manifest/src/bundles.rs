@@ -835,10 +835,10 @@ run_in = "container"
 run = [{ rhai = "{{ bundle.root }}/scripts/seed-latest-db-dump.rhai" }]
 
 [tasks.release]
-run = "composer global exec effigy -- release"
+run = "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" release"
 
 [defer]
-run = "composer global exec effigy -- {request} {args}"
+run = "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" {request} {args}"
 run_in = "container"
 "#;
 
@@ -934,7 +934,7 @@ home = "/home/dev"
 workspace = "__DEFAULT_WORKSPACE__"
 
 [defer]
-run = "composer global exec effigy -- {request} {args}"
+run = "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" {request} {args}"
 run_in = "container"
 "#;
 
@@ -1506,10 +1506,10 @@ run_in = "container"
 run = [{{ rhai = "{{{{ bundle.root }}}}/scripts/seed-latest-db-dump.rhai" }}]
 
 [tasks.release]
-run = "composer global exec effigy -- release"
+run = "\"${{COMPOSER_HOME:-$HOME/.config/composer}}/vendor/bin/effigy\" release"
 
 [defer]
-run = "composer global exec effigy -- {{request}} {{args}}"
+run = "\"${{COMPOSER_HOME:-$HOME/.config/composer}}/vendor/bin/effigy\" {{request}} {{args}}"
 run_in = "container"
 "#
     )
@@ -1565,7 +1565,7 @@ home = "/home/dev"
 workspace = "{{{{ inputs.default_workspace }}}}"
 
 [defer]
-run = "composer global exec effigy -- {{request}} {{args}}"
+run = "\"${{COMPOSER_HOME:-$HOME/.config/composer}}/vendor/bin/effigy\" {{request}} {{args}}"
 run_in = "container"
 "#
     )
