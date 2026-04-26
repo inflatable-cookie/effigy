@@ -3,38 +3,6 @@ use std::path::Path;
 
 use effigy_manifest::LoadedCatalog;
 
-use super::policy::IMPLICITLY_DEFERRED_COMMAND_BUILTINS;
-use super::select::implicit_root_deferral_is_enabled;
-
-fn implicit_deferred_builtins() -> BTreeSet<String> {
-    IMPLICITLY_DEFERRED_COMMAND_BUILTINS
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect()
-}
-
-fn has_explicit_deferral_catalog(catalogs: &[LoadedCatalog]) -> bool {
-    catalogs.iter().any(|catalog| catalog.defer_run.is_some())
-}
-
-fn implicit_deferred_builtins_for_root_with_catalogs(
-    root: &Path,
-    catalogs: &[LoadedCatalog],
-) -> BTreeSet<String> {
-    if implicit_root_deferral_is_enabled(root) && !has_explicit_deferral_catalog(catalogs) {
-        return implicit_deferred_builtins();
-    }
-    BTreeSet::new()
-}
-
-fn implicit_deferred_builtins_for_root(root: &Path) -> BTreeSet<String> {
-    if !has_root_manifest(root) || !implicit_root_deferral_is_enabled(root) {
-        return BTreeSet::new();
-    }
-    let catalogs = effigy_routing::discover_catalogs_allow_missing(root).unwrap_or_default();
-    implicit_deferred_builtins_for_root_with_catalogs(root, &catalogs)
-}
-
 pub(crate) fn deferred_builtins_for_root(root: &Path) -> BTreeSet<String> {
     let manifest_path = root.join(effigy_manifest::TASK_MANIFEST_FILE);
     let explicit = crate::runner::manifest::load_task_manifest(&manifest_path)
@@ -49,29 +17,19 @@ pub(crate) fn deferred_builtins_for_root(root: &Path) -> BTreeSet<String> {
     if !explicit.is_empty() {
         return explicit;
     }
-    if !has_root_manifest(root) {
-        return BTreeSet::new();
-    }
-    implicit_deferred_builtins_for_root(root)
+    let _ = root;
+    BTreeSet::new()
 }
 
 pub(crate) fn deferred_builtins_from_catalogs(
     catalogs: &[LoadedCatalog],
     resolved_root: &Path,
 ) -> BTreeSet<String> {
-    let explicit = catalogs
+    catalogs
         .iter()
         .find(|catalog| catalog.catalog_root == resolved_root)
         .map(|catalog| catalog.deferred_builtins.clone())
-        .unwrap_or_default();
-    if !explicit.is_empty() {
-        return explicit;
-    }
-    implicit_deferred_builtins_for_root_with_catalogs(resolved_root, catalogs)
-}
-
-fn has_root_manifest(root: &Path) -> bool {
-    root.join(effigy_manifest::TASK_MANIFEST_FILE).is_file()
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -101,7 +59,7 @@ mod tests {
     }
 
     #[test]
-    fn deferred_builtins_keep_implicit_root_deferral_when_manifest_exists() {
+    fn deferred_builtins_ignore_legacy_root_markers_when_manifest_exists() {
         let root = temp_workspace("anchored-implicit");
         fs::write(
             root.join("effigy.toml"),
@@ -112,6 +70,6 @@ mod tests {
         fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
 
         let builtins = deferred_builtins_for_root(&root);
-        assert!(builtins.contains("release"), "got: {builtins:?}");
+        assert!(!builtins.contains("release"), "got: {builtins:?}");
     }
 }

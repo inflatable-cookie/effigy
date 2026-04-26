@@ -6667,68 +6667,6 @@ fn cli_explicitly_deferred_release_bypasses_builtin_release_command() {
     assert_eq!(deferred, "release|prepare --plan");
 }
 
-#[test]
-fn cli_implicit_legacy_release_bypasses_builtin_release_command_by_default() {
-    let root = temp_workspace("cli-implicit-deferred-release");
-    fs::write(
-        root.join("effigy.toml"),
-        "[tasks.dev]\nrun = \"printf dev\"\n",
-    )
-    .expect("write manifest");
-    fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
-    fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
-
-    let marker = root.join("deferred-release.log");
-    let composer_home = root.join("fake-composer-home");
-    let vendor_bin = composer_home.join("vendor/bin");
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&vendor_bin).expect("mkdir vendor bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir bin");
-
-    let composer = bin_dir.join("composer");
-    fs::write(
-        &composer,
-        format!("#!/bin/sh\nprintf '%s\\n' '{}'\n", composer_home.display()),
-    )
-    .expect("write composer shim");
-    let mut perms = fs::metadata(&composer).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&composer, perms).expect("chmod composer");
-
-    let legacy_effigy = vendor_bin.join("effigy");
-    fs::write(
-        &legacy_effigy,
-        "#!/bin/sh\nprintf \"%s|%s\" \"$1\" \"$2 $3\" > \"$EFFIGY_TEST_DEFER_ARGS_FILE\"\n",
-    )
-    .expect("write legacy effigy shim");
-    let mut perms = fs::metadata(&legacy_effigy).expect("stat").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&legacy_effigy, perms).expect("chmod legacy effigy");
-
-    let path = format!(
-        "{}:{}",
-        bin_dir.display(),
-        std::env::var("PATH").expect("PATH")
-    );
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("release")
-        .arg("prepare")
-        .arg("--plan")
-        .arg("--repo")
-        .arg(&root)
-        .env("NO_COLOR", "1")
-        .env("PATH", path)
-        .env("EFFIGY_TEST_DEFER_ARGS_FILE", &marker)
-        .output()
-        .expect("run effigy");
-
-    assert!(output.status.success(), "release should defer cleanly");
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    assert!(!stdout.contains("Release Prepare Plan"), "got: {stdout}");
-    let deferred = fs::read_to_string(&marker).expect("read deferred");
-    assert_eq!(deferred, "release|prepare --plan");
-}
-
 fn write_executable(path: &std::path::Path, contents: &str) {
     fs::write(path, contents).expect("write executable");
     let mut perms = fs::metadata(path).expect("stat executable").permissions();

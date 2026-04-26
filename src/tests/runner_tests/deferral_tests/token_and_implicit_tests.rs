@@ -1,11 +1,7 @@
 use crate::runner::tests::prelude::{
-    assert_deferred_task_case_table, assert_deferred_task_failure_case_table,
-    assert_file_text_equals, assert_implicit_deferral_case_table, fs, implicit_deferral_script,
-    lock_test, reset_composer_home_cache_for_tests, run_task_expect_empty_output,
-    setup_implicit_deferral_stub, temp_workspace, workspace_with_optional_defer_manifest,
-    write_executable, write_implicit_deferral_markers, write_root_manifest, DeferredTaskCase,
-    DeferredTaskFailureCase, EnvGuard, ImplicitDeferralCase, ImplicitDeferralExpectation,
-    ImplicitFallbackDisabledCase,
+    assert_deferred_task_case_table, assert_deferred_task_failure_case_table, fs, lock_test,
+    run_task_expect_empty_output, temp_workspace, workspace_with_optional_defer_manifest,
+    write_executable, write_root_manifest, DeferredTaskCase, DeferredTaskFailureCase, EnvGuard,
 };
 
 fn setup_fake_docker_deferral_runtime(root: &std::path::Path) -> (std::path::PathBuf, EnvGuard) {
@@ -95,87 +91,21 @@ fn run_manifest_task_container_deferral_requires_resolved_container_binding() {
 }
 
 #[test]
-fn run_manifest_task_implicit_deferral_matrix() {
+fn run_manifest_task_legacy_root_markers_no_longer_enable_deferral() {
     let _guard = lock_test();
-    let fallback_disabled_cases = [
-        ImplicitFallbackDisabledCase {
-            workspace: "implicit-root-defer-missing-effigy-json",
-            create_effigy_marker: false,
-            create_composer_marker: true,
-            use_nested_markers: false,
-        },
-        ImplicitFallbackDisabledCase {
-            workspace: "implicit-root-defer-missing-composer-json",
-            create_effigy_marker: true,
-            create_composer_marker: false,
-            use_nested_markers: false,
-        },
-        ImplicitFallbackDisabledCase {
-            workspace: "implicit-root-defer-nested-markers-only",
-            create_effigy_marker: true,
-            create_composer_marker: true,
-            use_nested_markers: true,
-        },
-    ];
+    let root = workspace_with_optional_defer_manifest("legacy-markers-no-deferral", None, None);
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf dev\"\n",
+    )
+    .expect("write manifest");
+    fs::write(root.join("effigy.json"), "{}\n").expect("write legacy marker");
+    fs::write(root.join("composer.json"), "{}\n").expect("write composer marker");
 
-    let mut cases = vec![ImplicitDeferralCase {
-        workspace: "implicit-root-defer",
-        create_effigy_marker: true,
-        create_composer_marker: true,
-        use_nested_markers: false,
-        explicit_defer_run: None,
-        request: "version",
-        args: &["--dry-run"],
-        expectation: ImplicitDeferralExpectation::Deferred {
-            expected_args: "version\n--dry-run\n",
-        },
-    }];
-    cases.extend(
-        fallback_disabled_cases
-            .iter()
-            .map(|case| ImplicitDeferralCase {
-                workspace: case.workspace,
-                create_effigy_marker: case.create_effigy_marker,
-                create_composer_marker: case.create_composer_marker,
-                use_nested_markers: case.use_nested_markers,
-                explicit_defer_run: None,
-                request: "version",
-                args: &[],
-                expectation: ImplicitDeferralExpectation::TaskNotFound,
-            }),
-    );
-    cases.push(ImplicitDeferralCase {
-        workspace: "explicit-over-implicit",
-        create_effigy_marker: true,
-        create_composer_marker: true,
-        use_nested_markers: false,
-        explicit_defer_run: Some("printf explicit"),
-        request: "missing",
-        args: &[],
-        expectation: ImplicitDeferralExpectation::ExplicitDeferral,
-    });
-
-    assert_implicit_deferral_case_table(cases.as_slice());
-}
-
-#[test]
-fn run_manifest_task_implicit_deferral_caches_composer_home_per_process() {
-    let _guard = lock_test();
-    let root = workspace_with_optional_defer_manifest("implicit-root-defer-cached", None, None);
-    write_implicit_deferral_markers(&root, true, true, false);
-
-    let marker = root.join("defer-args.log");
-    let composer_log = root.join("composer.log");
-    let _env =
-        setup_implicit_deferral_stub(&root, &implicit_deferral_script(0), &marker, &composer_log);
-
-    run_task_expect_empty_output(&root, "version", &["--dry-run"], "first implicit deferral");
-    reset_composer_home_cache_for_tests();
-    run_task_expect_empty_output(&root, "version", &["--dry-run"], "second implicit deferral");
-
-    assert_file_text_equals(&marker, "version\n--dry-run\n");
-    let composer_log = fs::read_to_string(&composer_log).expect("read composer invocation log");
-    assert_eq!(composer_log.lines().count(), 1);
+    let err =
+        crate::runner::tests::prelude::run_task_in_workspace(&root, "version", &["--dry-run"])
+            .expect_err("legacy markers should not defer");
+    crate::runner::tests::prelude::assert_task_not_found_any(err);
 }
 
 #[test]
