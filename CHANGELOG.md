@@ -34,6 +34,10 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Changed
+- Add `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=auto|local|download` so
+  workspace-container handoff can force Linux Effigy install artifacts to
+  come from the local repo build or the published GitHub release cache
+  without changing machine layout.
 - Add a shipped `decodelabs-library` bundle for shared DecodeLabs library
   repos: one php-fpm workspace container, no default web/db/gateway services,
   and the same container-side Composer-global Effigy deferral contract as
