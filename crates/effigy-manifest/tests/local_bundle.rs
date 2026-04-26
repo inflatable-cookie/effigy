@@ -262,10 +262,13 @@ databases = ["legacy", "legacy_test"]
     assert!(matches!(
         release_task.run.as_ref().expect("release run"),
         effigy_manifest::ManifestManagedRun::Command(command)
-            if command == "composer global exec effigy -- release"
+            if command == "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" release"
     ));
     let defer = loaded.manifest.defer.as_ref().expect("bundle defer");
-    assert_eq!(defer.run, "composer global exec effigy -- {request} {args}");
+    assert_eq!(
+        defer.run,
+        "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" {request} {args}"
+    );
     assert_eq!(
         defer.run_in,
         Some(effigy_manifest::ManifestTaskRunIn::Container)
@@ -317,7 +320,10 @@ base_path = "../../bundles/decodelabs-library"
         Some("/workspace-root/clockwork")
     );
     let defer = loaded.manifest.defer.as_ref().expect("bundle defer");
-    assert_eq!(defer.run, "composer global exec effigy -- {request} {args}");
+    assert_eq!(
+        defer.run,
+        "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" {request} {args}"
+    );
     assert_eq!(
         defer.run_in,
         Some(effigy_manifest::ManifestTaskRunIn::Container)

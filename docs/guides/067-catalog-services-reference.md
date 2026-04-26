@@ -291,6 +291,8 @@ PHP-FPM workspace / application server.
   - `node_version` (default `""`)
   - `node_global_packages` (default `""`)
   - `mount_host_composer_home` (default `false`)
+  - `mount_shared_composer_auth` (default `true`)
+  - `mount_shared_composer_cache` (default `true`)
   - `composer_global_packages` (default `""`)
 - Exposed ports: none (FPM socket only).
 - Volumes: repo root (bind mount).

@@ -178,7 +178,9 @@ database = "legacy"
         "expected deferred shell command to clear NO_COLOR and force color, got {log}"
     );
     assert!(
-        log.contains("composer global exec effigy -- missing-task --watch"),
+        log.contains(
+            "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" missing-task --watch"
+        ),
         "expected deferred command in container exec, got {log}"
     );
     let lease_token =
@@ -208,8 +210,21 @@ database = "legacy"
 "#,
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
-    let _handoff =
-        EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", Some("1".to_owned()))]);
+    let composer_home = root.join("composer-home");
+    let composer_bin = composer_home.join("vendor/bin");
+    fs::create_dir_all(&composer_bin).expect("mkdir composer bin");
+    let legacy_log = root.join("fake-legacy-effigy.log");
+    write_executable(
+        &composer_bin.join("effigy"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+            legacy_log.display(),
+        ),
+    );
+    let _handoff = EnvGuard::set_many(&[
+        ("EFFIGY_INTERNAL_CONTAINER_HANDOFF", Some("1".to_owned())),
+        ("COMPOSER_HOME", Some(composer_home.display().to_string())),
+    ]);
 
     run_task_expect_empty_output(
         &root,
@@ -223,10 +238,69 @@ database = "legacy"
         !docker.contains("compose"),
         "expected no docker compose usage inside handoff container, got {docker}"
     );
-    let composer = fs::read_to_string(root.join("fake-composer.log")).expect("read composer log");
+    let composer = fs::read_to_string(&legacy_log).expect("read legacy effigy log");
     assert!(
-        composer.contains("global exec effigy -- missing-task --watch"),
-        "expected local composer deferral inside handoff container, got {composer}"
+        composer.contains("missing-task") && composer.contains("--watch"),
+        "expected local legacy effigy deferral inside handoff container, got {composer}"
+    );
+}
+
+#[test]
+fn run_manifest_task_decodelabs_handoff_local_deferral_prefers_composer_global_bin() {
+    let _guard = lock_test();
+    let root = temp_workspace("decodelabs-container-deferral-handoff-composer-bin");
+    std::fs::create_dir(root.join(".git")).expect("git dir");
+    std::fs::create_dir_all(root.join("app")).expect("app dir");
+    write_root_manifest(
+        &root,
+        r#"[bundle]
+base = "decodelabs"
+host = "legacy.test"
+project_name = "legacy-dev"
+database = "legacy"
+"#,
+    );
+    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    let composer_home = root.join("composer-home");
+    let composer_bin = composer_home.join("vendor/bin");
+    fs::create_dir_all(&composer_bin).expect("mkdir composer bin");
+    let legacy_log = root.join("fake-legacy-effigy.log");
+    let path_log = root.join("fake-path-effigy.log");
+    write_executable(
+        &composer_bin.join("effigy"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+            legacy_log.display(),
+        ),
+    );
+    write_executable(
+        &root.join("bin/effigy"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 97\n",
+            path_log.display(),
+        ),
+    );
+    let _handoff = EnvGuard::set_many(&[
+        ("EFFIGY_INTERNAL_CONTAINER_HANDOFF", Some("1".to_owned())),
+        ("COMPOSER_HOME", Some(composer_home.display().to_string())),
+    ]);
+
+    run_task_expect_empty_output(
+        &root,
+        "missing-task",
+        &["--watch"],
+        "decodelabs bundle handoff-local deferral should prefer composer global bin",
+    );
+
+    let legacy = fs::read_to_string(&legacy_log).expect("read fake legacy effigy log");
+    assert!(
+        legacy.contains("missing-task") && legacy.contains("--watch"),
+        "expected composer-home effigy to run, got {legacy}"
+    );
+    let path = fs::read_to_string(&path_log).unwrap_or_default();
+    assert!(
+        path.trim().is_empty(),
+        "expected PATH effigy not to run, got {path}"
     );
 }
 

@@ -732,7 +732,7 @@ fn user_global_catalog_dir() -> Option<PathBuf> {
     path.is_dir().then_some(path)
 }
 
-fn effigy_home_dir() -> Option<PathBuf> {
+pub(crate) fn effigy_home_dir() -> Option<PathBuf> {
     #[cfg(test)]
     if let Some(path) = test_effigy_home_override() {
         return Some(path);

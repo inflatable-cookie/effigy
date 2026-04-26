@@ -106,10 +106,13 @@ version = "11.0"
     assert!(matches!(
         release_task.run.as_ref().expect("release run"),
         ManifestManagedRun::Command(command)
-            if command == "composer global exec effigy -- release"
+            if command == "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" release"
     ));
     let defer = manifest.defer.as_ref().expect("bundle defer");
-    assert_eq!(defer.run, "composer global exec effigy -- {request} {args}");
+    assert_eq!(
+        defer.run,
+        "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" {request} {args}"
+    );
     assert_eq!(defer.run_in, Some(ManifestTaskRunIn::Container));
 }
 
@@ -308,7 +311,10 @@ base = "decodelabs-library"
     assert_eq!(dev.home.as_deref(), Some("/home/dev"));
 
     let defer = manifest.defer.as_ref().expect("bundle defer");
-    assert_eq!(defer.run, "composer global exec effigy -- {request} {args}");
+    assert_eq!(
+        defer.run,
+        "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" {request} {args}"
+    );
     assert_eq!(defer.run_in, Some(ManifestTaskRunIn::Container));
     assert!(manifest.tasks.get("seed").is_none());
 }

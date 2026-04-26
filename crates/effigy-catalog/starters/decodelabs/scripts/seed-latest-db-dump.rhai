@@ -20,7 +20,7 @@ fn primary_database_name() {
     return optional_config_string("bundle.database", "");
 }
 
-fn latest_dump_path(dumps_dir, dump_prefix) {
+fn latest_dump_path(dumps_dir) {
     let latest_path = "";
     let latest_name = "";
     for entry in list_dir(dumps_dir) {
@@ -29,7 +29,7 @@ fn latest_dump_path(dumps_dir, dump_prefix) {
         if entry_name == "" {
             continue;
         }
-        if !entry_name.starts_with(dump_prefix) || !entry_name.ends_with(".sql") {
+        if !entry_name.ends_with(".sql") {
             continue;
         }
         if latest_name == "" || entry_name > latest_name {
@@ -49,15 +49,14 @@ let container_name = optional_config_string("bundle.container_name", "web");
 let db_root_password_path = "containers." + container_name + ".services.db.params.root_password";
 let root_password = optional_config_string(db_root_password_path, "secret");
 let dumps_dir = path_join(repo_root, ".effigy/local/db-seeds");
-let dump_prefix = database + "-";
 
 create_dir(dumps_dir);
 
-let latest_host_path = latest_dump_path(dumps_dir, dump_prefix);
+let latest_host_path = latest_dump_path(dumps_dir);
 
 if latest_host_path == "" {
     throw "No SQL dumps found in " + dumps_dir
-        + "\nexpected files like " + database + "-20260422135323.sql";
+        + "\nexpected one or more .sql files, e.g. legacy-export-20260422135323.sql";
 }
 
 let dump_name = path_file_name(latest_host_path);
