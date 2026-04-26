@@ -11,7 +11,8 @@ use effigy_containers::EffectiveContainerPolicy;
 use super::error::RunnerError;
 use super::system_command::is_primary_service_running;
 
-const HOST_CONTAINER_LEASE_DIR: &str = ".effigy/runtime/host-container-leases";
+const HOST_CONTAINER_LEASE_HOME_DIR: &str = ".effigy/runtime/host-container-leases";
+const HOST_CONTAINER_LEASE_FALLBACK_DIR: &str = ".effigy/runtime/host-container-leases";
 const HOST_CONTAINER_LEASE_SCHEMA: &str = "effigy.host-container-lease.v1";
 const DEFAULT_HOST_CONTAINER_LEASE_TIMEOUT_SECS: u64 = 300;
 
@@ -30,9 +31,9 @@ struct HostContainerLease {
 
 pub(super) fn has_active_host_container_lease(
     repo_root: &Path,
-    container_name: &str,
+    policy: &EffectiveContainerPolicy,
 ) -> Result<bool, RunnerError> {
-    let Some(lease) = load_host_container_lease(repo_root, container_name)? else {
+    let Some(lease) = load_host_container_lease(repo_root, policy)? else {
         return Ok(false);
     };
     Ok(lease.expires_at_epoch_ms > now_epoch_ms())
@@ -42,7 +43,7 @@ pub(super) fn refresh_host_container_lease(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
-    fs::create_dir_all(host_container_lease_dir(repo_root))
+    fs::create_dir_all(host_container_lease_dir(repo_root, policy))
         .map_err(|error| RunnerError::task_invocation_failed_write(repo_root, error))?;
     let token = format!(
         "{}-{}-{}",
@@ -62,7 +63,7 @@ pub(super) fn refresh_host_container_lease(
     let encoded = serde_json::to_string_pretty(&lease).map_err(|error| {
         RunnerError::task_invocation(format!("failed to encode container lease: {error}"))
     })?;
-    let lease_path = host_container_lease_path(repo_root, &policy.name);
+    let lease_path = host_container_lease_path(repo_root, policy);
     fs::write(&lease_path, encoded)
         .map_err(|error| RunnerError::task_invocation_failed_write(&lease_path, error))?;
     spawn_host_container_lease_reaper(repo_root, &policy.name, &token)?;
@@ -75,9 +76,9 @@ pub(super) fn host_container_lease_timeout_duration() -> Duration {
 
 pub(super) fn clear_host_container_lease(
     repo_root: &Path,
-    container_name: &str,
+    policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
-    let lease_path = host_container_lease_path(repo_root, container_name);
+    let lease_path = host_container_lease_path(repo_root, policy);
     match fs::remove_file(&lease_path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -139,7 +140,12 @@ fn reap_host_container_lease(
     expected_token: &str,
 ) -> Result<(), RunnerError> {
     loop {
-        let Some(lease) = load_host_container_lease(repo_root, container_name)? else {
+        let policy = match effigy_containers::load_container_policy(repo_root, Some(container_name))
+        {
+            Ok(policy) => policy,
+            Err(_) => return Ok(()),
+        };
+        let Some(lease) = load_host_container_lease(repo_root, &policy)? else {
             return Ok(());
         };
         if lease.token != expected_token {
@@ -152,28 +158,19 @@ fn reap_host_container_lease(
             ));
             continue;
         }
-
-        let policy = match effigy_containers::load_container_policy(repo_root, Some(container_name))
-        {
-            Ok(policy) => policy,
-            Err(_) => {
-                clear_host_container_lease(repo_root, container_name)?;
-                return Ok(());
-            }
-        };
         if is_primary_service_running(repo_root, &policy)? {
             let _ = shutdown_container(repo_root, &policy);
         }
-        clear_host_container_lease(repo_root, container_name)?;
+        clear_host_container_lease(repo_root, &policy)?;
         return Ok(());
     }
 }
 
 fn load_host_container_lease(
     repo_root: &Path,
-    container_name: &str,
+    policy: &EffectiveContainerPolicy,
 ) -> Result<Option<HostContainerLease>, RunnerError> {
-    let lease_path = host_container_lease_path(repo_root, container_name);
+    let lease_path = host_container_lease_path(repo_root, policy);
     let raw = match fs::read_to_string(&lease_path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -184,12 +181,20 @@ fn load_host_container_lease(
     Ok(Some(lease))
 }
 
-fn host_container_lease_dir(repo_root: &Path) -> PathBuf {
-    repo_root.join(HOST_CONTAINER_LEASE_DIR)
+fn host_container_lease_dir(repo_root: &Path, policy: &EffectiveContainerPolicy) -> PathBuf {
+    if let Some(home) = host_container_lease_home_dir() {
+        return home
+            .join(sanitize_lease_path_component(&policy.profile))
+            .join(sanitize_lease_path_component(&policy.project_name));
+    }
+    repo_root.join(HOST_CONTAINER_LEASE_FALLBACK_DIR)
 }
 
-fn host_container_lease_path(repo_root: &Path, container_name: &str) -> PathBuf {
-    host_container_lease_dir(repo_root).join(format!("{container_name}.json"))
+fn host_container_lease_path(repo_root: &Path, policy: &EffectiveContainerPolicy) -> PathBuf {
+    host_container_lease_dir(repo_root, policy).join(format!(
+        "{}.json",
+        sanitize_lease_path_component(&policy.name)
+    ))
 }
 
 fn host_container_lease_timeout() -> Duration {
@@ -215,6 +220,33 @@ fn host_container_lease_schema_version() -> u8 {
     1
 }
 
+fn sanitize_lease_path_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn host_container_lease_home_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = std::env::var_os("EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME") {
+        return Some(
+            PathBuf::from(path)
+                .join("runtime")
+                .join("host-container-leases"),
+        );
+    }
+
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(HOST_CONTAINER_LEASE_HOME_DIR))
+}
+
 #[cfg(test)]
 pub(crate) fn run_host_container_lease_reaper_for_tests(
     repo_root: &Path,
@@ -229,5 +261,7 @@ pub(crate) fn read_host_container_lease_token_for_tests(
     repo_root: &Path,
     container_name: &str,
 ) -> Result<Option<String>, RunnerError> {
-    Ok(load_host_container_lease(repo_root, container_name)?.map(|lease| lease.token))
+    let policy = effigy_containers::load_container_policy(repo_root, Some(container_name))
+        .map_err(RunnerError::from)?;
+    Ok(load_host_container_lease(repo_root, &policy)?.map(|lease| lease.token))
 }

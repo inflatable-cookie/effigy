@@ -235,3 +235,77 @@ databases = ["contactpatch", "contactpatch_test"]
         vec!["contactpatch", "contactpatch_test"]
     );
 }
+
+#[test]
+fn decodelabs_library_bundle_derives_shared_workspace_runtime() {
+    let shared_root = tempfile::tempdir().expect("shared root tempdir");
+    let shared_root_path = shared_root
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| shared_root.path().to_path_buf());
+    let repo_root = shared_root.path().join("collections");
+    std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+    std::fs::create_dir(repo_root.join(".git")).expect("git dir");
+    let manifest_path = repo_root.join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "decodelabs-library"
+"#,
+    )
+    .expect("write manifest");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let manifest = loaded.manifest;
+    let bundle = manifest.bundle.expect("bundle");
+    assert_eq!(bundle.base.as_deref(), Some("decodelabs-library"));
+
+    let containers = manifest.containers.expect("containers");
+    let web = containers.environments.get("web").expect("web container");
+    assert_eq!(web.project_name.as_deref(), Some("decodelabs-library-dev"));
+    assert_eq!(web.working_dir.as_deref(), Some("/workspace-root"));
+    let app = web.services.get("app").expect("app service");
+    assert_eq!(app.catalog, "php-fpm");
+    assert_eq!(
+        app.params
+            .get("working_dir")
+            .and_then(|value| value.as_str()),
+        Some("/workspace-root")
+    );
+    assert_eq!(
+        app.params
+            .get("node_version")
+            .and_then(|value| value.as_str()),
+        Some("20")
+    );
+    assert_eq!(
+        app.params
+            .get("node_global_packages")
+            .and_then(|value| value.as_array())
+            .expect("node globals")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["eclint"]
+    );
+    assert_eq!(
+        app.params
+            .get("mount_source")
+            .and_then(|value| value.as_str()),
+        Some(shared_root_path.to_str().expect("shared root str"))
+    );
+
+    let systems = manifest.systems.expect("systems");
+    let dev = systems.systems.get("dev").expect("systems.dev");
+    assert_eq!(
+        dev.working_dir.as_deref(),
+        Some("/workspace-root/collections")
+    );
+    assert_eq!(dev.user.as_deref(), Some("dev"));
+    assert_eq!(dev.home.as_deref(), Some("/home/dev"));
+
+    let defer = manifest.defer.as_ref().expect("bundle defer");
+    assert_eq!(defer.run, "composer global exec effigy -- {request} {args}");
+    assert_eq!(defer.run_in, Some(ManifestTaskRunIn::Container));
+}

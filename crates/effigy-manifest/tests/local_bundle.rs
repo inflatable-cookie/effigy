@@ -267,6 +267,58 @@ databases = ["legacy", "legacy_test"]
 }
 
 #[test]
+fn exported_decodelabs_library_bundle_can_be_used_as_base_path() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bundle_dir = tmp.path().join("bundles/decodelabs-library");
+    effigy_manifest::export_bundle("decodelabs-library", &bundle_dir)
+        .expect("export decodelabs-library bundle");
+    let shared_root = tmp.path().join("libraries");
+    let repo_root = shared_root.join("clockwork");
+    std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+    let shared_root_path = shared_root
+        .canonicalize()
+        .unwrap_or_else(|_| shared_root.to_path_buf());
+    std::fs::create_dir(repo_root.join(".git")).expect("git dir");
+    std::fs::write(
+        repo_root.join("effigy.toml"),
+        r#"[bundle]
+base_path = "../../bundles/decodelabs-library"
+"#,
+    )
+    .expect("write manifest");
+
+    let loaded = load_task_manifest_with_inspection(&repo_root.join("effigy.toml"))
+        .expect("exported bundle should load");
+    let web = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("web"))
+        .expect("web container");
+    assert_eq!(
+        web.services
+            .get("app")
+            .expect("app service")
+            .params
+            .get("mount_source")
+            .and_then(|value| value.as_str()),
+        Some(shared_root_path.to_str().expect("shared root str"))
+    );
+    let systems = loaded.manifest.systems.as_ref().expect("systems");
+    let dev = systems.systems.get("dev").expect("systems.dev");
+    assert_eq!(
+        dev.working_dir.as_deref(),
+        Some("/workspace-root/clockwork")
+    );
+    let defer = loaded.manifest.defer.as_ref().expect("bundle defer");
+    assert_eq!(defer.run, "composer global exec effigy -- {request} {args}");
+    assert_eq!(
+        defer.run_in,
+        Some(effigy_manifest::ManifestTaskRunIn::Container)
+    );
+}
+
+#[test]
 fn local_bundle_rejects_unknown_inputs() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle_dir = tmp.path().join("bundle");

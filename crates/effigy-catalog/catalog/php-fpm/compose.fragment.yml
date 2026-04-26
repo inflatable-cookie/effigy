@@ -21,7 +21,7 @@ services:
         COMPOSER_GLOBAL_PACKAGES: "{{ composer_global_packages | join(' ') }}"
 {% endif %}
     volumes:
-      - {{ repo_root }}:{{ working_dir }}
+      - {% if mount_source %}{{ mount_source }}{% else %}{{ repo_root }}{% endif %}:{{ working_dir }}
     working_dir: {{ working_dir }}
     environment:
       DOCUMENT_ROOT: "{{ document_root }}"

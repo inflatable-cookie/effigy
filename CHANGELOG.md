@@ -30,6 +30,16 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Changed
+- Add a shipped `decodelabs-library` bundle for shared DecodeLabs library
+  repos: one php-fpm workspace container, no default web/db/gateway services,
+  and the same container-side Composer-global Effigy deferral contract as
+  `decodelabs`. Its shared-root mount now defaults to `../` relative to the
+  consuming repo, and it carries the same Node toolchain defaults as
+  `decodelabs` (`node_version = "20"`, `node_global_packages = ["eclint"]`).
+- Move host-triggered container leases onto a shared runtime identity keyed by
+  Colima profile + compose project + container name, so compatible repos can
+  refresh and observe the same temporary lease instead of each repo tracking
+  its own private timeout state.
 - Show a temporary spinner/progress line when a host-triggered deferred task
   has to start a stopped container environment before running the deferred
   command.
@@ -44,6 +54,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add a bundled `release` task to the shipped `decodelabs` bundle and its
   exported `base_path` template, delegating to the legacy Composer-global
   `effigy` binary with `composer global exec effigy -- release`.
+- Raise the shared `php-fpm` dev defaults to `upload_max_filesize = 256M`,
+  `post_max_size = 256M`, and `date.timezone = UTC`, and let the catalog mount
+  a caller-specified host source instead of always binding the consuming repo
+  root directly.
 - Add an `EFFIGY_COMPOSE_BACKEND` env override so operators can force
   Effigy onto `docker` or the Colima `nerdctl` / containerd path without
   changing what binaries happen to be on `PATH`.
