@@ -252,6 +252,12 @@ databases = ["legacy", "legacy_test"]
         .collect::<Vec<_>>();
     assert!(domains.contains(&"pma.legacy.test"), "got {domains:?}");
     assert!(bundle_dir.join("scripts/seed-latest-db-dump.rhai").exists());
+    let seed_task = loaded.manifest.tasks.get("seed").expect("seed task");
+    assert_eq!(
+        seed_task.run_in,
+        Some(effigy_manifest::ManifestTaskRunIn::Container)
+    );
+    assert_eq!(seed_task.stay_in_shell, Some(true));
     let release_task = loaded.manifest.tasks.get("release").expect("release task");
     assert!(matches!(
         release_task.run.as_ref().expect("release run"),

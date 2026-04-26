@@ -86,6 +86,8 @@ version = "11.0"
 
     let task = manifest.tasks.get("seed").expect("seed task");
     assert_eq!(task.workspace.as_deref(), Some("app"));
+    assert_eq!(task.run_in, Some(ManifestTaskRunIn::Container));
+    assert_eq!(task.stay_in_shell, Some(true));
     assert!(matches!(
         task.run.as_ref().expect("seed run"),
         ManifestManagedRun::Sequence(steps)
@@ -308,4 +310,5 @@ base = "decodelabs-library"
     let defer = manifest.defer.as_ref().expect("bundle defer");
     assert_eq!(defer.run, "composer global exec effigy -- {request} {args}");
     assert_eq!(defer.run_in, Some(ManifestTaskRunIn::Container));
+    assert!(manifest.tasks.get("seed").is_none());
 }

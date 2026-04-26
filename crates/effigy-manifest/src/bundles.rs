@@ -830,6 +830,8 @@ workspace = "__DEFAULT_WORKSPACE__"
 
 [tasks.seed]
 workspace = "__DEFAULT_WORKSPACE__"
+stay_in_shell = true
+run_in = "container"
 run = [{ rhai = "{{ bundle.root }}/scripts/seed-latest-db-dump.rhai" }]
 
 [tasks.release]
@@ -1499,6 +1501,8 @@ workspace = "{{{{ inputs.default_workspace }}}}"
 
 [tasks.seed]
 workspace = "{{{{ inputs.default_workspace }}}}"
+stay_in_shell = true
+run_in = "container"
 run = [{{ rhai = "{{{{ bundle.root }}}}/scripts/seed-latest-db-dump.rhai" }}]
 
 [tasks.release]

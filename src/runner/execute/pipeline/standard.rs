@@ -6,6 +6,7 @@ use super::super::super::exec_command::{
     run_routed_task_container_exec, run_routed_task_container_exec_with_policy,
 };
 use super::super::super::locking::io::acquire_scopes;
+use super::super::super::system_command::run_workspace_seeded_session;
 use super::super::api::{resolve_container_execution_binding, ContainerExecutionBinding};
 use super::super::context::ExecutionTaskContext;
 use super::super::planning::ExecutionPreflight;
@@ -27,6 +28,8 @@ use effigy_env::schema_support::{
 };
 use effigy_env::secret::SecretString;
 use effigy_manifest::TaskSelection;
+
+const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF";
 
 pub(in crate::runner) fn run_standard_task(
     preflight: &ExecutionPreflight,
@@ -97,16 +100,6 @@ pub(in crate::runner) fn run_standard_task(
         );
     }
 
-    if let Some(output) = nested::maybe_run_in_process_sequence(
-        preflight,
-        selection,
-        &context,
-        &env_schema_resolved,
-        secret_ref,
-    )? {
-        return Ok(output);
-    }
-
     let routed = route_standard_task_execution(
         &preflight.selector.task_name,
         selection
@@ -124,6 +117,18 @@ pub(in crate::runner) fn run_standard_task(
             colima_is_running(&policy, &selection.catalog.catalog_root).map_err(Into::into)
         },
     )?;
+
+    if should_stay_in_workspace_shell(preflight.output_json, selection.task, &container_binding) {
+        return run_workspace_seeded_session(
+            &selection.catalog.catalog_root,
+            container_binding.container_name(),
+            preflight.runtime_args_raw.repo_override.clone(),
+            &render_workspace_seeded_task_command(
+                &preflight.selector.task_name,
+                &preflight.runtime_args_exec.passthrough,
+            ),
+        );
+    }
 
     if let Some((container, service)) = routed_container_target(&routed.decision) {
         if preflight.output_json {
@@ -170,12 +175,52 @@ pub(in crate::runner) fn run_standard_task(
         return Ok(String::new());
     }
 
+    if let Some(output) = nested::maybe_run_in_process_sequence(
+        preflight,
+        selection,
+        &context,
+        &env_schema_resolved,
+        secret_ref,
+    )? {
+        return Ok(output);
+    }
+
     process_run::run_task_process(
         preflight.output_json,
         preflight.runtime_args_raw.verbose_root,
         &context,
         secret_ref,
     )
+}
+
+fn should_stay_in_workspace_shell(
+    output_json: bool,
+    task: &effigy_manifest::ManifestTask,
+    container_binding: &ContainerExecutionBinding,
+) -> bool {
+    if output_json
+        || std::env::var_os(CONTAINER_HANDOFF_ENV).is_some()
+        || !task.stay_in_shell.unwrap_or(false)
+        || task.workspace.is_none()
+        || task.run.is_none()
+    {
+        return false;
+    }
+
+    matches!(
+        container_binding,
+        ContainerExecutionBinding::Container { .. }
+    )
+}
+
+fn render_workspace_seeded_task_command(task_name: &str, args: &[String]) -> String {
+    let mut rendered = format!("effigy {}", effigy_core::shell::shell_quote(task_name));
+    let rendered_args = crate::runner::util::render_passthrough_args(args);
+    if !rendered_args.is_empty() {
+        rendered.push(' ');
+        rendered.push_str(&rendered_args);
+    }
+    rendered
 }
 
 fn run_inline_workspace_standard_task(
@@ -294,5 +339,87 @@ fn map_schema_support_error(error: SchemaSupportError) -> RunnerError {
             RunnerError::task_invocation(format!("failed to read {}: {error}", path.display()))
         }
         SchemaSupportError::Schema(error) => RunnerError::EnvSchema(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        render_workspace_seeded_task_command, should_stay_in_workspace_shell,
+        ContainerExecutionBinding, CONTAINER_HANDOFF_ENV,
+    };
+    use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn};
+    use std::env;
+
+    struct EnvGuard {
+        key: &'static str,
+        old: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &'static str) -> Self {
+            let old = env::var_os(key);
+            unsafe {
+                env::set_var(key, value);
+            }
+            Self { key, old }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.old.take() {
+                Some(value) => unsafe {
+                    env::set_var(self.key, value);
+                },
+                None => unsafe {
+                    env::remove_var(self.key);
+                },
+            }
+        }
+    }
+
+    fn stay_in_shell_task() -> ManifestTask {
+        ManifestTask {
+            workspace: Some("app".to_owned()),
+            stay_in_shell: Some(true),
+            run_in: Some(ManifestTaskRunIn::Container),
+            run: Some(ManifestManagedRun::Command("printf seed".to_owned())),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn workspace_seeded_task_command_preserves_passthrough_args() {
+        let rendered =
+            render_workspace_seeded_task_command("seed", &["--".to_owned(), "--force".to_owned()]);
+
+        assert_eq!(rendered, "effigy 'seed' '--' '--force'");
+    }
+
+    #[test]
+    fn stay_in_shell_requires_explicit_task_opt_in() {
+        assert!(should_stay_in_workspace_shell(
+            false,
+            &stay_in_shell_task(),
+            &ContainerExecutionBinding::Container {
+                name: Some("web".to_owned()),
+                workspace: None,
+            },
+        ));
+    }
+
+    #[test]
+    fn stay_in_shell_is_disabled_inside_container_handoff() {
+        let _env = EnvGuard::set(CONTAINER_HANDOFF_ENV, "1");
+
+        assert!(!should_stay_in_workspace_shell(
+            false,
+            &stay_in_shell_task(),
+            &ContainerExecutionBinding::Container {
+                name: Some("web".to_owned()),
+                workspace: None,
+            },
+        ));
     }
 }
