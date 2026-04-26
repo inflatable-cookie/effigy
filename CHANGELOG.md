@@ -47,6 +47,9 @@ During v0.x, MINOR bumps may include breaking changes.
   container handoff instead of trying to open a nested container session.
   The builtin now also has a dedicated `effigy defer --help` panel and is
   listed in general command help.
+- Let tasks opt into staying in the workspace shell after a host-triggered
+  container run with `stay_in_shell = true`. The bundled `decodelabs` `seed`
+  task now uses this and explicitly declares `run_in = "container"`.
 - Add a shipped `decodelabs-library` bundle for shared DecodeLabs library
   repos: one php-fpm workspace container, no default web/db/gateway services,
   and the same container-side Composer-global Effigy deferral contract as

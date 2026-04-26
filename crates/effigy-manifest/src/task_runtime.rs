@@ -14,6 +14,8 @@ pub struct ManifestTask {
     #[serde(default)]
     pub workspace: Option<String>,
     #[serde(default)]
+    pub stay_in_shell: Option<bool>,
+    #[serde(default)]
     pub lock: Option<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
