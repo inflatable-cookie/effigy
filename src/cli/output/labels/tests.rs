@@ -12,6 +12,7 @@ fn help_topic_label_maps_all_topics() {
     assert_eq!(help_topic_label(HelpTopic::General), "general");
     assert_eq!(help_topic_label(HelpTopic::Bundle), "bundle");
     assert_eq!(help_topic_label(HelpTopic::Changelog), "changelog");
+    assert_eq!(help_topic_label(HelpTopic::Defer), "defer");
     assert_eq!(help_topic_label(HelpTopic::Exec), "exec");
     assert_eq!(help_topic_label(HelpTopic::System), "system");
     assert_eq!(help_topic_label(HelpTopic::Workspace), "workspace");

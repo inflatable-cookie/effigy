@@ -5,6 +5,7 @@ pub fn help_topic_label(topic: HelpTopic) -> &'static str {
         HelpTopic::General => "general",
         HelpTopic::Bundle => "bundle",
         HelpTopic::Changelog => "changelog",
+        HelpTopic::Defer => "defer",
         HelpTopic::Exec => "exec",
         HelpTopic::System => "system",
         HelpTopic::Workspace => "workspace",

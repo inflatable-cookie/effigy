@@ -18,6 +18,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy container"));
     assert!(rendered.contains("effigy bootstrap"));
     assert!(rendered.contains("effigy release"));
+    assert!(rendered.contains("effigy defer"));
     assert!(rendered.contains("effigy scan"));
     assert!(rendered.contains("effigy test"));
     assert!(rendered.contains("effigy watch"));
@@ -251,6 +252,19 @@ fn render_release_help_shows_status_and_gate_options() {
     assert!(rendered.contains("branch drift, HEAD movement, and prepared-file content drift"));
     assert!(rendered.contains("`gates`, `reprepare`, and `discard` shortcuts"));
     assert!(!rendered.contains("simulate remain roadmap work"));
+}
+
+#[test]
+fn render_defer_help_shows_container_and_repo_options() {
+    let rendered = render_help_text(HelpTopic::Defer);
+    assert!(rendered.contains("defer Help"));
+    assert!(rendered.contains("effigy defer <REQUEST> [args...]"));
+    assert!(rendered.contains("effigy --json defer <REQUEST> [args...]"));
+    assert!(rendered.contains("--repo <PATH>"));
+    assert!(rendered.contains("--json"));
+    assert!(rendered.contains("Use this when you want the configured `[defer]` behavior"));
+    assert!(rendered.contains("effigy defer prep"));
+    assert!(rendered.contains("effigy defer release -- --dry-run"));
 }
 
 #[test]

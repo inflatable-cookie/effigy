@@ -58,6 +58,7 @@ pub enum HelpTopic {
     General,
     Bundle,
     Changelog,
+    Defer,
     Exec,
     System,
     Workspace,
