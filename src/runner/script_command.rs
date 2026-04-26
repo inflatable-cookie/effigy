@@ -111,6 +111,7 @@ fn host_callbacks() -> HostCallbacks {
                 repo_root,
                 ContainerSubcommand::Down {
                     name: Some(name.to_owned()),
+                    all: false,
                 },
             )
             .map_err(|error| error.to_string())

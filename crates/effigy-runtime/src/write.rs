@@ -11,6 +11,7 @@ use effigy_containers::{
 };
 use serde_yaml::{Mapping, Value};
 
+use crate::read::discover_running_environments;
 use crate::signals::run_docker_capture;
 use crate::EffigyRuntimeError;
 
@@ -40,6 +41,44 @@ where
     annotate_left_running_shared_services(&mut report, &policy);
     annotate_removed_gateway_routes(&mut report, &removed_gateway_domains);
     Ok(render_container_report(report, output_json))
+}
+
+pub fn run_container_down_all<F>(
+    output_json: bool,
+    deregister_gateway_routes: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
+{
+    let environments = discover_running_environments()?;
+    let mut stopped = Vec::new();
+
+    for environment in environments {
+        let repo_root = Path::new(&environment.repo_root);
+        let policy = environment.policy;
+        let colima_running = colima_is_running(&policy, repo_root)
+            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+        if colima_running {
+            shutdown_container_via_exec(repo_root, &policy)
+                .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+        }
+        let removed_gateway_domains = deregister_gateway_routes(&policy)?;
+        stopped.push(StoppedContainerEnvironment {
+            repo_root: environment.repo_root,
+            container: policy.name.clone(),
+            project_name: policy.project_name.clone(),
+            profile: policy.profile.clone(),
+            removed_gateway_domains,
+            left_running_shared_services: policy
+                .shared_services
+                .iter()
+                .map(|service| service.service_name.clone())
+                .collect(),
+            runtime_was_running: colima_running,
+        });
+    }
+
+    render_container_down_all_report(&stopped, output_json)
 }
 
 pub fn run_container_reset<FDeregister, FRemoveVolumes>(
@@ -262,6 +301,71 @@ fn format_os_args(args: &[OsString]) -> String {
         .join(" ")
 }
 
+struct StoppedContainerEnvironment {
+    repo_root: String,
+    container: String,
+    project_name: String,
+    profile: String,
+    removed_gateway_domains: Vec<String>,
+    left_running_shared_services: Vec<String>,
+    runtime_was_running: bool,
+}
+
+fn render_container_down_all_report(
+    stopped: &[StoppedContainerEnvironment],
+    output_json: bool,
+) -> Result<String, EffigyRuntimeError> {
+    if output_json {
+        return serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "effigy.container.down-all.v1",
+            "schema_version": 1,
+            "ok": true,
+            "count": stopped.len(),
+            "environments": stopped.iter().map(|entry| {
+                serde_json::json!({
+                    "repo_root": entry.repo_root,
+                    "container": entry.container,
+                    "project_name": entry.project_name,
+                    "profile": entry.profile,
+                    "runtime_was_running": entry.runtime_was_running,
+                    "removed_gateway_domains": entry.removed_gateway_domains,
+                    "left_running_shared_services": entry.left_running_shared_services,
+                })
+            }).collect::<Vec<_>>(),
+        }))
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()));
+    }
+
+    if stopped.is_empty() {
+        return Ok("[ok] no running Effigy-managed container environments found".to_owned());
+    }
+
+    let mut lines = vec![format!(
+        "[ok] stopped {} running Effigy-managed container environment{}",
+        stopped.len(),
+        if stopped.len() == 1 { "" } else { "s" }
+    )];
+    for entry in stopped {
+        lines.push(format!(
+            "{} ({}) [{}]",
+            entry.repo_root, entry.container, entry.profile
+        ));
+        if !entry.removed_gateway_domains.is_empty() {
+            lines.push(format!(
+                "[info] removed gateway routes: {}",
+                entry.removed_gateway_domains.join(", ")
+            ));
+        }
+        if !entry.left_running_shared_services.is_empty() {
+            lines.push(format!(
+                "[warn] shared services left running: {}",
+                entry.left_running_shared_services.join(", ")
+            ));
+        }
+    }
+    Ok(lines.join("\n"))
+}
+
 fn render_container_report(
     report: effigy_containers::ContainerCommandReport,
     output_json: bool,
@@ -329,5 +433,44 @@ fn annotate_left_running_shared_services(
     for note in notes {
         report.success_text.push('\n');
         report.success_text.push_str(&format!("[shared] {note}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn container_down_all_report_renders_text_and_json() {
+        let stopped = vec![StoppedContainerEnvironment {
+            repo_root: "/tmp/alpha".to_owned(),
+            container: "web".to_owned(),
+            project_name: "alpha-dev".to_owned(),
+            profile: "effigy".to_owned(),
+            removed_gateway_domains: vec!["alpha.test".to_owned()],
+            left_running_shared_services: vec!["db".to_owned()],
+            runtime_was_running: true,
+        }];
+
+        let text = render_container_down_all_report(&stopped, false).expect("render text report");
+        assert!(text.contains("[ok] stopped 1 running Effigy-managed container environment"));
+        assert!(text.contains("/tmp/alpha (web) [effigy]"));
+        assert!(text.contains("[info] removed gateway routes: alpha.test"));
+        assert!(text.contains("[warn] shared services left running: db"));
+
+        let json = render_container_down_all_report(&stopped, true).expect("render json report");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse json report");
+        assert_eq!(parsed["schema"], "effigy.container.down-all.v1");
+        assert_eq!(parsed["count"], 1);
+        assert_eq!(parsed["environments"][0]["repo_root"], "/tmp/alpha");
+        assert_eq!(parsed["environments"][0]["container"], "web");
+        assert_eq!(
+            parsed["environments"][0]["removed_gateway_domains"][0],
+            "alpha.test"
+        );
+        assert_eq!(
+            parsed["environments"][0]["left_running_shared_services"][0],
+            "db"
+        );
     }
 }

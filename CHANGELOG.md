@@ -38,6 +38,9 @@ During v0.x, MINOR bumps may include breaking changes.
   workspace-container handoff can force Linux Effigy install artifacts to
   come from the local repo build or the published GitHub release cache
   without changing machine layout.
+- Add `effigy container down --all` as the first cross-project container
+  control surface, reusing the same running-environment discovery model as
+  `status --all` and `stats --all`.
 - Add a shipped `decodelabs-library` bundle for shared DecodeLabs library
   repos: one php-fpm workspace container, no default web/db/gateway services,
   and the same container-side Composer-global Effigy deferral contract as

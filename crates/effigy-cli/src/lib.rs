@@ -476,6 +476,7 @@ pub enum ContainerSubcommand {
     },
     Down {
         name: Option<String>,
+        all: bool,
     },
     Status {
         name: Option<String>,

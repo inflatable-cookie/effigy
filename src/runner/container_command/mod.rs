@@ -7,7 +7,7 @@ use effigy_runtime::data::{
 use effigy_runtime::read::{
     run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
 };
-use effigy_runtime::write::{run_container_down, run_container_reset};
+use effigy_runtime::write::{run_container_down, run_container_down_all, run_container_reset};
 use effigy_runtime::EffigyRuntimeError;
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
@@ -49,6 +49,15 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         }
         return run_container_stats_all(args.output_json).map_err(Into::into);
     }
+    if let ContainerSubcommand::Down { name: _, all: true } = &args.subcommand {
+        if args.repo_override.is_some() {
+            return Err(RunnerError::task_invocation(
+                "`effigy container down --all` does not accept `--repo`; it discovers running environments across repos",
+            ));
+        }
+        return run_container_down_all(args.output_json, deregister_runtime_gateway_routes)
+            .map_err(Into::into);
+    }
 
     let cwd = current_working_dir()?;
     let resolved = resolve_repo_root(cwd.clone(), args.repo_override.clone())?;
@@ -66,9 +75,10 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             detach,
             args.output_json,
         ),
-        ContainerSubcommand::Down { name } => {
+        ContainerSubcommand::Down { name, all: false } => {
             run_container_down_adapter(&repo_root, name.as_deref(), args.output_json)
         }
+        ContainerSubcommand::Down { all: true, .. } => unreachable!("handled above"),
         ContainerSubcommand::Status { name, all: false } => {
             run_container_status(&repo_root, name.as_deref(), args.output_json).map_err(Into::into)
         }
@@ -259,5 +269,22 @@ mod tests {
         assert!(error
             .to_string()
             .contains("`effigy container stats --all` does not accept `--repo`"));
+    }
+
+    #[test]
+    fn container_down_all_rejects_repo_override() {
+        let error = run_container(ContainerArgs {
+            subcommand: ContainerSubcommand::Down {
+                name: None,
+                all: true,
+            },
+            repo_override: Some(std::path::PathBuf::from("/tmp/demo")),
+            output_json: false,
+        })
+        .expect_err("down --all should reject --repo");
+
+        assert!(error
+            .to_string()
+            .contains("`effigy container down --all` does not accept `--repo`"));
     }
 }

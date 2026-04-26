@@ -260,14 +260,14 @@ fn annotate_warning_lines(report: &mut ContainerCommandReport, warnings: &[Strin
 }
 
 #[derive(Debug)]
-struct DiscoveredRunningEnvironment {
-    repo_root: String,
-    policy: EffectiveContainerPolicy,
-    services: Vec<RunningComposeContainer>,
+pub(crate) struct DiscoveredRunningEnvironment {
+    pub(crate) repo_root: String,
+    pub(crate) policy: EffectiveContainerPolicy,
+    pub(crate) services: Vec<RunningComposeContainer>,
 }
 
-fn discover_running_environments() -> Result<Vec<DiscoveredRunningEnvironment>, EffigyRuntimeError>
-{
+pub(crate) fn discover_running_environments(
+) -> Result<Vec<DiscoveredRunningEnvironment>, EffigyRuntimeError> {
     let rows = list_running_compose_containers()
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let mut grouped: BTreeMap<(String, String), Vec<_>> = BTreeMap::new();
