@@ -25,11 +25,19 @@ use super::RunnerError;
 const CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH: &str = "/tmp/effigy-host";
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 const EFFIGY_RELEASE_REPO_BASE_URL: &str = "https://github.com/inflatable-cookie/effigy";
+const EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV: &str = "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LinuxWorkspaceTarget {
     X86_64Gnu,
     Aarch64Gnu,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxWorkspaceArtifactSource {
+    Auto,
+    Local,
+    Download,
 }
 
 impl LinuxWorkspaceTarget {
@@ -549,6 +557,12 @@ fn ensure_linux_workspace_effigy_artifact(
     target: LinuxWorkspaceTarget,
 ) -> Result<PathBuf, RunnerError> {
     let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
+    match configured_linux_workspace_artifact_source()? {
+        LinuxWorkspaceArtifactSource::Download => {
+            return ensure_downloaded_linux_workspace_effigy_artifact(target);
+        }
+        LinuxWorkspaceArtifactSource::Local | LinuxWorkspaceArtifactSource::Auto => {}
+    }
     if let Some(effigy_repo_root) = configured_effigy_repo_root() {
         persist_effigy_source_repo_root(&effigy_repo_root)?;
         return ensure_local_linux_workspace_effigy_artifact(
@@ -586,6 +600,22 @@ fn ensure_linux_workspace_effigy_artifact(
     }
 
     ensure_downloaded_linux_workspace_effigy_artifact(target)
+}
+
+fn configured_linux_workspace_artifact_source() -> Result<LinuxWorkspaceArtifactSource, RunnerError>
+{
+    let Some(raw) = std::env::var_os(EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV) else {
+        return Ok(LinuxWorkspaceArtifactSource::Auto);
+    };
+    let normalized = raw.to_string_lossy().trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "" | "auto" => Ok(LinuxWorkspaceArtifactSource::Auto),
+        "local" => Ok(LinuxWorkspaceArtifactSource::Local),
+        "download" | "github" | "release" => Ok(LinuxWorkspaceArtifactSource::Download),
+        _ => Err(RunnerError::task_invocation(format!(
+            "{EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV} must be one of `auto`, `local`, or `download`; got `{normalized}`"
+        ))),
+    }
 }
 
 fn sibling_effigy_repo_root(workspace_repo_root: &Path) -> Option<PathBuf> {
@@ -955,6 +985,7 @@ impl WorkspaceTransientProgressReporter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract_test_support::EnvGuard;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     fn temp_repo(manifest: &str) -> std::path::PathBuf {
@@ -1118,6 +1149,107 @@ primary_service = "workspace"
                 env!("CARGO_PKG_VERSION")
             )
         );
+    }
+
+    #[test]
+    fn workspace_artifact_source_defaults_to_auto() {
+        let _env = EnvGuard::set_many(&[(EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV, None)]);
+        assert_eq!(
+            configured_linux_workspace_artifact_source().expect("artifact source"),
+            LinuxWorkspaceArtifactSource::Auto
+        );
+    }
+
+    #[test]
+    fn workspace_artifact_source_accepts_download_aliases() {
+        for value in ["download", "github", "release"] {
+            let _env = EnvGuard::set_many(&[(
+                EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+                Some(value.to_owned()),
+            )]);
+            assert_eq!(
+                configured_linux_workspace_artifact_source().expect("artifact source"),
+                LinuxWorkspaceArtifactSource::Download
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_artifact_source_rejects_unknown_values() {
+        let _env = EnvGuard::set_many(&[(
+            EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+            Some("weird".to_owned()),
+        )]);
+        let error =
+            configured_linux_workspace_artifact_source().expect_err("unknown artifact source");
+        let rendered = error.to_string();
+        assert!(rendered.contains(EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV));
+        assert!(rendered.contains("auto"));
+        assert!(rendered.contains("download"));
+    }
+
+    #[test]
+    fn workspace_artifact_source_download_bypasses_discoverable_local_repo() {
+        let original_home = std::env::var_os("HOME");
+        let temp_home = std::env::temp_dir().join(format!(
+            "effigy-workspace-artifact-source-home-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_home).expect("mkdir temp home");
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "effigy-workspace-artifact-source-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let workspace = root.join("consumer");
+        let local_effigy = root.join("effigy");
+        std::fs::create_dir_all(&workspace).expect("mkdir workspace");
+        std::fs::create_dir_all(local_effigy.join("tasks")).expect("mkdir tasks");
+        std::fs::create_dir_all(local_effigy.join("containers")).expect("mkdir containers");
+        std::fs::write(local_effigy.join("effigy.toml"), "").expect("write manifest");
+        std::fs::write(local_effigy.join("tasks/effigy.tasks.toml"), "").expect("write tasks");
+        std::fs::write(local_effigy.join("containers/effigy.containers.toml"), "")
+            .expect("write containers");
+        let local_artifact =
+            local_effigy.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        std::fs::create_dir_all(local_artifact.parent().expect("artifact parent"))
+            .expect("mkdir artifact parent");
+        std::fs::write(&local_artifact, "local-artifact").expect("write local artifact");
+
+        let cache_path =
+            linux_workspace_effigy_cache_path(LinuxWorkspaceTarget::X86_64Gnu).expect("cache path");
+        std::fs::create_dir_all(cache_path.parent().expect("cache parent"))
+            .expect("mkdir cache parent");
+        std::fs::write(&cache_path, "downloaded-artifact").expect("write cache artifact");
+
+        let _env = EnvGuard::set_many(&[(
+            EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+            Some("download".to_owned()),
+        )]);
+        let artifact =
+            ensure_linux_workspace_effigy_artifact(&workspace, LinuxWorkspaceTarget::X86_64Gnu)
+                .expect("resolve artifact");
+
+        if let Some(value) = original_home {
+            unsafe {
+                std::env::set_var("HOME", value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(artifact, cache_path);
     }
 
     #[test]
