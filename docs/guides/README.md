@@ -55,6 +55,7 @@ pages only when you need more detail.
 
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
+- [`015-deferral-fallback-migration.md`](./015-deferral-fallback-migration.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 
 ### I want a host-clean local web/dev environment

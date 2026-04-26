@@ -135,6 +135,10 @@ During v0.x, MINOR bumps may include breaking changes.
   inspection, gateway status/setup, doctor, scan, and cache operations, plus
 
 ### Fixed
+- Stop non-managed container-backed tasks with a real `run` command from
+  being intercepted into the workspace shell handoff path. Bundle tasks like
+  `decodelabs` `seed` now execute their configured command inside the
+  container instead of just opening the container shell from the host.
 - Add a Rhai `trim_string(...)` host helper and switch shipped starter
   scripts onto it so bundle helpers stop breaking on Rhai's in-place
   `trim()` semantics, which return `()` instead of a trimmed string.
