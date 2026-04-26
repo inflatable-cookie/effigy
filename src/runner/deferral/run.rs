@@ -13,7 +13,9 @@ use effigy_cli::TaskInvocation;
 use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
 use effigy_manifest::{load_task_manifest, ManifestTask, ManifestTaskRunIn};
+use effigy_ui::style_text;
 use effigy_ui::theme::is_ci_environment;
+use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 
 use super::policy::DEFER_DEPTH_ENV;
@@ -246,8 +248,7 @@ fn run_deferred_request_with_binding(
                         deferral.source
                     ))
                 })?;
-            let had_active_lease =
-                has_active_host_container_lease(&deferral.working_dir, &policy.name)?;
+            let had_active_lease = has_active_host_container_lease(&deferral.working_dir, &policy)?;
             effigy_containers::validate_container_policy(&deferral.working_dir, &policy)
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
             effigy_containers::validate_compose_backend_runtime(&deferral.working_dir, &policy)
@@ -370,8 +371,11 @@ fn render_container_deferral_command(command: &str) -> String {
 
 fn emit_deferred_lease_notice(container_name: &str) {
     let timeout = format_duration_short(host_container_lease_timeout_duration());
+    let color_enabled =
+        resolve_color_enabled(OutputMode::from_env(), std::io::stderr().is_terminal());
     eprintln!(
-        "[info] temporary container lease active for `{container_name}`; idle shutdown in {timeout} unless reused or kept up explicitly"
+        "{} temporary container lease active for `{container_name}`; idle shutdown in {timeout} unless reused or kept up explicitly",
+        style_text(color_enabled, Theme::default().label, "[info]")
     );
 }
 

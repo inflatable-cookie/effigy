@@ -134,7 +134,11 @@ fn resolve_bundle_selection(
 }
 
 pub fn list_bundles() -> Vec<BundleSpec> {
-    vec![decodelabs_spec(), underlay_spec()]
+    vec![
+        decodelabs_spec(),
+        decodelabs_library_spec(),
+        underlay_spec(),
+    ]
 }
 
 pub fn get_bundle(name: &str) -> Option<BundleSpec> {
@@ -230,6 +234,7 @@ fn resolve_bundle_defaults(
 ) -> Result<Value, ManifestError> {
     match bundle_name {
         "decodelabs" => resolve_decodelabs_bundle(manifest_path, inputs),
+        "decodelabs-library" => resolve_decodelabs_library_bundle(manifest_path, inputs),
         "underlay" => resolve_underlay_bundle(manifest_path, inputs),
         other => Err(ManifestError::Compose {
             path: manifest_path.to_path_buf(),
@@ -427,7 +432,32 @@ fn resolve_local_bundle_inputs(
         }
     }
     normalize_database_bundle_inputs(manifest_path, bundle_name, &mut resolved)?;
+    normalize_bundle_specific_inputs(manifest_path, bundle_name, &mut resolved)?;
     Ok(resolved)
+}
+
+fn normalize_bundle_specific_inputs(
+    manifest_path: &Path,
+    bundle_name: &str,
+    inputs: &mut BTreeMap<String, Value>,
+) -> Result<(), ManifestError> {
+    if bundle_name != "decodelabs-library" {
+        return Ok(());
+    }
+    let shared_root_path = bundle_shared_root_path(manifest_path, bundle_name, inputs)?;
+    inputs.insert(
+        "shared_root".to_owned(),
+        Value::String(shared_root_path.display().to_string()),
+    );
+    if !inputs.contains_key("workspace_subdir") {
+        let workspace_subdir =
+            derive_bundle_workspace_subdir(manifest_path, &shared_root_path.display().to_string())?;
+        inputs.insert(
+            "workspace_subdir".to_owned(),
+            Value::String(workspace_subdir),
+        );
+    }
+    Ok(())
 }
 
 fn normalize_database_bundle_inputs(
@@ -633,6 +663,82 @@ fn decodelabs_spec() -> BundleSpec {
     }
 }
 
+fn decodelabs_library_spec() -> BundleSpec {
+    BundleSpec {
+        name: "decodelabs-library".to_owned(),
+        description: "DecodeLabs library workspace with a shared php-fpm dev container, Composer-global legacy Effigy deferral, and no default web/db/gateway services.".to_owned(),
+        inputs: vec![
+            BundleInputSpec {
+                name: "shared_root".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Host path mounted into the shared library container root. Defaults to the parent directory of the consuming repo (`../`).".to_owned(),
+                default: Some(Value::String("../".to_owned())),
+                example: Some(Value::String("../".to_owned())),
+            },
+            BundleInputSpec {
+                name: "workspace_subdir".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Repo path under `shared_root` used as the workspace CWD. Defaults to the consuming repo's relative path under `shared_root`.".to_owned(),
+                default: None,
+                example: Some(Value::String("collections".to_owned())),
+            },
+            BundleInputSpec {
+                name: "project_name".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Compose project name for the shared library container runtime.".to_owned(),
+                default: Some(Value::String("decodelabs-library-dev".to_owned())),
+                example: None,
+            },
+            BundleInputSpec {
+                name: "system_name".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Name of the `[systems.<name>]` block rendered by the bundle.".to_owned(),
+                default: Some(Value::String("dev".to_owned())),
+                example: None,
+            },
+            BundleInputSpec {
+                name: "container_name".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Name of the `[containers.<name>]` block hosting the shared library runtime.".to_owned(),
+                default: Some(Value::String("web".to_owned())),
+                example: None,
+            },
+            BundleInputSpec {
+                name: "workspace_service_name".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Name of the php-fpm workspace service inside the shared runtime container.".to_owned(),
+                default: Some(Value::String("app".to_owned())),
+                example: None,
+            },
+            BundleInputSpec {
+                name: "default_workspace".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Name of the `[systems.<system>.workspaces.<name>]` workspace treated as the system default.".to_owned(),
+                default: Some(Value::String("app".to_owned())),
+                example: None,
+            },
+        ],
+    }
+}
+
+const DECODELABS_PHP_EXTENSIONS: &[&str] = &[
+    "pdo_mysql",
+    "intl",
+    "exif",
+    "zip",
+    "gd",
+    "redis",
+    "memcached",
+    "opcache",
+];
+
 fn resolve_decodelabs_bundle(
     manifest_path: &Path,
     inputs: &BTreeMap<String, Value>,
@@ -683,14 +789,7 @@ node_version = "20"
 node_global_packages = ["eclint"]
 composer_global_packages = ["decodelabs/effigy"]
 extensions = [
-  "pdo_mysql",
-  "intl",
-  "exif",
-  "zip",
-  "gd",
-  "redis",
-  "memcached",
-  "opcache",
+__PHP_EXTENSIONS__
 ]
 
 [containers.__CONTAINER_NAME__.services.web]
@@ -752,10 +851,106 @@ run_in = "container"
         .replace("__SYSTEM_NAME__", &system_name)
         .replace("__CONTAINER_NAME__", &container_name)
         .replace("__WORKSPACE_SERVICE_NAME__", &workspace_service_name)
+        .replace(
+            "__PHP_EXTENSIONS__",
+            &render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  "),
+        )
         .replace("__DEFAULT_WORKSPACE__", &default_workspace);
 
     toml::from_str::<Value>(&rendered).map_err(|error| ManifestError::Parse {
         path: bundle_source_path("decodelabs"),
+        error,
+    })
+}
+
+fn resolve_decodelabs_library_bundle(
+    manifest_path: &Path,
+    inputs: &BTreeMap<String, Value>,
+) -> Result<Value, ManifestError> {
+    let shared_root_mount = bundle_shared_root_path(manifest_path, "decodelabs-library", inputs)?;
+    let workspace_subdir = optional_bundle_string(inputs, "workspace_subdir")
+        .map(Ok)
+        .unwrap_or_else(|| {
+            derive_bundle_workspace_subdir(manifest_path, &shared_root_mount.display().to_string())
+        })?;
+    let project_name = optional_bundle_string(inputs, "project_name")
+        .unwrap_or_else(|| "decodelabs-library-dev".to_owned());
+    let system_name =
+        optional_bundle_string(inputs, "system_name").unwrap_or_else(|| "dev".to_owned());
+    let container_name =
+        optional_bundle_string(inputs, "container_name").unwrap_or_else(|| "web".to_owned());
+    let workspace_service_name = optional_bundle_string(inputs, "workspace_service_name")
+        .unwrap_or_else(|| "app".to_owned());
+    let default_workspace =
+        optional_bundle_string(inputs, "default_workspace").unwrap_or_else(|| "app".to_owned());
+
+    let template = r#"
+[containers]
+default = "__CONTAINER_NAME__"
+
+[containers.__CONTAINER_NAME__]
+driver = "colima"
+startup = "detached"
+project_name = "__PROJECT_NAME__"
+primary_service = "__WORKSPACE_SERVICE_NAME__"
+working_dir = "/workspace-root"
+
+[containers.__CONTAINER_NAME__.lifecycle]
+on_task_exit = "stop"
+shutdown = "graceful"
+
+[containers.__CONTAINER_NAME__.aliases]
+php = "__WORKSPACE_SERVICE_NAME__"
+composer = { service = "__WORKSPACE_SERVICE_NAME__", command = "composer" }
+
+[containers.__CONTAINER_NAME__.services.__WORKSPACE_SERVICE_NAME__]
+catalog = "php-fpm"
+version = "8.4"
+document_root = "."
+working_dir = "/workspace-root"
+mount_source = "__SHARED_ROOT__"
+node_version = "20"
+node_global_packages = ["eclint"]
+composer_global_packages = ["decodelabs/effigy"]
+extensions = [
+__PHP_EXTENSIONS__
+]
+
+[systems]
+default = "__SYSTEM_NAME__"
+
+[systems.__SYSTEM_NAME__]
+container = "__CONTAINER_NAME__"
+default_workspace = "__DEFAULT_WORKSPACE__"
+working_dir = "/workspace-root/__WORKSPACE_SUBDIR__"
+user = "dev"
+home = "/home/dev"
+
+[systems.__SYSTEM_NAME__.workspaces.__DEFAULT_WORKSPACE__]
+
+[tasks.dev]
+workspace = "__DEFAULT_WORKSPACE__"
+
+[defer]
+run = "composer global exec effigy -- {request} {args}"
+run_in = "container"
+"#;
+
+    let rendered = template
+        .replace("__CONTAINER_NAME__", &container_name)
+        .replace("__PROJECT_NAME__", &project_name)
+        .replace("__SHARED_ROOT__", &shared_root_mount.display().to_string())
+        .replace("__SYSTEM_NAME__", &system_name)
+        .replace("__DEFAULT_WORKSPACE__", &default_workspace)
+        .replace("__WORKSPACE_SERVICE_NAME__", &workspace_service_name)
+        .replace("__WORKSPACE_SUBDIR__", &workspace_subdir)
+        .replace(
+            "__PHP_EXTENSIONS__",
+            &render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  "),
+        );
+
+    toml::from_str::<Value>(&rendered).map_err(|error| ManifestError::Parse {
+        path: bundle_source_path("decodelabs-library"),
         error,
     })
 }
@@ -1142,8 +1337,9 @@ fn shipped_bundle_export_files(name: &str) -> Result<Vec<BundleExportFile>, Mani
         detail: format!("unknown bundle `{name}`"),
     })?;
     let defaults = match name {
-        "decodelabs" => DECODELABS_EXPORT_TEMPLATE,
-        "underlay" => UNDERLAY_EXPORT_TEMPLATE,
+        "decodelabs" => decodelabs_export_template(),
+        "decodelabs-library" => decodelabs_library_export_template(),
+        "underlay" => underlay_export_template(),
         other => {
             return Err(ManifestError::Compose {
                 path: bundle_source_path(other),
@@ -1159,7 +1355,7 @@ fn shipped_bundle_export_files(name: &str) -> Result<Vec<BundleExportFile>, Mani
         },
         BundleExportFile {
             path: "effigy.toml",
-            contents: defaults.to_owned(),
+            contents: defaults,
         },
         BundleExportFile {
             path: "README.md",
@@ -1228,32 +1424,35 @@ fn bundle_input_type_literal(value_type: BundleInputType) -> &'static str {
     }
 }
 
-const DECODELABS_EXPORT_TEMPLATE: &str = r#"[containers]
-default = "{{ inputs.container_name }}"
+fn decodelabs_export_template() -> String {
+    let extensions = render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  ");
+    format!(
+        r#"[containers]
+default = "{{{{ inputs.container_name }}}}"
 
-[containers.{{ inputs.container_name }}]
+[containers.{{{{ inputs.container_name }}}}]
 driver = "colima"
 startup = "detached"
-project_name = "{{ inputs.project_name }}"
-primary_service = "{{ inputs.workspace_service_name }}"
+project_name = "{{{{ inputs.project_name }}}}"
+primary_service = "{{{{ inputs.workspace_service_name }}}}"
 working_dir = "/var/www/html"
 
-[containers.{{ inputs.container_name }}.lifecycle]
+[containers.{{{{ inputs.container_name }}}}.lifecycle]
 on_task_exit = "stop"
 shutdown = "graceful"
 
-[containers.{{ inputs.container_name }}.dns]
+[containers.{{{{ inputs.container_name }}}}.dns]
 routes = [
-  { domain = "{{ inputs.host }}", tls = true, service = "web" },
-  { domain = "pma.{{ inputs.host }}", tls = true, service = "pma" },
+  {{ domain = "{{{{ inputs.host }}}}", tls = true, service = "web" }},
+  {{ domain = "pma.{{{{ inputs.host }}}}", tls = true, service = "pma" }},
 ]
 
-[containers.{{ inputs.container_name }}.aliases]
-php = "{{ inputs.workspace_service_name }}"
-composer = { service = "{{ inputs.workspace_service_name }}", command = "composer" }
-mysql = { service = "db", command = "mysql -uroot{% raw %}{% if services.db.params.root_password %} -p{{ services.db.params.root_password }}{% endif %}{% endraw %} {{ inputs.database }}" }
+[containers.{{{{ inputs.container_name }}}}.aliases]
+php = "{{{{ inputs.workspace_service_name }}}}"
+composer = {{ service = "{{{{ inputs.workspace_service_name }}}}", command = "composer" }}
+mysql = {{ service = "db", command = "mysql -uroot{{% raw %}}{{% if services.db.params.root_password %}} -p{{{{ services.db.params.root_password }}}}{{% endif %}}{{% endraw %}} {{{{ inputs.database }}}}" }}
 
-[containers.{{ inputs.container_name }}.services.{{ inputs.workspace_service_name }}]
+[containers.{{{{ inputs.container_name }}}}.services.{{{{ inputs.workspace_service_name }}}}]
 catalog = "php-fpm"
 version = "8.4"
 document_root = "."
@@ -1261,59 +1460,112 @@ node_version = "20"
 node_global_packages = ["eclint"]
 composer_global_packages = ["decodelabs/effigy"]
 extensions = [
-  "pdo_mysql",
-  "intl",
-  "exif",
-  "zip",
-  "gd",
-  "redis",
-  "memcached",
-  "opcache",
+{extensions}
 ]
 
-[containers.{{ inputs.container_name }}.services.web]
+[containers.{{{{ inputs.container_name }}}}.services.web]
 catalog = "nginx"
 variant = "decodelabs"
 document_root = "."
-service = "{{ inputs.workspace_service_name }}"
+service = "{{{{ inputs.workspace_service_name }}}}"
 
-[containers.{{ inputs.container_name }}.services.db]
+[containers.{{{{ inputs.container_name }}}}.services.db]
 catalog = "mariadb"
-database = "{{ inputs.database }}"
-databases = [{% for database in inputs.databases %}"{{ database }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+database = "{{{{ inputs.database }}}}"
+databases = [{{% for database in inputs.databases %}}"{{{{ database }}}}"{{% if not loop.last %}}, {{% endif %}}{{% endfor %}}]
 
-[containers.{{ inputs.container_name }}.services.pma]
+[containers.{{{{ inputs.container_name }}}}.services.pma]
 catalog = "phpmyadmin"
 database_host = "db"
 
-[containers.{{ inputs.container_name }}.services.memcache]
+[containers.{{{{ inputs.container_name }}}}.services.memcache]
 catalog = "memcached"
 memory = 128
 
-[containers.{{ inputs.container_name }}.services.redis]
+[containers.{{{{ inputs.container_name }}}}.services.redis]
 catalog = "redis"
 
 [systems]
-default = "{{ inputs.system_name }}"
+default = "{{{{ inputs.system_name }}}}"
 
-[systems.{{ inputs.system_name }}]
-default_workspace = "{{ inputs.default_workspace }}"
-container = "{{ inputs.container_name }}"
+[systems.{{{{ inputs.system_name }}}}]
+default_workspace = "{{{{ inputs.default_workspace }}}}"
+container = "{{{{ inputs.container_name }}}}"
+
+[systems.{{{{ inputs.system_name }}}}.workspaces.{{{{ inputs.default_workspace }}}}]
 
 [tasks.dev]
-workspace = "{{ inputs.default_workspace }}"
+workspace = "{{{{ inputs.default_workspace }}}}"
 
 [tasks.seed]
-workspace = "{{ inputs.default_workspace }}"
-run = [{ rhai = "{{ bundle.root }}/scripts/seed-latest-db-dump.rhai" }]
+workspace = "{{{{ inputs.default_workspace }}}}"
+run = [{{ rhai = "{{{{ bundle.root }}}}/scripts/seed-latest-db-dump.rhai" }}]
 
 [tasks.release]
 run = "composer global exec effigy -- release"
 
 [defer]
-run = "composer global exec effigy -- {request} {args}"
+run = "composer global exec effigy -- {{request}} {{args}}"
 run_in = "container"
-"#;
+"#
+    )
+}
+
+fn decodelabs_library_export_template() -> String {
+    let extensions = render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  ");
+    format!(
+        r#"[containers]
+default = "{{{{ inputs.container_name }}}}"
+
+[containers.{{{{ inputs.container_name }}}}]
+driver = "colima"
+startup = "detached"
+project_name = "{{{{ inputs.project_name }}}}"
+primary_service = "{{{{ inputs.workspace_service_name }}}}"
+working_dir = "/workspace-root"
+
+[containers.{{{{ inputs.container_name }}}}.lifecycle]
+on_task_exit = "stop"
+shutdown = "graceful"
+
+[containers.{{{{ inputs.container_name }}}}.aliases]
+php = "{{{{ inputs.workspace_service_name }}}}"
+composer = {{ service = "{{{{ inputs.workspace_service_name }}}}", command = "composer" }}
+
+[containers.{{{{ inputs.container_name }}}}.services.{{{{ inputs.workspace_service_name }}}}]
+catalog = "php-fpm"
+version = "8.4"
+document_root = "."
+working_dir = "/workspace-root"
+mount_source = "{{{{ inputs.shared_root }}}}"
+node_version = "20"
+node_global_packages = ["eclint"]
+composer_global_packages = ["decodelabs/effigy"]
+extensions = [
+{extensions}
+]
+
+[systems]
+default = "{{{{ inputs.system_name }}}}"
+
+[systems.{{{{ inputs.system_name }}}}]
+container = "{{{{ inputs.container_name }}}}"
+default_workspace = "{{{{ inputs.default_workspace }}}}"
+working_dir = "/workspace-root/{{{{ inputs.workspace_subdir }}}}"
+user = "dev"
+home = "/home/dev"
+
+[systems.{{{{ inputs.system_name }}}}.workspaces.{{{{ inputs.default_workspace }}}}]
+
+[tasks.dev]
+workspace = "{{{{ inputs.default_workspace }}}}"
+
+[defer]
+run = "composer global exec effigy -- {{request}} {{args}}"
+run_in = "container"
+"#
+    )
+}
 
 const UNDERLAY_EXPORT_TEMPLATE: &str = r#"[package_manager]
 js = "bun"
@@ -1392,6 +1644,10 @@ run_in = "host"
 run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
 run_in = "host"
 "#;
+
+fn underlay_export_template() -> String {
+    UNDERLAY_EXPORT_TEMPLATE.to_owned()
+}
 
 fn materialize_shipped_bundle_assets(
     manifest_path: &Path,
@@ -1487,6 +1743,7 @@ fn prune_stale_materialized_bundle_roots(
 fn embedded_bundle_assets(bundle_name: &str) -> &'static [EmbeddedBundleAsset] {
     match bundle_name {
         "decodelabs" => DECODELABS_ASSETS,
+        "decodelabs-library" => &[],
         "underlay" => UNDERLAY_ASSETS,
         _ => &[],
     }
@@ -1553,6 +1810,38 @@ fn required_bundle_string(
     Ok(value.to_owned())
 }
 
+fn bundle_shared_root_input(
+    _manifest_path: &Path,
+    bundle_name: &str,
+    inputs: &BTreeMap<String, Value>,
+) -> Result<String, ManifestError> {
+    Ok(
+        optional_bundle_string(inputs, "shared_root").unwrap_or_else(|| {
+            bundle_default_input_string(bundle_name, "shared_root")
+                .unwrap_or_else(|| "../".to_owned())
+        }),
+    )
+}
+
+fn bundle_shared_root_path(
+    manifest_path: &Path,
+    bundle_name: &str,
+    inputs: &BTreeMap<String, Value>,
+) -> Result<PathBuf, ManifestError> {
+    let shared_root = bundle_shared_root_input(manifest_path, bundle_name, inputs)?;
+    let shared_root_path = resolve_bundle_host_path(manifest_path, &shared_root);
+    Ok(shared_root_path.canonicalize().unwrap_or(shared_root_path))
+}
+
+fn bundle_default_input_string(bundle_name: &str, key: &str) -> Option<String> {
+    list_bundles()
+        .into_iter()
+        .find(|spec| spec.name == bundle_name)
+        .and_then(|spec| spec.inputs.into_iter().find(|input| input.name == key))
+        .and_then(|input| input.default)
+        .and_then(|value| value.as_str().map(str::to_owned))
+}
+
 fn optional_bundle_integer(inputs: &BTreeMap<String, Value>, key: &str) -> Option<i64> {
     bundle_input_value(inputs, key).and_then(Value::as_integer)
 }
@@ -1577,6 +1866,61 @@ fn render_toml_string_list(inputs: &BTreeMap<String, Value>, key: &str) -> Strin
         .collect::<Vec<_>>()
         .join(", ");
     format!("[{encoded}]")
+}
+
+fn render_toml_string_array_lines(values: &[&str], indent: &str) -> String {
+    values
+        .iter()
+        .map(|value| format!("{indent}{value:?},"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn derive_bundle_workspace_subdir(
+    manifest_path: &Path,
+    shared_root: &str,
+) -> Result<String, ManifestError> {
+    let manifest_root = manifest_path
+        .parent()
+        .ok_or_else(|| ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: "bundle workspace subdir derivation requires a manifest parent directory"
+                .to_owned(),
+        })?;
+    let shared_root = resolve_bundle_host_path(manifest_path, shared_root);
+    let manifest_root = manifest_root
+        .canonicalize()
+        .unwrap_or_else(|_| manifest_root.to_path_buf());
+    let shared_root = shared_root.canonicalize().unwrap_or(shared_root);
+    let relative = manifest_root
+        .strip_prefix(&shared_root)
+        .map_err(|_| ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+                "bundle `decodelabs-library` could not derive `workspace_subdir` because repo root {} is not under shared_root {}",
+                manifest_root.display(),
+                shared_root.display()
+            ),
+        })?;
+    if relative.as_os_str().is_empty() {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: "bundle `decodelabs-library` requires `workspace_subdir` when the repo root equals `shared_root`".to_owned(),
+        });
+    }
+    Ok(relative.display().to_string())
+}
+
+fn resolve_bundle_host_path(manifest_path: &Path, path: &str) -> PathBuf {
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        path
+    } else {
+        manifest_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(path)
+    }
 }
 
 fn underlay_route_domain(host: &str, label: Option<&str>) -> String {

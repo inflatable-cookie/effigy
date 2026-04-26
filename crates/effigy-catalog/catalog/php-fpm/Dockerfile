@@ -80,10 +80,11 @@ RUN if [ -n "$EXTENSIONS" ]; then \
 # custom php.ini or .ini fragment into /usr/local/etc/php/conf.d/.
 RUN { \
         echo 'memory_limit = 512M'; \
-        echo 'upload_max_filesize = 64M'; \
-        echo 'post_max_size = 64M'; \
+        echo 'upload_max_filesize = 256M'; \
+        echo 'post_max_size = 256M'; \
         echo 'max_execution_time = 300'; \
         echo 'max_input_time = 300'; \
+        echo 'date.timezone = UTC'; \
         echo 'display_errors = On'; \
         echo 'display_startup_errors = On'; \
         echo 'error_reporting = E_ALL'; \

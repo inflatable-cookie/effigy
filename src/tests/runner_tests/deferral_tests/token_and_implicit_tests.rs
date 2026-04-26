@@ -25,12 +25,18 @@ fn setup_fake_docker_deferral_runtime(root: &std::path::Path) -> (std::path::Pat
         "#!/bin/sh\ncase \"$1\" in\n  status)\n    printf 'INFO[0000] status: Running\\n'\n    exit 0\n    ;;\n  start)\n    printf 'started\\n'\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
     );
     let old_path = std::env::var("PATH").ok().unwrap_or_default();
+    let lease_home = root.join("lease-home");
+    fs::create_dir_all(&lease_home).expect("mkdir lease home");
     let env = EnvGuard::set_many(&[
         ("PATH", Some(format!("{}:{old_path}", bin_dir.display()))),
         ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
         (
             "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
             Some("1".to_owned()),
+        ),
+        (
+            "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+            Some(lease_home.display().to_string()),
         ),
     ]);
     (docker_log, env)
@@ -286,5 +292,59 @@ database = "legacy"
     assert!(
         lease_token.is_none(),
         "expected cleared host-container lease"
+    );
+}
+
+#[test]
+fn run_manifest_task_decodelabs_library_bundle_shares_lease_across_repos() {
+    let _guard = lock_test();
+    let root = temp_workspace("decodelabs-library-shared-lease");
+    let shared_root = root.join("libraries/decodelabs");
+    let repo_a = shared_root.join("clockwork");
+    let repo_b = shared_root.join("clocksmith");
+    std::fs::create_dir_all(&repo_a).expect("mkdir repo a");
+    std::fs::create_dir_all(&repo_b).expect("mkdir repo b");
+    std::fs::create_dir(repo_a.join(".git")).expect("git dir a");
+    std::fs::create_dir(repo_b.join(".git")).expect("git dir b");
+    write_root_manifest(
+        &repo_a,
+        &format!(
+            r#"[bundle]
+base = "decodelabs-library"
+shared_root = "{}"
+"#,
+            shared_root.display()
+        ),
+    );
+    write_root_manifest(
+        &repo_b,
+        &format!(
+            r#"[bundle]
+base = "decodelabs-library"
+shared_root = "{}"
+"#,
+            shared_root.display()
+        ),
+    );
+    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root);
+
+    run_task_expect_empty_output(
+        &repo_a,
+        "missing-task",
+        &["--watch"],
+        "decodelabs-library bundle container deferral should succeed",
+    );
+
+    let token_a = crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
+        &repo_a, "web",
+    )
+    .expect("read lease token for repo a");
+    let token_b = crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
+        &repo_b, "web",
+    )
+    .expect("read lease token for repo b");
+    assert_eq!(
+        token_a, token_b,
+        "expected shared library repos to see the same host-container lease"
     );
 }
