@@ -151,7 +151,12 @@ pub fn render_bundle_defaults(
     name: &str,
     inputs: &BTreeMap<String, Value>,
 ) -> Result<Value, ManifestError> {
-    resolve_bundle_defaults(&bundle_source_path(name), &Value::Table(Default::default()), name, inputs)
+    resolve_bundle_defaults(
+        &bundle_source_path(name),
+        &Value::Table(Default::default()),
+        name,
+        inputs,
+    )
 }
 
 pub fn list_bundle_default_paths(name: &str) -> Result<Vec<String>, ManifestError> {

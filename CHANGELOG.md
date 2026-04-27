@@ -129,6 +129,23 @@ During v0.x, MINOR bumps may include breaking changes.
   the manifest default.
 
 ### Fixed
+- Stop the workspace permission prep from failing wholesale when the host
+  gitconfig / SSH known_hosts read-only bind mounts land under
+  `/home/dev`. The chown step now uses `chown -fR ... || true` so the
+  per-entry "Read-only file system" failures on the bind-mounted files
+  are silently tolerated. Real misconfigurations (missing target,
+  unwritable parent) still fail via `mkdir -p` and the loop
+  scaffolding.
+- Emit the host SSH agent forward unconditionally when
+  `forward_host_ssh_agent = true` (the default). The previous
+  implementation stat'd `/run/host-services/ssh-auth.sock` from the
+  Effigy process on macOS, but that path only exists inside the Colima
+  VM where compose runs — so the host-side check always failed and the
+  mount was silently skipped, leaving `git push` over SSH to die with
+  `Permission denied (publickey)`. Now we trust Colima to honour the
+  mount; if the agent isn't actually forwarded, compose-up fails loudly
+  instead of leaving ssh keyless at runtime. Opt-out via the catalog
+  param.
 - Let VT-backed managed TUI panes wrap rendered rows to the tab width again
   while still keeping the wider PTY buffer intact, so long real log lines
   stop being clipped without bringing back Bun-style progress row history
@@ -193,6 +210,13 @@ During v0.x, MINOR bumps may include breaking changes.
   workspace runtimes now overlay those adopted paths from
   `.effigy/runtime/isolation/...`, keeping source shared while isolating
   install/build directories inside the container.
+- Auto-adopt mounted sibling repo isolation contracts in direct-compose
+  workspace runtimes, so underlay-style consumers do not need to repeat the
+  same repo list under both `systems.<name>.mounts` and
+  `systems.<name>.isolation`. The isolation overlays now render as named
+  volumes instead of long host bind mounts, which keeps the Colima
+  `nerdctl/mounts` label under containerd's 4096-byte limit on repos like
+  `underlay-reference`.
 - Restore per-subproject `target/` and `node_modules/` named-volume injection
   on workspace-rust-bun containers via two new catalog params
   (`cargo_target_dirs`, `node_modules_dirs`) populated by the shipped
@@ -345,6 +369,23 @@ During v0.x, MINOR bumps may include breaking changes.
   from active guides have been redirected through `archive/`.
 
 ### Added
+- Install `openssh-client` in the `php-fpm` and `workspace-rust-bun` catalog
+  base images so `git push` over SSH actually works inside the container.
+  Without this git fails with `error: cannot run ssh: No such file or
+  directory` even when the host SSH agent socket is forwarded.
+- Mount the host developer's git identity and SSH access into workspace
+  containers so in-container release tasks (e.g. `git push`) work without
+  hand-configuring credentials per container. Adds three default-on params on
+  the `php-fpm`, `workspace-rust-bun`, and `node` catalogs:
+  `mount_host_git_config` (binds `~/.gitconfig` read-only at
+  `/home/dev/.gitconfig`), `mount_host_ssh_known_hosts` (binds
+  `~/.ssh/known_hosts` read-only at `/home/dev/.ssh/known_hosts`), and
+  `forward_host_ssh_agent` (forwards Colima's
+  `/run/host-services/ssh-auth.sock` and sets `SSH_AUTH_SOCK` accordingly).
+  All three skip silently when the host source is absent; private keys
+  themselves are deliberately not copied — the agent socket is the auth path.
+  User-set `SSH_AUTH_SOCK` env values in the manifest take precedence over
+  Effigy's runtime default.
 - Add a user-global `~/.effigy/config.toml` configuration file with bundle-keyed
   `library_mounts` entries. When a project's manifest declares `[bundle].base
   = "<name>"` matching a `[bundle.<name>]` block in the user config, each

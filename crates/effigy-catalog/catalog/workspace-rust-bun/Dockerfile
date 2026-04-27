@@ -16,6 +16,7 @@ RUN apt-get update \
         curl \
         git \
         libssl-dev \
+        openssh-client \
         pkg-config \
         procps \
     && rm -rf /var/lib/apt/lists/*

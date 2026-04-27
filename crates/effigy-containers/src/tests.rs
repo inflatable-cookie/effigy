@@ -404,6 +404,62 @@ primary_service = "app"
 }
 
 #[test]
+fn validate_compose_backend_runtime_rejects_colima_mount_payload_over_budget() {
+    let root = temp_repo("colima-mount-budget");
+    let volumes = (0..72)
+        .map(|index| {
+            format!(
+                "      - workspace-volume-{index:02}:/workspace-root/acme/some/really/long/path/{index:02}/node_modules\n"
+            )
+        })
+        .collect::<String>();
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        format!(
+            "services:\n  app:\n    image: alpine\n    volumes:\n{volumes}volumes:\n  workspace-volume-00: {{}}\n"
+        ),
+    )
+    .expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let previous = std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK");
+    unsafe {
+        std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1");
+    }
+    let error = with_test_compose_backend(ComposeBackend::ColimaNerdctl, || {
+        crate::validate_compose_backend_runtime(&root, &policy).expect_err("should fail")
+    });
+    match previous {
+        Some(value) => unsafe {
+            std::env::set_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", value)
+        },
+        None => unsafe { std::env::remove_var("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK") },
+    }
+
+    assert!(matches!(error, ContainerPolicyError::TaskInvocation(_)));
+    assert!(error.to_string().contains("estimated mount payload"));
+    assert!(error
+        .to_string()
+        .contains("trim isolation or workspace mounts"));
+    assert!(error
+        .to_string()
+        .contains("/workspace-root/acme/some/really/long/path"));
+}
+
+#[test]
 fn effective_attach_mode_respects_flags_before_policy() {
     let root = temp_repo("attach-mode");
     fs::write(
@@ -1325,7 +1381,6 @@ user = "dev"
 home = "/home/dev"
 working_dir = "/workspace-root/underlay-reference"
 mounts = ["../underlay", "../poodle"]
-isolation = [{ repo = "../poodle" }]
 
 [containers.stack]
 compose_file = "infra/dev/docker-compose.yml"
@@ -1371,24 +1426,26 @@ volumes:
         "rewritten compose: {rewritten}"
     );
     assert!(
-        rewritten.contains(
-            "/.effigy/runtime/isolation/stack/poodle/node_modules:/workspace-root/poodle/node_modules"
-        ),
-        "rewritten compose should overlay poodle node_modules isolation: {rewritten}"
+        rewritten.contains("efi-iso-")
+            && rewritten.contains(":/workspace-root/poodle/node_modules"),
+        "rewritten compose should overlay poodle node_modules isolation with a named volume: {rewritten}"
     );
     assert!(
-        rewritten.contains(
-            "/.effigy/runtime/isolation/stack/poodle/.svelte-kit:/workspace-root/poodle/.svelte-kit"
-        ),
-        "rewritten compose should overlay poodle .svelte-kit isolation: {rewritten}"
+        rewritten.contains("efi-iso-")
+            && rewritten.contains(":/workspace-root/poodle/.svelte-kit"),
+        "rewritten compose should overlay poodle .svelte-kit isolation with a named volume: {rewritten}"
     );
     assert!(
         !rewritten.contains("../../../:/workspace-root"),
         "rewritten compose should remove broad parent mount: {rewritten}"
     );
     assert!(
-        rewritten.contains("- stack-cache:/cache"),
-        "rewritten compose should preserve named volumes: {rewritten}"
+        rewritten.contains(":/cache") && rewritten.contains("name: efv-"),
+        "rewritten compose should preserve and compact named volumes: {rewritten}"
+    );
+    assert!(
+        rewritten.contains("name: efi-iso-"),
+        "rewritten compose should declare poodle node_modules isolation volume: {rewritten}"
     );
     assert!(
         !rewritten.contains("user: dev"),

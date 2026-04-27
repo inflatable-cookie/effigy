@@ -44,7 +44,6 @@ let underlay_source = optional_config_string("bundle.sources.underlay", "../unde
 let poodle_source = optional_config_string("bundle.sources.poodle", "../poodle");
 let underlay_dir = path_join(repo_root, underlay_source);
 let poodle_dir = path_join(repo_root, poodle_source);
-let poodle_components_dir = path_join(poodle_dir, "packages/svelte/components");
 let app_client_dir = path_join(repo_root, "app-client");
 let acme_client_dir = path_join(repo_root, "acme-client");
 let legacy_client_dir = path_join(repo_root, "client");
@@ -207,8 +206,7 @@ let shell_layout_helpers = "ensure_bun_install_if_present() {\n"
     + "\n";
 
 let shell_targets = "ensure_bun_install_if_present \"" + underlay_dir + "\" \"underlay\"\n"
-    + "ensure_bun_install_if_present \"" + poodle_dir + "\" \"poodle\"\n"
-    + "ensure_bun_install_if_present \"" + poodle_components_dir + "\" \"poodle-components\"\n";
+    + "ensure_bun_install_if_present \"" + poodle_dir + "\" \"poodle\"\n";
 
 if client_dir != "" {
     shell_targets += "ensure_bun_install_if_present \"" + client_abs_dir + "\" \"" + client_dir + "\"\n";
