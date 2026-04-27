@@ -45,16 +45,14 @@ overrides from an existing Underlay repo.
 effigy init underlay
 ```
 
-Emits three files into the current repo:
+Emits one root manifest into the current repo:
 
 | File                        | Purpose                                                                                      |
 |-----------------------------|----------------------------------------------------------------------------------------------|
-| `effigy.toml`               | Root manifest. `[bundle]`, optional `systems.dev.mounts`, repo alias, and `[manifest].include`. |
-| `effigy.bootstrap.toml`     | `[bootstrap]` entry points and the bootstrap-local `run` sequence.                           |
-| `effigy.tasks.toml`         | Managed `tasks.dev` concurrent shape + `health` / `validate` / `qa` aggregators.             |
+| `effigy.toml`               | Root manifest. `[bundle]`, optional `systems.dev.mounts`, repo alias, repo-owned tasks, and any explicit overrides. |
 
 The default UI setup script is a bundled asset referenced from
-`effigy.tasks.toml` through `{{ bundle.root }}/scripts/dev/ui-setup.rhai`.
+`effigy.toml` through `{{ bundle.root }}/scripts/dev/ui-setup.rhai`.
 It is not copied into the consumer repo. The helper reads `[bundle.dirs]`
 when repos need explicit package-directory mapping instead of the default
 `app-*` / `acme-*` guesses. If a repo still needs custom hydration after
@@ -103,27 +101,26 @@ copy here so users can refer back without re-emitting.
      entry becomes the primary database (compatible with `database`); all
      entries are created at first boot.
    - align `[bundle].api_port`, `[bundle].admin_port`, and `[bundle].front_port` if the repo uses different dev-server ports
-   - when the repo uses different app package names, set `[bundle.dirs]` (`front`, `admin`, and optional `ui`)
+   - when the repo uses different app package names, set `[bundle.dirs]` (`api`, `client`, optional `ui`, `front`, `admin`)
    - when gateway labels should follow those app names too, set `[bundle.routes]` (`front`, `admin`, `api`)
    - optionally override the name knobs — `[bundle].system_name`
      (default `dev`), `[bundle].container_name` (default `stack`),
      `[bundle].workspace_service_name` (default `workspace`), and
      `[bundle].default_workspace` (default `app`) — when the defaults
-     collide with existing repo conventions. Keep `effigy.tasks.toml`
-     and any `systems.<name>` override blocks aligned with the new
-     names.
+     collide with existing repo conventions. Keep the root `tasks.*`
+     entries and any `systems.<name>` override blocks aligned with the
+     new names.
    - adjust `systems.dev.mounts` for any sibling checkouts
 
-2. In `effigy.tasks.toml`:
+2. In `effigy.toml` tasks:
    - replace the `app-api/dev`, `app-admin/dev`, `app-front/dev`
      entries with the repo's real child apps
    - update tab ordering and aggregator task lists to match
    - keep bundled setup helpers referenced through `{{ bundle.root }}`
      unless the repo intentionally needs to own a forked script
 
-3. In `effigy.bootstrap.toml`, rewrite the bootstrap `run` sequence to
-   match the repo's dependency sync paths, preferring `bootstrap deps sync ...`
-   over shell hydration.
+3. Only add an explicit `[bootstrap]` block when the repo truly needs to
+   override the bundle-owned default children or dependency sync behavior.
 
 After the edit pass, the consumer repo carries **no** `docker-compose.yml`
 and **no** workspace Dockerfile. The root manifest only chooses bundle
@@ -133,13 +130,14 @@ bundled defaults each run.
 ## Bundle app mapping and route labels
 
 `[bundle.dirs]` tells the bundled `ui-setup.rhai` helper which packages
-back the front, admin, and (optional) shared UI surfaces:
+back the shared API client, optional UI package, and the front/admin surfaces:
 
 ```toml
 [bundle.dirs]
+client = "packages/api-client"
+ui = "packages/ui"
 front = "packages/web"
 admin = "packages/dashboard"
-ui = "packages/ui-kit"
 ```
 
 When unset, the helper guesses against `app-*` and `acme-*` package
@@ -170,8 +168,6 @@ The starter uses only the stable Effigy model:
 - [`063-container-system-guide.md`](./063-container-system-guide.md) for
   the generated service catalog and `[containers.<name>.services.*]`.
 - manifest bundles for the stable Underlay stack preset.
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-  for `[manifest].include` composition.
 
 No new runtime concept is introduced.
 

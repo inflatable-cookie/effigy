@@ -5,12 +5,6 @@ description = "Underlay-style manifest shape: bundle-backed workspace container 
 [[files]]
 target = "effigy.toml"
 
-[[files]]
-target = "effigy.bootstrap.toml"
-
-[[files]]
-target = "effigy.tasks.toml"
-
 [guidance]
 text = """
 Next steps:
@@ -21,20 +15,19 @@ Next steps:
    - set `[bundle].workspace_subdir` to the repo's directory name under `/workspace-root`
    - set `[bundle].database` to the repo's dev database name
    - align `[bundle].api_port`, `[bundle].admin_port`, and `[bundle].front_port` if the repo uses different dev-server ports
-   - when the repo uses different app package names, set `[bundle.dirs]` (`front`, `admin`, and optional `ui`)
+   - when the repo uses different app package names, set `[bundle.dirs]` (`api`, `client`, optional `ui`, `front`, `admin`)
    - when gateway labels should follow those app names too, set `[bundle.routes]` (`front`, `admin`, `api`)
    - adjust `systems.dev.mounts` for any sibling checkouts
 
-2. In `effigy.tasks.toml`:
+2. In `effigy.toml` tasks:
    - replace the `app-api/dev`, `app-admin/dev`, `app-front/dev`
      entries with the repo's real child apps
    - update tab ordering and aggregator task lists to match
    - keep bundled setup helpers referenced through `{{ bundle.root }}`
      unless the repo intentionally needs to own a forked script
 
-3. In `effigy.bootstrap.toml`, rewrite the bootstrap `run` sequence to
-   match the repo's dependency sync paths, preferring `bootstrap deps sync ...`
-   over shell hydration.
+3. Only add an explicit `[bootstrap]` block when the repo truly needs to
+   override the bundle-owned default children or dependency sync behavior.
 
 Then run `effigy tasks` to see what the starter wired up.
 """

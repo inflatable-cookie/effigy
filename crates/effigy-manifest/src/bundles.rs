@@ -1030,6 +1030,14 @@ fn underlay_spec() -> BundleSpec {
                 example: None,
             },
             BundleInputSpec {
+                name: "dirs.api".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "API package directory for bootstrap env generation and dependency sync. When omitted, the bundle falls back to the shipped Underlay guesses.".to_owned(),
+                default: None,
+                example: Some(Value::String("farmyard".to_owned())),
+            },
+            BundleInputSpec {
                 name: "dirs.front".to_owned(),
                 value_type: BundleInputType::String,
                 required: false,
@@ -1046,12 +1054,20 @@ fn underlay_spec() -> BundleSpec {
                 example: Some(Value::String("dairy".to_owned())),
             },
             BundleInputSpec {
+                name: "dirs.client".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Shared client package directory the bundled UI setup helper should hydrate before front/admin startup. When omitted, the helper falls back to the shipped Underlay guesses.".to_owned(),
+                default: None,
+                example: Some(Value::String("froyo".to_owned())),
+            },
+            BundleInputSpec {
                 name: "dirs.ui".to_owned(),
                 value_type: BundleInputType::String,
                 required: false,
-                description: "Shared UI package directory the bundled UI setup helper should hydrate before front/admin startup. When omitted, the helper falls back to the shipped Underlay guesses.".to_owned(),
+                description: "Optional UI package directory to include in bootstrap dependency sync and UI hydration. When omitted, the helper falls back to the shipped Underlay guesses.".to_owned(),
                 default: None,
-                example: Some(Value::String("froyo".to_owned())),
+                example: Some(Value::String("app-ui".to_owned())),
             },
             BundleInputSpec {
                 name: "routes.front".to_owned(),
@@ -1150,6 +1166,8 @@ fn resolve_underlay_bundle(
     let default_workspace =
         optional_bundle_string(inputs, "default_workspace").unwrap_or_else(|| "app".to_owned());
     let bundle_root = materialize_shipped_bundle_assets(manifest_path, "underlay")?;
+    let bootstrap_sync_paths = underlay_bootstrap_sync_paths(inputs);
+    let bootstrap_sync_command = format!("bootstrap deps sync {}", bootstrap_sync_paths.join(" "));
 
     let template = r#"
 [package_manager]
@@ -1217,6 +1235,24 @@ routes = [
   { domain = "minio.__HOST__", port = 9001, service = "minio" },
 ]
 
+[bootstrap]
+run = [
+  { rhai = "{{ bundle.root }}/scripts/bootstrap-env.rhai" },
+  { task = "container up --detach" },
+  { task = "__BOOTSTRAP_SYNC_COMMAND__" },
+]
+start = "dev"
+
+[[bootstrap.children]]
+path = "../underlay"
+repo = "git@github.com:inflatable-cookie/underlay.git"
+branch = "main"
+
+[[bootstrap.children]]
+path = "../poodle"
+repo = "git@github.com:inflatable-cookie/poodle.git"
+branch = "main"
+
 [tasks."smoke:error-logging"]
 run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
 run_in = "host"
@@ -1252,6 +1288,7 @@ run_in = "host"
             .replace("__SYSTEM_NAME__", &system_name)
             .replace("__CONTAINER_NAME__", &container_name)
             .replace("__WORKSPACE_SERVICE_NAME__", &workspace_service_name)
+            .replace("__BOOTSTRAP_SYNC_COMMAND__", &bootstrap_sync_command)
             .replace("__DEFAULT_WORKSPACE__", &default_workspace),
     )?;
 
@@ -1636,6 +1673,24 @@ routes = [
   { domain = "minio.{{ inputs.host }}", port = 9001, service = "minio" },
 ]
 
+[bootstrap]
+run = [
+  { rhai = "{{ bundle.root }}/scripts/bootstrap-env.rhai" },
+  { task = "container up --detach" },
+  { task = "bootstrap deps sync ../underlay {% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}{% if inputs.dirs.client %} {{ inputs.dirs.client }}{% else %} app-client{% endif %}{% if inputs.dirs.ui %} {{ inputs.dirs.ui }}{% else %} app-ui{% endif %}{% if inputs.dirs.front %} {{ inputs.dirs.front }}{% else %} app-front{% endif %}{% if inputs.dirs.admin %} {{ inputs.dirs.admin }}{% else %} app-admin{% endif %}" },
+]
+start = "dev"
+
+[[bootstrap.children]]
+path = "../underlay"
+repo = "git@github.com:inflatable-cookie/underlay.git"
+branch = "main"
+
+[[bootstrap.children]]
+path = "../poodle"
+repo = "git@github.com:inflatable-cookie/poodle.git"
+branch = "main"
+
 [tasks."smoke:error-logging"]
 run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
 run_in = "host"
@@ -1651,6 +1706,30 @@ run_in = "host"
 
 fn underlay_export_template() -> String {
     UNDERLAY_EXPORT_TEMPLATE.to_owned()
+}
+
+fn underlay_bootstrap_sync_paths(inputs: &BTreeMap<String, Value>) -> Vec<String> {
+    let mut paths = vec!["../underlay".to_owned()];
+    let candidates = [
+        optional_bundle_string(inputs, "dirs.api").unwrap_or_else(|| "app-api".to_owned()),
+        optional_bundle_string(inputs, "dirs.client").unwrap_or_else(|| "app-client".to_owned()),
+        optional_bundle_string(inputs, "dirs.ui").unwrap_or_else(|| "app-ui".to_owned()),
+        optional_bundle_string(inputs, "dirs.front").unwrap_or_else(|| "app-front".to_owned()),
+        optional_bundle_string(inputs, "dirs.admin").unwrap_or_else(|| "app-admin".to_owned()),
+    ];
+
+    for candidate in candidates {
+        let trimmed = candidate.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value = trimmed.to_owned();
+        if !paths.contains(&value) {
+            paths.push(value);
+        }
+    }
+
+    paths
 }
 
 fn materialize_shipped_bundle_assets(

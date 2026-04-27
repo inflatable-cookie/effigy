@@ -1,4 +1,5 @@
 use effigy_manifest::config_sections::{ManifestJsPackageManager, ManifestWorkspaceContainerRef};
+use effigy_manifest::load_task_manifest;
 use effigy_manifest::load_task_manifest_with_inspection;
 use effigy_manifest::ManifestTaskRunIn;
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep};
@@ -160,6 +161,25 @@ run = "printf seed"
         );
     }
 
+    let bootstrap = manifest.bootstrap.as_ref().expect("bootstrap");
+    let run = bootstrap.run.as_ref().expect("bootstrap run");
+    let ManifestManagedRun::Sequence(steps) = run else {
+        panic!("underlay bootstrap should use a managed sequence");
+    };
+    assert_eq!(
+        steps.len(),
+        3,
+        "expected env helper + container up + deps sync"
+    );
+    let Some(ManifestManagedRunStep::Step(sync_step)) = steps.get(2) else {
+        panic!("expected bootstrap deps sync step");
+    };
+    assert_eq!(
+        sync_step.task.as_deref(),
+        Some("bootstrap deps sync ../underlay app-api app-client app-ui app-front app-admin")
+    );
+    assert_eq!(bootstrap.start.as_deref(), Some("dev"));
+
     let seed = manifest.tasks.get("seed").expect("seed task");
     assert_eq!(seed.run_in(), ManifestTaskRunIn::Host);
 
@@ -255,6 +275,45 @@ default_workspace = "rust"
     assert!(
         http_routes.contains(&("dbgate.acme.test", Some("dbgate"))),
         "got {http_routes:?}"
+    );
+}
+
+#[test]
+fn underlay_bundle_uses_client_and_ui_dirs_for_bootstrap_sync() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "underlay-reference-dev"
+workspace_subdir = "underlay-reference"
+database = "acme"
+
+[bundle.dirs]
+api = "acme-api"
+client = "acme-client"
+ui = "acme-ui"
+front = "acme-front"
+admin = "acme-admin"
+"#,
+    )
+    .expect("write manifest");
+
+    let manifest = load_task_manifest(&manifest_path).expect("load manifest");
+    let bootstrap = manifest.bootstrap.as_ref().expect("bootstrap");
+    let run = bootstrap.run.as_ref().expect("bootstrap run");
+    let effigy_manifest::ManifestManagedRun::Sequence(steps) = run else {
+        panic!("underlay bootstrap should use a managed sequence");
+    };
+    let Some(effigy_manifest::ManifestManagedRunStep::Step(sync_step)) = steps.get(2) else {
+        panic!("expected bootstrap deps sync step");
+    };
+    assert_eq!(
+        sync_step.task.as_deref(),
+        Some("bootstrap deps sync ../underlay acme-api acme-client acme-ui acme-front acme-admin")
     );
 }
 

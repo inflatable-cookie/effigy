@@ -38,17 +38,24 @@ fn optional_repo_dir(configured) {
 
 let front_dir = optional_config_string("bundle.dirs.front", "");
 let admin_dir = optional_config_string("bundle.dirs.admin", "");
+let client_dir = optional_config_string("bundle.dirs.client", "");
 let ui_dir = optional_config_string("bundle.dirs.ui", "");
 let underlay_dir = path_join(repo_root, "../underlay");
 let poodle_dir = path_join(repo_root, "../poodle");
+let poodle_components_dir = path_join(repo_root, "../poodle/packages/svelte/components");
 let app_client_dir = path_join(repo_root, "app-client");
 let acme_client_dir = path_join(repo_root, "acme-client");
+let legacy_client_dir = path_join(repo_root, "client");
+let app_ui_dir = path_join(repo_root, "app-ui");
+let acme_ui_dir = path_join(repo_root, "acme-ui");
+let legacy_ui_dir = path_join(repo_root, "ui");
 let app_front_dir = path_join(repo_root, "app-front");
 let acme_front_dir = path_join(repo_root, "acme-front");
 let legacy_front_dir = path_join(repo_root, "front");
 let app_admin_dir = path_join(repo_root, "app-admin");
 let acme_admin_dir = path_join(repo_root, "acme-admin");
 let legacy_admin_dir = path_join(repo_root, "admin");
+let client_abs_dir = optional_repo_dir(client_dir);
 let ui_abs_dir = optional_repo_dir(ui_dir);
 let front_abs_dir = optional_repo_dir(front_dir);
 let admin_abs_dir = optional_repo_dir(admin_dir);
@@ -123,6 +130,32 @@ let shell_layout_helpers = "ensure_bun_install_if_present() {\n"
     + "  fi\n"
     + "}\n"
     + "\n"
+    + "resolve_first_package_dir() {\n"
+    + "  for dir in \"$@\"; do\n"
+    + "    if [ -f \"$dir/package.json\" ]; then\n"
+    + "      printf '%s\\n' \"$dir\"\n"
+    + "      return 0\n"
+    + "    fi\n"
+    + "  done\n"
+    + "  return 1\n"
+    + "}\n"
+    + "\n"
+    + "ensure_svelte_sync_if_present() {\n"
+    + "  dir=\"$1\"\n"
+    + "  label=\"$2\"\n"
+    + "  if [ ! -f \"$dir/package.json\" ]; then\n"
+    + "    return 0\n"
+    + "  fi\n"
+    + "  if [ ! -f \"$dir/svelte.config.js\" ] && [ ! -f \"$dir/svelte.config.ts\" ]; then\n"
+    + "    return 0\n"
+    + "  fi\n"
+    + "  printf '[info] svelte-kit sync -> %s\\n' \"$label\"\n"
+    + "  (\n"
+    + "    cd \"$dir\"\n"
+    + "    bunx svelte-kit sync\n"
+    + "  )\n"
+    + "}\n"
+    + "\n"
     + "ensure_first_bun_install() {\n"
     + "  label=\"$1\"\n"
     + "  shift\n"
@@ -137,30 +170,52 @@ let shell_layout_helpers = "ensure_bun_install_if_present() {\n"
     + "\n";
 
 let shell_targets = `ensure_bun_install_if_present "${underlay_dir}" "underlay"\n`
-    + `ensure_bun_install_if_present "${poodle_dir}" "poodle"\n`;
+    + `ensure_bun_install_if_present "${poodle_dir}" "poodle"\n`
+    + `ensure_bun_install_if_present "${poodle_components_dir}" "poodle-components"\n`;
+
+if client_dir != "" {
+    shell_targets += `ensure_bun_install_if_present "${client_abs_dir}" "${client_dir}"\n`;
+} else {
+    shell_targets += `ensure_bun_install_if_present "${app_client_dir}" "app-client"\n`;
+    shell_targets += `ensure_bun_install_if_present "${acme_client_dir}" "acme-client"\n`;
+    shell_targets += `ensure_bun_install_if_present "${legacy_client_dir}" "client"\n`;
+}
 
 if ui_dir != "" {
     shell_targets += `ensure_bun_install_if_present "${ui_abs_dir}" "${ui_dir}"\n`;
 } else {
-    shell_targets += `ensure_bun_install_if_present "${app_client_dir}" "app-client"\n`;
-    shell_targets += `ensure_bun_install_if_present "${acme_client_dir}" "acme-client"\n`;
+    shell_targets += `ensure_bun_install_if_present "${app_ui_dir}" "app-ui"\n`;
+    shell_targets += `ensure_bun_install_if_present "${acme_ui_dir}" "acme-ui"\n`;
+    shell_targets += `ensure_bun_install_if_present "${legacy_ui_dir}" "ui"\n`;
 }
 
 shell_targets += "\ncase \"$setup_task_name\" in\n";
-shell_targets += "  front) ensure_first_bun_install \"front\"";
+shell_targets += "  front) selected_dir=$(resolve_first_package_dir";
 if front_dir != "" {
     shell_targets += ` "${front_abs_dir}"`;
 } else {
     shell_targets += ` "${app_front_dir}" "${acme_front_dir}" "${legacy_front_dir}"`;
 }
-shell_targets += " ;;\n";
-shell_targets += "  admin) ensure_first_bun_install \"admin\"";
+shell_targets += ")\n";
+shell_targets += "    if [ -z \"$selected_dir\" ]; then\n";
+shell_targets += "      printf '[warn] skipping front; none of these package dirs exist\\n'\n";
+shell_targets += "    else\n";
+shell_targets += "      ensure_bun_install \"$selected_dir\" \"front\"\n";
+shell_targets += "      ensure_svelte_sync_if_present \"$selected_dir\" \"front\"\n";
+shell_targets += "    fi ;;\n";
+shell_targets += "  admin) selected_dir=$(resolve_first_package_dir";
 if admin_dir != "" {
     shell_targets += ` "${admin_abs_dir}"`;
 } else {
     shell_targets += ` "${app_admin_dir}" "${acme_admin_dir}" "${legacy_admin_dir}"`;
 }
-shell_targets += " ;;\n";
+shell_targets += ")\n";
+shell_targets += "    if [ -z \"$selected_dir\" ]; then\n";
+shell_targets += "      printf '[warn] skipping admin; none of these package dirs exist\\n'\n";
+shell_targets += "    else\n";
+shell_targets += "      ensure_bun_install \"$selected_dir\" \"admin\"\n";
+shell_targets += "      ensure_svelte_sync_if_present \"$selected_dir\" \"admin\"\n";
+shell_targets += "    fi ;;\n";
 shell_targets += "  *) printf '[error] unsupported ui setup target %s\\n' \"$setup_task_name\"; exit 1 ;;\n";
 shell_targets += "esac\n";
 
