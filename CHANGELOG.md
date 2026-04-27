@@ -183,14 +183,17 @@ During v0.x, MINOR bumps may include breaking changes.
   inside workspace shells reported `Error connecting to agent: No such
   file or directory`. Existing running Colima profiles need a one-time
   `colima stop --profile <profile>` for the new flag to take effect.
-- Restore the `DeferLoopDetected` signal when a deferred task tries to
-  recurse into another deferral. The previous attempt to "refuse nested
-  deferral" short-circuited `should_attempt_deferral` whenever
-  `EFFIGY_DEFER_DEPTH` was set, which suppressed the explicit loop guard
-  inside `run_deferred_request` and let the original `TaskNotFoundAny`
-  error propagate instead. The depth check now lives in one place — the
-  first action of `run_deferred_request` — so nested deferrals fail
-  loudly with `DeferLoopDetected` again.
+- Realign the deferral loop-guard test with the implicit-fallback policy
+  added in 0.2.13. When `EFFIGY_DEFER_DEPTH` is set we're inside a
+  deferred subprocess, so `should_attempt_deferral` correctly refuses to
+  attempt another deferral and lets the original `TaskNotFoundAny`
+  surface — that's a cleaner diagnostic for the common typo'd-task case
+  than `DeferLoopDetected`. The stale test was still asserting the
+  pre-policy `DeferLoopDetected` outcome on the implicit path; rename
+  and update it to match the new contract. Defense-in-depth
+  `DeferLoopDetected` still fires for the explicit `effigy defer ...`
+  path, which bypasses the policy and goes straight to
+  `run_deferred_request`'s depth check.
 - Let VT-backed managed TUI panes wrap rendered rows to the tab width again
   while still keeping the wider PTY buffer intact, so long real log lines
   stop being clipped without bringing back Bun-style progress row history
