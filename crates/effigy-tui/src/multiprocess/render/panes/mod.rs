@@ -90,6 +90,7 @@ pub(super) fn render_output_pane(
             .block(panel)
             .style(shell_inactive_style)
             .scroll((render_scroll_offset.min(u16::MAX as usize) as u16, 0))
+            .wrap(Wrap { trim: false })
     } else {
         Paragraph::new(lines)
             .block(panel)

@@ -129,6 +129,13 @@ During v0.x, MINOR bumps may include breaking changes.
   the manifest default.
 
 ### Fixed
+- Let VT-backed managed TUI panes wrap rendered rows to the tab width again
+  while still keeping the wider PTY buffer intact, so long real log lines
+  stop being clipped without bringing back Bun-style progress row history
+  smearing.
+- Align the shipped underlay bootstrap env helper with the actual postgres
+  catalog password default (`secret`) so generated `DATABASE_URL` values stop
+  drifting from the running stack contract.
 - Make sibling service params in catalog assembly include schema defaults, so
   generated dependents like phpMyAdmin can inherit defaulted values such as
   the bundled MariaDB `password` instead of seeing them as unset.
