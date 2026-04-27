@@ -68,7 +68,7 @@ fn failure_log_tail_returns_recent_lines_for_failed_process_only() {
 
     assert_eq!(
         failure_log_tail(&logs),
-        vec!["line one".to_owned(), "[stderr] bad thing".to_owned()]
+        vec!["line one".to_owned(), "bad thing".to_owned()]
     );
 }
 

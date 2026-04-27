@@ -169,24 +169,24 @@ let shell_layout_helpers = "ensure_bun_install_if_present() {\n"
     + "}\n"
     + "\n";
 
-let shell_targets = `ensure_bun_install_if_present "${underlay_dir}" "underlay"\n`
-    + `ensure_bun_install_if_present "${poodle_dir}" "poodle"\n`
-    + `ensure_bun_install_if_present "${poodle_components_dir}" "poodle-components"\n`;
+let shell_targets = "ensure_bun_install_if_present \"" + underlay_dir + "\" \"underlay\"\n"
+    + "ensure_bun_install_if_present \"" + poodle_dir + "\" \"poodle\"\n"
+    + "ensure_bun_install_if_present \"" + poodle_components_dir + "\" \"poodle-components\"\n";
 
 if client_dir != "" {
-    shell_targets += `ensure_bun_install_if_present "${client_abs_dir}" "${client_dir}"\n`;
+    shell_targets += "ensure_bun_install_if_present \"" + client_abs_dir + "\" \"" + client_dir + "\"\n";
 } else {
-    shell_targets += `ensure_bun_install_if_present "${app_client_dir}" "app-client"\n`;
-    shell_targets += `ensure_bun_install_if_present "${acme_client_dir}" "acme-client"\n`;
-    shell_targets += `ensure_bun_install_if_present "${legacy_client_dir}" "client"\n`;
+    shell_targets += "ensure_bun_install_if_present \"" + app_client_dir + "\" \"app-client\"\n";
+    shell_targets += "ensure_bun_install_if_present \"" + acme_client_dir + "\" \"acme-client\"\n";
+    shell_targets += "ensure_bun_install_if_present \"" + legacy_client_dir + "\" \"client\"\n";
 }
 
 if ui_dir != "" {
-    shell_targets += `ensure_bun_install_if_present "${ui_abs_dir}" "${ui_dir}"\n`;
+    shell_targets += "ensure_bun_install_if_present \"" + ui_abs_dir + "\" \"" + ui_dir + "\"\n";
 } else {
-    shell_targets += `ensure_bun_install_if_present "${app_ui_dir}" "app-ui"\n`;
-    shell_targets += `ensure_bun_install_if_present "${acme_ui_dir}" "acme-ui"\n`;
-    shell_targets += `ensure_bun_install_if_present "${legacy_ui_dir}" "ui"\n`;
+    shell_targets += "ensure_bun_install_if_present \"" + app_ui_dir + "\" \"app-ui\"\n";
+    shell_targets += "ensure_bun_install_if_present \"" + acme_ui_dir + "\" \"acme-ui\"\n";
+    shell_targets += "ensure_bun_install_if_present \"" + legacy_ui_dir + "\" \"ui\"\n";
 }
 
 shell_targets += "\ncase \"$setup_task_name\" in\n";

@@ -95,7 +95,7 @@ fn failure_log_tail(logs: &VecDeque<LogEntry>) -> Vec<String> {
         .flat_map(|entry| match entry.kind {
             LogEntryKind::Exit => Vec::new(),
             LogEntryKind::Stdout => normalized_log_lines("", &entry.line),
-            LogEntryKind::Stderr => normalized_log_lines("[stderr] ", &entry.line),
+            LogEntryKind::Stderr => normalized_log_lines("", &entry.line),
         })
         .filter(|line| !line.trim().is_empty())
         .collect::<Vec<_>>();

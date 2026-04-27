@@ -132,6 +132,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Make sibling service params in catalog assembly include schema defaults, so
   generated dependents like phpMyAdmin can inherit defaulted values such as
   the bundled MariaDB `root_password` instead of seeing them as unset.
+- Run bundled Rhai setup hooks through a PTY in interactive terminals so
+  tools like `bun install` keep their normal progress output in managed dev
+  tabs without needing extra verbosity flags.
 - Derive the managed lifecycle ready banner from configured container DNS
   routes when a task does not set `ready_message`, so bundle-backed dev tasks
   surface their gateway URLs without hand-maintained manifest strings. The
@@ -157,6 +160,12 @@ During v0.x, MINOR bumps may include breaking changes.
   unless `mount_host_composer_home = true` is set explicitly. This keeps
   container-side global Composer tools available even after legacy host-side
   Composer installs are removed.
+- Stop prefixing managed TUI stderr lines with `[stderr]`, so package-manager
+  and build-process output that legitimately streams on stderr renders plainly
+  in tabs, failure tails, and saved transcripts.
+- Render bootstrap progress lines with the normal colored status prefixes and
+  clearer phase spacing, so checkout/setup/start output no longer mixes muted
+  spinner completion lines with plain unthemed follow-up logs.
 - Stop non-managed container-backed tasks with a real `run` command from
   being intercepted into the workspace shell handoff path. Bundle tasks like
   `decodelabs` `seed` now execute their configured command inside the

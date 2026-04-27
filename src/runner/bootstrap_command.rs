@@ -12,8 +12,8 @@ use effigy_bootstrap::{
 };
 use effigy_cli::{BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand, TaskInvocation};
 use effigy_manifest::{ManifestJsPackageManager, ManifestManagedRun, TASK_MANIFEST_FILE};
-use effigy_ui::theme::is_ci_environment;
-use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
+use effigy_ui::theme::{is_ci_environment, resolve_color_enabled, Theme};
+use effigy_ui::{style_text, OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 use serde::Serialize;
 use serde_json::json;
 
@@ -91,14 +91,21 @@ fn execute_bootstrap_request(
 struct BootstrapProgressReporter {
     spinner: Option<Box<dyn SpinnerHandle>>,
     enabled: bool,
+    color_enabled: bool,
+    emitted_output: bool,
 }
 
 impl BootstrapProgressReporter {
     fn new(output_json: bool) -> Self {
-        let enabled = !output_json && std::io::stderr().is_terminal() && !is_ci_environment();
+        let stderr_is_tty = std::io::stderr().is_terminal();
+        let enabled = !output_json && stderr_is_tty && !is_ci_environment();
+        let color_enabled =
+            !output_json && resolve_color_enabled(OutputMode::from_env(), stderr_is_tty);
         Self {
             spinner: None,
             enabled,
+            color_enabled,
+            emitted_output: false,
         }
     }
 
@@ -109,7 +116,7 @@ impl BootstrapProgressReporter {
                 destination,
             } => {
                 self.start(&format!(
-                    "Bootstrap: pulling {} -> {}",
+                    "[bootstrap] pulling {} -> {}",
                     repo_url,
                     destination.display()
                 ));
@@ -128,7 +135,7 @@ impl BootstrapProgressReporter {
                 policy,
             } => {
                 self.start(&format!(
-                    "Bootstrap: submodules {} ({})",
+                    "[bootstrap] submodules {} ({})",
                     destination.display(),
                     effigy_bootstrap::submodule_policy_label(policy)
                 ));
@@ -150,7 +157,7 @@ impl BootstrapProgressReporter {
                 path, destination, ..
             } => {
                 self.start(&format!(
-                    "Bootstrap: pulling child {} -> {}",
+                    "[bootstrap] pulling child {} -> {}",
                     path,
                     destination.display()
                 ));
@@ -164,19 +171,19 @@ impl BootstrapProgressReporter {
                 self.finish_error(&format!("[warn] child {path} skipped: {warning}"));
             }
             BootstrapProgressEvent::ChildRunStarted { path, .. } => {
-                self.start_command_phase(&format!("Bootstrap: running child setup for {path}"));
+                self.start_command_phase(&format!("[bootstrap] running child setup for {path}"));
             }
             BootstrapProgressEvent::ChildRunFinished { path, run, .. } => {
                 self.finish_success(&format!("[ok] child {path} setup complete ({run})"));
             }
             BootstrapProgressEvent::RootRunStarted { .. } => {
-                self.start_command_phase("Bootstrap: running root setup");
+                self.start_command_phase("[bootstrap] running root setup");
             }
             BootstrapProgressEvent::RootRunFinished { run, .. } => {
                 self.finish_success(&format!("[ok] root setup complete ({run})"));
             }
             BootstrapProgressEvent::StartTaskStarted { selector, .. } => {
-                self.start_command_phase(&format!("Bootstrap: starting {selector}"));
+                self.start_command_phase(&format!("[bootstrap] starting {selector}"));
             }
             BootstrapProgressEvent::StartTaskFinished { selector, .. } => {
                 self.finish_success(&format!("[ok] start task complete ({selector})"));
@@ -190,29 +197,24 @@ impl BootstrapProgressReporter {
             let mut renderer = PlainRenderer::stderr(OutputMode::from_env());
             self.spinner = renderer.spinner(label).ok();
         } else {
-            eprintln!("{label}");
+            self.print_line(label);
         }
     }
 
     fn start_command_phase(&mut self, label: &str) {
         self.finish_clear();
-        eprintln!("{label}");
+        self.print_group_break();
+        self.print_line(label);
     }
 
     fn finish_success(&mut self, message: &str) {
-        if let Some(spinner) = self.spinner.take() {
-            spinner.finish_success(message);
-        } else {
-            eprintln!("{message}");
-        }
+        self.finish_clear();
+        self.print_line(message);
     }
 
     fn finish_error(&mut self, message: &str) {
-        if let Some(spinner) = self.spinner.take() {
-            spinner.finish_error(message);
-        } else {
-            eprintln!("{message}");
-        }
+        self.finish_clear();
+        self.print_line(message);
     }
 
     fn finish_clear(&mut self) {
@@ -220,6 +222,50 @@ impl BootstrapProgressReporter {
             spinner.finish_clear();
         }
     }
+
+    fn print_group_break(&mut self) {
+        if self.emitted_output {
+            eprintln!();
+        }
+    }
+
+    fn print_line(&mut self, message: &str) {
+        eprintln!(
+            "{}",
+            render_bootstrap_progress_message(message, self.color_enabled)
+        );
+        self.emitted_output = true;
+    }
+}
+
+fn render_bootstrap_progress_message(message: &str, color_enabled: bool) -> String {
+    message
+        .split_inclusive('\n')
+        .map(|line| render_bootstrap_progress_line(line, color_enabled))
+        .collect()
+}
+
+fn render_bootstrap_progress_line(line: &str, color_enabled: bool) -> String {
+    const STATUS_PREFIXES: [(&str, fn(&Theme) -> anstyle::Style); 6] = [
+        ("[ok]", |theme| theme.success),
+        ("[warn]", |theme| theme.warning),
+        ("[info]", |theme| theme.label),
+        ("[next]", |theme| theme.accent),
+        ("[gateway]", |theme| theme.label),
+        ("[bootstrap]", |theme| theme.label),
+    ];
+
+    for (prefix, style) in STATUS_PREFIXES {
+        if let Some(rest) = line.strip_prefix(prefix) {
+            return format!(
+                "{}{}",
+                style_text(color_enabled, style(&Theme::default()), prefix),
+                rest
+            );
+        }
+    }
+
+    line.to_owned()
 }
 
 fn run_bootstrap_run(

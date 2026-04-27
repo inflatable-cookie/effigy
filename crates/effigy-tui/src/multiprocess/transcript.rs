@@ -34,8 +34,7 @@ fn format_log_entry_lines(entry: &LogEntry) -> Vec<String> {
         .into_iter()
         .map(|line| match entry.kind {
             LogEntryKind::Stdout => line,
-            LogEntryKind::Stderr if is_known_cargo_status_line(&line) => line,
-            LogEntryKind::Stderr => format!("[stderr] {line}"),
+            LogEntryKind::Stderr => line,
             LogEntryKind::Exit => format!("[exit] {line}"),
         })
         .collect()
@@ -47,13 +46,6 @@ fn split_log_lines(line: &str) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn is_known_cargo_status_line(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    trimmed.starts_with("Compiling ")
-        || trimmed.starts_with("Finished ")
-        || trimmed.starts_with("Running `")
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
@@ -63,7 +55,7 @@ mod tests {
     use super::render_log_transcript;
 
     #[test]
-    fn transcript_preserves_plain_stdout_and_labels_real_stderr() {
+    fn transcript_preserves_plain_stdout_and_stderr() {
         let logs = VecDeque::from([
             LogEntry {
                 kind: LogEntryKind::Stdout,
@@ -81,27 +73,7 @@ mod tests {
 
         assert_eq!(
             render_log_transcript(&logs),
-            "ready\n[stderr] warning\n[exit] code=1"
-        );
-    }
-
-    #[test]
-    fn transcript_skips_stderr_prefix_for_known_cargo_status_lines() {
-        let logs = VecDeque::from([
-            LogEntry {
-                kind: LogEntryKind::Stderr,
-                line: "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s"
-                    .to_owned(),
-            },
-            LogEntry {
-                kind: LogEntryKind::Stderr,
-                line: "     Running `target/debug/acme-api`".to_owned(),
-            },
-        ]);
-
-        assert_eq!(
-            render_log_transcript(&logs),
-            "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s\n     Running `target/debug/acme-api`"
+            "ready\nwarning\n[exit] code=1"
         );
     }
 }
