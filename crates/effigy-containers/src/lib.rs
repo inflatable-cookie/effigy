@@ -212,6 +212,27 @@ pub fn load_container_policy(
     load_container_policy_with_workspace(repo_root, requested_name, None)
 }
 
+/// Resolve user-global library mounts for the manifest's declared bundle.
+///
+/// Returns an empty vec when the manifest has no `[bundle].base`, when the
+/// user has no `~/.effigy/config.toml`, or when the file has no entry for
+/// the active bundle. A malformed `config.toml` surfaces as a parse error.
+fn resolve_library_mounts(
+    manifest: &effigy_manifest::TaskManifest,
+) -> Result<Vec<effigy_manifest::LibraryMount>, ContainerPolicyError> {
+    let Some(bundle_name) = manifest
+        .bundle
+        .as_ref()
+        .and_then(|bundle| bundle.base.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(Vec::new());
+    };
+    let user_config = effigy_manifest::load_user_config()?;
+    Ok(user_config.library_mounts_for(bundle_name))
+}
+
 pub fn load_container_policy_with_workspace(
     repo_root: &Path,
     requested_name: Option<&str>,
@@ -241,6 +262,7 @@ pub fn load_container_policy_with_workspace(
             "container `{name}` is not defined in `[containers]` (available: {available})"
         ))
     })?;
+    let library_mounts = resolve_library_mounts(&loaded.manifest)?;
     build_effective_policy(
         repo_root,
         containers,
@@ -249,6 +271,7 @@ pub fn load_container_policy_with_workspace(
         config,
         &loaded.effective_manifest,
         inferred_workspace.as_ref(),
+        &library_mounts,
     )
 }
 
@@ -264,6 +287,7 @@ pub fn load_all_container_policies(
     })?;
     let default_project_name_base = default_project_name_base(&loaded.manifest, repo_root);
     validate_unique_project_names(containers, &default_project_name_base)?;
+    let library_mounts = resolve_library_mounts(&loaded.manifest)?;
 
     let mut policies = containers
         .environments
@@ -277,6 +301,7 @@ pub fn load_all_container_policies(
                 config,
                 &loaded.effective_manifest,
                 infer_default_workspace_for_container(&loaded.manifest, Some(name)).as_ref(),
+                &library_mounts,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -493,6 +518,7 @@ fn build_effective_policy(
     config: &ManifestContainerConfig,
     effective_manifest: &str,
     workspace: Option<&ManifestWorkspaceConfig>,
+    library_mounts: &[effigy_manifest::LibraryMount],
 ) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
     let driver = config.driver.unwrap_or(ManifestContainerDriver::Colima);
     let profile = config
@@ -529,6 +555,7 @@ fn build_effective_policy(
                 &working_dir,
                 &primary_service,
                 &mut compose_files,
+                library_mounts,
             )?;
         }
     }

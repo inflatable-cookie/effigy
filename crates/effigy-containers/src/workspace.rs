@@ -6,7 +6,7 @@ use std::process::Command as ProcessCommand;
 
 use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_manifest::{
-    load_task_manifest, ManifestContainerConfig, ManifestContainerServiceConfig,
+    load_task_manifest, LibraryMount, ManifestContainerConfig, ManifestContainerServiceConfig,
     ManifestWorkspaceConfig,
 };
 
@@ -23,6 +23,7 @@ pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     working_dir: &Path,
     primary_service: &str,
     compose_files: &mut [PathBuf],
+    library_mounts: &[LibraryMount],
 ) -> Result<(), ContainerPolicyError> {
     let Some(source_compose) = compose_files.first().cloned() else {
         return Ok(());
@@ -35,6 +36,7 @@ pub(crate) fn materialize_runtime_workspace_mount_rewrite(
         primary_service,
         &source_compose,
         working_dir,
+        library_mounts,
     )?;
     compose_files[0] = rewritten;
     Ok(())
@@ -103,6 +105,7 @@ fn rewrite_workspace_mounts_for_direct_compose(
     primary_service: &str,
     source_compose: &Path,
     working_dir: &Path,
+    library_mounts: &[LibraryMount],
 ) -> Result<PathBuf, ContainerPolicyError> {
     let workspace_root = working_dir.parent().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
@@ -152,6 +155,7 @@ fn rewrite_workspace_mounts_for_direct_compose(
         workspace,
         primary_service,
         working_dir,
+        library_mounts,
     )?;
     rewrite_workspace_service_volumes(
         service,
@@ -192,6 +196,7 @@ fn build_workspace_runtime_mounts(
     workspace: &ManifestWorkspaceConfig,
     primary_service: &str,
     working_dir: &Path,
+    library_mounts: &[LibraryMount],
 ) -> Result<Vec<RenderedWorkspaceMount>, ContainerPolicyError> {
     let workspace_root = working_dir.parent().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
@@ -223,6 +228,7 @@ fn build_workspace_runtime_mounts(
             raw,
         )?);
     }
+    mounts.extend(build_library_mounts(container_name, library_mounts)?);
     mounts.extend(build_isolation_mounts(
         repo_root,
         container_name,
@@ -587,6 +593,70 @@ fn test_host_composer_home_override() -> Option<Option<PathBuf>> {
     TEST_HOST_COMPOSER_HOME.with(|slot| slot.borrow().clone())
 }
 
+/// Container path under which user-global library mounts are exposed.
+///
+/// Stable convention so the legacy `effigy mount` command (which lives inside
+/// the decodelabs bundle container) has a predictable place to point at when
+/// resolving Composer `path` repositories — e.g. `~/Dev/legacy/libraries/decodelabs`
+/// becomes available at `/workspace-libraries/decodelabs/<package>` inside
+/// the workspace container.
+const WORKSPACE_LIBRARIES_ROOT: &str = "/workspace-libraries";
+
+/// Render user-global library mounts as bind-mount entries on the workspace
+/// container. Missing host paths are skipped silently — a developer's
+/// `~/.effigy/config.toml` may declare a parent directory that is only
+/// present on some machines, and a hard error there would block every
+/// `effigy container up` until the file is hand-edited. Hard errors are
+/// reserved for genuinely broken state (basename collisions between two
+/// declared parents).
+fn build_library_mounts(
+    container_name: &str,
+    library_mounts: &[LibraryMount],
+) -> Result<Vec<RenderedWorkspaceMount>, ContainerPolicyError> {
+    let mut rendered: Vec<RenderedWorkspaceMount> = Vec::new();
+    let mut targets_seen: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    for entry in library_mounts {
+        let host_path = &entry.host_path;
+        if !host_path.exists() {
+            // Best-effort: skip silently. A warning channel here would be
+            // welcome but doesn't have a natural sink at this layer.
+            continue;
+        }
+        let canonical_source = host_path.canonicalize().map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` library mount source `{}` is invalid: {error}",
+                entry.raw
+            ))
+        })?;
+        let basename = canonical_source
+            .file_name()
+            .and_then(OsStr::to_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ContainerPolicyError::TaskInvocation(format!(
+                    "container `{container_name}` library mount `{}` resolves to a path with no basename",
+                    entry.raw
+                ))
+            })?;
+        let target = format!("{WORKSPACE_LIBRARIES_ROOT}/{basename}");
+        if let Some(previous) = targets_seen.get(&target) {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` library mounts `{previous}` and `{}` both resolve to container path `{target}`; rename one or pick a non-colliding parent directory",
+                entry.raw
+            )));
+        }
+        targets_seen.insert(target.clone(), entry.raw.clone());
+        let rendered_entry = format!("{}:{target}", canonical_source.display());
+        rendered.push(RenderedWorkspaceMount {
+            target,
+            rendered: rendered_entry,
+            source: Some(canonical_source),
+        });
+    }
+    Ok(rendered)
+}
+
 fn parse_workspace_extra_mount(
     repo_root: &Path,
     container_name: &str,
@@ -868,4 +938,93 @@ fn render_compose_relative_path(path: &str, compose_dir: &Path) -> String {
 
 fn looks_like_remote_build_context(path: &str) -> bool {
     path.contains("://") || path.starts_with("git@")
+}
+
+#[cfg(test)]
+mod library_mount_tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "effigy-library-mount-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).expect("mkdir");
+        path
+    }
+
+    fn mount(raw: &str, host_path: PathBuf) -> LibraryMount {
+        LibraryMount {
+            raw: raw.to_owned(),
+            host_path,
+        }
+    }
+
+    #[test]
+    fn renders_canonical_bind_mount_under_workspace_libraries_root() {
+        let parent = temp_dir("renders");
+        let libraries = parent.join("decodelabs");
+        fs::create_dir_all(libraries.join("archetype")).expect("mkdir libraries");
+        let canonical = libraries.canonicalize().expect("canonicalize");
+
+        let mounts = build_library_mounts(
+            "web",
+            &[mount(&libraries.display().to_string(), libraries.clone())],
+        )
+        .expect("build mounts");
+
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].target, "/workspace-libraries/decodelabs");
+        assert_eq!(
+            mounts[0].rendered,
+            format!("{}:/workspace-libraries/decodelabs", canonical.display())
+        );
+        assert_eq!(mounts[0].source.as_deref(), Some(canonical.as_path()));
+    }
+
+    #[test]
+    fn skips_missing_host_paths_silently() {
+        let parent = temp_dir("missing");
+        let absent = parent.join("does-not-exist");
+        let mounts = build_library_mounts("web", &[mount("~/missing", absent)])
+            .expect("build mounts should not error");
+        assert!(mounts.is_empty());
+    }
+
+    #[test]
+    fn rejects_basename_collisions_between_two_parents() {
+        let parent = temp_dir("collision");
+        let first = parent.join("a").join("decodelabs");
+        let second = parent.join("b").join("decodelabs");
+        fs::create_dir_all(&first).expect("mkdir first");
+        fs::create_dir_all(&second).expect("mkdir second");
+
+        let err = build_library_mounts(
+            "web",
+            &[
+                mount(&first.display().to_string(), first.clone()),
+                mount(&second.display().to_string(), second.clone()),
+            ],
+        )
+        .expect_err("collision should error");
+
+        let message = match err {
+            ContainerPolicyError::TaskInvocation(msg) => msg,
+            other => panic!("unexpected error variant: {other:?}"),
+        };
+        assert!(
+            message.contains("/workspace-libraries/decodelabs"),
+            "error should name the colliding container path: {message}"
+        );
+    }
+
+    #[test]
+    fn empty_input_produces_no_mounts() {
+        let mounts = build_library_mounts("web", &[]).expect("build mounts");
+        assert!(mounts.is_empty());
+    }
 }
