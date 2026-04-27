@@ -129,6 +129,15 @@ During v0.x, MINOR bumps may include breaking changes.
   the manifest default.
 
 ### Fixed
+- Reclaim stale gateway loopback-IP assignments from the persisted registry
+  before allocating new DNS-only service aliases, using the live compose
+  project set as the primary signal. This stops old temp repos and dead
+  projects from exhausting the bounded `127.1.0.1–127.1.0.50` pool and
+  blocking new underlay-style containers like `contact-patch`.
+- Make managed `health_wait = true` gate lifecycle readiness on the task's
+  declared DNS routes instead of just printing a label. Underlay-style `dev`
+  stacks now wait until the gateway stops returning upstream startup errors
+  like `502` before the lifecycle pane flips to ready.
 - Stop the workspace permission prep from failing wholesale when the host
   gitconfig / SSH known_hosts read-only bind mounts land under
   `/home/dev`. The chown step now uses `chown -fR ... || true` so the
@@ -146,6 +155,28 @@ During v0.x, MINOR bumps may include breaking changes.
   mount; if the agent isn't actually forwarded, compose-up fails loudly
   instead of leaving ssh keyless at runtime. Opt-out via the catalog
   param.
+- Bridge the forwarded host SSH agent socket through `socat` inside the
+  `php-fpm` and `workspace-rust-bun` catalog containers so the non-root
+  workspace user can actually use it. Colima creates the forwarded
+  socket as `root:root` mode 0600 inside its VM, which left ssh-add
+  reporting `Error connecting to agent: Permission denied` even after a
+  plain `chmod 0666` from the container's entrypoint (Colima may harden
+  the socket in ways that defeat in-container chmod). The catalog
+  images now ship `socat` plus an `effigy-entrypoint` wrapper that
+  starts a bridge from `/run/host-services/ssh-auth.sock` to a
+  workspace-user-owned `/tmp/effigy-ssh-auth.sock` on container startup.
+  `SSH_AUTH_SOCK` is injected pointing at the bridge. The wrapper also
+  writes a startup log to `/var/log/effigy-ssh-bridge.log` for
+  diagnosability.
+- Pass `--ssh-agent` to `colima start` and persist `sshAgent: true` in
+  the managed Colima profile YAML so the host SSH agent socket is
+  actually forwarded into the VM at `/run/host-services/ssh-auth.sock`.
+  Without this, the workspace agent-socket bind mount landed on a
+  non-existent source path; Docker autocreated an empty *directory* in
+  its place, the in-container bridge never started, and `ssh-add -l`
+  inside workspace shells reported `Error connecting to agent: No such
+  file or directory`. Existing running Colima profiles need a one-time
+  `colima stop --profile <profile>` for the new flag to take effect.
 - Let VT-backed managed TUI panes wrap rendered rows to the tab width again
   while still keeping the wider PTY buffer intact, so long real log lines
   stop being clipped without bringing back Bun-style progress row history

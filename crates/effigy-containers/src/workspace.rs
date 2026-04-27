@@ -22,9 +22,18 @@ const HOST_GIT_CONFIG_TARGET: &str = "/home/dev/.gitconfig";
 /// Container target for the host `~/.ssh/known_hosts` mount.
 const HOST_SSH_KNOWN_HOSTS_TARGET: &str = "/home/dev/.ssh/known_hosts";
 
-/// Container target where Colima exposes the host's SSH agent socket. Same
-/// path on host and container so `SSH_AUTH_SOCK` resolves identically.
+/// Container target where Colima's forwarded host SSH agent socket is bind
+/// mounted. The forwarded socket inside the VM is root-owned, so the
+/// non-root workspace user cannot connect to it directly; the catalog image
+/// runs a `socat` bridge from this path to
+/// [`WORKSPACE_SSH_AUTH_SOCK_BRIDGED`] on container startup.
 const HOST_SSH_AGENT_SOCKET_TARGET: &str = "/run/host-services/ssh-auth.sock";
+
+/// Per-developer accessible bridge socket created by the catalog image's
+/// `effigy-entrypoint` wrapper. `SSH_AUTH_SOCK` is injected to point here
+/// so `ssh-add`, `git push`, and friends speak to a dev-owned socket
+/// regardless of how Colima hardens the forwarded original.
+const WORKSPACE_SSH_AUTH_SOCK_BRIDGED: &str = "/tmp/effigy-ssh-auth.sock";
 
 /// Catalogs whose primary service is treated as a workspace shell target. The
 /// host-git / host-ssh mounts only apply when the primary service uses one of
@@ -982,9 +991,13 @@ fn build_workspace_runtime_environment(
 ) -> std::collections::BTreeMap<String, String> {
     let mut env = std::collections::BTreeMap::new();
     if build_host_ssh_agent_mount(config, primary_service).is_some() {
+        // Point at the catalog image's socat-bridged socket rather than
+        // the raw bind-mounted path: the forwarded original is root-owned
+        // inside the Colima VM and the bridge is what the workspace user
+        // can actually connect to.
         env.insert(
             "SSH_AUTH_SOCK".to_owned(),
-            HOST_SSH_AGENT_SOCKET_TARGET.to_owned(),
+            WORKSPACE_SSH_AUTH_SOCK_BRIDGED.to_owned(),
         );
     }
     env
@@ -1595,7 +1608,7 @@ mod host_git_mount_tests {
 
         assert_eq!(
             env.get("SSH_AUTH_SOCK").map(String::as_str),
-            Some("/run/host-services/ssh-auth.sock")
+            Some("/tmp/effigy-ssh-auth.sock")
         );
     }
 

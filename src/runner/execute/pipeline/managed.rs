@@ -385,6 +385,8 @@ fn materialize_special_managed_processes(
         inline_policy.as_ref().or(named_policy.as_ref()),
     );
     let dns_route_lines = managed_dns_route_lines(inline_policy.as_ref().or(named_policy.as_ref()));
+    let readiness_probe_urls =
+        managed_readiness_probe_urls(inline_policy.as_ref().or(named_policy.as_ref()));
     let container_repo_root = match &container_binding {
         ContainerExecutionBinding::Inline { .. } => {
             container_binding.exec_working_dir(repo_root)?
@@ -418,6 +420,7 @@ fn materialize_special_managed_processes(
                         selection.task.health_wait.unwrap_or(false),
                         ready_message.as_deref(),
                         &dns_route_lines,
+                        &readiness_probe_urls,
                         &[],
                     )
                 } else {
@@ -428,6 +431,7 @@ fn materialize_special_managed_processes(
                         selection.task.health_wait.unwrap_or(false),
                         ready_message.as_deref(),
                         &dns_route_lines,
+                        &readiness_probe_urls,
                         &[],
                         &executable,
                     )
@@ -575,6 +579,27 @@ fn managed_dns_route_lines(policy: Option<&EffectiveContainerPolicy>) -> Vec<Str
     routes
 }
 
+fn managed_readiness_probe_urls(policy: Option<&EffectiveContainerPolicy>) -> Vec<String> {
+    let Some(policy) = policy else {
+        return Vec::new();
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    policy
+        .dns_routes
+        .iter()
+        .filter_map(|route| {
+            let domain = route.domain.trim();
+            if domain.is_empty() {
+                return None;
+            }
+            let scheme = if route.tls { "https" } else { "http" };
+            let url = format!("{scheme}://{domain}");
+            seen.insert(url.clone()).then_some(url)
+        })
+        .collect()
+}
+
 fn base_domain_from_dns_route(domain: &str) -> Option<&str> {
     let domain = domain.trim();
     if domain.is_empty() {
@@ -710,6 +735,7 @@ fn render_inline_managed_lifecycle_command(
     health_wait: bool,
     ready_message: Option<&str>,
     dns_route_lines: &[String],
+    readiness_probe_urls: &[String],
     setup_commands: &[String],
 ) -> String {
     let lifecycle_state = managed_lifecycle_state_path(repo_root, &policy.name, owner_task);
@@ -732,17 +758,23 @@ fn render_inline_managed_lifecycle_command(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("container `{}` is ready", policy.name));
     let dns_routes_section = render_managed_lifecycle_dns_routes_section(dns_route_lines);
+    let readiness_wait = render_managed_lifecycle_readiness_wait(
+        health_wait,
+        readiness_probe_urls,
+        "managed lifecycle readiness wait timed out",
+    );
     let setup_sequence = render_managed_lifecycle_setup_sequence(setup_commands);
     let idle_wait = managed_lifecycle_idle_wait_command();
     format!(
         "sh -lc {}",
         shell_quote(&format!(
-            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; {idle_wait}",
+            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}{readiness_wait}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; {idle_wait}",
             label = shell_quote(&policy.name),
             owner_task = shell_quote(owner_task),
             readiness_status = shell_quote(readiness_status),
             ready_banner = shell_quote(&ready_banner),
             dns_routes_section = dns_routes_section,
+            readiness_wait = readiness_wait,
             setup_sequence = setup_sequence,
             idle_wait = idle_wait,
         ))
@@ -759,6 +791,26 @@ fn render_managed_lifecycle_dns_routes_section(dns_route_lines: &[String]) -> St
     }
     section.push_str("printf '\\n'; ");
     section
+}
+
+fn render_managed_lifecycle_readiness_wait(
+    health_wait: bool,
+    readiness_probe_urls: &[String],
+    timeout_message: &str,
+) -> String {
+    if !health_wait || readiness_probe_urls.is_empty() {
+        return String::new();
+    }
+    let probe_urls = readiness_probe_urls
+        .iter()
+        .map(|url| shell_quote(url))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "readiness_deadline=$(( $(date +%s) + 60 )); while true; do readiness_ok=1; for readiness_url in {probe_urls}; do readiness_code=$(curl -k -s -o /dev/null -w '%{{http_code}}' \"$readiness_url\" || true); case \"$readiness_code\" in 000|502|503|504) readiness_ok=0; break ;; esac; done; if [ \"$readiness_ok\" = 1 ]; then break; fi; if [ \"$(date +%s)\" -ge \"$readiness_deadline\" ]; then printf '%s\\n' {timeout_message} 1>&2; exit 1; fi; sleep 1; done; ",
+        probe_urls = probe_urls,
+        timeout_message = shell_quote(timeout_message),
+    )
 }
 
 fn render_inline_managed_shell_command(
@@ -919,9 +971,10 @@ fn shell_quote(value: &str) -> String {
 mod tests {
     use super::{
         default_handoff_managed_shell_run, finish_managed_task, managed_dns_route_lines,
-        render_handoff_managed_standard_command, render_inline_managed_standard_exec_command,
-        render_managed_lifecycle_cleanup_notice, render_workspace_seeded_task_command,
-        should_open_workspace_shell_for_non_managed_task, ContainerExecutionBinding,
+        managed_readiness_probe_urls, render_handoff_managed_standard_command,
+        render_inline_managed_standard_exec_command, render_managed_lifecycle_cleanup_notice,
+        render_workspace_seeded_task_command, should_open_workspace_shell_for_non_managed_task,
+        ContainerExecutionBinding,
     };
     use crate::runner::error::RunnerError;
     use effigy_containers::{
@@ -1075,6 +1128,35 @@ mod tests {
                 "http://project.test -> app".to_owned(),
                 "https://admin.project.test -> admin:41002".to_owned(),
                 "postgres.project.test:5432 -> postgres".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn managed_readiness_probe_urls_follow_dns_routes_only() {
+        let mut policy = test_policy();
+        policy.dns_routes = vec![
+            EffectiveDnsRoute {
+                domain: "project.test".to_owned(),
+                tls: false,
+                port: None,
+                service: None,
+            },
+            EffectiveDnsRoute {
+                domain: "admin.project.test".to_owned(),
+                tls: true,
+                port: Some(41002),
+                service: Some("admin".to_owned()),
+            },
+        ];
+
+        let urls = managed_readiness_probe_urls(Some(&policy));
+
+        assert_eq!(
+            urls,
+            vec![
+                "http://project.test".to_owned(),
+                "https://admin.project.test".to_owned(),
             ]
         );
     }

@@ -1,0 +1,192 @@
+# 069 - Workspace Host Integration
+
+How Effigy bridges the developer's host environment into long-running
+workspace containers so in-container tasks (release scripts, `git push`,
+shared library hacking) work without per-container credential setup.
+
+This guide covers two related features that ship together:
+
+- **Library mounts** — bind extra host directories into the workspace under
+  `/workspace-libraries/<basename>`, keyed by bundle name in the user-global
+  `~/.effigy/config.toml`.
+- **Host git/SSH integration** — fold the developer's `~/.gitconfig`,
+  `~/.ssh/known_hosts`, and forwarded SSH agent socket into git-aware
+  workspace containers (`php-fpm`, `workspace-rust-bun`, `node`) by default.
+
+## Vision Alignment
+
+- Primary tags: `OPERATE`, `ADOPT`, `CONTRACT`
+- Target movement: container-side dev tasks should "just work" with the
+  developer's existing identity, instead of forcing per-container credential
+  copies or in-container key generation.
+
+## When To Use This
+
+Reach for this guide when:
+
+- A release task or git workflow runs inside a workspace container and needs
+  to push to a remote repo over SSH.
+- You hack on shared libraries (sibling repos to the consumer project) and
+  want them visible inside the container at a stable path.
+- You see `git push` failing with `Permission denied (publickey)`,
+  `ssh-add: Error connecting to agent: Permission denied`, or
+  `error: cannot run ssh: No such file or directory` in container output.
+
+## Library Mounts (Bundle-Keyed)
+
+`~/.effigy/config.toml` exposes per-bundle library mount lists. When a
+project's `effigy.toml` declares `[bundle].base = "<name>"` matching a
+`[bundle.<name>]` block in the user config, each listed parent directory is
+bind-mounted into the workspace container under
+`/workspace-libraries/<basename>`.
+
+### Example
+
+```toml
+# ~/.effigy/config.toml
+[bundle.decodelabs]
+library_mounts = [
+  "/Users/tom/Dev/legacy/libraries/decodelabs",
+  "/Users/tom/Dev/legacy/libraries/df-r7",
+  "/Users/tom/Dev/legacy/libraries/icf",
+]
+```
+
+A consumer project under any decodelabs site sees those three trees inside
+the container at:
+
+```
+/workspace-libraries/decodelabs
+/workspace-libraries/df-r7
+/workspace-libraries/icf
+```
+
+### Rules
+
+- Mounts apply only when the project's `[bundle].base` matches the user
+  config's `[bundle.<name>]` key. Other projects are unaffected.
+- Basename collisions across two listed parents are rejected at compose-time
+  with a clear error — rename or move one parent.
+- Per-developer; the file lives in `$HOME/.effigy` and is never checked in.
+- Missing config or missing bundle block silently no-ops.
+
+## Host Git/SSH Integration
+
+Three default-on params on the `php-fpm`, `workspace-rust-bun`, and `node`
+catalogs fold host credentials into the workspace container without copying
+private material.
+
+### `mount_host_git_config` (default `true`)
+
+Binds `~/.gitconfig` read-only at `/home/dev/.gitconfig` so git inside the
+container inherits the developer's identity, aliases, and global ignore.
+Skipped silently when the host file does not exist.
+
+### `mount_host_ssh_known_hosts` (default `true`)
+
+Binds `~/.ssh/known_hosts` read-only at `/home/dev/.ssh/known_hosts` so
+git/ssh from inside the container does not prompt on first connection to
+known remotes. Skipped silently when the host file does not exist.
+
+### `forward_host_ssh_agent` (default `true`)
+
+Forwards Colima's `/run/host-services/ssh-auth.sock` into the workspace
+container at the same path. `SSH_AUTH_SOCK` is set to a per-developer
+bridge socket (see below) so git pushes over SSH use the developer's
+already-loaded keys without copying private material into the container.
+
+The mount is emitted unconditionally (it cannot be host-side stat'd because
+the socket lives inside the Colima VM, not on the macOS host). If the agent
+isn't actually forwarded, compose-up fails loudly. Opt out by setting the
+param to `false`.
+
+### Container-side support
+
+Catalog images that opt in (`php-fpm`, `workspace-rust-bun`) ship three
+pieces of glue that the integration relies on:
+
+- `openssh-client` is installed in the base image so `git push` over SSH
+  has an `ssh` binary at all. Without this, git fails with `error: cannot
+  run ssh: No such file or directory`.
+- `socat` is installed in the base image to bridge the forwarded SSH
+  agent socket.
+- An `effigy-entrypoint` wrapper starts a `socat` process on container
+  startup that listens on `/tmp/effigy-ssh-auth.sock` (owned by the
+  workspace user, mode `0600`) and proxies traffic to
+  `/run/host-services/ssh-auth.sock`. `SSH_AUTH_SOCK` is injected at
+  `/tmp/effigy-ssh-auth.sock` so ssh tooling speaks to the bridge rather
+  than the root-owned forwarded original. Bridging is more reliable than
+  chmoding the forwarded socket because Colima may harden the socket
+  inside its VM in ways that defeat in-container `chmod`.
+
+### Override per service
+
+Disable any of the three mounts in the manifest:
+
+```toml
+[containers.web.services.app]
+catalog = "php-fpm"
+forward_host_ssh_agent = false
+mount_host_git_config = false
+```
+
+Or set a manifest-level `SSH_AUTH_SOCK` to win over Effigy's default — the
+runtime injection respects user-set values.
+
+## Verifying The Bridge
+
+Inside a workspace shell:
+
+```sh
+# Should show the bridged socket owned by the workspace user
+ls -la /tmp/effigy-ssh-auth.sock
+echo "$SSH_AUTH_SOCK"   # /tmp/effigy-ssh-auth.sock
+
+# Should list keys loaded into the host agent
+ssh-add -l
+
+# Should attempt the push using the host agent's keys
+git push
+```
+
+Effigy's managed Colima start always passes `--ssh-agent` and writes
+`sshAgent: true` into the managed profile config, so the agent socket is
+forwarded into the VM at `/run/host-services/ssh-auth.sock` by default. If
+`ssh-add -l` reports `The agent has no identities`, your host agent simply
+has no keys loaded — run `ssh-add ~/.ssh/<key>` outside the container and
+retry. If keys are listed but `git push` still returns `Permission denied
+(publickey)`, that's a remote-side authorization issue for whichever key is
+loaded.
+
+If you suspect Colima itself isn't forwarding the agent (the bridge log
+under `/var/log/effigy-ssh-bridge.log` reports `host_sock missing`), stop
+Colima entirely and bring it back up so the `--ssh-agent` flag actually
+applies — `colima stop --profile <profile>` followed by `effigy container
+reset`. A `colima start` against an already-running profile is a no-op and
+won't pick up new flags.
+
+## Caveats And Gaps
+
+- Only the three catalogs listed above receive the host git/SSH integration
+  by default. Adding a new workspace-flavored catalog requires extending
+  `WORKSPACE_GIT_AWARE_CATALOGS` in `effigy-containers/src/workspace.rs`.
+- The `node` catalog uses `node:<version>-alpine` directly with no
+  Dockerfile. The agent-socket mount and env var land correctly, but the
+  image lacks the `effigy-entrypoint` chmod wrapper, so a non-root user in
+  that catalog still has to access the socket through whatever permissions
+  Colima exposes. If you hit `Permission denied` from the agent in a node
+  container specifically, switch the catalog to a Dockerfile build or use
+  the `php-fpm`/`workspace-rust-bun` workspace as the shell target.
+- The integration assumes Colima as the container driver. Other drivers
+  (Docker Desktop, plain dockerd) may expose the host SSH agent at a
+  different path or not at all; the mount target is hard-coded to
+  `/run/host-services/ssh-auth.sock`.
+
+## Related Guides
+
+- [`063-container-system-guide.md`](./063-container-system-guide.md) — runtime
+  compose layout under `.effigy/runtime/compose/`.
+- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
+  — how workspaces compose with systems and containers.
+- [`067-catalog-services-reference.md`](./067-catalog-services-reference.md) —
+  per-catalog parameter surface for `php-fpm`, `workspace-rust-bun`, `node`.
