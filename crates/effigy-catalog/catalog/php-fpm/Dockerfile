@@ -123,6 +123,15 @@ RUN { \
         echo 'decorate_workers_output = no'; \
     } > /usr/local/etc/php-fpm.d/effigy-dev.conf
 
+# ── Git safe.directory ────────────────────────────────────────────────
+# Workspace-root and library-mount paths are bind-mounted from the host,
+# owned by the developer's host UID. Tooling that runs as root inside the
+# container (`effigy prep`, composer-invoked git, etc.) would otherwise
+# hit git's "dubious ownership" guard. Trust is implicit in a dev
+# container — every mounted tree is the developer's own working copy — so
+# allow any path system-wide.
+RUN git config --system --add safe.directory '*'
+
 # ── Composer ──────────────────────────────────────────────────────────
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 

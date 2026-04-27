@@ -61,6 +61,15 @@ RUN mkdir -p /home/dev/.cargo "${WORKSPACE_MOUNT}" \
 ENV HOME=/home/dev
 ENV CARGO_HOME=/usr/local/cargo
 
+# ── Git safe.directory ────────────────────────────────────────────────
+# Workspace-root and library-mount paths are bind-mounted from the host,
+# owned by the developer's host UID. Tooling that runs as root inside the
+# container (`effigy prep`, package managers, etc.) would otherwise hit
+# git's "dubious ownership" guard. Trust is implicit in a dev container —
+# every mounted tree is the developer's own working copy — so allow any
+# path system-wide.
+RUN git config --system --add safe.directory '*'
+
 # ── SSH agent socket bridge ───────────────────────────────────────────
 # Colima creates the forwarded host SSH agent socket inside its VM owned
 # by root; bind-mounting it preserves those perms, so the non-root `dev`

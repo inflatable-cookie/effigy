@@ -168,6 +168,12 @@ During v0.x, MINOR bumps may include breaking changes.
   `SSH_AUTH_SOCK` is injected pointing at the bridge. The wrapper also
   writes a startup log to `/var/log/effigy-ssh-bridge.log` for
   diagnosability.
+- Set `git config --system --add safe.directory '*'` in the `php-fpm`
+  and `workspace-rust-bun` catalog images so root-side tooling
+  (`effigy prep`, composer-invoked git, etc.) stops hitting git's
+  "dubious ownership" guard on bind-mounted workspace and library
+  paths owned by the host UID. Trust is implicit in a dev container,
+  so the system-wide allowlist is the right blanket fix.
 - Pass `--ssh-agent` to `colima start` and persist `sshAgent: true` in
   the managed Colima profile YAML so the host SSH agent socket is
   actually forwarded into the VM at `/run/host-services/ssh-auth.sock`.

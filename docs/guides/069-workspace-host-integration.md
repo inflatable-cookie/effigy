@@ -110,6 +110,10 @@ pieces of glue that the integration relies on:
   run ssh: No such file or directory`.
 - `socat` is installed in the base image to bridge the forwarded SSH
   agent socket.
+- `git config --system --add safe.directory '*'` is set so root-side
+  tooling inside the container (e.g. `effigy prep`, composer-invoked
+  git) doesn't trip over the "dubious ownership" guard on bind-mounted
+  workspace and library trees owned by the host UID.
 - An `effigy-entrypoint` wrapper starts a `socat` process on container
   startup that listens on `/tmp/effigy-ssh-auth.sock` (owned by the
   workspace user, mode `0600`) and proxies traffic to
