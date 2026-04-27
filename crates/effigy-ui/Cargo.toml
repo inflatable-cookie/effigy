@@ -1,8 +1,9 @@
 [package]
 name = "effigy-ui"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
 description = "UI rendering primitives for Effigy: Renderer trait, PlainRenderer, theme, progress, and table helpers"
 
 [dependencies]

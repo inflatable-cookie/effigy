@@ -1,8 +1,9 @@
 [package]
 name = "effigy-process"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
 description = "Process supervision subsystem for Effigy (spawn, stdio streaming, shutdown, diagnostics)"
 
 [dependencies]

@@ -1,8 +1,9 @@
 [package]
 name = "effigy-catalog"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
 description = "Service catalog and compose assembly for Effigy container environments"
 
 [dependencies]

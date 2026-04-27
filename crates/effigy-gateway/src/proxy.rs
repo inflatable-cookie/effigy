@@ -452,16 +452,29 @@ async fn handle_request(
     };
 
     // Look up the route.
-    let target = {
+    let route = {
         let table = route_table.read().expect("route table lock poisoned");
-        table.lookup(&host).and_then(|r| r.target.clone())
+        table.lookup(&host).cloned()
     };
 
-    let target = match target {
-        Some(t) => t,
+    let route = match route {
+        Some(route) => route,
         None => {
             GatewayStats::inc(&stats.no_route_requests);
             debug!(host = %host, peer = %peer_addr, "no route for host");
+            return Ok(no_route_response(&host));
+        }
+    };
+
+    if let Some(response) = maybe_redirect_http_to_https(&req, &route, config, forwarded_https) {
+        return Ok(response);
+    }
+
+    let target = match route.target.clone() {
+        Some(target) => target,
+        None => {
+            GatewayStats::inc(&stats.no_route_requests);
+            debug!(host = %host, peer = %peer_addr, "route has no HTTP target");
             return Ok(no_route_response(&host));
         }
     };
@@ -504,6 +517,33 @@ fn extract_host(req: &Request<Incoming>) -> Option<String> {
         .get(HOST)
         .and_then(|v| v.to_str().ok())
         .map(|h| h.split(':').next().unwrap_or(h).to_lowercase())
+}
+
+fn maybe_redirect_http_to_https<B>(
+    req: &Request<B>,
+    route: &crate::routes::Route,
+    config: &ProxyConfig,
+    forwarded_https: bool,
+) -> Option<Response<ProxyBody>> {
+    if forwarded_https || !route.tls || config.tls_bind_addr.is_none() {
+        return None;
+    }
+
+    let path_and_query = req
+        .uri()
+        .path_and_query()
+        .map(|value| value.as_str())
+        .unwrap_or("/");
+    let location = format!("https://{}{}", route.domain, path_and_query);
+
+    Some(
+        Response::builder()
+            .status(StatusCode::PERMANENT_REDIRECT)
+            .header("location", location)
+            .header("x-effigy-gateway", "true")
+            .body(empty_body())
+            .unwrap(),
+    )
 }
 
 /// Check if a request is a WebSocket upgrade.

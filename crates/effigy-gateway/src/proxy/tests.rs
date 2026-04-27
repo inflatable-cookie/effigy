@@ -1,4 +1,6 @@
 use super::*;
+use crate::routes::{Route, RouteSource};
+use chrono::Utc;
 
 #[test]
 fn extract_host_strips_port() {
@@ -172,4 +174,66 @@ fn error_response_has_correct_headers() {
 fn no_route_response_contains_domain() {
     let resp = no_route_response("myapp.test");
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[test]
+fn http_route_redirects_to_https_when_tls_is_enabled() {
+    let req = Request::builder()
+        .uri("/admin?tab=users")
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+    let route = Route {
+        domain: "myapp.test".to_owned(),
+        target: Some("127.0.0.1:41002".to_owned()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        source: RouteSource::Container,
+        project: "/tmp/project".to_owned(),
+        tls: true,
+        registered: Utc::now(),
+    };
+    let config = ProxyConfig {
+        tls_bind_addr: Some("127.0.0.1:443".parse().unwrap()),
+        ..ProxyConfig::default()
+    };
+
+    let response =
+        maybe_redirect_http_to_https(&req, &route, &config, false).expect("should redirect");
+
+    assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(
+        response
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "https://myapp.test/admin?tab=users"
+    );
+}
+
+#[test]
+fn https_route_does_not_redirect_when_request_is_already_https() {
+    let req = Request::builder()
+        .uri("/")
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+    let route = Route {
+        domain: "myapp.test".to_owned(),
+        target: Some("127.0.0.1:41002".to_owned()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        source: RouteSource::Container,
+        project: "/tmp/project".to_owned(),
+        tls: true,
+        registered: Utc::now(),
+    };
+    let config = ProxyConfig {
+        tls_bind_addr: Some("127.0.0.1:443".parse().unwrap()),
+        ..ProxyConfig::default()
+    };
+
+    assert!(maybe_redirect_http_to_https(&req, &route, &config, true).is_none());
 }
