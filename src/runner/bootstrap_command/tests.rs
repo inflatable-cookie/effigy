@@ -466,3 +466,49 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
         "bun marker should be written under the cloned repo sibling, not the bootstrap parent"
     );
 }
+
+#[test]
+fn run_bootstrap_with_cwd_skips_missing_bootstrap_deps_sync_paths() {
+    let root = temp_dir("bootstrap-deps-sync-missing");
+    fs::write(
+        root.join("effigy.toml"),
+        "[package_manager]\njs = \"bun\"\n",
+    )
+    .expect("write manifest");
+
+    let ui = root.join("ui");
+    fs::create_dir_all(&ui).expect("mkdir ui");
+    fs::write(ui.join("package.json"), "{}\n").expect("write ui package");
+
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    fs::write(bin_dir.join("bun"), "#!/bin/sh\nprintf bun > bun.marker\n").expect("write bun");
+    let script = bin_dir.join("bun");
+    let mut perms = fs::metadata(&script).expect("stat script").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&script, perms).expect("chmod script");
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    unsafe {
+        std::env::set_var("PATH", format!("{}:{original_path}", bin_dir.display()));
+    }
+    let out = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::DepsSync {
+                mode: BootstrapDepsSyncMode::Both,
+                paths: vec!["ui".to_owned(), "missing-ui".to_owned()],
+            },
+            output_json: false,
+        },
+        root.clone(),
+    )
+    .expect("run bootstrap deps sync");
+    unsafe {
+        std::env::set_var("PATH", original_path);
+    }
+
+    assert!(out.contains("bootstrap deps sync completed (1)"));
+    assert!(out.contains("ui [js]: bun install"));
+    assert!(out.contains("missing-ui [skip]: missing directory"));
+    assert!(ui.join("bun.marker").is_file(), "bun marker should exist");
+}

@@ -193,22 +193,11 @@ fn run_manifest_task_builtin_init_underlay_emits_all_declared_files_and_guidance
     let out = run_builtin_ok(root.to_path_buf(), "init", &["underlay"]);
     assert_output_contains_all(
         &out,
-        &[
-            "Created effigy.toml",
-            "Created effigy.bootstrap.toml",
-            "Created effigy.tasks.toml",
-            "Next steps:",
-            "[bundle].host",
-        ],
+        &["Created effigy.toml", "Next steps:", "[bundle].host"],
     );
     assert_path_exists(&root.join("effigy.toml"), "underlay root manifest");
-    assert_path_exists(
-        &root.join("effigy.bootstrap.toml"),
-        "underlay bootstrap manifest",
-    );
-    assert_path_exists(&root.join("effigy.tasks.toml"), "underlay tasks manifest");
     assert_file_text_contains_all(
-        &root.join("effigy.tasks.toml"),
+        &root.join("effigy.toml"),
         &["{{ bundle.root }}/scripts/dev/ui-setup.rhai"],
     );
 }
@@ -235,6 +224,10 @@ fn run_manifest_task_builtin_init_underlay_refuses_overwrite_without_force() {
         &root.join("effigy.bootstrap.toml"),
         "underlay refuse-overwrite must not write peer files",
     );
+    assert_path_missing(
+        &root.join("effigy.tasks.toml"),
+        "underlay refuse-overwrite must not write peer files",
+    );
 }
 
 #[test]
@@ -243,18 +236,15 @@ fn run_manifest_task_builtin_init_underlay_force_overwrites_all_targets() {
     write_root_manifest(&root, "[tasks]\nold = \"printf old\"\n");
 
     let out = run_builtin_ok(root.to_path_buf(), "init", &["underlay", "--force"]);
-    assert_output_contains_all(
-        &out,
-        &[
-            "Overwrote effigy.toml",
-            "Created effigy.bootstrap.toml",
-            "Created effigy.tasks.toml",
-        ],
-    );
+    assert_output_contains_all(&out, &["Overwrote effigy.toml"]);
     assert_file_text_excludes_all(&root.join("effigy.toml"), &["old = \"printf old\""]);
-    assert_path_exists(
+    assert_path_missing(
         &root.join("effigy.bootstrap.toml"),
-        "underlay bootstrap manifest",
+        "underlay starter should stay single-file by default",
+    );
+    assert_path_missing(
+        &root.join("effigy.tasks.toml"),
+        "underlay starter should stay single-file by default",
     );
 }
 
@@ -263,21 +253,18 @@ fn run_manifest_task_builtin_init_underlay_dry_run_prints_fenced_sections_withou
     let root = temp_workspace("builtin-init-underlay-dry-run");
 
     let out = run_builtin_ok(root.to_path_buf(), "init", &["underlay", "--dry-run"]);
-    assert_output_contains_all(
-        &out,
-        &[
-            "=== effigy.toml ===",
-            "=== effigy.bootstrap.toml ===",
-            "=== effigy.tasks.toml ===",
-        ],
-    );
+    assert_output_contains_all(&out, &["[bundle]", "base = \"underlay\"", "[tasks.dev]"]);
     assert_path_missing(
         &root.join("effigy.toml"),
         "underlay dry-run must not write the root manifest",
     );
     assert_path_missing(
         &root.join("effigy.tasks.toml"),
-        "underlay dry-run must not write tasks",
+        "underlay dry-run must not write split task files",
+    );
+    assert_path_missing(
+        &root.join("effigy.bootstrap.toml"),
+        "underlay dry-run must not write split bootstrap files",
     );
 }
 
@@ -295,7 +282,6 @@ fn run_manifest_task_builtin_init_underlay_json_reports_files_array_and_guidance
             "\"overwritten\": false",
             "\"files\":",
             "\"target\": \"effigy.toml\"",
-            "\"target\": \"effigy.tasks.toml\"",
             "\"guidance\":",
             "[bundle].host",
         ],

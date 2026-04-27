@@ -164,19 +164,19 @@ impl BootstrapProgressReporter {
                 self.finish_error(&format!("[warn] child {path} skipped: {warning}"));
             }
             BootstrapProgressEvent::ChildRunStarted { path, .. } => {
-                self.start(&format!("Bootstrap: running child setup for {path}"));
+                self.start_command_phase(&format!("Bootstrap: running child setup for {path}"));
             }
             BootstrapProgressEvent::ChildRunFinished { path, run, .. } => {
                 self.finish_success(&format!("[ok] child {path} setup complete ({run})"));
             }
             BootstrapProgressEvent::RootRunStarted { .. } => {
-                self.start("Bootstrap: running root setup");
+                self.start_command_phase("Bootstrap: running root setup");
             }
             BootstrapProgressEvent::RootRunFinished { run, .. } => {
                 self.finish_success(&format!("[ok] root setup complete ({run})"));
             }
             BootstrapProgressEvent::StartTaskStarted { selector, .. } => {
-                self.start(&format!("Bootstrap: starting {selector}"));
+                self.start_command_phase(&format!("Bootstrap: starting {selector}"));
             }
             BootstrapProgressEvent::StartTaskFinished { selector, .. } => {
                 self.finish_success(&format!("[ok] start task complete ({selector})"));
@@ -192,6 +192,11 @@ impl BootstrapProgressReporter {
         } else {
             eprintln!("{label}");
         }
+    }
+
+    fn start_command_phase(&mut self, label: &str) {
+        self.finish_clear();
+        eprintln!("{label}");
     }
 
     fn finish_success(&mut self, message: &str) {
@@ -248,6 +253,12 @@ struct BootstrapDepsOperation {
     manifest_path: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct BootstrapDepsSkippedPath {
+    path: String,
+    reason: &'static str,
+}
+
 fn run_bootstrap_deps_sync(
     repo_root: &Path,
     mode: BootstrapDepsSyncMode,
@@ -257,9 +268,16 @@ fn run_bootstrap_deps_sync(
     let root_parent = repo_root.parent().unwrap_or(repo_root);
     let mut manifest_cache = BTreeMap::<PathBuf, Option<ManifestJsPackageManager>>::new();
     let mut operations = Vec::<BootstrapDepsOperation>::new();
+    let mut skipped = Vec::<BootstrapDepsSkippedPath>::new();
 
     for path_raw in paths {
-        let resolved = resolve_bootstrap_sync_path(repo_root, root_parent, path_raw)?;
+        let Some(resolved) = resolve_bootstrap_sync_path(repo_root, root_parent, path_raw)? else {
+            skipped.push(BootstrapDepsSkippedPath {
+                path: path_raw.clone(),
+                reason: "missing directory",
+            });
+            continue;
+        };
         let package_json = resolved.join("package.json");
         let cargo_toml = resolved.join("Cargo.toml");
         let wants_js = matches!(
@@ -336,6 +354,7 @@ fn run_bootstrap_deps_sync(
                 BootstrapDepsSyncMode::RustOnly => "rust",
             },
             "operations": operations,
+            "skipped": skipped,
         }))
         .map_err(|error| RunnerError::task_invocation(error.to_string()));
     }
@@ -347,6 +366,12 @@ fn run_bootstrap_deps_sync(
             operation.path, operation.kind, operation.command
         ));
     }
+    for skipped_path in skipped {
+        text.push_str(&format!(
+            "\n- {} [skip]: {}",
+            skipped_path.path, skipped_path.reason
+        ));
+    }
     Ok(text)
 }
 
@@ -354,7 +379,7 @@ fn resolve_bootstrap_sync_path(
     repo_root: &Path,
     root_parent: &Path,
     path_raw: &str,
-) -> Result<PathBuf, RunnerError> {
+) -> Result<Option<PathBuf>, RunnerError> {
     let canonical_repo_root = repo_root
         .canonicalize()
         .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?;
@@ -362,8 +387,11 @@ fn resolve_bootstrap_sync_path(
         .canonicalize()
         .map_err(|error| RunnerError::task_invocation_failed_read(root_parent, error))?;
     let candidate = repo_root.join(path_raw);
-    let metadata = std::fs::metadata(&candidate)
-        .map_err(|error| RunnerError::task_invocation_failed_read(&candidate, error))?;
+    let metadata = match std::fs::metadata(&candidate) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(RunnerError::task_invocation_failed_read(&candidate, error)),
+    };
     if !metadata.is_dir() {
         return Err(RunnerError::task_invocation(format!(
             "`bootstrap deps sync {path_raw}` must target a directory",
@@ -374,7 +402,7 @@ fn resolve_bootstrap_sync_path(
         .map_err(|error| RunnerError::task_invocation_failed_read(&candidate, error))?;
     if canonical.starts_with(&canonical_repo_root) || canonical.starts_with(&canonical_root_parent)
     {
-        return Ok(canonical);
+        return Ok(Some(canonical));
     }
     Err(RunnerError::task_invocation(format!(
         "`bootstrap deps sync {path_raw}` cannot escape the repo parent directory",

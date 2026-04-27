@@ -10,7 +10,7 @@ This shape uses only existing Effigy surfaces:
 
 - `[bundle]` for the stable Underlay stack defaults
 - managed `tasks.dev` with `role = "lifecycle"` + `role = "shell"`
-- `[manifest].include` composition
+- repo-owned tasks in the root manifest
 
 There is no parallel "underlay runtime" concept in Effigy. The starter
 is a convention built on the stable system/workspace/catalog model.
@@ -19,12 +19,10 @@ is a convention built on the stable system/workspace/catalog model.
 
 | File                       | Ownership       | Purpose                                                                                  |
 |----------------------------|-----------------|------------------------------------------------------------------------------------------|
-| `effigy.toml`              | consumer (root) | Declares `[bundle]`, optional `systems.dev.mounts`, repo alias, and `[manifest].include`. |
-| `effigy.tasks.toml`        | starter         | Managed `tasks.dev` concurrent shape, plus `health`/`validate`/`qa` aggregators.         |
-| `effigy.bootstrap.toml`    | starter         | bootstrap-local `run` and the `[bootstrap]` entry points.                                |
+| `effigy.toml`              | consumer (root) | Declares `[bundle]`, optional `systems.dev.mounts`, repo alias, repo-owned tasks, and any explicit overrides. |
 
 The default frontend hydration helper is a bundled asset referenced from
-`effigy.tasks.toml` through `{{ bundle.root }}/scripts/dev/ui-setup.rhai`.
+`effigy.toml` through `{{ bundle.root }}/scripts/dev/ui-setup.rhai`.
 It is not emitted into the consumer repo. The helper reads `[bundle.dirs]`
 when repos need explicit package-directory mapping instead of the default
 `app-*` / `acme-*` guesses.
@@ -36,7 +34,7 @@ The shipped bundle also provides `smoke:error-logging`,
 `NULL_RATE_THRESHOLD`, or `ERROR_REPORTING_ROUTES_DIR` when the repo's
 API or route layout differs from the defaults.
 
-The starter bootstrap run also uses the bundled
+The bundle-owned bootstrap run also uses the bundled
 `{{ bundle.root }}/scripts/bootstrap-env.rhai` helper before container
 startup. It creates app-local `.env` files only when they are missing,
 deriving local URLs from `[bundle]` / `[bundle.routes]` and generating
@@ -54,26 +52,25 @@ After emission, edit:
    `workspace_subdir`, `database`, and the optional `api_port` /
    `admin_port` / `front_port` overrides.
    When the repo uses different app package names, also set
-   `[bundle.dirs]` (`front`, `admin`, and optional `ui`). When the repo
+   `[bundle.dirs]` (`api`, `client`, optional `ui`, `front`, `admin`). When the repo
    wants DNS labels to follow those app names, set `[bundle.routes]`
    (`front`, `admin`, `api`).
 2. Add `systems.dev.mounts` in `effigy.toml` when sibling checkouts
    must be visible inside the workspace container.
-3. Replace the `app-*/dev` concurrent entries in `effigy.tasks.toml`
+3. Replace the `app-*/dev` concurrent entries in `effigy.toml`
    and the aggregator task lists with the repo's real apps.
-4. Edit the bootstrap `run` sequence in `effigy.bootstrap.toml` to
-   match the repo's dependency sync paths, preferring `bootstrap deps sync ...`
-   over shell hydration.
-5. Keep bundled setup helpers referenced through `{{ bundle.root }}`
+4. Keep bundled setup helpers referenced through `{{ bundle.root }}`
    unless the repo intentionally needs to own a forked script.
+5. Only add an explicit `[bootstrap]` block when the repo truly needs to
+   override the bundle-owned default children or dependency sync behavior.
 
 The same checklist is embedded in the starter's `starter.toml`
 `[guidance]` block so `effigy init underlay` prints it on emit.
 
 After adoption, the consumer repo should carry no `docker-compose.yml`
 and no workspace Dockerfile. The root manifest only chooses bundle
-inputs and repo-owned tasks; the stack shape itself stays in Effigy's
-bundled `underlay` defaults and service catalog.
+inputs and repo-owned tasks; the stack shape and default bootstrap flow
+stay in Effigy's bundled `underlay` defaults and service catalog.
 
 ## What stays consumer-owned
 

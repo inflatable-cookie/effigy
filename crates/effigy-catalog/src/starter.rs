@@ -289,7 +289,7 @@ mod tests {
 
         assert_eq!(starter.name, "underlay");
         let targets: Vec<&str> = starter.files.iter().map(|f| f.target.as_str()).collect();
-        for expected in ["effigy.toml", "effigy.bootstrap.toml", "effigy.tasks.toml"] {
+        for expected in ["effigy.toml"] {
             assert!(
                 targets.contains(&expected),
                 "expected underlay to declare {expected}; got {targets:?}"

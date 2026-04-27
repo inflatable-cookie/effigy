@@ -34,6 +34,12 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Changed
+- Move the default `underlay` bootstrap contract into the shipped bundle
+  and collapse `effigy init underlay` back to a single root `effigy.toml`.
+  The bundle now owns the default env generation, sibling children, and
+  `bootstrap deps sync ...` command built from the Underlay directory inputs,
+  while split-out `effigy.bootstrap.toml` / `effigy.tasks.toml` becomes an
+  opt-in decomposition pattern instead of the starter default.
 - Add `EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE=auto|local|download` so
   workspace-container handoff can force Linux Effigy install artifacts to
   come from the local repo build or the published GitHub release cache

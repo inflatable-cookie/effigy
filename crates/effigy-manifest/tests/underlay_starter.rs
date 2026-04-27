@@ -1,18 +1,18 @@
 //! Composition proof for the bundled Underlay starter shape.
 //!
-//! The starter files live under
-//! `crates/effigy-catalog/starters/underlay/`. They are authored as
-//! reference source for manual adoption (no starter-init CLI yet). This
-//! test verifies that the composed manifest:
+//! The starter file lives under
+//! `crates/effigy-catalog/starters/underlay/`. It is authored as
+//! reference source for manual adoption and `effigy init underlay`.
+//! This test verifies that the starter manifest:
 //!
-//! - parses cleanly via `[manifest].include`
+//! - parses cleanly as a single root manifest
 //! - resolves the shipped `underlay` bundle into the expected
 //!   `systems.dev` + `containers.stack` shape
 //! - declares the catalog-sourced services (workspace + postgres + dbgate +
 //!   mailpit + minio)
 //! - wires the managed `dev` task with the `lifecycle` + `shell` roles
 //!   Effigy's dev runtime expects
-//! - carries a bootstrap-local managed `run` plus `start = "dev"`
+//! - carries the bundle-owned bootstrap-local managed `run` plus `start = "dev"`
 
 use std::path::{Path, PathBuf};
 
@@ -54,7 +54,7 @@ fn load_starter_manifest() -> (tempfile::TempDir, effigy_manifest::TaskManifest)
 
 #[test]
 fn starter_composes_into_single_manifest() {
-    let (tmp, manifest) = load_starter_manifest();
+    let (_tmp, manifest) = load_starter_manifest();
 
     let bundle = manifest.bundle.expect("starter root carries [bundle]");
     assert_eq!(bundle.base.as_deref(), Some("underlay"));
@@ -63,19 +63,13 @@ fn starter_composes_into_single_manifest() {
     let catalog = manifest.catalog.expect("starter root carries [catalog]");
     assert_eq!(catalog.alias.as_deref(), Some("underlay-app"));
 
-    // `[bootstrap]` merged in from effigy.bootstrap.toml.
+    // `[bootstrap]` now comes from the shipped bundle defaults.
     let bootstrap = manifest
         .bootstrap
-        .expect("starter declares [bootstrap] via bootstrap fragment");
+        .expect("starter declares [bootstrap] via bundle defaults");
     assert!(
         bootstrap.run.is_some(),
         "starter declares bootstrap-local run"
-    );
-    let effigy_bootstrap = std::fs::read_to_string(tmp.path().join("effigy.bootstrap.toml"))
-        .expect("read starter bootstrap file");
-    assert!(
-        effigy_bootstrap.contains(r#"{{ bundle.root }}/scripts/bootstrap-env.rhai"#),
-        "starter bootstrap should provision app-local env files before startup"
     );
     assert_eq!(bootstrap.start.as_deref(), Some("dev"));
 }
