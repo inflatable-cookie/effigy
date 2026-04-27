@@ -28,6 +28,7 @@ pub(in crate::runner::tests) fn assert_task_not_found_any(err: RunnerError) {
     }
 }
 
+#[allow(dead_code)]
 pub(in crate::runner::tests) fn assert_defer_loop_detected(err: RunnerError, expected_depth: u8) {
     match err {
         RunnerError::DeferLoopDetected { depth } => assert_eq!(depth, expected_depth),
