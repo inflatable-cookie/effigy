@@ -151,7 +151,7 @@ MariaDB database server.
 
 - Image: `mariadb:10.11` (override via `version`).
 - Parameters: `version` (`"10.11"`), `database` (`"app"`), `databases`
-  (string array, optional), `root_password` (`"secret"`).
+  (string array, optional), `password` (`"secret"`).
 - Exposed port: `3306`.
 - Volume: persistent data volume at `/var/lib/mysql`.
 - Healthcheck: `healthcheck.sh --connect --innodb_initialized`.

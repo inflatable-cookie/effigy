@@ -30,7 +30,7 @@ description = "Database user for the default connection"
 [params.database_password]
 type = "string"
 default = ""
-description = "Database password for the default connection (falls back to the referenced service's password/root_password when empty)"
+description = "Database password for the default connection (falls back to the referenced service's `password` param when empty)"
 
 [params.engine]
 type = "string"

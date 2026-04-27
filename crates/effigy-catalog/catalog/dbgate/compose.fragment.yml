@@ -9,8 +9,6 @@ services:
 {% set resolved_password = database_password %}
 {% if not database_password and database_service and database_service.params.password %}
 {% set resolved_password = database_service.params.password %}
-{% elif not database_password and database_service and database_service.params.root_password %}
-{% set resolved_password = database_service.params.root_password %}
 {% endif %}
     environment:
       CONNECTIONS: "pg"

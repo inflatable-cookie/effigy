@@ -155,3 +155,22 @@ fn vt_logs_reports_full_scrollback_range_not_one_screen_only() {
         "expected scrollback beyond one visible screen, got {max_offset}"
     );
 }
+
+#[test]
+fn vt_logs_do_not_rewrap_terminal_rows_to_narrow_panel_width() {
+    let mut parser = VtParser::new(8, 80, 100);
+    parser.process(b"progress: 1234567890123456789012345678901234567890");
+
+    let (rows, _, _) = vt_logs(&mut parser, 8, 20, 0, true);
+
+    let rendered = rows
+        .iter()
+        .map(|line| line.line.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line.contains("progress: 1234567890123456789012345678901234567890")),
+        "expected full terminal row to survive narrow pane rendering: {rendered:?}"
+    );
+}

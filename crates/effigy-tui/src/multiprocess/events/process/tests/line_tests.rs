@@ -4,6 +4,20 @@ use super::super::{handle_stderr_event, handle_stdout_event};
 use super::{diagnostics, process_event, state_with_process, state_with_vt_process};
 
 #[test]
+fn stdout_event_skips_plain_output_for_vt_process_even_before_chunk() {
+    let mut state = state_with_vt_process("api");
+    state.set_vt_saw_chunk_for("api", false);
+    let mut diagnostics = diagnostics();
+    let event = process_event("api", ProcessEventKind::Stdout, "line one", None);
+
+    let skipped = handle_stdout_event(&event, &mut state, &mut diagnostics, true);
+
+    assert!(skipped);
+    let lines = state.logs_for("api").expect("api logs");
+    assert!(lines.is_empty());
+}
+
+#[test]
 fn stdout_event_skips_plain_output_when_vt_chunk_already_seen() {
     let mut state = state_with_vt_process("api");
     state.set_vt_saw_chunk_for("api", true);

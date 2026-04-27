@@ -365,6 +365,120 @@ databases = ["acme", "acme_test"]
 }
 
 #[test]
+fn underlay_bundle_emits_per_subproject_volume_dirs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "underlay-reference-dev"
+workspace_subdir = "underlay-reference"
+database = "acme"
+
+[bundle.dirs]
+api = "acme-api"
+client = "acme-client"
+ui = "acme-ui"
+front = "acme-front"
+admin = "acme-admin"
+"#,
+    )
+    .expect("write manifest");
+    std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let workspace = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("stack"))
+        .and_then(|stack| stack.services.get("workspace"))
+        .expect("workspace service");
+
+    let cargo_dirs: Vec<&str> = workspace
+        .params
+        .get("cargo_target_dirs")
+        .and_then(|value| value.as_array())
+        .expect("cargo_target_dirs")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert_eq!(
+        cargo_dirs,
+        vec!["acme-api"],
+        "underlay bundle should expose the api subproject's target/ as a named volume"
+    );
+
+    let node_dirs: Vec<&str> = workspace
+        .params
+        .get("node_modules_dirs")
+        .and_then(|value| value.as_array())
+        .expect("node_modules_dirs")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert_eq!(
+        node_dirs,
+        vec!["acme-client", "acme-ui", "acme-front", "acme-admin"],
+        "underlay bundle should expose each bun frontend's node_modules as a named volume"
+    );
+}
+
+#[test]
+fn underlay_bundle_volume_dirs_default_to_app_star() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "underlay"
+host = "app.test"
+project_name = "underlay-app-dev"
+workspace_subdir = "underlay-app"
+database = "acme"
+"#,
+    )
+    .expect("write manifest");
+    std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let workspace = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("stack"))
+        .and_then(|stack| stack.services.get("workspace"))
+        .expect("workspace service");
+
+    let cargo_dirs: Vec<&str> = workspace
+        .params
+        .get("cargo_target_dirs")
+        .and_then(|value| value.as_array())
+        .expect("cargo_target_dirs")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert_eq!(cargo_dirs, vec!["app-api"]);
+
+    let node_dirs: Vec<&str> = workspace
+        .params
+        .get("node_modules_dirs")
+        .and_then(|value| value.as_array())
+        .expect("node_modules_dirs")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert_eq!(
+        node_dirs,
+        vec!["app-client", "app-ui", "app-front", "app-admin"]
+    );
+}
+
+#[test]
 fn underlay_bundle_uses_route_label_overrides() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("effigy.toml");

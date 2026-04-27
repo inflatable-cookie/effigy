@@ -17,7 +17,7 @@ type = "list"
 default = ["app"]
 description = "Databases to create; the first entry is treated as the primary database"
 
-[params.root_password]
+[params.password]
 type = "string"
 default = "secret"
 description = "Root password (local dev only)"

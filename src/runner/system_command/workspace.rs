@@ -12,6 +12,7 @@ use std::ffi::OsString;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use crate::runner::container_command::{run_container, runtime_error_from_runner};
@@ -22,10 +23,11 @@ use crate::runner::manifest::load_task_manifest;
 
 use super::RunnerError;
 
-const CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH: &str = "/tmp/effigy-host";
+const CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH_PREFIX: &str = "/tmp/effigy-host";
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 const EFFIGY_RELEASE_REPO_BASE_URL: &str = "https://github.com/inflatable-cookie/effigy";
 const EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV: &str = "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE";
+static WORKSPACE_EFFIGY_STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LinuxWorkspaceTarget {
@@ -247,7 +249,8 @@ fn prepare_workspace_handoff(
     initial_command: Option<&str>,
 ) -> Result<(), RunnerError> {
     maybe_start_workspace_gateway(policy)?;
-    ensure_workspace_effigy_available(repo_root, policy, container_name, repo_override.clone())?;
+    let _ = container_name;
+    ensure_workspace_effigy_available_for_policy(repo_root, policy, repo_override.clone())?;
     ensure_workspace_permissions_ready(repo_root, policy, container_name, repo_override)?;
     render_workspace_handoff_transition(policy, initial_command)
 }
@@ -449,10 +452,9 @@ fn render_workspace_handoff_notice(policy: &EffectiveContainerPolicy) -> String 
     )
 }
 
-fn ensure_workspace_effigy_available(
+pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy(
     workspace_repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    container_name: Option<&str>,
     repo_override: Option<PathBuf>,
 ) -> Result<(), RunnerError> {
     if std::env::var_os("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF").is_some() {
@@ -460,6 +462,7 @@ fn ensure_workspace_effigy_available(
     }
     let target = probe_workspace_linux_target(workspace_repo_root, policy)?;
     let artifact = ensure_linux_workspace_effigy_artifact(workspace_repo_root, target)?;
+    let staging_path = render_workspace_effigy_staging_path();
     let mut progress = WorkspaceTransientProgressReporter::new(
         repo_override.is_some(),
         "installing linux effigy into workspace container",
@@ -470,13 +473,13 @@ fn ensure_workspace_effigy_available(
         policy,
         policy.primary_service.as_str(),
         &artifact,
-        CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH,
+        &staging_path,
     )
     .inspect_err(|_| progress.finish(false))?;
     run_workspace_effigy_install(
         workspace_repo_root,
         policy,
-        container_name,
+        &staging_path,
         repo_override.as_deref(),
     )
     .inspect_err(|_| progress.finish(false))?;
@@ -487,12 +490,14 @@ fn ensure_workspace_effigy_available(
 fn run_workspace_effigy_install(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    _container_name: Option<&str>,
+    staging_path: &str,
     repo_override: Option<&Path>,
 ) -> Result<String, RunnerError> {
     let service = policy.primary_service.as_str();
     let mut args = compose_args(policy, ["exec", "-T", "-u", "0", service, "sh", "-lc"]);
-    args.push(OsString::from(render_workspace_effigy_install_command()));
+    args.push(OsString::from(render_workspace_effigy_install_command(
+        staging_path,
+    )));
     let output = crate::runner::exec_command::run_compose_exec(
         repo_root,
         policy,
@@ -514,11 +519,21 @@ fn run_workspace_effigy_install(
     }))
 }
 
-fn render_workspace_effigy_install_command() -> String {
+fn render_workspace_effigy_install_command(staging_path: &str) -> String {
     format!(
         "install -m 0755 {src} {dest} && rm -f {src}",
-        src = CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH,
+        src = shell_quote(staging_path),
         dest = CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH,
+    )
+}
+
+fn render_workspace_effigy_staging_path() -> String {
+    let counter = WORKSPACE_EFFIGY_STAGING_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "{prefix}-{pid}-{counter}",
+        prefix = CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH_PREFIX,
+        pid = std::process::id(),
+        counter = counter,
     )
 }
 
@@ -564,34 +579,7 @@ fn ensure_linux_workspace_effigy_artifact(
         }
         LinuxWorkspaceArtifactSource::Local | LinuxWorkspaceArtifactSource::Auto => {}
     }
-    if let Some(effigy_repo_root) = configured_effigy_repo_root() {
-        persist_effigy_source_repo_root(&effigy_repo_root)?;
-        return ensure_local_linux_workspace_effigy_artifact(
-            &host_binary,
-            &effigy_repo_root,
-            target,
-        );
-    }
-    if let Some(effigy_repo_root) = sibling_effigy_repo_root(workspace_repo_root) {
-        persist_effigy_source_repo_root(&effigy_repo_root)?;
-        return ensure_local_linux_workspace_effigy_artifact(
-            &host_binary,
-            &effigy_repo_root,
-            target,
-        );
-    }
-    let current_exe = std::env::current_exe().map_err(RunnerError::Cwd)?;
-    if let Some(effigy_repo_root) = discover_effigy_repo_root(current_exe.parent()) {
-        persist_effigy_source_repo_root(&effigy_repo_root)?;
-        return ensure_local_linux_workspace_effigy_artifact(
-            &host_binary,
-            &effigy_repo_root,
-            target,
-        );
-    }
-
-    let cwd = current_working_dir()?;
-    if let Some(effigy_repo_root) = discover_effigy_repo_root(Some(cwd.as_path())) {
+    if let Some(effigy_repo_root) = resolve_local_effigy_repo_root(workspace_repo_root)? {
         persist_effigy_source_repo_root(&effigy_repo_root)?;
         return ensure_local_linux_workspace_effigy_artifact(
             &host_binary,
@@ -601,6 +589,38 @@ fn ensure_linux_workspace_effigy_artifact(
     }
 
     ensure_downloaded_linux_workspace_effigy_artifact(target)
+}
+
+fn resolve_local_effigy_repo_root(
+    workspace_repo_root: &Path,
+) -> Result<Option<PathBuf>, RunnerError> {
+    let current_exe = std::env::current_exe().map_err(RunnerError::Cwd)?;
+    let cwd = current_working_dir()?;
+    Ok(resolve_local_effigy_repo_root_from_paths(
+        workspace_repo_root,
+        current_exe.parent(),
+        Some(cwd.as_path()),
+    ))
+}
+
+fn resolve_local_effigy_repo_root_from_paths(
+    workspace_repo_root: &Path,
+    current_exe_parent: Option<&Path>,
+    cwd: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(effigy_repo_root) = discover_effigy_repo_root(current_exe_parent) {
+        return Some(effigy_repo_root);
+    }
+
+    if let Some(effigy_repo_root) = discover_effigy_repo_root(cwd) {
+        return Some(effigy_repo_root);
+    }
+
+    if let Some(effigy_repo_root) = sibling_effigy_repo_root(workspace_repo_root) {
+        return Some(effigy_repo_root);
+    }
+
+    configured_effigy_repo_root()
 }
 
 fn configured_linux_workspace_artifact_source() -> Result<LinuxWorkspaceArtifactSource, RunnerError>
@@ -702,7 +722,10 @@ fn ensure_local_linux_workspace_effigy_artifact(
     target: LinuxWorkspaceTarget,
 ) -> Result<PathBuf, RunnerError> {
     let artifact_path = effigy_repo_root.join(target.artifact_relative_path());
-    let needs_refresh = linux_workspace_effigy_artifact_needs_refresh(host_binary, &artifact_path);
+    let freshness_anchor =
+        resolve_local_workspace_effigy_freshness_anchor(host_binary, effigy_repo_root);
+    let needs_refresh =
+        linux_workspace_effigy_artifact_needs_refresh(&freshness_anchor, &artifact_path, target);
 
     if needs_refresh {
         emit_workspace_info(
@@ -719,6 +742,32 @@ fn ensure_local_linux_workspace_effigy_artifact(
         )));
     }
     Ok(artifact_path)
+}
+
+fn resolve_local_workspace_effigy_freshness_anchor(
+    host_binary: &Path,
+    effigy_repo_root: &Path,
+) -> PathBuf {
+    let candidates = [
+        effigy_repo_root.join(".local-install/bin/effigy"),
+        effigy_repo_root.join("target/bootstrap-local/debug/effigy"),
+        effigy_repo_root.join("target/debug/effigy"),
+    ];
+    newest_existing_path(&candidates).unwrap_or_else(|| host_binary.to_path_buf())
+}
+
+fn newest_existing_path(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates
+        .iter()
+        .filter_map(|path| {
+            std::fs::metadata(path)
+                .ok()?
+                .modified()
+                .ok()
+                .map(|modified| (modified, path.clone()))
+        })
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
 }
 
 fn ensure_downloaded_linux_workspace_effigy_artifact(
@@ -829,8 +878,15 @@ fn download_linux_workspace_effigy_release(url: &str, dest: &Path) -> Result<(),
     Ok(())
 }
 
-fn linux_workspace_effigy_artifact_needs_refresh(host_binary: &Path, artifact_path: &Path) -> bool {
+fn linux_workspace_effigy_artifact_needs_refresh(
+    host_binary: &Path,
+    artifact_path: &Path,
+    target: LinuxWorkspaceTarget,
+) -> bool {
     if !artifact_path.is_file() {
+        return true;
+    }
+    if !linux_workspace_effigy_rehearsal_receipt_matches_target(artifact_path, target) {
         return true;
     }
     let Ok(host_meta) = std::fs::metadata(host_binary) else {
@@ -843,6 +899,22 @@ fn linux_workspace_effigy_artifact_needs_refresh(host_binary: &Path, artifact_pa
         (Ok(host_modified), Ok(artifact_modified)) => artifact_modified < host_modified,
         _ => true,
     }
+}
+
+fn linux_workspace_effigy_rehearsal_receipt_matches_target(
+    artifact_path: &Path,
+    target: LinuxWorkspaceTarget,
+) -> bool {
+    let Some(artifacts_dir) = artifact_path.parent() else {
+        return false;
+    };
+    let receipt_path = artifacts_dir.join("rehearsal.txt");
+    let Ok(receipt) = std::fs::read_to_string(&receipt_path) else {
+        return false;
+    };
+    receipt
+        .lines()
+        .any(|line| line.trim() == format!("release_triple={}", target.release_triple()))
 }
 
 fn run_linux_workspace_effigy_rehearsal(
@@ -1093,22 +1165,71 @@ primary_service = "workspace"
         ));
         std::fs::create_dir_all(&root).expect("mkdir root");
         let host = root.join("effigy-host");
-        let artifact = root.join("effigy-linux");
+        let artifacts_dir = root.join("artifacts");
+        std::fs::create_dir_all(&artifacts_dir).expect("mkdir artifacts");
+        let artifact = artifacts_dir.join("effigy-linux");
+        let receipt = artifacts_dir.join("rehearsal.txt");
         std::fs::write(&host, "host").expect("write host");
 
         assert!(linux_workspace_effigy_artifact_needs_refresh(
-            &host, &artifact
+            &host,
+            &artifact,
+            LinuxWorkspaceTarget::X86_64Gnu,
         ));
 
         std::fs::write(&artifact, "artifact").expect("write artifact");
+        std::fs::write(
+            &receipt,
+            "release_triple=x86_64-unknown-linux-gnu\ncompleted_at=2026-04-27T00:00:00Z\n",
+        )
+        .expect("write receipt");
         assert!(!linux_workspace_effigy_artifact_needs_refresh(
-            &host, &artifact
+            &host,
+            &artifact,
+            LinuxWorkspaceTarget::X86_64Gnu,
         ));
 
         std::thread::sleep(std::time::Duration::from_millis(10));
         std::fs::write(&host, "host-new").expect("rewrite host");
         assert!(linux_workspace_effigy_artifact_needs_refresh(
-            &host, &artifact
+            &host,
+            &artifact,
+            LinuxWorkspaceTarget::X86_64Gnu,
+        ));
+    }
+
+    #[test]
+    fn linux_artifact_refreshes_when_rehearsal_receipt_is_missing_or_wrong_target() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-linux-artifact-receipt-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let artifacts_dir = root.join("artifacts");
+        std::fs::create_dir_all(&artifacts_dir).expect("mkdir artifacts");
+        let host = root.join("effigy-host");
+        let artifact = artifacts_dir.join("effigy-linux");
+        let receipt = artifacts_dir.join("rehearsal.txt");
+        std::fs::write(&host, "host").expect("write host");
+        std::fs::write(&artifact, "artifact").expect("write artifact");
+
+        assert!(linux_workspace_effigy_artifact_needs_refresh(
+            &host,
+            &artifact,
+            LinuxWorkspaceTarget::X86_64Gnu,
+        ));
+
+        std::fs::write(
+            &receipt,
+            "release_triple=aarch64-unknown-linux-gnu\ncompleted_at=2026-04-27T00:00:00Z\n",
+        )
+        .expect("write wrong-target receipt");
+        assert!(linux_workspace_effigy_artifact_needs_refresh(
+            &host,
+            &artifact,
+            LinuxWorkspaceTarget::X86_64Gnu,
         ));
     }
 
@@ -1150,6 +1271,33 @@ primary_service = "workspace"
                 env!("CARGO_PKG_VERSION")
             )
         );
+    }
+
+    #[test]
+    fn local_workspace_effigy_freshness_anchor_prefers_newest_repo_local_build() {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-workspace-anchor-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let host = root.join("outside-effigy");
+        let target_debug = root.join("target/debug/effigy");
+        let target_bootstrap = root.join("target/bootstrap-local/debug/effigy");
+        let local_install = root.join(".local-install/bin/effigy");
+        for path in [&target_debug, &target_bootstrap, &local_install] {
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir parent");
+        }
+        std::fs::write(&host, "host").expect("write host");
+        std::fs::write(&target_debug, "debug").expect("write target debug");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(&target_bootstrap, "bootstrap").expect("write target bootstrap");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(&local_install, "local-install").expect("write local install");
+
+        let anchor = resolve_local_workspace_effigy_freshness_anchor(&host, &root);
+        assert_eq!(anchor, local_install);
     }
 
     #[test]
@@ -1251,6 +1399,65 @@ primary_service = "workspace"
         }
 
         assert_eq!(artifact, cache_path);
+    }
+
+    #[test]
+    fn resolve_local_effigy_repo_root_ignores_cached_download_artifact_in_auto_mode() {
+        let original_home = std::env::var_os("HOME");
+        let temp_home = std::env::temp_dir().join(format!(
+            "effigy-workspace-artifact-auto-home-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_home).expect("mkdir temp home");
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "effigy-workspace-artifact-auto-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let workspace = root.join("underlay-reference");
+        let local_effigy = root.join("effigy");
+        std::fs::create_dir_all(&workspace).expect("mkdir workspace");
+        std::fs::create_dir_all(local_effigy.join("tasks")).expect("mkdir tasks");
+        std::fs::create_dir_all(local_effigy.join("containers")).expect("mkdir containers");
+        std::fs::write(local_effigy.join("effigy.toml"), "").expect("write manifest");
+        std::fs::write(local_effigy.join("tasks/effigy.tasks.toml"), "").expect("write tasks");
+        std::fs::write(local_effigy.join("containers/effigy.containers.toml"), "")
+            .expect("write containers");
+        let local_artifact =
+            local_effigy.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+        std::fs::create_dir_all(local_artifact.parent().expect("artifact parent"))
+            .expect("mkdir artifact parent");
+        std::fs::write(&local_artifact, "local-artifact").expect("write local artifact");
+
+        let cache_path =
+            linux_workspace_effigy_cache_path(LinuxWorkspaceTarget::X86_64Gnu).expect("cache path");
+        std::fs::create_dir_all(cache_path.parent().expect("cache parent"))
+            .expect("mkdir cache parent");
+        std::fs::write(&cache_path, "downloaded-artifact").expect("write cache artifact");
+
+        let _env = EnvGuard::set_many(&[(EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV, None)]);
+        let resolved = resolve_local_effigy_repo_root_from_paths(&workspace, None, None);
+
+        if let Some(value) = original_home {
+            unsafe {
+                std::env::set_var("HOME", value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(resolved, Some(local_effigy));
     }
 
     #[test]
@@ -1403,6 +1610,61 @@ primary_service = "workspace"
     }
 
     #[test]
+    fn resolve_local_effigy_repo_root_prefers_live_sibling_checkout_over_configured_pointer() {
+        let original_home = std::env::var_os("HOME");
+        let temp_home = std::env::temp_dir().join(format!(
+            "effigy-source-priority-home-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(temp_home.join(".effigy")).expect("mkdir .effigy");
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "effigy-source-priority-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let workspace = root.join("underlay-reference");
+        let sibling_effigy = root.join("effigy");
+        let configured_effigy = temp_home.join("old-effigy");
+        std::fs::create_dir_all(&workspace).expect("mkdir workspace");
+        for repo in [&sibling_effigy, &configured_effigy] {
+            std::fs::create_dir_all(repo.join("tasks")).expect("mkdir tasks");
+            std::fs::create_dir_all(repo.join("containers")).expect("mkdir containers");
+            std::fs::write(repo.join("effigy.toml"), "").expect("write manifest");
+            std::fs::write(repo.join("tasks/effigy.tasks.toml"), "").expect("write tasks");
+            std::fs::write(repo.join("containers/effigy.containers.toml"), "")
+                .expect("write containers");
+        }
+        std::fs::write(
+            temp_home.join(".effigy/source.toml"),
+            format!("repo_root = \"{}\"\n", configured_effigy.display()),
+        )
+        .expect("write source config");
+
+        let resolved = resolve_local_effigy_repo_root_from_paths(&workspace, None, None);
+
+        if let Some(value) = original_home {
+            unsafe {
+                std::env::set_var("HOME", value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(resolved, Some(sibling_effigy));
+    }
+
+    #[test]
     fn persist_effigy_source_repo_root_writes_host_pointer_file() {
         let original_home = std::env::var_os("HOME");
         let temp_home = std::env::temp_dir().join(format!(
@@ -1488,9 +1750,18 @@ primary_service = "workspace"
 
     #[test]
     fn workspace_effigy_install_command_targets_usr_local_bin() {
-        let rendered = render_workspace_effigy_install_command();
+        let rendered = render_workspace_effigy_install_command("/tmp/effigy-host-1");
         assert!(rendered.contains("/tmp/effigy-host"));
         assert!(rendered.contains("/usr/local/bin/effigy"));
         assert!(rendered.contains("install -m 0755"));
+    }
+
+    #[test]
+    fn workspace_effigy_staging_path_is_unique() {
+        let first = render_workspace_effigy_staging_path();
+        let second = render_workspace_effigy_staging_path();
+        assert_ne!(first, second);
+        assert!(first.starts_with("/tmp/effigy-host-"));
+        assert!(second.starts_with("/tmp/effigy-host-"));
     }
 }

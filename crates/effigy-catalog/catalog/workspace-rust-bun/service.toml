@@ -27,6 +27,16 @@ type = "list"
 default = []
 description = "Host port bindings to publish on the workspace container, as strings (e.g. [\"41001:41001\", \"41002:41002\"]). Typically used to expose repo-owned dev servers that run inside the workspace."
 
+[params.cargo_target_dirs]
+type = "list"
+default = []
+description = "Subproject paths (relative to working_dir) whose `target/` directories should be backed by named Docker volumes instead of the host bind mount. Use this for Rust subprojects to keep cargo build output on Linux-native ext4 storage and avoid virtiofs file-locking issues."
+
+[params.node_modules_dirs]
+type = "list"
+default = []
+description = "Subproject paths (relative to working_dir) whose `node_modules/` directories should be backed by named Docker volumes instead of the host bind mount. Use this for Bun/Node subprojects to keep installed deps on Linux-native ext4 storage and isolate them from host package managers."
+
 [capabilities]
 exec_target = true
 shell = "/bin/bash"

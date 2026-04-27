@@ -46,6 +46,7 @@ pub(super) fn run_event_loop(
                     scrollbar_total: active_view.scrollbar_total,
                     follow: active_view.is_follow,
                     active_process: &active_view.active_process,
+                    active_vt: active_view.active_vt,
                     input_line: &runtime.state.input_line,
                     input_mode: runtime.state.input_mode,
                     shell_capture_mode: runtime.state.shell_capture_mode,

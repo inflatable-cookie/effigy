@@ -54,6 +54,28 @@ version = "11.0"
             .and_then(|value| value.as_str()),
         Some(".")
     );
+    assert_eq!(
+        app.params
+            .get("extensions")
+            .and_then(|value| value.as_array())
+            .expect("extensions")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "bcmath",
+            "pdo_mysql",
+            "mysqli",
+            "intl",
+            "exif",
+            "zip",
+            "gd",
+            "redis",
+            "memcached",
+            "opcache",
+            "event",
+        ]
+    );
 
     let db = web.services.get("db").expect("db service");
     assert_eq!(db.catalog, "mariadb");
@@ -299,6 +321,28 @@ base = "decodelabs-library"
             .get("mount_source")
             .and_then(|value| value.as_str()),
         Some(shared_root_path.to_str().expect("shared root str"))
+    );
+    assert_eq!(
+        app.params
+            .get("extensions")
+            .and_then(|value| value.as_array())
+            .expect("extensions")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "bcmath",
+            "pdo_mysql",
+            "mysqli",
+            "intl",
+            "exif",
+            "zip",
+            "gd",
+            "redis",
+            "memcached",
+            "opcache",
+            "event",
+        ]
     );
 
     let systems = manifest.systems.expect("systems");

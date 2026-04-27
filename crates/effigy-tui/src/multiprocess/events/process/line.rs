@@ -48,5 +48,5 @@ fn should_skip_plain_output_due_to_vt(
     process: &str,
     vt_emulator_enabled: bool,
 ) -> bool {
-    vt_emulator_enabled && state.vt_enabled_for(process) && state.vt_saw_chunk_for(process)
+    vt_emulator_enabled && state.vt_enabled_for(process)
 }

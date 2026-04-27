@@ -21,6 +21,19 @@ pub struct ManifestTaskDefaultsConfig {
     pub run_in: Option<ManifestTaskRunIn>,
 }
 
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestIsolationConfig {
+    #[serde(default)]
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestIsolationAdoption {
+    pub repo: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ManifestScanOutputFormat {
@@ -343,6 +356,8 @@ pub struct ManifestSystemConfig {
     pub user: Option<String>,
     #[serde(default)]
     pub home: Option<String>,
+    #[serde(default)]
+    pub isolation: Vec<ManifestIsolationAdoption>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default, PartialEq)]
@@ -358,6 +373,8 @@ pub struct ManifestWorkspaceConfig {
     pub user: Option<String>,
     #[serde(default)]
     pub home: Option<String>,
+    #[serde(skip)]
+    pub isolation: Vec<ManifestIsolationAdoption>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, PartialEq)]
@@ -898,8 +915,8 @@ pub struct ManifestReleaseGateDetails {
 mod tests {
     use super::{
         ManifestContainerDnsConfig, ManifestContainerServiceConfig, ManifestContainersConfig,
-        ManifestInlineWorkspaceContainerConfig, ManifestJsPackageManager, ManifestSystemsConfig,
-        ManifestWorkspaceContainerRef,
+        ManifestInlineWorkspaceContainerConfig, ManifestIsolationConfig, ManifestJsPackageManager,
+        ManifestSystemsConfig, ManifestWorkspaceContainerRef,
     };
 
     #[derive(Debug, serde::Deserialize)]
@@ -910,6 +927,11 @@ mod tests {
     #[derive(Debug, serde::Deserialize)]
     struct SystemWrapper {
         systems: ManifestSystemsConfig,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct IsolationWrapper {
+        isolation: ManifestIsolationConfig,
     }
 
     #[test]
@@ -1162,6 +1184,48 @@ working_dir = "/workspace-root/app"
         assert_eq!(
             workspace.working_dir.as_deref(),
             Some("/workspace-root/app")
+        );
+    }
+
+    #[test]
+    fn systems_config_accepts_isolation_adoption() {
+        let parsed: SystemWrapper = toml::from_str(
+            r#"
+[systems.dev]
+container = "stack"
+isolation = [{ repo = "../poodle" }, { repo = "../underlay" }]
+"#,
+        )
+        .expect("parse systems");
+
+        let system = parsed.systems.systems.get("dev").expect("dev system");
+        assert_eq!(
+            system
+                .isolation
+                .iter()
+                .map(|entry| entry.repo.as_str())
+                .collect::<Vec<_>>(),
+            vec!["../poodle", "../underlay"]
+        );
+    }
+
+    #[test]
+    fn isolation_config_accepts_path_list() {
+        let parsed: IsolationWrapper = toml::from_str(
+            r#"
+[isolation]
+paths = ["node_modules", ".svelte-kit", "dist"]
+"#,
+        )
+        .expect("parse isolation");
+
+        assert_eq!(
+            parsed.isolation.paths,
+            vec![
+                "node_modules".to_owned(),
+                ".svelte-kit".to_owned(),
+                "dist".to_owned()
+            ]
         );
     }
 
