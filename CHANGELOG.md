@@ -345,6 +345,21 @@ During v0.x, MINOR bumps may include breaking changes.
   from active guides have been redirected through `archive/`.
 
 ### Added
+- Add a user-global `~/.effigy/config.toml` configuration file with bundle-keyed
+  `library_mounts` entries. When a project's manifest declares `[bundle].base
+  = "<name>"` matching a `[bundle.<name>]` block in the user config, each
+  listed parent directory is bind-mounted into the workspace container under
+  `/workspace-libraries/<basename>`. Lets per-developer library checkouts
+  (e.g. `~/Dev/legacy/libraries/decodelabs`) stay reachable from the legacy
+  `effigy mount` command without committing host paths into the project's
+  checked-in `effigy.toml`. Missing host paths are skipped silently;
+  basename collisions across two declared parents are rejected with an
+  error.
+- Let the shipped `underlay` bundle infer sibling `underlay` / `poodle`
+  sources from `systems.<name>.mounts`, with optional `[bundle.sources]`
+  overrides only for ambiguous layouts, so nested consumer repos can drop
+  repo-local `[bootstrap]` overrides without duplicating the same paths
+  twice.
 - Add a bundled underlay `bootstrap-env.rhai` helper and wire it into the
   starter bootstrap run so fresh underlay repos can create missing
   app-local `.env` files before the first container bring-up. The helper

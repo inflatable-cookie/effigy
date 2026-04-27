@@ -9,6 +9,7 @@ mod loaded_catalog;
 mod task_defs;
 pub mod task_runtime;
 mod test_config;
+pub mod user_config;
 
 /// Filename of the per-catalog Effigy manifest file (`effigy.toml`).
 ///
@@ -57,6 +58,10 @@ pub use task_runtime::{
 };
 use test_config::ManifestTestConfig;
 pub use test_config::{ManifestCargoEnvMatchMode, ManifestTestSuiteTeardownPolicy};
+pub use user_config::{
+    load_user_config, load_user_config_from, with_test_user_config_home, LibraryMount,
+    UserBundleConfig, UserConfig, USER_CONFIG_FILE,
+};
 
 #[derive(Debug)]
 pub enum ManifestError {
