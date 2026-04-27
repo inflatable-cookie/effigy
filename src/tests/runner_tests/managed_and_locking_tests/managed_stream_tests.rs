@@ -261,6 +261,14 @@ routes = [{ domain = "project.test" }]
 }
 
 fn setup_managed_stream_gateway_without_ready_message(root: &Path) {
+    // Note: health_wait is intentionally false here. This test exercises
+    // the ready-message + dns_routes banner derivation (which fires when
+    // `ready_message` is unset); the readiness probe loop added in
+    // commit 247198fb has its own unit-level coverage in
+    // `managed_lifecycle_command_waits_for_probe_urls_before_ready`.
+    // Enabling health_wait here would make the lifecycle script spin in
+    // curl-against-fake-runtime forever and the `window` shutdown_on_exit
+    // process would tear it down before the banner ever printed.
     write_root_manifest(
         root,
         r#"[tasks.dev]
@@ -268,7 +276,7 @@ mode = "tui"
 workspace = "app"
 container_lifecycle = true
 gateway = true
-health_wait = true
+health_wait = false
 concurrent = [
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 2, tab = 2, shutdown_on_exit = true }
