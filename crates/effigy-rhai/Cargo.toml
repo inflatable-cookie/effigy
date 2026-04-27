@@ -9,7 +9,10 @@ description = "Rhai runtime and host API contracts for Effigy"
 effigy-core = { path = "../effigy-core" }
 effigy-ui = { path = "../effigy-ui" }
 anstyle = "1"
+base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+portable-pty = "0.9"
+ring = "0.17"
 rhai = { version = "1", features = ["serde"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 regex = "1"

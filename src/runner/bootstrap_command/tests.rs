@@ -5,7 +5,7 @@
 //! `run_manifest_task_with_cwd`). Crate-domain behavior is covered by
 //! integration tests in `crates/effigy-bootstrap/tests/integration.rs`.
 
-use super::run_bootstrap_with_cwd;
+use super::{render_bootstrap_progress_message, run_bootstrap_with_cwd};
 use effigy_cli::{BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -15,6 +15,30 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn bootstrap_progress_message_preserves_plain_text_without_color() {
+    let rendered = render_bootstrap_progress_message(
+        "[ok] cloned\n[gateway] installed route\n[bootstrap] running root setup\n",
+        false,
+    );
+    assert_eq!(
+        rendered,
+        "[ok] cloned\n[gateway] installed route\n[bootstrap] running root setup\n"
+    );
+}
+
+#[test]
+fn bootstrap_progress_message_colors_known_prefixes() {
+    let rendered = render_bootstrap_progress_message(
+        "[ok] cloned\n[gateway] installed route\n[bootstrap] running root setup\n",
+        true,
+    );
+    assert!(rendered.contains("\u{1b}["));
+    assert!(rendered.contains("[ok]"));
+    assert!(rendered.contains("[gateway]"));
+    assert!(rendered.contains("[bootstrap]"));
+}
 
 fn temp_dir(name: &str) -> PathBuf {
     for _ in 0..32 {

@@ -24,12 +24,12 @@ fn output_lines_include_runtime_meta_for_non_shell_processes() {
     let lines = output_lines(&logs, false, Duration::from_secs(2), 0);
     assert_eq!(lines.len(), 4);
     assert_eq!(lines[0].spans[0].content.as_ref(), "started: ");
-    assert_eq!(lines[2].spans[0].content.as_ref(), "[stderr] ");
+    assert_eq!(lines[2].spans[0].content.as_ref(), "oops");
     assert_eq!(lines[3].spans[0].content.as_ref(), "[exit] ");
 }
 
 #[test]
-fn output_lines_skip_stderr_prefix_for_known_cargo_status_lines() {
+fn output_lines_render_stderr_lines_plainly() {
     let logs = vec![
         LogEntry {
             kind: LogEntryKind::Stderr,
@@ -52,18 +52,6 @@ fn output_lines_skip_stderr_prefix_for_known_cargo_status_lines() {
         lines[2].spans[0].content.as_ref(),
         "     Running `target/debug/acme-api`"
     );
-}
-
-#[test]
-fn output_lines_keep_stderr_prefix_for_non_cargo_stderr() {
-    let logs = vec![LogEntry {
-        kind: LogEntryKind::Stderr,
-        line: "actual stderr warning".to_owned(),
-    }];
-
-    let lines = output_lines(&logs, false, Duration::from_secs(2), 0);
-    assert_eq!(lines.len(), 2);
-    assert_eq!(lines[1].spans[0].content.as_ref(), "[stderr] ");
 }
 
 #[test]

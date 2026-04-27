@@ -211,6 +211,44 @@ fn execute_rhai_script_exposes_shell_quote_string_helper() {
 }
 
 #[test]
+fn execute_rhai_script_exposes_generate_jwt_env_keys_helper() {
+    let root = temp_root("generate-jwt-env-keys");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            let jwt = generate_jwt_env_keys();
+            let private_key = trim_string(jwt["private_key"]);
+            let public_key = trim_string(jwt["public_key"]);
+            if private_key == "" { throw("missing private_key"); }
+            if public_key == "" { throw("missing public_key"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
+fn execute_rhai_script_exposes_generate_random_base64_helper() {
+    let root = temp_root("generate-random-base64");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            let secret = generate_random_base64(32);
+            if trim_string(secret) == "" { throw("missing random secret"); }
+            if generate_random_base64(32) == secret { throw("random secret repeated"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
 fn execute_rhai_script_rejects_recursive_effigy_process_calls() {
     let root = temp_root("recursive-effigy-process");
     let context = ScriptContext {
@@ -387,7 +425,10 @@ fn run_effigy_json_surfaces_callback_errors_as_runtime_errors() {
 
 #[test]
 fn host_log_message_colors_known_status_prefixes() {
-    let rendered = render_host_log_message("[ok] passed\n[check] running\n[next] inspect\n", true);
+    let rendered = render_host_log_message(
+        "[ok] passed\n[check] running\n[gateway] route installed\n[bootstrap] starting dev\n[next] inspect\n",
+        true,
+    );
 
     assert!(
         rendered.contains("\u{1b}["),
@@ -397,6 +438,10 @@ fn host_log_message_colors_known_status_prefixes() {
     assert!(rendered.contains(" passed"));
     assert!(rendered.contains("[check]"));
     assert!(rendered.contains(" running"));
+    assert!(rendered.contains("[gateway]"));
+    assert!(rendered.contains(" route installed"));
+    assert!(rendered.contains("[bootstrap]"));
+    assert!(rendered.contains(" starting dev"));
     assert!(rendered.contains("[next]"));
     assert!(rendered.contains(" inspect"));
 }

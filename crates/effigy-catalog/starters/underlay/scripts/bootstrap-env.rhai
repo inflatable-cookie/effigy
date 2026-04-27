@@ -92,38 +92,14 @@ fn command_stdout(program, args, label) {
     return trim_string(result["stdout"]);
 }
 
-fn generated_jwt_env(api_dir) {
-    let cargo_toml = path_join(api_dir, "Cargo.toml");
-    if !path_exists(cargo_toml) {
-        return #{ private_key: "", public_key: "" };
-    }
-
-    let output = command_stdout(
-        "cargo",
-        ["run", "--quiet", "--manifest-path", cargo_toml, "--bin", "generate-jwt-env"],
-        "generate-jwt-env",
-    );
-
-    let private_key = "";
-    let public_key = "";
-    for line in output.split("\n") {
-        let trimmed = trim_string(line);
-        if trimmed.starts_with("AUTH_JWT_PRIVATE_KEY=") {
-            private_key = trimmed.replace("AUTH_JWT_PRIVATE_KEY=", "");
-        } else if trimmed.starts_with("AUTH_JWT_PUBLIC_KEY=") {
-            public_key = trimmed.replace("AUTH_JWT_PUBLIC_KEY=", "");
-        }
-    }
-
+fn generated_jwt_env(_api_dir) {
+    let jwt = generate_jwt_env_keys();
+    let private_key = trim_string(jwt["private_key"]);
+    let public_key = trim_string(jwt["public_key"]);
     if private_key == "" || public_key == "" {
-        throw "generate-jwt-env did not emit both AUTH_JWT_PRIVATE_KEY and AUTH_JWT_PUBLIC_KEY";
+        throw "generate_jwt_env_keys did not return both private_key and public_key";
     }
-
     return #{ private_key: private_key, public_key: public_key };
-}
-
-fn random_base64(label) {
-    return command_stdout("openssl", ["rand", "-base64", "32"], label);
 }
 
 fn ensure_env_file(path, lines, label) {
@@ -131,7 +107,11 @@ fn ensure_env_file(path, lines, label) {
         log("[info] preserving existing " + label + " at " + path);
         return;
     }
-    write_file(path, lines.join("\n") + "\n");
+    let contents = "";
+    for line in lines {
+        contents += line + "\n";
+    }
+    write_file(path, contents);
     log("[ok] created " + label + " at " + path);
 }
 
@@ -154,8 +134,8 @@ if api_dir == "" && front_dir == "" && admin_dir == "" {
 
 if api_dir != "" {
     let jwt = generated_jwt_env(api_dir);
-    let oauth_secret = random_base64("openssl rand for AUTH_OAUTH_SECRET_KEY");
-    let encryption_key = random_base64("openssl rand for ENCRYPTION_KEY");
+    let oauth_secret = generate_random_base64(32);
+    let encryption_key = generate_random_base64(32);
     let api_env = [
         "# Underlay API - Local Development",
         "#",

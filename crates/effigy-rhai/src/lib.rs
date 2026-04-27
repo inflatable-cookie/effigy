@@ -6,12 +6,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{thread, time::Duration};
 
 use anstyle::Style;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use base64::Engine as _;
 use chrono::Utc;
 use effigy_core::path_error_text::{failed_to_read_path, failed_to_write_path};
 use effigy_core::shell::shell_quote;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Position, Scope};
+use ring::rand::SecureRandom;
+use ring::rand::SystemRandom;
+use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::{json, Value};
 #[cfg(unix)]
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
@@ -211,6 +217,14 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
             shell_quote(&value.to_string())
         }
     });
+    engine.register_fn(
+        "generate_jwt_env_keys",
+        || -> Result<Dynamic, Box<EvalAltResult>> { generate_jwt_env_keys_dynamic() },
+    );
+    engine.register_fn(
+        "generate_random_base64",
+        |size: i64| -> Result<String, Box<EvalAltResult>> { generate_random_base64(size) },
+    );
 
     engine.register_fn(
         "make_temp_dir",
@@ -441,17 +455,8 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
         "run_process_stream",
         move |program: ImmutableString, args: Array| -> Result<Map, Box<EvalAltResult>> {
             reject_recursive_effigy_process(program.as_str())?;
-            let mut process = ProcessCommand::new(program.as_str());
-            process.args(dynamic_array_to_strings(&args)?);
-            process.current_dir(&process_context.cwd);
-            process.stdin(Stdio::null());
-            process.stdout(Stdio::inherit());
-            process.stderr(Stdio::inherit());
-            with_local_node_bin_path(&mut process, &process_context.cwd);
-            let status = process
-                .status()
-                .map_err(|error| rhai_runtime_error(error.to_string()))?;
-            Ok(process_status_map(status))
+            let args = dynamic_array_to_strings(&args)?;
+            run_process_streaming(program.as_str(), &args, &process_context.cwd)
         },
     );
     engine.register_fn(
@@ -1006,6 +1011,35 @@ fn register_host_api(engine: &mut Engine, context: Arc<ScriptContext>, callbacks
     );
 }
 
+fn generate_jwt_env_keys_dynamic() -> Result<Dynamic, Box<EvalAltResult>> {
+    let rng = SystemRandom::new();
+    let pkcs8 = Ed25519KeyPair::generate_pkcs8(&rng)
+        .map_err(|_| rhai_runtime_error("failed to generate Ed25519 PKCS#8 keypair"))?;
+    let keypair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref())
+        .map_err(|_| rhai_runtime_error("failed to parse generated Ed25519 PKCS#8 keypair"))?;
+
+    let mut map = Map::new();
+    map.insert("private_key".into(), STANDARD.encode(pkcs8.as_ref()).into());
+    map.insert(
+        "public_key".into(),
+        URL_SAFE_NO_PAD.encode(keypair.public_key().as_ref()).into(),
+    );
+    Ok(Dynamic::from_map(map))
+}
+
+fn generate_random_base64(size: i64) -> Result<String, Box<EvalAltResult>> {
+    if size <= 0 {
+        return Err(rhai_runtime_error(
+            "generate_random_base64 size must be greater than zero",
+        ));
+    }
+    let mut bytes = vec![0_u8; size as usize];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| rhai_runtime_error("failed to generate secure random bytes"))?;
+    Ok(STANDARD.encode(bytes))
+}
+
 fn emit_host_log(message: &str, stderr: bool) -> std::io::Result<()> {
     use std::io::{self, IsTerminal, Write};
 
@@ -1040,13 +1074,15 @@ fn render_host_log_message(message: &str, color_enabled: bool) -> String {
 }
 
 fn render_host_log_line(line: &str, color_enabled: bool) -> String {
-    const STATUS_PREFIXES: [(&str, fn(&Theme) -> Style); 8] = [
+    const STATUS_PREFIXES: [(&str, fn(&Theme) -> Style); 10] = [
         ("[ok]", |theme| theme.success),
         ("[check]", |theme| theme.warning),
         ("[error]", |theme| theme.error),
         ("[warning]", |theme| theme.warning),
         ("[warn]", |theme| theme.warning),
         ("[info]", |theme| theme.label),
+        ("[gateway]", |theme| theme.label),
+        ("[bootstrap]", |theme| theme.label),
         ("[next]", |theme| theme.accent),
         ("[note]", |theme| theme.accent_soft),
     ];
@@ -1588,16 +1624,112 @@ fn allocate_temp_dir(prefix: &str) -> Result<PathBuf, RhaiHostError> {
 }
 
 fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {
-    let local_bin = cwd.join("node_modules/.bin");
-    if !local_bin.is_dir() {
+    let Some(merged) = local_node_bin_path_env(cwd) else {
         return;
-    }
-    let local_rendered = local_bin.display().to_string();
-    let merged = match std::env::var("PATH") {
-        Ok(path) if !path.is_empty() => format!("{local_rendered}:{path}"),
-        _ => local_rendered,
     };
     process.env("PATH", merged);
+}
+
+fn local_node_bin_path_env(cwd: &Path) -> Option<String> {
+    let local_bin = cwd.join("node_modules/.bin");
+    if !local_bin.is_dir() {
+        return None;
+    }
+    let local_rendered = local_bin.display().to_string();
+    Some(match std::env::var("PATH") {
+        Ok(path) if !path.is_empty() => format!("{local_rendered}:{path}"),
+        _ => local_rendered,
+    })
+}
+
+fn run_process_streaming(
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+) -> Result<Map, Box<EvalAltResult>> {
+    match run_process_streaming_with_pty(program, args, cwd) {
+        Ok(result) => return Ok(result),
+        Err(error) => {
+            debug_assert!(
+                !error.to_string().is_empty(),
+                "pty streaming fallback should preserve the underlying error"
+            );
+        }
+    }
+
+    let mut process = ProcessCommand::new(program);
+    process.args(args);
+    process.current_dir(cwd);
+    process.stdin(Stdio::null());
+    process.stdout(Stdio::inherit());
+    process.stderr(Stdio::inherit());
+    with_local_node_bin_path(&mut process, cwd);
+    let status = process
+        .status()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    Ok(process_status_map(status))
+}
+
+fn run_process_streaming_with_pty(
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+) -> Result<Map, Box<EvalAltResult>> {
+    use std::io::{self, Read, Write};
+
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize::default())
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+
+    let mut command = CommandBuilder::new(program);
+    command.args(args);
+    command.cwd(cwd);
+    if let Some(path) = local_node_bin_path_env(cwd) {
+        command.env("PATH", path);
+    }
+
+    let mut child = pair
+        .slave
+        .spawn_command(command)
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    drop(pair.slave);
+
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let reader_thread = std::thread::spawn(move || -> std::io::Result<()> {
+        let mut stdout = io::stdout().lock();
+        let mut buffer = [0_u8; 8192];
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            stdout.write_all(&buffer[..read])?;
+            stdout.flush()?;
+        }
+        Ok(())
+    });
+
+    let status = child
+        .wait()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    reader_thread
+        .join()
+        .map_err(|_| rhai_runtime_error("pty reader thread panicked"))?
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+
+    let mut map = Map::new();
+    map.insert(
+        "status".into(),
+        Dynamic::from_int(status.exit_code().into()),
+    );
+    map.insert("success".into(), Dynamic::from_bool(status.success()));
+    map.insert("stdout".into(), String::new().into());
+    map.insert("stderr".into(), String::new().into());
+    Ok(map)
 }
 
 fn rhai_runtime_error(message: impl Into<String>) -> Box<EvalAltResult> {

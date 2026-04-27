@@ -4,7 +4,6 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
 use crate::core::{LogEntry, LogEntryKind};
-use crate::multiprocess::transcript::is_known_cargo_status_line;
 
 use super::super::super::terminal_text::{ansi_line, runtime_meta_line};
 
@@ -44,14 +43,7 @@ pub(super) fn waiting_for_output_lines(
 fn format_log_entry_line(entry: &LogEntry) -> Line<'static> {
     match entry.kind {
         LogEntryKind::Stdout => ansi_line(&entry.line, Style::default()),
-        LogEntryKind::Stderr => {
-            if is_known_cargo_status_line(&entry.line) {
-                return ansi_line(&entry.line, Style::default());
-            }
-            let mut spans = vec![Span::styled("[stderr] ", Style::default().fg(Color::Red))];
-            spans.extend(ansi_line(&entry.line, Style::default()).spans);
-            Line::from(spans)
-        }
+        LogEntryKind::Stderr => ansi_line(&entry.line, Style::default()),
         LogEntryKind::Exit => Line::from(vec![
             Span::styled("[exit] ", Style::default().fg(Color::Yellow)),
             Span::styled(entry.line.clone(), Style::default().fg(Color::Gray)),
