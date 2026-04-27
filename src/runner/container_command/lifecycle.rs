@@ -35,6 +35,7 @@ use crate::runner::exec_command::{
     append_color_exec_env, probe_container_capabilities, run_compose_exec,
 };
 use crate::runner::host_container_lease::clear_host_container_lease;
+use crate::runner::system_command::ensure_workspace_effigy_available_for_policy;
 
 const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1";
 
@@ -242,6 +243,8 @@ pub(super) fn run_container_shell(
             "`effigy container shell` does not support `--json` because it is interactive",
         ));
     }
+    let (policy, _, _) = resolve_container_shell_session(repo_root, name, service)?;
+    maybe_refresh_workspace_effigy_for_shell(repo_root, &policy)?;
     run_runtime_container_shell(
         repo_root,
         name,
@@ -267,6 +270,7 @@ pub(in crate::runner) fn run_container_exec_capture(
     }
 
     let (policy, service, working_dir) = resolve_container_shell_session(repo_root, name, service)?;
+    maybe_refresh_workspace_effigy_for_shell(repo_root, &policy)?;
     let mut args = compose_args(&policy, ["exec", "-T", "-w"]);
     args.push(OsString::from(working_dir));
     append_color_exec_env(&mut args, false);
@@ -331,6 +335,16 @@ fn resolve_container_shell_session(
     let working_dir = load_container_exec_working_dir(repo_root, name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     Ok((policy, service, working_dir))
+}
+
+fn maybe_refresh_workspace_effigy_for_shell(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    if policy.workspace_user.is_none() {
+        return Ok(());
+    }
+    ensure_workspace_effigy_available_for_policy(repo_root, policy, None)
 }
 
 #[cfg(test)]

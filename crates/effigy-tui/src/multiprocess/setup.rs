@@ -8,11 +8,30 @@ use super::state::SessionState;
 use super::{MultiProcessTuiError, SessionRuntime};
 use crate::terminal_text::config::{VT_PARSER_COLS, VT_PARSER_ROWS, VT_PARSER_SCROLLBACK};
 
+const PTY_TERMINAL_COLS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_COLS";
+const PTY_TERMINAL_ROWS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_ROWS";
+
 pub(super) fn prepare_runtime_session(
     repo_root: PathBuf,
-    processes: Vec<ProcessSpec>,
+    mut processes: Vec<ProcessSpec>,
     tab_order: Vec<String>,
 ) -> Result<SessionRuntime, MultiProcessTuiError> {
+    let terminal = init_terminal()?;
+    let size = terminal.size()?;
+    let cols = size.width.max(1).to_string();
+    let rows = size.height.max(1).to_string();
+    for process in &mut processes {
+        if !process.pty {
+            continue;
+        }
+        process
+            .env
+            .insert(PTY_TERMINAL_COLS_ENV.to_owned(), cols.clone());
+        process
+            .env
+            .insert(PTY_TERMINAL_ROWS_ENV.to_owned(), rows.clone());
+    }
+
     let default_tabs = processes
         .iter()
         .map(|process| process.name.clone())
@@ -30,7 +49,6 @@ pub(super) fn prepare_runtime_session(
         .collect();
 
     let supervisor = ProcessSupervisor::spawn(repo_root.clone(), processes)?;
-    let terminal = init_terminal()?;
     let mut state = SessionState::new(
         repo_root,
         process_names,

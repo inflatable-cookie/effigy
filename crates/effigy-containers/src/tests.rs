@@ -1301,6 +1301,14 @@ fn direct_compose_policy_rewrites_workspace_mounts_from_manifest_contract() {
     fs::create_dir_all(&underlay).expect("mkdir underlay");
     fs::create_dir_all(&poodle).expect("mkdir poodle");
     fs::write(
+        poodle.join("effigy.toml"),
+        r#"
+[isolation]
+paths = ["node_modules", ".svelte-kit"]
+"#,
+    )
+    .expect("write poodle manifest");
+    fs::write(
         root.join("infra/dev/workspace.Dockerfile"),
         "FROM node:22\n",
     )
@@ -1317,6 +1325,7 @@ user = "dev"
 home = "/home/dev"
 working_dir = "/workspace-root/underlay-reference"
 mounts = ["../underlay", "../poodle"]
+isolation = [{ repo = "../poodle" }]
 
 [containers.stack]
 compose_file = "infra/dev/docker-compose.yml"
@@ -1360,6 +1369,18 @@ volumes:
     assert!(
         rewritten.contains(":/workspace-root/poodle"),
         "rewritten compose: {rewritten}"
+    );
+    assert!(
+        rewritten.contains(
+            "/.effigy/runtime/isolation/stack/poodle/node_modules:/workspace-root/poodle/node_modules"
+        ),
+        "rewritten compose should overlay poodle node_modules isolation: {rewritten}"
+    );
+    assert!(
+        rewritten.contains(
+            "/.effigy/runtime/isolation/stack/poodle/.svelte-kit:/workspace-root/poodle/.svelte-kit"
+        ),
+        "rewritten compose should overlay poodle .svelte-kit isolation: {rewritten}"
     );
     assert!(
         !rewritten.contains("../../../:/workspace-root"),

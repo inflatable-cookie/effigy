@@ -71,6 +71,14 @@ pub(in crate::runner) fn run_workspace_seeded_session(
     )
 }
 
+pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    repo_override: Option<std::path::PathBuf>,
+) -> Result<(), RunnerError> {
+    workspace::ensure_workspace_effigy_available_for_policy(repo_root, policy, repo_override)
+}
+
 fn load_resolved_container_policy(
     repo_root: &std::path::Path,
     container_name: Option<&str>,

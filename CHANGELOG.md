@@ -131,7 +131,7 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Fixed
 - Make sibling service params in catalog assembly include schema defaults, so
   generated dependents like phpMyAdmin can inherit defaulted values such as
-  the bundled MariaDB `root_password` instead of seeing them as unset.
+  the bundled MariaDB `password` instead of seeing them as unset.
 - Run bundled Rhai setup hooks through a PTY in interactive terminals so
   tools like `bun install` keep their normal progress output in managed dev
   tabs without needing extra verbosity flags.
@@ -163,9 +163,49 @@ During v0.x, MINOR bumps may include breaking changes.
 - Stop prefixing managed TUI stderr lines with `[stderr]`, so package-manager
   and build-process output that legitimately streams on stderr renders plainly
   in tabs, failure tails, and saved transcripts.
+- Render VT-backed managed TUI panes from the PTY screen width instead of the
+  narrow tab width, so in-place ANSI progress rows from tools like Bun stop
+  being split into appended wrapped fragments.
 - Render bootstrap progress lines with the normal colored status prefixes and
   clearer phase spacing, so checkout/setup/start output no longer mixes muted
   spinner completion lines with plain unthemed follow-up logs.
+- Prefer live local Effigy checkouts over the persisted source pointer when
+  choosing the Linux workspace binary in `auto` mode, so switching back from a
+  downloaded release artifact stops leaving stale cached binaries in workspace
+  containers.
+- Refresh the workspace Effigy binary from the local Linux rehearsal path
+  before `effigy container shell` and `effigy container shell --command` enter
+  workspace-style containers, so managed `dev` tabs stop reusing stale
+  in-container binaries after switching back from downloaded artifacts.
+- Add `bcmath`, `mysqli`, and `event` to the shared DecodeLabs PHP extension
+  defaults, so both `decodelabs` and `decodelabs-library` containers match
+  the current app/runtime requirements without per-repo overrides.
+- Add a first-pass cross-repo isolation contract: producer repos can declare
+  `[isolation].paths`, and consumer systems can adopt those paths with
+  `systems.<name>.isolation = [{ repo = "../library" }]`. Direct-compose
+  workspace runtimes now overlay those adopted paths from
+  `.effigy/runtime/isolation/...`, keeping source shared while isolating
+  install/build directories inside the container.
+- Restore per-subproject `target/` and `node_modules/` named-volume injection
+  on workspace-rust-bun containers via two new catalog params
+  (`cargo_target_dirs`, `node_modules_dirs`) populated by the shipped
+  `underlay` bundle from `[bundle.dirs]`. This keeps cargo build output and
+  Bun-installed deps on Linux-native ext4 storage, working around the Colima
+  virtiofs file-locking limitation that broke `cargo build` on
+  acowtancy-style underlay sites with `Permission denied` on `.rcgu.o`
+  removal. The catalog assembler now also auto-discovers named-volume
+  references from rendered service definitions and emits matching top-level
+  declarations.
+- Consolidate database superuser credential defaults across the shipped
+  catalogs: rename the `mariadb` catalog param `root_password` to `password`
+  so it matches `postgres`, collapse the dbgate/phpmyadmin sibling-password
+  resolvers onto a single `params.password` lookup, and drop the underlay
+  bundle's hardcoded `password = "postgres"` override so postgres falls
+  through to the catalog's `secret` default. MariaDB and Postgres now both
+  default to `secret` for the engine-canonical superuser (`root` and
+  `postgres` respectively); the upstream image conventions for usernames are
+  preserved. Minio keeps `root_password` since `MINIO_ROOT_PASSWORD` is the
+  canonical upstream env var name.
 - Stop non-managed container-backed tasks with a real `run` command from
   being intercepted into the workspace shell handoff path. Bundle tasks like
   `decodelabs` `seed` now execute their configured command inside the
@@ -476,6 +516,11 @@ During v0.x, MINOR bumps may include breaking changes.
   workspace containers; workspace handoff now also prefers a persisted host
   source pointer at `~/.effigy/source.toml` before falling back to local repo
   heuristics or release downloads.
+- Reclaim stale underlay UI setup locks, verify package.json dependencies
+  before treating isolated Bun `node_modules` trees as hydrated, and run
+  `svelte-kit sync` through Bun itself so front/admin panes do not hang
+  forever on a dead lock, skip installs against empty isolation volumes, or
+  fail on workspaces without `node`.
 - Stop non-managed `workspace = ...` tasks from reopening the workspace shell
   when they are invoked from inside an active workspace handoff, so commands
   like `effigy seed` run in place instead of trying to call host-only Colima

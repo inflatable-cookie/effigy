@@ -176,7 +176,7 @@ fn render_sibling_params_lookup() {
             port: Some(3306),
             params: {
                 let mut params = HashMap::new();
-                params.insert("root_password".to_string(), Value::from("localdev"));
+                params.insert("password".to_string(), Value::from("localdev"));
                 params
             },
         },
@@ -197,7 +197,7 @@ fn render_sibling_params_lookup() {
         host_gid: 20,
     };
 
-    let template = r#"{% set database_service = services[database_host] %}{{ database_service.params.root_password }}"#;
+    let template = r#"{% set database_service = services[database_host] %}{{ database_service.params.password }}"#;
 
     let result = renderer.render(template, &ctx, "test").unwrap();
     assert_eq!(result, "localdev");

@@ -158,7 +158,7 @@ impl ComposeAssembler {
 
             // Parse the rendered YAML and extract the service definition.
             let service_def = Self::extract_service_definition(&rendered, name, &fragment.name)?;
-            merged_services.insert(YamlValue::String(name.clone()), service_def);
+            merged_services.insert(YamlValue::String(name.clone()), service_def.clone());
 
             // Collect Dockerfiles.
             if let Some(ref dockerfile) = fragment.dockerfile {
@@ -178,15 +178,33 @@ impl ComposeAssembler {
             }
 
             // Collect volume declarations from schema.
+            let mut declared_names: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
             for (vol_key, vol_schema) in &fragment.schema.volumes {
                 if !vol_schema.named {
                     continue;
                 }
                 let vol_name = format!("{project_name}-{name}-{vol_key}");
+                declared_names.insert(vol_name.clone());
                 all_volumes.push(VolumeInfo {
                     name: vol_name,
                     named: true,
                     persist: vol_schema.persist,
+                    service: name.clone(),
+                });
+            }
+
+            // Auto-discover named volumes referenced in the rendered service
+            // definition that weren't statically declared in the schema. This
+            // lets fragment templates emit per-instance volume mounts (e.g.
+            // per-subproject `target/` or `node_modules/` volumes) without
+            // needing a static schema entry per occurrence.
+            for discovered in Self::discover_named_volume_references(&service_def, &declared_names)
+            {
+                all_volumes.push(VolumeInfo {
+                    name: discovered,
+                    named: true,
+                    persist: true,
                     service: name.clone(),
                 });
             }
@@ -241,6 +259,53 @@ impl ComposeAssembler {
                 })?;
 
         Ok(service_def.clone())
+    }
+
+    /// Walk a rendered service definition's `volumes:` list and return any
+    /// named-volume references that aren't already in `declared_names`.
+    ///
+    /// Named volumes are short-syntax mount strings like
+    /// `<volume-name>:<container-path>[:<options>]` where the source token
+    /// doesn't look like a host path. Bind mounts (paths starting with `/`,
+    /// `.`, or `~`) and anonymous volumes (no source) are skipped.
+    fn discover_named_volume_references(
+        service_def: &YamlValue,
+        declared_names: &std::collections::BTreeSet<String>,
+    ) -> Vec<String> {
+        let Some(volumes) = service_def.get("volumes").and_then(YamlValue::as_sequence) else {
+            return Vec::new();
+        };
+        let mut discovered: Vec<String> = Vec::new();
+        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for entry in volumes {
+            let Some(raw) = entry.as_str() else {
+                continue;
+            };
+            let mut parts = raw.splitn(3, ':');
+            let source = match parts.next() {
+                Some(value) => value.trim(),
+                None => continue,
+            };
+            let target = parts.next().map(str::trim).unwrap_or("");
+            if source.is_empty() || target.is_empty() {
+                continue;
+            }
+            if Self::looks_like_bind_mount_source(source) {
+                continue;
+            }
+            if declared_names.contains(source) || !seen.insert(source.to_owned()) {
+                continue;
+            }
+            discovered.push(source.to_owned());
+        }
+        discovered
+    }
+
+    fn looks_like_bind_mount_source(source: &str) -> bool {
+        source.starts_with('/')
+            || source.starts_with('.')
+            || source.starts_with('~')
+            || source.starts_with('$')
     }
 
     /// Build the final compose YAML document from merged services and volumes.

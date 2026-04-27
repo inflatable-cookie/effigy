@@ -729,7 +729,9 @@ fn decodelabs_library_spec() -> BundleSpec {
 }
 
 const DECODELABS_PHP_EXTENSIONS: &[&str] = &[
+    "bcmath",
     "pdo_mysql",
+    "mysqli",
     "intl",
     "exif",
     "zip",
@@ -737,6 +739,7 @@ const DECODELABS_PHP_EXTENSIONS: &[&str] = &[
     "redis",
     "memcached",
     "opcache",
+    "event",
 ];
 
 fn resolve_decodelabs_bundle(
@@ -779,7 +782,7 @@ routes = [
 [containers.__CONTAINER_NAME__.aliases]
 php = "__WORKSPACE_SERVICE_NAME__"
 composer = { service = "__WORKSPACE_SERVICE_NAME__", command = "composer" }
-mysql = { service = "db", command = "mysql -uroot{% if services.db.params.root_password %} -p{{ services.db.params.root_password }}{% endif %} {{ services.db.params.database }}" }
+mysql = { service = "db", command = "mysql -uroot{% if services.db.params.password %} -p{{ services.db.params.password }}{% endif %} {{ services.db.params.database }}" }
 
 [containers.__CONTAINER_NAME__.services.__WORKSPACE_SERVICE_NAME__]
 catalog = "php-fpm"
@@ -1168,6 +1171,8 @@ fn resolve_underlay_bundle(
     let bundle_root = materialize_shipped_bundle_assets(manifest_path, "underlay")?;
     let bootstrap_sync_paths = underlay_bootstrap_sync_paths(inputs);
     let bootstrap_sync_command = format!("bootstrap deps sync {}", bootstrap_sync_paths.join(" "));
+    let cargo_target_dirs = render_toml_string_array(&underlay_cargo_target_dirs(inputs));
+    let node_modules_dirs = render_toml_string_array(&underlay_node_modules_dirs(inputs));
 
     let template = r#"
 [package_manager]
@@ -1206,12 +1211,13 @@ host_ports = [
   "__ADMIN_PORT__:__ADMIN_PORT__",
   "__FRONT_PORT__:__FRONT_PORT__",
 ]
+cargo_target_dirs = __CARGO_TARGET_DIRS__
+node_modules_dirs = __NODE_MODULES_DIRS__
 
 [containers.__CONTAINER_NAME__.services.postgres]
 catalog = "postgres"
 database = "__DATABASE__"
 databases = __DATABASES__
-password = "postgres"
 
 [containers.__CONTAINER_NAME__.services.dbgate]
 catalog = "dbgate"
@@ -1289,6 +1295,8 @@ run_in = "host"
             .replace("__CONTAINER_NAME__", &container_name)
             .replace("__WORKSPACE_SERVICE_NAME__", &workspace_service_name)
             .replace("__BOOTSTRAP_SYNC_COMMAND__", &bootstrap_sync_command)
+            .replace("__CARGO_TARGET_DIRS__", &cargo_target_dirs)
+            .replace("__NODE_MODULES_DIRS__", &node_modules_dirs)
             .replace("__DEFAULT_WORKSPACE__", &default_workspace),
     )?;
 
@@ -1489,7 +1497,7 @@ routes = [
 [containers.{{{{ inputs.container_name }}}}.aliases]
 php = "{{{{ inputs.workspace_service_name }}}}"
 composer = {{ service = "{{{{ inputs.workspace_service_name }}}}", command = "composer" }}
-mysql = {{ service = "db", command = "mysql -uroot{{% raw %}}{{% if services.db.params.root_password %}} -p{{{{ services.db.params.root_password }}}}{{% endif %}}{{% endraw %}} {{{{ inputs.database }}}}" }}
+mysql = {{ service = "db", command = "mysql -uroot{{% raw %}}{{% if services.db.params.password %}} -p{{{{ services.db.params.password }}}}{{% endif %}}{{% endraw %}} {{{{ inputs.database }}}}" }}
 
 [containers.{{{{ inputs.container_name }}}}.services.{{{{ inputs.workspace_service_name }}}}]
 catalog = "php-fpm"
@@ -1644,12 +1652,20 @@ host_ports = [
   "{{ inputs.admin_port }}:{{ inputs.admin_port }}",
   "{{ inputs.front_port }}:{{ inputs.front_port }}",
 ]
+cargo_target_dirs = [
+  "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}",
+]
+node_modules_dirs = [
+  "{% if inputs.dirs.client %}{{ inputs.dirs.client }}{% else %}app-client{% endif %}",
+  "{% if inputs.dirs.ui %}{{ inputs.dirs.ui }}{% else %}app-ui{% endif %}",
+  "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}",
+  "{% if inputs.dirs.admin %}{{ inputs.dirs.admin }}{% else %}app-admin{% endif %}",
+]
 
 [containers.{{ inputs.container_name }}.services.postgres]
 catalog = "postgres"
 database = "{{ inputs.database }}"
 databases = [{% for database in inputs.databases %}"{{ database }}"{% if not loop.last %}, {% endif %}{% endfor %}]
-password = "postgres"
 
 [containers.{{ inputs.container_name }}.services.dbgate]
 catalog = "dbgate"
@@ -1706,6 +1722,72 @@ run_in = "host"
 
 fn underlay_export_template() -> String {
     UNDERLAY_EXPORT_TEMPLATE.to_owned()
+}
+
+/// Derive cargo `target/` named-volume subprojects for the underlay bundle
+/// from `[bundle.dirs]`. The `api` slot is the conventional Rust crate in the
+/// underlay shape; other slots are bun frontends and never carry a Rust target.
+fn underlay_cargo_target_dirs(inputs: &BTreeMap<String, Value>) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(api) = optional_bundle_string(inputs, "dirs.api") {
+        let trimmed = api.trim();
+        if !trimmed.is_empty() {
+            out.push(trimmed.to_owned());
+        }
+    } else {
+        out.push("app-api".to_owned());
+    }
+    out
+}
+
+/// Derive `node_modules/` named-volume subprojects for the underlay bundle
+/// from `[bundle.dirs]`. The `client`, `ui`, `front`, and `admin` slots are
+/// the conventional bun frontends; each gets its own named volume to keep
+/// installed deps off the host bind mount.
+fn underlay_node_modules_dirs(inputs: &BTreeMap<String, Value>) -> Vec<String> {
+    let candidates = [
+        (
+            "dirs.client",
+            optional_bundle_string(inputs, "dirs.client")
+                .unwrap_or_else(|| "app-client".to_owned()),
+        ),
+        (
+            "dirs.ui",
+            optional_bundle_string(inputs, "dirs.ui").unwrap_or_else(|| "app-ui".to_owned()),
+        ),
+        (
+            "dirs.front",
+            optional_bundle_string(inputs, "dirs.front").unwrap_or_else(|| "app-front".to_owned()),
+        ),
+        (
+            "dirs.admin",
+            optional_bundle_string(inputs, "dirs.admin").unwrap_or_else(|| "app-admin".to_owned()),
+        ),
+    ];
+    let mut out: Vec<String> = Vec::new();
+    for (_, value) in candidates {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let owned = trimmed.to_owned();
+        if !out.contains(&owned) {
+            out.push(owned);
+        }
+    }
+    out
+}
+
+fn render_toml_string_array(values: &[String]) -> String {
+    if values.is_empty() {
+        return "[]".to_owned();
+    }
+    let encoded = values
+        .iter()
+        .map(|value| format!("{value:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{encoded}]")
 }
 
 fn underlay_bootstrap_sync_paths(inputs: &BTreeMap<String, Value>) -> Vec<String> {

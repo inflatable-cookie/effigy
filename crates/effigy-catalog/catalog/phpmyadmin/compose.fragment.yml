@@ -8,8 +8,8 @@ services:
 {% set database_service = services[database_host] %}
 {% if database_password %}
       PMA_PASSWORD: "{{ database_password }}"
-{% elif database_service and database_service.params.root_password %}
-      PMA_PASSWORD: "{{ database_service.params.root_password }}"
+{% elif database_service and database_service.params.password %}
+      PMA_PASSWORD: "{{ database_service.params.password }}"
 {% else %}
       PMA_PASSWORD: ""
 {% endif %}

@@ -946,7 +946,7 @@ fn assembled_yaml_is_structurally_valid_compose() {
                     ]),
                 );
                 p.insert(
-                    "root_password".to_string(),
+                    "password".to_string(),
                     toml::Value::String("devpass".to_string()),
                 );
                 p
@@ -1672,10 +1672,7 @@ fn phpmyadmin_uses_empty_password_when_db_explicitly_sets_empty_password() {
             catalog: "mariadb".to_string(),
             params: {
                 let mut p = HashMap::new();
-                p.insert(
-                    "root_password".to_string(),
-                    toml::Value::String("".to_string()),
-                );
+                p.insert("password".to_string(), toml::Value::String("".to_string()));
                 p
             },
             variant: None,
@@ -1702,7 +1699,7 @@ fn phpmyadmin_uses_empty_password_when_db_explicitly_sets_empty_password() {
 }
 
 #[test]
-fn phpmyadmin_inherits_mariadb_root_password() {
+fn phpmyadmin_inherits_mariadb_password() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
 
@@ -1713,7 +1710,7 @@ fn phpmyadmin_inherits_mariadb_root_password() {
             params: {
                 let mut p = HashMap::new();
                 p.insert(
-                    "root_password".to_string(),
+                    "password".to_string(),
                     toml::Value::String("localdev".to_string()),
                 );
                 p
@@ -2246,6 +2243,87 @@ fn workspace_rust_bun_publishes_host_ports_when_requested() {
 }
 
 #[test]
+fn workspace_rust_bun_emits_named_volumes_for_subproject_dirs() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "workspace".to_string(),
+        catalog: "workspace-rust-bun".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert(
+                "working_subdir".to_string(),
+                toml::Value::String("underlay-reference".to_string()),
+            );
+            p.insert(
+                "cargo_target_dirs".to_string(),
+                toml::Value::Array(vec![toml::Value::String("acme-api".to_string())]),
+            );
+            p.insert(
+                "node_modules_dirs".to_string(),
+                toml::Value::Array(vec![
+                    toml::Value::String("acme-client".to_string()),
+                    toml::Value::String("acme-ui".to_string()),
+                ]),
+            );
+            p
+        },
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(
+            &services,
+            "underlay-reference-dev",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
+        .unwrap();
+
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let workspace = validate_service(&doc, "workspace");
+
+    let volumes = workspace
+        .get("volumes")
+        .expect("workspace volumes")
+        .as_sequence()
+        .expect("volumes sequence");
+    let volume_strings: Vec<&str> = volumes.iter().filter_map(|v| v.as_str()).collect();
+
+    assert!(
+        volume_strings.contains(
+            &"underlay-reference-dev-workspace-acme-api-target:/workspace-root/underlay-reference/acme-api/target"
+        ),
+        "expected per-subproject cargo target volume mount; got {volume_strings:?}"
+    );
+    assert!(
+        volume_strings.contains(
+            &"underlay-reference-dev-workspace-acme-client-node-modules:/workspace-root/underlay-reference/acme-client/node_modules"
+        ),
+        "expected per-subproject node_modules volume mount; got {volume_strings:?}"
+    );
+    assert!(
+        volume_strings.contains(
+            &"underlay-reference-dev-workspace-acme-ui-node-modules:/workspace-root/underlay-reference/acme-ui/node_modules"
+        ),
+        "expected per-subproject node_modules volume mount; got {volume_strings:?}"
+    );
+
+    // Top-level named volumes should include the per-subproject ones, so
+    // compose actually creates persistent volumes rather than anonymous ones.
+    let vol_names: Vec<&str> = result.volumes.iter().map(|v| v.name.as_str()).collect();
+    assert!(vol_names.contains(&"underlay-reference-dev-workspace-cargo-registry"));
+    assert!(vol_names.contains(&"underlay-reference-dev-workspace-cargo-git"));
+    assert!(vol_names.contains(&"underlay-reference-dev-workspace-acme-api-target"));
+    assert!(vol_names.contains(&"underlay-reference-dev-workspace-acme-client-node-modules"));
+    assert!(vol_names.contains(&"underlay-reference-dev-workspace-acme-ui-node-modules"));
+}
+
+#[test]
 fn underlay_style_stack_assembles_with_bundled_fragments_only() {
     // This is the proof against underlay-reference: the exact service shape
     // that repo's `infra/dev/docker-compose.yml` + `workspace.Dockerfile`
@@ -2497,7 +2575,7 @@ fn end_to_end_php_stack_written_to_disk() {
                     toml::Value::String("client_app".to_string()),
                 );
                 p.insert(
-                    "root_password".to_string(),
+                    "password".to_string(),
                     toml::Value::String("localdev".to_string()),
                 );
                 p
@@ -2549,7 +2627,7 @@ error_page_404 = "/vendor/genesis.php"
 catalog = "mariadb"
 version = "10.11"
 database = "client_app"
-root_password = "localdev"
+password = "localdev"
 
 [containers.web.services.cache]
 catalog = "redis"

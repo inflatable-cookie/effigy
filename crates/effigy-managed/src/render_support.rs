@@ -20,7 +20,7 @@ where
             cwd: process.cwd,
             start_after_ms: process.start_after_ms,
             shutdown_on_exit: process.shutdown_on_exit,
-            pty: process.role == ManagedProcessRole::Shell,
+            pty: process.role != ManagedProcessRole::Lifecycle,
             env: BTreeMap::new(),
         })
         .collect()
@@ -243,7 +243,7 @@ mod tests {
 
         assert_eq!(specs.len(), 3);
         assert!(!specs[0].pty, "lifecycle should use plain pipes");
-        assert!(!specs[1].pty, "standard tabs should use plain pipes");
+        assert!(specs[1].pty, "standard tabs should use PTY transport");
         assert!(specs[2].pty, "shell tab should keep PTY transport");
     }
 }

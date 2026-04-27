@@ -13,6 +13,7 @@ use effigy_tasks::{render_task_selector, TaskSelector};
 
 use super::command_context::{current_working_dir, resolve_repo_root};
 use super::error::RunnerError;
+use super::system_command::ensure_workspace_effigy_available_for_policy;
 use surface::{
     build_alias_table, build_raw_exec_args, ensure_container_running, exec_alias_surface_absent,
     load_named_container_config, resolve_dev_exec_surface, resolve_exec_working_dir,
@@ -331,9 +332,16 @@ fn run_routed_task_exec_internal_with_mapped_cwd(
         mapped_cwd,
         &raw_command,
     );
+    if strategy_requires_workspace_effigy_install(&strategy) {
+        ensure_workspace_effigy_available_for_policy(repo_root, policy, None)?;
+    }
     let args = build_routed_task_exec_args(&strategy, secret_env, service, mapped_cwd);
 
     run_compose_exec(repo_root, policy, &args, capture, "docker compose exec")
+}
+
+fn strategy_requires_workspace_effigy_install(strategy: &effigy_exec::ExecStrategy) -> bool {
+    matches!(strategy, effigy_exec::ExecStrategy::Handoff { .. })
 }
 
 fn map_host_cwd(
@@ -668,6 +676,21 @@ working_dir = "{working_dir}"
     }
 
     #[test]
+    fn handoff_strategy_requires_workspace_effigy_install() {
+        assert!(strategy_requires_workspace_effigy_install(
+            &effigy_exec::ExecStrategy::Handoff {
+                args: vec!["tasks".to_owned()],
+            }
+        ));
+        assert!(!strategy_requires_workspace_effigy_install(
+            &effigy_exec::ExecStrategy::RawExec {
+                working_dir: "/workspace".to_owned(),
+                command: vec!["sh".to_owned(), "-lc".to_owned(), "pwd".to_owned()],
+            }
+        ));
+    }
+
+    #[test]
     fn build_alias_table_renders_service_param_templates() {
         let aliases = build_alias_table(&ManifestContainerConfig {
             driver: None,
@@ -690,7 +713,7 @@ working_dir = "{working_dir}"
                             toml::Value::String("contactpatch".to_owned()),
                         ),
                         (
-                            "root_password".to_owned(),
+                            "password".to_owned(),
                             toml::Value::String("localdev".to_owned()),
                         ),
                     ]
@@ -707,7 +730,7 @@ working_dir = "{working_dir}"
                     effigy_manifest::ManifestContainerExecAliasTableConfig {
                         service: "db".to_owned(),
                         command: Some(
-                            "mysql -uroot{% if services.db.params.root_password %} -p{{ services.db.params.root_password }}{% endif %} {{ services.db.params.database }}".to_owned(),
+                            "mysql -uroot{% if services.db.params.password %} -p{{ services.db.params.password }}{% endif %} {{ services.db.params.database }}".to_owned(),
                         ),
                     },
                 ),

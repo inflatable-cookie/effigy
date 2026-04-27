@@ -79,7 +79,7 @@ fn spawn_plain_shell(spec: &ProcessSpec) -> ProcessCommand {
 }
 
 fn spawn_with_pty_wrapper(spec: &ProcessSpec) -> ProcessCommand {
-    let terminal_size = browser_terminal_size_override();
+    let terminal_size = terminal_size_override(spec);
     let wrapped_run = wrap_pty_shell_command(&spec.run, terminal_size);
     let mut process = ProcessCommand::new("script");
     apply_pty_wrapper_invocation(&mut process, &wrapped_run);
@@ -118,6 +118,30 @@ fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {
         _ => local_rendered,
     };
     process.env("PATH", merged);
+}
+
+fn terminal_size_override(spec: &ProcessSpec) -> Option<(u16, u16)> {
+    if let Some(size) = terminal_size_override_from_env_map(&spec.env) {
+        return Some(size);
+    }
+    browser_terminal_size_override()
+}
+
+fn terminal_size_override_from_env_map(
+    env: &std::collections::BTreeMap<String, String>,
+) -> Option<(u16, u16)> {
+    let cols = env
+        .get(DEMO_BROWSER_TERMINAL_COLS_ENV)?
+        .parse::<u16>()
+        .ok()?;
+    let rows = env
+        .get(DEMO_BROWSER_TERMINAL_ROWS_ENV)?
+        .parse::<u16>()
+        .ok()?;
+    if cols == 0 || rows == 0 {
+        return None;
+    }
+    Some((cols, rows))
 }
 
 fn browser_terminal_size_override() -> Option<(u16, u16)> {
@@ -159,7 +183,9 @@ fn apply_pty_wrapper_invocation(process: &mut ProcessCommand, wrapped_run: &str)
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_pty_shell_command;
+    use std::collections::BTreeMap;
+
+    use super::{terminal_size_override_from_env_map, wrap_pty_shell_command};
 
     #[test]
     fn wrap_pty_shell_command_prefixes_stty_with_terminal_size() {
@@ -171,5 +197,13 @@ mod tests {
     fn wrap_pty_shell_command_leaves_command_when_size_missing() {
         let wrapped = wrap_pty_shell_command("printf demo", None);
         assert_eq!(wrapped, "printf demo");
+    }
+
+    #[test]
+    fn terminal_size_override_from_env_map_reads_process_specific_values() {
+        let mut env = BTreeMap::new();
+        env.insert("EFFIGY_BROWSER_TERMINAL_COLS".to_owned(), "132".to_owned());
+        env.insert("EFFIGY_BROWSER_TERMINAL_ROWS".to_owned(), "41".to_owned());
+        assert_eq!(terminal_size_override_from_env_map(&env), Some((132, 41)));
     }
 }

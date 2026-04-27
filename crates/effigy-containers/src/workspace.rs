@@ -6,7 +6,8 @@ use std::process::Command as ProcessCommand;
 
 use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_manifest::{
-    ManifestContainerConfig, ManifestContainerServiceConfig, ManifestWorkspaceConfig,
+    load_task_manifest, ManifestContainerConfig, ManifestContainerServiceConfig,
+    ManifestWorkspaceConfig,
 };
 
 use crate::{policy_support::effigy_home_dir, ContainerPolicyError, EffectiveContainerPolicy};
@@ -91,6 +92,7 @@ pub fn load_workspace_ownership_targets(
 struct RenderedWorkspaceMount {
     target: String,
     rendered: String,
+    source: Option<PathBuf>,
 }
 
 fn rewrite_workspace_mounts_for_direct_compose(
@@ -211,6 +213,7 @@ fn build_workspace_runtime_mounts(
             canonical_repo_root.display(),
             working_dir.display()
         ),
+        source: Some(canonical_repo_root.clone()),
     }];
     for raw in &workspace.mounts {
         mounts.push(parse_workspace_extra_mount(
@@ -220,6 +223,12 @@ fn build_workspace_runtime_mounts(
             raw,
         )?);
     }
+    mounts.extend(build_isolation_mounts(
+        repo_root,
+        container_name,
+        workspace,
+        &mounts,
+    )?);
     let host_composer_home_mount = build_host_composer_home_mount(config, primary_service)?;
     if let Some(mount) = host_composer_home_mount {
         mounts.push(mount);
@@ -254,6 +263,7 @@ fn build_host_composer_home_mount(
             host_composer_home.display(),
             PHP_FPM_COMPOSER_HOME_TARGET
         ),
+        source: None,
     }))
 }
 
@@ -295,6 +305,7 @@ fn build_shared_composer_auth_mounts(
                 PHP_FPM_COMPOSER_HOME_TARGET,
                 file_name
             ),
+            source: None,
         });
     }
 
@@ -324,7 +335,183 @@ fn build_shared_composer_cache_mount(
     Ok(Some(RenderedWorkspaceMount {
         target: PHP_FPM_COMPOSER_CACHE_TARGET.to_owned(),
         rendered: format!("{}:{}", source.display(), PHP_FPM_COMPOSER_CACHE_TARGET),
+        source: None,
     }))
+}
+
+fn build_isolation_mounts(
+    repo_root: &Path,
+    container_name: &str,
+    workspace: &ManifestWorkspaceConfig,
+    current_mounts: &[RenderedWorkspaceMount],
+) -> Result<Vec<RenderedWorkspaceMount>, ContainerPolicyError> {
+    let mut mounts = Vec::new();
+    for adoption in &workspace.isolation {
+        let producer_root =
+            resolve_adopted_isolation_repo(repo_root, container_name, &adoption.repo)?;
+        let producer_manifest_path = producer_root.join("effigy.toml");
+        let manifest = load_task_manifest(&producer_manifest_path).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "failed to load isolation contract from `{}` for container `{container_name}`: {error}",
+                producer_manifest_path.display()
+            ))
+        })?;
+        let isolation_paths = manifest
+            .isolation
+            .as_ref()
+            .map(|config| config.paths.as_slice())
+            .unwrap_or(&[]);
+        if isolation_paths.is_empty() {
+            continue;
+        }
+        let target_root = current_mounts
+            .iter()
+            .find_map(|mount| {
+                mount.source
+                    .as_ref()
+                    .filter(|source| **source == producer_root)
+                    .map(|_| mount.target.as_str())
+            })
+            .ok_or_else(|| {
+                ContainerPolicyError::TaskInvocation(format!(
+                    "system isolation repo `{}` for container `{container_name}` is not mounted into the workspace runtime",
+                    adoption.repo
+                ))
+            })?;
+
+        for relative in isolation_paths {
+            let normalized = normalize_isolation_relative_path(
+                &producer_manifest_path,
+                relative,
+                container_name,
+            )?;
+            let host_dir = ensure_isolation_runtime_dir(
+                repo_root,
+                container_name,
+                &adoption.repo,
+                &normalized,
+            )?;
+            let target = Path::new(target_root)
+                .join(&normalized)
+                .display()
+                .to_string();
+            mounts.push(RenderedWorkspaceMount {
+                target: target.clone(),
+                rendered: format!("{}:{target}", host_dir.display()),
+                source: None,
+            });
+        }
+    }
+    Ok(mounts)
+}
+
+fn resolve_adopted_isolation_repo(
+    repo_root: &Path,
+    container_name: &str,
+    raw_repo: &str,
+) -> Result<PathBuf, ContainerPolicyError> {
+    let repo = raw_repo.trim();
+    if repo.is_empty() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` system isolation repo entry must not be empty"
+        )));
+    }
+    let resolved = if Path::new(repo).is_absolute() {
+        PathBuf::from(repo)
+    } else {
+        repo_root.join(repo)
+    };
+    resolved.canonicalize().map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` system isolation repo `{repo}` is invalid: {error}"
+        ))
+    })
+}
+
+fn normalize_isolation_relative_path(
+    manifest_path: &Path,
+    raw_path: &str,
+    container_name: &str,
+) -> Result<PathBuf, ContainerPolicyError> {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "isolation path in {} for container `{container_name}` must not be empty",
+            manifest_path.display()
+        )));
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "isolation path `{trimmed}` in {} for container `{container_name}` must be relative",
+            manifest_path.display()
+        )));
+    }
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(value) => normalized.push(value),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => {
+                return Err(ContainerPolicyError::TaskInvocation(format!(
+                    "isolation path `{trimmed}` in {} for container `{container_name}` must stay under the producer repo root",
+                    manifest_path.display()
+                )))
+            }
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "isolation path `{trimmed}` in {} for container `{container_name}` resolved to an empty path",
+            manifest_path.display()
+        )));
+    }
+    Ok(normalized)
+}
+
+fn ensure_isolation_runtime_dir(
+    repo_root: &Path,
+    container_name: &str,
+    raw_repo: &str,
+    relative_path: &Path,
+) -> Result<PathBuf, ContainerPolicyError> {
+    let repo_key = sanitize_isolation_key(raw_repo);
+    let mut dir = repo_root
+        .join(".effigy")
+        .join("runtime")
+        .join("isolation")
+        .join(container_name)
+        .join(repo_key);
+    for component in relative_path.components() {
+        if let std::path::Component::Normal(value) = component {
+            dir.push(value);
+        }
+    }
+    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
+        path: repo_root.join(".gitignore"),
+        error,
+    })?;
+    std::fs::create_dir_all(&dir).map_err(|error| ContainerPolicyError::Read {
+        path: dir.clone(),
+        error,
+    })?;
+    Ok(dir)
+}
+
+fn sanitize_isolation_key(raw: &str) -> String {
+    let sanitized = raw
+        .trim()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect::<String>();
+    let trimmed = sanitized.trim_matches('-');
+    if trimmed.is_empty() {
+        "repo".to_owned()
+    } else {
+        trimmed.chars().take(96).collect()
+    }
 }
 
 fn service_bool_param(service: &ManifestContainerServiceConfig, key: &str, default: bool) -> bool {
@@ -451,7 +638,11 @@ fn parse_workspace_extra_mount(
         rendered.push(':');
         rendered.push_str(options);
     }
-    Ok(RenderedWorkspaceMount { target, rendered })
+    Ok(RenderedWorkspaceMount {
+        target,
+        rendered,
+        source: Some(canonical_source),
+    })
 }
 
 fn rewrite_workspace_service_volumes(

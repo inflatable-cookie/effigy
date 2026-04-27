@@ -46,8 +46,8 @@ if database == "" {
 }
 
 let container_name = optional_config_string("bundle.container_name", "web");
-let db_root_password_path = "containers." + container_name + ".services.db.params.root_password";
-let root_password = optional_config_string(db_root_password_path, "secret");
+let db_password_path = "containers." + container_name + ".services.db.params.password";
+let db_password = optional_config_string(db_password_path, "secret");
 let dumps_dir = path_join(repo_root, ".effigy/local/db-seeds");
 
 create_dir(dumps_dir);
@@ -61,10 +61,10 @@ if latest_host_path == "" {
 
 let dump_name = path_file_name(latest_host_path);
 let dump_container_path = path_join("/var/www/html/.effigy/local/db-seeds", dump_name);
-let mysql_prefix = if root_password == "" {
+let mysql_prefix = if db_password == "" {
     "mysql --skip-ssl -h db -uroot"
 } else {
-    "mysql --skip-ssl -h db -uroot --password=" + shell_quote_string(root_password)
+    "mysql --skip-ssl -h db -uroot --password=" + shell_quote_string(db_password)
 };
 let reset_sql = "DROP DATABASE IF EXISTS `" + database + "`; CREATE DATABASE `" + database + "`;";
 

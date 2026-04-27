@@ -14,6 +14,7 @@ use snapshot::active_snapshot;
 pub struct ActiveViewModel {
     pub active_process: String,
     pub active_logs: Vec<LogEntry>,
+    pub active_vt: bool,
     pub scroll_offset: usize,
     pub max_offset: usize,
     pub render_scroll_offset: usize,
@@ -50,6 +51,7 @@ pub fn build_active_view_model(
     ActiveViewModel {
         active_process: snapshot.name,
         active_logs: scroll.logs,
+        active_vt: vt_emulator_enabled && snapshot.vt_has_chunks,
         scroll_offset: scroll.scroll_offset,
         max_offset: scroll.max_offset,
         render_scroll_offset: scroll.render_scroll_offset,

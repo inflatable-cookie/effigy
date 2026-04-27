@@ -27,6 +27,7 @@ pub(super) struct OutputPaneRenderArgs<'a> {
     pub(super) render_scroll_offset: usize,
     pub(super) scrollbar_total: usize,
     pub(super) active_process: &'a str,
+    pub(super) active_vt: bool,
     pub(super) process_name: &'a str,
     pub(super) shell_capture_mode: bool,
     pub(super) active_output_seen: bool,
@@ -49,6 +50,7 @@ pub(super) fn render_output_pane(
         render_scroll_offset,
         scrollbar_total,
         active_process,
+        active_vt,
         process_name,
         shell_capture_mode,
         active_output_seen,
@@ -83,6 +85,11 @@ pub(super) fn render_output_pane(
         ))
         .block(panel)
         .style(shell_inactive_style)
+    } else if active_vt {
+        Paragraph::new(lines)
+            .block(panel)
+            .style(shell_inactive_style)
+            .scroll((render_scroll_offset.min(u16::MAX as usize) as u16, 0))
     } else {
         Paragraph::new(lines)
             .block(panel)

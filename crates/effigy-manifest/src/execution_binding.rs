@@ -262,6 +262,7 @@ fn implied_default_workspace_config(
         mounts: system_config.mounts.clone(),
         user: system_config.user.clone(),
         home: system_config.home.clone(),
+        isolation: system_config.isolation.clone(),
     };
     if workspace.container.is_none() {
         workspace.container = default_workspace_container(containers);
@@ -280,6 +281,7 @@ fn merge_workspace_config(
         mounts: system_config.mounts.clone(),
         user: system_config.user.clone(),
         home: system_config.home.clone(),
+        isolation: system_config.isolation.clone(),
     };
     if workspace.container.is_some() {
         merged.container = workspace.container.clone();
@@ -392,6 +394,7 @@ run = "npm run dev"
                         mounts: vec![],
                         user: None,
                         home: None,
+                        isolation: vec![],
                     },
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
@@ -432,6 +435,7 @@ run = "npm run dev"
                         mounts: vec![],
                         user: None,
                         home: None,
+                        isolation: vec![],
                     },
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
@@ -471,6 +475,7 @@ run = "npm run dev"
                         mounts: vec![],
                         user: None,
                         home: None,
+                        isolation: vec![],
                     },
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
@@ -509,6 +514,7 @@ run = "npm run dev"
                         mounts: vec![],
                         user: None,
                         home: None,
+                        isolation: vec![],
                     },
                     container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
                 }
@@ -582,6 +588,7 @@ run = "npm run dev"
                         mounts: vec![],
                         user: None,
                         home: None,
+                        isolation: vec![],
                     },
                     container: Some(ResolvedWorkspaceContainer::Inline(
                         ResolvedInlineWorkspaceContainer {
