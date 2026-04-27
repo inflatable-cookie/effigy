@@ -18,6 +18,7 @@ Next steps:
    - when the repo uses different app package names, set `[bundle.dirs]` (`api`, `client`, optional `ui`, `front`, `admin`)
    - when gateway labels should follow those app names too, set `[bundle.routes]` (`front`, `admin`, `api`)
    - adjust `systems.dev.mounts` for any sibling checkouts
+   - only set `[bundle.sources]` when the bundle should use paths that differ from those mounts
 
 2. In `effigy.toml` tasks:
    - replace the `app-api/dev`, `app-admin/dev`, `app-front/dev`

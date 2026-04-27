@@ -298,6 +298,10 @@ client = "acme-client"
 ui = "acme-ui"
 front = "acme-front"
 admin = "acme-admin"
+
+[bundle.sources]
+underlay = "../../underlay"
+poodle = "../../poodle"
 "#,
     )
     .expect("write manifest");
@@ -313,8 +317,64 @@ admin = "acme-admin"
     };
     assert_eq!(
         sync_step.task.as_deref(),
-        Some("bootstrap deps sync ../underlay acme-api acme-client acme-ui acme-front acme-admin")
+        Some(
+            "bootstrap deps sync ../../underlay acme-api acme-client acme-ui acme-front acme-admin"
+        )
     );
+
+    let children = &manifest.bootstrap.as_ref().expect("bootstrap").children;
+    let child_paths: Vec<&str> = children.iter().map(|child| child.path.as_str()).collect();
+    assert_eq!(child_paths, vec!["../../underlay", "../../poodle"]);
+}
+
+#[test]
+fn underlay_bundle_infers_sources_from_system_mounts() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "underlay-reference-dev"
+workspace_subdir = "underlay-reference"
+database = "acme"
+
+[bundle.dirs]
+api = "acme-api"
+client = "acme-client"
+ui = "acme-ui"
+front = "acme-front"
+admin = "acme-admin"
+
+[systems.dev]
+mounts = ["../../underlay", "../../poodle"]
+"#,
+    )
+    .expect("write manifest");
+
+    let manifest = load_task_manifest(&manifest_path).expect("load manifest");
+    let bootstrap = manifest.bootstrap.as_ref().expect("bootstrap");
+    let run = bootstrap.run.as_ref().expect("bootstrap run");
+    let effigy_manifest::ManifestManagedRun::Sequence(steps) = run else {
+        panic!("underlay bootstrap should use a managed sequence");
+    };
+    let Some(effigy_manifest::ManifestManagedRunStep::Step(sync_step)) = steps.get(2) else {
+        panic!("expected bootstrap deps sync step");
+    };
+    assert_eq!(
+        sync_step.task.as_deref(),
+        Some("bootstrap deps sync ../../underlay acme-api acme-client acme-ui acme-front acme-admin")
+    );
+
+    let children = &manifest
+        .bootstrap
+        .as_ref()
+        .expect("bootstrap")
+        .children;
+    let child_paths: Vec<&str> = children.iter().map(|child| child.path.as_str()).collect();
+    assert_eq!(child_paths, vec!["../../underlay", "../../poodle"]);
 }
 
 #[test]

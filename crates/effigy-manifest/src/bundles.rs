@@ -69,7 +69,7 @@ pub(crate) fn apply_bundle_defaults(
     }
     let (defaults, source_path) = match &selection {
         BundleSelection::Shipped { name } => (
-            resolve_bundle_defaults(manifest_path, name, &normalized_inputs)?,
+            resolve_bundle_defaults(manifest_path, current, name, &normalized_inputs)?,
             bundle_source_path(name),
         ),
         BundleSelection::Local { path } => {
@@ -151,7 +151,7 @@ pub fn render_bundle_defaults(
     name: &str,
     inputs: &BTreeMap<String, Value>,
 ) -> Result<Value, ManifestError> {
-    resolve_bundle_defaults(&bundle_source_path(name), name, inputs)
+    resolve_bundle_defaults(&bundle_source_path(name), &Value::Table(Default::default()), name, inputs)
 }
 
 pub fn list_bundle_default_paths(name: &str) -> Result<Vec<String>, ManifestError> {
@@ -229,13 +229,14 @@ pub fn export_bundle(name: &str, target_dir: &Path) -> Result<BundleExport, Mani
 
 fn resolve_bundle_defaults(
     manifest_path: &Path,
+    current: &Value,
     bundle_name: &str,
     inputs: &BTreeMap<String, Value>,
 ) -> Result<Value, ManifestError> {
     match bundle_name {
         "decodelabs" => resolve_decodelabs_bundle(manifest_path, inputs),
         "decodelabs-library" => resolve_decodelabs_library_bundle(manifest_path, inputs),
-        "underlay" => resolve_underlay_bundle(manifest_path, inputs),
+        "underlay" => resolve_underlay_bundle(manifest_path, current, inputs),
         other => Err(ManifestError::Compose {
             path: manifest_path.to_path_buf(),
             detail: format!("unknown bundle `{other}`"),
@@ -1057,6 +1058,22 @@ fn underlay_spec() -> BundleSpec {
                 example: Some(Value::String("dairy".to_owned())),
             },
             BundleInputSpec {
+                name: "sources.underlay".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Relative path from the consumer repo to the sibling underlay checkout used by bootstrap sync, bootstrap children, and the bundled UI setup helper.".to_owned(),
+                default: Some(Value::String("../underlay".to_owned())),
+                example: Some(Value::String("../../underlay".to_owned())),
+            },
+            BundleInputSpec {
+                name: "sources.poodle".to_owned(),
+                value_type: BundleInputType::String,
+                required: false,
+                description: "Relative path from the consumer repo to the sibling poodle checkout used by bootstrap children and the bundled UI setup helper.".to_owned(),
+                default: Some(Value::String("../poodle".to_owned())),
+                example: Some(Value::String("../../poodle".to_owned())),
+            },
+            BundleInputSpec {
                 name: "dirs.client".to_owned(),
                 value_type: BundleInputType::String,
                 required: false,
@@ -1134,6 +1151,7 @@ fn underlay_spec() -> BundleSpec {
 
 fn resolve_underlay_bundle(
     manifest_path: &Path,
+    current: &Value,
     inputs: &BTreeMap<String, Value>,
 ) -> Result<Value, ManifestError> {
     let host = required_bundle_string(manifest_path, "underlay", inputs, "host")?;
@@ -1168,8 +1186,22 @@ fn resolve_underlay_bundle(
         .unwrap_or_else(|| "workspace".to_owned());
     let default_workspace =
         optional_bundle_string(inputs, "default_workspace").unwrap_or_else(|| "app".to_owned());
+    let underlay_source = infer_underlay_bundle_source(
+        current,
+        &system_name,
+        optional_bundle_string(inputs, "sources.underlay"),
+        "underlay",
+        "../underlay",
+    );
+    let poodle_source = infer_underlay_bundle_source(
+        current,
+        &system_name,
+        optional_bundle_string(inputs, "sources.poodle"),
+        "poodle",
+        "../poodle",
+    );
     let bundle_root = materialize_shipped_bundle_assets(manifest_path, "underlay")?;
-    let bootstrap_sync_paths = underlay_bootstrap_sync_paths(inputs);
+    let bootstrap_sync_paths = underlay_bootstrap_sync_paths(inputs, &underlay_source);
     let bootstrap_sync_command = format!("bootstrap deps sync {}", bootstrap_sync_paths.join(" "));
     let cargo_target_dirs = render_toml_string_array(&underlay_cargo_target_dirs(inputs));
     let node_modules_dirs = render_toml_string_array(&underlay_node_modules_dirs(inputs));
@@ -1250,12 +1282,12 @@ run = [
 start = "dev"
 
 [[bootstrap.children]]
-path = "../underlay"
+path = "__UNDERLAY_SOURCE__"
 repo = "git@github.com:inflatable-cookie/underlay.git"
 branch = "main"
 
 [[bootstrap.children]]
-path = "../poodle"
+path = "__POODLE_SOURCE__"
 repo = "git@github.com:inflatable-cookie/poodle.git"
 branch = "main"
 
@@ -1294,6 +1326,8 @@ run_in = "host"
             .replace("__SYSTEM_NAME__", &system_name)
             .replace("__CONTAINER_NAME__", &container_name)
             .replace("__WORKSPACE_SERVICE_NAME__", &workspace_service_name)
+            .replace("__UNDERLAY_SOURCE__", &underlay_source)
+            .replace("__POODLE_SOURCE__", &poodle_source)
             .replace("__BOOTSTRAP_SYNC_COMMAND__", &bootstrap_sync_command)
             .replace("__CARGO_TARGET_DIRS__", &cargo_target_dirs)
             .replace("__NODE_MODULES_DIRS__", &node_modules_dirs)
@@ -1693,17 +1727,17 @@ routes = [
 run = [
   { rhai = "{{ bundle.root }}/scripts/bootstrap-env.rhai" },
   { task = "container up --detach" },
-  { task = "bootstrap deps sync ../underlay {% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}{% if inputs.dirs.client %} {{ inputs.dirs.client }}{% else %} app-client{% endif %}{% if inputs.dirs.ui %} {{ inputs.dirs.ui }}{% else %} app-ui{% endif %}{% if inputs.dirs.front %} {{ inputs.dirs.front }}{% else %} app-front{% endif %}{% if inputs.dirs.admin %} {{ inputs.dirs.admin }}{% else %} app-admin{% endif %}" },
+  { task = "bootstrap deps sync {% if inputs.sources.underlay %}{{ inputs.sources.underlay }}{% else %}../underlay{% endif %}{% if inputs.dirs.api %} {{ inputs.dirs.api }}{% else %} app-api{% endif %}{% if inputs.dirs.client %} {{ inputs.dirs.client }}{% else %} app-client{% endif %}{% if inputs.dirs.ui %} {{ inputs.dirs.ui }}{% else %} app-ui{% endif %}{% if inputs.dirs.front %} {{ inputs.dirs.front }}{% else %} app-front{% endif %}{% if inputs.dirs.admin %} {{ inputs.dirs.admin }}{% else %} app-admin{% endif %}" },
 ]
 start = "dev"
 
 [[bootstrap.children]]
-path = "../underlay"
+path = "{% if inputs.sources.underlay %}{{ inputs.sources.underlay }}{% else %}../underlay{% endif %}"
 repo = "git@github.com:inflatable-cookie/underlay.git"
 branch = "main"
 
 [[bootstrap.children]]
-path = "../poodle"
+path = "{% if inputs.sources.poodle %}{{ inputs.sources.poodle }}{% else %}../poodle{% endif %}"
 repo = "git@github.com:inflatable-cookie/poodle.git"
 branch = "main"
 
@@ -1790,8 +1824,11 @@ fn render_toml_string_array(values: &[String]) -> String {
     format!("[{encoded}]")
 }
 
-fn underlay_bootstrap_sync_paths(inputs: &BTreeMap<String, Value>) -> Vec<String> {
-    let mut paths = vec!["../underlay".to_owned()];
+fn underlay_bootstrap_sync_paths(
+    inputs: &BTreeMap<String, Value>,
+    underlay_source: &str,
+) -> Vec<String> {
+    let mut paths = vec![underlay_source.trim().to_owned()];
     let candidates = [
         optional_bundle_string(inputs, "dirs.api").unwrap_or_else(|| "app-api".to_owned()),
         optional_bundle_string(inputs, "dirs.client").unwrap_or_else(|| "app-client".to_owned()),
@@ -1812,6 +1849,48 @@ fn underlay_bootstrap_sync_paths(inputs: &BTreeMap<String, Value>) -> Vec<String
     }
 
     paths
+}
+
+fn infer_underlay_bundle_source(
+    current: &Value,
+    system_name: &str,
+    explicit: Option<String>,
+    suffix: &str,
+    fallback: &str,
+) -> String {
+    if let Some(explicit) = explicit {
+        let trimmed = explicit.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_owned();
+        }
+    }
+
+    let mounts = current
+        .as_table()
+        .and_then(|table| table.get("systems"))
+        .and_then(Value::as_table)
+        .and_then(|systems| systems.get(system_name))
+        .and_then(Value::as_table)
+        .and_then(|system| system.get("mounts"))
+        .and_then(Value::as_array);
+
+    if let Some(mounts) = mounts {
+        let expected_suffix = format!("/{suffix}");
+        for mount in mounts {
+            let Some(mount) = mount.as_str() else {
+                continue;
+            };
+            let trimmed = mount.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed == suffix || trimmed.ends_with(&expected_suffix) {
+                return trimmed.to_owned();
+            }
+        }
+    }
+
+    fallback.to_owned()
 }
 
 fn materialize_shipped_bundle_assets(
