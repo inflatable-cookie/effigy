@@ -205,6 +205,25 @@ During v0.x, MINOR bumps may include breaking changes.
   `DeferLoopDetected` still fires for the explicit `effigy defer ...`
   path, which bypasses the policy and goes straight to
   `run_deferred_request`'s depth check.
+- Stop the bootstrap deps-sync runner-shell tests from racing with
+  neighbouring tests on the process-wide `PATH` env var. The three
+  `run_bootstrap_with_cwd_*` tests prepend a fake `bin_dir` so they can
+  observe `bun`/`cargo` invocations, but `bootstrap_deps_json_contract_*`
+  also mutates `PATH` (and `cwd`) and was not on the same lock, which
+  occasionally let real `cargo` slip in mid-test and trip "no targets in
+  manifest" errors. The bootstrap shell tests now acquire the shared
+  `contract_test_support::lock_test()` mutex before mutating `PATH`, and
+  use a small `PathPrepend` RAII guard so the prior value is restored
+  even on panic.
+- Anchor the `preflight_recommends_native_first_publish_command`
+  distribution test on `CARGO_MANIFEST_DIR` rather than `Path::new(".")`,
+  so the test no longer races against `set_current_dir` in
+  `defer_command`, `builtin_contract_tests`, or other neighbours under
+  cargo's parallel execution.
+- Serialize the two `should_stay_in_workspace_shell` standard-pipeline
+  tests on a shared `OnceLock<Mutex<()>>` and wrap the `EFFIGY_INTERNAL_
+  CONTAINER_HANDOFF` env mutation in an `EnvRestore` RAII guard, so the
+  pair stops corrupting each other when run in parallel.
 - Let VT-backed managed TUI panes wrap rendered rows to the tab width again
   while still keeping the wider PTY buffer intact, so long real log lines
   stop being clipped without bringing back Bun-style progress row history

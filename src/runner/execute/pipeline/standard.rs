@@ -350,6 +350,18 @@ mod tests {
     };
     use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn};
     use std::env;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    /// Serializes tests that read or mutate `CONTAINER_HANDOFF_ENV`.
+    /// `should_stay_in_workspace_shell` reads the env directly via
+    /// `std::env::var_os`, so tests touching that env must not run in
+    /// parallel with each other or with tests that read the same env.
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     struct EnvGuard {
         key: &'static str,
@@ -399,6 +411,18 @@ mod tests {
 
     #[test]
     fn stay_in_shell_requires_explicit_task_opt_in() {
+        let _lock = env_lock();
+        // Defensive: ensure the env isn't set if a stale prior process left
+        // it behind. The lock prevents concurrent test mutation.
+        let _clear = unsafe {
+            let prior = env::var_os(CONTAINER_HANDOFF_ENV);
+            env::remove_var(CONTAINER_HANDOFF_ENV);
+            EnvRestore {
+                key: CONTAINER_HANDOFF_ENV,
+                value: prior,
+            }
+        };
+
         assert!(should_stay_in_workspace_shell(
             false,
             &stay_in_shell_task(),
@@ -411,6 +435,7 @@ mod tests {
 
     #[test]
     fn stay_in_shell_is_disabled_inside_container_handoff() {
+        let _lock = env_lock();
         let _env = EnvGuard::set(CONTAINER_HANDOFF_ENV, "1");
 
         assert!(!should_stay_in_workspace_shell(
@@ -421,5 +446,23 @@ mod tests {
                 workspace: None,
             },
         ));
+    }
+
+    struct EnvRestore {
+        key: &'static str,
+        value: Option<std::ffi::OsString>,
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match self.value.take() {
+                Some(value) => unsafe {
+                    env::set_var(self.key, value);
+                },
+                None => unsafe {
+                    env::remove_var(self.key);
+                },
+            }
+        }
     }
 }

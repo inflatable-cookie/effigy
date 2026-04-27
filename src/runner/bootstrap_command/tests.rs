@@ -16,6 +16,32 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// RAII guard that prepends `bin_dir` to `PATH` for the duration of a test
+/// and restores the prior value on drop. Always pair with the shared
+/// `crate::contract_test_support::lock_test()` mutex so no other test
+/// in the binary mutates `PATH` (or `cwd`) while this guard is live.
+struct PathPrepend {
+    original: String,
+}
+
+impl PathPrepend {
+    fn new(bin_dir: &Path) -> Self {
+        let original = std::env::var("PATH").unwrap_or_default();
+        unsafe {
+            std::env::set_var("PATH", format!("{}:{original}", bin_dir.display()));
+        }
+        Self { original }
+    }
+}
+
+impl Drop for PathPrepend {
+    fn drop(&mut self) {
+        unsafe {
+            std::env::set_var("PATH", &self.original);
+        }
+    }
+}
+
 #[test]
 fn bootstrap_progress_message_preserves_plain_text_without_color() {
     let rendered = render_bootstrap_progress_message(
@@ -415,10 +441,8 @@ fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
         fs::set_permissions(&script, perms).expect("chmod script");
     }
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    unsafe {
-        std::env::set_var("PATH", format!("{}:{original_path}", bin_dir.display()));
-    }
+    let _process_lock = crate::contract_test_support::lock_test();
+    let _path = PathPrepend::new(&bin_dir);
     let out = run_bootstrap_with_cwd(
         BootstrapArgs {
             subcommand: BootstrapSubcommand::DepsSync {
@@ -430,9 +454,6 @@ fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
         root.clone(),
     )
     .expect("run bootstrap deps sync");
-    unsafe {
-        std::env::set_var("PATH", original_path);
-    }
 
     assert!(out.contains("bootstrap deps sync completed (2)"));
     assert!(out.contains("ui [js]: bun install"));
@@ -462,10 +483,8 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
     perms.set_mode(0o755);
     fs::set_permissions(bin_dir.join("bun"), perms).expect("chmod bun");
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    unsafe {
-        std::env::set_var("PATH", format!("{}:{original_path}", bin_dir.display()));
-    }
+    let _process_lock = crate::contract_test_support::lock_test();
+    let _path = PathPrepend::new(&bin_dir);
     let out = run_bootstrap_with_cwd(
         BootstrapArgs {
             subcommand: BootstrapSubcommand::Clone {
@@ -480,9 +499,6 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
         cwd.clone(),
     )
     .expect("run bootstrap");
-    unsafe {
-        std::env::set_var("PATH", original_path);
-    }
 
     assert!(out.contains("[ok] bootstrap completed"));
     assert!(
@@ -512,10 +528,8 @@ fn run_bootstrap_with_cwd_skips_missing_bootstrap_deps_sync_paths() {
     perms.set_mode(0o755);
     fs::set_permissions(&script, perms).expect("chmod script");
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    unsafe {
-        std::env::set_var("PATH", format!("{}:{original_path}", bin_dir.display()));
-    }
+    let _process_lock = crate::contract_test_support::lock_test();
+    let _path = PathPrepend::new(&bin_dir);
     let out = run_bootstrap_with_cwd(
         BootstrapArgs {
             subcommand: BootstrapSubcommand::DepsSync {
@@ -527,9 +541,6 @@ fn run_bootstrap_with_cwd_skips_missing_bootstrap_deps_sync_paths() {
         root.clone(),
     )
     .expect("run bootstrap deps sync");
-    unsafe {
-        std::env::set_var("PATH", original_path);
-    }
 
     assert!(out.contains("bootstrap deps sync completed (1)"));
     assert!(out.contains("ui [js]: bun install"));

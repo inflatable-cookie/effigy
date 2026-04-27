@@ -141,8 +141,13 @@ fn current_repo_distribution_metadata_requires_only_workflow_bound_glibc_script(
 
 #[test]
 fn preflight_recommends_native_first_publish_command() {
+    // Use CARGO_MANIFEST_DIR rather than `Path::new(".")` so the test does
+    // not rely on process cwd. Other tests in the suite (defer_command,
+    // builtin_contract_tests, contract_test_support) call set_current_dir
+    // and can race with this test under cargo's parallel execution.
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let output = run_preflight(
-        std::path::Path::new("."),
+        repo_root,
         &default_distribution_policy(),
         Some("v0.2.13"),
         true,
