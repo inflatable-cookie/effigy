@@ -1,8 +1,9 @@
 [package]
 name = "effigy-tui"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
 description = "Shared TUI core and terminal-text primitives for Effigy"
 
 [dependencies]

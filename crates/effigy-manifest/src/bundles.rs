@@ -736,6 +736,8 @@ fn decodelabs_library_spec() -> BundleSpec {
 
 const DECODELABS_PHP_EXTENSIONS: &[&str] = &[
     "bcmath",
+    "apcu",
+    "pcntl",
     "pdo_mysql",
     "mysqli",
     "intl",

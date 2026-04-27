@@ -28,11 +28,16 @@ members = [
     "crates/effigy-doctor",
 ]
 
-[package]
-name = "effigy"
+[workspace.package]
 version = "0.2.13"
 edition = "2021"
 license = "MIT"
+
+[package]
+name = "effigy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Unified task runner with nested catalog resolution"
 
 [dependencies]

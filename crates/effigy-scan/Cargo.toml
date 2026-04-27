@@ -1,8 +1,9 @@
 [package]
 name = "effigy-scan"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
 description = "Workspace scan engine for Effigy (options, execution, render)"
 
 [dependencies]

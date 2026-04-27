@@ -34,6 +34,13 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Changed
+- Move internal workspace crates onto shared workspace metadata so their crate
+  versions now track the main Effigy release version instead of all reporting
+  `0.1.0`, and mark the internal crates `publish = false`.
+- Make the shared host gateway return `308` redirects from HTTP to HTTPS when
+  a registered route sets `tls = true` and the HTTPS listener is available, so
+  HTTP-oriented bundles pick up consistent TLS redirects without per-bundle
+  config.
 - Move the default `underlay` bootstrap contract into the shipped bundle
   and collapse `effigy init underlay` back to a single root `effigy.toml`.
   The bundle now owns the default env generation, sibling children, and

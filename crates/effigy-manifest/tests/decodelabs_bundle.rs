@@ -64,6 +64,8 @@ version = "11.0"
             .collect::<Vec<_>>(),
         vec![
             "bcmath",
+            "apcu",
+            "pcntl",
             "pdo_mysql",
             "mysqli",
             "intl",
@@ -332,6 +334,8 @@ base = "decodelabs-library"
             .collect::<Vec<_>>(),
         vec![
             "bcmath",
+            "apcu",
+            "pcntl",
             "pdo_mysql",
             "mysqli",
             "intl",
