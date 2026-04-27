@@ -47,6 +47,7 @@ const PROJECT_LOCAL_CATALOG_DIR: &str = "infra/dev/catalog";
 const EJECTED_COMPOSE_DIR: &str = "infra/dev";
 const SHARED_SERVICE_HOST: &str = "host.docker.internal";
 const RUNTIME_DNS_FALLBACK_SERVERS: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
+const NERDCTL_MOUNTS_LABEL_BUDGET_BYTES: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectiveAttachMode {
@@ -490,7 +491,8 @@ pub fn validate_compose_backend_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), ContainerPolicyError> {
-    validate_compose_backend_host_paths(repo_root, policy)
+    validate_compose_backend_host_paths(repo_root, policy)?;
+    validate_compose_backend_mount_budget(policy)
 }
 
 pub fn effective_attach_mode(
@@ -670,6 +672,41 @@ fn validate_compose_backend_host_paths(
     )))
 }
 
+fn validate_compose_backend_mount_budget(
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), ContainerPolicyError> {
+    if compose::resolve_compose_backend() != compose::ComposeBackend::ColimaNerdctl {
+        return Ok(());
+    }
+    let Some(estimate) = estimate_primary_service_mount_label_size(
+        &policy.compose_files[0],
+        &policy.primary_service,
+    )?
+    else {
+        return Ok(());
+    };
+    if estimate.total_bytes < NERDCTL_MOUNTS_LABEL_BUDGET_BYTES {
+        return Ok(());
+    }
+    let heaviest = estimate
+        .entries
+        .iter()
+        .rev()
+        .take(6)
+        .map(|entry| format!("{} ({} bytes)", entry.target, entry.raw.len()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(ContainerPolicyError::TaskInvocation(format!(
+        "container `{}` uses the Colima nerdctl compose fallback, but primary service `{}` has an estimated mount payload of {} bytes across {} mounts, which exceeds the nerdctl/containerd label budget of {} bytes; trim isolation or workspace mounts. Heaviest targets: {}",
+        policy.name,
+        policy.primary_service,
+        estimate.total_bytes,
+        estimate.entries.len(),
+        NERDCTL_MOUNTS_LABEL_BUDGET_BYTES,
+        heaviest
+    )))
+}
+
 fn is_colima_temp_root_path(path: &Path) -> bool {
     let temp_root = std::env::temp_dir();
     path_is_within(path, &temp_root)
@@ -677,6 +714,78 @@ fn is_colima_temp_root_path(path: &Path) -> bool {
         || path_is_within(path, Path::new("/private/tmp"))
         || path_is_within(path, Path::new("/var/folders"))
         || path_is_within(path, Path::new("/private/var/folders"))
+}
+
+#[derive(Debug)]
+struct PrimaryServiceMountEstimate {
+    total_bytes: usize,
+    entries: Vec<MountBudgetEntry>,
+}
+
+#[derive(Debug)]
+struct MountBudgetEntry {
+    target: String,
+    raw: String,
+}
+
+fn estimate_primary_service_mount_label_size(
+    compose_file: &Path,
+    primary_service: &str,
+) -> Result<Option<PrimaryServiceMountEstimate>, ContainerPolicyError> {
+    let content =
+        std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
+            path: compose_file.to_path_buf(),
+            error,
+        })?;
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "failed to parse compose file {} while estimating nerdctl mount budget: {error}",
+            compose_file.display()
+        ))
+    })?;
+    let Some(service) = parsed
+        .get("services")
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|services| services.get(serde_yaml::Value::String(primary_service.to_owned())))
+        .and_then(serde_yaml::Value::as_mapping)
+    else {
+        return Ok(None);
+    };
+    let Some(volumes) = service
+        .get(serde_yaml::Value::String("volumes".to_owned()))
+        .and_then(serde_yaml::Value::as_sequence)
+    else {
+        return Ok(None);
+    };
+    let mut entries = volumes
+        .iter()
+        .filter_map(serde_yaml::Value::as_str)
+        .filter_map(parse_mount_budget_entry)
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.raw.len());
+    let total_bytes = entries.iter().map(|entry| entry.raw.len()).sum::<usize>()
+        + entries.len().saturating_sub(1);
+    Ok(Some(PrimaryServiceMountEstimate {
+        total_bytes,
+        entries,
+    }))
+}
+
+fn parse_mount_budget_entry(raw: &str) -> Option<MountBudgetEntry> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut parts = trimmed.splitn(3, ':');
+    let source = parts.next()?.trim();
+    let target = parts.next()?.trim();
+    if source.is_empty() || target.is_empty() {
+        return None;
+    }
+    Some(MountBudgetEntry {
+        target: target.to_owned(),
+        raw: trimmed.to_owned(),
+    })
 }
 
 fn path_is_within(path: &Path, root: &Path) -> bool {

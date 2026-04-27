@@ -18,6 +18,10 @@ ADD --chmod=0755 https://github.com/mlocati/docker-php-extension-installer/relea
 RUN apt-get update && apt-get install -y --no-install-recommends \
         # Version control and archive tools
         git unzip curl wget \
+        # SSH client for git push over ssh and remote interactive use
+        # (pairs with the host gitconfig / known_hosts / agent-socket
+        # mounts driven by the workspace catalog params)
+        openssh-client \
         # Build tools (needed by some composer packages)
         make \
         # Database CLI clients for debugging

@@ -433,8 +433,18 @@ fn render_workspace_permission_command(user: &str, targets: &[String]) -> String
         .map(|target| shell_quote(target))
         .collect::<Vec<_>>()
         .join(" ");
+    // `chown -fR ... || true` is the recursive chown that tolerates per-entry
+    // failures. The host-injected gitconfig / SSH known_hosts / agent socket
+    // bind mounts under `/home/dev` are read-only by design, so a plain
+    // `chown -R` would die on them with "Read-only file system" before
+    // touching the rest of the workspace home. The `-f` flag suppresses the
+    // per-entry error message, but GNU chown still exits non-zero when any
+    // file failed — hence the trailing `|| true` to keep the prep step
+    // green. The `mkdir -p` and the loop scaffolding still fail loudly,
+    // which is what catches real misconfigurations like a missing target
+    // path or an unwritable parent directory.
     format!(
-        "user={user}; if id -u \"$user\" >/dev/null 2>&1; then uid=$(id -u \"$user\"); gid=$(id -g \"$user\"); for path in {targets}; do mkdir -p \"$path\" && chown -R \"$uid:$gid\" \"$path\"; done; fi",
+        "user={user}; if id -u \"$user\" >/dev/null 2>&1; then uid=$(id -u \"$user\"); gid=$(id -g \"$user\"); for path in {targets}; do mkdir -p \"$path\" && {{ chown -fR \"$uid:$gid\" \"$path\" || true; }}; done; fi",
         user = shell_quote(user),
         targets = quoted_targets,
     )
@@ -1077,6 +1087,32 @@ mod tests {
         std::fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n")
             .expect("write compose");
         root
+    }
+
+    #[test]
+    fn permission_command_tolerates_read_only_bind_mounts() {
+        let cmd = render_workspace_permission_command(
+            "dev",
+            &["/home/dev".to_owned(), "/cache".to_owned()],
+        );
+        assert!(
+            cmd.contains("chown -fR"),
+            "permission prep should use `chown -fR` so the per-entry error \
+             message on read-only host bind mounts is suppressed:\n{cmd}"
+        );
+        assert!(
+            cmd.contains("|| true"),
+            "permission prep should tolerate per-entry chown failures via \
+             `|| true` — `chown -f` only hides the message, it still exits \
+             non-zero when a read-only bind mount can't be chowned:\n{cmd}"
+        );
+        assert!(
+            !cmd.contains("chown -R "),
+            "permission prep must not fall back to plain `chown -R` — that \
+             dies on read-only host bind mounts under /home/dev:\n{cmd}"
+        );
+        assert!(cmd.contains("'/home/dev'"));
+        assert!(cmd.contains("'/cache'"));
     }
 
     #[test]

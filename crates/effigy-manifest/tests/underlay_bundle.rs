@@ -365,14 +365,12 @@ mounts = ["../../underlay", "../../poodle"]
     };
     assert_eq!(
         sync_step.task.as_deref(),
-        Some("bootstrap deps sync ../../underlay acme-api acme-client acme-ui acme-front acme-admin")
+        Some(
+            "bootstrap deps sync ../../underlay acme-api acme-client acme-ui acme-front acme-admin"
+        )
     );
 
-    let children = &manifest
-        .bootstrap
-        .as_ref()
-        .expect("bootstrap")
-        .children;
+    let children = &manifest.bootstrap.as_ref().expect("bootstrap").children;
     let child_paths: Vec<&str> = children.iter().map(|child| child.path.as_str()).collect();
     assert_eq!(child_paths, vec!["../../underlay", "../../poodle"]);
 }

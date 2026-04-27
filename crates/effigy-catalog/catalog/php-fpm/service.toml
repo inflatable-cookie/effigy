@@ -57,6 +57,21 @@ type = "list"
 default = []
 description = "Composer packages to install globally in the container image as a fallback when no host Composer home is mounted"
 
+[params.mount_host_git_config]
+type = "bool"
+default = true
+description = "Mount the host's `~/.gitconfig` read-only into the workspace container so git inside the container inherits the developer's identity, aliases, and global ignore. Skipped silently when the host file does not exist."
+
+[params.mount_host_ssh_known_hosts]
+type = "bool"
+default = true
+description = "Mount the host's `~/.ssh/known_hosts` read-only into the workspace container so git/ssh from inside the container does not prompt on first connection to known remotes. Skipped silently when the host file does not exist."
+
+[params.forward_host_ssh_agent]
+type = "bool"
+default = true
+description = "Forward the host's SSH agent socket into the workspace container (Colima exposes it at `/run/host-services/ssh-auth.sock`) and set `SSH_AUTH_SOCK` accordingly so git pushes over SSH use the developer's already-loaded keys without copying private material into the container. Skipped silently when the socket is not present on the host."
+
 [capabilities]
 exec_target = true
 shell = "/bin/bash"

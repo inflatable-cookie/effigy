@@ -1,6 +1,7 @@
 #[cfg(test)]
 use std::cell::RefCell;
 use std::ffi::OsStr;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
@@ -14,6 +15,22 @@ use crate::{policy_support::effigy_home_dir, ContainerPolicyError, EffectiveCont
 
 const PHP_FPM_COMPOSER_HOME_TARGET: &str = "/home/dev/.config/composer";
 const PHP_FPM_COMPOSER_CACHE_TARGET: &str = "/home/dev/.cache/composer";
+
+/// Container target for the host `~/.gitconfig` mount.
+const HOST_GIT_CONFIG_TARGET: &str = "/home/dev/.gitconfig";
+
+/// Container target for the host `~/.ssh/known_hosts` mount.
+const HOST_SSH_KNOWN_HOSTS_TARGET: &str = "/home/dev/.ssh/known_hosts";
+
+/// Container target where Colima exposes the host's SSH agent socket. Same
+/// path on host and container so `SSH_AUTH_SOCK` resolves identically.
+const HOST_SSH_AGENT_SOCKET_TARGET: &str = "/run/host-services/ssh-auth.sock";
+
+/// Catalogs whose primary service is treated as a workspace shell target. The
+/// host-git / host-ssh mounts only apply when the primary service uses one of
+/// these catalogs — they're the catalogs where a developer is plausibly going
+/// to run `git push` from inside the container.
+const WORKSPACE_GIT_AWARE_CATALOGS: &[&str] = &["php-fpm", "workspace-rust-bun", "node"];
 
 pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     repo_root: &Path,
@@ -95,6 +112,7 @@ struct RenderedWorkspaceMount {
     target: String,
     rendered: String,
     source: Option<PathBuf>,
+    named_volume: Option<String>,
 }
 
 fn rewrite_workspace_mounts_for_direct_compose(
@@ -130,24 +148,6 @@ fn rewrite_workspace_mounts_for_direct_compose(
             source_compose.display()
         ))
     })?;
-    let services = parsed
-        .get_mut("services")
-        .and_then(serde_yaml::Value::as_mapping_mut)
-        .ok_or_else(|| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "compose file {} is missing a `services` mapping for workspace mount rewrite",
-                source_compose.display()
-            ))
-        })?;
-    let service = services
-        .get_mut(serde_yaml::Value::String(primary_service.to_owned()))
-        .and_then(serde_yaml::Value::as_mapping_mut)
-        .ok_or_else(|| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "compose file {} does not define primary service `{primary_service}` for workspace mount rewrite",
-                source_compose.display()
-            ))
-        })?;
     let injected_mounts = build_workspace_runtime_mounts(
         repo_root,
         container_name,
@@ -157,14 +157,40 @@ fn rewrite_workspace_mounts_for_direct_compose(
         working_dir,
         library_mounts,
     )?;
-    rewrite_workspace_service_volumes(
-        service,
-        compose_dir,
-        repo_root,
-        workspace_root,
-        working_dir,
-        &injected_mounts,
-    )?;
+    inject_workspace_named_volumes(&mut parsed, &injected_mounts);
+    let injected_env = build_workspace_runtime_environment(config, primary_service);
+    {
+        let services = parsed
+            .get_mut("services")
+            .and_then(serde_yaml::Value::as_mapping_mut)
+            .ok_or_else(|| {
+                ContainerPolicyError::TaskInvocation(format!(
+                    "compose file {} is missing a `services` mapping for workspace mount rewrite",
+                    source_compose.display()
+                ))
+            })?;
+        let service = services
+            .get_mut(serde_yaml::Value::String(primary_service.to_owned()))
+            .and_then(serde_yaml::Value::as_mapping_mut)
+            .ok_or_else(|| {
+                ContainerPolicyError::TaskInvocation(format!(
+                    "compose file {} does not define primary service `{primary_service}` for workspace mount rewrite",
+                    source_compose.display()
+                ))
+            })?;
+        rewrite_workspace_service_volumes(
+            service,
+            compose_dir,
+            repo_root,
+            workspace_root,
+            working_dir,
+            &injected_mounts,
+        )?;
+        if !injected_env.is_empty() {
+            inject_workspace_service_environment(service, &injected_env);
+        }
+    }
+    compact_workspace_named_volume_mounts(&mut parsed, primary_service);
     normalize_runtime_rewrite_paths(&mut parsed, compose_dir);
 
     let rewrite_dir = repo_root.join(".effigy").join("runtime").join("compose");
@@ -219,6 +245,7 @@ fn build_workspace_runtime_mounts(
             working_dir.display()
         ),
         source: Some(canonical_repo_root.clone()),
+        named_volume: None,
     }];
     for raw in &workspace.mounts {
         mounts.push(parse_workspace_extra_mount(
@@ -244,7 +271,174 @@ fn build_workspace_runtime_mounts(
     if let Some(mount) = build_shared_composer_cache_mount(config, primary_service)? {
         mounts.push(mount);
     }
+    if let Some(mount) = build_host_git_config_mount(config, primary_service) {
+        mounts.push(mount);
+    }
+    if let Some(mount) = build_host_ssh_known_hosts_mount(config, primary_service) {
+        mounts.push(mount);
+    }
+    if let Some(mount) = build_host_ssh_agent_mount(config, primary_service) {
+        mounts.push(mount);
+    }
     Ok(mounts)
+}
+
+/// Returns true when the primary service uses a catalog where the host-git
+/// integration applies. Centralized so additions to
+/// [`WORKSPACE_GIT_AWARE_CATALOGS`] cover every helper at once.
+fn is_git_aware_workspace_service(service: &ManifestContainerServiceConfig) -> bool {
+    WORKSPACE_GIT_AWARE_CATALOGS.contains(&service.catalog.as_str())
+}
+
+fn build_host_git_config_mount(
+    config: &ManifestContainerConfig,
+    primary_service: &str,
+) -> Option<RenderedWorkspaceMount> {
+    let service = config.services.get(primary_service)?;
+    if !is_git_aware_workspace_service(service)
+        || !service_bool_param(service, "mount_host_git_config", true)
+    {
+        return None;
+    }
+    let host_path = host_home_dir()?.join(".gitconfig");
+    if !host_path.is_file() {
+        return None;
+    }
+    Some(RenderedWorkspaceMount {
+        target: HOST_GIT_CONFIG_TARGET.to_owned(),
+        rendered: format!("{}:{HOST_GIT_CONFIG_TARGET}:ro", host_path.display()),
+        source: None,
+        named_volume: None,
+    })
+}
+
+fn build_host_ssh_known_hosts_mount(
+    config: &ManifestContainerConfig,
+    primary_service: &str,
+) -> Option<RenderedWorkspaceMount> {
+    let service = config.services.get(primary_service)?;
+    if !is_git_aware_workspace_service(service)
+        || !service_bool_param(service, "mount_host_ssh_known_hosts", true)
+    {
+        return None;
+    }
+    let host_path = host_home_dir()?.join(".ssh").join("known_hosts");
+    if !host_path.is_file() {
+        return None;
+    }
+    Some(RenderedWorkspaceMount {
+        target: HOST_SSH_KNOWN_HOSTS_TARGET.to_owned(),
+        rendered: format!("{}:{HOST_SSH_KNOWN_HOSTS_TARGET}:ro", host_path.display()),
+        source: None,
+        named_volume: None,
+    })
+}
+
+fn build_host_ssh_agent_mount(
+    config: &ManifestContainerConfig,
+    primary_service: &str,
+) -> Option<RenderedWorkspaceMount> {
+    let service = config.services.get(primary_service)?;
+    if !is_git_aware_workspace_service(service)
+        || !service_bool_param(service, "forward_host_ssh_agent", true)
+    {
+        return None;
+    }
+    let host_path = host_ssh_agent_socket()?;
+    Some(RenderedWorkspaceMount {
+        target: HOST_SSH_AGENT_SOCKET_TARGET.to_owned(),
+        rendered: format!("{}:{HOST_SSH_AGENT_SOCKET_TARGET}", host_path.display()),
+        source: None,
+        named_volume: None,
+    })
+}
+
+/// Resolve the host's home directory. Tests can override via
+/// [`with_test_host_home`] to avoid touching the real filesystem.
+fn host_home_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(value) = test_host_home_override() {
+        return value;
+    }
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Locate the host SSH agent socket. Colima exposes it at the canonical
+/// `/run/host-services/ssh-auth.sock` path *inside its VM*; that is the
+/// path compose resolves the volume mount against, since compose runs in
+/// the VM. We deliberately do **not** stat that path from the Effigy
+/// process on macOS — the path only exists VM-side, so a `.exists()`
+/// check from the host would always return false and silently disable
+/// the mount.
+///
+/// Behaviour:
+/// - When `forward_host_ssh_agent = true` (the default) and the catalog
+///   is git-aware, we emit the mount unconditionally and trust Colima to
+///   honour it. If the socket isn't actually forwarded (e.g. Colima
+///   started without `--ssh-agent`), compose-up fails loudly with a
+///   clear error rather than ssh later returning "Permission denied
+///   (publickey)" with no agent in sight.
+/// - Users who don't want this behaviour set `forward_host_ssh_agent =
+///   false` per service.
+fn host_ssh_agent_socket() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(value) = test_host_ssh_agent_socket_override() {
+        return value;
+    }
+    Some(PathBuf::from(HOST_SSH_AGENT_SOCKET_TARGET))
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_HOST_HOME: RefCell<Option<Option<PathBuf>>> = const { RefCell::new(None) };
+    static TEST_HOST_SSH_AGENT_SOCKET: RefCell<Option<Option<PathBuf>>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_host_home<T>(path: Option<&Path>, run: impl FnOnce() -> T) -> T {
+    struct ResetGuard(Option<Option<PathBuf>>);
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            TEST_HOST_HOME.with(|slot| {
+                *slot.borrow_mut() = previous;
+            });
+        }
+    }
+    let previous =
+        TEST_HOST_HOME.with(|slot| slot.borrow_mut().replace(path.map(Path::to_path_buf)));
+    let _guard = ResetGuard(previous);
+    run()
+}
+
+#[cfg(test)]
+fn test_host_home_override() -> Option<Option<PathBuf>> {
+    TEST_HOST_HOME.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_host_ssh_agent_socket<T>(
+    path: Option<&Path>,
+    run: impl FnOnce() -> T,
+) -> T {
+    struct ResetGuard(Option<Option<PathBuf>>);
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            TEST_HOST_SSH_AGENT_SOCKET.with(|slot| {
+                *slot.borrow_mut() = previous;
+            });
+        }
+    }
+    let previous = TEST_HOST_SSH_AGENT_SOCKET
+        .with(|slot| slot.borrow_mut().replace(path.map(Path::to_path_buf)));
+    let _guard = ResetGuard(previous);
+    run()
+}
+
+#[cfg(test)]
+fn test_host_ssh_agent_socket_override() -> Option<Option<PathBuf>> {
+    TEST_HOST_SSH_AGENT_SOCKET.with(|slot| slot.borrow().clone())
 }
 
 fn build_host_composer_home_mount(
@@ -270,6 +464,7 @@ fn build_host_composer_home_mount(
             PHP_FPM_COMPOSER_HOME_TARGET
         ),
         source: None,
+        named_volume: None,
     }))
 }
 
@@ -312,6 +507,7 @@ fn build_shared_composer_auth_mounts(
                 file_name
             ),
             source: None,
+            named_volume: None,
         });
     }
 
@@ -342,6 +538,7 @@ fn build_shared_composer_cache_mount(
         target: PHP_FPM_COMPOSER_CACHE_TARGET.to_owned(),
         rendered: format!("{}:{}", source.display(), PHP_FPM_COMPOSER_CACHE_TARGET),
         source: None,
+        named_volume: None,
     }))
 }
 
@@ -352,9 +549,31 @@ fn build_isolation_mounts(
     current_mounts: &[RenderedWorkspaceMount],
 ) -> Result<Vec<RenderedWorkspaceMount>, ContainerPolicyError> {
     let mut mounts = Vec::new();
+    let mut adopted_roots: Vec<(String, PathBuf)> = Vec::new();
     for adoption in &workspace.isolation {
         let producer_root =
             resolve_adopted_isolation_repo(repo_root, container_name, &adoption.repo)?;
+        adopted_roots.push((adoption.repo.clone(), producer_root));
+    }
+
+    for mount in current_mounts {
+        let Some(source) = mount.source.as_ref() else {
+            continue;
+        };
+        if source == repo_root {
+            continue;
+        }
+        let manifest_path = source.join("effigy.toml");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        if adopted_roots.iter().any(|(_, root)| root == source) {
+            continue;
+        }
+        adopted_roots.push((source.display().to_string(), source.clone()));
+    }
+
+    for (adoption_repo, producer_root) in adopted_roots {
         let producer_manifest_path = producer_root.join("effigy.toml");
         let manifest = load_task_manifest(&producer_manifest_path).map_err(|error| {
             ContainerPolicyError::TaskInvocation(format!(
@@ -381,7 +600,7 @@ fn build_isolation_mounts(
             .ok_or_else(|| {
                 ContainerPolicyError::TaskInvocation(format!(
                     "system isolation repo `{}` for container `{container_name}` is not mounted into the workspace runtime",
-                    adoption.repo
+                    adoption_repo
                 ))
             })?;
 
@@ -391,20 +610,16 @@ fn build_isolation_mounts(
                 relative,
                 container_name,
             )?;
-            let host_dir = ensure_isolation_runtime_dir(
-                repo_root,
-                container_name,
-                &adoption.repo,
-                &normalized,
-            )?;
+            let volume_name = isolation_volume_name(container_name, &producer_root, &normalized);
             let target = Path::new(target_root)
                 .join(&normalized)
                 .display()
                 .to_string();
             mounts.push(RenderedWorkspaceMount {
                 target: target.clone(),
-                rendered: format!("{}:{target}", host_dir.display()),
+                rendered: format!("{volume_name}:{target}"),
                 source: None,
+                named_volume: Some(volume_name),
             });
         }
     }
@@ -477,47 +692,16 @@ fn normalize_isolation_relative_path(
     Ok(normalized)
 }
 
-fn ensure_isolation_runtime_dir(
-    repo_root: &Path,
+fn isolation_volume_name(
     container_name: &str,
-    raw_repo: &str,
+    producer_root: &Path,
     relative_path: &Path,
-) -> Result<PathBuf, ContainerPolicyError> {
-    let repo_key = sanitize_isolation_key(raw_repo);
-    let mut dir = repo_root
-        .join(".effigy")
-        .join("runtime")
-        .join("isolation")
-        .join(container_name)
-        .join(repo_key);
-    for component in relative_path.components() {
-        if let std::path::Component::Normal(value) = component {
-            dir.push(value);
-        }
-    }
-    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
-        path: repo_root.join(".gitignore"),
-        error,
-    })?;
-    std::fs::create_dir_all(&dir).map_err(|error| ContainerPolicyError::Read {
-        path: dir.clone(),
-        error,
-    })?;
-    Ok(dir)
-}
-
-fn sanitize_isolation_key(raw: &str) -> String {
-    let sanitized = raw
-        .trim()
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
-        .collect::<String>();
-    let trimmed = sanitized.trim_matches('-');
-    if trimmed.is_empty() {
-        "repo".to_owned()
-    } else {
-        trimmed.chars().take(96).collect()
-    }
+) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    container_name.hash(&mut hasher);
+    producer_root.hash(&mut hasher);
+    relative_path.hash(&mut hasher);
+    format!("efi-iso-{:016x}", hasher.finish())
 }
 
 fn service_bool_param(service: &ManifestContainerServiceConfig, key: &str, default: bool) -> bool {
@@ -652,6 +836,7 @@ fn build_library_mounts(
             target,
             rendered: rendered_entry,
             source: Some(canonical_source),
+            named_volume: None,
         });
     }
     Ok(rendered)
@@ -712,6 +897,7 @@ fn parse_workspace_extra_mount(
         target,
         rendered,
         source: Some(canonical_source),
+        named_volume: None,
     })
 }
 
@@ -785,6 +971,187 @@ fn rewrite_workspace_service_volumes(
 
     *volumes = rewritten;
     Ok(())
+}
+
+/// Build the env vars Effigy needs to inject on the workspace primary
+/// service alongside the rewritten volume list. Currently just
+/// `SSH_AUTH_SOCK` when host SSH agent forwarding is active.
+fn build_workspace_runtime_environment(
+    config: &ManifestContainerConfig,
+    primary_service: &str,
+) -> std::collections::BTreeMap<String, String> {
+    let mut env = std::collections::BTreeMap::new();
+    if build_host_ssh_agent_mount(config, primary_service).is_some() {
+        env.insert(
+            "SSH_AUTH_SOCK".to_owned(),
+            HOST_SSH_AGENT_SOCKET_TARGET.to_owned(),
+        );
+    }
+    env
+}
+
+/// Merge `additions` into the primary service's `environment:` block,
+/// supporting both compose forms (mapping or list of `KEY=VALUE` strings).
+/// Existing keys are preserved — user-declared values win over Effigy's
+/// runtime defaults.
+fn inject_workspace_service_environment(
+    service: &mut serde_yaml::Mapping,
+    additions: &std::collections::BTreeMap<String, String>,
+) {
+    if additions.is_empty() {
+        return;
+    }
+    let key = serde_yaml::Value::String("environment".to_owned());
+    let entry = service
+        .entry(key)
+        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    match entry {
+        serde_yaml::Value::Mapping(mapping) => {
+            for (name, value) in additions {
+                let env_key = serde_yaml::Value::String(name.clone());
+                if !mapping.contains_key(&env_key) {
+                    mapping.insert(env_key, serde_yaml::Value::String(value.clone()));
+                }
+            }
+        }
+        serde_yaml::Value::Sequence(sequence) => {
+            let existing: std::collections::BTreeSet<String> = sequence
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(|raw| {
+                    raw.split_once('=')
+                        .map(|(k, _)| k.to_owned())
+                        .unwrap_or_else(|| raw.to_owned())
+                })
+                .collect();
+            for (name, value) in additions {
+                if !existing.contains(name) {
+                    sequence.push(serde_yaml::Value::String(format!("{name}={value}")));
+                }
+            }
+        }
+        _ => {
+            // `environment` is set to something other than a list/mapping
+            // (e.g. null). Replace with a fresh mapping carrying our entries.
+            let mut mapping = serde_yaml::Mapping::new();
+            for (name, value) in additions {
+                mapping.insert(
+                    serde_yaml::Value::String(name.clone()),
+                    serde_yaml::Value::String(value.clone()),
+                );
+            }
+            *entry = serde_yaml::Value::Mapping(mapping);
+        }
+    }
+}
+
+fn inject_workspace_named_volumes(
+    parsed: &mut serde_yaml::Value,
+    mounts: &[RenderedWorkspaceMount],
+) {
+    let names = mounts
+        .iter()
+        .filter_map(|mount| mount.named_volume.as_deref())
+        .collect::<std::collections::BTreeSet<_>>();
+    if names.is_empty() {
+        return;
+    }
+    let Some(root) = parsed.as_mapping_mut() else {
+        return;
+    };
+    let key = serde_yaml::Value::String("volumes".to_owned());
+    let volumes = root
+        .entry(key)
+        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    let Some(mapping) = volumes.as_mapping_mut() else {
+        return;
+    };
+    for name in names {
+        let entry_key = serde_yaml::Value::String(name.to_owned());
+        mapping.entry(entry_key).or_insert_with(|| {
+            let mut entry = serde_yaml::Mapping::new();
+            entry.insert(
+                serde_yaml::Value::String("name".to_owned()),
+                serde_yaml::Value::String(name.to_owned()),
+            );
+            serde_yaml::Value::Mapping(entry)
+        });
+    }
+}
+
+fn compact_workspace_named_volume_mounts(parsed: &mut serde_yaml::Value, primary_service: &str) {
+    let Some(root) = parsed.as_mapping_mut() else {
+        return;
+    };
+    let service_key = serde_yaml::Value::String(primary_service.to_owned());
+    let mut renamed: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    {
+        let Some(service) = root
+            .get_mut(serde_yaml::Value::String("services".to_owned()))
+            .and_then(serde_yaml::Value::as_mapping_mut)
+            .and_then(|services| services.get_mut(&service_key))
+            .and_then(serde_yaml::Value::as_mapping_mut)
+        else {
+            return;
+        };
+        let Some(volumes) = service
+            .get_mut(serde_yaml::Value::String("volumes".to_owned()))
+            .and_then(serde_yaml::Value::as_sequence_mut)
+        else {
+            return;
+        };
+        for entry in volumes.iter_mut() {
+            let Some(raw) = entry.as_str() else {
+                continue;
+            };
+            let Some((source, target, options)) = parse_mount_parts(raw) else {
+                continue;
+            };
+            if looks_like_bind_mount_source(source) {
+                continue;
+            }
+            let short = renamed
+                .entry(source.to_owned())
+                .or_insert_with(|| compact_named_volume_name(source))
+                .clone();
+            let rendered = match options.filter(|value| !value.is_empty()) {
+                Some(options) => format!("{short}:{target}:{options}"),
+                None => format!("{short}:{target}"),
+            };
+            *entry = serde_yaml::Value::String(rendered);
+        }
+    }
+    if renamed.is_empty() {
+        return;
+    }
+    let volumes_key = serde_yaml::Value::String("volumes".to_owned());
+    let Some(volumes_root) = root
+        .entry(volumes_key)
+        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+        .as_mapping_mut()
+    else {
+        return;
+    };
+    for (original, short) in renamed {
+        let original_key = serde_yaml::Value::String(original);
+        let short_key = serde_yaml::Value::String(short.clone());
+        let mut entry = volumes_root
+            .get(&original_key)
+            .and_then(serde_yaml::Value::as_mapping)
+            .cloned()
+            .unwrap_or_default();
+        entry.insert(
+            serde_yaml::Value::String("name".to_owned()),
+            serde_yaml::Value::String(short.clone()),
+        );
+        volumes_root.insert(short_key, serde_yaml::Value::Mapping(entry));
+    }
+}
+
+fn compact_named_volume_name(source: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.hash(&mut hasher);
+    format!("efv-{:016x}", hasher.finish())
 }
 
 fn parse_mount_parts(mount: &str) -> Option<(&str, &str, Option<&str>)> {
@@ -1026,5 +1393,296 @@ mod library_mount_tests {
     fn empty_input_produces_no_mounts() {
         let mounts = build_library_mounts("web", &[]).expect("build mounts");
         assert!(mounts.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod host_git_mount_tests {
+    use super::*;
+    use effigy_manifest::ManifestContainerServiceConfig;
+    use std::collections::BTreeMap;
+    use std::fs;
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "effigy-host-git-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).expect("mkdir");
+        path
+    }
+
+    fn make_config(
+        catalog: &str,
+        params: BTreeMap<String, toml::Value>,
+    ) -> ManifestContainerConfig {
+        let service = ManifestContainerServiceConfig {
+            catalog: catalog.to_owned(),
+            variant: None,
+            config: None,
+            shared: None,
+            params,
+        };
+        let mut services = BTreeMap::new();
+        services.insert("workspace".to_owned(), service);
+        ManifestContainerConfig {
+            driver: None,
+            startup: None,
+            context: None,
+            profile: None,
+            compose_file: None,
+            project_name: None,
+            primary_service: Some("workspace".to_owned()),
+            services,
+            working_dir: None,
+            aliases: BTreeMap::new(),
+            dns: None,
+            lifecycle: None,
+            health: None,
+            host: None,
+            data: None,
+        }
+    }
+
+    fn enabled_params() -> BTreeMap<String, toml::Value> {
+        BTreeMap::new()
+    }
+
+    #[test]
+    fn gitconfig_mount_renders_read_only_when_host_file_exists() {
+        let home = temp_dir("gitconfig-present");
+        fs::write(home.join(".gitconfig"), "[user]\n  email = a@b\n").expect("write gitconfig");
+        let config = make_config("workspace-rust-bun", enabled_params());
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_git_config_mount(&config, "workspace")
+        })
+        .expect("expected mount");
+
+        assert_eq!(mount.target, "/home/dev/.gitconfig");
+        assert!(mount.rendered.ends_with(":/home/dev/.gitconfig:ro"));
+        assert!(mount
+            .rendered
+            .contains(home.join(".gitconfig").to_str().unwrap()));
+    }
+
+    #[test]
+    fn gitconfig_mount_skipped_when_host_file_missing() {
+        let home = temp_dir("gitconfig-missing");
+        let config = make_config("php-fpm", enabled_params());
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_git_config_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
+    }
+
+    #[test]
+    fn gitconfig_mount_skipped_when_param_disabled() {
+        let home = temp_dir("gitconfig-disabled");
+        fs::write(home.join(".gitconfig"), "ignored").expect("write");
+        let mut params = BTreeMap::new();
+        params.insert(
+            "mount_host_git_config".to_owned(),
+            toml::Value::Boolean(false),
+        );
+        let config = make_config("php-fpm", params);
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_git_config_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
+    }
+
+    #[test]
+    fn gitconfig_mount_skipped_for_non_workspace_catalogs() {
+        let home = temp_dir("gitconfig-non-workspace");
+        fs::write(home.join(".gitconfig"), "ignored").expect("write");
+        let config = make_config("postgres", enabled_params());
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_git_config_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
+    }
+
+    #[test]
+    fn known_hosts_mount_renders_read_only_when_present() {
+        let home = temp_dir("known-hosts");
+        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+        fs::write(
+            home.join(".ssh").join("known_hosts"),
+            "github.com ssh-ed25519 AAAA",
+        )
+        .expect("write known_hosts");
+        let config = make_config("node", enabled_params());
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_ssh_known_hosts_mount(&config, "workspace")
+        })
+        .expect("expected mount");
+
+        assert_eq!(mount.target, "/home/dev/.ssh/known_hosts");
+        assert!(mount.rendered.ends_with(":/home/dev/.ssh/known_hosts:ro"));
+    }
+
+    #[test]
+    fn ssh_agent_mount_renders_when_socket_present() {
+        let parent = temp_dir("agent-present");
+        let socket_path = parent.join("ssh-auth.sock");
+        // A regular file works as a stand-in for the socket on macOS — the
+        // helper only checks `.exists()`. Real Colima exposes a unix socket.
+        fs::write(&socket_path, "").expect("write socket placeholder");
+        let config = make_config("workspace-rust-bun", enabled_params());
+
+        let mount = with_test_host_ssh_agent_socket(Some(&socket_path), || {
+            build_host_ssh_agent_mount(&config, "workspace")
+        })
+        .expect("expected mount");
+
+        assert_eq!(mount.target, "/run/host-services/ssh-auth.sock");
+        assert_eq!(
+            mount.rendered,
+            format!("{}:/run/host-services/ssh-auth.sock", socket_path.display())
+        );
+    }
+
+    #[test]
+    fn ssh_agent_mount_skipped_when_param_disabled() {
+        // The host-side `.exists()` check was removed deliberately: the
+        // socket lives inside the Colima VM, not on the macOS host, so a
+        // host-side stat would always be false and the mount would be
+        // silently disabled. The opt-out path is the catalog param.
+        let mut params = enabled_params();
+        params.insert(
+            "forward_host_ssh_agent".to_owned(),
+            toml::Value::Boolean(false),
+        );
+        let config = make_config("php-fpm", params);
+        let mount = build_host_ssh_agent_mount(&config, "workspace");
+        assert!(mount.is_none());
+    }
+
+    #[test]
+    fn ssh_agent_mount_emits_unconditionally_when_enabled() {
+        // We trust Colima to honour the mount; host-side absence is not a
+        // signal to skip. If the agent isn't forwarded, compose-up fails
+        // loudly rather than ssh later returning "Permission denied
+        // (publickey)" with no agent in sight.
+        let config = make_config("workspace-rust-bun", enabled_params());
+        let mount = build_host_ssh_agent_mount(&config, "workspace")
+            .expect("agent mount should be emitted with default params");
+        assert_eq!(mount.target, "/run/host-services/ssh-auth.sock");
+        assert_eq!(
+            mount.rendered,
+            "/run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock"
+        );
+    }
+
+    #[test]
+    fn runtime_environment_includes_ssh_auth_sock_when_agent_forwarded() {
+        let parent = temp_dir("env-agent");
+        let socket_path = parent.join("ssh-auth.sock");
+        fs::write(&socket_path, "").expect("placeholder");
+        let config = make_config("workspace-rust-bun", enabled_params());
+
+        let env = with_test_host_ssh_agent_socket(Some(&socket_path), || {
+            build_workspace_runtime_environment(&config, "workspace")
+        });
+
+        assert_eq!(
+            env.get("SSH_AUTH_SOCK").map(String::as_str),
+            Some("/run/host-services/ssh-auth.sock")
+        );
+    }
+
+    #[test]
+    fn runtime_environment_empty_when_agent_param_disabled() {
+        let mut params = enabled_params();
+        params.insert(
+            "forward_host_ssh_agent".to_owned(),
+            toml::Value::Boolean(false),
+        );
+        let config = make_config("php-fpm", params);
+        let env = build_workspace_runtime_environment(&config, "workspace");
+        assert!(env.is_empty());
+    }
+
+    #[test]
+    fn injecting_environment_preserves_existing_keys() {
+        let mut service = serde_yaml::Mapping::new();
+        let mut existing_env = serde_yaml::Mapping::new();
+        existing_env.insert(
+            serde_yaml::Value::String("SSH_AUTH_SOCK".to_owned()),
+            serde_yaml::Value::String("/already/set".to_owned()),
+        );
+        service.insert(
+            serde_yaml::Value::String("environment".to_owned()),
+            serde_yaml::Value::Mapping(existing_env),
+        );
+
+        let mut additions = std::collections::BTreeMap::new();
+        additions.insert("SSH_AUTH_SOCK".to_owned(), "/runtime/default".to_owned());
+        additions.insert("EXTRA".to_owned(), "added".to_owned());
+        inject_workspace_service_environment(&mut service, &additions);
+
+        let env = service
+            .get(serde_yaml::Value::String("environment".to_owned()))
+            .and_then(|v| v.as_mapping())
+            .expect("environment mapping");
+        assert_eq!(
+            env.get(serde_yaml::Value::String("SSH_AUTH_SOCK".to_owned()))
+                .and_then(|v| v.as_str()),
+            Some("/already/set"),
+            "user-set env values must win over Effigy defaults"
+        );
+        assert_eq!(
+            env.get(serde_yaml::Value::String("EXTRA".to_owned()))
+                .and_then(|v| v.as_str()),
+            Some("added")
+        );
+    }
+
+    #[test]
+    fn injecting_environment_creates_block_when_missing() {
+        let mut service = serde_yaml::Mapping::new();
+        let mut additions = std::collections::BTreeMap::new();
+        additions.insert("SSH_AUTH_SOCK".to_owned(), "/sock".to_owned());
+        inject_workspace_service_environment(&mut service, &additions);
+
+        let env = service
+            .get(serde_yaml::Value::String("environment".to_owned()))
+            .and_then(|v| v.as_mapping())
+            .expect("environment mapping created");
+        assert_eq!(
+            env.get(serde_yaml::Value::String("SSH_AUTH_SOCK".to_owned()))
+                .and_then(|v| v.as_str()),
+            Some("/sock")
+        );
+    }
+
+    #[test]
+    fn injecting_environment_supports_existing_list_form() {
+        let mut service = serde_yaml::Mapping::new();
+        service.insert(
+            serde_yaml::Value::String("environment".to_owned()),
+            serde_yaml::Value::Sequence(vec![serde_yaml::Value::String(
+                "EXISTING=keep".to_owned(),
+            )]),
+        );
+        let mut additions = std::collections::BTreeMap::new();
+        additions.insert("SSH_AUTH_SOCK".to_owned(), "/sock".to_owned());
+        inject_workspace_service_environment(&mut service, &additions);
+
+        let env = service
+            .get(serde_yaml::Value::String("environment".to_owned()))
+            .and_then(|v| v.as_sequence())
+            .expect("environment sequence");
+        let strings: Vec<&str> = env.iter().filter_map(|v| v.as_str()).collect();
+        assert!(strings.contains(&"EXISTING=keep"));
+        assert!(strings.contains(&"SSH_AUTH_SOCK=/sock"));
     }
 }
