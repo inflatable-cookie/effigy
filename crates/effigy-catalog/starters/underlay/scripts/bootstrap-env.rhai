@@ -149,9 +149,9 @@ if api_dir != "" {
         "SUPPORT_EMAIL=support@local.invalid",
         "",
         "# Database",
-        "DATABASE_URL=postgres://postgres:postgres@" + postgres_domain + ":5432/" + database,
+        "DATABASE_URL=postgres://postgres:secret@" + postgres_domain + ":5432/" + database,
         if test_database != "" {
-            "TEST_DATABASE_URL=postgres://postgres:postgres@" + postgres_domain + ":5432/" + test_database
+            "TEST_DATABASE_URL=postgres://postgres:secret@" + postgres_domain + ":5432/" + test_database
         } else {
             "# TEST_DATABASE_URL="
         },
