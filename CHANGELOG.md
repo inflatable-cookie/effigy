@@ -183,6 +183,14 @@ During v0.x, MINOR bumps may include breaking changes.
   inside workspace shells reported `Error connecting to agent: No such
   file or directory`. Existing running Colima profiles need a one-time
   `colima stop --profile <profile>` for the new flag to take effect.
+- Restore the `DeferLoopDetected` signal when a deferred task tries to
+  recurse into another deferral. The previous attempt to "refuse nested
+  deferral" short-circuited `should_attempt_deferral` whenever
+  `EFFIGY_DEFER_DEPTH` was set, which suppressed the explicit loop guard
+  inside `run_deferred_request` and let the original `TaskNotFoundAny`
+  error propagate instead. The depth check now lives in one place — the
+  first action of `run_deferred_request` — so nested deferrals fail
+  loudly with `DeferLoopDetected` again.
 - Let VT-backed managed TUI panes wrap rendered rows to the tab width again
   while still keeping the wider PTY buffer intact, so long real log lines
   stop being clipped without bringing back Bun-style progress row history
