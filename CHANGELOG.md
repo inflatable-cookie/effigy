@@ -183,6 +183,17 @@ During v0.x, MINOR bumps may include breaking changes.
   inside workspace shells reported `Error connecting to agent: No such
   file or directory`. Existing running Colima profiles need a one-time
   `colima stop --profile <profile>` for the new flag to take effect.
+- Disable `health_wait` in the
+  `managed_stream_derives_ready_message_from_dns_routes` test fixture.
+  Commit 247198fb added a real curl-based readiness probe loop to
+  `managed_lifecycle_command`, which spins forever against the test's
+  fake docker runtime (no HTTP server is listening), so the lifecycle
+  process gets torn down by `window`'s `shutdown_on_exit` before the
+  `managed ready: routes:` and `dns_routes:` banners ever print. Probe
+  behaviour has its own unit-level coverage in
+  `managed_lifecycle_command_waits_for_probe_urls_before_ready`; this
+  test only exercises ready-message + dns_routes banner derivation,
+  which is orthogonal to whether `health_wait` is enabled.
 - Realign the deferral loop-guard test with the implicit-fallback policy
   added in 0.2.13. When `EFFIGY_DEFER_DEPTH` is set we're inside a
   deferred subprocess, so `should_attempt_deferral` correctly refuses to
