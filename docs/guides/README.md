@@ -78,6 +78,9 @@ pages only when you need more detail.
   for the full shipped catalog of service fragments (postgres, dbgate, pgweb,
   mariadb, redis, memcached, mailpit, minio, elasticsearch, phpmyadmin, nginx,
   php-fpm, workspace-rust-bun) with inputs, ports, and gateway eligibility.
+- [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
+  for user-global library mounts and host git/SSH integration into
+  workspace containers (gitconfig, known_hosts, agent forwarding).
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 
@@ -211,6 +214,7 @@ Details:
 - [`065-underlay-starter.md`](./065-underlay-starter.md)
 - [`066-local-manifest-bundles.md`](./066-local-manifest-bundles.md)
 - [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
+- [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)

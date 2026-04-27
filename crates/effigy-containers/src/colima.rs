@@ -68,6 +68,13 @@ pub fn colima_start_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
         policy.profile.clone(),
         "--runtime".to_string(),
         runtime.to_string(),
+        // Forward the host's SSH agent socket to
+        // `/run/host-services/ssh-auth.sock` inside the VM. Without this flag
+        // the workspace catalogs' agent-socket bind mount lands on a
+        // non-existent source path and Docker autocreates an empty directory
+        // in its place, silently breaking `git push` over SSH from inside
+        // workspace shells.
+        "--ssh-agent".to_string(),
     ];
     if let Some(resources) = managed_colima_profile_resources(&policy.profile) {
         args.push("--memory".to_string());
@@ -177,6 +184,10 @@ pub fn prepare_managed_colima_profile(policy: &EffectiveContainerPolicy) -> Resu
         Value::String("memory".to_owned()),
         Value::Number(Number::from(resources.memory_gib)),
     );
+    // Forward the host SSH agent into the VM at
+    // `/run/host-services/ssh-auth.sock` so the workspace agent-socket bind
+    // mount has a real source path. Equivalent to `colima start --ssh-agent`.
+    root.insert(Value::String("sshAgent".to_owned()), Value::Bool(true));
     upsert_colima_platform_overrides(
         root,
         std::env::consts::OS,

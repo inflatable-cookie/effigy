@@ -22,6 +22,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # (pairs with the host gitconfig / known_hosts / agent-socket
         # mounts driven by the workspace catalog params)
         openssh-client \
+        # Bridge the root-owned host SSH agent socket to a dev-accessible
+        # path on container start (see effigy-entrypoint below)
+        socat \
         # Build tools (needed by some composer packages)
         make \
         # Database CLI clients for debugging
@@ -154,6 +157,51 @@ RUN if [ -n "$NODE_VERSION" ]; then \
         && corepack enable \
         && if [ -n "$NODE_GLOBAL_PACKAGES" ]; then npm install -g $NODE_GLOBAL_PACKAGES; fi; \
     fi
+
+# ── SSH agent socket bridge ───────────────────────────────────────────
+# Colima creates the forwarded host SSH agent socket inside its VM owned
+# by root; bind-mounting it preserves those perms, so the non-root `dev`
+# workspace user can't talk to it directly. We bridge it via socat to a
+# dev-owned socket at `/tmp/effigy-ssh-auth.sock`, then point
+# `SSH_AUTH_SOCK` at the bridge. Bridging avoids any Colima-side
+# immutability that would defeat a plain chmod on the forwarded socket.
+# The wrapper preserves the base image's `docker-php-entrypoint` so PHP
+# signal/init handling is unchanged.
+RUN set -eux; \
+    { \
+        echo '#!/bin/bash'; \
+        echo 'set -e'; \
+        echo 'host_sock=/run/host-services/ssh-auth.sock'; \
+        echo 'bridge_sock=/tmp/effigy-ssh-auth.sock'; \
+        echo 'log=/var/log/effigy-ssh-bridge.log'; \
+        echo ': > "$log" || true'; \
+        echo 'echo "[effigy-entrypoint] $(date -u +%FT%TZ) start" >> "$log" 2>&1 || true'; \
+        echo 'dev_uid=$(id -u dev 2>/dev/null || echo 1000)'; \
+        echo 'dev_gid=$(id -g dev 2>/dev/null || echo 1000)'; \
+        echo 'echo "[effigy-entrypoint] dev uid=$dev_uid gid=$dev_gid" >> "$log"'; \
+        echo 'if [ -S "$host_sock" ]; then'; \
+        echo '    echo "[effigy-entrypoint] host_sock present at $host_sock" >> "$log"'; \
+        echo '    rm -f "$bridge_sock"'; \
+        echo '    socat UNIX-LISTEN:"$bridge_sock",fork,reuseaddr,unlink-early,user=$dev_uid,group=$dev_gid,mode=0600 UNIX-CONNECT:"$host_sock" >>"$log" 2>&1 &'; \
+        echo '    echo "[effigy-entrypoint] socat pid=$!" >> "$log"'; \
+        echo '    for _ in 1 2 3 4 5 6 7 8 9 10; do'; \
+        echo '        [ -S "$bridge_sock" ] && break'; \
+        echo '        sleep 0.1'; \
+        echo '    done'; \
+        echo '    if [ -S "$bridge_sock" ]; then'; \
+        echo '        echo "[effigy-entrypoint] bridge_sock created at $bridge_sock" >> "$log"'; \
+        echo '    else'; \
+        echo '        echo "[effigy-entrypoint] WARNING bridge_sock never appeared" >> "$log"'; \
+        echo '    fi'; \
+        echo 'else'; \
+        echo '    echo "[effigy-entrypoint] WARNING host_sock missing at $host_sock - SSH agent forwarding will not work" >> "$log"'; \
+        echo 'fi'; \
+        echo 'exec "$@"'; \
+    } > /usr/local/bin/effigy-entrypoint; \
+    chmod 0755 /usr/local/bin/effigy-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/effigy-entrypoint", "docker-php-entrypoint"]
+CMD ["php-fpm"]
 
 # ── Entrypoint ────────────────────────────────────────────────────────
 WORKDIR /var/www/html

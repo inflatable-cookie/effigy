@@ -27,6 +27,11 @@ pub(super) struct OutputPaneRenderArgs<'a> {
     pub(super) render_scroll_offset: usize,
     pub(super) scrollbar_total: usize,
     pub(super) active_process: &'a str,
+    // Forwarded by callers; the previous render branched on this but the
+    // two branches converged to identical output. Kept on the struct so
+    // call sites compile unchanged; reintroduce a real consumer if the
+    // branches need to diverge again.
+    #[allow(dead_code)]
     pub(super) active_vt: bool,
     pub(super) process_name: &'a str,
     pub(super) shell_capture_mode: bool,
@@ -50,7 +55,7 @@ pub(super) fn render_output_pane(
         render_scroll_offset,
         scrollbar_total,
         active_process,
-        active_vt,
+        active_vt: _,
         process_name,
         shell_capture_mode,
         active_output_seen,
@@ -85,12 +90,6 @@ pub(super) fn render_output_pane(
         ))
         .block(panel)
         .style(shell_inactive_style)
-    } else if active_vt {
-        Paragraph::new(lines)
-            .block(panel)
-            .style(shell_inactive_style)
-            .scroll((render_scroll_offset.min(u16::MAX as usize) as u16, 0))
-            .wrap(Wrap { trim: false })
     } else {
         Paragraph::new(lines)
             .block(panel)

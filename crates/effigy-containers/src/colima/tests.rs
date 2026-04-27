@@ -43,6 +43,16 @@ fn colima_start_command_uses_profile() {
 }
 
 #[test]
+fn colima_start_command_forwards_host_ssh_agent() {
+    let cmd = colima_start_command(&test_policy("anyprofile"));
+    assert!(
+        cmd.args.contains(&"--ssh-agent".to_string()),
+        "colima start must include --ssh-agent so /run/host-services/ssh-auth.sock is forwarded into the VM for workspace agent-socket bind mounts; args={:?}",
+        cmd.args
+    );
+}
+
+#[test]
 fn colima_start_command_adds_arch_and_vm_type_overrides_on_macos() {
     let mut args = vec!["start".to_owned()];
     append_colima_platform_overrides(&mut args, "macos", Some("aarch64"), Some("vz"));

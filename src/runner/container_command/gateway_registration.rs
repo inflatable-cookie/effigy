@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use effigy_containers::exec::{
-    list_running_compose_containers_for_profile, RunningComposeContainer,
+    list_running_compose_containers, list_running_compose_containers_for_profile,
+    RunningComposeContainer,
 };
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute, SharedServiceBinding};
 use effigy_gateway::loopback::LoopbackRegistry;
@@ -545,6 +546,11 @@ fn load_or_allocate_loopback_ip(
     let path = gateway_dir()?.join("loopback-ips.json");
     let mut registry = LoopbackRegistry::load(&path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if prune_stale_loopback_assignments(&mut registry)? {
+        registry
+            .save(&path)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    }
     if let Some(existing) = registry.get(identity) {
         return Ok(Some(existing.ip));
     }
@@ -559,6 +565,60 @@ fn load_or_allocate_loopback_ip(
         .save(&path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     Ok(Some(assignment))
+}
+
+fn prune_stale_loopback_assignments(registry: &mut LoopbackRegistry) -> Result<bool, RunnerError> {
+    if registry.is_empty() {
+        return Ok(false);
+    }
+    let route_table = RouteTable::load(&gateway_route_table_path()?)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let rows = list_running_compose_containers()
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok(prune_stale_loopback_assignments_with_runtime(
+        registry,
+        &route_table,
+        &rows,
+    ))
+}
+
+fn prune_stale_loopback_assignments_with_runtime(
+    registry: &mut LoopbackRegistry,
+    route_table: &RouteTable,
+    rows: &[RunningComposeContainer],
+) -> bool {
+    let active_identities = rows
+        .iter()
+        .filter_map(|row| row.project_name.as_deref())
+        .flat_map(|project_name| [project_name.to_owned(), format!("shared:{project_name}")])
+        .collect::<std::collections::BTreeSet<_>>();
+    let active_projects = rows
+        .iter()
+        .filter_map(|row| row.working_dir.as_deref())
+        .collect::<std::collections::BTreeSet<_>>();
+    let active_ips = route_table
+        .all_routes()
+        .into_iter()
+        .filter(|route| route.source == RouteSource::Container)
+        .filter_map(|route| {
+            route
+                .dns_ip
+                .filter(|_| active_projects.contains(route.project.as_str()))
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let stale = registry
+        .assignments
+        .iter()
+        .filter(|(identity, assignment)| {
+            !active_identities.contains(identity.as_str()) && !active_ips.contains(&assignment.ip)
+        })
+        .map(|(identity, _)| identity.clone())
+        .collect::<Vec<_>>();
+    let changed = !stale.is_empty();
+    for identity in stale {
+        registry.deallocate(&identity);
+    }
+    changed
 }
 
 fn occupied_service_alias_domains<'a>(
@@ -1563,5 +1623,81 @@ services:
             .expect("shared routes");
             assert!(routes.is_empty());
         });
+    }
+
+    #[test]
+    fn prunes_stale_loopback_assignments_when_route_table_and_registry_drift() {
+        let mut registry = LoopbackRegistry::new();
+        registry
+            .allocate("active-project", "/tmp/active")
+            .expect("allocate active");
+        registry
+            .allocate("stale-project", "/tmp/stale")
+            .expect("allocate stale");
+
+        let mut route_table = RouteTable::new();
+        route_table.upsert(effigy_gateway::routes::Route {
+            domain: "postgres.active.test".to_owned(),
+            target: None,
+            dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+            tcp_port: Some(5432),
+            tcp_target: Some("127.0.0.1:15432".to_owned()),
+            source: RouteSource::Container,
+            project: "/tmp/active".to_owned(),
+            tls: false,
+            registered: chrono::Utc::now(),
+        });
+        route_table.upsert(effigy_gateway::routes::Route {
+            domain: "postgres.stale.test".to_owned(),
+            target: None,
+            dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 2)),
+            tcp_port: Some(5432),
+            tcp_target: Some("127.0.0.1:25432".to_owned()),
+            source: RouteSource::Container,
+            project: "/tmp/stale".to_owned(),
+            tls: false,
+            registered: chrono::Utc::now(),
+        });
+
+        let rows = vec![RunningComposeContainer {
+            container_name: "active-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: vec!["0.0.0.0:15432->5432/tcp".to_owned()],
+            project_name: Some("active-project".to_owned()),
+            working_dir: Some("/tmp/active".to_owned()),
+            service: Some("db".to_owned()),
+        }];
+
+        let changed =
+            prune_stale_loopback_assignments_with_runtime(&mut registry, &route_table, &rows);
+        assert!(changed);
+        assert!(registry.get("active-project").is_some());
+        assert!(registry.get("stale-project").is_none());
+    }
+
+    #[test]
+    fn keeps_active_project_identity_when_runtime_rows_do_not_report_working_dir() {
+        let mut registry = LoopbackRegistry::new();
+        registry
+            .allocate("active-project", "/tmp/active")
+            .expect("allocate active");
+        registry
+            .allocate("stale-project", "/tmp/stale")
+            .expect("allocate stale");
+
+        let rows = vec![RunningComposeContainer {
+            container_name: "active-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: vec!["0.0.0.0:15432->5432/tcp".to_owned()],
+            project_name: Some("active-project".to_owned()),
+            working_dir: None,
+            service: Some("db".to_owned()),
+        }];
+
+        let changed =
+            prune_stale_loopback_assignments_with_runtime(&mut registry, &RouteTable::new(), &rows);
+        assert!(changed);
+        assert!(registry.get("active-project").is_some());
+        assert!(registry.get("stale-project").is_none());
     }
 }
