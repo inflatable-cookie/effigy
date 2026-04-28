@@ -301,7 +301,6 @@ fn workspace_artifact_source_rejects_unknown_values() {
 
 #[test]
 fn workspace_artifact_source_download_bypasses_discoverable_local_repo() {
-    let original_home = std::env::var_os("HOME");
     let temp_home = std::env::temp_dir().join(format!(
         "effigy-workspace-artifact-source-home-{}",
         std::time::SystemTime::now()
@@ -310,9 +309,7 @@ fn workspace_artifact_source_download_bypasses_discoverable_local_repo() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&temp_home).expect("mkdir temp home");
-    unsafe {
-        std::env::set_var("HOME", &temp_home);
-    }
+    let _home = EnvGuard::set_many(&[("HOME", Some(temp_home.display().to_string()))]);
 
     let root = std::env::temp_dir().join(format!(
         "effigy-workspace-artifact-source-{}",
@@ -350,22 +347,11 @@ fn workspace_artifact_source_download_bypasses_discoverable_local_repo() {
         ensure_linux_workspace_effigy_artifact(&workspace, LinuxWorkspaceTarget::X86_64Gnu)
             .expect("resolve artifact");
 
-    if let Some(value) = original_home {
-        unsafe {
-            std::env::set_var("HOME", value);
-        }
-    } else {
-        unsafe {
-            std::env::remove_var("HOME");
-        }
-    }
-
     assert_eq!(artifact, cache_path);
 }
 
 #[test]
 fn resolve_local_effigy_repo_root_ignores_cached_download_artifact_in_auto_mode() {
-    let original_home = std::env::var_os("HOME");
     let temp_home = std::env::temp_dir().join(format!(
         "effigy-workspace-artifact-auto-home-{}",
         std::time::SystemTime::now()
@@ -374,9 +360,7 @@ fn resolve_local_effigy_repo_root_ignores_cached_download_artifact_in_auto_mode(
             .as_nanos()
     ));
     std::fs::create_dir_all(&temp_home).expect("mkdir temp home");
-    unsafe {
-        std::env::set_var("HOME", &temp_home);
-    }
+    let _home = EnvGuard::set_many(&[("HOME", Some(temp_home.display().to_string()))]);
 
     let root = std::env::temp_dir().join(format!(
         "effigy-workspace-artifact-auto-{}",
@@ -409,22 +393,11 @@ fn resolve_local_effigy_repo_root_ignores_cached_download_artifact_in_auto_mode(
     let _env = EnvGuard::set_many(&[(EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV, None)]);
     let resolved = resolve_local_effigy_repo_root_from_paths(&workspace, None, None);
 
-    if let Some(value) = original_home {
-        unsafe {
-            std::env::set_var("HOME", value);
-        }
-    } else {
-        unsafe {
-            std::env::remove_var("HOME");
-        }
-    }
-
     assert_eq!(resolved, Some(local_effigy));
 }
 
 #[test]
 fn workspace_linux_cache_path_is_versioned() {
-    let original_home = std::env::var_os("HOME");
     let temp_home = std::env::temp_dir().join(format!(
         "effigy-workspace-cache-home-{}",
         std::time::SystemTime::now()
@@ -433,22 +406,10 @@ fn workspace_linux_cache_path_is_versioned() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&temp_home).expect("mkdir temp home");
-    unsafe {
-        std::env::set_var("HOME", &temp_home);
-    }
+    let _home = EnvGuard::set_many(&[("HOME", Some(temp_home.display().to_string()))]);
 
     let cache_path =
         linux_workspace_effigy_cache_path(LinuxWorkspaceTarget::X86_64Gnu).expect("cache path");
-
-    if let Some(value) = original_home {
-        unsafe {
-            std::env::set_var("HOME", value);
-        }
-    } else {
-        unsafe {
-            std::env::remove_var("HOME");
-        }
-    }
 
     assert!(cache_path.starts_with(&temp_home));
     assert!(cache_path
@@ -528,7 +489,6 @@ fn sibling_effigy_repo_root_discovers_projects_effigy_from_ancestor() {
 
 #[test]
 fn configured_effigy_repo_root_reads_host_pointer_file() {
-    let original_home = std::env::var_os("HOME");
     let temp_home = std::env::temp_dir().join(format!(
         "effigy-configured-source-home-{}",
         std::time::SystemTime::now()
@@ -549,28 +509,15 @@ fn configured_effigy_repo_root_reads_host_pointer_file() {
     )
     .expect("write source config");
 
-    unsafe {
-        std::env::set_var("HOME", &temp_home);
-    }
+    let _home = EnvGuard::set_many(&[("HOME", Some(temp_home.display().to_string()))]);
 
     let discovered = configured_effigy_repo_root().expect("configured repo root");
-
-    if let Some(value) = original_home {
-        unsafe {
-            std::env::set_var("HOME", value);
-        }
-    } else {
-        unsafe {
-            std::env::remove_var("HOME");
-        }
-    }
 
     assert_eq!(discovered, effigy);
 }
 
 #[test]
 fn resolve_local_effigy_repo_root_prefers_live_sibling_checkout_over_configured_pointer() {
-    let original_home = std::env::var_os("HOME");
     let temp_home = std::env::temp_dir().join(format!(
         "effigy-source-priority-home-{}",
         std::time::SystemTime::now()
@@ -579,9 +526,7 @@ fn resolve_local_effigy_repo_root_prefers_live_sibling_checkout_over_configured_
             .as_nanos()
     ));
     std::fs::create_dir_all(temp_home.join(".effigy")).expect("mkdir .effigy");
-    unsafe {
-        std::env::set_var("HOME", &temp_home);
-    }
+    let _home = EnvGuard::set_many(&[("HOME", Some(temp_home.display().to_string()))]);
 
     let root = std::env::temp_dir().join(format!(
         "effigy-source-priority-{}",
@@ -610,22 +555,11 @@ fn resolve_local_effigy_repo_root_prefers_live_sibling_checkout_over_configured_
 
     let resolved = resolve_local_effigy_repo_root_from_paths(&workspace, None, None);
 
-    if let Some(value) = original_home {
-        unsafe {
-            std::env::set_var("HOME", value);
-        }
-    } else {
-        unsafe {
-            std::env::remove_var("HOME");
-        }
-    }
-
     assert_eq!(resolved, Some(sibling_effigy));
 }
 
 #[test]
 fn persist_effigy_source_repo_root_writes_host_pointer_file() {
-    let original_home = std::env::var_os("HOME");
     let temp_home = std::env::temp_dir().join(format!(
         "effigy-persisted-source-home-{}",
         std::time::SystemTime::now()
@@ -636,23 +570,11 @@ fn persist_effigy_source_repo_root_writes_host_pointer_file() {
     let effigy = temp_home.join("projects/effigy");
     std::fs::create_dir_all(&effigy).expect("mkdir effigy");
 
-    unsafe {
-        std::env::set_var("HOME", &temp_home);
-    }
+    let _home = EnvGuard::set_many(&[("HOME", Some(temp_home.display().to_string()))]);
 
     persist_effigy_source_repo_root(&effigy).expect("persist source config");
     let raw =
         std::fs::read_to_string(temp_home.join(".effigy/source.toml")).expect("read source config");
-
-    if let Some(value) = original_home {
-        unsafe {
-            std::env::set_var("HOME", value);
-        }
-    } else {
-        unsafe {
-            std::env::remove_var("HOME");
-        }
-    }
 
     assert!(raw.contains(&format!("repo_root = \"{}\"", effigy.display())));
 }

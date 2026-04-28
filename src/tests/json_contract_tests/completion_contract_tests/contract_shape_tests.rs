@@ -1,6 +1,6 @@
 use crate::runner::json_contract_tests::prelude::{
-    assert_candidates_cache_policy, assert_schema_v1, fs, run_completion_task, run_invocation_json,
-    temp_workspace, test_lock, with_completion_cache_default, write_manifest,
+    assert_candidates_cache_policy, assert_schema_v1, fs, lock_test, run_completion_task,
+    run_invocation_json, temp_workspace, with_completion_cache_default, write_manifest,
 };
 
 #[test]
@@ -16,7 +16,7 @@ fn builtin_completion_json_contract_has_versioned_shape() {
 
 #[test]
 fn builtin_completion_candidates_json_contract_has_versioned_shape() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = with_completion_cache_default();
     let root = temp_workspace("completion-candidates-json-contract");
     let catalog_a = root.join("catalog_a");
@@ -50,7 +50,7 @@ fn builtin_completion_candidates_json_contract_has_versioned_shape() {
 
 #[test]
 fn builtin_completion_candidates_help_json_uses_help_schema() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = with_completion_cache_default();
     let root = temp_workspace("completion-candidates-help-json");
     write_manifest(&root.join("effigy.toml"), "");

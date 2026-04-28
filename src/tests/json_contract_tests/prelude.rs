@@ -25,7 +25,7 @@ pub(crate) mod runtime {
 
 pub(crate) mod harness {
     pub(crate) use crate::contract_test_support::{
-        parse_json, temp_workspace, test_lock, with_cwd, write_manifest, EnvGuard,
+        lock_test, parse_json, temp_workspace, with_cwd, write_manifest, EnvGuard,
     };
 }
 

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
-use std::thread;
+use std::sync::{Condvar, Mutex, OnceLock};
+use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub(super) fn parse_json(text: &str) -> serde_json::Value {
@@ -35,15 +35,73 @@ where
     out
 }
 
-pub(super) fn test_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+pub(super) fn test_lock() -> &'static ReentrantTestLock {
+    static LOCK: OnceLock<ReentrantTestLock> = OnceLock::new();
+    LOCK.get_or_init(ReentrantTestLock::new)
 }
 
-pub(super) fn lock_test() -> MutexGuard<'static, ()> {
-    match test_lock().lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
+pub(super) fn lock_test() -> ReentrantTestLockGuard {
+    test_lock().lock()
+}
+
+/// Reentrant mutex used to serialize tests that touch process-global state
+/// (`cwd`, env vars). `std::sync::ReentrantLock` is still nightly-only, so
+/// we ship a minimal owner-tracking guard built on stable primitives.
+pub(super) struct ReentrantTestLock {
+    state: Mutex<ReentrantState>,
+    cv: Condvar,
+}
+
+struct ReentrantState {
+    owner: Option<ThreadId>,
+    count: u64,
+}
+
+impl ReentrantTestLock {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(ReentrantState {
+                owner: None,
+                count: 0,
+            }),
+            cv: Condvar::new(),
+        }
+    }
+
+    fn lock(&'static self) -> ReentrantTestLockGuard {
+        let me = thread::current().id();
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        loop {
+            match state.owner {
+                None => {
+                    state.owner = Some(me);
+                    state.count = 1;
+                    return ReentrantTestLockGuard { lock: self };
+                }
+                Some(owner) if owner == me => {
+                    state.count += 1;
+                    return ReentrantTestLockGuard { lock: self };
+                }
+                _ => {
+                    state = self.cv.wait(state).unwrap_or_else(|p| p.into_inner());
+                }
+            }
+        }
+    }
+}
+
+pub(super) struct ReentrantTestLockGuard {
+    lock: &'static ReentrantTestLock,
+}
+
+impl Drop for ReentrantTestLockGuard {
+    fn drop(&mut self) {
+        let mut state = self.lock.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.count -= 1;
+        if state.count == 0 {
+            state.owner = None;
+            self.lock.cv.notify_one();
+        }
     }
 }
 
@@ -61,10 +119,15 @@ pub(super) fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) 
 
 pub(super) struct EnvGuard {
     original: Vec<(String, Option<String>)>,
+    // Holds the global test lock so concurrent tests that mutate process env
+    // serialize against each other (and against `with_cwd`). The lock is
+    // reentrant, so callers that already hold it don't deadlock.
+    _lock: ReentrantTestLockGuard,
 }
 
 impl EnvGuard {
     pub(super) fn set_many(entries: &[(&str, Option<String>)]) -> Self {
+        let lock = lock_test();
         let mut original = Vec::with_capacity(entries.len());
         for (key, value) in entries {
             original.push(((*key).to_owned(), std::env::var(key).ok()));
@@ -73,7 +136,10 @@ impl EnvGuard {
                 None => std::env::remove_var(key),
             }
         }
-        Self { original }
+        Self {
+            original,
+            _lock: lock,
+        }
     }
 }
 
