@@ -1,0 +1,667 @@
+use super::*;
+
+#[test]
+fn load_workspace_ownership_targets_collects_named_volume_targets() {
+    let parent = std::env::temp_dir().join(format!(
+        "effigy-workspace-ownership-targets-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    let root = parent.join("underlay-reference");
+    let underlay = parent.join("underlay");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir repo");
+    fs::create_dir_all(&underlay).expect("mkdir underlay");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "stack"
+
+[systems.dev]
+container = "stack"
+user = "dev"
+home = "/home/dev"
+working_dir = "/workspace-root/underlay-reference"
+mounts = ["../underlay"]
+
+[containers.stack]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "workspace"
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        r#"
+services:
+  workspace:
+    image: "node:22"
+    volumes:
+      - ../../../:/workspace-root
+      - stack-cache:/cache
+      - stack-node-modules:/workspace-root/underlay-reference/acme-client/node_modules
+      - /tmp/host-path:/workspace-root/host-cache
+"#,
+    )
+    .expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let targets = load_workspace_ownership_targets(&policy).expect("targets");
+
+    assert!(targets.iter().any(|value| value == "/home/dev"));
+    assert!(targets.iter().any(|value| value == "/cache"));
+    assert!(targets
+        .iter()
+        .any(|value| value == "/workspace-root/underlay-reference/acme-client/node_modules"));
+    assert!(!targets
+        .iter()
+        .any(|value| value == "/workspace-root/host-cache"));
+    assert!(!targets
+        .iter()
+        .any(|value| value == "/workspace-root/underlay-reference"));
+}
+
+#[test]
+fn eject_generated_compose_promotes_generated_output_to_direct_ownership() {
+    let root = temp_repo("eject-generated");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+"#,
+    )
+    .expect("write manifest");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let generated = root.join(".effigy/runtime/compose/.effigy-compose.generated.yml");
+    assert!(
+        generated.exists(),
+        "generated compose should exist before eject"
+    );
+
+    let result = eject_generated_compose(&root, &policy).expect("eject");
+    assert_eq!(
+        result.compose_path,
+        root.join("infra/dev/docker-compose.yml")
+    );
+    assert!(
+        result.compose_path.exists(),
+        "permanent compose should exist"
+    );
+    assert!(!generated.exists(), "generated compose should be removed");
+}
+
+#[test]
+fn eject_generated_compose_rejects_direct_compose_ownership() {
+    let root = temp_repo("eject-direct");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let error = eject_generated_compose(&root, &policy).expect_err("should fail");
+    assert!(error
+        .to_string()
+        .contains("direct `compose_file` ownership"));
+}
+
+#[test]
+fn load_all_container_policies_returns_every_declared_environment() {
+    let root = temp_repo("all-policies");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.worker]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "jobs"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policies = load_all_container_policies(&root).expect("policies");
+    assert_eq!(policies.len(), 2);
+    assert_eq!(policies[0].name, "web");
+    assert_eq!(policies[1].name, "worker");
+}
+
+#[test]
+fn status_all_report_renders_environment_inventory() {
+    let report = status_all_report(&[ContainerStatusAllEntry {
+        repo_root: "/tmp/demo".to_owned(),
+        container: "web".to_owned(),
+        project_name: "demo-web-dev".to_owned(),
+        profile: "effigy".to_owned(),
+        primary_service: "app".to_owned(),
+        dns_domain: Some("demo.test".to_owned()),
+        dns_tls: true,
+        declared_ports: vec!["18080:80".to_owned()],
+        allocated_ports: Some(AllocatedPortsSummary {
+            base: 8100,
+            http: 8100,
+            mysql: 8106,
+            postgres: 8132,
+            redis: 8179,
+            memcached: 8111,
+        }),
+        services: vec![ContainerStatusService {
+            name: "app".to_owned(),
+            container_name: "demo-app-1".to_owned(),
+            status: "Up 2 minutes".to_owned(),
+            ports: vec!["0.0.0.0:18080->80/tcp".to_owned()],
+        }],
+    }]);
+
+    assert!(report.success_text.contains("running Effigy-managed"));
+    assert!(report.success_text.contains("demo.test (tls)"));
+    assert!(report.success_text.contains("allocated_ports: base=8100"));
+    assert_eq!(report.json["environment_count"], 1);
+    assert_eq!(report.json["environments"][0]["container"], "web");
+}
+
+#[test]
+fn stats_all_report_renders_resource_inventory_and_warning() {
+    let report = stats_all_report(
+        &[ContainerStatsAllEntry {
+            repo_root: "/tmp/demo".to_owned(),
+            container: "web".to_owned(),
+            project_name: "demo-web-dev".to_owned(),
+            profile: "effigy".to_owned(),
+            primary_service: "app".to_owned(),
+            services: vec![
+                ContainerStatsService {
+                    name: "app".to_owned(),
+                    container_name: "demo-app-1".to_owned(),
+                    status: "Up 2 minutes".to_owned(),
+                    cpu_percent: Some("1.25%".to_owned()),
+                    memory_usage: Some("12.4MiB / 8GiB".to_owned()),
+                    memory_percent: Some("0.15%".to_owned()),
+                },
+                ContainerStatsService {
+                    name: "web".to_owned(),
+                    container_name: "demo-web-1".to_owned(),
+                    status: "Up 2 minutes".to_owned(),
+                    cpu_percent: None,
+                    memory_usage: None,
+                    memory_percent: None,
+                },
+            ],
+        }],
+        Some("runtime stats were unavailable for: demo-web-1"),
+    );
+
+    assert_eq!(report.json["schema"], "effigy.container.stats-all.v1");
+    assert_eq!(report.json["environment_count"], 1);
+    assert_eq!(
+        report.json["stats_warning"],
+        "runtime stats were unavailable for: demo-web-1"
+    );
+    assert!(report
+        .success_text
+        .contains("[warn] runtime stats were unavailable"));
+    assert!(report.success_text.contains("cpu=1.25%"));
+    assert!(report.success_text.contains("memory=12.4MiB / 8GiB"));
+    assert!(report.success_text.contains("cpu=unavailable"));
+}
+
+#[test]
+fn status_report_renders_shared_service_targets() {
+    let root = temp_repo("status-shared-services");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let mut policy = load_container_policy(&root, None).expect("policy");
+    policy.shared_services = vec![SharedServiceBinding {
+        service_name: "db".to_owned(),
+        catalog: "mariadb".to_owned(),
+        project_name: "effigy-shared-mariadb-deadbeef".to_owned(),
+        compose_file: PathBuf::from("/tmp/shared/.effigy-compose.generated.yml"),
+        host: "host.docker.internal".to_owned(),
+        host_port: 8106,
+        container_port: 3306,
+    }];
+
+    let report = status_report(&policy, true, None, None);
+
+    assert!(report.success_text.contains("shared_services: 1"));
+    assert!(report
+        .success_text
+        .contains("db [mariadb] -> host.docker.internal:8106"));
+    assert_eq!(
+        report.json["shared_services"][0]["project_name"],
+        "effigy-shared-mariadb-deadbeef"
+    );
+}
+
+#[test]
+fn generated_compose_policy_includes_managed_volumes() {
+    let root = temp_repo("managed-volumes");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "workspace"
+
+[containers.web.services.workspace]
+catalog = "workspace-rust-bun"
+working_subdir = "managed-volumes"
+"#,
+    )
+    .expect("write manifest");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert!(policy
+        .managed_volumes
+        .iter()
+        .any(|volume| volume.name.ends_with("cargo-registry")));
+    assert!(policy.managed_volumes.iter().any(|volume| volume.persist));
+}
+
+#[test]
+fn generated_compose_policy_includes_declared_media_mounts_and_prepares_source_dirs() {
+    let root = temp_repo("managed-media");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.data]
+media = ["storage/uploads:/var/www/html/storage/uploads"]
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+
+[containers.web.services.db]
+catalog = "mariadb"
+"#,
+    )
+    .expect("write manifest");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert_eq!(
+        policy.declared_media_mounts,
+        vec!["storage/uploads:/var/www/html/storage/uploads".to_owned()]
+    );
+    assert!(root.join("storage/uploads").is_dir());
+
+    let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+    let expected = format!(
+        "{}:/var/www/html/storage/uploads",
+        root.join("storage/uploads").display()
+    );
+    assert_eq!(compose.matches(&expected).count(), 2, "compose: {compose}");
+}
+
+#[test]
+fn generated_compose_policy_includes_declared_host_mounts_on_repo_root_services() {
+    let root = temp_repo("generated-host-mounts");
+    let sibling = tempfile::tempdir().expect("sibling tempdir");
+    fs::create_dir_all(sibling.path().join("public")).expect("mkdir sibling");
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.host]
+mounts = [
+  {{ host = "{}",
+     container = "/var/www/mortcalc",
+     external = true }},
+]
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+
+[containers.web.services.db]
+catalog = "mariadb"
+"#,
+            sibling.path().display()
+        ),
+    )
+    .expect("write manifest");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    let expected = format!(
+        "{}:/var/www/mortcalc",
+        sibling.path().canonicalize().unwrap().display()
+    );
+    assert_eq!(policy.declared_mounts, vec![expected.clone()]);
+
+    let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+    assert_eq!(compose.matches(&expected).count(), 2, "compose: {compose}");
+}
+
+#[test]
+fn generated_compose_policy_includes_pull_production_hook() {
+    let root = temp_repo("pull-production-policy");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.data]
+pull_production = "scripts/pull-production.sh"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+"#,
+    )
+    .expect("write manifest");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert_eq!(
+        policy.pull_production_hook.as_deref(),
+        Some("scripts/pull-production.sh")
+    );
+}
+
+#[test]
+fn direct_compose_policy_rejects_media_mounts() {
+    let root = temp_repo("direct-media-reject");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.web.data]
+media = ["storage/uploads:/var/www/html/storage/uploads"]
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let error = load_container_policy(&root, None).expect_err("should fail");
+    assert!(error
+        .to_string()
+        .contains("bounded media lifecycle path only supports generated compose"));
+}
+
+#[test]
+fn reset_report_renders_keep_data_volume_actions() {
+    let root = temp_repo("reset-report");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let report = crate::reset_report(
+        &policy,
+        true,
+        true,
+        Some(&VolumeClassification {
+            keep: vec!["demo-web-dev-db-data".to_owned()],
+            remove: vec!["demo-web-dev-cache-data".to_owned()],
+        }),
+    );
+
+    assert!(report
+        .success_text
+        .contains("preserved persistent data volumes"));
+    assert!(report
+        .success_text
+        .contains("kept_volumes: demo-web-dev-db-data"));
+    assert!(report
+        .success_text
+        .contains("removed_volumes: demo-web-dev-cache-data"));
+    assert_eq!(report.json["keep_data"], true);
+    assert_eq!(report.json["volumes"]["kept"][0], "demo-web-dev-db-data");
+    assert_eq!(
+        report.json["volumes"]["removed"][0],
+        "demo-web-dev-cache-data"
+    );
+}
+
+#[test]
+fn data_list_report_renders_volume_inventory_and_unavailable_metadata() {
+    let root = temp_repo("data-list-report");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let report = data_list_report(
+        &policy,
+        false,
+        &[
+            ContainerDataVolumeEntry {
+                name: "demo-web-dev-db-data".to_owned(),
+                service: "db".to_owned(),
+                persist: true,
+                size_bytes: Some(2048),
+                mount_point: Some("/var/lib/docker/volumes/demo-web-dev-db-data/_data".to_owned()),
+            },
+            ContainerDataVolumeEntry {
+                name: "demo-web-dev-app-node-modules".to_owned(),
+                service: "app".to_owned(),
+                persist: false,
+                size_bytes: None,
+                mount_point: None,
+            },
+        ],
+    );
+
+    assert_eq!(report.json["schema"], "effigy.container.data-list.v1");
+    assert_eq!(report.json["volume_count"], 2);
+    assert_eq!(report.json["volumes"][0]["classification"], "persistent");
+    assert_eq!(report.json["volumes"][1]["classification"], "ephemeral");
+    assert!(report
+        .success_text
+        .contains("runtime_metadata: unavailable"));
+    assert!(report.success_text.contains("size=2.0 KiB"));
+    assert!(report.success_text.contains("size=unavailable"));
+}
+
+#[test]
+fn data_transfer_report_renders_export_contract() {
+    let root = temp_repo("data-transfer-report");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let report = data_transfer_report(
+        &policy,
+        ContainerDataTransferAction::Export,
+        &ContainerDataVolumeEntry {
+            name: "demo-web-dev-db-data".to_owned(),
+            service: "db".to_owned(),
+            persist: true,
+            size_bytes: None,
+            mount_point: None,
+        },
+        Path::new("/tmp/demo-backup.tar.gz"),
+    );
+
+    assert_eq!(report.json["schema"], "effigy.container.data-export.v1");
+    assert_eq!(report.json["action"], "export");
+    assert_eq!(report.json["volume"]["name"], "demo-web-dev-db-data");
+    assert_eq!(report.json["output_path"], "/tmp/demo-backup.tar.gz");
+    assert!(report.success_text.contains("exported managed volume"));
+}
+
+#[test]
+fn data_pull_production_report_renders_hook_contract() {
+    let root = temp_repo("pull-production-report");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let report = crate::data_pull_production_report(
+        &policy,
+        &crate::ContainerDataHookResult {
+            hook: "rhai:scripts/pull-prod.rhai".to_owned(),
+        },
+        true,
+        Some("ready"),
+    );
+
+    assert_eq!(
+        report.json["schema"],
+        "effigy.container.data-pull-production.v1"
+    );
+    assert_eq!(report.json["hook"], "rhai:scripts/pull-prod.rhai");
+    assert_eq!(report.json["colima_started"], true);
+    assert!(report
+        .success_text
+        .contains("ran production data hook for container `web`"));
+}
+
+#[test]
+fn status_report_renders_media_mounts() {
+    let root = temp_repo("status-media");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let mut policy = load_container_policy(&root, None).expect("policy");
+    policy.declared_media_mounts = vec!["storage/uploads:/var/www/html/storage/uploads".to_owned()];
+
+    let report = status_report(&policy, true, None, None);
+
+    assert_eq!(
+        report.json["media_mounts"][0],
+        "storage/uploads:/var/www/html/storage/uploads"
+    );
+    assert!(report
+        .success_text
+        .contains("media_mounts: storage/uploads:/var/www/html/storage/uploads"));
+}

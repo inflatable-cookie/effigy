@@ -407,7 +407,7 @@ mod tests {
         std::fs::create_dir_all(sibling.join("assets")).unwrap();
         let sibling_source = sibling.join("assets");
         let raw = "../sibling/assets";
-        let table = make_table(&raw, "/srv/assets", true, Vec::new());
+        let table = make_table(raw, "/srv/assets", true, Vec::new());
         let resolved = resolve_structured(&repo, "web", &table).unwrap();
         let canonical = sibling_source.canonicalize().unwrap();
         assert_eq!(resolved, format!("{}:/srv/assets", canonical.display()));
