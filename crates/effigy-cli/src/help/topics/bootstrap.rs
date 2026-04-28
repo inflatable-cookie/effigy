@@ -1,26 +1,18 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::{
-    render_bullet_section, render_info_notices, render_options_section, render_usage_section,
-};
+use super::shared::render_standard_topic_help;
 
 pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
-    renderer.section("bootstrap Help")?;
-    render_info_notices(
+    render_standard_topic_help(
         renderer,
+        "bootstrap",
         &[
             "Bootstrap a repo into the current working tree from a git URL, then follow the repo-owned `[bootstrap]` contract.",
             "Phase 1 ships root clone/update, optional submodule sync, child repo checkout, bootstrap-local `run` steps, and automatic `[bootstrap].start` execution unless `--no-start` is passed.",
         ],
-    )?;
-    render_usage_section(
-        renderer,
         &[
             "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--no-start] [--plan] [--json]",
             "effigy --json bootstrap <GIT_URL> --plan",
         ],
-    )?;
-    render_options_section(
-        renderer,
         &[
             (
                 "--path <DIR>",
@@ -45,16 +37,10 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ("--json", "Render machine-readable bootstrap payloads"),
             ("-h, --help", "Print command help"),
         ],
-    )?;
-    render_bullet_section(
-        renderer,
-        "Examples",
-        "commands",
         &[
             "effigy bootstrap git@github.com:inflatable-cookie/loophole.git --plan",
             "effigy bootstrap https://github.com/inflatable-cookie/loophole.git --path ./loophole --plan",
             "effigy bootstrap git@github.com:inflatable-cookie/loophole.git --branch main --no-start --plan",
         ],
-    )?;
-    Ok(())
+    )
 }

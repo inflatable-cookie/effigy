@@ -60,6 +60,11 @@ pub struct ManagedProcessSpec {
     pub service: Option<String>,
     pub start_after_ms: u64,
     pub shutdown_on_exit: bool,
+    /// When `true`, the runner skips the parent task's container wrap
+    /// (compose exec / handoff prefix) for this process and runs the
+    /// raw `run` command on the host. Sourced from
+    /// `[[tasks.<name>.concurrent]].run_in = "host"`.
+    pub run_on_host: bool,
 }
 
 #[derive(Debug)]
@@ -120,6 +125,9 @@ pub enum ManagedError {
         task: String,
         mode: String,
     },
+    TaskHasConcurrentWithoutMode {
+        task: String,
+    },
     TaskManagedProfileNotFound {
         task: String,
         profile: String,
@@ -179,6 +187,13 @@ impl std::fmt::Display for ManagedError {
             Self::TaskManagedUnsupportedMode { task, mode } => {
                 write!(f, "task '{task}' has unsupported managed mode '{mode}'")
             }
+            Self::TaskHasConcurrentWithoutMode { task } => write!(
+                f,
+                "task '{task}' declares `concurrent = [...]` but does not set `mode = \"tui\"`; \
+                 either add `mode = \"tui\"` (TUI runs concurrent entries as tabs) or move the \
+                 concurrent entries to `[[containers.<name>.host_processes]]` for non-TUI \
+                 lifecycle-bound supervisors"
+            ),
             Self::TaskManagedProfileNotFound {
                 task,
                 profile,

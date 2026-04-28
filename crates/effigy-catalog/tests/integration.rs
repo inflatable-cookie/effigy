@@ -356,8 +356,26 @@ fn php_fpm_supports_node_globals_and_pnpm_tooling() {
         result.compose_yaml
     );
     assert!(
+        result
+            .compose_yaml
+            .contains("PNPM_HOME: /home/dev/.local/share/pnpm"),
+        "php-fpm compose should expose PNPM_HOME for corepack-managed pnpm:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result
+            .compose_yaml
+            .contains("npm_config_store_dir: /var/www/html/.effigy/runtime/pnpm/store"),
+        "php-fpm compose should pin the pnpm store under the repo runtime dir:\n{}",
+        result.compose_yaml
+    );
+    assert!(
         result.dockerfiles["app"].contains("corepack enable"),
         "php-fpm Dockerfile should enable corepack so pnpm is available"
+    );
+    assert!(
+        result.dockerfiles["app"].contains("corepack prepare pnpm@latest --activate"),
+        "php-fpm Dockerfile should explicitly activate pnpm via corepack"
     );
     assert!(
         result.dockerfiles["app"].contains("npm install -g $NODE_GLOBAL_PACKAGES"),
@@ -394,6 +412,13 @@ fn php_fpm_supports_explicit_decodelabs_style_service_params() {
             p.insert(
                 "composer_global_packages".to_string(),
                 toml::Value::Array(vec![toml::Value::String("decodelabs/effigy".to_string())]),
+            );
+            p.insert(
+                "isolated_dirs".to_string(),
+                toml::Value::Array(vec![
+                    toml::Value::String("vendor".to_string()),
+                    toml::Value::String("node_modules".to_string()),
+                ]),
             );
             p.insert(
                 "extensions".to_string(),
@@ -448,6 +473,20 @@ fn php_fpm_supports_explicit_decodelabs_style_service_params() {
         result.compose_yaml.contains("DOCUMENT_ROOT: '.'")
             || result.compose_yaml.contains("DOCUMENT_ROOT: ."),
         "php-fpm explicit params should apply the repo-root document root:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result
+            .compose_yaml
+            .contains("test-project-app-vendor:/var/www/html/vendor"),
+        "php-fpm explicit params should isolate configured hot dirs with named volumes:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result
+            .compose_yaml
+            .contains("test-project-app-node-modules:/var/www/html/node_modules"),
+        "php-fpm explicit params should isolate configured hot dirs with named volumes:\n{}",
         result.compose_yaml
     );
 }
@@ -1112,6 +1151,21 @@ fn assembled_yaml_is_structurally_valid_compose() {
     assert!(
         result.dockerfiles["app"].contains("id -gn dev"),
         "Dockerfile should derive the php-fpm group from the dev user's primary group"
+    );
+    assert!(
+        result.dockerfiles["app"].contains("opcache.enable = 1"),
+        "Dockerfile should explicitly enable opcache for php-fpm:\n{}",
+        result.dockerfiles["app"]
+    );
+    assert!(
+        result.dockerfiles["app"].contains("realpath_cache_size = 4096K"),
+        "Dockerfile should explicitly tune PHP realpath cache for php-fpm:\n{}",
+        result.dockerfiles["app"]
+    );
+    assert!(
+        result.dockerfiles["app"].contains("opcache.revalidate_freq = 1"),
+        "Dockerfile should explicitly tune opcache revalidation for dev:\n{}",
+        result.dockerfiles["app"]
     );
 
     assert!(

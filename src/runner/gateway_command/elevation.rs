@@ -68,7 +68,13 @@ pub(super) fn gateway_down_requires_elevation(
         }
         #[cfg(target_os = "macos")]
         {
+            // Elevation needed if the bootstrap TLD file exists OR any
+            // route-driven managed resolver file the daemon may have
+            // dropped is still around (the daemon writes those without
+            // sudo, but gateway-down runs from the unprivileged runner
+            // and so still needs sudo to remove them).
             resolver_spec(config).path.exists()
+                || !resolver_setup::enumerate_managed_resolver_files().is_empty()
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -209,10 +215,49 @@ pub(super) fn provision_loopback_aliases_if_needed(_config: &GatewayConfig) -> V
 pub(super) fn uninstall_resolver_if_needed(config: &GatewayConfig) -> Vec<String> {
     #[cfg(target_os = "macos")]
     {
+        let mut warnings = Vec::new();
+
+        // Remove the bootstrap TLD resolver file (managed by the
+        // elevation flow that brought the gateway up).
         let spec = resolver_spec(config);
-        spec.uninstall()
-            .map(|_| Vec::new())
-            .unwrap_or_else(|error| vec![resolver_setup_warning("remove", &spec, error)])
+        if let Err(error) = spec.uninstall() {
+            warnings.push(resolver_setup_warning("remove", &spec, error));
+        }
+
+        // Sweep any route-driven resolver files the daemon may have
+        // left behind. These have the Effigy managed-by header, so the
+        // sweep is safe even if other tools wrote unrelated files into
+        // `/etc/resolver/`.
+        for path in resolver_setup::enumerate_managed_resolver_files() {
+            let path_str = path.display().to_string();
+            let output = ProcessCommand::new("sudo")
+                .args(["rm", path.to_str().unwrap_or("")])
+                .output();
+            match output {
+                Ok(output) if output.status.success() => {}
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                    let detail = if !stderr.is_empty() {
+                        stderr
+                    } else if !stdout.is_empty() {
+                        stdout
+                    } else {
+                        format!("sudo rm exited with status {}", output.status)
+                    };
+                    warnings.push(format!(
+                        "failed to remove route-driven resolver file {path_str}: {detail}",
+                    ));
+                }
+                Err(error) => {
+                    warnings.push(format!(
+                        "failed to launch sudo rm for resolver file {path_str}: {error}",
+                    ));
+                }
+            }
+        }
+
+        warnings
     }
     #[cfg(not(target_os = "macos"))]
     {

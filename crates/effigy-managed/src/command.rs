@@ -16,6 +16,17 @@ pub fn resolve_managed_task_plan<'a>(
     resolver: TaskResolverFn<'a>,
 ) -> Result<Option<ManagedTaskPlan>, ManagedError> {
     let Some(mode) = task.mode.as_deref() else {
+        // A task that declares `concurrent = [...]` (or per-profile
+        // concurrent entries) but no `mode` would otherwise be
+        // silently downgraded to standard execution, dropping every
+        // concurrent process. That's almost never what the author
+        // wanted — turn it into a hard error so the manifest mistake
+        // surfaces at task-resolution time.
+        if profiles::has_concurrent_schema(task) {
+            return Err(ManagedError::TaskHasConcurrentWithoutMode {
+                task: selector.task_name.clone(),
+            });
+        }
         return Ok(None);
     };
     if mode != "tui" {

@@ -1,3 +1,5 @@
+mod support;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -6,6 +8,7 @@ use effigy_env as env_schema;
 use effigy_env::resolver::ResolvedSource;
 use effigy_env::EnvSchemaError;
 use effigy_env::EnvValue;
+use support::temp_workspace;
 
 /// Create a temporary directory with a `.env.schema` file inside it.
 /// Returns the directory path. Caller should clean up with `cleanup_temp`.
@@ -29,21 +32,8 @@ fn fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn temp_workspace(name: &str) -> PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "effigy_env_schema_{name}_{}_{}",
-        std::process::id(),
-        seq
-    ));
-    std::fs::create_dir_all(&dir).expect("create temp workspace");
-    dir
-}
-
 fn copy_fixture_to_temp(name: &str) -> PathBuf {
-    let dir = temp_workspace(name.trim_end_matches(".env.schema"));
+    let dir = temp_workspace("effigy-env-schema", name.trim_end_matches(".env.schema"));
     std::fs::copy(fixture_path(name), dir.join(".env.schema")).expect("copy env schema fixture");
     dir
 }
@@ -425,7 +415,7 @@ fn load_schema_nonexistent_file() {
 
 #[test]
 fn detect_schema_path_returns_none_when_default_file_missing() {
-    let dir = temp_workspace("detect-schema-missing");
+    let dir = temp_workspace("effigy-env-schema", "detect-schema-missing");
 
     let detected = env_schema::detect_schema_path(&dir);
     assert!(detected.is_none());
@@ -447,7 +437,7 @@ fn load_env_schema_if_present_autodetects_default_file() {
 
 #[test]
 fn load_env_schema_if_present_returns_none_without_schema() {
-    let dir = temp_workspace("optional-schema-missing");
+    let dir = temp_workspace("effigy-env-schema", "optional-schema-missing");
 
     let schema = env_schema::load_env_schema_if_present(&dir).expect("load optional schema");
     assert!(schema.is_none());
@@ -505,7 +495,7 @@ fn full_pipeline_rfc_style_fixture_resolves_realistic_contract() {
 
 #[test]
 fn public_resolve_and_validate_env_surfaces_validation_errors_without_reloading() {
-    let dir = temp_workspace("resolve-validate-public-api");
+    let dir = temp_workspace("effigy-env-schema", "resolve-validate-public-api");
     std::fs::write(dir.join(".env.schema"), "# @type=port\nPORT=99999\n").expect("write schema");
     let schema = env_schema::load_env_schema(&dir.join(".env.schema")).expect("load schema");
     let context = env_schema::ResolutionContext {
@@ -589,7 +579,7 @@ fn full_pipeline_utf8_fixture_preserves_unicode_values() {
 
 #[test]
 fn full_pipeline_empty_schema_file_resolves_to_empty_env() {
-    let dir = temp_workspace("empty_schema_file");
+    let dir = temp_workspace("effigy-env-schema", "empty_schema_file");
     std::fs::write(dir.join(".env.schema"), "").expect("write empty schema");
 
     let resolved = env_schema::load_and_resolve(
@@ -607,7 +597,7 @@ fn full_pipeline_empty_schema_file_resolves_to_empty_env() {
 
 #[test]
 fn load_schema_invalid_utf8_file_reports_read_failure() {
-    let dir = temp_workspace("invalid_utf8_schema");
+    let dir = temp_workspace("effigy-env-schema", "invalid_utf8_schema");
     std::fs::write(dir.join(".env.schema"), [0xff, 0xfe, 0xfd]).expect("write invalid bytes");
 
     let error = env_schema::load_schema(&dir.join(".env.schema")).expect_err("load should fail");

@@ -56,6 +56,16 @@ version = "11.0"
     );
     assert_eq!(
         app.params
+            .get("isolated_dirs")
+            .and_then(|value| value.as_array())
+            .expect("isolated_dirs")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["vendor", "node_modules"]
+    );
+    assert_eq!(
+        app.params
             .get("extensions")
             .and_then(|value| value.as_array())
             .expect("extensions")
@@ -300,7 +310,7 @@ base = "decodelabs-library"
         app.params
             .get("working_dir")
             .and_then(|value| value.as_str()),
-        Some("/workspace-root")
+        Some("/workspace-root/collections")
     );
     assert_eq!(
         app.params
@@ -323,6 +333,16 @@ base = "decodelabs-library"
             .get("mount_source")
             .and_then(|value| value.as_str()),
         Some(shared_root_path.to_str().expect("shared root str"))
+    );
+    assert_eq!(
+        app.params
+            .get("isolated_dirs")
+            .and_then(|value| value.as_array())
+            .expect("isolated_dirs")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["vendor"]
     );
     assert_eq!(
         app.params

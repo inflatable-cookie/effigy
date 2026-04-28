@@ -1,19 +1,14 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::{
-    render_bullet_section, render_info_notices, render_options_section, render_usage_section,
-};
+use super::shared::render_standard_topic_help;
 
 pub(crate) fn render_docs_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
-    renderer.section("docs Help")?;
-    render_info_notices(
+    render_standard_topic_help(
         renderer,
+        "docs",
         &[
             "Run reusable markdown/documentation validation checks without dropping into shell scripts.",
             "Repo-specific policy should stay in task wiring and flags; these built-ins provide the generic validation engines.",
         ],
-    )?;
-    render_usage_section(
-        renderer,
         &[
             "effigy docs check-links [--repo <PATH>] [<FILE>...] [--json]",
             "effigy docs check-json-examples [--repo <PATH>] [--file <PATH>] [--section <TITLE>] [--min-blocks <N>] [--require <TEXT>]... [--require-block <N:TEXT>]... [--json]",
@@ -27,9 +22,6 @@ pub(crate) fn render_docs_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<
             "effigy docs add-log-index [--repo <PATH>] <LOG_FILE> [--json]",
             "effigy --json docs check-links [--repo <PATH>] [<FILE>...]",
         ],
-    )?;
-    render_options_section(
-        renderer,
         &[
             ("--repo <PATH>", "Override target repository path"),
             (
@@ -91,11 +83,6 @@ pub(crate) fn render_docs_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<
             ("--json", "Render machine-readable validation payloads"),
             ("-h, --help", "Print command help"),
         ],
-    )?;
-    render_bullet_section(
-        renderer,
-        "Examples",
-        "commands",
         &[
             "effigy docs check-links README.md docs/guides/README.md",
             "effigy docs check-json-examples",
@@ -111,6 +98,5 @@ pub(crate) fn render_docs_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<
             "effigy docs add-log-index docs/logs/2026-03/02-160000-my-log.md",
             "effigy --json docs check-links README.md",
         ],
-    )?;
-    Ok(())
+    )
 }

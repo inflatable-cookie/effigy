@@ -54,3 +54,19 @@ pub(super) fn render_bullet_section<R: HelpRenderer>(
     renderer.bullet_list(label, &owned_strings(items))?;
     Ok(())
 }
+
+pub(super) fn render_standard_topic_help<R: HelpRenderer>(
+    renderer: &mut R,
+    topic: &str,
+    notices: &[&str],
+    usage: &[&str],
+    options: &[(&str, &str)],
+    examples: &[&str],
+) -> HelpResult<()> {
+    renderer.section(&format!("{topic} Help"))?;
+    render_info_notices(renderer, notices)?;
+    render_usage_section(renderer, usage)?;
+    render_options_section(renderer, options)?;
+    render_bullet_section(renderer, "Examples", "commands", examples)?;
+    Ok(())
+}

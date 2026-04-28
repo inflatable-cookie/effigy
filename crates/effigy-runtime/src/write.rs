@@ -50,6 +50,22 @@ pub fn run_container_down_all<F>(
 where
     F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
 {
+    run_container_down_all_with_hook(
+        output_json,
+        deregister_gateway_routes,
+        |_repo_root, _policy| {},
+    )
+}
+
+pub fn run_container_down_all_with_hook<F, H>(
+    output_json: bool,
+    deregister_gateway_routes: F,
+    pre_shutdown: H,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
+    H: Fn(&Path, &EffectiveContainerPolicy),
+{
     let environments = discover_running_environments()?;
     let mut stopped = Vec::new();
 
@@ -58,6 +74,9 @@ where
         let policy = environment.policy;
         let colima_running = colima_is_running(&policy, repo_root)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+        // Run the pre-shutdown hook before we touch compose so any
+        // host-side supervisors stop racing with the compose-down.
+        pre_shutdown(repo_root, &policy);
         if colima_running {
             shutdown_container_via_exec(repo_root, &policy)
                 .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;

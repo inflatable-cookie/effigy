@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use effigy_core::builtin_tasks::is_builtin_task_name;
 use effigy_manifest::{LoadedCatalog, ManifestTask, TaskSelection};
 use effigy_routing::select_catalog_and_task;
 use serde_json::json;
@@ -9,55 +10,6 @@ use crate::EffigyTasksError;
 use crate::{parse_task_reference_invocation, render_task_selector, TaskSelector};
 
 const DEFAULT_MANAGED_PROFILE: &str = "default";
-const BUILTIN_TASKS: [(&str, &str); 13] = [
-    ("help", "Show general help (same as --help)"),
-    (
-        "config",
-        "Show supported project effigy.toml configuration keys and examples",
-    ),
-    (
-        "container",
-        "Operate manifest-defined Colima-backed container environments",
-    ),
-    (
-        "doctor",
-        "Built-in remedial health checks for environment, manifests, and task references",
-    ),
-    (
-        "test",
-        "Built-in test runner detection, supports <catalog>/test fallback, optional --plan",
-    ),
-    ("tasks", "List discovered catalogs and available tasks"),
-    (
-        "watch",
-        "Watch mode phase-1 runtime with owner policy, debounce, and include/exclude globs",
-    ),
-    (
-        "init",
-        "Initialize baseline effigy.toml scaffold with dry-run/force controls",
-    ),
-    (
-        "migrate",
-        "Migrate package scripts into [tasks] with preview/apply flow",
-    ),
-    (
-        "unlock",
-        "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)",
-    ),
-    (
-        "cache",
-        "Inspect and invalidate phase-1 task cache metadata (`inspect`, `invalidate`)",
-    ),
-    (
-        "completion",
-        "Generate shell completion scripts (`bash`, `zsh`, `fish`)",
-    ),
-    (
-        "scan",
-        "Run built-in repository scanners such as `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-in-src`, `attention-markers`, and `stale-suppressions`",
-    ),
-];
-
 pub struct ProbeTaskResolutionRequest<'a> {
     pub raw_selector: Option<&'a str>,
     pub cwd: &'a Path,
@@ -225,7 +177,7 @@ fn render_available_profiles(task: &ManifestTask) -> String {
 }
 
 fn is_builtin_or_catalogs_task(task_name: &str) -> bool {
-    BUILTIN_TASKS.iter().any(|(name, _)| *name == task_name) || task_name == "catalogs"
+    is_builtin_task_name(task_name) || task_name == "catalogs"
 }
 
 fn selector_lock_name(selector: &TaskSelector) -> String {

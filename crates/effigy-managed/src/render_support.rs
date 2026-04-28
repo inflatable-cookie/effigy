@@ -218,6 +218,7 @@ mod tests {
                 start_after_ms: 0,
                 shutdown_on_exit: true,
                 service: None,
+                run_on_host: false,
             },
             ManagedProcessSpec {
                 name: "api".to_owned(),
@@ -228,6 +229,7 @@ mod tests {
                 start_after_ms: 0,
                 shutdown_on_exit: false,
                 service: None,
+                run_on_host: false,
             },
             ManagedProcessSpec {
                 name: "shell".to_owned(),
@@ -238,6 +240,7 @@ mod tests {
                 start_after_ms: 0,
                 shutdown_on_exit: false,
                 service: Some("workspace".to_owned()),
+                run_on_host: false,
             },
         ]);
 

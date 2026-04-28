@@ -796,6 +796,7 @@ mysql = { service = "db", command = "mysql -uroot{% if services.db.params.passwo
 catalog = "php-fpm"
 version = "8.4"
 document_root = "."
+isolated_dirs = ["vendor", "node_modules"]
 node_version = "20"
 node_global_packages = ["eclint"]
 composer_global_packages = ["decodelabs/effigy"]
@@ -920,8 +921,9 @@ composer = { service = "__WORKSPACE_SERVICE_NAME__", command = "composer" }
 catalog = "php-fpm"
 version = "8.4"
 document_root = "."
-working_dir = "/workspace-root"
+working_dir = "/workspace-root/__WORKSPACE_SUBDIR__"
 mount_source = "__SHARED_ROOT__"
+isolated_dirs = ["vendor"]
 node_version = "20"
 node_global_packages = ["eclint"]
 composer_global_packages = ["decodelabs/effigy"]

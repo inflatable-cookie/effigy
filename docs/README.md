@@ -60,7 +60,10 @@ deeper links only when you need them.
   [`guides/064-system-workspace-and-dev-contract.md`](./guides/064-system-workspace-and-dev-contract.md)
 - Then use
   [`guides/063-container-system-guide.md`](./guides/063-container-system-guide.md)
-  for the current implementation surface and
+  for the current implementation surface,
+  [`guides/069-workspace-host-integration.md`](./guides/069-workspace-host-integration.md)
+  for workspace library mounts, mounted-repo isolation, and host git/SSH
+  bridging, and
   [`architecture/020-container-infrastructure-design.md`](./architecture/020-container-infrastructure-design.md)
   for the deeper substrate design
 

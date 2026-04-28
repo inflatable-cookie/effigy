@@ -1,19 +1,14 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::{
-    render_bullet_section, render_info_notices, render_options_section, render_usage_section,
-};
+use super::shared::render_standard_topic_help;
 
 pub(crate) fn render_release_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
-    renderer.section("release Help")?;
-    render_info_notices(
+    render_standard_topic_help(
         renderer,
+        "release",
         &[
             "Inspect release readiness from changelog state, version files, and configured gates.",
             "Text-mode release preparation and execution now use compact review menus by default; interactive prepare can jump between version review, mutation inspection, gate results, and final approval, while interactive execute can jump between stale warnings, prepared-state review, working-tree inspection, and final approval. Those menus now keep a compact command legend plus the current selected version or stale-acknowledgement state visible while you review, mark which sections were already reviewed, and blocked prepare/execute output now adds suggested remediation actions instead of only raw blocker lines. `effigy release resume` is the dedicated prepared-state recovery entrypoint: it summarizes `.release-prepared.json`, highlights drift since prepare time, and can hand off directly into execute review. Prepared release state now records source fingerprints, so `resume` and `execute` can detect branch drift, HEAD movement, and prepared-file content drift instead of relying only on raw working-tree presence checks. Those recovery menus now also expose direct `gates`, `reprepare`, and `discard` shortcuts so operators can inspect gates, regenerate prepared state, or clear stale state without leaving the interactive flow. `--plan` stays non-destructive, `--dry-run` aliases that preview mode, and `--yes` stays the explicit non-interactive path.",
         ],
-    )?;
-    render_usage_section(
-        renderer,
         &[
             "effigy release status [--repo <PATH>] [--check-gates] [--json]",
             "effigy release gates [--repo <PATH>] [--json]",
@@ -28,9 +23,6 @@ pub(crate) fn render_release_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
             "effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]",
             "effigy --json release status [--repo <PATH>] [--check-gates]",
         ],
-    )?;
-    render_options_section(
-        renderer,
         &[
             ("--repo <PATH>", "Override target repository path"),
             (
@@ -68,11 +60,6 @@ pub(crate) fn render_release_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
             ("--json", "Render machine-readable release status payload"),
             ("-h, --help", "Print command help"),
         ],
-    )?;
-    render_bullet_section(
-        renderer,
-        "Examples",
-        "commands",
         &[
             "effigy release status",
             "effigy release status --repo /path/to/workspace",
@@ -95,6 +82,5 @@ pub(crate) fn render_release_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
             "effigy --json release prepare --plan --check-gates",
             "effigy --json release status --check-gates",
         ],
-    )?;
-    Ok(())
+    )
 }

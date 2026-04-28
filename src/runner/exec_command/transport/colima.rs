@@ -311,6 +311,7 @@ mod tests {
             on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
             shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
+            host_processes: Vec::new(),
         };
 
         let rows = vec![
@@ -377,6 +378,7 @@ mod tests {
             on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
             shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
+            host_processes: Vec::new(),
         };
 
         let container_id = resolve_compose_service_container_id_via_ps(

@@ -32,6 +32,30 @@ pub fn run_attached_container_session<F>(
 where
     F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
 {
+    run_attached_container_session_with_hook(
+        repo_root,
+        policy,
+        colima_started,
+        health,
+        owner_task,
+        deregister_gateway_routes,
+        |_repo_root, _policy| {},
+    )
+}
+
+pub fn run_attached_container_session_with_hook<F, H>(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    colima_started: bool,
+    health: Option<&'static str>,
+    owner_task: Option<&str>,
+    deregister_gateway_routes: F,
+    pre_shutdown: H,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
+    H: Fn(&Path, &EffectiveContainerPolicy),
+{
     match resolve_attached_session_mode() {
         AttachedSessionMode::Tui => {
             run_attached_container_tui(repo_root, policy, owner_task)?;
@@ -41,6 +65,7 @@ where
                 colima_started,
                 "tui-exit",
                 deregister_gateway_routes,
+                pre_shutdown,
             )
         }
         AttachedSessionMode::Stream => run_attached_container_stream(
@@ -50,6 +75,7 @@ where
             health,
             owner_task,
             deregister_gateway_routes,
+            pre_shutdown,
         ),
     }
 }
@@ -88,16 +114,18 @@ fn run_attached_container_tui(
     Ok(())
 }
 
-fn run_attached_container_stream<F>(
+fn run_attached_container_stream<F, H>(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     colima_started: bool,
     health: Option<&'static str>,
     owner_task: Option<&str>,
     deregister_gateway_routes: F,
+    pre_shutdown: H,
 ) -> Result<String, EffigyRuntimeError>
 where
     F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
+    H: Fn(&Path, &EffectiveContainerPolicy),
 {
     let service = policy.primary_service.clone();
     println!(
@@ -142,22 +170,29 @@ where
         colima_started,
         termination_reason,
         deregister_gateway_routes,
+        pre_shutdown,
     )
 }
 
-fn render_attached_session_closeout<F>(
+fn render_attached_session_closeout<F, H>(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     colima_started: bool,
     termination_reason: &str,
     deregister_gateway_routes: F,
+    pre_shutdown: H,
 ) -> Result<String, EffigyRuntimeError>
 where
     F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
+    H: Fn(&Path, &EffectiveContainerPolicy),
 {
     let mut shutdown_applied = false;
     let mut gateway_domains_removed = Vec::new();
     if policy.on_task_exit == ManifestContainerOnTaskExit::Stop {
+        // Stop host-side supervisors before tearing the container
+        // down so they don't restart their workloads against a
+        // shutting-down compose project.
+        pre_shutdown(repo_root, policy);
         shutdown_container_via_exec(repo_root, policy)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
         gateway_domains_removed = deregister_gateway_routes(policy)?;

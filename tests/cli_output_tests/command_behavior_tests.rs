@@ -7,115 +7,15 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use super::support::{
-    parse_stdout_json, run_json_cli_command, run_json_cli_command_with_manifest,
-    run_json_task_success, temp_workspace, wait_for_path_exists,
+    attach_bare_remote, git_commit_all, git_stdout, init_git_repo, parse_stdout_json,
+    run_json_cli_command, run_json_cli_command_with_manifest, run_json_task_success,
+    temp_workspace, wait_for_path_exists, write_fake_effigy_install_repo,
 };
 
 static CLI_PROCESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 fn lock_cli_process_tests() -> std::sync::MutexGuard<'static, ()> {
     CLI_PROCESS_TEST_LOCK.lock().expect("cli process test lock")
-}
-
-fn init_git_repo(root: &std::path::Path) {
-    let init = Command::new("git")
-        .arg("init")
-        .arg(root)
-        .output()
-        .expect("git init");
-    assert!(init.status.success(), "git init failed: {init:?}");
-
-    let email = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["config", "user.email", "effigy-tests@example.com"])
-        .output()
-        .expect("git config email");
-    assert!(email.status.success(), "git config email failed: {email:?}");
-
-    let name = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["config", "user.name", "Effigy Tests"])
-        .output()
-        .expect("git config name");
-    assert!(name.status.success(), "git config name failed: {name:?}");
-}
-
-fn git_commit_all(root: &std::path::Path, message: &str) {
-    let add = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["add", "."])
-        .output()
-        .expect("git add");
-    assert!(add.status.success(), "git add failed: {add:?}");
-
-    let commit = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["commit", "-m", message])
-        .output()
-        .expect("git commit");
-    assert!(commit.status.success(), "git commit failed: {commit:?}");
-}
-
-fn git_stdout(root: &std::path::Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
-        .expect("run git");
-    assert!(output.status.success(), "git command failed: {output:?}");
-    String::from_utf8(output.stdout)
-        .expect("utf8 git stdout")
-        .trim()
-        .to_owned()
-}
-
-fn attach_bare_remote(root: &std::path::Path) -> std::path::PathBuf {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let pid = std::process::id();
-    let remote = (0..1024)
-        .map(|attempt| {
-            std::env::temp_dir().join(format!("effigy-release-remote-{pid}-{ts}-{attempt}.git"))
-        })
-        .find(|candidate| !candidate.exists())
-        .expect("find unique bare remote path");
-    let init = Command::new("git")
-        .arg("init")
-        .arg("--bare")
-        .arg(&remote)
-        .output()
-        .expect("git init bare");
-    assert!(init.status.success(), "git init bare failed: {init:?}");
-
-    let add_remote = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["remote", "add", "origin"])
-        .arg(&remote)
-        .output()
-        .expect("git remote add");
-    assert!(
-        add_remote.status.success(),
-        "git remote add failed: {add_remote:?}"
-    );
-
-    let branch = git_stdout(root, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
-    let push = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["push", "-u", "origin", &branch])
-        .output()
-        .expect("git push initial");
-    assert!(push.status.success(), "git push initial failed: {push:?}");
-
-    remote
 }
 
 fn install_rejecting_pre_receive_hook(remote: &std::path::Path) {
@@ -3741,33 +3641,6 @@ fn rewrite_release_state_prepared_at(root: &std::path::Path, prepared_at: &str) 
     .expect("write stale state");
 }
 
-fn init_git_repo_with_commit(root: &std::path::Path, message: &str) {
-    init_git_repo(root);
-    git_commit_all(root, message);
-}
-
-fn write_fake_effigy_install_repo(root: &std::path::Path, tag: &str) -> String {
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"effigy\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[[bin]]\nname = \"effigy\"\npath = \"src/main.rs\"\n",
-    )
-    .expect("write cargo manifest");
-    fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("write main");
-    init_git_repo_with_commit(root, "initial");
-    let tag_output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["tag", tag])
-        .output()
-        .expect("git tag");
-    assert!(
-        tag_output.status.success(),
-        "git tag failed: {tag_output:?}"
-    );
-    format!("file://{}", root.display())
-}
-
 #[test]
 fn cli_doctor_supports_colorized_output_when_forced() {
     let root = temp_workspace("cli-color-doctor");
@@ -4128,7 +4001,7 @@ fn cli_release_gates_json_mode_stops_after_first_failure() {
 fn cli_release_verify_install_json_mode_installs_and_checks_tagged_binary() {
     let root = temp_workspace("cli-release-verify-install-json-success");
     let repo = temp_workspace("cli-release-verify-install-repo");
-    let repo_url = write_fake_effigy_install_repo(&repo, "v0.1.0");
+    let repo_url = write_fake_effigy_install_repo(&repo, "0.1.0", "v0.1.0");
 
     let output = run_json_cli_command(
         &root,

@@ -449,13 +449,13 @@ fn remove_file_if_exists(path: &Path) -> Result<(), GatewayError> {
 }
 
 fn mkcert_ca_exists() -> bool {
-    let Some(caroot) = mkcert_ca_root() else {
-        return false;
-    };
-    caroot.join("rootCA.pem").is_file()
+    mkcert_root_ca_pem().is_some()
 }
 
-fn mkcert_ca_root() -> Option<PathBuf> {
+/// Resolve the directory mkcert stores its local CA in by invoking
+/// `mkcert -CAROOT`. Returns `None` when mkcert is not on `PATH` or the
+/// command fails.
+pub fn mkcert_ca_root() -> Option<PathBuf> {
     let output = Command::new("mkcert").arg("-CAROOT").output().ok()?;
     if !output.status.success() {
         return None;
@@ -465,6 +465,21 @@ fn mkcert_ca_root() -> Option<PathBuf> {
         None
     } else {
         Some(PathBuf::from(path))
+    }
+}
+
+/// Resolve the path to mkcert's local root CA PEM (`rootCA.pem` inside
+/// the mkcert CAROOT). Returns `None` when mkcert is not installed or
+/// the file does not exist on disk. Used by the container layer to
+/// auto-mount the root into workspace catalogs so HTTPS calls from a
+/// container back through the host gateway trust the local CA.
+pub fn mkcert_root_ca_pem() -> Option<PathBuf> {
+    let caroot = mkcert_ca_root()?;
+    let pem = caroot.join("rootCA.pem");
+    if pem.is_file() {
+        Some(pem)
+    } else {
+        None
     }
 }
 

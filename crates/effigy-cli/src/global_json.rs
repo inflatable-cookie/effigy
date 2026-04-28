@@ -51,6 +51,8 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::InternalGateway(_) => {}
         Command::InternalRhai(_) => {}
         Command::InternalContainerLeaseReaper(_) => {}
+        Command::InternalHostProcessSupervise(_) => {}
+        Command::InternalHostProcessStop(_) => {}
         Command::Help(_) => {}
     }
     cmd
@@ -83,6 +85,8 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::InternalGateway(_) => false,
         Command::InternalRhai(_) => false,
         Command::InternalContainerLeaseReaper(_) => false,
+        Command::InternalHostProcessSupervise(_) => false,
+        Command::InternalHostProcessStop(_) => false,
         Command::Help(_) => false,
     }
 }

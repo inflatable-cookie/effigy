@@ -213,19 +213,41 @@ fn handle_dns_query(
     response.metadata.recursion_available = false;
 
     let mut answered = false;
-    let mut matched_tld = false;
+    let mut matched_tld_or_route = false;
     let mut resolved_route = false;
 
     for query in &request.queries {
-        // We only serve A records. But if the query is for our TLD
-        // (even for AAAA), we mark it as matched so we return NoError
-        // instead of Refused. This prevents slow dual-stack lookups
-        // in browsers that try AAAA first.
         let query_name = query.name().to_string();
         let query_domain = query_name.trim_end_matches('.').to_lowercase();
         let tld_check = &config.tld;
-        if query_domain.ends_with(&format!(".{tld_check}")) || query_domain == *tld_check {
-            matched_tld = true;
+        let matches_tld =
+            query_domain.ends_with(&format!(".{tld_check}")) || query_domain == *tld_check;
+
+        // Cache-first route lookup, used both for the AAAA "claim this
+        // name as ours" decision and the A answer below.
+        let (has_route, route_dns_ip) = if let Some(cached) = cache.get(&query_domain) {
+            cached
+        } else {
+            let result = route_table
+                .read()
+                .expect("route table lock poisoned")
+                .lookup(&query_domain)
+                .map(|route| (true, route.dns_ip))
+                .unwrap_or((false, None));
+            cache.put(query_domain.clone(), result.0, result.1);
+            result
+        };
+
+        // We're authoritative for this name if either it falls under
+        // our managed TLD (legacy `.test` behaviour, including its
+        // unregistered-route fallback) OR it has a registered route
+        // declared by a container manifest (covers public domains that
+        // the gateway is intentionally fronting locally, e.g. via
+        // `target_host`). Marking the question as ours here also means
+        // we return NoError on AAAA so browsers don't retry through
+        // upstream resolvers and bypass the local override.
+        if matches_tld || has_route {
+            matched_tld_or_route = true;
         }
 
         if query.query_type() != RecordType::A {
@@ -234,45 +256,19 @@ fn handle_dns_query(
 
         let name = query.name();
 
-        // Normalize: convert FQDN to bare domain (strip trailing dot).
-        let domain = name.to_string();
-        let domain = domain.trim_end_matches('.').to_lowercase();
-
-        // Check if this domain ends with our TLD.
-        let tld = &config.tld;
-        let matches_tld = domain.ends_with(&format!(".{tld}")) || domain == *tld;
-
-        if !matches_tld {
-            continue;
-        }
-
-        // Check if we have a route for this domain (cache-first).
-        let (has_route, route_dns_ip) = if let Some(cached) = cache.get(&domain) {
-            cached
-        } else {
-            let result = route_table
-                .read()
-                .expect("route table lock poisoned")
-                .lookup(&domain)
-                .map(|route| (true, route.dns_ip))
-                .unwrap_or((false, None));
-            cache.put(domain.clone(), result.0, result.1);
-            result
-        };
-
         if has_route {
             let resolved_ip = route_dns_ip.unwrap_or(config.resolve_to);
-            debug!(domain = %domain, "DNS: resolving to {}", resolved_ip);
+            debug!(domain = %query_domain, "DNS: resolving to {}", resolved_ip);
 
             let record = Record::from_rdata(name.clone(), 60, RData::A(A(resolved_ip)));
             response.add_answer(record);
             answered = true;
             resolved_route = true;
-        } else {
+        } else if matches_tld {
             // Domain matches TLD but no route registered.
             // Still resolve to localhost — the proxy will return a
             // helpful error page.
-            debug!(domain = %domain, "DNS: resolving (no route, will proxy to error)");
+            debug!(domain = %query_domain, "DNS: resolving (no route, will proxy to error)");
 
             let record = Record::from_rdata(
                 name.clone(),
@@ -282,15 +278,18 @@ fn handle_dns_query(
             response.add_answer(record);
             answered = true;
         }
+        // else: not our TLD AND no route — fall through to refuse below.
     }
 
-    if answered || matched_tld {
-        // Either we have an answer, or the query was for our TLD (even
-        // if we don't have A records for it, e.g., AAAA queries).
-        // Return NoError so browsers don't retry with different strategies.
+    if answered || matched_tld_or_route {
+        // Either we have an answer, or we claim authority over the
+        // question (matched our TLD or a registered route, even for
+        // AAAA / no-A). Return NoError so browsers don't retry with
+        // different strategies that bypass the local override.
         response.metadata.response_code = ResponseCode::NoError;
     } else {
-        // Not our TLD — refuse.
+        // Not our TLD and no route — refuse so resolution falls back
+        // to the upstream public DNS.
         response.metadata.response_code = ResponseCode::Refused;
     }
 

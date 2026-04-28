@@ -2,9 +2,9 @@
 //! `src/runner/container_command.rs`.
 
 use std::io::IsTerminal;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-const MANAGED_EXEC_READINESS_TIMEOUT_SECS: u64 = 30;
+pub const MANAGED_EXEC_READINESS_TIMEOUT_SECS: u64 = 30;
 
 use crate::{
     compose::{on_task_exit_label, shutdown_label},
@@ -165,7 +165,11 @@ pub fn managed_lifecycle_command(
     let selector = container_name
         .map(str::trim)
         .filter(|value| !value.is_empty() && *value != "default");
-    let lifecycle_state = managed_lifecycle_state_path(repo_root, selector, lifecycle_owner_task);
+    let lifecycle_state = managed_lifecycle_state_path(
+        repo_root,
+        selector.unwrap_or("default"),
+        lifecycle_owner_task,
+    );
     let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
     let up = effigy_container_command(executable, selector, "up --detach", &repo);
     let status = effigy_container_command(executable, selector, "status", &repo);
@@ -181,13 +185,13 @@ pub fn managed_lifecycle_command(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("container `{label}` is ready"));
-    let dns_routes_section = render_managed_lifecycle_dns_routes_section(dns_route_lines);
-    let readiness_wait = render_managed_lifecycle_readiness_wait(
+    let dns_routes_section = managed_lifecycle_dns_routes_section(dns_route_lines);
+    let readiness_wait = managed_lifecycle_readiness_wait(
         health_wait,
         readiness_probe_urls,
         "managed lifecycle readiness wait timed out",
     );
-    let setup_sequence = render_managed_lifecycle_setup_sequence(setup_commands);
+    let setup_sequence = managed_lifecycle_setup_sequence(setup_commands);
     let idle_wait = managed_lifecycle_idle_wait_command();
     format!(
         "sh -lc {script}",
@@ -204,7 +208,7 @@ pub fn managed_lifecycle_command(
     )
 }
 
-fn render_managed_lifecycle_dns_routes_section(dns_route_lines: &[String]) -> String {
+pub fn managed_lifecycle_dns_routes_section(dns_route_lines: &[String]) -> String {
     if dns_route_lines.is_empty() {
         return "printf 'dns_routes: none\\n\\n'; ".to_owned();
     }
@@ -216,7 +220,7 @@ fn render_managed_lifecycle_dns_routes_section(dns_route_lines: &[String]) -> St
     section
 }
 
-fn render_managed_lifecycle_readiness_wait(
+pub fn managed_lifecycle_readiness_wait(
     health_wait: bool,
     readiness_probe_urls: &[String],
     timeout_message: &str,
@@ -259,7 +263,8 @@ pub fn managed_shell_command(
     let selector = container_name
         .map(str::trim)
         .filter(|value| !value.is_empty() && *value != "default");
-    let lifecycle_state = managed_lifecycle_state_path(repo_root, selector, owner_task);
+    let lifecycle_state =
+        managed_lifecycle_state_path(repo_root, selector.unwrap_or("default"), owner_task);
     let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
     let service_flag = service
         .map(str::trim)
@@ -290,7 +295,7 @@ pub fn managed_shell_command(
     )
 }
 
-fn managed_lifecycle_idle_wait_command() -> &'static str {
+pub fn managed_lifecycle_idle_wait_command() -> &'static str {
     "while kill -0 \"$parent_pid\" >/dev/null 2>&1; do sleep 1; done"
 }
 
@@ -315,7 +320,8 @@ pub fn managed_standard_exec_command(
     let selector = container_name
         .map(str::trim)
         .filter(|value| !value.is_empty() && *value != "default");
-    let lifecycle_state = managed_lifecycle_state_path(repo_root, selector, owner_task);
+    let lifecycle_state =
+        managed_lifecycle_state_path(repo_root, selector.unwrap_or("default"), owner_task);
     let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
     let readiness_probe = format!(
         "{} >/dev/null 2>&1",
@@ -338,12 +344,11 @@ pub fn managed_standard_exec_command(
     )
 }
 
-fn managed_lifecycle_state_path(
+pub fn managed_lifecycle_state_path(
     repo_root: &Path,
-    container_name: Option<&str>,
+    container_label: &str,
     owner_task: &str,
-) -> std::path::PathBuf {
-    let container_label = container_name.unwrap_or("default");
+) -> PathBuf {
     let sanitized_task = sanitize_state_key(owner_task);
     let sanitized_container = sanitize_state_key(container_label);
     repo_root
@@ -375,7 +380,7 @@ fn rewrite_command_for_container(
     )
 }
 
-fn container_exec_command(
+pub fn container_exec_command(
     command: &str,
     repo_root: &Path,
     process_cwd: &Path,
@@ -396,7 +401,7 @@ fn container_exec_command(
     )
 }
 
-fn render_managed_lifecycle_setup_sequence(setup_commands: &[String]) -> String {
+pub fn managed_lifecycle_setup_sequence(setup_commands: &[String]) -> String {
     if setup_commands.is_empty() {
         return String::new();
     }
@@ -411,32 +416,10 @@ pub fn managed_gateway_command(executable: &str) -> String {
 }
 
 pub fn resolve_effigy_invocation_prefix() -> Result<String, std::io::Error> {
-    if let Some(explicit) = effigy_core::executable_override::current() {
-        let trimmed = explicit.trim();
-        if !trimmed.is_empty() {
-            return Ok(shell_quote(trimmed));
-        }
-    }
-
-    if let Ok(explicit) = std::env::var("EFFIGY_EXECUTABLE") {
-        let trimmed = explicit.trim();
-        if !trimmed.is_empty() {
-            return Ok(shell_quote(trimmed));
-        }
-    }
-
-    let executable = std::env::current_exe()?;
-    let is_test_harness = executable
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .is_some_and(|name| name == "deps");
-    if is_test_harness {
-        let manifest_path = shell_quote(&format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR")));
-        return Ok(format!(
-            "cargo run --quiet --manifest-path {manifest_path} --bin effigy --"
-        ));
-    }
-    Ok(shell_quote(&executable.display().to_string()))
+    effigy_core::effigy_invocation::resolve_effigy_invocation_prefix(&format!(
+        "{}/Cargo.toml",
+        env!("CARGO_MANIFEST_DIR")
+    ))
 }
 
 fn attached_overview_command(

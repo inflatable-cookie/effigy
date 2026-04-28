@@ -23,6 +23,7 @@ use tracing::{debug, error, info};
 use crate::dns::{run_dns_server, DnsCache, DnsConfig};
 use crate::error::GatewayError;
 use crate::proxy::{run_proxy_server, run_tls_proxy_server, ProxyConfig};
+use crate::resolver_setup;
 use crate::routes::{LiveRouteTable, RouteTable};
 use crate::stats::GatewayStats;
 use crate::tcp_alias::run_tcp_alias_manager;
@@ -224,12 +225,21 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
         let _ = signal_tx.send(true);
     });
 
+    // Reconcile route-driven `/etc/resolver/` files against the
+    // initial route table. Best-effort — we run as root here, but
+    // surfacing fs errors aborts the daemon, which is wrong for a
+    // resolver-side concern. Just log and continue.
+    reconcile_route_resolver_files_from_table(&shared_table, &config);
+
     // Set up file watcher for route table.
-    // When routes change, the watcher reloads the table and clears the
-    // DNS cache so new routes are picked up immediately.
+    // When routes change, the watcher reloads the table, clears the
+    // DNS cache so new routes are picked up immediately, and
+    // re-reconciles `/etc/resolver/` so non-managed-TLD route domains
+    // get system resolver files written/removed in lockstep.
     let watcher_table = Arc::clone(&shared_table);
     let watcher_cache = Arc::clone(&dns_cache);
     let watcher_path = config.route_table_path.clone();
+    let watcher_config = config.clone();
     let idle_shutdown_generation = Arc::new(AtomicU64::new(0));
     let _watcher = setup_file_watcher(
         &watcher_path,
@@ -237,6 +247,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
         watcher_cache,
         idle_shutdown_generation,
         shutdown_tx.clone(),
+        watcher_config,
     )?;
 
     let has_tls = config.proxy.tls_bind_addr.is_some() && config.tls.is_some();
@@ -330,6 +341,7 @@ fn setup_file_watcher(
     dns_cache: Arc<DnsCache>,
     idle_shutdown_generation: Arc<AtomicU64>,
     shutdown_tx: watch::Sender<bool>,
+    gateway_config: GatewayConfig,
 ) -> Result<RecommendedWatcher, GatewayError> {
     let watched_path = path.to_path_buf();
 
@@ -349,6 +361,7 @@ fn setup_file_watcher(
                         ) {
                             error!(error = %error, "failed to reload route table");
                         }
+                        reconcile_route_resolver_files_from_table(&table, &gateway_config);
                     }
                     _ => {}
                 }
@@ -476,6 +489,52 @@ fn setup_tls_watcher(
         .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
 
     Ok(watcher)
+}
+
+/// Reconcile macOS `/etc/resolver/<suffix>` files against the current
+/// set of route domains that fall outside the managed TLD.
+///
+/// Runs inside the gateway daemon (which runs as root via the
+/// elevation flow), so writes go directly without sudo. Best-effort:
+/// resolver hygiene must never crash the gateway, so any error is
+/// logged and swallowed.
+#[cfg(target_os = "macos")]
+fn reconcile_route_resolver_files_from_table(
+    table: &Arc<RwLock<RouteTable>>,
+    config: &GatewayConfig,
+) {
+    let domains: Vec<String> = {
+        let guard = table.read().expect("route table lock poisoned");
+        guard
+            .all_routes()
+            .into_iter()
+            .map(|route| route.domain.clone())
+            .collect()
+    };
+    let suffixes = resolver_setup::route_driven_resolver_suffixes(domains, &config.dns.tld);
+    let port = config.dns.bind_addr.port();
+    match resolver_setup::reconcile_route_resolver_files(&suffixes, &config.dns.tld, port) {
+        Ok(outcome) => {
+            if !outcome.added.is_empty() || !outcome.removed.is_empty() {
+                info!(
+                    added = outcome.added.len(),
+                    removed = outcome.removed.len(),
+                    "reconciled route-driven /etc/resolver files",
+                );
+            }
+        }
+        Err(error) => {
+            error!(error = %error, "failed to reconcile route-driven /etc/resolver files");
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn reconcile_route_resolver_files_from_table(
+    _table: &Arc<RwLock<RouteTable>>,
+    _config: &GatewayConfig,
+) {
+    // No /etc/resolver/ equivalent off macOS — nothing to do.
 }
 
 fn handle_server_task_result(

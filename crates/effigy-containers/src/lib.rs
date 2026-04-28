@@ -93,6 +93,53 @@ pub struct EffectiveContainerPolicy {
     pub on_task_exit: ManifestContainerOnTaskExit,
     pub shutdown: ManifestContainerShutdownMode,
     pub detach_timeout_secs: u64,
+    pub host_processes: Vec<EffectiveHostProcess>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveHostProcess {
+    pub name: String,
+    pub run: String,
+    pub restart: HostProcessRestart,
+    pub restart_delay_ms: u64,
+    pub shutdown_signal: HostProcessSignal,
+    pub shutdown_grace_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostProcessRestart {
+    OnFailure,
+    Always,
+    Never,
+}
+
+impl HostProcessRestart {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OnFailure => "on-failure",
+            Self::Always => "always",
+            Self::Never => "never",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostProcessSignal {
+    Sigterm,
+    Sigint,
+    Sighup,
+    Sigkill,
+}
+
+impl HostProcessSignal {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sigterm => "SIGTERM",
+            Self::Sigint => "SIGINT",
+            Self::Sighup => "SIGHUP",
+            Self::Sigkill => "SIGKILL",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +148,11 @@ pub struct EffectiveDnsRoute {
     pub tls: bool,
     pub port: Option<u16>,
     pub service: Option<String>,
+    /// External `host:port` target. When set, the gateway registers
+    /// this route directly against the listener and skips the
+    /// container-service host-port resolution. Mutually exclusive
+    /// with `service` at the manifest layer.
+    pub target_host: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -427,6 +479,7 @@ pub fn load_inline_workspace_container_policy(
         on_task_exit: ManifestContainerOnTaskExit::Stop,
         shutdown: ManifestContainerShutdownMode::Graceful,
         detach_timeout_secs: DEFAULT_ATTACH_TIMEOUT_SECS,
+        host_processes: Vec::new(),
     })
 }
 
@@ -575,6 +628,10 @@ fn build_effective_policy(
             tls: route.tls.unwrap_or(false),
             port: route.port,
             service: route.service.filter(|value| !value.trim().is_empty()),
+            target_host: route
+                .target_host
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty()),
         });
     }
     let service_aliases = effective_service_aliases(config);
@@ -646,7 +703,51 @@ fn build_effective_policy(
         detach_timeout_secs: lifecycle
             .and_then(|value| value.detach_timeout_secs)
             .unwrap_or(DEFAULT_ATTACH_TIMEOUT_SECS),
+        host_processes: config
+            .host_processes
+            .iter()
+            .map(resolve_host_process)
+            .collect(),
     })
+}
+
+fn resolve_host_process(
+    entry: &effigy_manifest::ManifestContainerHostProcess,
+) -> EffectiveHostProcess {
+    use effigy_manifest::ManifestContainerHostProcessRestart;
+    let restart = match entry.restart.unwrap_or_default() {
+        ManifestContainerHostProcessRestart::OnFailure => HostProcessRestart::OnFailure,
+        ManifestContainerHostProcessRestart::Always => HostProcessRestart::Always,
+        ManifestContainerHostProcessRestart::Never => HostProcessRestart::Never,
+    };
+    let shutdown_signal = entry
+        .shutdown_signal
+        .as_deref()
+        .map(str::trim)
+        .map(str::to_ascii_uppercase)
+        .as_deref()
+        .map(parse_host_process_signal)
+        .unwrap_or(HostProcessSignal::Sigterm);
+    EffectiveHostProcess {
+        name: entry.name.trim().to_owned(),
+        run: entry.run.clone(),
+        restart,
+        restart_delay_ms: entry.restart_delay_ms.unwrap_or(1000),
+        shutdown_signal,
+        shutdown_grace_secs: entry.shutdown_grace_secs.unwrap_or(5),
+    }
+}
+
+fn parse_host_process_signal(name: &str) -> HostProcessSignal {
+    // Manifest validation already guaranteed the value is one of these,
+    // but be defensive: fall back to SIGTERM on anything unexpected.
+    match name {
+        "SIGTERM" => HostProcessSignal::Sigterm,
+        "SIGINT" => HostProcessSignal::Sigint,
+        "SIGHUP" => HostProcessSignal::Sighup,
+        "SIGKILL" => HostProcessSignal::Sigkill,
+        _ => HostProcessSignal::Sigterm,
+    }
 }
 
 fn validate_compose_backend_host_paths(

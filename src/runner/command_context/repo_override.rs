@@ -25,6 +25,8 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
         Command::InternalGateway(_) => None,
         Command::InternalRhai(_) => None,
         Command::InternalContainerLeaseReaper(_) => None,
+        Command::InternalHostProcessSupervise(_) => None,
+        Command::InternalHostProcessStop(_) => None,
         Command::Task(_) => super::task_repo_override(cmd),
         Command::Help(_) => None,
     }

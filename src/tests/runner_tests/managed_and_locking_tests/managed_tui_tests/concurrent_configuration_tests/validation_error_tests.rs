@@ -2,6 +2,41 @@ use crate::runner::tests::prelude::{
     assert_managed_invalid_definition_case_table, ManagedInvalidDefinitionCase,
 };
 
+macro_rules! container_session_manifest {
+    ($body:literal) => {
+        concat!(
+            "[tasks.dev]\n",
+            "mode = \"tui\"\n",
+            "workspace = \"app\"\n",
+            $body,
+            "\n[systems]\n",
+            "default = \"dev\"\n\n",
+            "[systems.dev]\n",
+            "default_workspace = \"app\"\n\n",
+            "[systems.dev.workspaces.app]\n",
+            "container = \"web\"\n"
+        )
+    };
+}
+
+macro_rules! lifecycle_container_manifest {
+    ($body:literal) => {
+        concat!(
+            "[tasks.dev]\n",
+            "mode = \"tui\"\n",
+            "workspace = \"app\"\n",
+            "container_lifecycle = true\n",
+            $body,
+            "\n[systems]\n",
+            "default = \"dev\"\n\n",
+            "[systems.dev]\n",
+            "default_workspace = \"app\"\n\n",
+            "[systems.dev.workspaces.app]\n",
+            "container = \"web\"\n"
+        )
+    };
+}
+
 #[test]
 fn run_manifest_task_managed_tui_validation_error_contract_table() {
     let cases = [
@@ -52,20 +87,10 @@ concurrent = [{ name = "term", task = "shell" }]
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-lifecycle-missing-managed-flag",
-            manifest: r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-concurrent = [{ role = "lifecycle" }]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-"#,
+            manifest: container_session_manifest!(
+                r#"concurrent = [{ role = "lifecycle" }]
+"#
+            ),
             expected_task: "dev",
             expected_process: "process",
             expected_detail_substring: Some(
@@ -85,21 +110,10 @@ container_lifecycle = true
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-lifecycle-rejects-run",
-            manifest: r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-concurrent = [{ role = "lifecycle", run = "printf nope" }]
-container_lifecycle = true
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-"#,
+            manifest: lifecycle_container_manifest!(
+                r#"concurrent = [{ role = "lifecycle", run = "printf nope" }]
+"#
+            ),
             expected_task: "dev",
             expected_process: "process",
             expected_detail_substring: Some("omit `run` and `task`"),
@@ -118,20 +132,10 @@ concurrent = [{ role = "shell" }]
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-shell-rejects-run",
-            manifest: r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-concurrent = [{ role = "shell", run = "printf nope" }]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-"#,
+            manifest: container_session_manifest!(
+                r#"concurrent = [{ role = "shell", run = "printf nope" }]
+"#
+            ),
             expected_task: "dev",
             expected_process: "process",
             expected_detail_substring: Some(
@@ -140,21 +144,10 @@ container = "web"
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-lifecycle-rejects-setup",
-            manifest: r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-concurrent = [{ role = "lifecycle", setup = [{ run = "printf nope" }] }]
-container_lifecycle = true
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-"#,
+            manifest: lifecycle_container_manifest!(
+                r#"concurrent = [{ role = "lifecycle", setup = [{ run = "printf nope" }] }]
+"#
+            ),
             expected_task: "dev",
             expected_process: "lifecycle",
             expected_detail_substring: Some(
@@ -177,21 +170,11 @@ health_wait = true
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-health-wait-missing-lifecycle",
-            manifest: r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-concurrent = [{ name = "api", run = "printf api" }]
+            manifest: container_session_manifest!(
+                r#"concurrent = [{ name = "api", run = "printf api" }]
 health_wait = true
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-"#,
+"#
+            ),
             expected_task: "dev",
             expected_process: "managed",
             expected_detail_substring: Some(
@@ -200,22 +183,11 @@ container = "web"
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-ready-message-requires-health-wait",
-            manifest: r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-concurrent = [{ role = "lifecycle" }]
-container_lifecycle = true
+            manifest: lifecycle_container_manifest!(
+                r#"concurrent = [{ role = "lifecycle" }]
 ready_message = "http://project.test"
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-"#,
+"#
+            ),
             expected_task: "dev",
             expected_process: "managed",
             expected_detail_substring: Some("`ready_message` requires `health_wait = true`"),
@@ -236,21 +208,11 @@ gateway = true
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-gateway-missing-lifecycle",
-            manifest: r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-concurrent = [{ name = "api", run = "printf api" }]
+            manifest: container_session_manifest!(
+                r#"concurrent = [{ name = "api", run = "printf api" }]
 gateway = true
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-"#,
+"#
+            ),
             expected_task: "dev",
             expected_process: "managed",
             expected_detail_substring: Some(

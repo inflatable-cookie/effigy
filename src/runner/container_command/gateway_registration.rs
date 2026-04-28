@@ -25,6 +25,12 @@ pub(in crate::runner) struct RegisteredGatewayRoute {
     pub(in crate::runner) tcp_target: Option<String>,
     pub(in crate::runner) tls: bool,
     pub(in crate::runner) service: Option<String>,
+    /// True when the route's target was supplied directly via the
+    /// manifest's `target_host = "..."` field, rather than resolved
+    /// from a compose-service binding. External targets bypass the
+    /// container-runtime validation but still go through the
+    /// host-listener collision check.
+    pub(in crate::runner) external_target: bool,
 }
 
 pub(in crate::runner) fn register_gateway_routes_for_container(
@@ -150,15 +156,21 @@ fn resolve_gateway_routes(
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     let mut routes = Vec::new();
     for dns_route in &policy.dns_routes {
-        let host_port = selected_host_port_for_route(policy, dns_route)?;
+        let target = if let Some(host_target) = dns_route.target_host.as_deref() {
+            host_target.trim().to_owned()
+        } else {
+            let host_port = selected_host_port_for_route(policy, dns_route)?;
+            format!("127.0.0.1:{host_port}")
+        };
         routes.push(RegisteredGatewayRoute {
             domain: dns_route.domain.clone(),
-            target: Some(format!("127.0.0.1:{host_port}")),
+            target: Some(target),
             dns_ip: None,
             tcp_port: None,
             tcp_target: None,
             tls: dns_route.tls,
             service: dns_route.service.clone(),
+            external_target: dns_route.target_host.is_some(),
         });
     }
     Ok(routes)
@@ -171,16 +183,22 @@ fn resolve_gateway_routes_against_rows(
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     let mut routes = Vec::new();
     for dns_route in &policy.dns_routes {
-        let host_port = runtime_host_port_for_route(repo_root, policy, dns_route, rows)?
-            .unwrap_or(selected_host_port_for_route(policy, dns_route)?);
+        let target = if let Some(host_target) = dns_route.target_host.as_deref() {
+            host_target.trim().to_owned()
+        } else {
+            let host_port = runtime_host_port_for_route(repo_root, policy, dns_route, rows)?
+                .unwrap_or(selected_host_port_for_route(policy, dns_route)?);
+            format!("127.0.0.1:{host_port}")
+        };
         routes.push(RegisteredGatewayRoute {
             domain: dns_route.domain.clone(),
-            target: Some(format!("127.0.0.1:{host_port}")),
+            target: Some(target),
             dns_ip: None,
             tcp_port: None,
             tcp_target: None,
             tls: dns_route.tls,
             service: dns_route.service.clone(),
+            external_target: dns_route.target_host.is_some(),
         });
     }
     Ok(routes)
@@ -231,6 +249,7 @@ fn resolve_gateway_service_alias_routes(
                 tcp_target,
                 tls: false,
                 service: Some(alias.service.clone()),
+                external_target: false,
             }
         })
         .collect())
@@ -280,6 +299,7 @@ fn resolve_gateway_shared_service_alias_routes(
             },
             tls: false,
             service: Some(shared.service_name.clone()),
+            external_target: false,
         });
     }
     Ok(routes)
@@ -426,6 +446,14 @@ fn validate_gateway_routes_against_rows(
     rows: &[RunningComposeContainer],
 ) -> Result<(), RunnerError> {
     for route in routes {
+        if route.external_target {
+            // The route declared `target_host` directly in the manifest, so it
+            // points at a host listener owned by something outside the
+            // container project (e.g. a sidecar autossh tunnel started from
+            // the dev task). Skip the runtime-binding check — the next
+            // validator covers host-listener collisions.
+            continue;
+        }
         let Some(target_port) = route
             .target
             .as_deref()
@@ -464,6 +492,12 @@ fn validate_gateway_routes_against_host_listeners(
     routes: &[RegisteredGatewayRoute],
 ) -> Result<(), RunnerError> {
     for route in routes {
+        if route.external_target {
+            // `target_host` explicitly opts in to a host-side listener — that
+            // is the whole point of the directive. Skip the safety check that
+            // refuses to attach to host processes.
+            continue;
+        }
         let Some(target_port) = route
             .target
             .as_deref()
@@ -1066,6 +1100,7 @@ mod tests {
                 tls: true,
                 port: None,
                 service: None,
+                target_host: None,
             }],
             service_aliases: vec![EffectiveServiceAlias {
                 service: "db".to_owned(),
@@ -1084,6 +1119,7 @@ mod tests {
             on_task_exit: ManifestContainerOnTaskExit::Stop,
             shutdown: ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
+            host_processes: Vec::new(),
         }
     }
 
@@ -1268,6 +1304,7 @@ services:
             tcp_target: Some("127.0.0.1:21306".to_owned()),
             tls: false,
             service: Some("db".to_owned()),
+            external_target: false,
         }];
 
         prune_stale_container_routes_for_project(&route_table_path, &repo_root, &desired)
@@ -1287,6 +1324,7 @@ services:
                 tls: false,
                 port: Some(9001),
                 service: Some("admin".to_owned()),
+                target_host: None,
             });
         policy.declared_ports = vec!["8080:80".to_owned(), "9001:9001".to_owned()];
 
@@ -1505,6 +1543,7 @@ services:
                     tls: false,
                     port: Some(9001),
                     service: Some("dbadmin".to_owned()),
+                    target_host: None,
                 });
 
             let routes =
@@ -1609,6 +1648,7 @@ services:
                     tls: false,
                     port: Some(9001),
                     service: Some("dbadmin".to_owned()),
+                    target_host: None,
                 });
 
             let project_routes =

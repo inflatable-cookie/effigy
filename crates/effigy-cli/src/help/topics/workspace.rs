@@ -5,6 +5,10 @@ pub(crate) fn render_workspace_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
         NoticeLevel::Info,
         "Ensure the selected system substrate is up, then open the resolved workspace shell.",
     )?;
+    renderer.notice(
+        NoticeLevel::Info,
+        "Mounted sibling repos listed in `systems.<name>.mounts` auto-adopt any producer-declared `[isolation].paths` into the workspace container; the normal path does not require a duplicate isolation list.",
+    )?;
     renderer.section("Usage")?;
     renderer.text("effigy workspace [<NAME>] [--system <NAME>] [--repo <PATH>]")?;
     renderer.text("")?;

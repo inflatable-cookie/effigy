@@ -1,26 +1,18 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::{
-    render_bullet_section, render_info_notices, render_options_section, render_usage_section,
-};
+use super::shared::render_standard_topic_help;
 
 pub(crate) fn render_doctor_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
-    renderer.section("doctor Help")?;
-    render_info_notices(
+    render_standard_topic_help(
         renderer,
+        "doctor",
         &[
             "Run remediation-first health checks for environment tooling, manifest validity, and task references.",
             "Explain task resolution with `effigy doctor <task> <args>`.",
         ],
-    )?;
-    render_usage_section(
-        renderer,
         &[
             "effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]",
             "effigy doctor <task> <args> [--json]",
         ],
-    )?;
-    render_options_section(
-        renderer,
         &[
             ("--repo <PATH>", "Override target repository path"),
             ("--fix", "Apply safe automatic remediations when available"),
@@ -31,11 +23,6 @@ pub(crate) fn render_doctor_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
             ("--json", "Render machine-readable doctor report payload"),
             ("-h, --help", "Print command help"),
         ],
-    )?;
-    render_bullet_section(
-        renderer,
-        "Examples",
-        "commands",
         &[
             "effigy doctor",
             "effigy doctor --repo /path/to/workspace",
@@ -44,6 +31,5 @@ pub(crate) fn render_doctor_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
             "effigy doctor frontend/build -- --watch",
             "effigy --json doctor --repo /path/to/workspace",
         ],
-    )?;
-    Ok(())
+    )
 }

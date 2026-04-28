@@ -18,7 +18,9 @@ mod exec_command;
 mod execute;
 mod gateway_command;
 mod host_container_lease;
+mod host_process;
 mod locking;
+mod managed_shell;
 mod manifest;
 mod release_command;
 mod script_command;
@@ -41,6 +43,9 @@ pub use error::RunnerError;
 pub(in crate::runner) use exec_command::run_exec;
 pub(in crate::runner) use gateway_command::{run_gateway, run_internal_gateway};
 pub(in crate::runner) use host_container_lease::run_internal_container_lease_reaper;
+pub(in crate::runner) use host_process::{
+    run_internal_host_process_stop, run_internal_host_process_supervise,
+};
 pub(in crate::runner) use release_command::run_release;
 pub(in crate::runner) use script_command::run_internal_rhai;
 pub(in crate::runner) use service_command::run_service;

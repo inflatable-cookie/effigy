@@ -13,7 +13,7 @@ use effigy_containers::{
     validate_compose_backend_runtime, validate_container_policy, EffectiveAttachMode,
     EffectiveContainerPolicy,
 };
-use effigy_runtime::session::run_attached_container_session;
+use effigy_runtime::session::run_attached_container_session_with_hook;
 use effigy_runtime::shell::run_container_shell as run_runtime_container_shell;
 use effigy_runtime::signals::{
     install_stop_requested_flag, run_compose_inherit_with_stop_flag, run_docker_capture,
@@ -35,6 +35,7 @@ use crate::runner::exec_command::{
     append_color_exec_env, probe_container_capabilities, run_compose_exec,
 };
 use crate::runner::host_container_lease::clear_host_container_lease;
+use crate::runner::host_process::start_host_processes_for_container;
 use crate::runner::system_command::ensure_workspace_effigy_available_for_policy;
 
 const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1";
@@ -118,12 +119,21 @@ pub(super) fn run_container_up(
 
     clear_host_container_lease(repo_root, &policy)?;
 
+    // Spawn detached host-process supervisors (one per
+    // `[[containers.<name>.host_processes]]` entry). Failures here do
+    // not abort the container bring-up — they surface as warnings on
+    // the report.
+    let mut combined_warnings: Vec<String> = warnings.clone();
+    if let Err(error) = start_host_processes_for_container(repo_root, &policy) {
+        combined_warnings.push(format!("host-process supervisor failed to start: {error}"));
+    }
+
     if attach_mode == EffectiveAttachMode::Detached {
         let mut report = up_detached_report(&policy, colima_started, health);
         annotate_shared_service_notes(&mut report, &shared_service_notes);
         annotate_registered_gateway_routes(&mut report, &gateway_routes);
         annotate_tcp_alias_host_notes(&mut report, &tcp_alias_host_notes);
-        annotate_warning_lines(&mut report, &warnings);
+        annotate_warning_lines(&mut report, &combined_warnings);
         return Ok(render_container_report(report, output_json));
     }
 
@@ -133,10 +143,21 @@ pub(super) fn run_container_up(
         ));
     }
 
-    run_attached_container_session(repo_root, &policy, colima_started, health, None, |policy| {
-        super::gateway_registration::deregister_gateway_routes_for_container(policy)
-            .map_err(runtime_error_from_runner)
-    })
+    run_attached_container_session_with_hook(
+        repo_root,
+        &policy,
+        colima_started,
+        health,
+        None,
+        |policy| {
+            super::gateway_registration::deregister_gateway_routes_for_container(policy)
+                .map_err(runtime_error_from_runner)
+        },
+        |repo_root, policy| {
+            let _ =
+                crate::runner::host_process::stop_host_processes_for_container(repo_root, policy);
+        },
+    )
     .map_err(Into::into)
 }
 
@@ -412,6 +433,7 @@ mod tests {
             on_task_exit: ManifestContainerOnTaskExit::Stop,
             shutdown: ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
+            host_processes: Vec::new(),
         }
     }
 

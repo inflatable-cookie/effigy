@@ -1,5 +1,6 @@
 use crate::runner::tests::prelude::{
-    assert_managed_output_case_table, lock_test, managed_tui_env, write_ranked_catalog_tasks,
+    assert_managed_output_case_table, lock_test, managed_tui_env,
+    write_managed_tui_container_lifecycle_manifest, write_ranked_catalog_tasks,
     write_ranked_task_ref_manifest, write_root_manifest, ManagedInvocation, ManagedOutputCase,
     Path,
 };
@@ -42,215 +43,67 @@ fn setup_single_definition_ordered_profile_entries(root: &Path) {
 }
 
 fn setup_lifecycle_entry(root: &Path) {
-    write_root_manifest(
+    write_managed_tui_container_lifecycle_manifest(
         root,
-        r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-container_lifecycle = true
-concurrent = [
+        r#"[
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "api", run = "printf api", start = 2, tab = 2, shutdown_on_exit = true }
-]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-
-[containers]
-default = "web"
-
-[containers.web]
-driver = "colima"
-startup = "detached"
-compose_file = "docker-compose.yml"
-project_name = "demo-web-dev"
-primary_service = "app"
-working_dir = "/workspace"
-"#,
+]"#,
+        "",
+        "",
     );
-    std::fs::write(
-        root.join("docker-compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write docker compose");
 }
 
 fn setup_lifecycle_and_shell_entry(root: &Path) {
-    write_root_manifest(
+    write_managed_tui_container_lifecycle_manifest(
         root,
-        r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-container_lifecycle = true
-concurrent = [
+        r#"[
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "terminal", role = "shell", start = 2, tab = 2 },
   { name = "api", run = "printf api", start = 3, tab = 3, shutdown_on_exit = true }
-]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-
-[containers]
-default = "web"
-
-[containers.web]
-driver = "colima"
-startup = "detached"
-compose_file = "docker-compose.yml"
-project_name = "demo-web-dev"
-primary_service = "app"
-working_dir = "/workspace"
-"#,
+]"#,
+        "",
+        "",
     );
-    std::fs::write(
-        root.join("docker-compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write docker compose");
 }
 
 fn setup_lifecycle_and_shell_service_entry(root: &Path) {
-    write_root_manifest(
+    write_managed_tui_container_lifecycle_manifest(
         root,
-        r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-container_lifecycle = true
-concurrent = [
+        r#"[
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "terminal", role = "shell", service = "workspace", start = 2, tab = 2 },
   { name = "api", run = "printf api", start = 3, tab = 3, shutdown_on_exit = true }
-]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-
-[containers]
-default = "web"
-
-[containers.web]
-driver = "colima"
-startup = "detached"
-compose_file = "docker-compose.yml"
-project_name = "demo-web-dev"
-primary_service = "app"
-working_dir = "/workspace"
-"#,
+]"#,
+        "",
+        "",
     );
-    std::fs::write(
-        root.join("docker-compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write docker compose");
 }
 
 fn setup_lifecycle_readiness_entry(root: &Path) {
-    write_root_manifest(
+    write_managed_tui_container_lifecycle_manifest(
         root,
-        r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-container_lifecycle = true
-health_wait = true
-ready_message = "http://project.test"
-concurrent = [
+        r#"[
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "terminal", role = "shell", start = 2, tab = 2 },
   { name = "api", run = "printf api", start = 3, tab = 3, shutdown_on_exit = true }
-]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-
-[containers]
-default = "web"
-
-[containers.web]
-driver = "colima"
-startup = "detached"
-compose_file = "docker-compose.yml"
-project_name = "demo-web-dev"
-primary_service = "app"
-working_dir = "/workspace"
-"#,
+]"#,
+        "health_wait = true\nready_message = \"http://project.test\"",
+        "",
     );
-    std::fs::write(
-        root.join("docker-compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write docker compose");
 }
 
 fn setup_lifecycle_gateway_and_readiness_entry(root: &Path) {
-    write_root_manifest(
+    write_managed_tui_container_lifecycle_manifest(
         root,
-        r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-container_lifecycle = true
-gateway = true
-health_wait = true
-ready_message = "http://project.test"
-concurrent = [
+        r#"[
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "terminal", role = "shell", start = 2, tab = 2 },
   { name = "api", run = "printf api", start = 3, tab = 3, shutdown_on_exit = true }
-]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-
-[containers]
-default = "web"
-
-[containers.web]
-driver = "colima"
-startup = "detached"
-compose_file = "docker-compose.yml"
-project_name = "demo-web-dev"
-primary_service = "app"
-working_dir = "/workspace"
-
-[containers.web.dns]
-routes = [{ domain = "project.test" }]
-"#,
+]"#,
+        "gateway = true\nhealth_wait = true\nready_message = \"http://project.test\"",
+        "[containers.web.dns]\nroutes = [{ domain = \"project.test\" }]",
     );
-    std::fs::write(
-        root.join("docker-compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write docker compose");
 }
 
 #[test]

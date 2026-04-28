@@ -33,6 +33,10 @@ pub enum Command {
     InternalGateway(InternalGatewayArgs),
     #[doc(hidden)]
     InternalContainerLeaseReaper(InternalContainerLeaseReaperArgs),
+    #[doc(hidden)]
+    InternalHostProcessSupervise(InternalHostProcessSuperviseArgs),
+    #[doc(hidden)]
+    InternalHostProcessStop(InternalHostProcessStopArgs),
     Help(HelpTopic),
 }
 
@@ -51,6 +55,29 @@ pub struct InternalContainerLeaseReaperArgs {
     pub repo_root: PathBuf,
     pub container_name: String,
     pub token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct InternalHostProcessSuperviseArgs {
+    pub repo_root: PathBuf,
+    pub container_name: String,
+    pub process_name: String,
+    pub run: String,
+    pub pid_file: PathBuf,
+    pub log_file: PathBuf,
+    /// `on-failure`, `always`, or `never`.
+    pub restart: String,
+    pub restart_delay_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct InternalHostProcessStopArgs {
+    pub pid_file: PathBuf,
+    /// Signal name (e.g. `SIGTERM`).
+    pub signal: String,
+    pub grace_secs: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

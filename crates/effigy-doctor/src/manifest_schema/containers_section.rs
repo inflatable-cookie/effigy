@@ -45,6 +45,7 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
                 "lifecycle",
                 "health",
                 "host",
+                "host_processes",
                 "ui",
             ],
         );
@@ -82,6 +83,76 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
         }
         if let Some(dns) = table.get("dns") {
             validate_container_dns(context, &path, dns);
+        }
+        if let Some(host_processes) = table.get("host_processes") {
+            validate_container_host_processes(context, &path, host_processes);
+        }
+    }
+}
+
+fn validate_container_host_processes(
+    context: &mut SchemaContext<'_, '_>,
+    base_path: &str,
+    value: &Value,
+) {
+    let path = format!("{base_path}.host_processes");
+    let Some(entries) = value.as_array() else {
+        context.unsupported_value(
+            &path,
+            SchemaContext::value_type(value),
+            "expected array of tables",
+        );
+        return;
+    };
+    for (index, entry) in entries.iter().enumerate() {
+        let entry_path = format!("{path}[{index}]");
+        let Some(table) = entry.as_table() else {
+            context.unsupported_value(
+                &entry_path,
+                SchemaContext::value_type(entry),
+                "expected table",
+            );
+            continue;
+        };
+        validate_allowed_keys(
+            context,
+            &entry_path,
+            table,
+            &[
+                "name",
+                "run",
+                "restart",
+                "restart_delay_ms",
+                "shutdown_signal",
+                "shutdown_grace_secs",
+            ],
+        );
+        validate_string_field(context, &entry_path, table.get("name"), "name");
+        validate_string_field(context, &entry_path, table.get("run"), "run");
+        validate_string_field(context, &entry_path, table.get("restart"), "restart");
+        validate_string_field(
+            context,
+            &entry_path,
+            table.get("shutdown_signal"),
+            "shutdown_signal",
+        );
+        if let Some(delay) = table.get("restart_delay_ms") {
+            if delay.as_integer().is_none() {
+                context.unsupported_value(
+                    &format!("{entry_path}.restart_delay_ms"),
+                    SchemaContext::value_type(delay),
+                    "expected integer",
+                );
+            }
+        }
+        if let Some(grace) = table.get("shutdown_grace_secs") {
+            if grace.as_integer().is_none() {
+                context.unsupported_value(
+                    &format!("{entry_path}.shutdown_grace_secs"),
+                    SchemaContext::value_type(grace),
+                    "expected integer",
+                );
+            }
         }
     }
 }
@@ -190,7 +261,7 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
                     context,
                     &defaults_path,
                     defaults_table,
-                    &["tls", "port", "service"],
+                    &["tls", "port", "service", "target_host"],
                 );
                 if let Some(tls) = defaults_table.get("tls") {
                     if tls.as_bool().is_none() {
@@ -215,6 +286,12 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
                     &defaults_path,
                     defaults_table.get("service"),
                     "service",
+                );
+                validate_string_field(
+                    context,
+                    &defaults_path,
+                    defaults_table.get("target_host"),
+                    "target_host",
                 );
             }
             None => context.unsupported_value(
@@ -247,10 +324,16 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
                 context,
                 &route_path,
                 route_table,
-                &["domain", "tls", "port", "service"],
+                &["domain", "tls", "port", "service", "target_host"],
             );
             validate_string_field(context, &route_path, route_table.get("domain"), "domain");
             validate_string_field(context, &route_path, route_table.get("service"), "service");
+            validate_string_field(
+                context,
+                &route_path,
+                route_table.get("target_host"),
+                "target_host",
+            );
             if let Some(tls) = route_table.get("tls") {
                 if tls.as_bool().is_none() {
                     context.unsupported_value(

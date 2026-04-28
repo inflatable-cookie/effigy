@@ -253,6 +253,12 @@ impl From<ManagedError> for RunnerError {
             ManagedError::TaskManagedUnsupportedMode { task, mode } => {
                 Self::TaskManagedUnsupportedMode { task, mode }
             }
+            ManagedError::TaskHasConcurrentWithoutMode { task } => Self::TaskInvocation(format!(
+                "task '{task}' declares `concurrent = [...]` but does not set `mode = \"tui\"`; \
+                     either add `mode = \"tui\"` (TUI runs concurrent entries as tabs) or move \
+                     the concurrent entries to `[[containers.<name>.host_processes]]` for non-TUI \
+                     lifecycle-bound supervisors"
+            )),
             ManagedError::TaskManagedProfileNotFound {
                 task,
                 profile,

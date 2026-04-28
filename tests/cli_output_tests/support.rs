@@ -78,6 +78,136 @@ pub(super) fn parse_stdout_json(output: &Output) -> Value {
     serde_json::from_str(&stdout).expect("json parse")
 }
 
+pub(super) fn init_git_repo(root: &Path) {
+    let init = Command::new("git")
+        .arg("init")
+        .arg(root)
+        .output()
+        .expect("git init");
+    assert!(init.status.success(), "git init failed: {init:?}");
+
+    let email = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["config", "user.email", "effigy-tests@example.com"])
+        .output()
+        .expect("git config email");
+    assert!(email.status.success(), "git config email failed: {email:?}");
+
+    let name = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["config", "user.name", "Effigy Tests"])
+        .output()
+        .expect("git config name");
+    assert!(name.status.success(), "git config name failed: {name:?}");
+}
+
+pub(super) fn git_commit_all(root: &Path, message: &str) {
+    let add = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["add", "."])
+        .output()
+        .expect("git add");
+    assert!(add.status.success(), "git add failed: {add:?}");
+
+    let commit = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", message])
+        .output()
+        .expect("git commit");
+    assert!(commit.status.success(), "git commit failed: {commit:?}");
+}
+
+pub(super) fn init_git_repo_with_commit(root: &Path, message: &str) {
+    init_git_repo(root);
+    git_commit_all(root, message);
+}
+
+pub(super) fn git_stdout(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(output.status.success(), "git command failed: {output:?}");
+    String::from_utf8(output.stdout)
+        .expect("utf8 git stdout")
+        .trim()
+        .to_owned()
+}
+
+pub(super) fn attach_bare_remote(root: &Path) -> PathBuf {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let pid = std::process::id();
+    let remote = (0..1024)
+        .map(|attempt| {
+            std::env::temp_dir().join(format!("effigy-release-remote-{pid}-{ts}-{attempt}.git"))
+        })
+        .find(|candidate| !candidate.exists())
+        .expect("find unique bare remote path");
+    let init = Command::new("git")
+        .arg("init")
+        .arg("--bare")
+        .arg(&remote)
+        .output()
+        .expect("git init bare");
+    assert!(init.status.success(), "git init bare failed: {init:?}");
+
+    let add_remote = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["remote", "add", "origin"])
+        .arg(&remote)
+        .output()
+        .expect("git remote add");
+    assert!(
+        add_remote.status.success(),
+        "git remote add failed: {add_remote:?}"
+    );
+
+    let branch = git_stdout(root, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    let push = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["push", "-u", "origin", &branch])
+        .output()
+        .expect("git push initial");
+    assert!(push.status.success(), "git push initial failed: {push:?}");
+
+    remote
+}
+
+pub(super) fn write_fake_effigy_install_repo(root: &Path, version: &str, tag: &str) -> String {
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::write(
+        root.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"effigy\"\nversion = \"{version}\"\nedition = \"2021\"\n\n[[bin]]\nname = \"effigy\"\npath = \"src/main.rs\"\n",
+        ),
+    )
+    .expect("write cargo manifest");
+    fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("write main");
+    init_git_repo_with_commit(root, "initial");
+    let tag_output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["tag", tag])
+        .output()
+        .expect("git tag");
+    assert!(
+        tag_output.status.success(),
+        "git tag failed: {tag_output:?}"
+    );
+    format!("file://{}", root.display())
+}
+
 pub(super) fn run_json_cli_command_with_manifest(
     name: &str,
     manifest: &str,

@@ -1,27 +1,19 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::{
-    render_bullet_section, render_info_notices, render_options_section, render_usage_section,
-};
+use super::shared::render_standard_topic_help;
 
 pub(crate) fn render_changelog_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
-    renderer.section("changelog Help")?;
-    render_info_notices(
+    render_standard_topic_help(
         renderer,
+        "changelog",
         &[
             "Parse, validate, format, analyze, and extract changelogs conforming to the Northstar Changelog Profile.",
         ],
-    )?;
-    render_usage_section(
-        renderer,
         &[
             "effigy changelog validate [FILE] [--json]",
             "effigy changelog format [FILE] [--write|--preview]",
             "effigy changelog analyze [FILE] [--json]",
             "effigy changelog extract [FILE] --version <VERSION>",
         ],
-    )?;
-    render_options_section(
-        renderer,
         &[
             (
                 "validate",
@@ -42,11 +34,6 @@ pub(crate) fn render_changelog_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ("--json", "Output results as JSON"),
             ("-h, --help", "Print command help"),
         ],
-    )?;
-    render_bullet_section(
-        renderer,
-        "Examples",
-        "commands",
         &[
             "effigy changelog validate",
             "effigy changelog validate CHANGELOG.md",
@@ -55,6 +42,5 @@ pub(crate) fn render_changelog_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy changelog analyze --json",
             "effigy changelog extract --version 0.2.0",
         ],
-    )?;
-    Ok(())
+    )
 }
