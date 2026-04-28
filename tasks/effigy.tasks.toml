@@ -46,6 +46,34 @@ container = "linux-release"
 "qa:json" = "cargo run --bin effigy -- contracts check-json --fast --print-selected=text"
 "qa:json:ci" = "cargo run --bin effigy -- contracts check-json --full --print-selected=json"
 "qa:released-surface" = "cargo test --test cli_output_tests released_surface_ -- --nocapture"
+"qa:ci:fmt" = [{ task = "fmt:check" }]
+"qa:ci:clippy" = "cargo clippy --all-targets -- -D warnings -A clippy::result_large_err -A clippy::too_many_arguments -A clippy::type_complexity"
+"qa:ci:test" = "cargo nextest run --no-fail-fast"
+"qa:ci:doc" = "cargo test --doc"
+"qa:ci:docs-links" = "cargo run --bin effigy -- docs check-links"
+"qa:ci:json:artifact" = "bash -lc 'set -o pipefail; cargo run --bin effigy -- contracts check-json --full --print-selected=json | tee json-contracts.log; grep -m1 '^{\"selected\":' json-contracts.log > json-contracts-selected.json'"
+"qa:ci:json:validate" = "cargo run --bin effigy -- contracts validate-selection --artifact ./json-contracts-selected.json"
+"qa:ci:json:negative" = "cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture"
+"qa:ci:json" = [
+  { task = "qa:ci:json:artifact" },
+  { task = "qa:ci:json:validate" },
+  { task = "qa:ci:json:negative" },
+]
+"qa:ci:fast" = [
+  { task = "qa:ci:test" },
+  { task = "qa:ci:doc" },
+  { task = "qa:released-surface" },
+  { task = "qa:ci:json" },
+]
+"qa:ci:local" = [
+  { task = "qa:ci:fmt" },
+  { task = "qa:ci:clippy" },
+  { task = "qa:ci:test" },
+  { task = "qa:ci:doc" },
+  { task = "qa:released-surface" },
+  { task = "qa:ci:docs-links" },
+  { task = "qa:ci:json" },
+]
 "qa:gates" = [{ task = "qa:docs" }, { task = "qa:json" }]
 "qa:ci" = [{ task = "qa:docs" }, { task = "qa:json:ci" }, { task = "qa:released-surface" }]
 "prepush:test:json-mode" = "cargo test --test cli_output_tests cli_json_mode"
