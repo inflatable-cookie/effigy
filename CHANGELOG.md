@@ -33,6 +33,15 @@ During v0.x, MINOR bumps may include breaking changes.
   "either"`. `host` is no longer accepted in `[tasks.<name>]`; `either` is the
   default transparent routing mode.
 
+### Added
+- Add `extend = [...]` array merge directive to manifest include specs.
+  Listed paths in the included file get appended onto the parent's array
+  instead of being rejected as a conflict, so layered overlays can grow a
+  shared list without restating the existing entries. Validation rejects
+  extending a non-array path, declaring the same path under both `override`
+  and `extend`, and declaring an `extend` path that the include never
+  reaches.
+
 ### Changed
 - Move internal workspace crates onto shared workspace metadata so their crate
   versions now track the main Effigy release version instead of all reporting
