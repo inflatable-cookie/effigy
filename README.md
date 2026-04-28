@@ -1,100 +1,62 @@
 # Effigy
 
-Effigy gives a repo one way to ask for work.
+Effigy is a repo runtime for developer work.
 
-Instead of remembering whether a task lives in `package.json`, Cargo, a shell
-script, or a nested workspace, you use one CLI for task routing, built-in
-workflows, and automation-safe output.
+It gives a repo one CLI for:
+- task routing
+- manifest-owned local environments
+- proof demos
+- machine-safe JSON output
+- release and distribution workflows
 
-The goal is simple: common repo work should feel direct. When a workflow still
-needs too much ceremony, the answer should usually be to improve Effigy or the
-manifest, not to teach people more wrapper scripts.
+Instead of remembering whether something lives in `package.json`, Cargo, a
+shell script, a nested workspace, or a local container stack, you ask Effigy.
 
-## What Effigy Puts Up Front
+## What It Does
 
-- See what a repo can do with `effigy tasks`.
-- Run local or nested tasks with `effigy <task>` or `effigy <catalog>/<task>`.
-- Standardize everyday workflows with built-ins such as `effigy doctor`,
-  `effigy test`, `effigy watch`, `effigy init`, and `effigy migrate`.
-- Discover repo-owned proof demos with `effigy demo list`, inspect the latest
-  known or currently running proof state with `effigy demo inspect <id>`,
-  query retained attempt history with `effigy demo history <id>`, record a
-  normalized proof attempt with `effigy demo run <id>`, and use `demo stop` /
-  `demo rerun` for runner-owned lifecycle control. The demo lane also now
-  includes a browser surface with history, artifacts, and a live terminal tab
-  for the bounded honest runtime cases.
-- Move CI and agent automation onto stable JSON with `effigy --json <command>`.
-- Replace scattered release and validation scripts with built-in command
-  surfaces as adoption grows.
-- Provide optional distribution primitives so repos can adopt artifact
-  validation, closeout generation, publish checks, or fuller distribution
-  orchestration without inheriting one mandatory release protocol.
-- Provide a first bounded container surface so web-heavy repos can define named
-  Colima-backed local environments instead of installing databases and service
-  stacks directly on the host machine.
-
-Current roadmap state:
-- [`g02.006` container environment contract](./docs/roadmaps/g02/006-colima-container-environment-contract.md) is paused on a trustworthy v1 boundary
-- [`g02.007` distribution release and consumer rollout](./docs/roadmaps/g02/007-distribution-release-and-consumer-rollout.md) is active, with release closure complete but release execution still deferred
-- [`g02.010` modularization and crate boundaries](./docs/roadmaps/g02/010-effigy-modularization-and-crate-boundaries.md) is still active in a parallel thread
-- workspace plus `effigy-core` foundation is shipped
-- `effigy-tasks` foundation is shipped
-- `effigy-manifest` foundation is shipped
-- `effigy-demo` foundation is shipped
-- demo browser/projection extraction is shipped
-- demo runtime/session extraction is shipped
-- post-demo boundary decision is made
-- docs-policy extraction is shipped
-- post-docs boundary decision is made
-- docs-policy QA check extraction is shipped
-- post-docs QA boundary decision is made
-- `effigy-env` foundation extraction is shipped
-- post-env boundary decision is made
-- `effigy-doctor` foundation extraction is shipped
-- post-doctor boundary decision is made
-- doctor report/projection extraction is shipped
-- remaining doctor shell is classified as orchestration work
-- CLI shell foundation extraction is shipped
-- first TUI shell-seam extraction is shipped
-- multiprocess TUI/runtime foundation extraction is shipped
-- demo-browser and TUI shell extraction are shipped strongly enough to pause
-- `effigy-contracts`, `effigy-bootstrap`, `effigy-process`, and `effigy-ui` are now real workspace crates
-- test ownership cleanup is complete across `src/` and workspace crates
-- release closure is complete
+- Run repo and nested tasks with `effigy <task>` or `effigy <catalog>/<task>`
+- Inspect what a repo exposes with `effigy tasks`
+- Keep local web/service stacks off the host with `effigy container ...`,
+  `effigy system ...`, and `effigy workspace`
+- Route local domains through the built-in gateway with TLS, DNS, and port
+  management
+- Define proof demos in the manifest and operate them with `effigy demo ...`
+- Use stable JSON output for CI, agents, and other machine consumers
+- Run release and distribution workflows from first-class built-ins instead of
+  repo-local shell wrappers
 
 ## Install
 
-Homebrew (macOS):
+Homebrew on macOS:
 
 ```bash
 brew install inflatable-cookie/tap/effigy
 ```
 
-Prebuilt binary (macOS and Linux):
+Prebuilt binary on macOS or Linux:
 
 ```bash
 curl -fsSL https://github.com/inflatable-cookie/effigy/releases/latest/download/effigy-$(uname -m | sed 's/arm64/aarch64/')-$(uname -s | tr A-Z a-z | sed 's/darwin/apple-darwin/;s/linux/unknown-linux-gnu/') -o /usr/local/bin/effigy && chmod +x /usr/local/bin/effigy
 ```
 
-Linux note: GNU/Linux release binaries are built against an Ubuntu 22.04
-baseline and should run on systems with `glibc >= 2.35`. If your distro is
-older, use `cargo install` instead.
+Linux note: release binaries target an Ubuntu 22.04 baseline and expect
+`glibc >= 2.35`. If your distro is older, install from source instead.
 
 From source:
 
 ```bash
-cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.2.13
+cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.3.0
 ```
 
-## Start In 5 Minutes
+## Start Fast
 
-1. Scaffold a starter manifest:
+Initialize a manifest:
 
 ```bash
 effigy init
 ```
 
-2. Add a few obvious tasks:
+Add a few obvious tasks to `effigy.toml`:
 
 ```toml
 [catalog]
@@ -102,190 +64,90 @@ alias = "app"
 
 [tasks]
 dev = "bun run dev"
-"db:reset" = "./scripts/reset-db.sh"
 build = "bun run build"
+"db:reset" = "./scripts/reset-db.sh"
 ```
 
-3. Ask the repo what exists, then run it:
+Ask the repo what exists, then run it:
 
 ```bash
 effigy tasks
 effigy dev
-effigy test --plan
 effigy tasks --resolve test
+effigy test --plan
 ```
 
 Leave `test` to the built-in runner unless you intentionally want
 `tasks.test` to override it.
 
-If you want the guided version of that flow, start with
-[`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md).
+If you want the guided version:
+- [`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md)
+- [`055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md)
 
-To clone and bootstrap a repo in one shot from another directory:
+## Common Paths
 
-```bash
-effigy bootstrap git@github.com:inflatable-cookie/effigy.git
-```
-
-## Main Workflows
-
-### Find and run work
-
-Use Effigy when you want one entrypoint for repo tasks instead of hunting
-through package managers and subdirectories.
+### Run tasks without hunting for them
 
 ```bash
 effigy tasks
 effigy tasks --resolve test
 effigy api/build
+effigy --json tasks
 ```
 
-Details:
-- [`055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md)
+Read next:
 - [`016-task-routing-precedence.md`](./docs/guides/016-task-routing-precedence.md)
 - [`022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
 
-### Keep the repo healthy
-
-Use built-ins when you want consistent health, test, and watch flows instead of
-custom shell glue.
-
-```bash
-effigy doctor --verbose
-effigy test --plan
-effigy watch --owner effigy --once test
-effigy scan god-files
-```
-
-Details:
-- [`018-doctor-explain-mode.md`](./docs/guides/018-doctor-explain-mode.md)
-- [`019-watch-init-migrate-foundation.md`](./docs/guides/019-watch-init-migrate-foundation.md)
-- [`048-built-in-test-suite-lifecycle-and-env.md`](./docs/guides/048-built-in-test-suite-lifecycle-and-env.md)
-- [`023-troubleshooting-and-failure-recipes.md`](./docs/guides/023-troubleshooting-and-failure-recipes.md)
-
-### Shape the manifest instead of more scripts
-
-Use `effigy.toml` to make common setup, env, test, and task routing explicit.
+### Shape repo behavior in `effigy.toml`
 
 ```bash
 effigy init
 effigy migrate --from package.json
-effigy config --schema --minimal
 effigy config --inspect
+effigy config --schema --minimal
 ```
 
-Details:
+Read next:
 - [`022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
 - [`059-manifest-composition-guide.md`](./docs/guides/059-manifest-composition-guide.md)
 - [`050-env-schema-integration.md`](./docs/guides/050-env-schema-integration.md)
-- [`028-migration-quick-paths.md`](./docs/guides/028-migration-quick-paths.md)
-
-For managed multi-process stacks, `concurrent` entries can also declare
-`shutdown_on_exit = true` when one process should act as the lifecycle root for
-the whole session, such as an Electron main window closing the rest of the dev
-stack.
-
-When one `effigy.toml` starts carrying too many unrelated concerns, split it
-with `[manifest].include = [...]` and use `effigy config --inspect` to verify
-the effective merged result before relying on it in CI or docs-policy flows.
 
 ### Keep web-service dependencies off the host
 
-Use the container surface when a repo needs databases, queues, blob stores, or
-other local services but you do not want to install that stack directly on the
-machine.
+Use the system/container surface when a repo needs databases, queues, blob
+stores, language stacks, or Rust/Bun workspaces without installing that full stack
+directly on the machine.
 
 ```bash
 effigy container up
 effigy container status
-effigy container down
-effigy dev:services
+effigy gateway status
+effigy dev
 ```
 
-Details:
+Read next:
 - [`063-container-system-guide.md`](./docs/guides/063-container-system-guide.md)
-- [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
+- [`064-system-workspace-and-dev-contract.md`](./docs/guides/064-system-workspace-and-dev-contract.md)
+- [`065-underlay-starter.md`](./docs/guides/065-underlay-starter.md)
+- [`067-catalog-services-reference.md`](./docs/guides/067-catalog-services-reference.md)
+- [`069-workspace-host-integration.md`](./docs/guides/069-workspace-host-integration.md)
 
-### Inspect proof demos
-
-Use the demo surface when a repo needs operator-visible proof inventory instead
-of another pile of ad hoc runner scripts.
+### Define and run proof demos
 
 ```bash
 effigy demo list
+effigy demo inspect <id>
+effigy demo run <id>
+effigy demo history <id>
 effigy demo browser
-effigy demo list --group-by gap
-effigy demo inspect browser-proof-report
-effigy demo history browser-proof-report
-effigy demo history lifecycle-window --attempt lifecycle-window-1775944067106
-effigy demo run browser-proof-report
-effigy demo run lifecycle-window
-effigy demo stop lifecycle-window
-effigy demo list --owner auth --status ready
-effigy demo list --group-by owner --stale-only
-effigy demo inspect login-smoke
-effigy demo history login-smoke --limit 5
-effigy demo run login-smoke
-effigy demo stop login-smoke
-effigy demo rerun login-smoke
-effigy --json demo list
 ```
 
-Details:
+Read next:
 - [`058-demo-system-guide.md`](./docs/guides/058-demo-system-guide.md)
-- [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
-- [`docs/roadmaps/g02/003-demo-harness-model-and-runner-contract.md`](./docs/roadmaps/g02/003-demo-harness-model-and-runner-contract.md)
-
-The shipped browser-facing query layer is intentionally small: filter by text,
-owner, tag, mode, cover, status, gap, or stale state, then group by owner,
-tag, mode, cover, status, or gap when you need a browser-like inventory view
-without starting UI work yet.
-
-When you want one interactive surface instead of multiple terminals, use:
-
-```bash
-cargo run --bin effigy -- demo browser
-```
-
-The first browser foundation gives you:
-- a grouped demo list on the left
-- a detail pane for the selected demo
-- panel focus with `Tab` / `Shift+Tab`
-- detail tabs for `Overview`, `History`, `Terminal`, and `Artifacts`
-- `←` / `→` switching detail tabs when the detail pane is focused
-- `Enter` opening the action sheet from the list, activating the selected
-  detail-side entry, or toggling terminal input capture on the terminal tab
-- a calmer interaction model built around `Tab`, arrow keys, `Enter`, `Esc`,
-  `/`, and `f`
-- a single filter sheet for search-adjacent controls over owner, tag, mode,
-  cover, status, gap, stale-only, and grouping
-- artifact selection as a simple list on the detail side, browsed with `↑` /
-  `↓` once that panel is focused
-- a live terminal tab for browser-launched run-backed interactive demos and
-  bounded single-process concurrent-runner-backed interactive demos
-
-It still deliberately stops short of nested TUI launch or pretending that a
-flattened multi-process projected runtime is one live browser terminal.
-
-This repo now self-hosts two realistic demos:
-- `browser-proof-report` generates a small HTML report plus text snapshots under
-  `.effigy/demo/artifacts/browser-proof-report/`
-- `lifecycle-window` stays active until stopped so `list`, `inspect`, `stop`,
-  and `rerun` can be pressure-tested against a real run-backed process
-- `demo inspect <id>` now shows the latest terminal receipt plus a bounded
-  recent-attempt history so operators can review what happened before the most
-  recent run without widening into full timeline UI yet
-- `demo history <id>` now gives that retained result timeline its own
-  dedicated query surface, with optional `--limit <N>` trimming, so one demo's
-  history no longer has to live only inside the broader inspect payload
-- `demo history <id> --attempt <ATTEMPT_ID>` drills into one retained
-  historical result so operators can inspect a prior receipt, artifacts, and
-  log references directly from that dedicated history surface
+- [`060-consumer-demo-migration-guide.md`](./docs/guides/060-consumer-demo-migration-guide.md)
 
 ### Automate safely
-
-Use JSON mode and contract docs when Effigy is feeding CI, agents, or other
-tools.
 
 ```bash
 effigy --json tasks
@@ -293,21 +155,12 @@ effigy --json doctor
 effigy --json test --plan
 ```
 
-Details:
+Read next:
 - [`017-json-output-contracts.md`](./docs/guides/017-json-output-contracts.md)
 - [`024-ci-and-automation-recipes.md`](./docs/guides/024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./docs/guides/026-json-payload-examples.md)
-- [`047-agent-and-cross-repo-adoption.md`](./docs/guides/047-agent-and-cross-repo-adoption.md)
-- [`056-northstar-effigy-consumer-repo-contract.md`](./docs/guides/056-northstar-effigy-consumer-repo-contract.md)
-
-When you want a repo to adopt the full Northstar + Effigy flow, keep the
-bootstrap/scaffolding logic in the `northstar-effigy` skill and use Effigy to
-validate the resulting contract with native docs, QA, and release surfaces.
 
 ### Release from built-ins
-
-Use the release surface when you want preview-first, repeatable release work
-without re-inventing the workflow in shell.
 
 ```bash
 effigy release status --check-gates
@@ -315,93 +168,46 @@ effigy release prepare --plan
 effigy release execute --plan
 ```
 
-Details:
-- [`062-distribution-system-guide.md`](./docs/guides/062-distribution-system-guide.md)
+Read next:
 - [`051-release-orchestration.md`](./docs/guides/051-release-orchestration.md)
-- [`052-changelog-workflows-and-northstar-profile.md`](./docs/guides/052-changelog-workflows-and-northstar-profile.md)
+- [`062-distribution-system-guide.md`](./docs/guides/062-distribution-system-guide.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md)
 
-## Documentation Paths
+## Shipped `v0.3` Surface
 
-- New to Effigy:
-  [`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md)
-- Want the most common day-to-day flows:
-  [`055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md)
-- Writing or cleaning up `effigy.toml`:
-  [`022-manifest-cookbook.md`](./docs/guides/022-manifest-cookbook.md)
-- Want optional distribution primitives or release evidence workflows:
-  [`062-distribution-system-guide.md`](./docs/guides/062-distribution-system-guide.md)
-- Need the full command surface:
-  [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
-- Need the full docs map:
-  [`docs/README.md`](./docs/README.md)
-- Need practical guide navigation:
-  [`docs/guides/README.md`](./docs/guides/README.md)
+Effigy `v0.3` ships:
+- task routing and manifest composition
+- built-in test, doctor, watch, init, migrate, config, docs, contracts, and
+  release surfaces
+- local systems, workspaces, containers, and gateway-backed DNS/TLS routing
+- service catalog fragments such as `workspace-rust-bun`, `php-fpm`,
+  `postgres`, `mariadb`, `dbgate`, `mailpit`, `minio`, and `phpmyadmin`
+- proof demos with receipts, history, artifacts, and the interactive demo
+  browser
+- local bundle export and repo-local bundle customization
+- built-in distribution and release orchestration
+
+For the version-by-version story, see [`CHANGELOG.md`](./CHANGELOG.md).
+
+## Documentation
+
+- Docs front door: [`docs/guides/README.md`](./docs/guides/README.md)
+- Full command reference: [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
+- Everyday workflows: [`055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md)
+- Quick start: [`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md)
 
 ## Working On Effigy Itself
 
-This repo self-hosts a root `effigy.toml`, so product development uses Effigy
-for its own QA and release flows.
+This repo self-hosts Effigy. Common local checks:
 
 ```bash
-effigy test --plan
-effigy qa
-effigy release gates
+effigy qa:ci:fast
+effigy qa:ci:local
+effigy release status --check-gates
 ```
 
-If `effigy` is not yet on `PATH`, bootstrap from the checkout:
+If `effigy` is not on `PATH` yet:
 
 ```bash
 cargo run --bin effigy -- bootstrap:local
 ```
-
-Compatibility fallbacks remain available for callers that still need them:
-
-```bash
-cargo qa
-cargo qa-docs
-cargo qa-json
-cargo qa-release
-```
-
-## Current Planning Posture
-
-Effigy's active product lane is `g02.006`.
-
-Use these surfaces before continuing container-environment work:
-
-- [`docs/roadmaps/README.md`](./docs/roadmaps/README.md)
-- [`docs/roadmaps/g02/006-colima-container-environment-contract.md`](./docs/roadmaps/g02/006-colima-container-environment-contract.md)
-- [`docs/specs/archive/006-colima-container-environment-strict-lane.md`](./docs/specs/archive/006-colima-container-environment-strict-lane.md)
-- [`docs/specs/archive/batch-cards/107-implement-colima-container-foundation.md`](./docs/specs/archive/batch-cards/107-implement-colima-container-foundation.md)
-- [`docs/contracts/001-working-rules.md`](./docs/contracts/001-working-rules.md)
-
-Queued follow-on milestones:
-
-- [`docs/roadmaps/g02/007-distribution-release-and-consumer-rollout.md`](./docs/roadmaps/g02/007-distribution-release-and-consumer-rollout.md)
-- [`docs/roadmaps/g02/008-demo-and-manifest-import-rollout.md`](./docs/roadmaps/g02/008-demo-and-manifest-import-rollout.md)
-- [`docs/roadmaps/g02/009-vault-backed-varlock-rollout.md`](./docs/roadmaps/g02/009-vault-backed-varlock-rollout.md)
-
-## Repository Layout
-
-```text
-effigy/
-├── src/
-├── docs/
-│   ├── architecture/
-│   ├── contracts/
-│   ├── guides/
-│   ├── logs/
-│   ├── research/
-│   ├── roadmaps/
-│   └── vision/
-└── Cargo.toml
-```
-
-## Next Task
-
-Release execution stays deferred while the remaining `g02.010` work is still
-active.
-
-The next move is to finish the live `g02.010` thread, then re-evaluate release
-execution from `115`.
