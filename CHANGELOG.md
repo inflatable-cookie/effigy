@@ -249,6 +249,15 @@ During v0.x, MINOR bumps may include breaking changes.
   the manifest default.
 
 ### Fixed
+- Honour user-supplied `databases = [...]` on the `mariadb` and `postgres`
+  catalogs when no explicit `database` was set. The compose-fragment
+  `MYSQL_DATABASE` / `POSTGRES_DB` env var now reflects `databases[0]`
+  rather than staying pinned to the schema default `"app"`. The bug was
+  in param-resolution ordering: `normalize_database_params` ran after
+  schema defaults were merged, so `database` was always present (as
+  `"app"`) and the "derive from `databases[0]`" branch never fired.
+  Normalisation now runs against raw user-and-variant params before
+  schema defaults backfill.
 - Reclaim stale gateway loopback-IP assignments from the persisted registry
   before allocating new DNS-only service aliases, using the live compose
   project set as the primary signal. This stops old temp repos and dead
