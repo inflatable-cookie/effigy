@@ -79,8 +79,13 @@ pages only when you need more detail.
   mariadb, redis, memcached, mailpit, minio, elasticsearch, phpmyadmin, nginx,
   php-fpm, workspace-rust-bun) with inputs, ports, and gateway eligibility.
 - [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
-  for user-global library mounts and host git/SSH integration into
-  workspace containers (gitconfig, known_hosts, agent forwarding).
+  for user-global library mounts, mounted-repo isolation, and host git/SSH
+  integration into workspace containers (gitconfig, known_hosts, agent
+  forwarding).
+- [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)
+  for the per-machine `effigy.local.toml` workflow that combines auto-discovery,
+  `extend`/`optional` includes, domain sugar, and external host mounts to ship
+  opt-in environments without committing personal infrastructure.
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 

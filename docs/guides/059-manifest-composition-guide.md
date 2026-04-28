@@ -267,6 +267,10 @@ After this guide, you should be able to:
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
 - [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
+- [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)
+  for a worked end-to-end pattern that combines auto-discovery,
+  `extend`/`optional` includes, domain sugar, and external host
+  mounts into one developer-onboarding workflow.
 
 ## Next Step
 

@@ -233,7 +233,9 @@ Rules for the structured form:
 This is the recommended way to mount per-developer files (SSH config,
 shell history, scratch dirs) that live outside the repo without
 committing absolute paths to the manifest. Pair with `effigy.local.toml`
-for a clean per-machine override layer.
+for a clean per-machine override layer — see
+[`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)
+for the full workflow.
 
 ## Runtime Behavior
 
