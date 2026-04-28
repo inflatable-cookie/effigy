@@ -42,6 +42,7 @@ pub struct BundleExport {
 pub(crate) fn apply_bundle_defaults(
     manifest_path: &Path,
     current: &mut Value,
+    extend_paths: &[String],
 ) -> Result<Option<AppliedBundleDefaults>, ManifestError> {
     let Some(bundle): Option<crate::config_sections::ManifestBundleConfig> = current
         .as_table()
@@ -83,6 +84,7 @@ pub(crate) fn apply_bundle_defaults(
         BundleSelection::Local { path } => path.clone(),
     };
     merge_missing_values(current, &defaults);
+    apply_bundle_extend_paths(manifest_path, current, &defaults, extend_paths)?;
     Ok(Some(AppliedBundleDefaults {
         source_path,
         bundle_root,
@@ -2316,6 +2318,81 @@ fn merge_missing_values(current: &mut Value, defaults: &Value) {
             }
         }
     }
+}
+
+fn apply_bundle_extend_paths(
+    manifest_path: &Path,
+    current: &mut Value,
+    defaults: &Value,
+    extend_paths: &[String],
+) -> Result<(), ManifestError> {
+    for path in extend_paths {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: "invalid `[bundle]` section: `extend[]` must not contain empty paths"
+                    .to_owned(),
+            });
+        }
+        apply_bundle_extend_path(manifest_path, current, defaults, trimmed)?;
+    }
+    Ok(())
+}
+
+fn apply_bundle_extend_path(
+    manifest_path: &Path,
+    current: &mut Value,
+    defaults: &Value,
+    path: &str,
+) -> Result<(), ManifestError> {
+    let Some(default_value) = lookup_value_at_path(defaults, path) else {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+                "invalid `[bundle]` section: extend path `{path}` does not exist in bundle defaults"
+            ),
+        });
+    };
+    let Some(current_value) = lookup_value_at_path_mut(current, path) else {
+        return Ok(());
+    };
+    let default_array = default_value
+        .as_array()
+        .ok_or_else(|| ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+            "invalid `[bundle]` section: extend path `{path}` requires an array in bundle defaults"
+        ),
+        })?;
+    let current_array = current_value
+        .as_array_mut()
+        .ok_or_else(|| ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+                "invalid `[bundle]` section: extend path `{path}` requires an array in the manifest"
+            ),
+        })?;
+    let mut combined = default_array.clone();
+    combined.extend(current_array.iter().cloned());
+    *current_array = combined;
+    Ok(())
+}
+
+fn lookup_value_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.as_table()?.get(segment)?;
+    }
+    Some(current)
+}
+
+fn lookup_value_at_path_mut<'a>(value: &'a mut Value, path: &str) -> Option<&'a mut Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.as_table_mut()?.get_mut(segment)?;
+    }
+    Some(current)
 }
 
 fn collect_value_paths(path: &str, value: &Value, out: &mut Vec<String>) {

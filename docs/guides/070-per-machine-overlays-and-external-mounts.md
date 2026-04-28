@@ -10,8 +10,8 @@ The primitives:
 
 1. **`effigy.local.toml` auto-discovery** — a per-machine overlay file
    loaded automatically when present.
-2. **`extend = [...]` include directive** — append onto array-valued
-   fields from a sibling include rather than replacing them.
+2. **`[manifest].extend = [...]`** — append onto array-valued fields
+   from an imported fragment rather than replacing them.
 3. **`optional = true` include directive** — silently skip an include
    when its file is missing.
 4. **`domains = [...]` sugar on `[containers.<name>.dns]`** — a flat
@@ -132,16 +132,14 @@ Two things to call out:
 # the project's <env-name> environment.
 
 [manifest]
-include = [
-  { path = "envs/<env-name>/effigy.env.toml",
-    extend = [
-      "containers.web.dns.domains",
-      "tasks.dev.profiles.default.concurrent",
-    ] },
+extend = [
+  "containers.web.dns.domains",
+  "tasks.dev.profiles.default.concurrent",
 ]
+include = ["envs/<env-name>/effigy.env.toml"]
 ```
 
-The `extend` directive is what lets the env folder cleanly grow new
+The local fragment's `extend` list is what lets the env folder cleanly grow new
 domains and concurrent processes without colliding with whatever the
 root manifest already declares on those paths.
 
@@ -223,7 +221,7 @@ edits get covered — but committing the rule is best practice.
 committed layers. This is intentional: local overrides committed,
 not the other way around.
 
-`extend = [...]` on the include in `effigy.local.toml` makes the env
+`[manifest].extend = [...]` in `effigy.local.toml` makes the env
 fragment **append** onto array-valued paths instead of fully
 replacing them. Useful when the root manifest already has its own
 entries on those paths.
