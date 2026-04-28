@@ -116,7 +116,7 @@ Read next:
 ### Keep web-service dependencies off the host
 
 Use the system/container surface when a repo needs databases, queues, blob
-stores, language stacks, or Rust/Bun workspaces without installing that full stack
+stores or language stack workspaces without installing that full stack
 directly on the machine.
 
 ```bash
