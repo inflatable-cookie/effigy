@@ -34,6 +34,16 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Added
+- Auto-discover `effigy.local.toml` alongside the root manifest. When
+  present, it loads as if the root declared
+  `{ path = "effigy.local.toml", optional = true }` at the end of its
+  include list — the local file always wins over committed layers, can
+  carry its own `[manifest].include` block, and is detected by canonical
+  path so explicit declarations don't double-merge. Set
+  `EFFIGY_NO_LOCAL_OVERLAY=1` to skip auto-discovery for CI determinism.
+  The first time auto-discovery activates against a `.git` repo, Effigy
+  idempotently amends the repo's `.gitignore` so the local fragment is
+  never committed accidentally.
 - Add `optional = true` on manifest include specs. When the flag is set
   and the include file does not exist, the include is silently skipped
   rather than raising a manifest error. Present optional files load and

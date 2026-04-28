@@ -82,6 +82,59 @@ Meaning:
 
 Override is path-scoped and replaces the whole addressed value.
 
+For arrays specifically, `extend = [...]` appends instead of replacing:
+
+```toml
+[manifest]
+include = [
+  { path = "envs/cumberland/effigy.env.toml",
+    extend = ["containers.web.dns.domains"] },
+]
+```
+
+This is the right tool when an overlay needs to grow a shared list (DNS
+routes, env-schema paths, scan globs) without restating every existing
+entry. `extend` rejects non-array paths and conflicts with `override` on
+the same path — pick one per path.
+
+Includes can also opt out of the "missing file is an error" default:
+
+```toml
+[manifest]
+include = [
+  { path = "effigy.local.toml", optional = true },
+]
+```
+
+A missing optional file is silently skipped; a present one loads and
+merges normally. This is the foundation for env-folder overlays and the
+auto-discovered local overlay (see §4b).
+
+## 4b) Auto-Discovered `effigy.local.toml`
+
+If a file named `effigy.local.toml` sits next to the root manifest,
+Effigy treats it as if the root declared
+`{ path = "effigy.local.toml", optional = true }` at the very end of its
+include list. The synthetic include is appended last, so the local file
+always wins over committed layers (consistent with "local overrides
+committed").
+
+The local file can carry its own `[manifest].include` block — including
+`extend`, `override`, and further `optional` directives — to layer in
+additional env folders or per-machine fragments.
+
+The first time auto-discovery activates against a repo with a `.git`
+directory, Effigy idempotently appends `effigy.local.toml` to that
+repo's `.gitignore` so the local fragment is never committed
+accidentally.
+
+If the committed manifest already declares an `effigy.local.toml`
+include explicitly, Effigy detects that by canonical path and does not
+double-merge.
+
+For CI determinism, set `EFFIGY_NO_LOCAL_OVERLAY=1` to skip
+auto-discovery entirely.
+
 ## 4) Inspect The Effective Result
 
 Use inspection every time composition gets non-trivial:

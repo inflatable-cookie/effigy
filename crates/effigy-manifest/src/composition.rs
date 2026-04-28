@@ -176,7 +176,10 @@ fn load_composed_value(
             detail: "manifest root must be a TOML table".to_owned(),
         })?;
 
-    let includes = take_include_specs(manifest_path, &mut table)?;
+    let mut includes = take_include_specs(manifest_path, &mut table)?;
+    if session.stack.len() == 1 {
+        append_local_overlay_include(manifest_path, &mut includes);
+    }
     let mut composed = ComposedValue {
         value: Value::Table(table),
         source_map: BTreeMap::new(),
@@ -208,6 +211,63 @@ fn load_composed_value(
 
     session.stack.pop();
     Ok(composed)
+}
+
+/// Filename of the auto-discovered local-overlay manifest.
+const LOCAL_OVERLAY_FILENAME: &str = "effigy.local.toml";
+/// Env switch that disables auto-discovery for CI determinism.
+const NO_LOCAL_OVERLAY_ENV: &str = "EFFIGY_NO_LOCAL_OVERLAY";
+
+/// Appends a synthetic optional include for `effigy.local.toml` when one
+/// is present alongside the root manifest, unless it's already declared
+/// explicitly or `EFFIGY_NO_LOCAL_OVERLAY=1` is set. Idempotent: a no-op
+/// when the file is missing.
+fn append_local_overlay_include(manifest_path: &Path, includes: &mut Vec<ManifestIncludeSpec>) {
+    if std::env::var(NO_LOCAL_OVERLAY_ENV).ok().as_deref() == Some("1") {
+        return;
+    }
+    let parent = match manifest_path.parent() {
+        Some(parent) => parent,
+        None => return,
+    };
+    let local_path = parent.join(LOCAL_OVERLAY_FILENAME);
+    if !local_path.is_file() {
+        return;
+    }
+    let canonical_local = std::fs::canonicalize(&local_path).unwrap_or_else(|_| local_path.clone());
+    let already_declared = includes.iter().any(|spec| {
+        let canonical_spec = std::fs::canonicalize(&spec.resolved_path)
+            .unwrap_or_else(|_| spec.resolved_path.clone());
+        canonical_spec == canonical_local
+    });
+    if already_declared {
+        return;
+    }
+    // Best-effort: amend `.gitignore` so the local overlay is never
+    // committed accidentally. Failures here are non-fatal — manifest
+    // loading should not depend on filesystem write access.
+    if let Some(repo_root) = locate_git_root(parent) {
+        let _ = effigy_core::runtime_dir::ensure_local_overlay_ignored_in_git_root(&repo_root);
+    }
+    includes.push(ManifestIncludeSpec {
+        resolved_path: local_path,
+        override_paths: Vec::new(),
+        extend_paths: Vec::new(),
+        optional: true,
+    });
+}
+
+/// Walk upward from `start` looking for a `.git` dir. Returns the
+/// directory containing it, if any.
+fn locate_git_root(start: &Path) -> Option<PathBuf> {
+    let mut current = Some(start);
+    while let Some(dir) = current {
+        if dir.join(".git").is_dir() {
+            return Some(dir.to_path_buf());
+        }
+        current = dir.parent();
+    }
+    None
 }
 
 fn take_include_specs(
@@ -815,6 +875,119 @@ paths = ["b"]
         let loaded = load_task_manifest_with_inspection(&root).expect("load");
         let domains = array_strings(&loaded.effective_value, "isolation.paths");
         assert_eq!(domains, vec!["a".to_owned(), "b".to_owned()]);
+    }
+
+    /// Serialise tests that toggle process-global `EFFIGY_NO_LOCAL_OVERLAY`.
+    static LOCAL_OVERLAY_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn auto_discovers_local_overlay_alongside_root_manifest() {
+        let _guard = LOCAL_OVERLAY_ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("EFFIGY_NO_LOCAL_OVERLAY");
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[shell]
+run = "root"
+"#,
+        );
+        write_manifest(
+            dir,
+            "effigy.local.toml",
+            r#"
+[isolation]
+paths = ["b"]
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        let domains = array_strings(&loaded.effective_value, "isolation.paths");
+        assert_eq!(domains, vec!["b".to_owned()]);
+        // Auto-discovered include shows up in the include graph.
+        assert_eq!(loaded.include_graph.len(), 1);
+        assert_eq!(
+            loaded.include_graph[0].child.file_name(),
+            Some(std::ffi::OsStr::new("effigy.local.toml"))
+        );
+    }
+
+    #[test]
+    fn no_local_overlay_env_disables_auto_discovery() {
+        let _guard = LOCAL_OVERLAY_ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("EFFIGY_NO_LOCAL_OVERLAY", "1");
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[shell]
+run = "root"
+"#,
+        );
+        write_manifest(
+            dir,
+            "effigy.local.toml",
+            r#"
+[isolation]
+paths = ["b"]
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        std::env::remove_var("EFFIGY_NO_LOCAL_OVERLAY");
+        let isolation = loaded
+            .effective_value
+            .as_table()
+            .and_then(|t| t.get("isolation"));
+        assert!(
+            isolation.is_none(),
+            "local overlay should not have been merged: {:?}",
+            isolation
+        );
+        assert!(loaded.include_graph.is_empty());
+    }
+
+    #[test]
+    fn explicit_local_overlay_include_is_not_double_merged() {
+        let _guard = LOCAL_OVERLAY_ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("EFFIGY_NO_LOCAL_OVERLAY");
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = [
+  { path = "effigy.local.toml", optional = true, extend = ["isolation.paths"] },
+]
+
+[isolation]
+paths = ["a"]
+"#,
+        );
+        write_manifest(
+            dir,
+            "effigy.local.toml",
+            r#"
+[isolation]
+paths = ["b"]
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        let domains = array_strings(&loaded.effective_value, "isolation.paths");
+        // If double-merged, "b" would appear twice.
+        assert_eq!(domains, vec!["a".to_owned(), "b".to_owned()]);
+        let local_includes = loaded
+            .include_graph
+            .iter()
+            .filter(|edge| {
+                edge.child.file_name() == Some(std::ffi::OsStr::new("effigy.local.toml"))
+            })
+            .count();
+        assert_eq!(local_includes, 1);
     }
 
     #[test]

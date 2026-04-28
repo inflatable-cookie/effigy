@@ -1,6 +1,25 @@
 use std::path::Path;
 
 pub fn ensure_effigy_ignored_in_git_root(repo_root: &Path) -> std::io::Result<bool> {
+    ensure_pattern_ignored_in_git_root(repo_root, ".effigy", &[".effigy", ".effigy/"])
+}
+
+/// Append `effigy.local.toml` to the repo's `.gitignore` (creating the
+/// file if needed) the first time the auto-discovered local overlay is
+/// observed. Idempotent. No-op on non-git roots.
+pub fn ensure_local_overlay_ignored_in_git_root(repo_root: &Path) -> std::io::Result<bool> {
+    ensure_pattern_ignored_in_git_root(
+        repo_root,
+        "effigy.local.toml",
+        &["effigy.local.toml", "/effigy.local.toml"],
+    )
+}
+
+fn ensure_pattern_ignored_in_git_root(
+    repo_root: &Path,
+    append_line: &str,
+    accepted_aliases: &[&str],
+) -> std::io::Result<bool> {
     if !repo_root.join(".git").is_dir() {
         return Ok(false);
     }
@@ -12,7 +31,11 @@ pub fn ensure_effigy_ignored_in_git_root(repo_root: &Path) -> std::io::Result<bo
         Err(error) => return Err(error),
     };
 
-    if existing.lines().any(is_effigy_ignore_line) {
+    if existing
+        .lines()
+        .map(str::trim)
+        .any(|line| accepted_aliases.contains(&line))
+    {
         return Ok(false);
     }
 
@@ -20,19 +43,15 @@ pub fn ensure_effigy_ignored_in_git_root(repo_root: &Path) -> std::io::Result<bo
     if !updated.is_empty() && !updated.ends_with('\n') {
         updated.push('\n');
     }
-    updated.push_str(".effigy\n");
+    updated.push_str(append_line);
+    updated.push('\n');
     std::fs::write(gitignore_path, updated)?;
     Ok(true)
 }
 
-fn is_effigy_ignore_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed == ".effigy" || trimmed == ".effigy/"
-}
-
 #[cfg(test)]
 mod tests {
-    use super::ensure_effigy_ignored_in_git_root;
+    use super::{ensure_effigy_ignored_in_git_root, ensure_local_overlay_ignored_in_git_root};
 
     #[test]
     fn creates_gitignore_when_git_root_has_none() {
@@ -73,5 +92,33 @@ mod tests {
 
         assert!(!changed);
         assert!(!root.path().join(".gitignore").exists());
+    }
+
+    #[test]
+    fn local_overlay_is_appended_once() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(root.path().join(".git")).expect("mkdir git");
+
+        let changed = ensure_local_overlay_ignored_in_git_root(root.path()).expect("ignore");
+        let again = ensure_local_overlay_ignored_in_git_root(root.path()).expect("ignore again");
+
+        assert!(changed);
+        assert!(!again);
+        assert_eq!(
+            std::fs::read_to_string(root.path().join(".gitignore")).expect("read"),
+            "effigy.local.toml\n"
+        );
+    }
+
+    #[test]
+    fn local_overlay_skips_when_alias_present() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(root.path().join(".git")).expect("mkdir git");
+        std::fs::write(root.path().join(".gitignore"), "/effigy.local.toml\n")
+            .expect("seed gitignore");
+
+        let changed = ensure_local_overlay_ignored_in_git_root(root.path()).expect("ignore");
+
+        assert!(!changed);
     }
 }
