@@ -75,7 +75,8 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
         return Ok(Vec::new());
     }
 
-    let mut pending: Vec<PathBuf> = vec![workspace_root.to_path_buf()];
+    let mut pending = vec![workspace_root.to_path_buf()];
+    pending.extend(discover_system_mount_catalog_roots(workspace_root)?);
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
     let mut manifests_by_catalog: HashMap<PathBuf, PathBuf> = HashMap::new();
 
@@ -116,6 +117,76 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
     let mut manifests: Vec<PathBuf> = manifests_by_catalog.into_values().collect();
     manifests.sort();
     Ok(manifests)
+}
+
+fn discover_system_mount_catalog_roots(
+    workspace_root: &Path,
+) -> Result<Vec<PathBuf>, RoutingError> {
+    let loaded = load_task_manifest_with_inspection(&workspace_root.join(TASK_MANIFEST_FILE))
+        .map_err(RoutingError::from)?;
+    let Some(systems) = loaded.manifest.systems.as_ref() else {
+        return Ok(Vec::new());
+    };
+
+    let mut discovered = Vec::new();
+    let mut seen = HashSet::new();
+
+    for system in systems.systems.values() {
+        collect_mount_catalog_roots(workspace_root, &system.mounts, &mut seen, &mut discovered);
+        for workspace in system.workspaces.values() {
+            collect_mount_catalog_roots(
+                workspace_root,
+                &workspace.mounts,
+                &mut seen,
+                &mut discovered,
+            );
+        }
+    }
+
+    Ok(discovered)
+}
+
+fn collect_mount_catalog_roots(
+    workspace_root: &Path,
+    mounts: &[String],
+    seen: &mut HashSet<PathBuf>,
+    discovered: &mut Vec<PathBuf>,
+) {
+    for mount in mounts {
+        let Some(source) = mount_source_path(mount) else {
+            continue;
+        };
+        let resolved = if source.is_absolute() {
+            source
+        } else {
+            workspace_root.join(source)
+        };
+        let Ok(canonical) = fs::canonicalize(&resolved) else {
+            continue;
+        };
+        if !canonical.is_dir() || !canonical.join(TASK_MANIFEST_FILE).is_file() {
+            continue;
+        }
+        if seen.insert(canonical.clone()) {
+            discovered.push(canonical);
+        }
+    }
+}
+
+fn mount_source_path(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let source = trimmed
+        .split_once(':')
+        .map(|(left, _)| left)
+        .unwrap_or(trimmed);
+    let source = source.trim();
+    if source.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(source))
 }
 
 pub(super) fn should_skip_dir(path: &Path) -> bool {
