@@ -607,8 +607,18 @@ fn prune_stale_loopback_assignments(registry: &mut LoopbackRegistry) -> Result<b
     }
     let route_table = RouteTable::load(&gateway_route_table_path()?)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let rows = list_running_compose_containers()
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    // Pruning is best-effort: if no container runtime is reachable
+    // (e.g. colima/docker not installed in CI sandboxes, or the
+    // daemon is transiently down), skip this round rather than
+    // failing the entire gateway registration. Stale entries will be
+    // pruned on the next successful round.
+    let rows = match list_running_compose_containers() {
+        Ok(rows) => rows,
+        Err(_) => {
+            // Container runtime not reachable — skip prune this round.
+            return Ok(false);
+        }
+    };
     Ok(prune_stale_loopback_assignments_with_runtime(
         registry,
         &route_table,
