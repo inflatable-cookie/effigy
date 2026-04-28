@@ -22,6 +22,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - Deferred container tasks now prepare isolated workspace dirs before exec, fixing first-run permission failures on `decodelabs-library` `vendor/` volumes. The `decodelabs-library` bundle also now derives a repo-specific default `project_name` from `workspace_subdir`, so sibling library repos no longer share the same isolated `vendor` volume unless they opt into a shared project explicitly.
 - DecodeLabs PHP workspace defaults now include `sockets`, `bz2`, `curl`, `gmp`, `imagick`, `mbstring`, `readline`, `sqlite3`, and `xml` in addition to the existing `mysqli` / `pdo_mysql` MySQL support.
 - `php-fpm` now explicitly sets `short_open_tag = Off` in its dev ini instead of inheriting the base-image default implicitly.
+- `effigy doctor` no longer flags `[bundle]` as an unsupported top-level manifest key. The schema validator's allow-list is now in sync with the loader and the documented bundle selector keys (`base` / `base_path`).
+- `effigy doctor` and routing discovery no longer treat `effigy init` starter assets (the `effigy.toml` files shipped under `crates/effigy-catalog/starters/*/`) as live project catalogs. Directories that ship a peer `starter.toml` are now skipped during manifest discovery, so their placeholder task references no longer surface as resolution errors against a real workspace.
 
 ### Breaking
 - Reject `concurrent = [...]` on a task that does not declare

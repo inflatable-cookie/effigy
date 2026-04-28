@@ -105,6 +105,9 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
 
             if is_task_manifest_file(&file_type, &path) {
                 let catalog_root = path.parent().map(Path::to_path_buf).unwrap_or_default();
+                if is_starter_asset_dir(&catalog_root) {
+                    continue;
+                }
                 manifests_by_catalog.insert(catalog_root, path);
             }
         }
@@ -120,6 +123,16 @@ pub(super) fn should_skip_dir(path: &Path) -> bool {
         path.file_name().and_then(|n| n.to_str()),
         Some(".git" | "node_modules" | "target" | ".next")
     )
+}
+
+/// True when a directory containing an `effigy.toml` is actually an
+/// `effigy init` starter asset rather than a real project catalog.
+/// Starter directories ship a peer `starter.toml` describing the
+/// scaffold; real catalogs never do. The `effigy.toml` inside a
+/// starter is template content with placeholder catalog references
+/// that intentionally won't resolve in isolation.
+fn is_starter_asset_dir(catalog_root: &Path) -> bool {
+    catalog_root.join("starter.toml").is_file()
 }
 
 pub fn default_alias(catalog_root: &Path, workspace_root: &Path) -> String {
