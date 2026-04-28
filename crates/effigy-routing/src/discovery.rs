@@ -76,7 +76,7 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
     }
 
     let mut pending = vec![workspace_root.to_path_buf()];
-    pending.extend(discover_system_mount_catalog_roots(workspace_root)?);
+    pending.extend(discover_system_mount_catalog_roots(workspace_root));
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
     let mut manifests_by_catalog: HashMap<PathBuf, PathBuf> = HashMap::new();
 
@@ -119,13 +119,22 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
     Ok(manifests)
 }
 
-fn discover_system_mount_catalog_roots(
-    workspace_root: &Path,
-) -> Result<Vec<PathBuf>, RoutingError> {
-    let loaded = load_task_manifest_with_inspection(&workspace_root.join(TASK_MANIFEST_FILE))
-        .map_err(RoutingError::from)?;
+/// Returns extra catalog roots reachable through `[systems.<name>] mounts`
+/// declarations on the root manifest.
+///
+/// Tolerant by design: when the root manifest can't be parsed (e.g. unknown
+/// keys, malformed TOML), we return an empty list rather than failing
+/// discovery. The directory walk still surfaces the broken manifest at the
+/// workspace root, and downstream consumers (`effigy doctor`'s tolerant
+/// scan) report the parse error as a finding instead of bubbling it as a
+/// hard error.
+fn discover_system_mount_catalog_roots(workspace_root: &Path) -> Vec<PathBuf> {
+    let Ok(loaded) = load_task_manifest_with_inspection(&workspace_root.join(TASK_MANIFEST_FILE))
+    else {
+        return Vec::new();
+    };
     let Some(systems) = loaded.manifest.systems.as_ref() else {
-        return Ok(Vec::new());
+        return Vec::new();
     };
 
     let mut discovered = Vec::new();
@@ -143,7 +152,7 @@ fn discover_system_mount_catalog_roots(
         }
     }
 
-    Ok(discovered)
+    discovered
 }
 
 fn collect_mount_catalog_roots(

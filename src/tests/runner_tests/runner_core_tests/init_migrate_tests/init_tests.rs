@@ -198,7 +198,12 @@ fn run_manifest_task_builtin_init_underlay_emits_all_declared_files_and_guidance
     assert_path_exists(&root.join("effigy.toml"), "underlay root manifest");
     assert_file_text_contains_all(
         &root.join("effigy.toml"),
-        &["{{ bundle.root }}/scripts/dev/ui-setup.rhai"],
+        &[
+            "[catalog]",
+            "alias = \"underlay-app\"",
+            "[bundle]",
+            "base = \"underlay\"",
+        ],
     );
 }
 
@@ -253,7 +258,7 @@ fn run_manifest_task_builtin_init_underlay_dry_run_prints_fenced_sections_withou
     let root = temp_workspace("builtin-init-underlay-dry-run");
 
     let out = run_builtin_ok(root.to_path_buf(), "init", &["underlay", "--dry-run"]);
-    assert_output_contains_all(&out, &["[bundle]", "base = \"underlay\"", "[tasks.dev]"]);
+    assert_output_contains_all(&out, &["[bundle]", "base = \"underlay\"", "[systems.dev]"]);
     assert_path_missing(
         &root.join("effigy.toml"),
         "underlay dry-run must not write the root manifest",
