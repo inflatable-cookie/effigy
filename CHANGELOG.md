@@ -13,6 +13,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - `php-fpm` now explicitly activates `pnpm` when Node.js is enabled and pins the pnpm store under `.effigy/runtime/pnpm/store` instead of letting `.pnpm-store` appear at the project root.
 - `php-fpm` now exports `COMPOSER_CACHE_DIR=/home/dev/.cache/composer` so the existing shared Composer cache mount is the cache Composer actually uses.
 
+### Fixed
+
+- Gateway registration no longer crashes when the host container runtime is unreachable (e.g. colima/docker not installed in CI sandboxes or the daemon transiently down). Stale loopback-IP pruning becomes best-effort: when listing running containers fails, the prune is skipped that round and runs again next time.
+- Linux clippy: `crate::resolver_setup` import in `effigy-gateway::server` is now gated behind `cfg(target_os = "macos")` to match the only call site, fixing an `unused-imports` failure on Linux builds.
+
 ### Breaking
 - Reject `concurrent = [...]` on a task that does not declare
   `mode = "tui"`. The old behaviour silently ignored concurrent

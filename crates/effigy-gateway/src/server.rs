@@ -23,6 +23,7 @@ use tracing::{debug, error, info};
 use crate::dns::{run_dns_server, DnsCache, DnsConfig};
 use crate::error::GatewayError;
 use crate::proxy::{run_proxy_server, run_tls_proxy_server, ProxyConfig};
+#[cfg(target_os = "macos")]
 use crate::resolver_setup;
 use crate::routes::{LiveRouteTable, RouteTable};
 use crate::stats::GatewayStats;
