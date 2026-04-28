@@ -1,9 +1,9 @@
 use super::{
-    compare_release_state_fingerprints, detect_version_file_kind, format_release_tag,
-    gate_blockers, load_release_config, load_release_prepared_state, normalized_expected_files,
-    resolve_version_field_path, snapshot_mutation_paths, write_release_prepared_state,
-    FileMutationApply, FileMutationPlan, GateExecutionReport, GateResult,
-    ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints, VersionFileKind,
+    compare_release_state_fingerprints, detect_cargo_version_path, detect_version_file_kind,
+    format_release_tag, gate_blockers, load_release_config, load_release_prepared_state,
+    normalized_expected_files, resolve_version_field_path, snapshot_mutation_paths,
+    write_release_prepared_state, FileMutationApply, FileMutationPlan, GateExecutionReport,
+    GateResult, ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints, VersionFileKind,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -53,6 +53,22 @@ fn version_field_path_defaults_follow_known_formats() {
     assert_eq!(
         resolve_version_field_path(VersionFileKind::PyProjectToml, None).expect("default path"),
         None
+    );
+}
+
+#[test]
+fn detect_cargo_version_path_supports_workspace_inherited_versions() {
+    let direct: toml::Value =
+        toml::from_str("[package]\nversion = \"0.2.4\"\n").expect("direct cargo");
+    assert_eq!(detect_cargo_version_path(&direct), Some("package.version"));
+
+    let inherited: toml::Value = toml::from_str(
+        "[workspace.package]\nversion = \"0.2.4\"\n\n[package]\nversion.workspace = true\n",
+    )
+    .expect("inherited cargo");
+    assert_eq!(
+        detect_cargo_version_path(&inherited),
+        Some("workspace.package.version")
     );
 }
 

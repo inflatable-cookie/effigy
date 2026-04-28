@@ -10,6 +10,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - `concurrent = [...]` now requires `mode = "tui"`. Sidecars that should follow container lifecycle now belong on `[[containers.<name>.host_processes]]`.
 - Legacy root deferral is no longer inferred from `composer.json` or `effigy.json`. Repos that relied on it now need an explicit `[defer]` block or a shipped bundle that provides one.
 - The workspace/container config contract has moved: default workspace settings now live under `[systems.<name>]`, managed task settings live directly on `[tasks.<name>]`, generated compose output lives under `.effigy/runtime/compose`, and task-level `host = true` is replaced by `run_in = "host" | "container" | "either"`.
+- Compatibility-only release wrapper scripts are gone. Call the native Effigy release surfaces directly instead of relying on the old shell entrypoints.
 
 ### Added
 - A full container and system surface: `effigy container ...`, `effigy system ...`, `effigy workspace`, generated compose ownership, data lifecycle commands, cross-project `status --all` / `stats --all`, shared backing services, and bounded reset/eject/import/export flows.
@@ -33,6 +34,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - The gateway/runtime path is more resilient: stale loopback assignments are reclaimed, unreachable host runtimes no longer crash registration, health waits now probe real route readiness, and route registration rejects invalid or conflicting upstreams more honestly.
 - Doctor and catalog discovery now correctly accept `[bundle]`, skip shipped starter assets, avoid treating starter templates as live project catalogs, and surface strict-parse failures as findings instead of crashing out of the sweep.
 - DecodeLabs PHP workspaces now correctly use the shared Composer cache mount, and the shipped `php-fpm` image now carries the broader extension set needed by current DecodeLabs consumers.
+- The built-in release flow now resolves workspace-inherited Cargo versions correctly, so self-hosted `release status` and `release simulate` work against repos using `workspace.package.version` plus `version.workspace = true`.
 - Container/dev regressions were fixed across SSH agent forwarding, mkcert trust propagation, git safe-directory handling, bootstrap start behavior, VT/TUI rendering, bundle default drift, and manifest-driven MariaDB/Postgres database selection.
 
 ## [0.2.13] - 2026-04-13

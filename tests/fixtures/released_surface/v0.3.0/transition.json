@@ -5,6 +5,21 @@
   "requires_migration_notes": true,
   "intentional_breaks": [
     {
+      "surface": "managed concurrent task contract",
+      "change": "Managed `concurrent = [...]` tasks now require `mode = \"tui\"`, and container-lifecycle sidecars belong on `[[containers.<name>.host_processes]]` instead of hanging off non-TUI concurrent tasks.",
+      "migration_note": "Add `mode = \"tui\"` to managed concurrent tasks that use `concurrent = [...]`, and move lifecycle-owned sidecars onto `[[containers.<name>.host_processes]]`."
+    },
+    {
+      "surface": "legacy implicit root deferral",
+      "change": "Legacy root deferral is no longer inferred from `composer.json` or `effigy.json`.",
+      "migration_note": "Add an explicit `[defer]` block or adopt a shipped bundle that provides one if the repo still relies on root-level fallback execution."
+    },
+    {
+      "surface": "workspace and managed task config contract",
+      "change": "Workspace/container defaults moved onto `[systems.<name>]`, managed task settings moved directly onto `[tasks.<name>]`, generated compose output moved under `.effigy/runtime/compose`, and task-level `host = true` was replaced by `run_in = \"host\" | \"container\" | \"either\"`.",
+      "migration_note": "Move workspace config onto `[systems.<name>]`, flatten managed task settings onto `[tasks.<name>]`, stop reading generated compose from the old location, and replace `host = true` with `run_in`."
+    },
+    {
       "surface": "legacy release wrapper scripts",
       "change": "Removed compatibility-only shell entrypoints for release checks, release smoke, install-link setup, install-from-tag verification, and release prepare flow.",
       "migration_note": "Call the native Effigy surfaces directly instead: `effigy release gates`, `effigy release verify-install`, `effigy smoke:release`, `effigy bootstrap:local`, and `effigy release prepare` / `effigy release prepare --plan`."

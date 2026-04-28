@@ -59,6 +59,26 @@ pub fn detect_pyproject_version_path(parsed: &toml::Value) -> Option<&'static st
         })
 }
 
+pub fn detect_cargo_version_path(parsed: &toml::Value) -> Option<&'static str> {
+    if toml_value_at_path(parsed, "package.version")
+        .and_then(toml::Value::as_str)
+        .is_some()
+    {
+        return Some("package.version");
+    }
+
+    if toml_value_at_path(parsed, "package.version.workspace").and_then(toml::Value::as_bool)
+        == Some(true)
+        && toml_value_at_path(parsed, "workspace.package.version")
+            .and_then(toml::Value::as_str)
+            .is_some()
+    {
+        return Some("workspace.package.version");
+    }
+
+    None
+}
+
 pub fn render_updated_version_contents(
     source: &ResolvedVersionSource,
     new_version: &semver::Version,
@@ -293,11 +313,25 @@ fn resolve_toml_version_text(
             });
     }
 
-    let Some(path) = detect_pyproject_version_path(parsed) else {
-        return Err(ReleaseError::TaskInvocation(format!(
-            "could not find version field in {} (tried `project.version` and `tool.poetry.version`)",
-            source.path.display()
-        )));
+    let path = match source.kind {
+        VersionFileKind::CargoToml => detect_cargo_version_path(parsed).ok_or_else(|| {
+            ReleaseError::TaskInvocation(format!(
+                "could not find version field in {} (tried `package.version` and `workspace.package.version` via `package.version.workspace = true`)",
+                source.path.display()
+            ))
+        })?,
+        VersionFileKind::PyProjectToml => detect_pyproject_version_path(parsed).ok_or_else(|| {
+            ReleaseError::TaskInvocation(format!(
+                "could not find version field in {} (tried `project.version` and `tool.poetry.version`)",
+                source.path.display()
+            ))
+        })?,
+        VersionFileKind::PackageJson | VersionFileKind::PlainText => {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "unsupported TOML version source kind for {}",
+                source.path.display()
+            )))
+        }
     };
     toml_value_at_path(parsed, path)
         .and_then(toml::Value::as_str)
@@ -335,7 +369,13 @@ fn render_updated_toml_contents(
     let path = source
         .field_path
         .clone()
-        .or_else(|| detect_pyproject_version_path(&parsed).map(ToOwned::to_owned))
+        .or_else(|| match source.kind {
+            VersionFileKind::CargoToml => detect_cargo_version_path(&parsed).map(ToOwned::to_owned),
+            VersionFileKind::PyProjectToml => {
+                detect_pyproject_version_path(&parsed).map(ToOwned::to_owned)
+            }
+            VersionFileKind::PackageJson | VersionFileKind::PlainText => None,
+        })
         .ok_or_else(|| {
             ReleaseError::TaskInvocation(format!(
                 "could not find version field in {}",
