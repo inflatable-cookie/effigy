@@ -187,6 +187,8 @@ Current v1 rules (both shapes):
 - `host.mounts` are repo-relative by default and may not escape the repo
   root. Sources from outside the repo opt in via the structured table
   form with `external = true` (see "External host mounts" below)
+- on generated compose stacks, declared `host.mounts` are attached to the
+  generated local services that already bind the repo root
 - host access is explicit through declared `ports` on the user-owned path;
   catalog-driven services own their own published-port metadata
 - readiness may be declared through one environment `health.check`
@@ -222,9 +224,9 @@ Rules for the structured form:
 - Without `external = true`, an expanded path that lands at an absolute
   location is rejected — declare `external = true` to make the
   out-of-repo intent explicit.
-- With `external = true`, the path must canonicalise to an absolute
-  location: use `~/...`, `${VAR}` resolving to an absolute path, or a
-  literal absolute path. Bare relative paths are rejected.
+- With `external = true`, the path may be absolute or repo-relative. A
+  repo-relative external mount still resolves from the repo root, but it may
+  escape it (for example `../shared-app`).
 - The source must exist at policy-load time, regardless of `external`.
 - `options` is a free-form array of tokens (e.g. `["ro"]`) appended
   after the container target in the rendered mount spec; effigy

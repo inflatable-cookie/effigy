@@ -1820,6 +1820,56 @@ catalog = "mariadb"
 }
 
 #[test]
+fn generated_compose_policy_includes_declared_host_mounts_on_repo_root_services() {
+    let root = temp_repo("generated-host-mounts");
+    let sibling = tempfile::tempdir().expect("sibling tempdir");
+    fs::create_dir_all(sibling.path().join("public")).expect("mkdir sibling");
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.host]
+mounts = [
+  {{ host = "{}",
+     container = "/var/www/mortcalc",
+     external = true }},
+]
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+
+[containers.web.services.db]
+catalog = "mariadb"
+"#,
+            sibling.path().display()
+        ),
+    )
+    .expect("write manifest");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    let expected = format!(
+        "{}:/var/www/mortcalc",
+        sibling.path().canonicalize().unwrap().display()
+    );
+    assert_eq!(policy.declared_mounts, vec![expected.clone()]);
+
+    let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+    assert_eq!(compose.matches(&expected).count(), 2, "compose: {compose}");
+}
+
+#[test]
 fn generated_compose_policy_includes_pull_production_hook() {
     let root = temp_repo("pull-production-policy");
     fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
