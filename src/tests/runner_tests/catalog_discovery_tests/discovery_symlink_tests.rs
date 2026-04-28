@@ -78,3 +78,67 @@ alias = "catalog_a"
         other => panic!("unexpected error: {other}"),
     }
 }
+
+#[test]
+fn discover_catalogs_includes_system_mount_catalog_directories() {
+    let root = temp_workspace("catalog-system-mount-discovery");
+    let external = create_workspace_dir(&root, "external");
+    let underlay_src = create_workspace_dir(&external, "underlay");
+
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[catalog]
+alias = "acowtancy"
+
+[systems.dev]
+mounts = ["./external/underlay"]
+"#,
+    );
+    write_manifest(
+        &underlay_src.join("effigy.toml"),
+        r#"[catalog]
+alias = "underlay"
+
+[tasks."check:exports"]
+run = "printf underlay-checks"
+"#,
+    );
+
+    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    assert!(
+        catalogs.iter().any(|catalog| catalog.alias == "underlay"),
+        "mounted underlay catalog should be discovered"
+    );
+
+    assert_builtin_ok_empty(root, "underlay/check:exports", &[]);
+}
+
+#[test]
+fn discover_catalogs_includes_workspace_mount_catalog_directories() {
+    let root = temp_workspace("catalog-workspace-mount-discovery");
+    let external = create_workspace_dir(&root, "external");
+    let underlay_src = create_workspace_dir(&external, "underlay");
+
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[catalog]
+alias = "acowtancy"
+
+[systems.dev.workspaces.app]
+mounts = ["./external/underlay:/workspace-root/underlay"]
+"#,
+    );
+    write_catalog_tasks(
+        &underlay_src,
+        Some("underlay"),
+        &[("validate", "printf underlay-validate")],
+    );
+
+    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    assert!(
+        catalogs.iter().any(|catalog| catalog.alias == "underlay"),
+        "workspace-mounted underlay catalog should be discovered"
+    );
+
+    assert_builtin_ok_empty(root, "underlay/validate", &[]);
+}
