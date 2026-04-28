@@ -149,7 +149,7 @@ fn setup_managed_stream_gateway(root: &Path) {
 }
 
 fn setup_managed_stream_gateway_without_ready_message(root: &Path) {
-    // Note: health_wait is intentionally false here. This test exercises
+    // health_wait is intentionally false here. This test exercises
     // the ready-message + dns_routes banner derivation (which fires when
     // `ready_message` is unset); the readiness probe loop added in
     // commit 247198fb has its own unit-level coverage in
