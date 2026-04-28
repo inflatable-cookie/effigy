@@ -33,7 +33,7 @@ Current milestones:
 - [`019-v0-3-surface-audit-and-ux-simplification.md`](./019-v0-3-surface-audit-and-ux-simplification.md) (planned; the `v0.3` audit follow-up will align front-door docs, release refs, and local-dev UX around the shipped surface without widening product scope)
 - [`020-multi-project-gateway-expansion-and-service-dns.md`](./020-multi-project-gateway-expansion-and-service-dns.md) (planned; the post-`v0.3` multi-project networking follow-up will add per-route DNS targets, project/shared loopback-IP service routing, and HTTP post-start port discovery without replacing the current gateway model)
 - [`021-unified-init-and-starter-emission.md`](./021-unified-init-and-starter-emission.md) (complete; `effigy init [<name>]` is the single scaffolding surface, `minimal` + `underlay` ship as embedded starters with multi-file emission and post-emission guidance, and the `effigy.init.v1` / `effigy.init.list.v1` contracts are live — resolves the `g01.029` Wave 5 `effigy init --northstar`-shaped candidate as `effigy init <name>`)
-- [`022-v0-3-pre-release-hardening-and-contract-cleanup.md`](./022-v0-3-pre-release-hardening-and-contract-cleanup.md) (planned; the release-audit follow-up will close the short pre-cut hardening list around gateway privilege flow, resolver validation, env execution reliability, discovery hygiene, and any cheap first-contract cleanup worth taking before `v0.3`)
+- [`022-v0-3-pre-release-hardening-and-contract-cleanup.md`](./022-v0-3-pre-release-hardening-and-contract-cleanup.md) (complete; the bounded pre-cut hardening and first-contract cleanup pass landed across gateway privilege flow, resolver validation, env execution reliability, discovery hygiene, and the last cheap `v0.3` contract tidy-up worth taking before release)
 
 Container infrastructure design document:
 
@@ -73,13 +73,12 @@ move.
 `g02.007` remains queued, with its `v0.3.0` prep checkpoint still clean.
 Release execution is gated on explicit human approval regardless of lane
 ordering. If release execution is requested, `g02.007` resumes ahead of
-`g02.020` for the duration of the release path. `g02.022` supplies the bounded
-pre-cut hardening queue that must be reviewed before the final cut decision.
+`g02.020` for the duration of the release path. `g02.022` is complete and no
+longer blocks the cut.
 
 If release execution is requested, resume with:
 
 `cargo run --bin effigy -- release prepare --yes --version 0.3.0 --check-gates`
 
-After `g02.020` lands, use `g02.022` for the bounded hardening pass that
-remains relevant to the `v0.3` cut. After the release cut settles, `g02.019`
-picks up the post-audit UX and front-door alignment batch.
+After the release cut settles, `g02.019` picks up the post-audit UX and
+front-door alignment batch.
