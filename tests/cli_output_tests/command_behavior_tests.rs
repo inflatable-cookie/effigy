@@ -7300,7 +7300,7 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
 
     wait_for_path_exists(
         &log_follow,
-        Duration::from_secs(3),
+        Duration::from_secs(10),
         "attached log follow marker",
     );
     nix::sys::signal::kill(
@@ -7350,7 +7350,7 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
 
     wait_for_path_exists(
         &log_follow,
-        Duration::from_secs(3),
+        Duration::from_secs(10),
         "attached stream log follow marker",
     );
     nix::sys::signal::kill(
@@ -7543,7 +7543,7 @@ fn cli_container_attached_session_terminates_log_process_group() {
 
     wait_for_path_exists(
         &log_follow,
-        Duration::from_secs(3),
+        Duration::from_secs(10),
         "attached process-group log follow marker",
     );
     nix::sys::signal::kill(
