@@ -101,7 +101,7 @@ copy here so users can refer back without re-emitting.
      entry becomes the primary database (compatible with `database`); all
      entries are created at first boot.
    - align `[bundle].api_port`, `[bundle].admin_port`, and `[bundle].front_port` if the repo uses different dev-server ports
-   - when the repo uses different app package names, set `[bundle.dirs]` (`api`, `client`, optional `ui`, `front`, `admin`)
+   - when the repo uses different app package names, set `[bundle.dirs]` (`docs`, `api`, `client`, optional `ui`, `front`, `admin`)
    - when gateway labels should follow those app names too, set `[bundle.routes]` (`front`, `admin`, `api`)
    - optionally override the name knobs — `[bundle].system_name`
      (default `dev`), `[bundle].container_name` (default `stack`),
@@ -113,9 +113,10 @@ copy here so users can refer back without re-emitting.
    - adjust `systems.dev.mounts` for any sibling checkouts
 
 2. In `effigy.toml` tasks:
-   - replace the `app-api/dev`, `app-admin/dev`, `app-front/dev`
-     entries with the repo's real child apps
-   - update tab ordering and aggregator task lists to match
+   - the bundle owns the default root `dev`, `health`, `validate`, and
+     `qa` tasks
+   - only add explicit root overrides when the repo really diverges
+     from the standard docs/api/client/ui/front/admin shape
    - keep bundled setup helpers referenced through `{{ bundle.root }}`
      unless the repo intentionally needs to own a forked script
 
@@ -130,10 +131,12 @@ bundled defaults each run.
 ## Bundle app mapping and route labels
 
 `[bundle.dirs]` tells the bundled `ui-setup.rhai` helper which packages
-back the shared API client, optional UI package, and the front/admin surfaces:
+back the docs lane, shared API client, optional UI package, and the
+front/admin surfaces:
 
 ```toml
 [bundle.dirs]
+docs = "packages/docs"
 client = "packages/api-client"
 ui = "packages/ui"
 front = "packages/web"
@@ -232,7 +235,7 @@ System-layer overrides still apply on top:
 
 - Per-app `effigy.toml` in each child app (cargo/bun build commands,
   vite flags, migrations, jobs runner, etc.)
-- Tab ordering and concurrent makeup in `tasks.dev`
+- Root `tasks.dev` only when the repo needs a non-standard concurrent shape
 - Project domains, project name, and app dev-server ports through
   `[bundle]` inputs
 - Sibling-checkout layout in `systems.dev.mounts`

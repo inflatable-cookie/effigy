@@ -9,7 +9,7 @@ publication for `db.<host>`, `smtp.<host>`, and `s3.<host>`.
 This shape uses only existing Effigy surfaces:
 
 - `[bundle]` for the stable Underlay stack defaults
-- managed `tasks.dev` with `role = "lifecycle"` + `role = "shell"`
+- bundle-owned managed `tasks.dev` with `role = "lifecycle"` + `role = "shell"`
 - repo-owned tasks in the root manifest
 
 There is no parallel "underlay runtime" concept in Effigy. The starter
@@ -52,13 +52,18 @@ After emission, edit:
    `workspace_subdir`, `database`, and the optional `api_port` /
    `admin_port` / `front_port` overrides.
    When the repo uses different app package names, also set
-   `[bundle.dirs]` (`api`, `client`, optional `ui`, `front`, `admin`). When the repo
+   `[bundle.dirs]` (`docs`, `api`, `client`, optional `ui`, `front`, `admin`). When the repo
    wants DNS labels to follow those app names, set `[bundle.routes]`
    (`front`, `admin`, `api`).
 2. Add `systems.dev.mounts` in `effigy.toml` when sibling checkouts
    must be visible inside the workspace container.
-3. Replace the `app-*/dev` concurrent entries in `effigy.toml`
-   and the aggregator task lists with the repo's real apps.
+3. The bundle owns the default root `dev` task as well as the standard
+   `health`, `validate`, and `qa` aggregators.
+   Only add explicit root overrides when the repo really diverges from
+   the standard docs/api/client/ui/front/admin shape.
+   The bundle owns the default root `health`, `validate`, and `qa`
+   aggregators; only add explicit root overrides when the repo really
+   diverges from the standard docs/api/client/ui/front/admin shape.
 4. Keep bundled setup helpers referenced through `{{ bundle.root }}`
    unless the repo intentionally needs to own a forked script.
 5. Only add an explicit `[bootstrap]` block when the repo truly needs to
@@ -76,6 +81,7 @@ stay in Effigy's bundled `underlay` defaults and service catalog.
 
 - Per-app `effigy.toml` in each child app (cargo/bun build glue, vite
   flags, migrations, jobs runner, etc.)
-- Tab ordering and concurrent makeup in `tasks.dev`
+- Root `tasks.dev` only when the repo needs a non-standard concurrent
+  shape
 - Bundle inputs, sibling mounts, and any repo-specific port choices
 - Custom setup scripts only when the bundled helper is not enough
