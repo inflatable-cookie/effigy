@@ -184,7 +184,9 @@ Current v1 rules (both shapes):
 - `driver` is effectively Colima-only
 - `compose_file` (when used) must stay repo-relative
 - `primary_service` is required
-- `host.mounts` must stay repo-relative and may not escape the repo root
+- `host.mounts` are repo-relative by default and may not escape the repo
+  root. Sources from outside the repo opt in via the structured table
+  form with `external = true` (see "External host mounts" below)
 - host access is explicit through declared `ports` on the user-owned path;
   catalog-driven services own their own published-port metadata
 - readiness may be declared through one environment `health.check`
@@ -192,6 +194,46 @@ Current v1 rules (both shapes):
 - the richer data lifecycle commands (`data list`, `data export`, etc.) stay
   on the generated-compose path instead of widening direct `compose_file`
   ownership
+
+### External Host Mounts
+
+`[containers.<name>.host].mounts` accepts two forms in the same array:
+
+- a legacy `"source:target[:options]"` string (repo-relative source only)
+- a structured table opting into out-of-repo sources via `external = true`
+
+```toml
+[containers.web.host]
+mounts = [
+  # Legacy repo-relative form — unchanged.
+  ".:/workspace",
+  # Structured form — required for out-of-repo sources.
+  { host = "${PERSONAL_SSH_CONFIG}",
+    container = "/home/dev/.ssh/config",
+    external = true,
+    options = ["ro"] },
+]
+```
+
+Rules for the structured form:
+
+- `host` supports `${VAR}` interpolation (against process env) and `~`
+  expansion (against `$HOME`). `$VAR` without braces is left as-is.
+- Without `external = true`, an expanded path that lands at an absolute
+  location is rejected — declare `external = true` to make the
+  out-of-repo intent explicit.
+- With `external = true`, the path must canonicalise to an absolute
+  location: use `~/...`, `${VAR}` resolving to an absolute path, or a
+  literal absolute path. Bare relative paths are rejected.
+- The source must exist at policy-load time, regardless of `external`.
+- `options` is a free-form array of tokens (e.g. `["ro"]`) appended
+  after the container target in the rendered mount spec; effigy
+  passes them through to the compose layer unchanged.
+
+This is the recommended way to mount per-developer files (SSH config,
+shell history, scratch dirs) that live outside the repo without
+committing absolute paths to the manifest. Pair with `effigy.local.toml`
+for a clean per-machine override layer.
 
 ## Runtime Behavior
 
@@ -290,6 +332,9 @@ Gateway integration is now part of the shipped path:
   port
 - `[containers.<name>.dns].tls = true` works with `effigy gateway setup-tls`
   and the route-owned certificate path
+- once TLS is enabled for a route, plain `http://...` requests now receive a
+  `308` redirect to the equivalent `https://...` URL from the gateway instead
+  of proxying upstream over HTTP
 
 ### TCP DNS Aliases and Loopback IPs
 

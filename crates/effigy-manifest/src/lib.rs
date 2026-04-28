@@ -32,6 +32,7 @@ pub use config_sections::{
     ManifestContainerConfig, ManifestContainerDataConfig, ManifestContainerDnsConfig,
     ManifestContainerDnsDomainDefaults, ManifestContainerDnsRouteConfig, ManifestContainerDriver,
     ManifestContainerExecAliasConfig, ManifestContainerExecAliasTableConfig,
+    ManifestContainerHostConfig, ManifestContainerHostMount, ManifestContainerHostMountTable,
     ManifestContainerOnTaskExit, ManifestContainerServiceConfig, ManifestContainerShutdownMode,
     ManifestContainerStartup, ManifestContainersConfig, ManifestDemoConfig, ManifestDemoMode,
     ManifestDemoStatus, ManifestDistributionConfig, ManifestDistributionMetadataConfig,

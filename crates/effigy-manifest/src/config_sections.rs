@@ -598,7 +598,51 @@ pub struct ManifestContainerHostConfig {
     #[serde(default)]
     pub ports: Vec<String>,
     #[serde(default)]
-    pub mounts: Vec<String>,
+    pub mounts: Vec<ManifestContainerHostMount>,
+}
+
+/// A host -> container bind mount declaration on `[containers.<name>.host]`.
+///
+/// Two forms accepted at the manifest layer:
+///
+/// - **Legacy string form** — a colon-separated `host:container[:options]`
+///   spec. Source must be repo-relative; absolute and `~`-prefixed paths
+///   are rejected.
+/// - **Structured form** — a table that opts into out-of-repo sources via
+///   `external = true` and supports `${VAR}` / `~` expansion in `host`.
+///
+/// Both forms render down to the same internal mount string before
+/// reaching the compose layer.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+pub enum ManifestContainerHostMount {
+    /// `"host:container[:options]"` — legacy form, repo-relative only.
+    Spec(String),
+    /// Structured form. Use `external = true` to source the mount from
+    /// outside the repo root (with `${VAR}` / `~` expansion in `host`).
+    Table(ManifestContainerHostMountTable),
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestContainerHostMountTable {
+    /// Host-side path. Supports `${VAR}` (process env) and `~` expansion.
+    /// Without `external = true`, must resolve to a repo-relative path
+    /// under the manifest root; with `external = true`, may live
+    /// anywhere on disk.
+    pub host: String,
+    /// Container-side mount target. Absolute path inside the container.
+    pub container: String,
+    /// Opt-in: source the mount from outside the repo root. Required
+    /// to use absolute paths, `~` expansion, or `${VAR}` references
+    /// that resolve outside the repo. Defaults to false.
+    #[serde(default)]
+    pub external: bool,
+    /// Extra option tokens (e.g. `["ro"]`) appended after the container
+    /// path in the rendered mount spec. Reserved for future use; the
+    /// container layer passes them through unchanged today.
+    #[serde(default)]
+    pub options: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
@@ -968,7 +1012,8 @@ pub struct ManifestReleaseGateDetails {
 #[cfg(test)]
 mod tests {
     use super::{
-        ManifestContainerDnsConfig, ManifestContainerServiceConfig, ManifestContainersConfig,
+        ManifestContainerDnsConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
+        ManifestContainerServiceConfig, ManifestContainersConfig,
         ManifestInlineWorkspaceContainerConfig, ManifestIsolationConfig, ManifestJsPackageManager,
         ManifestSystemsConfig, ManifestWorkspaceContainerRef,
     };
@@ -1520,5 +1565,110 @@ container = { image = "node:22", mount = "./:/workspace", shell = "bash" }
                 panic!("expected inline workspace container shortcut")
             }
         }
+    }
+
+    #[test]
+    fn container_host_mounts_accept_legacy_string_form() {
+        let parsed: ManifestContainerHostConfig = toml::from_str(
+            r#"
+mounts = ["./:/workspace", "./assets:/srv/assets:ro"]
+"#,
+        )
+        .expect("parse legacy string mounts");
+
+        assert_eq!(parsed.mounts.len(), 2);
+        match &parsed.mounts[0] {
+            ManifestContainerHostMount::Spec(value) => assert_eq!(value, "./:/workspace"),
+            ManifestContainerHostMount::Table(_) => panic!("expected spec form"),
+        }
+        match &parsed.mounts[1] {
+            ManifestContainerHostMount::Spec(value) => assert_eq!(value, "./assets:/srv/assets:ro"),
+            ManifestContainerHostMount::Table(_) => panic!("expected spec form"),
+        }
+    }
+
+    #[test]
+    fn container_host_mounts_accept_structured_external_form() {
+        let parsed: ManifestContainerHostConfig = toml::from_str(
+            r#"
+mounts = [
+  { host = "${PERSONAL_SSH_CONFIG}",
+    container = "/home/dev/.ssh/config",
+    external = true,
+    options = ["ro"] },
+]
+"#,
+        )
+        .expect("parse structured mount");
+
+        assert_eq!(parsed.mounts.len(), 1);
+        match &parsed.mounts[0] {
+            ManifestContainerHostMount::Table(table) => {
+                assert_eq!(table.host, "${PERSONAL_SSH_CONFIG}");
+                assert_eq!(table.container, "/home/dev/.ssh/config");
+                assert!(table.external);
+                assert_eq!(table.options, vec!["ro".to_owned()]);
+            }
+            ManifestContainerHostMount::Spec(_) => panic!("expected table form"),
+        }
+    }
+
+    #[test]
+    fn container_host_mounts_mix_legacy_and_structured_in_same_array() {
+        let parsed: ManifestContainerHostConfig = toml::from_str(
+            r#"
+mounts = [
+  "./:/workspace",
+  { host = "~/.config/effigy", container = "/etc/effigy", external = true },
+]
+"#,
+        )
+        .expect("parse mixed mounts");
+
+        assert_eq!(parsed.mounts.len(), 2);
+        assert!(matches!(
+            parsed.mounts[0],
+            ManifestContainerHostMount::Spec(_)
+        ));
+        match &parsed.mounts[1] {
+            ManifestContainerHostMount::Table(table) => {
+                assert_eq!(table.host, "~/.config/effigy");
+                assert!(table.external);
+                assert!(table.options.is_empty());
+            }
+            ManifestContainerHostMount::Spec(_) => panic!("expected table form"),
+        }
+    }
+
+    #[test]
+    fn container_host_mount_table_defaults_external_to_false() {
+        let parsed: ManifestContainerHostConfig = toml::from_str(
+            r#"
+mounts = [
+  { host = "./assets", container = "/srv/assets" },
+]
+"#,
+        )
+        .expect("parse defaults");
+
+        match &parsed.mounts[0] {
+            ManifestContainerHostMount::Table(table) => {
+                assert!(!table.external);
+                assert!(table.options.is_empty());
+            }
+            ManifestContainerHostMount::Spec(_) => panic!("expected table form"),
+        }
+    }
+
+    #[test]
+    fn container_host_mount_table_rejects_unknown_fields() {
+        let result: Result<ManifestContainerHostConfig, _> = toml::from_str(
+            r#"
+mounts = [
+  { host = "./", container = "/workspace", bogus = "value" },
+]
+"#,
+        );
+        assert!(result.is_err(), "expected unknown-field rejection");
     }
 }

@@ -2,6 +2,7 @@ pub mod colima;
 pub mod compose;
 pub mod exec;
 pub mod health;
+mod mount_spec;
 mod policy_support;
 pub mod report;
 pub mod session;
@@ -18,9 +19,10 @@ pub use workspace::load_workspace_ownership_targets;
 
 #[cfg(test)]
 pub(crate) use compose::with_test_compose_backend;
+use mount_spec::resolve_host_mounts;
 #[cfg(test)]
 pub(crate) use policy_support::with_test_effigy_home;
-use policy_support::{resolve_compose_source, validate_declared_mounts, validate_media_mounts};
+use policy_support::{resolve_compose_source, validate_media_mounts};
 use workspace::materialize_runtime_workspace_mount_rewrite;
 #[cfg(test)]
 pub(crate) use workspace::with_test_host_composer_home;
@@ -476,7 +478,8 @@ pub fn validate_container_policy(
             )));
         }
     }
-    validate_declared_mounts(repo_root, &policy.name, &policy.declared_mounts)?;
+    // Host mounts are resolved + validated at intake (see `mount_spec`).
+    // `policy.declared_mounts` already contains canonical absolute paths.
     validate_media_mounts(repo_root, &policy.name, &policy.declared_media_mounts)?;
     Ok(())
 }
@@ -586,6 +589,7 @@ fn build_effective_policy(
         )?;
     }
     let host = config.host.as_ref().cloned().unwrap_or_default();
+    let resolved_host_mounts = resolve_host_mounts(repo_root, name, &host.mounts)?;
     let data = config.data.as_ref().cloned().unwrap_or_default();
     let health = config.health.as_ref().cloned().unwrap_or_default();
     let lifecycle = config.lifecycle.as_ref();
@@ -616,7 +620,7 @@ fn build_effective_policy(
         service_aliases,
         declared_ports: effective_ports,
         ports_declared_explicitly: !host.ports.is_empty(),
-        declared_mounts: host.mounts,
+        declared_mounts: resolved_host_mounts,
         declared_media_mounts: data.media,
         pull_production_hook: data.pull_production,
         health_check: health.check,
@@ -995,13 +999,30 @@ fn resolve_container_exec_working_dir(
         .canonicalize()
         .unwrap_or_else(|_| repo_root.to_path_buf());
     for mount in &host.mounts {
-        let mut parts = mount.splitn(3, ':');
-        let source = parts.next().unwrap_or_default().trim();
-        let target = parts.next().unwrap_or_default().trim();
-        if target.is_empty() {
+        let (source, target) = match mount {
+            effigy_manifest::ManifestContainerHostMount::Spec(raw) => {
+                let mut parts = raw.splitn(3, ':');
+                let source = parts.next().unwrap_or_default().trim().to_owned();
+                let target = parts.next().unwrap_or_default().trim().to_owned();
+                (source, target)
+            }
+            effigy_manifest::ManifestContainerHostMount::Table(table) => {
+                // External mounts can't satisfy "container's CWD must
+                // map to the repo root" — they live elsewhere by
+                // definition, so skip them here.
+                if table.external {
+                    continue;
+                }
+                (
+                    table.host.trim().to_owned(),
+                    table.container.trim().to_owned(),
+                )
+            }
+        };
+        if source.is_empty() || target.is_empty() {
             continue;
         }
-        let resolved_source = repo_root.join(source);
+        let resolved_source = repo_root.join(&source);
         let canonical_source = resolved_source.canonicalize().unwrap_or(resolved_source);
         if canonical_source == canonical_root {
             return Ok(PathBuf::from(target));

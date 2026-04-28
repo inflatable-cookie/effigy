@@ -326,7 +326,60 @@ fn validate_container_host(context: &mut SchemaContext<'_, '_>, base_path: &str,
     };
     validate_allowed_keys(context, &path, table, &["ports", "mounts"]);
     validate_string_array(context, &format!("{path}.ports"), table.get("ports"));
-    validate_string_array(context, &format!("{path}.mounts"), table.get("mounts"));
+    validate_container_host_mounts(context, &path, table.get("mounts"));
+}
+
+fn validate_container_host_mounts(
+    context: &mut SchemaContext<'_, '_>,
+    base_path: &str,
+    value: Option<&Value>,
+) {
+    let path = format!("{base_path}.mounts");
+    let Some(value) = value else {
+        return;
+    };
+    let Some(entries) = value.as_array() else {
+        context.unsupported_value(
+            &path,
+            SchemaContext::value_type(value),
+            "expected array of strings or tables",
+        );
+        return;
+    };
+    for (index, entry) in entries.iter().enumerate() {
+        let entry_path = format!("{path}[{index}]");
+        if entry.is_str() {
+            continue;
+        }
+        let Some(table) = entry.as_table() else {
+            context.unsupported_value(
+                &entry_path,
+                SchemaContext::value_type(entry),
+                "expected string or table",
+            );
+            continue;
+        };
+        validate_allowed_keys(
+            context,
+            &entry_path,
+            table,
+            &["host", "container", "external", "options"],
+        );
+        validate_string_field(context, &entry_path, table.get("host"), "host");
+        validate_string_field(context, &entry_path, table.get("container"), "container");
+        if let Some(external) = table.get("external") {
+            if external.as_bool().is_none() {
+                context.unsupported_value(
+                    &format!("{entry_path}.external"),
+                    SchemaContext::value_type(external),
+                    "expected boolean",
+                );
+            }
+        }
+        if let Some(options) = table.get("options") {
+            validate_string_array(context, &format!("{entry_path}.options"), Some(options));
+        }
+    }
 }
 
 fn validate_container_ui(context: &mut SchemaContext<'_, '_>, base_path: &str, value: &Value) {

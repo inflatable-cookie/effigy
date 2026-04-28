@@ -3,11 +3,10 @@ use super::{
     load_all_container_policies, load_container_exec_working_dir, load_container_policy,
     load_inline_workspace_container_policy, load_workspace_ownership_targets,
     resolve_inline_workspace_exec_working_dir, stats_all_report, status_all_report, status_report,
-    validate_container_policy, with_test_compose_backend, with_test_effigy_home,
-    with_test_host_composer_home, AllocatedPortsSummary, ContainerDataTransferAction,
-    ContainerDataVolumeEntry, ContainerPolicyError, ContainerStatsAllEntry, ContainerStatsService,
-    ContainerStatusAllEntry, ContainerStatusService, EffectiveAttachMode, EffectiveComposeSource,
-    SharedServiceBinding,
+    with_test_compose_backend, with_test_effigy_home, with_test_host_composer_home,
+    AllocatedPortsSummary, ContainerDataTransferAction, ContainerDataVolumeEntry,
+    ContainerPolicyError, ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry,
+    ContainerStatusService, EffectiveAttachMode, EffectiveComposeSource, SharedServiceBinding,
 };
 use crate::compose::ComposeBackend;
 use effigy_catalog::volumes::VolumeClassification;
@@ -368,8 +367,10 @@ mounts = ["../outside:/workspace/outside"]
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
-    let error = validate_container_policy(&root, &policy).expect_err("should fail");
+    // Host-mount resolution moved to intake (see `mount_spec`), so the
+    // repo-escape check now fires at policy-load time, not at later
+    // `validate_container_policy`.
+    let error = load_container_policy(&root, None).expect_err("should fail");
     assert!(error.to_string().contains("escapes the repo root"));
 }
 
