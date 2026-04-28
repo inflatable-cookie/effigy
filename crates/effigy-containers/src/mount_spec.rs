@@ -14,9 +14,10 @@
 //!
 //! - Without `external = true`, the host source must canonicalise under the
 //!   repo root (preserves the long-standing isolation guarantee).
-//! - With `external = true`, the source may live anywhere on disk, but
-//!   must still exist (we canonicalise to fail fast on misconfigured
-//!   machines).
+//! - With `external = true`, the source may live anywhere on disk. Absolute
+//!   paths are accepted directly; relative paths resolve from the repo root and
+//!   may escape it. The source must still exist (we canonicalise to fail fast
+//!   on misconfigured machines).
 //!
 //! `${VAR}` is the only interpolation form. `$VAR` (no braces) is left
 //! intentionally unsupported to avoid shell-style ambiguity.
@@ -98,12 +99,12 @@ fn resolve_structured(
 
     let expanded_path = Path::new(&expanded);
     let canonical = if table.external {
-        if !expanded_path.is_absolute() {
-            return Err(ContainerPolicyError::TaskInvocation(format!(
-                "container `{container_name}` external mount `host` value `{raw_host}` (expanded to `{expanded}`) must resolve to an absolute path; use `~/...`, `${{VAR}}`, or a literal absolute path"
-            )));
-        }
-        canonicalize_anywhere(container_name, &expanded, raw_host)?
+        let resolved = if expanded_path.is_absolute() {
+            expanded_path.to_path_buf()
+        } else {
+            repo_root.join(expanded_path)
+        };
+        canonicalize_anywhere(container_name, &resolved, raw_host)?
     } else {
         if expanded_path.is_absolute() {
             return Err(ContainerPolicyError::TaskInvocation(format!(
@@ -158,13 +159,13 @@ fn canonicalize_under_repo(
 
 fn canonicalize_anywhere(
     container_name: &str,
-    expanded: &str,
+    resolved: &Path,
     raw_for_error: &str,
 ) -> Result<PathBuf, ContainerPolicyError> {
-    let path = Path::new(expanded);
-    path.canonicalize().map_err(|error| {
+    resolved.canonicalize().map_err(|error| {
         ContainerPolicyError::TaskInvocation(format!(
-            "container `{container_name}` external mount source `{raw_for_error}` (expanded to `{expanded}`) is invalid: {error}"
+            "container `{container_name}` external mount source `{raw_for_error}` (resolved to `{}`) is invalid: {error}",
+            resolved.display()
         ))
     })
 }
@@ -398,20 +399,18 @@ mod tests {
     }
 
     #[test]
-    fn structured_form_external_requires_absolute_after_expansion() {
-        let repo = temp_repo();
-        // ./assets exists, but `external = true` doesn't anchor to
-        // repo_root; a bare relative path can't be sourced from
-        // "anywhere on disk" without ambiguity. Make the user be
-        // explicit (use ~/ or ${VAR} or an absolute path).
-        std::fs::create_dir_all(repo.path().join("assets")).unwrap();
-        let table = make_table("./assets", "/srv/assets", true, Vec::new());
-        let err = resolve_structured(repo.path(), "web", &table).unwrap_err();
-        let message = format!("{err}");
-        assert!(
-            message.contains("must resolve to an absolute path"),
-            "unexpected: {message}"
-        );
+    fn structured_form_external_allows_repo_relative_escape() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join("repo");
+        let sibling = root.path().join("sibling");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(sibling.join("assets")).unwrap();
+        let sibling_source = sibling.join("assets");
+        let raw = "../sibling/assets";
+        let table = make_table(&raw, "/srv/assets", true, Vec::new());
+        let resolved = resolve_structured(&repo, "web", &table).unwrap();
+        let canonical = sibling_source.canonicalize().unwrap();
+        assert_eq!(resolved, format!("{}:/srv/assets", canonical.display()));
     }
 
     #[test]

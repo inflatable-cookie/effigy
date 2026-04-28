@@ -222,6 +222,11 @@ fn load_composed_value(
             &mut composed.source_map,
             manifest_path,
         )?;
+        for path in child.extend_paths {
+            if !composed.extend_paths.contains(&path) {
+                composed.extend_paths.push(path);
+            }
+        }
     }
 
     session.stack.pop();

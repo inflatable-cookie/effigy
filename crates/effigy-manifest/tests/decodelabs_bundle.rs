@@ -75,6 +75,7 @@ version = "11.0"
         vec![
             "bcmath",
             "apcu",
+            "calendar",
             "pcntl",
             "pdo_mysql",
             "mysqli",
@@ -324,6 +325,124 @@ routes = [
 }
 
 #[test]
+fn decodelabs_bundle_in_imported_fragment_honors_child_manifest_extend() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root_path = tmp.path().join("effigy.toml");
+    let local_path = tmp.path().join("effigy.local.toml");
+    std::fs::write(
+        &root_path,
+        r#"
+[tasks]
+deploy = "true"
+"#,
+    )
+    .expect("write root manifest");
+    std::fs::write(
+        &local_path,
+        r#"
+[manifest]
+extend = ["containers.web.dns.routes"]
+
+[bundle]
+base = "decodelabs"
+host = "cbs.legacy.test"
+project_name = "cbs-dev"
+database = "cbs"
+
+[containers.web.dns]
+routes = [
+  { domain = "borderway.legacy.test", tls = true, service = "web" },
+]
+"#,
+    )
+    .expect("write local manifest");
+    std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
+
+    let loaded = load_task_manifest_with_inspection(&root_path).expect("load manifest");
+    let web = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("web"))
+        .expect("web container");
+    let dns = web.dns.as_ref().expect("dns");
+    let routes = dns
+        .routes
+        .iter()
+        .map(|route| (route.domain.as_str(), route.service.as_deref(), route.tls))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        routes,
+        vec![
+            ("cbs.legacy.test", Some("web"), Some(true)),
+            ("pma.cbs.legacy.test", Some("pma"), Some(true)),
+            ("borderway.legacy.test", Some("web"), Some(true)),
+        ]
+    );
+}
+
+#[test]
+fn decodelabs_bundle_in_imported_fragment_ignores_unrelated_child_extend_paths() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root_path = tmp.path().join("effigy.toml");
+    let local_path = tmp.path().join("effigy.local.toml");
+    std::fs::write(
+        &root_path,
+        r#"
+[tasks]
+deploy = "true"
+"#,
+    )
+    .expect("write root manifest");
+    std::fs::write(
+        &local_path,
+        r#"
+[manifest]
+extend = ["containers.web.dns.routes", "containers.web.dns.domains"]
+
+[bundle]
+base = "decodelabs"
+host = "cbs.legacy.test"
+project_name = "cbs-dev"
+database = "cbs"
+
+[containers.web.dns]
+domains = ["admin.cbs.legacy.test"]
+domain_defaults = { tls = true, service = "web" }
+routes = [
+  { domain = "borderway.legacy.test", tls = true, service = "web" },
+]
+"#,
+    )
+    .expect("write local manifest");
+    std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
+
+    let loaded = load_task_manifest_with_inspection(&root_path).expect("load manifest");
+    let web = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("web"))
+        .expect("web container");
+    let dns = web.dns.as_ref().expect("dns");
+    let routes = dns
+        .routes
+        .iter()
+        .map(|route| (route.domain.as_str(), route.service.as_deref(), route.tls))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        routes,
+        vec![
+            ("cbs.legacy.test", Some("web"), Some(true)),
+            ("pma.cbs.legacy.test", Some("pma"), Some(true)),
+            ("borderway.legacy.test", Some("web"), Some(true)),
+        ]
+    );
+}
+
+#[test]
 fn decodelabs_library_bundle_derives_shared_workspace_runtime() {
     let shared_root = tempfile::tempdir().expect("shared root tempdir");
     let shared_root_path = shared_root
@@ -403,6 +522,7 @@ base = "decodelabs-library"
         vec![
             "bcmath",
             "apcu",
+            "calendar",
             "pcntl",
             "pdo_mysql",
             "mysqli",

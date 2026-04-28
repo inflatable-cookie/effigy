@@ -278,6 +278,10 @@ the bundle that owns the service):
 - `laravel`, `spa`, `wordpress` — additional shipped variants tuned for
   those framework patterns.
 
+An explicit repo-local `config = "..."` path on the service overrides the
+variant lookup entirely. Use that when a stack needs a custom multi-vhost or
+proxy layout that does not fit one of the shipped variants.
+
 ### `php-fpm`
 
 PHP-FPM workspace / application server.

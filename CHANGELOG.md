@@ -18,6 +18,7 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Gateway registration no longer crashes when the host container runtime is unreachable (e.g. colima/docker not installed in CI sandboxes or the daemon transiently down). Stale loopback-IP pruning becomes best-effort: when listing running containers fails, the prune is skipped that round and runs again next time.
 - Linux clippy: `crate::resolver_setup` import in `effigy-gateway::server` is now gated behind `cfg(target_os = "macos")` to match the only call site, fixing an `unused-imports` failure on Linux builds.
+- Generated compose containers now actually apply declared `[containers.<name>.host].mounts` onto generated services that already bind the repo root, so catalog-backed stacks can mount sibling checkouts and other external paths without ejecting to a hand-owned compose file.
 
 ### Breaking
 - Reject `concurrent = [...]` on a task that does not declare

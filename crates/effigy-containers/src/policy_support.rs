@@ -12,8 +12,9 @@ use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde_yaml::Value as YamlValue;
 
 use crate::{
-    service_alias_contract, ContainerPolicyError, SharedServiceBinding,
-    GENERATED_RUNTIME_COMPOSE_DIR, PROJECT_LOCAL_CATALOG_DIR, SHARED_SERVICE_HOST,
+    mount_spec::resolve_host_mounts, service_alias_contract, ContainerPolicyError,
+    SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, PROJECT_LOCAL_CATALOG_DIR,
+    SHARED_SERVICE_HOST,
 };
 
 #[cfg(test)]
@@ -123,6 +124,13 @@ pub(crate) fn resolve_compose_source(
         container_name,
         project_name,
         &configured_media_mounts(config),
+        &mut assembly,
+    )?;
+    apply_generated_compose_host_mount_policy(
+        repo_root,
+        container_name,
+        project_name,
+        config,
         &mut assembly,
     )?;
     let configured_bindings = configured_host_ports(config)
@@ -911,6 +919,19 @@ fn configured_media_mounts(config: &ManifestContainerConfig) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn configured_host_mounts(
+    repo_root: &Path,
+    container_name: &str,
+    config: &ManifestContainerConfig,
+) -> Result<Vec<String>, ContainerPolicyError> {
+    let mounts = config
+        .host
+        .as_ref()
+        .map(|host| host.mounts.as_slice())
+        .unwrap_or(&[]);
+    resolve_host_mounts(repo_root, container_name, mounts)
+}
+
 pub(crate) fn validate_media_mounts(
     repo_root: &Path,
     container_name: &str,
@@ -980,6 +1001,60 @@ fn apply_generated_compose_media_policy(
     Ok(())
 }
 
+fn apply_generated_compose_host_mount_policy(
+    repo_root: &Path,
+    container_name: &str,
+    project_name: &str,
+    config: &ManifestContainerConfig,
+    assembly: &mut effigy_catalog::assembly::AssemblyResult,
+) -> Result<(), ContainerPolicyError> {
+    let host_mounts = configured_host_mounts(repo_root, container_name, config)?;
+    if host_mounts.is_empty() {
+        return Ok(());
+    }
+
+    let mut parsed: YamlValue =
+        serde_yaml::from_str(&assembly.compose_yaml).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "generated compose for `{project_name}` is invalid YAML before host mount rewrite: {error}"
+            ))
+        })?;
+    let Some(services) = parsed
+        .get_mut("services")
+        .and_then(YamlValue::as_mapping_mut)
+    else {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "generated compose for `{project_name}` is missing a `services` mapping"
+        )));
+    };
+
+    let repo_root_display = repo_root.display().to_string();
+    let mut attached_services = 0usize;
+    for service in services.values_mut() {
+        let Some(service) = service.as_mapping_mut() else {
+            continue;
+        };
+        if !service_has_repo_root_mount(service, &repo_root_display) {
+            continue;
+        }
+        append_bind_mounts(service, &host_mounts, "host mount")?;
+        attached_services += 1;
+    }
+
+    if attached_services == 0 {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` declares `[containers.{container_name}.host].mounts`, but no generated service has a repo-root bind mount to attach them to"
+        )));
+    }
+
+    assembly.compose_yaml = serde_yaml::to_string(&parsed).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "failed to serialize generated compose for `{project_name}` after host mount rewrite: {error}"
+        ))
+    })?;
+    Ok(())
+}
+
 fn service_has_repo_root_mount(service: &serde_yaml::Mapping, repo_root: &str) -> bool {
     service
         .get(YamlValue::String("volumes".to_owned()))
@@ -994,27 +1069,46 @@ fn service_has_repo_root_mount(service: &serde_yaml::Mapping, repo_root: &str) -
         })
 }
 
+fn volumes_sequence_mut<'a>(
+    service: &'a mut serde_yaml::Mapping,
+    policy_name: &str,
+) -> Result<&'a mut Vec<YamlValue>, ContainerPolicyError> {
+    let key = YamlValue::String("volumes".to_owned());
+    if !service.contains_key(&key) {
+        service.insert(key.clone(), YamlValue::Sequence(Vec::new()));
+    }
+    match service.get_mut(&key) {
+        Some(YamlValue::Sequence(sequence)) => Ok(sequence),
+        Some(_) => Err(ContainerPolicyError::TaskInvocation(format!(
+            "generated compose {policy_name} only supports sequence `volumes` entries"
+        ))),
+        None => unreachable!("volumes key should exist after insertion"),
+    }
+}
+
+fn append_bind_mounts(
+    service: &mut serde_yaml::Mapping,
+    mounts: &[String],
+    policy_name: &str,
+) -> Result<(), ContainerPolicyError> {
+    let volumes = volumes_sequence_mut(service, policy_name)?;
+    for mount in mounts {
+        if volumes
+            .iter()
+            .any(|entry| entry.as_str().is_some_and(|existing| existing == mount))
+        {
+            continue;
+        }
+        volumes.push(YamlValue::String(mount.clone()));
+    }
+    Ok(())
+}
+
 fn append_media_mounts(
     service: &mut serde_yaml::Mapping,
     mounts: &[(PathBuf, String)],
 ) -> Result<(), ContainerPolicyError> {
-    let key = YamlValue::String("volumes".to_owned());
-    let volumes = match service.get_mut(&key) {
-        Some(YamlValue::Sequence(sequence)) => sequence,
-        Some(_) => {
-            return Err(ContainerPolicyError::TaskInvocation(
-                "generated compose media policy only supports sequence `volumes` entries"
-                    .to_owned(),
-            ))
-        }
-        None => {
-            service.insert(key.clone(), YamlValue::Sequence(Vec::new()));
-            service
-                .get_mut(&key)
-                .and_then(YamlValue::as_sequence_mut)
-                .expect("volumes sequence should exist after insertion")
-        }
-    };
+    let volumes = volumes_sequence_mut(service, "media policy")?;
 
     for (source, target) in mounts {
         let mount = format!("{}:{target}", source.display());

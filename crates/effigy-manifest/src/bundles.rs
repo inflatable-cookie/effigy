@@ -739,6 +739,7 @@ fn decodelabs_library_spec() -> BundleSpec {
 const DECODELABS_PHP_EXTENSIONS: &[&str] = &[
     "bcmath",
     "apcu",
+    "calendar",
     "pcntl",
     "pdo_mysql",
     "mysqli",
@@ -2347,12 +2348,7 @@ fn apply_bundle_extend_path(
     path: &str,
 ) -> Result<(), ManifestError> {
     let Some(default_value) = lookup_value_at_path(defaults, path) else {
-        return Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!(
-                "invalid `[bundle]` section: extend path `{path}` does not exist in bundle defaults"
-            ),
-        });
+        return Ok(());
     };
     let Some(current_value) = lookup_value_at_path_mut(current, path) else {
         return Ok(());

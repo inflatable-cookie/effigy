@@ -121,7 +121,10 @@ Two things to call out:
   use. This keeps personal infra out of the repo entirely.
 - **`external = true` on the mount.** Required to source from outside
   the repo. The `host` value uses `${VAR}` interpolation against
-  process env (not the manifest `[env]` block — see below).
+  process env (not the manifest `[env]` block — see below). The path may be
+  absolute or repo-relative; a repo-relative external mount still resolves
+  from the repo root, but Effigy no longer enforces repo-root containment on
+  it.
 
 ### 2. Ship a copy-pastable scaffold (committed)
 
