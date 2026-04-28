@@ -111,6 +111,7 @@ fn render_inspect_payload(
                 "parent": display_path(&edge.parent, target_root),
                 "child": display_path(&edge.child, target_root),
                 "override_paths": edge.override_paths,
+                "extend_paths": edge.extend_paths,
             })
         })
         .collect::<Vec<_>>();
@@ -398,19 +399,23 @@ fn render_manifest_inspection(
 }
 
 fn render_edge(target_root: &Path, edge: &ManifestCompositionEdge) -> String {
-    if edge.override_paths.is_empty() {
-        return format!(
-            "- {} -> {}",
-            display_path(&edge.parent, target_root),
-            display_path(&edge.child, target_root)
-        );
-    }
-    format!(
-        "- {} -> {} (override: {})",
+    let head = format!(
+        "- {} -> {}",
         display_path(&edge.parent, target_root),
-        display_path(&edge.child, target_root),
-        edge.override_paths.join(", ")
-    )
+        display_path(&edge.child, target_root)
+    );
+    let mut suffixes = Vec::new();
+    if !edge.override_paths.is_empty() {
+        suffixes.push(format!("override: {}", edge.override_paths.join(", ")));
+    }
+    if !edge.extend_paths.is_empty() {
+        suffixes.push(format!("extend: {}", edge.extend_paths.join(", ")));
+    }
+    if suffixes.is_empty() {
+        head
+    } else {
+        format!("{head} ({})", suffixes.join("; "))
+    }
 }
 
 fn render_override(target_root: &Path, entry: &ManifestCompositionOverride) -> String {

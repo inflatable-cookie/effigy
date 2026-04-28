@@ -26,6 +26,8 @@ pub struct ManifestCompositionEdge {
     pub parent: PathBuf,
     pub child: PathBuf,
     pub override_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extend_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -61,12 +63,15 @@ struct ManifestIncludeDirective {
     path: String,
     #[serde(default, rename = "override")]
     override_paths: Vec<String>,
+    #[serde(default, rename = "extend")]
+    extend_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 struct ManifestIncludeSpec {
     resolved_path: PathBuf,
     override_paths: Vec<String>,
+    extend_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +186,7 @@ fn load_composed_value(
             parent: manifest_path.to_path_buf(),
             child: include.resolved_path.clone(),
             override_paths: include.override_paths.clone(),
+            extend_paths: include.extend_paths.clone(),
         });
         merge_values(
             "",
@@ -213,18 +219,31 @@ fn take_include_specs(
     let parent = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let mut specs = Vec::with_capacity(config.include.len());
     for entry in config.include {
-        let (path, override_paths) = match entry {
-            ManifestIncludeEntry::Path(path) => (path, Vec::new()),
-            ManifestIncludeEntry::Detailed(detail) => (detail.path, detail.override_paths),
+        let (path, override_paths, extend_paths) = match entry {
+            ManifestIncludeEntry::Path(path) => (path, Vec::new(), Vec::new()),
+            ManifestIncludeEntry::Detailed(detail) => {
+                (detail.path, detail.override_paths, detail.extend_paths)
+            }
         };
         let resolved_path = if Path::new(&path).is_absolute() {
             PathBuf::from(&path)
         } else {
             parent.join(&path)
         };
+        if let Some(conflict) = override_paths.iter().find(|p| extend_paths.contains(p)) {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "include `{}` declares `{}` in both `override` and `extend`; pick one",
+                    resolved_path.display(),
+                    conflict
+                ),
+            });
+        }
         specs.push(ManifestIncludeSpec {
             resolved_path,
             override_paths,
+            extend_paths,
         });
     }
     Ok(specs)
@@ -245,50 +264,101 @@ fn merge_values(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
+    let extend_set = include
+        .extend_paths
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let mut used_overrides = BTreeSet::new();
+    let mut used_extends = BTreeSet::new();
     merge_value_inner(
         path,
         current,
         incoming,
         incoming_sources,
         &override_set,
+        &extend_set,
         &mut used_overrides,
+        &mut used_extends,
         overridden_paths,
         current_sources,
         &include.resolved_path,
         root_manifest_path,
     )?;
-    let unused = include
+    let unused_overrides = include
         .override_paths
         .iter()
         .filter(|path| !used_overrides.contains((*path).as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    if !unused.is_empty() {
+    if !unused_overrides.is_empty() {
         return Err(ManifestError::Compose {
             path: root_manifest_path.to_path_buf(),
             detail: format!(
                 "unused override path(s) for {}: {}",
                 include.resolved_path.display(),
-                unused.join(", ")
+                unused_overrides.join(", ")
+            ),
+        });
+    }
+    let unused_extends = include
+        .extend_paths
+        .iter()
+        .filter(|path| !used_extends.contains((*path).as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unused_extends.is_empty() {
+        return Err(ManifestError::Compose {
+            path: root_manifest_path.to_path_buf(),
+            detail: format!(
+                "unused extend path(s) for {}: {}",
+                include.resolved_path.display(),
+                unused_extends.join(", ")
             ),
         });
     }
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn merge_value_inner(
     path: &str,
     current: &mut Value,
     incoming: &Value,
     incoming_sources: &BTreeMap<String, PathBuf>,
     override_set: &BTreeSet<String>,
+    extend_set: &BTreeSet<String>,
     used_overrides: &mut BTreeSet<String>,
+    used_extends: &mut BTreeSet<String>,
     overridden_paths: &mut Vec<ManifestCompositionOverride>,
     current_sources: &mut BTreeMap<String, PathBuf>,
     incoming_fragment: &Path,
     root_manifest_path: &Path,
 ) -> Result<(), ManifestError> {
+    if !path.is_empty() && extend_set.contains(path) {
+        let existing_source =
+            current_value_source(path, current_sources, root_manifest_path).to_path_buf();
+        match (current.as_array_mut(), incoming.as_array()) {
+            (Some(current_array), Some(incoming_array)) => {
+                current_array.extend(incoming_array.iter().cloned());
+                used_extends.insert(path.to_owned());
+                return Ok(());
+            }
+            _ => {
+                return Err(ManifestError::Compose {
+                    path: root_manifest_path.to_path_buf(),
+                    detail: format!(
+                        "extend path `{path}` requires arrays on both sides; got {} from {} and {} from {}",
+                        value_kind(current),
+                        existing_source.display(),
+                        value_kind(incoming),
+                        incoming_fragment.display()
+                    ),
+                });
+            }
+        }
+    }
+
     if !path.is_empty() && override_set.contains(path) {
         let existing_source =
             current_value_source(path, current_sources, root_manifest_path).to_path_buf();
@@ -333,7 +403,9 @@ fn merge_value_inner(
                         incoming_value,
                         incoming_sources,
                         override_set,
+                        extend_set,
                         used_overrides,
+                        used_extends,
                         overridden_paths,
                         current_sources,
                         incoming_fragment,
@@ -492,4 +564,203 @@ fn current_value_source<'a>(
         .get(path)
         .map(PathBuf::as_path)
         .unwrap_or(root_manifest_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn write_manifest(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, body).expect("write manifest");
+        path
+    }
+
+    fn array_strings(value: &Value, path: &str) -> Vec<String> {
+        let mut current = value;
+        for segment in path.split('.') {
+            current = current
+                .as_table()
+                .and_then(|table| table.get(segment))
+                .unwrap_or_else(|| panic!("missing path segment {segment} in {path}"));
+        }
+        current
+            .as_array()
+            .expect("array")
+            .iter()
+            .map(|item| item.as_str().expect("string").to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn extend_appends_array_entries() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = [
+  { path = "overlay.toml", extend = ["isolation.paths"] },
+]
+
+[isolation]
+paths = ["a", "b"]
+"#,
+        );
+        write_manifest(
+            dir,
+            "overlay.toml",
+            r#"
+[isolation]
+paths = ["c", "d"]
+"#,
+        );
+
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        let domains = array_strings(&loaded.effective_value, "isolation.paths");
+        assert_eq!(
+            domains,
+            vec![
+                "a".to_owned(),
+                "b".to_owned(),
+                "c".to_owned(),
+                "d".to_owned(),
+            ]
+        );
+        let edge = loaded
+            .include_graph
+            .iter()
+            .find(|edge| edge.child.file_name() == Some(std::ffi::OsStr::new("overlay.toml")))
+            .expect("overlay edge");
+        assert_eq!(edge.extend_paths, vec!["isolation.paths"]);
+    }
+
+    #[test]
+    fn extend_on_non_array_path_errors() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = [
+  { path = "overlay.toml", extend = ["shell.run"] },
+]
+
+[shell]
+run = "primary"
+"#,
+        );
+        write_manifest(
+            dir,
+            "overlay.toml",
+            r#"
+[shell]
+run = "secondary"
+"#,
+        );
+
+        let err = load_task_manifest_with_inspection(&root).unwrap_err();
+        let detail = format!("{err}");
+        assert!(detail.contains("extend path `shell.run`"), "{detail}");
+        assert!(detail.contains("requires arrays on both sides"), "{detail}");
+        assert!(detail.contains("effigy.toml"), "{detail}");
+        assert!(detail.contains("overlay.toml"), "{detail}");
+    }
+
+    #[test]
+    fn extend_and_override_on_same_path_errors() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = [
+  { path = "overlay.toml",
+    extend = ["isolation.paths"],
+    override = ["isolation.paths"] },
+]
+
+[isolation]
+paths = ["a"]
+"#,
+        );
+        write_manifest(
+            dir,
+            "overlay.toml",
+            r#"
+[isolation]
+paths = ["b"]
+"#,
+        );
+
+        let err = load_task_manifest_with_inspection(&root).unwrap_err();
+        let detail = format!("{err}");
+        assert!(
+            detail.contains("declares `isolation.paths` in both `override` and `extend`"),
+            "{detail}"
+        );
+    }
+
+    #[test]
+    fn unused_extend_path_errors() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = [
+  { path = "overlay.toml", extend = ["isolation.paths"] },
+]
+"#,
+        );
+        write_manifest(dir, "overlay.toml", "[shell]\nrun = \"echo\"\n");
+
+        let err = load_task_manifest_with_inspection(&root).unwrap_err();
+        let detail = format!("{err}");
+        assert!(detail.contains("unused extend path"), "{detail}");
+        assert!(detail.contains("isolation.paths"), "{detail}");
+    }
+
+    #[test]
+    fn extend_passes_through_table_traversal() {
+        // The path being extended is nested; merge must descend through tables
+        // to reach the target array, not error at intermediate table merges.
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = [
+  { path = "overlay.toml", extend = ["scan.god_files.include"] },
+]
+
+[scan.god_files]
+warn = 500
+include = ["src/**"]
+"#,
+        );
+        write_manifest(
+            dir,
+            "overlay.toml",
+            r#"
+[scan.god_files]
+include = ["overlay/**"]
+"#,
+        );
+
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        let domains = array_strings(&loaded.effective_value, "scan.god_files.include");
+        assert_eq!(domains, vec!["src/**".to_owned(), "overlay/**".to_owned()]);
+    }
 }
