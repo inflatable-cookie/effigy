@@ -15,6 +15,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - Imported manifest layers can now declare `[manifest].extend = ["..."]` so specific array paths append instead of replacing. That now covers normal includes, auto-discovered local overlays, and bundle-provided arrays like DNS routes.
 - Internal: split `effigy-cli` `command_parsing.rs` (~2.7 kLOC) into per-command-family sibling modules (`command_parsing_container.rs`, `command_parsing_demo.rs`, `command_parsing_docs.rs`) following the existing `command_parsing_distribution.rs` pattern. No behavioural change; clears the file from the doctor god-files scan.
 - Internal: split `effigy-catalog`'s 2.9 kLOC `tests/integration.rs` into themed sibling modules under `tests/integration/` (`fragments`, `structure`, `services`, `workspace`). Shared helpers (`bundled_resolver`, `validate_compose_structure`, `validate_service`) stay in the entry file. No test coverage change; clears the file from the doctor god-files scan.
+- Internal: split `effigy-release/src/lib.rs` (~2.4 kLOC) into focused submodules. `verify_install.rs` owns the verify-install cargo-install harness; `prepare_helpers.rs` owns mutation planning, prepared-state I/O, fingerprint comparison, and changelog rendering helpers. The crate's public API is preserved via `pub use` re-exports.
 
 ### Fixed
 
