@@ -7,9 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
-- Reject `concurrent = [...]` on tasks that do not declare `mode = "tui"`; sidecars that should follow container lifecycle now belong on `[[containers.<name>.host_processes]]`.
-- Remove implicit legacy root deferral from `composer.json` + `effigy.json`; legacy repos now need an explicit `[defer]` block or a shipped bundle that provides one.
-- Move default workspace container config onto `[systems.<name>]`, flatten managed task settings onto `[tasks.<name>]`, move generated compose runtime output to `.effigy/runtime/compose`, and replace task-level `host = true` with `run_in = "host" | "container" | "either"`.
+- `concurrent = [...]` now requires `mode = "tui"`. Sidecars that should follow container lifecycle now belong on `[[containers.<name>.host_processes]]`.
+- Legacy root deferral is no longer inferred from `composer.json` or `effigy.json`. Repos that relied on it now need an explicit `[defer]` block or a shipped bundle that provides one.
+- The workspace/container config contract has moved: default workspace settings now live under `[systems.<name>]`, managed task settings live directly on `[tasks.<name>]`, generated compose output lives under `.effigy/runtime/compose`, and task-level `host = true` is replaced by `run_in = "host" | "container" | "either"`.
 
 ### Added
 - A full container and system surface: `effigy container ...`, `effigy system ...`, `effigy workspace`, generated compose ownership, data lifecycle commands, cross-project `status --all` / `stats --all`, shared backing services, and bounded reset/eject/import/export flows.
@@ -31,10 +31,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Generated compose stacks now honor declared host mounts on catalog-backed repo-root services, and direct-compose workspace runtimes now auto-adopt mounted sibling isolation contracts without requiring duplicate config.
 - Workspace and deferred container execution now handle isolated writable dirs correctly, fixing permission failures, accidental cross-repo `vendor` reuse, read-only bind edge cases, and a broad class of handoff/startup regressions.
 - The gateway/runtime path is more resilient: stale loopback assignments are reclaimed, unreachable host runtimes no longer crash registration, health waits now probe real route readiness, and route registration rejects invalid or conflicting upstreams more honestly.
-- Doctor and catalog discovery now correctly accept `[bundle]`, skip shipped starter assets, and avoid treating starter templates as live project catalogs.
-- `effigy doctor` no longer fails hard when the root manifest has unknown keys or is otherwise unparseable; system-mount catalog discovery is now tolerant, so doctor's strict-parse pass surfaces the failure as a finding instead of bubbling it as a runner error.
+- Doctor and catalog discovery now correctly accept `[bundle]`, skip shipped starter assets, avoid treating starter templates as live project catalogs, and surface strict-parse failures as findings instead of crashing out of the sweep.
 - DecodeLabs PHP workspaces now correctly use the shared Composer cache mount, and the shipped `php-fpm` image now carries the broader extension set needed by current DecodeLabs consumers.
-- A broad batch of container/dev regressions was fixed across SSH agent forwarding, mkcert trust propagation, git safe-directory handling, bootstrap start behavior, VT/TUI rendering, bundle/database default drift, and manifest-driven MariaDB/Postgres database selection.
+- Container/dev regressions were fixed across SSH agent forwarding, mkcert trust propagation, git safe-directory handling, bootstrap start behavior, VT/TUI rendering, bundle default drift, and manifest-driven MariaDB/Postgres database selection.
 
 ## [0.2.13] - 2026-04-13
 
