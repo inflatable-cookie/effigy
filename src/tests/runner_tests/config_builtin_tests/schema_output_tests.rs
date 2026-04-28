@@ -146,7 +146,7 @@ fn run_manifest_task_builtin_config_schema_target_bundle_named_prints_specific_i
             "base = \"decodelabs\"",
             "host = \"contact-patch.legacy.test\"",
             "project_name = \"contactpatch-dev\"",
-            "database = \"contactpatch\"",
+            "databases = [\"contactpatch\", \"contactpatch_test\"]",
             "Default paths populated by this bundle:",
             "containers.web.services.app.catalog",
         ],
