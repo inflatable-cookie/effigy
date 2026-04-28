@@ -16,6 +16,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - Internal: split `effigy-cli` `command_parsing.rs` (~2.7 kLOC) into per-command-family sibling modules (`command_parsing_container.rs`, `command_parsing_demo.rs`, `command_parsing_docs.rs`) following the existing `command_parsing_distribution.rs` pattern. No behavioural change; clears the file from the doctor god-files scan.
 - Internal: split `effigy-catalog`'s 2.9 kLOC `tests/integration.rs` into themed sibling modules under `tests/integration/` (`fragments`, `structure`, `services`, `workspace`). Shared helpers (`bundled_resolver`, `validate_compose_structure`, `validate_service`) stay in the entry file. No test coverage change; clears the file from the doctor god-files scan.
 - Internal: split `effigy-release/src/lib.rs` (~2.4 kLOC) into focused submodules. `verify_install.rs` owns the verify-install cargo-install harness; `prepare_helpers.rs` owns mutation planning, prepared-state I/O, fingerprint comparison, and changelog rendering helpers. The crate's public API is preserved via `pub use` re-exports.
+- Internal: split `effigy-manifest/src/bundles.rs` (~2.2 kLOC) into a `bundles/` submodule tree. `bundles/specs.rs` owns the shipped bundle specs (decodelabs, decodelabs-library, underlay) plus their resolvers. `bundles/export.rs` owns export rendering, embedded-asset materialization, and the shipped bundle templates. The public API (`list_bundles`, `get_bundle`, `export_bundle`, etc.) is unchanged; clears the file from the doctor god-files scan.
 
 ### Fixed
 
