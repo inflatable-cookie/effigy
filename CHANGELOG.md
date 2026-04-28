@@ -17,6 +17,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - Internal: split `effigy-catalog`'s 2.9 kLOC `tests/integration.rs` into themed sibling modules under `tests/integration/` (`fragments`, `structure`, `services`, `workspace`). Shared helpers (`bundled_resolver`, `validate_compose_structure`, `validate_service`) stay in the entry file. No test coverage change; clears the file from the doctor god-files scan.
 - Internal: split `effigy-release/src/lib.rs` (~2.4 kLOC) into focused submodules. `verify_install.rs` owns the verify-install cargo-install harness; `prepare_helpers.rs` owns mutation planning, prepared-state I/O, fingerprint comparison, and changelog rendering helpers. The crate's public API is preserved via `pub use` re-exports.
 - Internal: split `effigy-manifest/src/bundles.rs` (~2.2 kLOC) into a `bundles/` submodule tree. `bundles/specs.rs` owns the shipped bundle specs (decodelabs, decodelabs-library, underlay) plus their resolvers. `bundles/export.rs` owns export rendering, embedded-asset materialization, and the shipped bundle templates. The public API (`list_bundles`, `get_bundle`, `export_bundle`, etc.) is unchanged; clears the file from the doctor god-files scan.
+- Internal: split `effigy-tui/src/demo_browser.rs` (~2.1 kLOC) by moving the large `impl DemoBrowserState` method block into a sibling `demo_browser_state_methods.rs` module. All public types and methods stay reachable through the existing module path; clears the file from the doctor god-files scan.
 
 ### Fixed
 
