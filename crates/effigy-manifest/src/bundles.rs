@@ -161,11 +161,14 @@ pub fn render_bundle_defaults(
     name: &str,
     inputs: &BTreeMap<String, Value>,
 ) -> Result<Value, ManifestError> {
+    let mut normalized_inputs = inputs.clone();
+    normalize_database_bundle_inputs(&bundle_source_path(name), name, &mut normalized_inputs)?;
+    normalize_bundle_specific_inputs(&bundle_source_path(name), name, &mut normalized_inputs)?;
     resolve_bundle_defaults(
         &bundle_source_path(name),
         &Value::Table(Default::default()),
         name,
-        inputs,
+        &normalized_inputs,
     )
 }
 
