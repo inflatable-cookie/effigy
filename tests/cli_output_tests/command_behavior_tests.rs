@@ -6553,7 +6553,7 @@ fn write_container_fixture(root: &std::path::Path, health_check: Option<&str>, m
 
 fn write_generated_container_volume_fixture(root: &std::path::Path) {
     fs::create_dir_all(root.join("app")).expect("mkdir app dir");
-    // NOTE: the `db` service uses `elasticsearch` (not `mariadb`) because
+    // The `db` service uses `elasticsearch` (not `mariadb`) because
     // mariadb/postgres catalogs now bind-mount their data dirs onto the
     // host under `.effigy/runtime/data/<service>/...` and no longer
     // register a managed named volume. This fixture needs a service that
