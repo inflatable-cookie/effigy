@@ -1,11 +1,11 @@
 use crate::runner::json_contract_tests::prelude::{
-    assert_candidates_cache_policy, fs, run_completion_candidates_json, temp_workspace, test_lock,
+    assert_candidates_cache_policy, fs, lock_test, run_completion_candidates_json, temp_workspace,
     thread, with_completion_cache_default, write_manifest, Duration, EnvGuard,
 };
 
 #[test]
 fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_rerun() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = with_completion_cache_default();
     let root = temp_workspace("completion-candidates-cache-hit");
     write_manifest(
@@ -49,7 +49,7 @@ fn builtin_completion_candidates_json_contract_reports_cache_hit_on_unchanged_re
 
 #[test]
 fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = with_completion_cache_default();
     let root = temp_workspace("completion-candidates-cache-ttl-expiry");
     write_manifest(
@@ -73,7 +73,7 @@ fn builtin_completion_candidates_json_contract_expires_cache_after_ttl() {
 #[test]
 fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_change_with_preserved_mtime(
 ) {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = with_completion_cache_default();
     let root = temp_workspace("completion-candidates-mtime-invalidation");
     let manifest_path = root.join("effigy.toml");
@@ -119,7 +119,7 @@ fn builtin_completion_candidates_json_contract_invalidates_cache_on_manifest_cha
 
 #[test]
 fn builtin_completion_candidates_json_contract_reports_env_ttl_policy() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = EnvGuard::set_many(&[(
         "EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS",
         Some("750".to_owned()),
@@ -145,7 +145,7 @@ fn builtin_completion_candidates_json_contract_reports_env_ttl_policy() {
 
 #[test]
 fn builtin_completion_candidates_json_contract_reports_invalid_env_ttl_policy() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = EnvGuard::set_many(&[(
         "EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS",
         Some("not-a-number".to_owned()),

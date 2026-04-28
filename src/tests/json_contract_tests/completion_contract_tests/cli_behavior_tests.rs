@@ -1,11 +1,11 @@
 use crate::runner::json_contract_tests::prelude::{
-    fs, run_completion_task, temp_workspace, test_lock, with_completion_cache_default,
+    fs, lock_test, run_completion_task, temp_workspace, with_completion_cache_default,
     write_manifest, RunnerError,
 };
 
 #[test]
 fn builtin_completion_candidates_text_includes_builtin_and_task_selectors() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = with_completion_cache_default();
     let root = temp_workspace("completion-candidates-text-contract");
     let catalog_a = root.join("catalog_a");
@@ -27,7 +27,7 @@ fn builtin_completion_candidates_text_includes_builtin_and_task_selectors() {
 
 #[test]
 fn builtin_completion_bash_script_uses_dynamic_candidates_probe() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = with_completion_cache_default();
     let root = temp_workspace("completion-bash-dynamic-candidates");
     write_manifest(&root.join("effigy.toml"), "");
@@ -38,7 +38,7 @@ fn builtin_completion_bash_script_uses_dynamic_candidates_probe() {
 
 #[test]
 fn builtin_completion_candidates_prefix_requires_value() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = with_completion_cache_default();
     let root = temp_workspace("completion-candidates-prefix-missing");
     write_manifest(&root.join("effigy.toml"), "");
@@ -56,7 +56,7 @@ fn builtin_completion_candidates_prefix_requires_value() {
 
 #[test]
 fn builtin_completion_candidates_repo_requires_value_reports_global_parser_error() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = with_completion_cache_default();
     let root = temp_workspace("completion-candidates-repo-missing");
     write_manifest(&root.join("effigy.toml"), "");
@@ -74,7 +74,7 @@ fn builtin_completion_candidates_repo_requires_value_reports_global_parser_error
 
 #[test]
 fn builtin_completion_candidates_unknown_argument_reports_stable_error() {
-    let _guard = test_lock().lock().expect("lock");
+    let _guard = lock_test();
     let _env = with_completion_cache_default();
     let root = temp_workspace("completion-candidates-unknown-argument");
     write_manifest(&root.join("effigy.toml"), "");

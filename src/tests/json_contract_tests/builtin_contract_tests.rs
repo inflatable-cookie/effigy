@@ -29,7 +29,7 @@ fn builtin_config_json_contract_has_versioned_shape() {
 
 #[test]
 fn bootstrap_deps_json_contract_has_versioned_shape() {
-    let _lock = test_lock().lock().expect("lock");
+    let _lock = lock_test();
     let root = temp_workspace("deps-json-contract");
     write_manifest(
         &root.join("effigy.toml"),
