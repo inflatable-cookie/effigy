@@ -371,22 +371,12 @@ fn merge_values(
             ),
         });
     }
-    let unused_extends = include
-        .extend_paths
-        .iter()
-        .filter(|path| !used_extends.contains((*path).as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    if !unused_extends.is_empty() {
-        return Err(ManifestError::Compose {
-            path: root_manifest_path.to_path_buf(),
-            detail: format!(
-                "unused extend path(s) for {}: {}",
-                include.resolved_path.display(),
-                unused_extends.join(", ")
-            ),
-        });
-    }
+    // extend is prophylactic: declaring a path that didn't actually
+    // need to be appended (because it didn't exist on the parent yet)
+    // is the happy outcome, not an error. Override is strict because a
+    // replacement that replaced nothing is almost always a typo;
+    // extend doesn't carry the same risk.
+    let _ = used_extends;
     Ok(())
 }
 
@@ -779,7 +769,10 @@ paths = ["b"]
     }
 
     #[test]
-    fn unused_extend_path_errors() {
+    fn extend_on_non_conflicting_path_is_silent_noop() {
+        // extend is prophylactic — listing a path that didn't actually
+        // need appending (because the parent didn't have it yet) is
+        // the happy outcome, not an error.
         let tmp = tempdir().expect("tempdir");
         let dir = tmp.path();
         let root = write_manifest(
@@ -792,12 +785,10 @@ include = [
 ]
 "#,
         );
-        write_manifest(dir, "overlay.toml", "[shell]\nrun = \"echo\"\n");
+        write_manifest(dir, "overlay.toml", "[isolation]\npaths = [\"a\"]\n");
 
-        let err = load_task_manifest_with_inspection(&root).unwrap_err();
-        let detail = format!("{err}");
-        assert!(detail.contains("unused extend path"), "{detail}");
-        assert!(detail.contains("isolation.paths"), "{detail}");
+        load_task_manifest_with_inspection(&root)
+            .expect("non-conflicting extend should compose cleanly");
     }
 
     #[test]

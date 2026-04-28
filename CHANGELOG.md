@@ -69,9 +69,11 @@ During v0.x, MINOR bumps may include breaking changes.
   Listed paths in the included file get appended onto the parent's array
   instead of being rejected as a conflict, so layered overlays can grow a
   shared list without restating the existing entries. Validation rejects
-  extending a non-array path, declaring the same path under both `override`
-  and `extend`, and declaring an `extend` path that the include never
-  reaches.
+  extending a non-array path and declaring the same path under both
+  `override` and `extend`. Extending a path that didn't conflict (because
+  the parent didn't have it yet) is treated as a successful no-op rather
+  than an error, so `extend` can be declared prophylactically to guarantee
+  append semantics even if a future root manifest grows the same path.
 
 ### Changed
 - Move internal workspace crates onto shared workspace metadata so their crate
