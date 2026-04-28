@@ -323,6 +323,9 @@ The normal path is:
 - container-owned Composer home and global packages inside the image/container
 - shared auth/config under `~/.effigy/shared/composer/`
 - shared cache under `~/.effigy/shared/composer-cache/`
+- `COMPOSER_CACHE_DIR` is pinned to `/home/dev/.cache/composer` so Composer
+  actually uses the shared cache mount rather than defaulting back under
+  `COMPOSER_HOME`
 
 PHP runtime defaults:
 

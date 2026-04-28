@@ -29,6 +29,7 @@ services:
     environment:
       DOCUMENT_ROOT: "{{ document_root }}"
       COMPOSER_HOME: "/home/dev/.config/composer"
+      COMPOSER_CACHE_DIR: "/home/dev/.cache/composer"
       PNPM_HOME: "/home/dev/.local/share/pnpm"
       npm_config_store_dir: "{{ working_dir }}/.effigy/runtime/pnpm/store"
 {% if services.mariadb or services.postgres or services.redis or services.memcached %}

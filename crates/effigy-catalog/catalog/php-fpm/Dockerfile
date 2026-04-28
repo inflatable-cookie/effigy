@@ -147,13 +147,14 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 # Allow Composer to run as root (common in dev containers).
 ENV COMPOSER_ALLOW_SUPERUSER=1
 ENV COMPOSER_HOME=${COMPOSER_HOME}
+ENV COMPOSER_CACHE_DIR=/home/dev/.cache/composer
 ENV PNPM_HOME=/home/dev/.local/share/pnpm
 ENV PATH=${COMPOSER_HOME}/vendor/bin:${PNPM_HOME}:${PATH}
 
 RUN set -eux; \
     workspace_group="$(id -gn dev)"; \
-    mkdir -p "${COMPOSER_HOME}"; \
-    chown -R dev:"${workspace_group}" "${COMPOSER_HOME}"
+    mkdir -p "${COMPOSER_HOME}" "${COMPOSER_CACHE_DIR}"; \
+    chown -R dev:"${workspace_group}" "${COMPOSER_HOME}" "${COMPOSER_CACHE_DIR}"
 
 RUN set -eux; \
     packages="$(printf '%s\n' "${COMPOSER_GLOBAL_PACKAGES}" | xargs)"; \
@@ -162,7 +163,7 @@ RUN set -eux; \
         composer global require --no-interaction --prefer-dist ${packages}; \
     fi; \
     workspace_group="$(id -gn dev)"; \
-    chown -R dev:"${workspace_group}" "${COMPOSER_HOME}"
+    chown -R dev:"${workspace_group}" "${COMPOSER_HOME}" "${COMPOSER_CACHE_DIR}"
 
 # ── Node.js (optional, for frontend asset compilation) ────────────────
 # Many PHP projects need Node for asset builds (webpack, vite, mix).
