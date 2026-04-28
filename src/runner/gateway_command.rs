@@ -792,7 +792,7 @@ mod tests {
         assert!(shell_command.contains("EFFIGY_GATEWAY_ESCALATED='1'"));
         assert!(shell_command.contains("EFFIGY_INTERNAL_SUPPRESS_HEADER='1'"));
         assert!(shell_command.contains("HOME="));
-        assert!(shell_command.contains("PATH="));
+        assert!(!shell_command.contains("PATH="));
         assert!(shell_command.contains("gateway setup-tls --json"));
     }
 }
