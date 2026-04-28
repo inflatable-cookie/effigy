@@ -6948,7 +6948,17 @@ fn cli_container_status_json_reports_default_container_contract() {
     assert_eq!(parsed["result"]["primary_service"], "app");
     assert_eq!(parsed["result"]["colima_running"], false);
     assert_eq!(parsed["result"]["ports"][0], "8080:80");
-    assert_eq!(parsed["result"]["mounts"][0], "./app:/workspace");
+    // Host mounts are canonicalised under the repo root at policy
+    // resolve time, so the JSON contract surfaces the absolute path
+    // rather than the manifest's literal `./app:/workspace` form.
+    let expected_mount = format!(
+        "{}:/workspace",
+        root.join("app")
+            .canonicalize()
+            .expect("canonicalize app")
+            .display()
+    );
+    assert_eq!(parsed["result"]["mounts"][0], expected_mount);
 }
 
 #[test]

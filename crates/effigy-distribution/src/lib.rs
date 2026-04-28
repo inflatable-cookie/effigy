@@ -1110,32 +1110,40 @@ pub fn validate_metadata_command(
         .and_then(toml::Value::as_table)
         .and_then(|workspace| workspace.get("package"))
         .and_then(toml::Value::as_table);
-    let package_metadata = package.or(workspace_package).ok_or_else(|| {
-        DistributionExecutionError::Message(
+    if package.is_none() && workspace_package.is_none() {
+        return Err(DistributionExecutionError::Message(
             "Cargo.toml is missing [package] or [workspace.package] metadata".to_owned(),
-        )
-    })?;
+        ));
+    }
 
-    let name = package_metadata
-        .get("name")
-        .and_then(toml::Value::as_str)
-        .unwrap_or(&distribution_policy.package_name)
-        .to_owned();
-    let version = package_metadata
-        .get("version")
-        .and_then(toml::Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let license = package_metadata
-        .get("license")
-        .and_then(toml::Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let description = package_metadata
-        .get("description")
-        .and_then(toml::Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
+    // Resolve a string field against `[package]` first, falling back to
+    // `[workspace.package]` whenever the package-level entry is missing
+    // or is the workspace-inheritance marker `{ workspace = true }`. This
+    // matches Cargo's own resolution rule for `version.workspace = true`
+    // and friends, so the validator sees the effective value rather than
+    // the literal inheritance table.
+    let resolve_str = |key: &str| -> Option<String> {
+        let from_package = package.and_then(|tbl| tbl.get(key));
+        let inherited = from_package
+            .and_then(toml::Value::as_table)
+            .and_then(|tbl| tbl.get("workspace"))
+            .and_then(toml::Value::as_bool)
+            == Some(true);
+        if !inherited {
+            if let Some(value) = from_package.and_then(toml::Value::as_str) {
+                return Some(value.to_owned());
+            }
+        }
+        workspace_package
+            .and_then(|tbl| tbl.get(key))
+            .and_then(toml::Value::as_str)
+            .map(str::to_owned)
+    };
+
+    let name = resolve_str("name").unwrap_or_else(|| distribution_policy.package_name.clone());
+    let version = resolve_str("version").unwrap_or_default();
+    let license = resolve_str("license").unwrap_or_default();
+    let description = resolve_str("description").unwrap_or_default();
 
     let semver_re =
         Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$").expect("semver regex");

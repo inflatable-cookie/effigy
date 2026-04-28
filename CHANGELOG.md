@@ -10,6 +10,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 - Explicitly enabled and tuned `opcache` in the `php-fpm` catalog dev image instead of relying on base-image defaults.
 - DecodeLabs PHP workspaces now isolate hot dirs through a single `php-fpm` `isolated_dirs` list; the shipped Decodelabs app bundle uses `["vendor", "node_modules"]` and `decodelabs-library` uses just its repo-local `vendor/`.
+- `php-fpm` now explicitly activates `pnpm` when Node.js is enabled and pins the pnpm store under `.effigy/runtime/pnpm/store` instead of letting `.pnpm-store` appear at the project root.
+- `php-fpm` now exports `COMPOSER_CACHE_DIR=/home/dev/.cache/composer` so the existing shared Composer cache mount is the cache Composer actually uses.
 
 ### Breaking
 - Reject `concurrent = [...]` on a task that does not declare
@@ -249,6 +251,16 @@ During v0.x, MINOR bumps may include breaking changes.
   the manifest default.
 
 ### Fixed
+- `effigy distribution` metadata validation now resolves
+  workspace-inherited Cargo fields (`version.workspace = true`,
+  `license.workspace = true`, etc.) against `[workspace.package]`
+  before checking semver / license / tag-vs-version. Previously the
+  validator treated the inheritance marker as the literal value, so
+  the `effigy` root crate (which adopted shared workspace metadata
+  recently) failed validation with `package version is not
+  semver-like:` / `package license is empty` / `tag version
+  0.2.13 does not match Cargo version` on every release-gate
+  preflight run.
 - Honour user-supplied `databases = [...]` on the `mariadb` and `postgres`
   catalogs when no explicit `database` was set. The compose-fragment
   `MYSQL_DATABASE` / `POSTGRES_DB` env var now reflects `databases[0]`
