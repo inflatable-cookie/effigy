@@ -748,10 +748,10 @@ container_lifecycle = true
 gateway = true
 health_wait = true
 concurrent = [
-  { name = "admin", task = "__ADMIN_DIR__/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 6, tab = 1 },
-  { name = "front", task = "__FRONT_DIR__/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 5, tab = 2 },
-  { name = "jobs", task = "__API_DIR__/jobs", start = 4, tab = 3, start_after_ms = 1500 },
-  { name = "api", task = "__API_DIR__/api", start = 3, tab = 4 },
+  { name = "front", task = "__FRONT_DIR__/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 6, tab = 1 },
+  { name = "admin", task = "__ADMIN_DIR__/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 5, tab = 2 },
+  { name = "api", task = "__API_DIR__/api", start = 4, tab = 3 },
+  { name = "jobs", task = "__API_DIR__/jobs", start = 3, tab = 4, start_after_ms = 1500 },
   { role = "shell", service = "__WORKSPACE_SERVICE_NAME__", start = 2, tab = 5 },
   { role = "lifecycle", start = 1, tab = 6 },
 ]

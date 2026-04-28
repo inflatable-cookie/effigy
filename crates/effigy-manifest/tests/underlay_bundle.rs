@@ -276,10 +276,10 @@ run = "printf seed"
     assert_eq!(
         concurrent_tasks,
         vec![
-            Some("app-admin/dev"),
             Some("app-front/dev"),
-            Some("app-api/jobs"),
+            Some("app-admin/dev"),
             Some("app-api/api"),
+            Some("app-api/jobs"),
             None,
             None,
         ]
