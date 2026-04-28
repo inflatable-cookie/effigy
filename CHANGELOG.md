@@ -34,6 +34,10 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Added
+- Add `optional = true` on manifest include specs. When the flag is set
+  and the include file does not exist, the include is silently skipped
+  rather than raising a manifest error. Present optional files load and
+  merge normally.
 - Add `extend = [...]` array merge directive to manifest include specs.
   Listed paths in the included file get appended onto the parent's array
   instead of being rejected as a conflict, so layered overlays can grow a
