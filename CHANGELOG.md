@@ -34,6 +34,13 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Added
+- Add `domains = [...]` and `domain_defaults = { ... }` sugar on
+  `[containers.<name>.dns]`. Each domain in `domains` expands into a
+  route inheriting `tls`, `port`, and `service` from `domain_defaults`,
+  letting overlays grow a flat list of public-facing names without
+  restating the per-route shape. A literal entry in `routes` with the
+  same domain wins over its sugar form, so power users can still
+  override individual entries.
 - Auto-discover `effigy.local.toml` alongside the root manifest. When
   present, it loads as if the root declared
   `{ path = "effigy.local.toml", optional = true }` at the end of its

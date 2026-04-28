@@ -433,6 +433,60 @@ pub struct ManifestContainerConfig {
 pub struct ManifestContainerDnsConfig {
     #[serde(default)]
     pub routes: Vec<ManifestContainerDnsRouteConfig>,
+    /// Sugar: a flat list of domain names that expand into routes
+    /// inheriting from `domain_defaults`. Literal entries in `routes`
+    /// with the same domain win over their sugar form, so power users
+    /// can still override individual entries.
+    #[serde(default)]
+    pub domains: Vec<String>,
+    /// Defaults applied to each `domains[i]` entry when expanded into
+    /// a route. Ignored if `domains` is empty.
+    #[serde(default)]
+    pub domain_defaults: Option<ManifestContainerDnsDomainDefaults>,
+}
+
+impl ManifestContainerDnsConfig {
+    /// Returns the fully resolved set of DNS routes — literal `routes`
+    /// entries followed by any `domains[i]` sugar entries that aren't
+    /// already covered by a literal route on the same domain. Sugar
+    /// entries inherit `domain_defaults`.
+    pub fn resolved_routes(&self) -> Vec<ManifestContainerDnsRouteConfig> {
+        let mut resolved = self.routes.clone();
+        if self.domains.is_empty() {
+            return resolved;
+        }
+        let defaults = self.domain_defaults.clone().unwrap_or_default();
+        for domain in &self.domains {
+            let trimmed = domain.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if resolved
+                .iter()
+                .any(|existing| existing.domain.trim() == trimmed)
+            {
+                continue;
+            }
+            resolved.push(ManifestContainerDnsRouteConfig {
+                domain: domain.clone(),
+                tls: defaults.tls,
+                port: defaults.port,
+                service: defaults.service.clone(),
+            });
+        }
+        resolved
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestContainerDnsDomainDefaults {
+    #[serde(default)]
+    pub tls: Option<bool>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub service: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
@@ -1279,6 +1333,89 @@ routes = [
         assert_eq!(parsed.routes[0].tls, None);
         assert_eq!(parsed.routes[0].port, None);
         assert_eq!(parsed.routes[0].service, None);
+    }
+
+    #[test]
+    fn container_dns_domains_sugar_expands_with_defaults() {
+        let parsed: ManifestContainerDnsConfig = toml::from_str(
+            r#"
+domains = [
+  "dev.example",
+  "admin.example",
+  "dr.example",
+]
+domain_defaults = { tls = true, service = "tunnel" }
+"#,
+        )
+        .expect("parse dns sugar");
+
+        let resolved = parsed.resolved_routes();
+        assert_eq!(resolved.len(), 3);
+        let domains: Vec<&str> = resolved.iter().map(|r| r.domain.as_str()).collect();
+        assert_eq!(domains, ["dev.example", "admin.example", "dr.example"]);
+        for route in &resolved {
+            assert_eq!(route.tls, Some(true));
+            assert_eq!(route.service.as_deref(), Some("tunnel"));
+            assert_eq!(route.port, None);
+        }
+    }
+
+    #[test]
+    fn container_dns_literal_route_overrides_sugar_for_same_domain() {
+        let parsed: ManifestContainerDnsConfig = toml::from_str(
+            r#"
+routes = [
+  { domain = "dev.example", port = 9000, service = "custom" },
+]
+domains = ["dev.example", "admin.example"]
+domain_defaults = { tls = true, service = "tunnel" }
+"#,
+        )
+        .expect("parse dns sugar with literal");
+
+        let resolved = parsed.resolved_routes();
+        assert_eq!(resolved.len(), 2);
+        // Literal entries come first.
+        assert_eq!(resolved[0].domain, "dev.example");
+        assert_eq!(resolved[0].port, Some(9000));
+        assert_eq!(resolved[0].service.as_deref(), Some("custom"));
+        // Literal route's tls is None — not overridden by sugar default.
+        assert_eq!(resolved[0].tls, None);
+        // Sugar entry for the uncovered domain still expands.
+        assert_eq!(resolved[1].domain, "admin.example");
+        assert_eq!(resolved[1].tls, Some(true));
+        assert_eq!(resolved[1].service.as_deref(), Some("tunnel"));
+    }
+
+    #[test]
+    fn container_dns_domains_without_defaults_yields_unset_route_fields() {
+        let parsed: ManifestContainerDnsConfig = toml::from_str(
+            r#"
+domains = ["a.example"]
+"#,
+        )
+        .expect("parse domains-only");
+
+        let resolved = parsed.resolved_routes();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].domain, "a.example");
+        assert_eq!(resolved[0].tls, None);
+        assert_eq!(resolved[0].port, None);
+        assert_eq!(resolved[0].service, None);
+    }
+
+    #[test]
+    fn container_dns_resolved_routes_skips_blank_domain_entries() {
+        let parsed: ManifestContainerDnsConfig = toml::from_str(
+            r#"
+domains = ["", "  ", "real.example"]
+"#,
+        )
+        .expect("parse with blanks");
+
+        let resolved = parsed.resolved_routes();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].domain, "real.example");
     }
 
     #[test]
