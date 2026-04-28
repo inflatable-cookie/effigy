@@ -22,6 +22,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - Structured host mounts with `external = true`, `${VAR}` / `~` expansion, target-host DNS routes, host-side companion processes, and `run_in = "host"` concurrent entries for sidecars such as SSH tunnels.
 - `effigy.local.toml` auto-discovery, optional includes, fragment-owned `[manifest].extend`, and `effigy bundle export ...` for local bundle customization without forking shipped bundles.
 - A shipped `decodelabs-library` bundle, a shipped `decodelabs` `seed` task, and broader underlay bundle defaults for bootstrap, root `dev`, `health`, `validate`, and `qa`.
+- Repo-owned `qa:ci:fast` and `qa:ci:local` tasks that reproduce the current GitHub Actions CI and JSON-contract lanes locally before push.
 
 ### Changed
 - Existing local manifest composition now uses fragment-owned `[manifest].extend`; the old include-side `extend = [...]` form is gone.
