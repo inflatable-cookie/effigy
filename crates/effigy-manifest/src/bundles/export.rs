@@ -433,10 +433,10 @@ container_lifecycle = true
 gateway = true
 health_wait = true
 concurrent = [
-  { name = "admin", task = "{% if inputs.dirs.admin %}{{ inputs.dirs.admin }}{% else %}app-admin{% endif %}/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 6, tab = 1 },
-  { name = "front", task = "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 5, tab = 2 },
-  { name = "jobs", task = "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/jobs", start = 4, tab = 3, start_after_ms = 1500 },
-  { name = "api", task = "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/api", start = 3, tab = 4 },
+  { name = "front", task = "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 6, tab = 1 },
+  { name = "admin", task = "{% if inputs.dirs.admin %}{{ inputs.dirs.admin }}{% else %}app-admin{% endif %}/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 5, tab = 2 },
+  { name = "api", task = "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/api", start = 4, tab = 3 },
+  { name = "jobs", task = "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/jobs", start = 3, tab = 4, start_after_ms = 1500 },
   { role = "shell", service = "{{ inputs.workspace_service_name }}", start = 2, tab = 5 },
   { role = "lifecycle", start = 1, tab = 6 },
 ]
