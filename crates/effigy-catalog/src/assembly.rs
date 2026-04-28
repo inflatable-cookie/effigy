@@ -442,12 +442,18 @@ impl ComposeAssembler {
         decl: &ServiceDeclaration,
         fragment: &CatalogFragment,
     ) -> HashMap<String, toml::Value> {
-        let mut params = fragment
-            .schema
-            .params
-            .iter()
-            .filter_map(|(name, schema)| schema.default.clone().map(|value| (name.clone(), value)))
-            .collect::<HashMap<_, _>>();
+        // Layer order:
+        //   1. variant preset (if any)
+        //   2. user-provided params (decl.params)
+        //   3. catalog database-pair normalisation against the *user-and-variant*
+        //      view (so schema defaults don't mask "user set databases but not
+        //      database" — derive the missing one from the other)
+        //   4. schema defaults fill in anything still unset
+        //
+        // Normalising before defaults ensures `databases = ["foo"]` correctly
+        // pulls `database` to `"foo"`, instead of leaving it pinned to the
+        // schema default `"app"`.
+        let mut params: HashMap<String, toml::Value> = HashMap::new();
         if let Some(variant) = decl.variant.as_ref() {
             if let Some(preset) = fragment.param_variants.get(variant) {
                 params.extend(preset.clone());
@@ -455,6 +461,14 @@ impl ComposeAssembler {
         }
         params.extend(decl.params.clone());
         Self::normalize_database_params(&decl.catalog, &mut params);
+        for (name, schema) in &fragment.schema.params {
+            if params.contains_key(name) {
+                continue;
+            }
+            if let Some(default) = schema.default.clone() {
+                params.insert(name.clone(), default);
+            }
+        }
         params
     }
 
