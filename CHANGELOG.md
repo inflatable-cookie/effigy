@@ -13,6 +13,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - `php-fpm` now explicitly activates `pnpm` when Node.js is enabled and pins the pnpm store under `.effigy/runtime/pnpm/store` instead of letting `.pnpm-store` appear at the project root.
 - `php-fpm` now exports `COMPOSER_CACHE_DIR=/home/dev/.cache/composer` so the existing shared Composer cache mount is the cache Composer actually uses.
 - Imported manifest layers can now declare `[manifest].extend = ["..."]` so specific array paths append instead of replacing. That now covers normal includes, auto-discovered local overlays, and bundle-provided arrays like DNS routes.
+- Internal: split `effigy-cli` `command_parsing.rs` (~2.7 kLOC) into per-command-family sibling modules (`command_parsing_container.rs`, `command_parsing_demo.rs`, `command_parsing_docs.rs`) following the existing `command_parsing_distribution.rs` pattern. No behavioural change; clears the file from the doctor god-files scan.
 
 ### Fixed
 
