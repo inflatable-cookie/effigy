@@ -1177,6 +1177,11 @@ fn assembled_yaml_is_structurally_valid_compose() {
         result.dockerfiles["app"]
     );
     assert!(
+        result.dockerfiles["app"].contains("short_open_tag = Off"),
+        "Dockerfile should explicitly disable short_open_tag for php-fpm:\n{}",
+        result.dockerfiles["app"]
+    );
+    assert!(
         result.dockerfiles["app"].contains("opcache.revalidate_freq = 1"),
         "Dockerfile should explicitly tune opcache revalidation for dev:\n{}",
         result.dockerfiles["app"]

@@ -97,6 +97,7 @@ RUN { \
         echo 'error_reporting = E_ALL'; \
         echo 'log_errors = On'; \
         echo 'error_log = /dev/stderr'; \
+        echo 'short_open_tag = Off'; \
         echo 'realpath_cache_size = 4096K'; \
         echo 'realpath_cache_ttl = 600'; \
         echo 'opcache.enable = 1'; \
