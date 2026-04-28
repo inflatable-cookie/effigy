@@ -336,9 +336,11 @@ PHP runtime defaults:
 - Effigy writes a dev `.ini` fragment into the image.
 - It also increases PHP path caching for bind-mounted development trees.
 - `opcache` is explicitly enabled for FPM requests.
+- `short_open_tag` is explicitly disabled.
 - Dev defaults currently set:
   - `realpath_cache_size = 4096K`
   - `realpath_cache_ttl = 600`
+  - `short_open_tag = Off`
   - `opcache.enable = 1`
   - `opcache.enable_cli = 0`
   - `opcache.memory_consumption = 256`

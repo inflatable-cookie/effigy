@@ -21,6 +21,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - Generated compose containers now actually apply declared `[containers.<name>.host].mounts` onto generated services that already bind the repo root, so catalog-backed stacks can mount sibling checkouts and other external paths without ejecting to a hand-owned compose file.
 - Deferred container tasks now prepare isolated workspace dirs before exec, fixing first-run permission failures on `decodelabs-library` `vendor/` volumes. The `decodelabs-library` bundle also now derives a repo-specific default `project_name` from `workspace_subdir`, so sibling library repos no longer share the same isolated `vendor` volume unless they opt into a shared project explicitly.
 - DecodeLabs PHP workspace defaults now include `sockets`, `bz2`, `curl`, `gmp`, `imagick`, `mbstring`, `readline`, `sqlite3`, and `xml` in addition to the existing `mysqli` / `pdo_mysql` MySQL support.
+- `php-fpm` now explicitly sets `short_open_tag = Off` in its dev ini instead of inheriting the base-image default implicitly.
 
 ### Breaking
 - Reject `concurrent = [...]` on a task that does not declare
