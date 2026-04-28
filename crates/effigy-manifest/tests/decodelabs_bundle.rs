@@ -75,17 +75,26 @@ version = "11.0"
         vec![
             "bcmath",
             "apcu",
+            "bz2",
             "calendar",
+            "curl",
+            "gmp",
+            "imagick",
+            "mbstring",
             "pcntl",
-            "pdo_mysql",
-            "mysqli",
-            "intl",
             "exif",
-            "zip",
             "gd",
-            "redis",
+            "intl",
             "memcached",
+            "mysqli",
             "opcache",
+            "pdo_mysql",
+            "readline",
+            "redis",
+            "sockets",
+            "sqlite3",
+            "xml",
+            "zip",
             "event",
         ]
     );
@@ -469,7 +478,10 @@ base = "decodelabs-library"
 
     let containers = manifest.containers.expect("containers");
     let web = containers.environments.get("web").expect("web container");
-    assert_eq!(web.project_name.as_deref(), Some("decodelabs-library-dev"));
+    assert_eq!(
+        web.project_name.as_deref(),
+        Some("decodelabs-library-collections-dev")
+    );
     assert_eq!(web.working_dir.as_deref(), Some("/workspace-root"));
     let app = web.services.get("app").expect("app service");
     assert_eq!(app.catalog, "php-fpm");
@@ -522,17 +534,26 @@ base = "decodelabs-library"
         vec![
             "bcmath",
             "apcu",
+            "bz2",
             "calendar",
+            "curl",
+            "gmp",
+            "imagick",
+            "mbstring",
             "pcntl",
-            "pdo_mysql",
-            "mysqli",
-            "intl",
             "exif",
-            "zip",
             "gd",
-            "redis",
+            "intl",
             "memcached",
+            "mysqli",
             "opcache",
+            "pdo_mysql",
+            "readline",
+            "redis",
+            "sockets",
+            "sqlite3",
+            "xml",
+            "zip",
             "event",
         ]
     );

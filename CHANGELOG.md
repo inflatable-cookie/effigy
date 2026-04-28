@@ -19,6 +19,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - Gateway registration no longer crashes when the host container runtime is unreachable (e.g. colima/docker not installed in CI sandboxes or the daemon transiently down). Stale loopback-IP pruning becomes best-effort: when listing running containers fails, the prune is skipped that round and runs again next time.
 - Linux clippy: `crate::resolver_setup` import in `effigy-gateway::server` is now gated behind `cfg(target_os = "macos")` to match the only call site, fixing an `unused-imports` failure on Linux builds.
 - Generated compose containers now actually apply declared `[containers.<name>.host].mounts` onto generated services that already bind the repo root, so catalog-backed stacks can mount sibling checkouts and other external paths without ejecting to a hand-owned compose file.
+- Deferred container tasks now prepare isolated workspace dirs before exec, fixing first-run permission failures on `decodelabs-library` `vendor/` volumes. The `decodelabs-library` bundle also now derives a repo-specific default `project_name` from `workspace_subdir`, so sibling library repos no longer share the same isolated `vendor` volume unless they opt into a shared project explicitly.
+- DecodeLabs PHP workspace defaults now include `sockets`, `bz2`, `curl`, `gmp`, `imagick`, `mbstring`, `readline`, `sqlite3`, and `xml` in addition to the existing `mysqli` / `pdo_mysql` MySQL support.
 
 ### Breaking
 - Reject `concurrent = [...]` on a task that does not declare
