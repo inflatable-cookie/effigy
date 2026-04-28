@@ -65,6 +65,8 @@ struct ManifestIncludeDirective {
     override_paths: Vec<String>,
     #[serde(default, rename = "extend")]
     extend_paths: Vec<String>,
+    #[serde(default)]
+    optional: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +74,7 @@ struct ManifestIncludeSpec {
     resolved_path: PathBuf,
     override_paths: Vec<String>,
     extend_paths: Vec<String>,
+    optional: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +184,9 @@ fn load_composed_value(
     record_value_sources("", &composed.value, manifest_path, &mut composed.source_map);
 
     for include in includes {
+        if include.optional && !include.resolved_path.exists() {
+            continue;
+        }
         let child = load_composed_value(&include.resolved_path, session)?;
         session.include_graph.push(ManifestCompositionEdge {
             parent: manifest_path.to_path_buf(),
@@ -219,11 +225,14 @@ fn take_include_specs(
     let parent = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let mut specs = Vec::with_capacity(config.include.len());
     for entry in config.include {
-        let (path, override_paths, extend_paths) = match entry {
-            ManifestIncludeEntry::Path(path) => (path, Vec::new(), Vec::new()),
-            ManifestIncludeEntry::Detailed(detail) => {
-                (detail.path, detail.override_paths, detail.extend_paths)
-            }
+        let (path, override_paths, extend_paths, optional) = match entry {
+            ManifestIncludeEntry::Path(path) => (path, Vec::new(), Vec::new(), false),
+            ManifestIncludeEntry::Detailed(detail) => (
+                detail.path,
+                detail.override_paths,
+                detail.extend_paths,
+                detail.optional,
+            ),
         };
         let resolved_path = if Path::new(&path).is_absolute() {
             PathBuf::from(&path)
@@ -244,6 +253,7 @@ fn take_include_specs(
             resolved_path,
             override_paths,
             extend_paths,
+            optional,
         });
     }
     Ok(specs)
@@ -728,6 +738,83 @@ include = [
         let detail = format!("{err}");
         assert!(detail.contains("unused extend path"), "{detail}");
         assert!(detail.contains("isolation.paths"), "{detail}");
+    }
+
+    #[test]
+    fn optional_missing_include_is_skipped() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = [
+  { path = "missing.toml", optional = true },
+]
+
+[isolation]
+paths = ["a"]
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        let domains = array_strings(&loaded.effective_value, "isolation.paths");
+        assert_eq!(domains, vec!["a".to_owned()]);
+        // Optional skipped includes do not show up in the include graph.
+        assert!(
+            loaded.include_graph.is_empty(),
+            "include_graph: {:?}",
+            loaded.include_graph
+        );
+    }
+
+    #[test]
+    fn optional_missing_include_without_flag_errors() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = [
+  { path = "missing.toml" },
+]
+"#,
+        );
+        let err = load_task_manifest_with_inspection(&root).unwrap_err();
+        let detail = format!("{err}");
+        assert!(detail.contains("missing.toml"), "{detail}");
+    }
+
+    #[test]
+    fn optional_present_include_is_loaded() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = [
+  { path = "overlay.toml", optional = true, extend = ["isolation.paths"] },
+]
+
+[isolation]
+paths = ["a"]
+"#,
+        );
+        write_manifest(
+            dir,
+            "overlay.toml",
+            r#"
+[isolation]
+paths = ["b"]
+"#,
+        );
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        let domains = array_strings(&loaded.effective_value, "isolation.paths");
+        assert_eq!(domains, vec!["a".to_owned(), "b".to_owned()]);
     }
 
     #[test]
