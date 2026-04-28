@@ -563,7 +563,7 @@ fn build_effective_policy(
     }
     let dns = config.dns.as_ref().cloned().unwrap_or_default();
     let mut dns_routes = Vec::new();
-    for route in dns.routes {
+    for route in dns.resolved_routes() {
         if route.domain.trim().is_empty() {
             continue;
         }

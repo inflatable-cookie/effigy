@@ -155,7 +155,75 @@ fn validate_container_dns(context: &mut SchemaContext<'_, '_>, base_path: &str, 
     let Some(table) = require_table(context, &path, value, "expected table") else {
         return;
     };
-    validate_allowed_keys(context, &path, table, &["routes"]);
+    validate_allowed_keys(
+        context,
+        &path,
+        table,
+        &["routes", "domains", "domain_defaults"],
+    );
+    if let Some(domains) = table.get("domains") {
+        match domains.as_array() {
+            Some(entries) => {
+                for (index, entry) in entries.iter().enumerate() {
+                    let entry_path = format!("{path}.domains[{index}]");
+                    if entry.as_str().is_none() {
+                        context.unsupported_value(
+                            &entry_path,
+                            SchemaContext::value_type(entry),
+                            "expected string",
+                        );
+                    }
+                }
+            }
+            None => context.unsupported_value(
+                &format!("{path}.domains"),
+                SchemaContext::value_type(domains),
+                "expected array of strings",
+            ),
+        }
+    }
+    if let Some(defaults) = table.get("domain_defaults") {
+        match defaults.as_table() {
+            Some(defaults_table) => {
+                let defaults_path = format!("{path}.domain_defaults");
+                validate_allowed_keys(
+                    context,
+                    &defaults_path,
+                    defaults_table,
+                    &["tls", "port", "service"],
+                );
+                if let Some(tls) = defaults_table.get("tls") {
+                    if tls.as_bool().is_none() {
+                        context.unsupported_value(
+                            &format!("{defaults_path}.tls"),
+                            SchemaContext::value_type(tls),
+                            "expected boolean",
+                        );
+                    }
+                }
+                if let Some(port) = defaults_table.get("port") {
+                    if port.as_integer().is_none() {
+                        context.unsupported_value(
+                            &format!("{defaults_path}.port"),
+                            SchemaContext::value_type(port),
+                            "expected integer",
+                        );
+                    }
+                }
+                validate_string_field(
+                    context,
+                    &defaults_path,
+                    defaults_table.get("service"),
+                    "service",
+                );
+            }
+            None => context.unsupported_value(
+                &format!("{path}.domain_defaults"),
+                SchemaContext::value_type(defaults),
+                "expected table",
+            ),
+        }
+    }
     if let Some(routes) = table.get("routes") {
         let Some(entries) = routes.as_array() else {
             context.unsupported_value(
