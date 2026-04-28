@@ -13,6 +13,7 @@ use effigy_gateway::loopback::{DEFAULT_LOOPBACK_END, DEFAULT_LOOPBACK_START};
 use effigy_gateway::resolver_setup::{self, ResolverSpec};
 use effigy_gateway::routes::RouteTable;
 use effigy_gateway::server::{GatewayConfig, GatewayStatus};
+use effigy_gateway::tls::{resolved_mkcert_program, MKCERT_BIN_ENV};
 
 use crate::runner::error::RunnerError;
 
@@ -404,9 +405,11 @@ fn gateway_elevated_env_vars() -> Vec<(&'static str, OsString)> {
         (GATEWAY_ESCALATED_ENV, OsString::from("1")),
         ("EFFIGY_INTERNAL_SUPPRESS_HEADER", OsString::from("1")),
     ];
+    if let Some(mkcert) = resolved_mkcert_program() {
+        vars.push((MKCERT_BIN_ENV, mkcert.into_os_string()));
+    }
     for key in [
         "HOME",
-        "PATH",
         "EFFIGY_GATEWAY_DNS_ADDR",
         "EFFIGY_GATEWAY_PROXY_ADDR",
         "EFFIGY_GATEWAY_HTTPS_ADDR",
@@ -546,6 +549,20 @@ fn loopback_alias_warning(error: effigy_gateway::GatewayError) -> String {
         DEFAULT_LOOPBACK_START,
         DEFAULT_LOOPBACK_END
     )
+}
+
+#[cfg(test)]
+mod env_tests {
+    use super::*;
+
+    #[test]
+    fn elevated_gateway_env_omits_path() {
+        let vars = gateway_elevated_env_vars();
+        assert!(
+            !vars.iter().any(|(key, _)| *key == "PATH"),
+            "elevated gateway env should not forward caller PATH"
+        );
+    }
 }
 
 #[cfg(all(test, target_os = "macos"))]

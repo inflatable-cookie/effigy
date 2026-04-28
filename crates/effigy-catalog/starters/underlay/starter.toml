@@ -13,7 +13,7 @@ Next steps:
    - set `[bundle].host` to the project's front-end domain
    - rename `[bundle].project_name`
    - set `[bundle].workspace_subdir` to the repo's directory name under `/workspace-root`
-   - set `[bundle].database` to the repo's dev database name
+   - set `[bundle].databases = ["app"]` to the repo's dev database name
    - align `[bundle].api_port`, `[bundle].admin_port`, and `[bundle].front_port` if the repo uses different dev-server ports
    - when the repo uses different app package names, set `[bundle.dirs]` (`api`, `client`, optional `ui`, `front`, `admin`)
    - when gateway labels should follow those app names too, set `[bundle.routes]` (`front`, `admin`, `api`)

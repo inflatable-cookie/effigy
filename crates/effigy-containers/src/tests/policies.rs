@@ -73,7 +73,7 @@ base = "underlay"
 host = "acme.test"
 project_name = "underlay-reference-dev"
 workspace_subdir = "underlay-reference"
-database = "acme"
+databases = ["acme"]
 
 [systems.dev]
 mounts = ["../underlay"]

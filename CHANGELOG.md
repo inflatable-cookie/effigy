@@ -27,11 +27,16 @@ During v0.x, MINOR bumps may include breaking changes.
 - Existing local manifest composition now uses fragment-owned `[manifest].extend`; the old include-side `extend = [...]` form is gone.
 - Existing workspace-backed local dev now stages generated compose and other runtime state under `.effigy/runtime`, with clearer ownership boundaries between repo source, generated runtime artifacts, and container-local writable state.
 - Existing underlay consumers now resolve sibling task catalogs from declared mounts, so selectors like `underlay/*` no longer depend on symlinked sibling repos.
+- The pre-release bundle/config contract was tightened before the first `v0.3` cut: shipped `decodelabs` and `underlay` bundles now take `databases = ["app"]` as the single database input shape, and `workspace-rust-bun` now uses one `isolated_dirs` list instead of split `cargo_target_dirs` / `node_modules_dirs` knobs.
 
 ### Fixed
 - Generated compose stacks now honor declared host mounts on catalog-backed repo-root services, and direct-compose workspace runtimes now auto-adopt mounted sibling isolation contracts without requiring duplicate config.
 - Workspace and deferred container execution now handle isolated writable dirs correctly, fixing permission failures, accidental cross-repo `vendor` reuse, read-only bind edge cases, and a broad class of handoff/startup regressions.
 - The gateway/runtime path is more resilient: stale loopback assignments are reclaimed, unreachable host runtimes no longer crash registration, health waits now probe real route readiness, and route registration rejects invalid or conflicting upstreams more honestly.
+- Gateway elevation and TLS helper lookup are now tighter: elevated runs no longer inherit a caller-controlled `PATH`, and mkcert lookup is resolved through an explicit or bounded trusted path instead of ambient shell state.
+- Gateway-managed DNS suffixes are now validated before resolver-file writes, and manifest DNS route domains reject invalid label shapes instead of letting unsafe path-like values drift into runtime routing.
+- Env-schema `exec('...')` resolution now drains stderr safely, fixing a false-timeout / apparent hang class when commands produce large stderr output.
+- Task catalog discovery now skips `.effigy` runtime artifacts instead of walking generated runtime trees during selector resolution.
 - Doctor and catalog discovery now correctly accept `[bundle]`, skip shipped starter assets, avoid treating starter templates as live project catalogs, and surface strict-parse failures as findings instead of crashing out of the sweep.
 - DecodeLabs PHP workspaces now correctly use the shared Composer cache mount, and the shipped `php-fpm` image now carries the broader extension set needed by current DecodeLabs consumers.
 - The built-in release flow now resolves workspace-inherited Cargo versions correctly, so self-hosted `release status` and `release simulate` work against repos using `workspace.package.version` plus `version.workspace = true`.

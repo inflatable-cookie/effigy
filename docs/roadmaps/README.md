@@ -49,6 +49,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02/006-colima-container-environment-contract.md` is now paused after the real-machine `colima nerdctl` live-stop and closeout path was hardened strongly enough to stop carrying a deferred warning.
 - `g02/020-multi-project-gateway-expansion-and-service-dns.md` is now the active strict lane as of 2026-04-22 (re-sequenced ahead of `g02.007` and `g02.019`; see `docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
 - `g02/007-distribution-release-and-consumer-rollout.md` is queued behind `g02.020`, still gated on explicit release intent for the deliberate `v0.3` cut. It resumes ahead of `g02.020` whenever release execution is explicitly requested.
+- `g02/022-v0-3-pre-release-hardening-and-contract-cleanup.md` captures the bounded pre-cut hardening queue exposed by the final `v0.3` audit: gateway privilege flow, resolver validation, env execution reliability, discovery hygiene, and any cheap first-contract cleanup worth taking before release.
 - `g02/010-effigy-modularization-and-crate-boundaries.md` is complete.
 - `g02/008-demo-and-manifest-import-rollout.md` remains planned, but stays outside the current `v0.3` release-prep queue.
 - `g02/009-vault-backed-varlock-rollout.md` remains planned, but stays outside the current `v0.3` release-prep queue.
@@ -61,6 +62,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   setup integration)
 - queued: `g02.007` (release-prep, still gated on explicit release intent;
   resumes ahead of `g02.020` if release execution is requested)
+- queued: `g02.022` (pre-release hardening queue for the short security /
+  runtime / contract-cleanup list exposed by the final `v0.3` audit)
 - queued: `g02.019` (v0.3 surface audit, after both `g02.020` and the release
   cut settle)
 

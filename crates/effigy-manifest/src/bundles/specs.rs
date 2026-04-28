@@ -6,8 +6,8 @@ use toml::Value;
 use super::export::{
     infer_underlay_bundle_source, materialize_shipped_bundle_assets,
     render_shipped_bundle_template, render_toml_string_array, underlay_bootstrap_sync_paths,
-    underlay_cargo_target_dirs, underlay_dir_or_default, underlay_node_modules_dirs,
-    underlay_optional_dir_step, underlay_optional_docs_qa_steps, underlay_optional_docs_step,
+    underlay_dir_or_default, underlay_isolated_dirs, underlay_optional_dir_step,
+    underlay_optional_docs_qa_steps, underlay_optional_docs_step,
 };
 use super::{
     bundle_shared_root_path, bundle_source_path, derive_bundle_workspace_subdir,
@@ -38,17 +38,9 @@ pub(super) fn decodelabs_spec() -> BundleSpec {
                 example: Some(Value::String("contactpatch-dev".to_owned())),
             },
             BundleInputSpec {
-                name: "database".to_owned(),
-                value_type: BundleInputType::String,
-                required: false,
-                description: "Primary MariaDB database name for the app and bundled db alias rendering. Kept for backwards compatibility; prefer `databases`.".to_owned(),
-                default: None,
-                example: Some(Value::String("contactpatch".to_owned())),
-            },
-            BundleInputSpec {
                 name: "databases".to_owned(),
                 value_type: BundleInputType::List,
-                required: false,
+                required: true,
                 description: "MariaDB databases to create for the stack. The first entry becomes the primary app database.".to_owned(),
                 default: None,
                 example: Some(Value::Array(vec![
@@ -453,17 +445,9 @@ pub(super) fn underlay_spec() -> BundleSpec {
                 example: Some(Value::String("underlay-reference".to_owned())),
             },
             BundleInputSpec {
-                name: "database".to_owned(),
-                value_type: BundleInputType::String,
-                required: false,
-                description: "Primary Postgres database name for the bundled postgres service. Kept for backwards compatibility; prefer `databases`.".to_owned(),
-                default: None,
-                example: Some(Value::String("acme".to_owned())),
-            },
-            BundleInputSpec {
                 name: "databases".to_owned(),
                 value_type: BundleInputType::List,
-                required: false,
+                required: true,
                 description: "Postgres databases to create for the stack. The first entry becomes the primary app database.".to_owned(),
                 default: None,
                 example: Some(Value::Array(vec![
@@ -665,8 +649,7 @@ pub(super) fn resolve_underlay_bundle(
     let bundle_root = materialize_shipped_bundle_assets(manifest_path, "underlay")?;
     let bootstrap_sync_paths = underlay_bootstrap_sync_paths(inputs, &underlay_source);
     let bootstrap_sync_command = format!("bootstrap deps sync {}", bootstrap_sync_paths.join(" "));
-    let cargo_target_dirs = render_toml_string_array(&underlay_cargo_target_dirs(inputs));
-    let node_modules_dirs = render_toml_string_array(&underlay_node_modules_dirs(inputs));
+    let isolated_dirs = render_toml_string_array(&underlay_isolated_dirs(inputs));
 
     let template = r#"
 [package_manager]
@@ -705,8 +688,7 @@ host_ports = [
   "__ADMIN_PORT__:__ADMIN_PORT__",
   "__FRONT_PORT__:__FRONT_PORT__",
 ]
-cargo_target_dirs = __CARGO_TARGET_DIRS__
-node_modules_dirs = __NODE_MODULES_DIRS__
+isolated_dirs = __ISOLATED_DIRS__
 
 [containers.__CONTAINER_NAME__.services.postgres]
 catalog = "postgres"
@@ -863,8 +845,7 @@ run_in = "host"
                 "__FRONT_DIR__",
                 &underlay_dir_or_default(inputs, "dirs.front", "app-front"),
             )
-            .replace("__CARGO_TARGET_DIRS__", &cargo_target_dirs)
-            .replace("__NODE_MODULES_DIRS__", &node_modules_dirs)
+            .replace("__ISOLATED_DIRS__", &isolated_dirs)
             .replace("__DEFAULT_WORKSPACE__", &default_workspace),
     )?;
 

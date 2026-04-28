@@ -9,3 +9,6 @@ description = "Env schema and varlock contracts for Effigy"
 [dependencies]
 regex = "1"
 zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"

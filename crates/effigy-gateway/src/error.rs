@@ -110,6 +110,10 @@ pub enum GatewayError {
     #[error("gateway is not running")]
     NotRunning,
 
+    /// Resolver suffix is invalid.
+    #[error("resolver suffix `{suffix}` is invalid: {reason}")]
+    InvalidResolverSuffix { suffix: String, reason: String },
+
     /// File watcher error.
     #[error("file watcher error: {0}")]
     WatcherError(String),

@@ -95,11 +95,10 @@ copy here so users can refer back without re-emitting.
    - set `[bundle].host` to the project's front-end domain
    - rename `[bundle].project_name`
    - set `[bundle].workspace_subdir` to the repo's directory name under `/workspace-root`
-   - set `[bundle].database` to the repo's dev database name
-   - when the repo needs more than one database, set
-     `[bundle].databases = ["app", "app_test", ...]` instead. The first
-     entry becomes the primary database (compatible with `database`); all
-     entries are created at first boot.
+   - set `[bundle].databases = ["app"]` to the repo's dev database name
+   - when the repo needs more than one database, extend that list:
+     `[bundle].databases = ["app", "app_test", ...]`. The first entry
+     becomes the primary database and all entries are created at first boot.
    - align `[bundle].api_port`, `[bundle].admin_port`, and `[bundle].front_port` if the repo uses different dev-server ports
    - when the repo uses different app package names, set `[bundle.dirs]` (`docs`, `api`, `client`, optional `ui`, `front`, `admin`)
    - when gateway labels should follow those app names too, set `[bundle.routes]` (`front`, `admin`, `api`)
@@ -285,14 +284,14 @@ declaring it directly in the root manifest:
 base = "decodelabs"
 host = "example.legacy.test"
 project_name = "my-project-dev"
-database = "my_database"
+databases = ["my_database"]
 ```
 
 | Input                    | Default     | Purpose                                                                      |
 |--------------------------|-------------|------------------------------------------------------------------------------|
 | `host`                   | _required_  | Primary local hostname. Gateway registers the `web` service on `<host>` and `pma.<host>`. |
 | `project_name`           | _required_  | Docker Compose project name for the generated stack.                          |
-| `database`               | _required_  | Default MariaDB database name. Also wired into the `mysql` workspace alias. Set `databases = ["app", "app_test", ...]` instead when the repo needs more than one. |
+| `databases`              | _required_  | MariaDB databases to create for the stack. Use `["app"]` for the normal single-db case; the first entry is also wired into the `mysql` workspace alias. |
 | `system_name`            | `"dev"`     | Name of the `[systems.<name>]` block rendered by the bundle.                  |
 | `container_name`         | `"web"`     | Name of the `[containers.<name>]` block and the default container.            |
 | `workspace_service_name` | `"app"`     | Name of the php-fpm service (also the `php` alias target and the `composer` service). |

@@ -91,6 +91,52 @@ pub fn resolver_path(tld: &str) -> PathBuf {
     PathBuf::from(RESOLVER_DIR).join(tld)
 }
 
+fn validate_resolver_suffix(raw: &str) -> Result<String, GatewayError> {
+    let trimmed = raw.trim().trim_end_matches('.').to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return Err(GatewayError::InvalidResolverSuffix {
+            suffix: raw.to_owned(),
+            reason: "suffix is empty".to_owned(),
+        });
+    }
+    if trimmed.len() > 253 {
+        return Err(GatewayError::InvalidResolverSuffix {
+            suffix: raw.to_owned(),
+            reason: "suffix exceeds 253 characters".to_owned(),
+        });
+    }
+    for label in trimmed.split('.') {
+        if label.is_empty() {
+            return Err(GatewayError::InvalidResolverSuffix {
+                suffix: raw.to_owned(),
+                reason: "suffix contains an empty label".to_owned(),
+            });
+        }
+        if label.len() > 63 {
+            return Err(GatewayError::InvalidResolverSuffix {
+                suffix: raw.to_owned(),
+                reason: format!("label `{label}` exceeds 63 characters"),
+            });
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return Err(GatewayError::InvalidResolverSuffix {
+                suffix: raw.to_owned(),
+                reason: format!("label `{label}` cannot start or end with `-`"),
+            });
+        }
+        if !label
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        {
+            return Err(GatewayError::InvalidResolverSuffix {
+                suffix: raw.to_owned(),
+                reason: format!("label `{label}` must contain only ASCII letters, digits, or `-`"),
+            });
+        }
+    }
+    Ok(trimmed)
+}
+
 /// Check if the resolver file exists and points to the correct port.
 pub fn is_resolver_configured(tld: &str, expected_port: u16) -> bool {
     let path = resolver_path(tld);
@@ -113,6 +159,7 @@ pub fn resolver_dir_exists() -> bool {
 /// escalation.
 pub fn resolver_file_spec(tld: &str, port: u16) -> ResolverSpec {
     ResolverSpec {
+        suffix: tld.to_owned(),
         path: resolver_path(tld),
         content: resolver_file_contents(port),
     }
@@ -121,6 +168,8 @@ pub fn resolver_file_spec(tld: &str, port: u16) -> ResolverSpec {
 /// Spec for a resolver file that needs to be written.
 #[derive(Debug, Clone)]
 pub struct ResolverSpec {
+    /// Raw suffix the file was derived from.
+    pub suffix: String,
     /// Path where the file should be written.
     pub path: PathBuf,
     /// Content of the file.
@@ -128,12 +177,19 @@ pub struct ResolverSpec {
 }
 
 impl ResolverSpec {
+    fn validated_path(&self) -> Result<PathBuf, GatewayError> {
+        let suffix = validate_resolver_suffix(&self.suffix)?;
+        Ok(resolver_path(&suffix))
+    }
+
     /// Write the resolver file using sudo.
     ///
     /// The caller is expected to have already triggered the needed privilege
     /// escalation path before invoking this.
     pub fn install(&self) -> Result<(), GatewayError> {
         use std::process::{Command, Stdio};
+
+        let validated_path = self.validated_path()?;
 
         // Ensure the directory exists.
         if !resolver_dir_exists() {
@@ -151,7 +207,7 @@ impl ResolverSpec {
 
         // Write the file via sudo tee.
         let mut child = Command::new("sudo")
-            .args(["tee", self.path.to_str().unwrap_or("")])
+            .args(["tee", validated_path.to_str().unwrap_or("")])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -166,7 +222,7 @@ impl ResolverSpec {
         let output = child.wait_with_output()?;
         if !output.status.success() {
             return Err(GatewayError::DnsBindError {
-                addr: self.path.display().to_string(),
+                addr: validated_path.display().to_string(),
                 reason: render_sudo_failure("failed to write resolver file", &output),
             });
         }
@@ -180,15 +236,16 @@ impl ResolverSpec {
     /// the elevation flow that started it. Skips the write if the file
     /// already has the desired content (idempotent reconciliation).
     pub fn install_direct(&self) -> Result<(), GatewayError> {
+        let validated_path = self.validated_path()?;
         if !resolver_dir_exists() {
             std::fs::create_dir_all(RESOLVER_DIR).map_err(GatewayError::Io)?;
         }
-        if let Ok(existing) = std::fs::read_to_string(&self.path) {
+        if let Ok(existing) = std::fs::read_to_string(&validated_path) {
             if existing == self.content {
                 return Ok(());
             }
         }
-        std::fs::write(&self.path, &self.content).map_err(GatewayError::Io)
+        std::fs::write(&validated_path, &self.content).map_err(GatewayError::Io)
     }
 
     /// Remove the resolver file directly (no sudo).
@@ -197,29 +254,31 @@ impl ResolverSpec {
     /// does not carry the Effigy managed-by header, so a misconfigured
     /// path can never delete an unrelated user-authored resolver entry.
     pub fn uninstall_direct(&self) -> Result<(), GatewayError> {
-        if !self.path.exists() {
+        let validated_path = self.validated_path()?;
+        if !validated_path.exists() {
             return Ok(());
         }
-        if !file_is_effigy_managed(&self.path) {
+        if !file_is_effigy_managed(&validated_path) {
             return Ok(());
         }
-        std::fs::remove_file(&self.path).map_err(GatewayError::Io)
+        std::fs::remove_file(&validated_path).map_err(GatewayError::Io)
     }
 
     /// Remove the resolver file using sudo.
     pub fn uninstall(&self) -> Result<(), GatewayError> {
-        if !self.path.exists() {
+        let validated_path = self.validated_path()?;
+        if !validated_path.exists() {
             return Ok(());
         }
 
         let output = std::process::Command::new("sudo")
-            .args(["rm", self.path.to_str().unwrap_or("")])
+            .args(["rm", validated_path.to_str().unwrap_or("")])
             .output()
             .map_err(GatewayError::Io)?;
 
         if !output.status.success() {
             return Err(GatewayError::DnsBindError {
-                addr: self.path.display().to_string(),
+                addr: validated_path.display().to_string(),
                 reason: render_sudo_failure("failed to remove resolver file", &output),
             });
         }
@@ -257,6 +316,9 @@ where
     for domain in route_domains {
         let domain = domain.as_ref().trim_end_matches('.').to_lowercase();
         if domain.is_empty() {
+            continue;
+        }
+        if validate_resolver_suffix(&domain).is_err() {
             continue;
         }
         // Skip anything that the single bootstrap resolver file already covers.
@@ -322,6 +384,11 @@ pub fn reconcile_route_resolver_files(
         // Synthesise a spec-equivalent for the remove call so the
         // managed-header guard runs consistently.
         let spec = ResolverSpec {
+            suffix: managed
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_owned(),
             path: managed.clone(),
             content: String::new(),
         };

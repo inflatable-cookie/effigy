@@ -44,3 +44,41 @@ fn remove_cert_ignores_missing_files() {
     let config = TlsConfig::new(dir.path().to_path_buf());
     config.remove_cert("missing.test").unwrap();
 }
+
+#[test]
+fn resolved_mkcert_program_uses_absolute_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let mkcert = dir.path().join("mkcert");
+    std::fs::write(&mkcert, "#!/bin/sh\nexit 0\n").unwrap();
+
+    let previous = std::env::var_os(MKCERT_BIN_ENV);
+    unsafe {
+        std::env::set_var(MKCERT_BIN_ENV, &mkcert);
+    }
+
+    let resolved = resolved_mkcert_program();
+
+    match previous {
+        Some(value) => unsafe { std::env::set_var(MKCERT_BIN_ENV, value) },
+        None => unsafe { std::env::remove_var(MKCERT_BIN_ENV) },
+    }
+
+    assert_eq!(resolved.as_deref(), Some(mkcert.as_path()));
+}
+
+#[test]
+fn resolved_mkcert_program_ignores_relative_override() {
+    let previous = std::env::var_os(MKCERT_BIN_ENV);
+    unsafe {
+        std::env::set_var(MKCERT_BIN_ENV, "mkcert");
+    }
+
+    let resolved = resolved_mkcert_program();
+
+    match previous {
+        Some(value) => unsafe { std::env::set_var(MKCERT_BIN_ENV, value) },
+        None => unsafe { std::env::remove_var(MKCERT_BIN_ENV) },
+    }
+
+    assert_ne!(resolved.as_deref(), Some(Path::new("mkcert")));
+}

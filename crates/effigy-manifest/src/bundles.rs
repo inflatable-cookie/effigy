@@ -457,22 +457,43 @@ fn normalize_bundle_specific_inputs(
     bundle_name: &str,
     inputs: &mut BTreeMap<String, Value>,
 ) -> Result<(), ManifestError> {
-    if bundle_name != "decodelabs-library" {
+    if bundle_name == "underlay" {
+        for key in [
+            "dirs.docs",
+            "dirs.api",
+            "dirs.client",
+            "dirs.ui",
+            "dirs.front",
+            "dirs.admin",
+            "routes.front",
+            "routes.admin",
+            "routes.api",
+        ] {
+            if bundle_input_value(inputs, key).is_none() {
+                insert_bundle_input_value(inputs, key, Value::String(String::new()));
+            }
+        }
         return Ok(());
     }
-    let shared_root_path = bundle_shared_root_path(manifest_path, bundle_name, inputs)?;
-    inputs.insert(
-        "shared_root".to_owned(),
-        Value::String(shared_root_path.display().to_string()),
-    );
-    if !inputs.contains_key("workspace_subdir") {
-        let workspace_subdir =
-            derive_bundle_workspace_subdir(manifest_path, &shared_root_path.display().to_string())?;
+
+    if bundle_name == "decodelabs-library" {
+        let shared_root_path = bundle_shared_root_path(manifest_path, bundle_name, inputs)?;
         inputs.insert(
-            "workspace_subdir".to_owned(),
-            Value::String(workspace_subdir),
+            "shared_root".to_owned(),
+            Value::String(shared_root_path.display().to_string()),
         );
+        if !inputs.contains_key("workspace_subdir") {
+            let workspace_subdir = derive_bundle_workspace_subdir(
+                manifest_path,
+                &shared_root_path.display().to_string(),
+            )?;
+            inputs.insert(
+                "workspace_subdir".to_owned(),
+                Value::String(workspace_subdir),
+            );
+        }
     }
+
     Ok(())
 }
 
@@ -481,6 +502,15 @@ fn normalize_database_bundle_inputs(
     bundle_name: &str,
     inputs: &mut BTreeMap<String, Value>,
 ) -> Result<(), ManifestError> {
+    if inputs.contains_key("database") {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+                "bundle `{bundle_name}` input `database` has been removed; use `databases = [\"app\"]` instead"
+            ),
+        });
+    }
+
     let Some(databases) =
         normalize_database_value(manifest_path, bundle_name, "databases", inputs)?
     else {
@@ -490,15 +520,15 @@ fn normalize_database_bundle_inputs(
     if !inputs.contains_key("databases") {
         inputs.insert("databases".to_owned(), Value::Array(databases.clone()));
     }
-    if !inputs.contains_key("database") {
-        let Some(primary) = databases.first().and_then(|value| value.as_str()) else {
-            return Err(ManifestError::Compose {
-                path: manifest_path.to_path_buf(),
-                detail: format!("bundle `{bundle_name}` normalized `databases` but found no primary database entry"),
-            });
-        };
-        inputs.insert("database".to_owned(), Value::String(primary.to_owned()));
-    }
+    let Some(primary) = databases.first().and_then(|value| value.as_str()) else {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+                "bundle `{bundle_name}` normalized `databases` but found no primary database entry"
+            ),
+        });
+    };
+    inputs.insert("database".to_owned(), Value::String(primary.to_owned()));
     Ok(())
 }
 
@@ -508,8 +538,8 @@ fn normalize_database_value(
     field_name: &str,
     inputs: &BTreeMap<String, Value>,
 ) -> Result<Option<Vec<Value>>, ManifestError> {
-    match (inputs.get("databases"), inputs.get("database")) {
-        (Some(Value::Array(values)), _) => {
+    match inputs.get("databases") {
+        Some(Value::Array(values)) => {
             if values.is_empty() {
                 return Err(ManifestError::Compose {
                     path: manifest_path.to_path_buf(),
@@ -532,27 +562,13 @@ fn normalize_database_value(
             }
             Ok(Some(normalized))
         }
-        (Some(_), _) => Err(ManifestError::Compose {
+        Some(_) => Err(ManifestError::Compose {
             path: manifest_path.to_path_buf(),
             detail: format!(
                 "bundle `{bundle_name}` input `{field_name}` must be a list of non-empty strings"
             ),
         }),
-        (None, Some(Value::String(value))) => {
-            let value = value.trim();
-            if value.is_empty() {
-                return Err(ManifestError::Compose {
-                    path: manifest_path.to_path_buf(),
-                    detail: format!("bundle `{bundle_name}` input `database` must not be empty"),
-                });
-            }
-            Ok(Some(vec![Value::String(value.to_owned())]))
-        }
-        (None, Some(_)) => Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!("bundle `{bundle_name}` input `database` must be a non-empty string"),
-        }),
-        (None, None) => Ok(None),
+        None => Ok(None),
     }
 }
 
