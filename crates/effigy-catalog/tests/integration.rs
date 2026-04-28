@@ -186,6 +186,13 @@ fn assemble_php_mariadb_redis_stack() {
         "missing composer home environment:\n{}",
         result.compose_yaml
     );
+    assert!(
+        result
+            .compose_yaml
+            .contains("COMPOSER_CACHE_DIR: /home/dev/.cache/composer"),
+        "missing composer cache environment:\n{}",
+        result.compose_yaml
+    );
 
     // PHP service should depend on MariaDB.
     assert!(
@@ -455,6 +462,13 @@ fn php_fpm_supports_explicit_decodelabs_style_service_params() {
             .compose_yaml
             .contains("COMPOSER_GLOBAL_PACKAGES: decodelabs/effigy"),
         "php-fpm explicit params should apply Composer globals:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result
+            .compose_yaml
+            .contains("COMPOSER_CACHE_DIR: /home/dev/.cache/composer"),
+        "php-fpm explicit params should route Composer through the shared cache dir:\n{}",
         result.compose_yaml
     );
     assert!(
