@@ -9,6 +9,7 @@ pub(super) fn validate_top_level_keys(
     let allowed_top = [
         "manifest",
         "catalog",
+        "bundle",
         "defer",
         "demos",
         "docs_policy",
