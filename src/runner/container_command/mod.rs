@@ -7,7 +7,9 @@ use effigy_runtime::data::{
 use effigy_runtime::read::{
     run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
 };
-use effigy_runtime::write::{run_container_down, run_container_down_all, run_container_reset};
+use effigy_runtime::write::{
+    run_container_down, run_container_down_all_with_hook, run_container_reset,
+};
 use effigy_runtime::EffigyRuntimeError;
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
@@ -55,8 +57,14 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
                 "`effigy container down --all` does not accept `--repo`; it discovers running environments across repos",
             ));
         }
-        return run_container_down_all(args.output_json, deregister_runtime_gateway_routes)
-            .map_err(Into::into);
+        return run_container_down_all_with_hook(
+            args.output_json,
+            deregister_runtime_gateway_routes,
+            |repo_root, policy| {
+                let _ = super::host_process::stop_host_processes_for_container(repo_root, policy);
+            },
+        )
+        .map_err(Into::into);
     }
 
     let cwd = current_working_dir()?;
@@ -158,6 +166,7 @@ fn run_container_down_adapter(
     name: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    stop_host_processes_best_effort(repo_root, name);
     run_container_down(
         repo_root,
         name,
@@ -173,6 +182,7 @@ fn run_container_reset_adapter(
     keep_data: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    stop_host_processes_best_effort(repo_root, name);
     run_container_reset(
         repo_root,
         name,
@@ -185,6 +195,15 @@ fn run_container_reset_adapter(
         },
     )
     .map_err(Into::into)
+}
+
+/// Best-effort host-process shutdown. Runs before any compose-down so
+/// supervisors stop spawning child processes. Failure to load the
+/// policy (already gone, manifest deleted, etc.) is silently ignored.
+fn stop_host_processes_best_effort(repo_root: &std::path::Path, name: Option<&str>) {
+    if let Ok(policy) = effigy_containers::load_container_policy(repo_root, name) {
+        let _ = super::host_process::stop_host_processes_for_container(repo_root, &policy);
+    }
 }
 
 fn run_container_data_list_adapter(

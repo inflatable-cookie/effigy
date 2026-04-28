@@ -93,6 +93,14 @@ pub struct ManifestManagedConcurrentEntry {
     pub task: Option<String>,
     #[serde(default)]
     pub run: Option<String>,
+    /// Per-entry execution context override. When the parent task
+    /// binds to a container/workspace, individual concurrent entries
+    /// can opt out of that wrap with `run_in = "host"` — useful for
+    /// host-only sidecars (e.g. an `autossh` tunnel that depends on
+    /// the developer's local ssh_config). Defaults to `Either`,
+    /// meaning the entry inherits the parent task's execution context.
+    #[serde(default)]
+    pub run_in: Option<ManifestTaskRunIn>,
     #[serde(default)]
     pub setup: Vec<ManifestManagedRunStep>,
     #[serde(default)]

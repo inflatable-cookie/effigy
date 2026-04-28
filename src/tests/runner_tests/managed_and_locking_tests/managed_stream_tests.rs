@@ -2,10 +2,11 @@ use crate::contract_test_support::{wait_for_path_exists, ExecutableOverrideGuard
 use crate::runner::tests::prelude::{
     assert_managed_non_zero_exit_case_table, assert_managed_output_case_table,
     assert_managed_profile_not_found_case_table, assert_managed_stream_builtin_test_case_table,
-    assert_managed_stream_builtin_test_profile_entry, lock_test, managed_stream_env,
-    write_managed_stream_profile_manifest, write_root_manifest, EnvGuard, ManagedInvocation,
-    ManagedNonZeroExitCase, ManagedOutputCase, ManagedProfileNotFoundCase,
-    ManagedStreamBuiltinTestCase, Path,
+    assert_managed_stream_builtin_test_profile_entry, install_fake_container_runtime,
+    install_fake_docker_ps_with_stale_project, lock_test, managed_stream_env,
+    write_managed_stream_container_lifecycle_manifest, write_managed_stream_profile_manifest,
+    write_root_manifest, EnvGuard, ManagedInvocation, ManagedNonZeroExitCase, ManagedOutputCase,
+    ManagedProfileNotFoundCase, ManagedStreamBuiltinTestCase, Path,
 };
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -63,84 +64,33 @@ concurrent = [
 }
 
 fn setup_managed_stream_lifecycle(root: &Path) {
-    write_root_manifest(
+    write_managed_stream_container_lifecycle_manifest(
         root,
-        r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-container_lifecycle = true
-concurrent = [
+        r#"[
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "true", start = 2, tab = 2, start_after_ms = 300, shutdown_on_exit = true }
-]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-working_dir = "/workspace"
-container = "web"
-
-[containers]
-default = "web"
-
-[containers.web]
-driver = "colima"
-startup = "detached"
-compose_file = "docker-compose.yml"
-project_name = "demo-web-dev"
-primary_service = "app"
-working_dir = "/workspace"
-"#,
+]"#,
+        "",
+        "working_dir = \"/workspace\"\ncontainer = \"web\"",
+        "demo-web-dev",
+        "working_dir = \"/workspace\"",
+        "",
     );
-    fs::write(
-        root.join("docker-compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write docker compose");
 }
 
 fn setup_managed_stream_lifecycle_workspace_binding(root: &Path) {
-    write_root_manifest(
+    write_managed_stream_container_lifecycle_manifest(
         root,
-        r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-container_lifecycle = true
-concurrent = [
+        r#"[
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "true", start = 2, tab = 2, start_after_ms = 300, shutdown_on_exit = true }
-]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-working_dir = "/workspace"
-container = "web"
-
-[containers]
-default = "web"
-
-[containers.web]
-driver = "colima"
-startup = "detached"
-compose_file = "docker-compose.yml"
-project_name = "demo-web-dev"
-primary_service = "app"
-"#,
+]"#,
+        "",
+        "working_dir = \"/workspace\"\ncontainer = \"web\"",
+        "demo-web-dev",
+        "",
+        "",
     );
-    fs::write(
-        root.join("docker-compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write docker compose");
 }
 
 fn setup_managed_stream_lifecycle_inline_workspace_binding(root: &Path) {
@@ -169,95 +119,33 @@ container = { image = "alpine:latest", mount = "./:/workspace" }
 }
 
 fn setup_managed_stream_readiness(root: &Path) {
-    write_root_manifest(
+    write_managed_stream_container_lifecycle_manifest(
         root,
-        r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-container_lifecycle = true
-health_wait = true
-ready_message = "http://project.test"
-concurrent = [
+        r#"[
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 2, tab = 2, shutdown_on_exit = true }
-]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-working_dir = "/workspace"
-container = "web"
-
-[containers]
-default = "web"
-
-[containers.web]
-driver = "colima"
-startup = "detached"
-compose_file = "docker-compose.yml"
-project_name = "demo-web-dev"
-primary_service = "app"
-working_dir = "/workspace"
-"#,
+]"#,
+        "health_wait = true\nready_message = \"http://project.test\"",
+        "working_dir = \"/workspace\"\ncontainer = \"web\"",
+        "demo-web-dev",
+        "working_dir = \"/workspace\"",
+        "",
     );
-    fs::write(
-        root.join("docker-compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write docker compose");
 }
 
 fn setup_managed_stream_gateway(root: &Path) {
-    write_root_manifest(
+    write_managed_stream_container_lifecycle_manifest(
         root,
-        r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-container_lifecycle = true
-gateway = true
-health_wait = true
-ready_message = "http://project.test"
-concurrent = [
+        r#"[
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 2, tab = 2, shutdown_on_exit = true }
-]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-working_dir = "/workspace"
-container = "web"
-
-[containers]
-default = "web"
-
-[containers.web]
-driver = "colima"
-startup = "detached"
-compose_file = "docker-compose.yml"
-project_name = "demo-web-dev"
-primary_service = "app"
-
-[containers.web.host]
-ports = ["8080:80"]
-
-[containers.web.dns]
-routes = [{ domain = "project.test" }]
-"#,
+]"#,
+        "gateway = true\nhealth_wait = true\nready_message = \"http://project.test\"",
+        "working_dir = \"/workspace\"\ncontainer = \"web\"",
+        "demo-web-dev",
+        "",
+        "[containers.web.host]\nports = [\"8080:80\"]\n\n[containers.web.dns]\nroutes = [{ domain = \"project.test\" }]",
     );
-    fs::write(
-        root.join("docker-compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write docker compose");
 }
 
 fn setup_managed_stream_gateway_without_ready_message(root: &Path) {
@@ -269,54 +157,18 @@ fn setup_managed_stream_gateway_without_ready_message(root: &Path) {
     // Enabling health_wait here would make the lifecycle script spin in
     // curl-against-fake-runtime forever and the `window` shutdown_on_exit
     // process would tear it down before the banner ever printed.
-    write_root_manifest(
+    write_managed_stream_container_lifecycle_manifest(
         root,
-        r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-container_lifecycle = true
-gateway = true
-health_wait = false
-concurrent = [
+        r#"[
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "sh -lc 'sleep 1; exit 0'", start = 2, tab = 2, shutdown_on_exit = true }
-]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-working_dir = "/workspace"
-container = "web"
-
-[containers]
-default = "web"
-
-[containers.web]
-driver = "colima"
-startup = "detached"
-compose_file = "docker-compose.yml"
-project_name = "demo-web-dev"
-primary_service = "app"
-
-[containers.web.host]
-ports = ["8080:80"]
-
-[containers.web.dns]
-routes = [
-  { domain = "project.test" },
-  { domain = "admin.project.test", tls = true }
-]
-"#,
+]"#,
+        "gateway = true\nhealth_wait = false",
+        "working_dir = \"/workspace\"\ncontainer = \"web\"",
+        "demo-web-dev",
+        "",
+        "[containers.web.host]\nports = [\"8080:80\"]\n\n[containers.web.dns]\nroutes = [\n  { domain = \"project.test\" },\n  { domain = \"admin.project.test\", tls = true }\n]",
     );
-    fs::write(
-        root.join("docker-compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write docker compose");
 }
 
 fn setup_managed_stream_container_routed_task_ref(root: &Path) {
@@ -367,43 +219,18 @@ ports = ["8080:80"]
 }
 
 fn setup_managed_stream_stale_project_name_mismatch(root: &Path) {
-    write_root_manifest(
+    write_managed_stream_container_lifecycle_manifest(
         root,
-        r#"[tasks.dev]
-mode = "tui"
-workspace = "app"
-container_lifecycle = true
-concurrent = [
+        r#"[
   { role = "lifecycle", start = 1, tab = 1 },
   { name = "window", run = "true", start = 2, tab = 2, shutdown_on_exit = true }
-]
-
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "web"
-
-[containers]
-default = "web"
-
-[containers.web]
-driver = "colima"
-startup = "detached"
-compose_file = "docker-compose.yml"
-project_name = "demo-web-renamed"
-primary_service = "app"
-working_dir = "/workspace"
-"#,
+]"#,
+        "",
+        "container = \"web\"",
+        "demo-web-renamed",
+        "working_dir = \"/workspace\"",
+        "",
     );
-    fs::write(
-        root.join("docker-compose.yml"),
-        "services:\n  app:\n    image: alpine:latest\n",
-    )
-    .expect("write docker compose");
 }
 
 fn write_fake_effigy(root: &Path) -> std::path::PathBuf {
@@ -423,73 +250,6 @@ fn write_fake_effigy(root: &Path) -> std::path::PathBuf {
     perms.set_mode(0o755);
     fs::set_permissions(&script, perms).expect("chmod fake effigy");
     script
-}
-
-fn write_fake_container_runtime(root: &Path) -> EnvGuard {
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
-
-    let docker = bin_dir.join("docker");
-    let docker_log = root.join("fake-docker.log");
-    fs::write(
-        &docker,
-        format!(
-            "#!/bin/sh\nlog='{}'\nprintf 'docker:%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = compose ]; then\n  shift\n  while [ $# -gt 0 ]; do\n    case \"$1\" in\n      -f|-p)\n        shift 2\n        ;;\n      up)\n        printf 'compose:up\\n' >> \"$log\"\n        exit 0\n        ;;\n      down)\n        printf 'compose:down\\n' >> \"$log\"\n        exit 0\n        ;;\n      ps)\n        printf 'compose:ps\\n' >> \"$log\"\n        printf 'NAME STATUS\\n'\n        exit 0\n        ;;\n      exec)\n        shift\n        if [ \"$1\" = -T ]; then\n          shift\n        fi\n        service=\"$1\"\n        shift\n        printf 'compose:exec:%s:%s\\n' \"$service\" \"$*\" >> \"$log\"\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ] && [ \"$3\" = true ]; then\n          exit 0\n        fi\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ]; then\n          command=$(printf '%s' \"$3\" | sed \"s/^'//; s/'$//\")\n          eval \"$command\"\n          exit $?\n        fi\n        exec \"$@\"\n        ;;\n      *)\n        shift\n        ;;\n    esac\n  done\nfi\nexit 0\n",
-            docker_log.display()
-        ),
-    )
-    .expect("write fake docker");
-    let mut perms = fs::metadata(&docker)
-        .expect("stat fake docker")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&docker, perms).expect("chmod fake docker");
-
-    let colima = bin_dir.join("colima");
-    let colima_log = root.join("fake-colima.log");
-    fs::write(
-        &colima,
-        format!(
-            "#!/bin/sh\nlog='{}'\nprintf 'colima:%s\\n' \"$*\" >> \"$log\"\ncase \"$1\" in\n  status)\n    printf 'INFO[0000] status: Running\\n'\n    exit 0\n    ;;\n  start)\n    printf 'started\\n'\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
-            colima_log.display()
-        ),
-    )
-    .expect("write fake colima");
-    let mut perms = fs::metadata(&colima)
-        .expect("stat fake colima")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&colima, perms).expect("chmod fake colima");
-
-    let old_path = std::env::var("PATH").ok().unwrap_or_default();
-    EnvGuard::set_many(&[("PATH", Some(format!("{}:{old_path}", bin_dir.display())))])
-}
-
-fn write_fake_docker_ps_with_stale_project(root: &Path, stale_project_name: &str) -> EnvGuard {
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
-    let canonical_root = root.canonicalize().expect("canonical root");
-
-    let docker = bin_dir.join("docker");
-    let docker_log = root.join("fake-docker.log");
-    fs::write(
-        &docker,
-        format!(
-            "#!/bin/sh\nlog='{}'\nprintf 'docker:%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = ps ]; then\n  printf 'demo-app-1\\tUp 2 minutes\\t\\t{}\\t{}\\tapp\\n'\n  exit 0\nfi\nprintf 'unexpected:%s\\n' \"$*\" >> \"$log\"\nexit 0\n",
-            docker_log.display(),
-            stale_project_name,
-            canonical_root.display()
-        ),
-    )
-    .expect("write fake docker");
-    let mut perms = fs::metadata(&docker)
-        .expect("stat fake docker")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&docker, perms).expect("chmod fake docker");
-
-    let old_path = std::env::var("PATH").ok().unwrap_or_default();
-    EnvGuard::set_many(&[("PATH", Some(format!("{}:{old_path}", bin_dir.display())))])
 }
 
 #[test]
@@ -620,7 +380,7 @@ fn run_manifest_task_managed_stream_lifecycle_process_owns_container_shutdown() 
     let _env = managed_stream_env();
     let root = crate::runner::tests::prelude::temp_workspace("managed-stream-lifecycle");
     setup_managed_stream_lifecycle(&root);
-    let _runtime = write_fake_container_runtime(&root);
+    let _runtime = install_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
@@ -644,7 +404,7 @@ fn run_manifest_task_managed_stream_workspace_binding_owns_container_shutdown() 
     let root =
         crate::runner::tests::prelude::temp_workspace("managed-stream-lifecycle-workspace-binding");
     setup_managed_stream_lifecycle_workspace_binding(&root);
-    let _runtime = write_fake_container_runtime(&root);
+    let _runtime = install_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
@@ -669,7 +429,7 @@ fn run_manifest_task_managed_stream_inline_workspace_binding_owns_container_shut
         "managed-stream-lifecycle-inline-workspace-binding",
     );
     setup_managed_stream_lifecycle_inline_workspace_binding(&root);
-    let _runtime = write_fake_container_runtime(&root);
+    let _runtime = install_fake_container_runtime(&root);
 
     let out =
         crate::runner::tests::prelude::run_dev(&root, &[]).expect("managed run should succeed");
@@ -692,7 +452,7 @@ fn run_manifest_task_managed_stream_projects_ready_message_from_lifecycle_owner(
     let _env = managed_stream_env();
     let root = crate::runner::tests::prelude::temp_workspace("managed-stream-readiness");
     setup_managed_stream_readiness(&root);
-    let _runtime = write_fake_container_runtime(&root);
+    let _runtime = install_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
@@ -711,7 +471,7 @@ fn run_manifest_task_managed_stream_auto_starts_gateway_before_runtime() {
     let _env = managed_stream_env();
     let root = crate::runner::tests::prelude::temp_workspace("managed-stream-gateway");
     setup_managed_stream_gateway(&root);
-    let _runtime = write_fake_container_runtime(&root);
+    let _runtime = install_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
@@ -733,7 +493,7 @@ fn run_manifest_task_managed_stream_derives_ready_message_from_dns_routes() {
     let root =
         crate::runner::tests::prelude::temp_workspace("managed-stream-gateway-route-summary");
     setup_managed_stream_gateway_without_ready_message(&root);
-    let _runtime = write_fake_container_runtime(&root);
+    let _runtime = install_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
@@ -760,7 +520,7 @@ fn run_manifest_task_managed_stream_handoff_skips_gateway_and_container_lifecycl
     let root =
         crate::runner::tests::prelude::temp_workspace("managed-stream-container-handoff-local");
     setup_managed_stream_gateway(&root);
-    let _runtime = write_fake_container_runtime(&root);
+    let _runtime = install_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
@@ -791,7 +551,7 @@ fn run_manifest_task_managed_stream_resolves_task_refs_before_container_exec_whe
     let root =
         crate::runner::tests::prelude::temp_workspace("managed-stream-container-routed-task-ref");
     setup_managed_stream_container_routed_task_ref(&root);
-    let _runtime = write_fake_container_runtime(&root);
+    let _runtime = install_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
 
@@ -815,7 +575,7 @@ fn run_manifest_task_managed_stream_fails_fast_for_stale_project_name_runtime() 
     let root =
         crate::runner::tests::prelude::temp_workspace("managed-stream-stale-project-name-runtime");
     setup_managed_stream_stale_project_name_mismatch(&root);
-    let _runtime = write_fake_docker_ps_with_stale_project(&root, "demo-web-old");
+    let _runtime = install_fake_docker_ps_with_stale_project(&root, "demo-web-old");
 
     let error = crate::runner::tests::prelude::run_dev(&root, &[])
         .expect_err("managed run should fail for stale project name");

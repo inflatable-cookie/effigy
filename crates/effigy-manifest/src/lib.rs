@@ -33,9 +33,10 @@ pub use config_sections::{
     ManifestContainerDnsDomainDefaults, ManifestContainerDnsRouteConfig, ManifestContainerDriver,
     ManifestContainerExecAliasConfig, ManifestContainerExecAliasTableConfig,
     ManifestContainerHostConfig, ManifestContainerHostMount, ManifestContainerHostMountTable,
-    ManifestContainerOnTaskExit, ManifestContainerServiceConfig, ManifestContainerShutdownMode,
-    ManifestContainerStartup, ManifestContainersConfig, ManifestDemoConfig, ManifestDemoMode,
-    ManifestDemoStatus, ManifestDistributionConfig, ManifestDistributionMetadataConfig,
+    ManifestContainerHostProcess, ManifestContainerHostProcessRestart, ManifestContainerOnTaskExit,
+    ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
+    ManifestContainersConfig, ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus,
+    ManifestDistributionConfig, ManifestDistributionMetadataConfig,
     ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
     ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig,
     ManifestIsolationAdoption, ManifestIsolationConfig, ManifestJsPackageManager,
@@ -181,8 +182,149 @@ impl TaskManifest {
         for (demo_id, demo) in &self.demos {
             demo.validate(manifest_path, demo_id)?;
         }
+        if let Some(containers) = self.containers.as_ref() {
+            for (container_name, container) in &containers.environments {
+                if let Some(dns) = container.dns.as_ref() {
+                    validate_dns_routes(manifest_path, container_name, dns)?;
+                }
+                validate_host_processes(manifest_path, container_name, &container.host_processes)?;
+            }
+        }
         Ok(())
     }
+}
+
+fn validate_dns_routes(
+    manifest_path: &Path,
+    container_name: &str,
+    dns: &crate::config_sections::ManifestContainerDnsConfig,
+) -> Result<(), ManifestError> {
+    if let Some(defaults) = dns.domain_defaults.as_ref() {
+        if defaults.service.is_some() && defaults.target_host.is_some() {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "containers.{container_name}.dns.domain_defaults declares both `service` and `target_host`; pick one"
+                ),
+            });
+        }
+        if let Some(target) = defaults.target_host.as_deref() {
+            validate_target_host_format(
+                manifest_path,
+                target,
+                &format!("containers.{container_name}.dns.domain_defaults.target_host"),
+            )?;
+        }
+    }
+    for route in &dns.routes {
+        if route.service.is_some() && route.target_host.is_some() {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "containers.{container_name}.dns.routes entry for `{}` declares both `service` and `target_host`; pick one",
+                    route.domain
+                ),
+            });
+        }
+        if let Some(target) = route.target_host.as_deref() {
+            validate_target_host_format(
+                manifest_path,
+                target,
+                &format!(
+                    "containers.{container_name}.dns.routes[{}].target_host",
+                    route.domain
+                ),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_host_processes(
+    manifest_path: &Path,
+    container_name: &str,
+    entries: &[crate::config_sections::ManifestContainerHostProcess],
+) -> Result<(), ManifestError> {
+    use std::collections::HashSet;
+
+    let mut seen = HashSet::<String>::new();
+    for (index, entry) in entries.iter().enumerate() {
+        let scope = format!("containers.{container_name}.host_processes[{index}]");
+        let trimmed_name = entry.name.trim();
+        if trimmed_name.is_empty() {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!("{scope}.name is empty"),
+            });
+        }
+        if !trimmed_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "{scope}.name = `{trimmed_name}` must contain only ASCII letters, digits, `-`, or `_`"
+                ),
+            });
+        }
+        if !seen.insert(trimmed_name.to_owned()) {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "containers.{container_name}.host_processes contains duplicate name `{trimmed_name}`"
+                ),
+            });
+        }
+        if entry.run.trim().is_empty() {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!("{scope}.run is empty"),
+            });
+        }
+        if let Some(signal) = entry.shutdown_signal.as_deref() {
+            let upper = signal.trim().to_ascii_uppercase();
+            const ALLOWED: &[&str] = &["SIGTERM", "SIGINT", "SIGHUP", "SIGKILL"];
+            if !ALLOWED.contains(&upper.as_str()) {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "{scope}.shutdown_signal = `{signal}` must be one of: SIGTERM, SIGINT, SIGHUP, SIGKILL"
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_target_host_format(
+    manifest_path: &Path,
+    raw: &str,
+    field: &str,
+) -> Result<(), ManifestError> {
+    let trimmed = raw.trim();
+    let Some((host, port)) = trimmed.rsplit_once(':') else {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+                "{field} = `{raw}` must be in `host:port` form (e.g. `127.0.0.1:8080`)"
+            ),
+        });
+    };
+    if host.trim().is_empty() {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!("{field} = `{raw}` is missing a host before the `:`"),
+        });
+    }
+    if port.parse::<u16>().is_err() {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!("{field} = `{raw}` has port `{port}` that does not parse as u16"),
+        });
+    }
+    Ok(())
 }
 
 impl ManifestDefer {
@@ -193,5 +335,225 @@ impl ManifestDefer {
             .filter(|name| !name.is_empty())
             .map(str::to_owned)
             .collect::<BTreeSet<String>>()
+    }
+}
+
+#[cfg(test)]
+mod target_host_validation_tests {
+    use super::*;
+
+    fn parse(text: &str) -> TaskManifest {
+        toml::from_str(text).expect("parse manifest")
+    }
+
+    fn err(manifest: &TaskManifest) -> String {
+        match manifest.validate(Path::new("/tmp/effigy.toml")) {
+            Ok(_) => panic!("expected validation error"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[test]
+    fn defaults_with_service_and_target_host_is_rejected() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[containers.web.dns]
+domains = ["a.test"]
+domain_defaults = { service = "tunnel", target_host = "127.0.0.1:8080" }
+"#,
+        );
+        let detail = err(&manifest);
+        assert!(
+            detail.contains("declares both `service` and `target_host`"),
+            "got: {detail}"
+        );
+    }
+
+    #[test]
+    fn route_with_service_and_target_host_is_rejected() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[containers.web.dns]
+routes = [{ domain = "a.test", service = "tunnel", target_host = "127.0.0.1:8080" }]
+"#,
+        );
+        let detail = err(&manifest);
+        assert!(
+            detail.contains("declares both `service` and `target_host`"),
+            "got: {detail}"
+        );
+    }
+
+    #[test]
+    fn target_host_must_be_host_colon_port() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[containers.web.dns]
+routes = [{ domain = "a.test", target_host = "127.0.0.1" }]
+"#,
+        );
+        let detail = err(&manifest);
+        assert!(
+            detail.contains("must be in `host:port` form"),
+            "got: {detail}"
+        );
+    }
+
+    #[test]
+    fn target_host_port_must_be_u16() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[containers.web.dns]
+routes = [{ domain = "a.test", target_host = "127.0.0.1:99999" }]
+"#,
+        );
+        let detail = err(&manifest);
+        assert!(detail.contains("does not parse as u16"), "got: {detail}");
+    }
+
+    #[test]
+    fn valid_target_host_passes() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[containers.web.dns]
+domains = ["a.test"]
+domain_defaults = { tls = true, target_host = "127.0.0.1:8080" }
+"#,
+        );
+        manifest
+            .validate(Path::new("/tmp/effigy.toml"))
+            .expect("expected valid manifest");
+    }
+}
+
+#[cfg(test)]
+mod host_process_validation_tests {
+    use super::*;
+
+    fn parse(text: &str) -> TaskManifest {
+        toml::from_str(text).expect("parse manifest")
+    }
+
+    fn err(manifest: &TaskManifest) -> String {
+        match manifest.validate(Path::new("/tmp/effigy.toml")) {
+            Ok(_) => panic!("expected validation error"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[test]
+    fn host_process_with_empty_name_is_rejected() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[[containers.web.host_processes]]
+name = ""
+run = "echo ok"
+"#,
+        );
+        assert!(err(&manifest).contains("name is empty"));
+    }
+
+    #[test]
+    fn host_process_with_bad_name_chars_is_rejected() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[[containers.web.host_processes]]
+name = "tunnel/bad"
+run = "echo ok"
+"#,
+        );
+        assert!(err(&manifest).contains("must contain only ASCII letters"));
+    }
+
+    #[test]
+    fn host_process_with_duplicate_name_is_rejected() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[[containers.web.host_processes]]
+name = "tunnel"
+run = "echo ok"
+
+[[containers.web.host_processes]]
+name = "tunnel"
+run = "echo ok"
+"#,
+        );
+        assert!(err(&manifest).contains("duplicate name"));
+    }
+
+    #[test]
+    fn host_process_with_empty_run_is_rejected() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[[containers.web.host_processes]]
+name = "tunnel"
+run = "   "
+"#,
+        );
+        assert!(err(&manifest).contains("run is empty"));
+    }
+
+    #[test]
+    fn host_process_with_unknown_signal_is_rejected() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[[containers.web.host_processes]]
+name = "tunnel"
+run = "echo ok"
+shutdown_signal = "SIGUSR2"
+"#,
+        );
+        assert!(err(&manifest).contains("must be one of"));
+    }
+
+    #[test]
+    fn valid_host_process_passes() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[[containers.web.host_processes]]
+name = "tunnel"
+run = "autossh -L 0.0.0.0:8080:127.0.0.1:80 bastion"
+restart = "always"
+restart_delay_ms = 2500
+shutdown_signal = "SIGTERM"
+shutdown_grace_secs = 10
+"#,
+        );
+        manifest
+            .validate(Path::new("/tmp/effigy.toml"))
+            .expect("expected valid manifest");
     }
 }

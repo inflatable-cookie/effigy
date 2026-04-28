@@ -84,11 +84,19 @@ RUN set -eux; \
         echo 'host_sock=/run/host-services/ssh-auth.sock'; \
         echo 'bridge_sock=/tmp/effigy-ssh-auth.sock'; \
         echo 'log=/var/log/effigy-ssh-bridge.log'; \
+        echo 'mkcert_ca=/usr/local/share/ca-certificates/effigy-mkcert.crt'; \
         echo ': > "$log" || true'; \
         echo 'echo "[effigy-entrypoint] $(date -u +%FT%TZ) start" >> "$log" 2>&1 || true'; \
         echo 'dev_uid=$(id -u dev 2>/dev/null || echo 1000)'; \
         echo 'dev_gid=$(id -g dev 2>/dev/null || echo 1000)'; \
         echo 'echo "[effigy-entrypoint] dev uid=$dev_uid gid=$dev_gid" >> "$log"'; \
+        echo 'if [ -f "$mkcert_ca" ]; then'; \
+        echo '    if update-ca-certificates >>"$log" 2>&1; then'; \
+        echo '        echo "[effigy-entrypoint] mkcert root CA installed into system trust store" >> "$log"'; \
+        echo '    else'; \
+        echo '        echo "[effigy-entrypoint] WARNING update-ca-certificates failed (see lines above)" >> "$log"'; \
+        echo '    fi'; \
+        echo 'fi'; \
         echo 'if [ -S "$host_sock" ]; then'; \
         echo '    echo "[effigy-entrypoint] host_sock present at $host_sock" >> "$log"'; \
         echo '    rm -f "$bridge_sock"'; \

@@ -1,4 +1,6 @@
+pub mod builtin_tasks;
 pub mod data_loading;
+pub mod effigy_invocation;
 pub mod executable_override;
 pub mod fs_probe;
 pub mod path_error_text;

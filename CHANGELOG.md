@@ -6,7 +6,19 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- Explicitly enabled and tuned `opcache` in the `php-fpm` catalog dev image instead of relying on base-image defaults.
+- DecodeLabs PHP workspaces now isolate hot dirs through a single `php-fpm` `isolated_dirs` list; the shipped Decodelabs app bundle uses `["vendor", "node_modules"]` and `decodelabs-library` uses just its repo-local `vendor/`.
+
 ### Breaking
+- Reject `concurrent = [...]` on a task that does not declare
+  `mode = "tui"`. The old behaviour silently ignored concurrent
+  entries on non-TUI tasks, so sidecars declared on `tasks.dev`
+  without an explicit mode never ran. The error message points
+  consumers at either setting `mode = "tui"` or moving the entries
+  onto `[[containers.<name>.host_processes]]` if the sidecar should
+  follow the container's lifecycle instead of a TUI session.
 - Remove legacy `[bundle].name` support. The only built-in bundle selector
   keys at manifest level are now `base` for shipped bundles and `base_path`
   for local bundle directories.
@@ -34,6 +46,49 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Added
+- Resolve registered gateway routes whose domain falls outside the
+  managed TLD (e.g. `dev.cumberland.co.uk`). The DNS resolver now
+  consults the route table for any A query and answers when a route
+  exists — not only `.test`-style queries — and returns NoError on
+  matching AAAA queries so browsers don't retry through upstream
+  DNS and bypass the local override. The gateway daemon (which runs
+  as root through the existing elevation flow) reconciles macOS
+  `/etc/resolver/<domain>` files on startup and after every
+  `routes.json` change, writing one per non-managed-TLD route domain
+  and removing files when a route disappears. Files carry the
+  `Managed by Effigy gateway` header so the gateway-down cleanup
+  can sweep them safely without touching unrelated user-authored
+  resolver entries. Lets a manifest declare a `domains = [...]`
+  list under a public DNS suffix and have those names resolve
+  locally with no per-machine `/etc/hosts` edits.
+- Auto-mount the host's mkcert root CA into workspace catalog
+  containers and install it into the system trust store on container
+  start, so HTTPS calls from inside the container back through the
+  host gateway (e.g. a PHP migration sync task hitting
+  `https://dev.cumberland.co.uk/...`) trust the gateway's
+  mkcert-issued certs without per-project glue. Effigy locates the
+  cert via `mkcert -CAROOT`, mounts `rootCA.pem` read-only at
+  `/usr/local/share/ca-certificates/effigy-mkcert.crt`, and the
+  catalog's `effigy-entrypoint` wrapper runs
+  `update-ca-certificates` on startup. Active for the `php-fpm` and
+  `workspace-rust-bun` catalogs (whose entrypoints wire the install
+  step). Silently skipped when mkcert is not installed or has not
+  generated a root CA. Per-service opt-out via
+  `params.mount_host_mkcert_ca = false`.
+- Add `[[containers.<name>.host_processes]]` for declaring host-side
+  sidecar processes whose lifecycle follows the container. Each entry
+  has a `name`, a `run` shell command, and optional `restart`
+  (`on-failure` default, `always`, `never`), `restart_delay_ms`,
+  `shutdown_signal` (`SIGTERM` default, plus `SIGINT` / `SIGHUP` /
+  `SIGKILL`), and `shutdown_grace_secs` knobs. Effigy spawns a
+  detached supervisor per entry after `compose up` succeeds and tears
+  it down before `compose down`/`reset`/attached-session shutdown,
+  with PID and combined stdout/stderr written to
+  `.effigy/runtime/host-processes/<container>/<name>.{pid,log}`.
+  Replaces the `concurrent`-on-dev-task pattern for sidecars (e.g.
+  `autossh` tunnels backing `target_host` gateway routes) that need
+  to be tied to the container rather than to a managed dev TUI
+  session.
 - Accept a structured table form on `[containers.<name>.host].mounts`
   alongside the legacy `"host:container[:options]"` string form, with an
   `external = true` opt-in for sourcing mounts from outside the repo
@@ -51,6 +106,22 @@ During v0.x, MINOR bumps may include breaking changes.
   restating the per-route shape. A literal entry in `routes` with the
   same domain wins over its sugar form, so power users can still
   override individual entries.
+- Add `target_host = "host:port"` to `[containers.<name>.dns]` routes
+  and `domain_defaults`. When set, the gateway registers the route
+  directly against the named host listener instead of resolving against
+  a container service, so domains can be fronted by sidecar processes
+  (e.g. an `autossh` tunnel running as a managed concurrent task) without
+  requiring a compose service to back them. `target_host` is mutually
+  exclusive with `service` on the same scope, and the value must parse as
+  `host:port` with a u16 port; both rules surface as manifest validation
+  errors rather than runtime failures.
+- Accept `run_in = "host"` on `[[tasks.<name>.concurrent]]` entries.
+  When set, the entry runs its `run` command on the host shell rather
+  than inheriting the parent task's container wrap (compose exec /
+  workspace handoff prefix). Pairs with the `target_host` route directive
+  to let a host-side sidecar (e.g. autossh) back gateway routes for a
+  container project. Rejected on `role = "lifecycle"` and `role =
+  "shell"` entries, which by definition own the container handoff.
 - Auto-discover `effigy.local.toml` alongside the root manifest. When
   present, it loads as if the root declared
   `{ path = "effigy.local.toml", optional = true }` at the end of its

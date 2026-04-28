@@ -9,6 +9,9 @@ This guide covers two related features that ship together:
 - **Library mounts** — bind extra host directories into the workspace under
   `/workspace-libraries/<basename>`, keyed by bundle name in the user-global
   `~/.effigy/config.toml`.
+- **Mounted-repo isolation** — let producer repos declare `[isolation].paths`
+  once, then auto-adopt those paths for sibling repos listed under
+  `systems.<name>.mounts` inside a workspace container.
 - **Host git/SSH integration** — fold the developer's `~/.gitconfig`,
   `~/.ssh/known_hosts`, and forwarded SSH agent socket into git-aware
   workspace containers (`php-fpm`, `workspace-rust-bun`, `node`) by default.
@@ -28,9 +31,66 @@ Reach for this guide when:
   to push to a remote repo over SSH.
 - You hack on shared libraries (sibling repos to the consumer project) and
   want them visible inside the container at a stable path.
+- You want `node_modules` or `target` in mounted sibling repos to stay
+  container-owned instead of fighting the host copy.
 - You see `git push` failing with `Permission denied (publickey)`,
   `ssh-add: Error connecting to agent: Permission denied`, or
   `error: cannot run ssh: No such file or directory` in container output.
+
+## Mounted-Repo Isolation
+
+Producer repos declare the directories they are willing to isolate:
+
+```toml
+[isolation]
+paths = [
+  "node_modules",
+  "target",
+]
+```
+
+Consumer repos then just mount the sibling repo normally:
+
+```toml
+[systems.dev]
+mounts = ["../underlay", "../poodle"]
+```
+
+Effigy auto-adopts any producer-declared `[isolation].paths` from those mounted
+repos into the workspace container. The normal path does **not** need a second
+`systems.<name>.isolation = [...]` list repeating the same repos.
+
+What this buys you:
+
+- host source stays shared
+- install/build state that diverges between macOS and Linux stays container-owned
+- sibling library repos remain editable from both the host and the workspace
+  shell without the two copies of `node_modules` or `target` clobbering each
+  other
+
+### Keep producer contracts tight
+
+Isolation is not free. On Colima/containerd, workspace mounts are serialized
+through nerdctl/containerd metadata, so every extra isolated path spends mount
+budget on the workspace container. Keep producer contracts limited to the dirs
+that really matter in mounted consumer flows:
+
+- `node_modules` for mounted JS libraries consumers actually import from
+- `target` for mounted Rust libraries consumers actually build against
+- avoid preview/demo-only build dirs unless a real consumer path needs them
+
+Effigy now preflights oversized Colima mount payloads and fails early with a
+clear error before compose-up, but the better fix is still to keep producer
+isolation lists lean.
+
+### Override cases
+
+`systems.<name>.isolation` still exists, but it is now an override surface:
+
+- opt into an unmounted repo
+- suppress or narrow the default auto-adoption path
+- resolve an unusual layout where the bundle/runtime should look somewhere
+  different from the mounted sibling repo
 
 ## Library Mounts (Bundle-Keyed)
 

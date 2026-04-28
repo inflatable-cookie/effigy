@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use effigy_manifest::{
     resolve_task_execution_binding, LoadedCatalog, ManifestManagedConcurrentEntry, ManifestTask,
-    ResolvedTaskExecutionBinding, TaskResolverFn,
+    ManifestTaskRunIn, ResolvedTaskExecutionBinding, TaskResolverFn,
 };
 use effigy_tasks::TaskSelector;
 
@@ -64,6 +64,7 @@ pub fn resolve_concurrent_process_entries<'a>(
                 service: normalized.service,
                 start_after_ms: normalized.start_after_ms,
                 shutdown_on_exit: normalized.shutdown_on_exit,
+                run_on_host: normalized.run_on_host,
             },
             start_rank: normalized.start_rank,
             tab_rank: normalized.tab_rank,
@@ -118,6 +119,7 @@ struct NormalizedConcurrentEntry {
     tab_rank: usize,
     start_after_ms: u64,
     shutdown_on_exit: bool,
+    run_on_host: bool,
 }
 
 fn normalize_entry(
@@ -144,6 +146,22 @@ fn normalize_entry(
         .unwrap_or_else(|| format!("process-{ordinal}"));
     let start_rank = entry.start.unwrap_or(ordinal);
     let tab_rank = entry.tab.unwrap_or(start_rank);
+    let run_on_host = match entry.run_in {
+        Some(ManifestTaskRunIn::Host) => {
+            if matches!(
+                role,
+                ManagedProcessRole::Lifecycle | ManagedProcessRole::Shell
+            ) {
+                return Err(invalid_managed_process_definition(
+                    selector,
+                    &process_name,
+                    "`run_in = \"host\"` is only supported on standard concurrent entries (not `lifecycle` or `shell`)",
+                ));
+            }
+            true
+        }
+        _ => false,
+    };
     Ok(NormalizedConcurrentEntry {
         process_name,
         role,
@@ -157,6 +175,7 @@ fn normalize_entry(
         tab_rank,
         start_after_ms: entry.start_after_ms.unwrap_or(0),
         shutdown_on_exit: lifecycle_shutdown_on_exit(selector, entry, role)?,
+        run_on_host,
     })
 }
 

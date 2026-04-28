@@ -119,6 +119,39 @@ Composition rules:
   `override = [...]`.
 - override is path-scoped and replaces the whole addressed value.
 
+## 2c) Producer Isolation + Mounted Consumer Adoption
+
+Producer repo:
+
+```toml
+[isolation]
+paths = [
+  "node_modules",
+  "target",
+]
+```
+
+Consumer repo:
+
+```toml
+[systems.dev]
+mounts = ["../underlay", "../poodle"]
+```
+
+Use this when a mounted sibling repo needs Linux/container-owned install or
+build state without clobbering the host copy.
+
+Rules:
+- producer repos declare only the paths that are safe and useful to isolate
+- mounted consumers normally do **not** repeat those repos under a second
+  `isolation = [...]` list; `systems.<name>.mounts` auto-adopts the producer
+  contract
+- keep the producer list tight, especially on Colima/containerd, because each
+  isolated path spends mount budget on the workspace container
+- for user-global sibling library trees, pair this with
+  [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
+  rather than inventing repo-local symlink tricks
+
 Inspection:
 
 ```sh

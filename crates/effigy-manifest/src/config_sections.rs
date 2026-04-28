@@ -426,6 +426,15 @@ pub struct ManifestContainerConfig {
     pub host: Option<ManifestContainerHostConfig>,
     #[serde(default)]
     pub data: Option<ManifestContainerDataConfig>,
+    /// Host-side processes that follow this container's lifecycle.
+    /// Each entry is started after `compose up` succeeds and stopped
+    /// before `compose down`. Useful for sidecars that the containerised
+    /// app depends on but that must run on the developer's host
+    /// (e.g. an `autossh` SSH tunnel that needs the host's ssh_config).
+    /// Crashes are restarted per the entry's `restart` policy. Output
+    /// streams to `.effigy/runtime/host-processes/<container>/<name>.log`.
+    #[serde(default)]
+    pub host_processes: Vec<ManifestContainerHostProcess>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
@@ -472,6 +481,7 @@ impl ManifestContainerDnsConfig {
                 tls: defaults.tls,
                 port: defaults.port,
                 service: defaults.service.clone(),
+                target_host: defaults.target_host.clone(),
             });
         }
         resolved
@@ -487,6 +497,12 @@ pub struct ManifestContainerDnsDomainDefaults {
     pub port: Option<u16>,
     #[serde(default)]
     pub service: Option<String>,
+    /// External target in `host:port` form. When set, the gateway
+    /// registers the route directly against this host listener and
+    /// skips the container-service resolution. Mutually exclusive
+    /// with `service`.
+    #[serde(default)]
+    pub target_host: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
@@ -499,6 +515,10 @@ pub struct ManifestContainerDnsRouteConfig {
     pub port: Option<u16>,
     #[serde(default)]
     pub service: Option<String>,
+    /// External target in `host:port` form. See `domain_defaults`.
+    /// Mutually exclusive with `service` on the same route.
+    #[serde(default)]
+    pub target_host: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -581,6 +601,58 @@ pub struct ManifestContainerLifecycleConfig {
     pub shutdown: Option<ManifestContainerShutdownMode>,
     #[serde(default)]
     pub detach_timeout_secs: Option<u64>,
+}
+
+/// A host-side process tied to a container's lifecycle.
+///
+/// Started after `compose up` for the parent container, stopped before
+/// `compose down`. Output is appended to a per-process log file under
+/// `.effigy/runtime/host-processes/<container>/<name>.log`; the
+/// supervisor PID lives next to it as `<name>.pid`.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestContainerHostProcess {
+    /// Stable identifier for this process. Used for log/PID file names
+    /// and shutdown lookup. Must be unique within the container's
+    /// `host_processes` list and contain only `[A-Za-z0-9_-]` characters.
+    pub name: String,
+    /// Host shell command to execute. Runs under `sh -lc <run>`.
+    pub run: String,
+    /// Restart policy when the process exits. Defaults to `on-failure`
+    /// (restart only when the exit code is non-zero). `always` restarts
+    /// regardless; `never` exits the supervisor on first exit.
+    #[serde(default)]
+    pub restart: Option<ManifestContainerHostProcessRestart>,
+    /// Delay between restart attempts, in milliseconds. Defaults to 1000.
+    #[serde(default)]
+    pub restart_delay_ms: Option<u64>,
+    /// Signal sent during graceful shutdown. Defaults to `SIGTERM`.
+    /// Accepts `SIGTERM`, `SIGINT`, `SIGHUP`, or `SIGKILL`.
+    #[serde(default)]
+    pub shutdown_signal: Option<String>,
+    /// Seconds to wait after the shutdown signal before escalating to
+    /// `SIGKILL`. Defaults to 5.
+    #[serde(default)]
+    pub shutdown_grace_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ManifestContainerHostProcessRestart {
+    #[default]
+    OnFailure,
+    Always,
+    Never,
+}
+
+impl ManifestContainerHostProcessRestart {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OnFailure => "on-failure",
+            Self::Always => "always",
+            Self::Never => "never",
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
@@ -1430,6 +1502,44 @@ domain_defaults = { tls = true, service = "tunnel" }
         assert_eq!(resolved[1].domain, "admin.example");
         assert_eq!(resolved[1].tls, Some(true));
         assert_eq!(resolved[1].service.as_deref(), Some("tunnel"));
+    }
+
+    #[test]
+    fn container_dns_target_host_propagates_from_defaults_to_sugar_routes() {
+        let parsed: ManifestContainerDnsConfig = toml::from_str(
+            r#"
+domains = ["dev.example", "admin.example"]
+domain_defaults = { tls = true, target_host = "127.0.0.1:8080" }
+"#,
+        )
+        .expect("parse dns sugar with target_host");
+
+        let resolved = parsed.resolved_routes();
+        assert_eq!(resolved.len(), 2);
+        for route in &resolved {
+            assert_eq!(route.tls, Some(true));
+            assert_eq!(route.target_host.as_deref(), Some("127.0.0.1:8080"));
+            assert_eq!(route.service, None);
+        }
+    }
+
+    #[test]
+    fn container_dns_target_host_on_literal_route_round_trips() {
+        let parsed: ManifestContainerDnsConfig = toml::from_str(
+            r#"
+routes = [
+  { domain = "dev.example", tls = true, target_host = "127.0.0.1:8080" },
+]
+"#,
+        )
+        .expect("parse literal route with target_host");
+
+        assert_eq!(parsed.routes.len(), 1);
+        assert_eq!(
+            parsed.routes[0].target_host.as_deref(),
+            Some("127.0.0.1:8080")
+        );
+        assert_eq!(parsed.routes[0].service, None);
     }
 
     #[test]

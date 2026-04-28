@@ -443,6 +443,7 @@ working_dir = "{working_dir}"
             health: None,
             host: None,
             data: None,
+            host_processes: Vec::new(),
         };
         let root = temp_repo("working-dir");
         write_container_manifest(&root, "/var/www/html");
@@ -478,6 +479,7 @@ working_dir = "{working_dir}"
             health: None,
             host: None,
             data: None,
+            host_processes: Vec::new(),
         })
         .expect("alias table");
         let resolved = aliases
@@ -513,6 +515,7 @@ working_dir = "{working_dir}"
             health: None,
             host: None,
             data: None,
+            host_processes: Vec::new(),
         })
         .expect("alias table");
         let resolved = aliases
@@ -546,6 +549,7 @@ working_dir = "{working_dir}"
             health: None,
             host: None,
             data: None,
+            host_processes: Vec::new(),
         };
 
         let args = build_raw_exec_args(
@@ -742,6 +746,7 @@ working_dir = "{working_dir}"
             health: None,
             host: None,
             data: None,
+            host_processes: Vec::new(),
         })
         .expect("alias table");
 

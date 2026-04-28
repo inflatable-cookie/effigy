@@ -74,6 +74,8 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::InternalGateway(_)
         | Command::InternalRhai(_)
         | Command::InternalContainerLeaseReaper(_)
+        | Command::InternalHostProcessSupervise(_)
+        | Command::InternalHostProcessStop(_)
         | Command::Task(_)) => run_and_render_command(&context, command),
     }
 }

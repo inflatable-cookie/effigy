@@ -3,7 +3,10 @@ use serde_json::Value;
 use std::fs;
 use std::process::Command;
 
-use super::support::{parse_stdout_json, run_cli_command, run_json_cli_command, temp_workspace};
+use super::support::{
+    parse_stdout_json, run_cli_command, run_json_cli_command, temp_workspace,
+    write_fake_effigy_install_repo,
+};
 
 #[derive(Deserialize)]
 struct ReleasedSurfaceBaseline {
@@ -126,69 +129,6 @@ fn write_release_version_file_fixture(root: &std::path::Path) {
         "[release]\nversion-file = \"VERSION\"\nchangelog = \"CHANGELOG.md\"\ntag-format = \"version-{version}\"\n",
     )
     .expect("write manifest");
-}
-
-fn init_git_repo_with_commit(root: &std::path::Path, message: &str) {
-    let init = Command::new("git")
-        .arg("init")
-        .arg(root)
-        .output()
-        .expect("git init");
-    assert!(init.status.success(), "git init failed: {init:?}");
-
-    let email = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["config", "user.email", "effigy-tests@example.com"])
-        .output()
-        .expect("git config email");
-    assert!(email.status.success(), "git config email failed: {email:?}");
-
-    let name = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["config", "user.name", "Effigy Tests"])
-        .output()
-        .expect("git config name");
-    assert!(name.status.success(), "git config name failed: {name:?}");
-
-    let add = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["add", "."])
-        .output()
-        .expect("git add");
-    assert!(add.status.success(), "git add failed: {add:?}");
-
-    let commit = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["commit", "-m", message])
-        .output()
-        .expect("git commit");
-    assert!(commit.status.success(), "git commit failed: {commit:?}");
-}
-
-fn write_fake_effigy_install_repo(root: &std::path::Path, tag: &str) -> String {
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"effigy\"\nversion = \"0.2.13\"\nedition = \"2021\"\n\n[[bin]]\nname = \"effigy\"\npath = \"src/main.rs\"\n",
-    )
-    .expect("write cargo manifest");
-    fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("write main");
-    init_git_repo_with_commit(root, "initial");
-    let tag_output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["tag", tag])
-        .output()
-        .expect("git tag");
-    assert!(
-        tag_output.status.success(),
-        "git tag failed: {tag_output:?}"
-    );
-    format!("file://{}", root.display())
 }
 
 #[test]
@@ -327,7 +267,7 @@ fn v0_2_13_release_verify_install_still_installs_tagged_binary() {
     let baseline = load_baseline();
     let root = temp_workspace("released-surface-v0-2-13-verify-install");
     let repo = temp_workspace("released-surface-v0-2-13-verify-install-repo");
-    let repo_url = write_fake_effigy_install_repo(&repo, &baseline.baseline_tag);
+    let repo_url = write_fake_effigy_install_repo(&repo, "0.2.13", &baseline.baseline_tag);
 
     let output = run_json_cli_command(
         &root,

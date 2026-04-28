@@ -1,27 +1,19 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::{
-    render_bullet_section, render_info_notices, render_options_section, render_usage_section,
-};
+use super::shared::render_standard_topic_help;
 
 pub(crate) fn render_contracts_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
-    renderer.section("contracts Help")?;
-    render_info_notices(
+    render_standard_topic_help(
         renderer,
+        "contracts",
         &[
             "Validate reusable JSON contract artifacts from Effigy-owned command surfaces instead of jq-heavy shell scripts.",
             "Keep contract structure in JSON files and repo-specific policy in task wiring; the built-in command just enforces the published shape.",
         ],
-    )?;
-    render_usage_section(
-        renderer,
         &[
             "effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected|--print-selected=json] [--json]",
             "effigy contracts validate-selection [--repo <PATH>] [--contract <PATH>] [--artifact <PATH>] [--json]",
             "effigy --json contracts validate-selection [--repo <PATH>] [--artifact <PATH>]",
         ],
-    )?;
-    render_options_section(
-        renderer,
         &[
             ("--repo <PATH>", "Override target repository path"),
             (
@@ -53,11 +45,6 @@ pub(crate) fn render_contracts_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ("--json", "Render machine-readable validation payloads"),
             ("-h, --help", "Print command help"),
         ],
-    )?;
-    render_bullet_section(
-        renderer,
-        "Examples",
-        "commands",
         &[
             "effigy contracts check-json --fast --print-selected",
             "effigy contracts check-json --fast --changed-only origin/main --print-selected=json",
@@ -65,6 +52,5 @@ pub(crate) fn render_contracts_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy contracts validate-selection --artifact tmp/selected.json",
             "effigy --json contracts validate-selection --artifact json-contracts-selected.json",
         ],
-    )?;
-    Ok(())
+    )
 }

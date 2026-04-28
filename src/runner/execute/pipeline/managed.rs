@@ -2,13 +2,18 @@ use super::super::super::container_command::support::validate_running_container_
 use super::super::super::gateway_command::gateway_up_for_managed_task;
 use super::super::super::locking::io::acquire_scopes;
 use super::super::super::locking::model::LockScope;
+use super::super::super::managed_shell::{
+    managed_readiness_probe_urls, render_handoff_managed_lifecycle_command,
+    render_inline_compose_command, render_inline_managed_lifecycle_command,
+    render_inline_managed_shell_command, render_inline_managed_standard_exec_command,
+};
 use super::super::super::system_command::{run_workspace, run_workspace_seeded_session};
 use super::super::api::{resolve_container_execution_binding, ContainerExecutionBinding};
 use super::super::planning::ExecutionPreflight;
 use crate::runner::error::RunnerError;
 use crate::runner::util::render_passthrough_args;
 use effigy_cli::WorkspaceArgs;
-use effigy_containers::compose::{compose_args, compose_invocation};
+use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
     managed_gateway_command, managed_lifecycle_command, managed_lifecycle_shutdown_command,
     managed_shell_command, managed_standard_exec_command, resolve_effigy_invocation_prefix,
@@ -16,6 +21,7 @@ use effigy_containers::session::{
 use effigy_containers::{
     load_container_exec_working_dir, load_container_policy, EffectiveContainerPolicy,
 };
+use effigy_core::shell::shell_quote;
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
@@ -25,7 +31,6 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
-const MANAGED_EXEC_READINESS_TIMEOUT_SECS: u64 = 30;
 const MANAGED_LIFECYCLE_CLEANUP_TIMEOUT_SECS: u64 = 90;
 const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF";
 
@@ -464,6 +469,15 @@ fn materialize_special_managed_processes(
                 };
             }
             ManagedProcessRole::Standard => {
+                if process.run_on_host {
+                    // Entry opts out of the parent task's container wrap —
+                    // run the raw command on the host. The setup script,
+                    // if any, runs in the same shell before the run.
+                    if let Some(setup) = process.setup.as_deref() {
+                        process.run = format!("{setup}\n{}", process.run);
+                    }
+                    continue;
+                }
                 if container_handoff {
                     process.run = render_handoff_managed_standard_command(
                         process.setup.as_deref(),
@@ -579,27 +593,6 @@ fn managed_dns_route_lines(policy: Option<&EffectiveContainerPolicy>) -> Vec<Str
     routes
 }
 
-fn managed_readiness_probe_urls(policy: Option<&EffectiveContainerPolicy>) -> Vec<String> {
-    let Some(policy) = policy else {
-        return Vec::new();
-    };
-
-    let mut seen = std::collections::HashSet::new();
-    policy
-        .dns_routes
-        .iter()
-        .filter_map(|route| {
-            let domain = route.domain.trim();
-            if domain.is_empty() {
-                return None;
-            }
-            let scheme = if route.tls { "https" } else { "http" };
-            let url = format!("{scheme}://{domain}");
-            seen.insert(url.clone()).then_some(url)
-        })
-        .collect()
-}
-
 fn base_domain_from_dns_route(domain: &str) -> Option<&str> {
     let domain = domain.trim();
     if domain.is_empty() {
@@ -627,317 +620,6 @@ fn render_handoff_managed_standard_command(setup_command: Option<&str>, run: &st
     )
 }
 
-fn format_os_args(args: &[std::ffi::OsString]) -> String {
-    args.iter()
-        .map(|arg| shell_quote(&arg.to_string_lossy()))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn render_inline_compose_command(
-    repo_root: &std::path::Path,
-    policy: &effigy_containers::EffectiveContainerPolicy,
-    args: &[std::ffi::OsString],
-) -> String {
-    let (program, resolved_args) = compose_invocation(policy, args);
-    format!(
-        "cd {} && {} {}",
-        shell_quote(&repo_root.display().to_string()),
-        shell_quote(program),
-        format_os_args(&resolved_args),
-    )
-}
-
-fn managed_lifecycle_state_path(
-    repo_root: &std::path::Path,
-    container_label: &str,
-    owner_task: &str,
-) -> std::path::PathBuf {
-    repo_root
-        .join(".effigy/runtime/managed-lifecycle")
-        .join(format!(
-            "{}-{}.state",
-            sanitize_state_key(owner_task),
-            sanitize_state_key(container_label)
-        ))
-}
-
-fn sanitize_state_key(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect()
-}
-
-fn render_managed_lifecycle_setup_sequence(setup_commands: &[String]) -> String {
-    if setup_commands.is_empty() {
-        return String::new();
-    }
-    setup_commands
-        .iter()
-        .map(|command| {
-            format!(
-                "if ! {command}; then printf '%s\\n' 'managed lifecycle failed during container setup' 1>&2; exit 1; fi; "
-            )
-        })
-        .collect()
-}
-
-fn render_handoff_managed_lifecycle_command(
-    repo_root: &std::path::Path,
-    container_label: &str,
-    owner_task: &str,
-    health_wait: bool,
-    ready_message: Option<&str>,
-    dns_route_lines: &[String],
-    setup_commands: &[String],
-) -> String {
-    let lifecycle_state = managed_lifecycle_state_path(repo_root, container_label, owner_task);
-    let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
-    let readiness_status = if health_wait {
-        "workspace container is already running in handoff mode"
-    } else {
-        "running inside workspace container handoff"
-    };
-    let ready_banner = ready_message
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("workspace container `{container_label}` is ready"));
-    let dns_routes_section = render_managed_lifecycle_dns_routes_section(dns_route_lines);
-    let setup_sequence = render_managed_lifecycle_setup_sequence(setup_commands);
-    let idle_wait = managed_lifecycle_idle_wait_command();
-    format!(
-        "sh -lc {}",
-        shell_quote(&format!(
-            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; cleanup() {{ printf '%s\\n' stopped > \"$state_path\"; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; printf '[info] lifecycle owner is idle; workspace container handoff is already active.\\n'; {idle_wait}",
-            label = shell_quote(container_label),
-            owner_task = shell_quote(owner_task),
-            readiness_status = shell_quote(readiness_status),
-            ready_banner = shell_quote(&ready_banner),
-            dns_routes_section = dns_routes_section,
-            setup_sequence = setup_sequence,
-            idle_wait = idle_wait,
-        ))
-    )
-}
-
-fn render_inline_managed_lifecycle_command(
-    repo_root: &std::path::Path,
-    policy: &effigy_containers::EffectiveContainerPolicy,
-    owner_task: &str,
-    health_wait: bool,
-    ready_message: Option<&str>,
-    dns_route_lines: &[String],
-    readiness_probe_urls: &[String],
-    setup_commands: &[String],
-) -> String {
-    let lifecycle_state = managed_lifecycle_state_path(repo_root, &policy.name, owner_task);
-    let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
-    let up = render_inline_compose_command(repo_root, policy, &compose_args(policy, ["up", "-d"]));
-    let ps = render_inline_compose_command(repo_root, policy, &compose_args(policy, ["ps"]));
-    let down = render_inline_compose_command(
-        repo_root,
-        policy,
-        &compose_args(policy, ["down", "--remove-orphans"]),
-    );
-    let readiness_status = if health_wait {
-        "waiting for readiness via detached container startup"
-    } else {
-        "startup does not declare managed readiness waiting"
-    };
-    let ready_banner = ready_message
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("container `{}` is ready", policy.name));
-    let dns_routes_section = render_managed_lifecycle_dns_routes_section(dns_route_lines);
-    let readiness_wait = render_managed_lifecycle_readiness_wait(
-        health_wait,
-        readiness_probe_urls,
-        "managed lifecycle readiness wait timed out",
-    );
-    let setup_sequence = render_managed_lifecycle_setup_sequence(setup_commands);
-    let idle_wait = managed_lifecycle_idle_wait_command();
-    format!(
-        "sh -lc {}",
-        shell_quote(&format!(
-            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; {down} >/dev/null 2>&1 || true; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; {setup_sequence}{readiness_wait}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; {idle_wait}",
-            label = shell_quote(&policy.name),
-            owner_task = shell_quote(owner_task),
-            readiness_status = shell_quote(readiness_status),
-            ready_banner = shell_quote(&ready_banner),
-            dns_routes_section = dns_routes_section,
-            readiness_wait = readiness_wait,
-            setup_sequence = setup_sequence,
-            idle_wait = idle_wait,
-        ))
-    )
-}
-
-fn render_managed_lifecycle_dns_routes_section(dns_route_lines: &[String]) -> String {
-    if dns_route_lines.is_empty() {
-        return "printf 'dns_routes: none\\n\\n'; ".to_owned();
-    }
-    let mut section = "printf 'dns_routes:\\n'; ".to_owned();
-    for line in dns_route_lines {
-        section.push_str(&format!("printf '  - %s\\n' {}; ", shell_quote(line)));
-    }
-    section.push_str("printf '\\n'; ");
-    section
-}
-
-fn render_managed_lifecycle_readiness_wait(
-    health_wait: bool,
-    readiness_probe_urls: &[String],
-    timeout_message: &str,
-) -> String {
-    if !health_wait || readiness_probe_urls.is_empty() {
-        return String::new();
-    }
-    let probe_urls = readiness_probe_urls
-        .iter()
-        .map(|url| shell_quote(url))
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!(
-        "readiness_deadline=$(( $(date +%s) + 60 )); while true; do readiness_ok=1; for readiness_url in {probe_urls}; do readiness_code=$(curl -k -s -o /dev/null -w '%{{http_code}}' \"$readiness_url\" || true); case \"$readiness_code\" in 000|502|503|504) readiness_ok=0; break ;; esac; done; if [ \"$readiness_ok\" = 1 ]; then break; fi; if [ \"$(date +%s)\" -ge \"$readiness_deadline\" ]; then printf '%s\\n' {timeout_message} 1>&2; exit 1; fi; sleep 1; done; ",
-        probe_urls = probe_urls,
-        timeout_message = shell_quote(timeout_message),
-    )
-}
-
-fn render_inline_managed_shell_command(
-    repo_root: &std::path::Path,
-    policy: &effigy_containers::EffectiveContainerPolicy,
-    owner_task: &str,
-    service: Option<&str>,
-) -> String {
-    let lifecycle_state = managed_lifecycle_state_path(repo_root, &policy.name, owner_task);
-    let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
-    let service_name = service
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(policy.primary_service.as_str());
-    let readiness_probe = render_inline_compose_command(
-        repo_root,
-        policy,
-        &compose_args(policy, ["exec", service_name, "sh", "-lc", "true"]),
-    );
-    let attach = render_inline_compose_command(
-        repo_root,
-        policy,
-        &compose_args(policy, ["exec", service_name, "sh"]),
-    );
-    format!(
-        "sh -lc {}",
-        shell_quote(&format!(
-            "state_path={lifecycle_state}; while true; do if {readiness_probe} >/dev/null 2>&1; then {attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before shell became available' 1>&2; exit 1; fi; sleep 1; done"
-        ))
-    )
-}
-
-fn managed_lifecycle_idle_wait_command() -> &'static str {
-    "while kill -0 \"$parent_pid\" >/dev/null 2>&1; do sleep 1; done"
-}
-
-fn rewrite_command_for_container(
-    command: &str,
-    repo_root: &std::path::Path,
-    container_repo_root: &std::path::Path,
-) -> String {
-    command.replace(
-        &repo_root.display().to_string(),
-        &container_repo_root.display().to_string(),
-    )
-}
-
-fn container_exec_command(
-    command: &str,
-    repo_root: &std::path::Path,
-    process_cwd: &std::path::Path,
-    container_repo_root: Option<&std::path::Path>,
-) -> String {
-    let Some(container_repo_root) = container_repo_root else {
-        return command.to_owned();
-    };
-    let container_cwd =
-        container_repo_root.join(process_cwd.strip_prefix(repo_root).unwrap_or(process_cwd));
-    let container_local_bin = container_cwd.join("node_modules/.bin");
-    let rewritten_command = rewrite_command_for_container(command, repo_root, container_repo_root);
-    format!(
-        "export PATH={}:$PATH; cd {} && {}",
-        shell_quote(&container_local_bin.display().to_string()),
-        shell_quote(&container_cwd.display().to_string()),
-        rewritten_command
-    )
-}
-
-fn render_inline_managed_standard_exec_command(
-    repo_root: &std::path::Path,
-    policy: &effigy_containers::EffectiveContainerPolicy,
-    owner_task: &str,
-    process_cwd: &std::path::Path,
-    container_repo_root: Option<&std::path::Path>,
-    setup_command: Option<&str>,
-    command: &str,
-) -> String {
-    let cwd = shell_quote(&process_cwd.display().to_string());
-    let lifecycle_state = managed_lifecycle_state_path(repo_root, &policy.name, owner_task);
-    let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
-    let probe = render_inline_compose_command(
-        repo_root,
-        policy,
-        &compose_args(
-            policy,
-            [
-                "exec",
-                "-T",
-                policy.primary_service.as_str(),
-                "sh",
-                "-lc",
-                "true",
-            ],
-        ),
-    );
-    let rewritten = shell_quote(&container_exec_command(
-        command,
-        repo_root,
-        process_cwd,
-        container_repo_root,
-    ));
-    let attach = render_inline_compose_command(
-        repo_root,
-        policy,
-        &compose_args(
-            policy,
-            [
-                "exec",
-                "-T",
-                policy.primary_service.as_str(),
-                "sh",
-                "-lc",
-                rewritten.as_str(),
-            ],
-        ),
-    );
-    let setup_sequence = setup_command.unwrap_or("");
-    format!(
-        "sh -lc {}",
-        shell_quote(&format!(
-            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if {probe} >/dev/null 2>&1; then {setup_sequence}{attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
-            timeout_secs = MANAGED_EXEC_READINESS_TIMEOUT_SECS,
-            setup_sequence = setup_sequence,
-        ))
-    )
-}
-
 fn default_handoff_managed_shell_run() -> String {
     "if [ -n \"${SHELL:-}\" ] && [ -x \"${SHELL}\" ]; then exec \"${SHELL}\" -i; fi; if command -v bash >/dev/null 2>&1; then exec \"$(command -v bash)\" -i; fi; if command -v sh >/dev/null 2>&1; then exec \"$(command -v sh)\" -i; fi; exec /bin/sh -i".to_owned()
 }
@@ -952,31 +634,18 @@ fn render_workspace_seeded_task_command(task_name: &str, args: &[String]) -> Str
     rendered
 }
 
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_owned();
-    }
-    if value.bytes().all(|byte| {
-        matches!(
-            byte,
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'/' | b':' | b'.' | b'_' | b'-'
-        )
-    }) {
-        return value.to_owned();
-    }
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         default_handoff_managed_shell_run, finish_managed_task, managed_dns_route_lines,
-        managed_readiness_probe_urls, render_handoff_managed_standard_command,
-        render_inline_managed_standard_exec_command, render_managed_lifecycle_cleanup_notice,
+        render_handoff_managed_standard_command, render_managed_lifecycle_cleanup_notice,
         render_workspace_seeded_task_command, should_open_workspace_shell_for_non_managed_task,
         ContainerExecutionBinding,
     };
     use crate::runner::error::RunnerError;
+    use crate::runner::managed_shell::{
+        managed_readiness_probe_urls, render_inline_managed_standard_exec_command,
+    };
     use effigy_containers::{
         EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveServiceAlias,
     };
@@ -1036,7 +705,7 @@ mod tests {
             ],
         );
 
-        assert_eq!(rendered, "effigy dev 'front' '--' '--host' '0.0.0.0'");
+        assert_eq!(rendered, "effigy 'dev' 'front' '--' '--host' '0.0.0.0'");
     }
 
     #[test]
@@ -1106,12 +775,14 @@ mod tests {
                 tls: false,
                 port: None,
                 service: None,
+                target_host: None,
             },
             EffectiveDnsRoute {
                 domain: "admin.project.test".to_owned(),
                 tls: true,
                 port: Some(41002),
                 service: Some("admin".to_owned()),
+                target_host: None,
             },
         ];
         policy.service_aliases = vec![EffectiveServiceAlias {
@@ -1141,12 +812,14 @@ mod tests {
                 tls: false,
                 port: None,
                 service: None,
+                target_host: None,
             },
             EffectiveDnsRoute {
                 domain: "admin.project.test".to_owned(),
                 tls: true,
                 port: Some(41002),
                 service: Some("admin".to_owned()),
+                target_host: None,
             },
         ];
 
@@ -1191,6 +864,7 @@ mod tests {
             on_task_exit: ManifestContainerOnTaskExit::Stop,
             shutdown: ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
+            host_processes: Vec::new(),
         }
     }
 }

@@ -19,6 +19,12 @@ const PHP_FPM_COMPOSER_CACHE_TARGET: &str = "/home/dev/.cache/composer";
 /// Container target for the host `~/.gitconfig` mount.
 const HOST_GIT_CONFIG_TARGET: &str = "/home/dev/.gitconfig";
 
+/// Container target for the host mkcert local root CA. Workspace catalog
+/// images run `update-ca-certificates` on entrypoint, which scans
+/// `/usr/local/share/ca-certificates/*.crt`, so HTTPS calls from inside
+/// the container trust the gateway's mkcert-issued certs.
+const HOST_MKCERT_ROOT_CA_TARGET: &str = "/usr/local/share/ca-certificates/effigy-mkcert.crt";
+
 /// Container target for the host `~/.ssh/known_hosts` mount.
 const HOST_SSH_KNOWN_HOSTS_TARGET: &str = "/home/dev/.ssh/known_hosts";
 
@@ -40,6 +46,13 @@ const WORKSPACE_SSH_AUTH_SOCK_BRIDGED: &str = "/tmp/effigy-ssh-auth.sock";
 /// these catalogs — they're the catalogs where a developer is plausibly going
 /// to run `git push` from inside the container.
 const WORKSPACE_GIT_AWARE_CATALOGS: &[&str] = &["php-fpm", "workspace-rust-bun", "node"];
+
+/// Catalogs whose `effigy-entrypoint` runs `update-ca-certificates` when the
+/// mkcert root CA is mounted at [`HOST_MKCERT_ROOT_CA_TARGET`]. Adding a
+/// catalog to this list without also wiring the entrypoint hook would mount
+/// the cert but never install it into the system trust store, so HTTPS calls
+/// would still fail.
+const WORKSPACE_MKCERT_TRUST_CATALOGS: &[&str] = &["php-fpm", "workspace-rust-bun"];
 
 pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     repo_root: &Path,
@@ -289,6 +302,9 @@ fn build_workspace_runtime_mounts(
     if let Some(mount) = build_host_ssh_agent_mount(config, primary_service) {
         mounts.push(mount);
     }
+    if let Some(mount) = build_host_mkcert_ca_mount(config, primary_service) {
+        mounts.push(mount);
+    }
     Ok(mounts)
 }
 
@@ -362,6 +378,48 @@ fn build_host_ssh_agent_mount(
     })
 }
 
+/// Mount the host's mkcert root CA into workspace catalog containers so
+/// HTTPS calls from inside the container back through the host gateway
+/// trust the gateway's mkcert-issued cert. The catalog image's
+/// `effigy-entrypoint` wrapper runs `update-ca-certificates` on
+/// container start, which folds the mounted file into the system trust
+/// store.
+///
+/// Silently skipped when:
+/// - the primary service is not a workspace-aware catalog,
+/// - the per-service `mount_host_mkcert_ca` param is false,
+/// - mkcert is not installed on the host or has not generated a root CA
+///   (no PEM at `$(mkcert -CAROOT)/rootCA.pem`).
+fn build_host_mkcert_ca_mount(
+    config: &ManifestContainerConfig,
+    primary_service: &str,
+) -> Option<RenderedWorkspaceMount> {
+    let service = config.services.get(primary_service)?;
+    if !WORKSPACE_MKCERT_TRUST_CATALOGS.contains(&service.catalog.as_str())
+        || !service_bool_param(service, "mount_host_mkcert_ca", true)
+    {
+        return None;
+    }
+    let host_path = host_mkcert_root_ca_pem()?;
+    Some(RenderedWorkspaceMount {
+        target: HOST_MKCERT_ROOT_CA_TARGET.to_owned(),
+        rendered: format!("{}:{HOST_MKCERT_ROOT_CA_TARGET}:ro", host_path.display()),
+        source: None,
+        named_volume: None,
+    })
+}
+
+/// Resolve the host's mkcert root CA PEM. Tests override via
+/// [`with_test_host_mkcert_root_ca`] to avoid invoking the real
+/// `mkcert` binary or touching the developer's actual CA root.
+fn host_mkcert_root_ca_pem() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(value) = test_host_mkcert_root_ca_override() {
+        return value;
+    }
+    effigy_gateway::tls::mkcert_root_ca_pem()
+}
+
 /// Resolve the host's home directory. Tests can override via
 /// [`with_test_host_home`] to avoid touching the real filesystem.
 fn host_home_dir() -> Option<PathBuf> {
@@ -401,6 +459,7 @@ fn host_ssh_agent_socket() -> Option<PathBuf> {
 thread_local! {
     static TEST_HOST_HOME: RefCell<Option<Option<PathBuf>>> = const { RefCell::new(None) };
     static TEST_HOST_SSH_AGENT_SOCKET: RefCell<Option<Option<PathBuf>>> = const { RefCell::new(None) };
+    static TEST_HOST_MKCERT_ROOT_CA: RefCell<Option<Option<PathBuf>>> = const { RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -448,6 +507,28 @@ pub(crate) fn with_test_host_ssh_agent_socket<T>(
 #[cfg(test)]
 fn test_host_ssh_agent_socket_override() -> Option<Option<PathBuf>> {
     TEST_HOST_SSH_AGENT_SOCKET.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_host_mkcert_root_ca<T>(path: Option<&Path>, run: impl FnOnce() -> T) -> T {
+    struct ResetGuard(Option<Option<PathBuf>>);
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            TEST_HOST_MKCERT_ROOT_CA.with(|slot| {
+                *slot.borrow_mut() = previous;
+            });
+        }
+    }
+    let previous = TEST_HOST_MKCERT_ROOT_CA
+        .with(|slot| slot.borrow_mut().replace(path.map(Path::to_path_buf)));
+    let _guard = ResetGuard(previous);
+    run()
+}
+
+#[cfg(test)]
+fn test_host_mkcert_root_ca_override() -> Option<Option<PathBuf>> {
+    TEST_HOST_MKCERT_ROOT_CA.with(|slot| slot.borrow().clone())
 }
 
 fn build_host_composer_home_mount(
@@ -1457,6 +1538,7 @@ mod host_git_mount_tests {
             health: None,
             host: None,
             data: None,
+            host_processes: Vec::new(),
         }
     }
 
@@ -1576,6 +1658,85 @@ mod host_git_mount_tests {
         );
         let config = make_config("php-fpm", params);
         let mount = build_host_ssh_agent_mount(&config, "workspace");
+        assert!(mount.is_none());
+    }
+
+    #[test]
+    fn mkcert_ca_mount_renders_read_only_when_root_ca_present() {
+        let dir = temp_dir("mkcert-present");
+        let pem = dir.join("rootCA.pem");
+        fs::write(
+            &pem,
+            "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
+        )
+        .expect("write fake mkcert root");
+        let config = make_config("php-fpm", enabled_params());
+
+        let mount = with_test_host_mkcert_root_ca(Some(&pem), || {
+            build_host_mkcert_ca_mount(&config, "workspace")
+        })
+        .expect("expected mkcert mount");
+
+        assert_eq!(
+            mount.target,
+            "/usr/local/share/ca-certificates/effigy-mkcert.crt"
+        );
+        assert!(mount
+            .rendered
+            .ends_with(":/usr/local/share/ca-certificates/effigy-mkcert.crt:ro"));
+        assert!(mount.rendered.contains(pem.to_str().unwrap()));
+    }
+
+    #[test]
+    fn mkcert_ca_mount_skipped_when_root_ca_absent() {
+        let config = make_config("workspace-rust-bun", enabled_params());
+        let mount = with_test_host_mkcert_root_ca(None, || {
+            build_host_mkcert_ca_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
+    }
+
+    #[test]
+    fn mkcert_ca_mount_skipped_when_param_disabled() {
+        let dir = temp_dir("mkcert-disabled");
+        let pem = dir.join("rootCA.pem");
+        fs::write(&pem, "ignored").expect("write");
+        let mut params = enabled_params();
+        params.insert(
+            "mount_host_mkcert_ca".to_owned(),
+            toml::Value::Boolean(false),
+        );
+        let config = make_config("php-fpm", params);
+        let mount = with_test_host_mkcert_root_ca(Some(&pem), || {
+            build_host_mkcert_ca_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
+    }
+
+    #[test]
+    fn mkcert_ca_mount_skipped_for_non_workspace_catalogs() {
+        let dir = temp_dir("mkcert-non-workspace");
+        let pem = dir.join("rootCA.pem");
+        fs::write(&pem, "ignored").expect("write");
+        let config = make_config("postgres", enabled_params());
+        let mount = with_test_host_mkcert_root_ca(Some(&pem), || {
+            build_host_mkcert_ca_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
+    }
+
+    #[test]
+    fn mkcert_ca_mount_skipped_for_node_catalog_without_entrypoint_hook() {
+        // `node` is git-aware but has no Dockerfile entrypoint that runs
+        // `update-ca-certificates`, so mounting the cert there would be a
+        // silent no-op. Pin the narrower trust-catalog boundary.
+        let dir = temp_dir("mkcert-node");
+        let pem = dir.join("rootCA.pem");
+        fs::write(&pem, "ignored").expect("write");
+        let config = make_config("node", enabled_params());
+        let mount = with_test_host_mkcert_root_ca(Some(&pem), || {
+            build_host_mkcert_ca_mount(&config, "workspace")
+        });
         assert!(mount.is_none());
     }
 

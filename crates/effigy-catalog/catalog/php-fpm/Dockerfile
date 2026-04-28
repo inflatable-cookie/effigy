@@ -97,6 +97,15 @@ RUN { \
         echo 'error_reporting = E_ALL'; \
         echo 'log_errors = On'; \
         echo 'error_log = /dev/stderr'; \
+        echo 'realpath_cache_size = 4096K'; \
+        echo 'realpath_cache_ttl = 600'; \
+        echo 'opcache.enable = 1'; \
+        echo 'opcache.enable_cli = 0'; \
+        echo 'opcache.memory_consumption = 256'; \
+        echo 'opcache.interned_strings_buffer = 16'; \
+        echo 'opcache.max_accelerated_files = 20000'; \
+        echo 'opcache.validate_timestamps = 1'; \
+        echo 'opcache.revalidate_freq = 1'; \
     } > /usr/local/etc/php/conf.d/effigy-dev.ini
 
 # ── PHP-FPM tuning ───────────────────────────────────────────────────
@@ -138,7 +147,8 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 # Allow Composer to run as root (common in dev containers).
 ENV COMPOSER_ALLOW_SUPERUSER=1
 ENV COMPOSER_HOME=${COMPOSER_HOME}
-ENV PATH=${COMPOSER_HOME}/vendor/bin:${PATH}
+ENV PNPM_HOME=/home/dev/.local/share/pnpm
+ENV PATH=${COMPOSER_HOME}/vendor/bin:${PNPM_HOME}:${PATH}
 
 RUN set -eux; \
     workspace_group="$(id -gn dev)"; \
@@ -164,6 +174,7 @@ RUN if [ -n "$NODE_VERSION" ]; then \
         && rm -rf /var/lib/apt/lists/* \
         && npm install -g npm@latest \
         && corepack enable \
+        && corepack prepare pnpm@latest --activate \
         && if [ -n "$NODE_GLOBAL_PACKAGES" ]; then npm install -g $NODE_GLOBAL_PACKAGES; fi; \
     fi
 
@@ -183,11 +194,19 @@ RUN set -eux; \
         echo 'host_sock=/run/host-services/ssh-auth.sock'; \
         echo 'bridge_sock=/tmp/effigy-ssh-auth.sock'; \
         echo 'log=/var/log/effigy-ssh-bridge.log'; \
+        echo 'mkcert_ca=/usr/local/share/ca-certificates/effigy-mkcert.crt'; \
         echo ': > "$log" || true'; \
         echo 'echo "[effigy-entrypoint] $(date -u +%FT%TZ) start" >> "$log" 2>&1 || true'; \
         echo 'dev_uid=$(id -u dev 2>/dev/null || echo 1000)'; \
         echo 'dev_gid=$(id -g dev 2>/dev/null || echo 1000)'; \
         echo 'echo "[effigy-entrypoint] dev uid=$dev_uid gid=$dev_gid" >> "$log"'; \
+        echo 'if [ -f "$mkcert_ca" ]; then'; \
+        echo '    if update-ca-certificates >>"$log" 2>&1; then'; \
+        echo '        echo "[effigy-entrypoint] mkcert root CA installed into system trust store" >> "$log"'; \
+        echo '    else'; \
+        echo '        echo "[effigy-entrypoint] WARNING update-ca-certificates failed (see lines above)" >> "$log"'; \
+        echo '    fi'; \
+        echo 'fi'; \
         echo 'if [ -S "$host_sock" ]; then'; \
         echo '    echo "[effigy-entrypoint] host_sock present at $host_sock" >> "$log"'; \
         echo '    rm -f "$bridge_sock"'; \

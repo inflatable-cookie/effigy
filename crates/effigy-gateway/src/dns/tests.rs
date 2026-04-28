@@ -130,6 +130,46 @@ fn refuses_non_tld_domain() {
 }
 
 #[test]
+fn resolves_registered_non_tld_domain() {
+    // Public-domain route declared by a manifest (e.g. via `target_host`
+    // in cumberland) should be answered locally, not refused. Without
+    // this, browsers fall back to upstream DNS and bypass the gateway.
+    let config = test_config();
+    let table = route_table_with("dev.cumberland.co.uk");
+    let query = build_query("dev.cumberland.co.uk.", RecordType::A);
+
+    let cache = DnsCache::new(Duration::from_secs(2));
+    let (response_bytes, resolved) = handle_dns_query(&query, &config, &table, &cache);
+    assert!(resolved, "registered non-tld domain should resolve");
+    let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
+
+    assert_eq!(response.metadata.response_code, ResponseCode::NoError);
+    assert_eq!(response.answers.len(), 1);
+    match &response.answers[0].data {
+        RData::A(a) => assert_eq!(a.0, Ipv4Addr::LOCALHOST),
+        other => panic!("expected A record, got {other:?}"),
+    }
+}
+
+#[test]
+fn registered_non_tld_aaaa_returns_noerror_not_refused() {
+    // Browsers run AAAA in parallel with A. If we Refuse the AAAA
+    // query, they may retry through upstream DNS and reach the public
+    // record, bypassing the local gateway. Returning NoError-with-no-
+    // answers keeps the lookup pinned to us.
+    let config = test_config();
+    let table = route_table_with("dev.cumberland.co.uk");
+    let query = build_query("dev.cumberland.co.uk.", RecordType::AAAA);
+
+    let cache = DnsCache::new(Duration::from_secs(2));
+    let (response_bytes, _) = handle_dns_query(&query, &config, &table, &cache);
+    let response = Message::from_bytes(&response_bytes.unwrap()).unwrap();
+
+    assert_eq!(response.metadata.response_code, ResponseCode::NoError);
+    assert_eq!(response.answers.len(), 0);
+}
+
+#[test]
 fn ignores_non_a_queries() {
     let config = test_config();
     let table = route_table_with("myapp.test");

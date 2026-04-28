@@ -1146,6 +1146,7 @@ mod tests {
             on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
             shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
+            host_processes: Vec::new(),
         });
 
         assert!(rendered.contains("[next]"));

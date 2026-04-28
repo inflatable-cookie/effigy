@@ -223,6 +223,10 @@ System-layer overrides still apply on top:
   Dockerfile's `USER`/`WORKDIR` are defaults only.
 - `systems.<name>.mounts` are injected into the workspace service's
   compose `volumes` at runtime.
+- mounted sibling repos in `systems.<name>.mounts` automatically adopt any
+  producer-declared `[isolation].paths` into the workspace container; the
+  normal underlay-consumer path does not need a second sibling list under
+  `systems.<name>.isolation`.
 
 ## What stays consumer-owned
 

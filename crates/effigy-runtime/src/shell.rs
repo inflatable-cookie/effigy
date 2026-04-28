@@ -382,6 +382,7 @@ mod tests {
             on_task_exit: ManifestContainerOnTaskExit::LeaveRunning,
             shutdown: ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
+            host_processes: Vec::new(),
         }
     }
 

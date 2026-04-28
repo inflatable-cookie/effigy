@@ -1,23 +1,11 @@
+mod support;
+
 use serde_json::Value;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-static TEMP_WORKSPACE_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn temp_workspace(name: &str) -> PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time")
-        .as_nanos();
-    let seq = TEMP_WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!("effigy-bootstrap-cli-{name}-{ts}-{seq}"));
-    fs::create_dir_all(&root).expect("mkdir workspace");
-    root
-}
+use support::temp_workspace;
 
 fn parse_stdout_json(output: &std::process::Output) -> Value {
     let stdout = String::from_utf8(output.stdout.clone()).expect("utf8 stdout");
@@ -109,7 +97,7 @@ fn attach_remote_and_push(worktree: &Path, remote: &Path) {
 }
 
 fn create_child_remote(name: &str) -> PathBuf {
-    let worktree = temp_workspace(&format!("{name}-worktree"));
+    let worktree = temp_workspace("effigy-bootstrap-cli", &format!("{name}-worktree"));
     fs::create_dir_all(worktree.join("scripts")).expect("mkdir child scripts");
     fs::write(worktree.join("README.md"), format!("# {name}\n")).expect("write child readme");
     fs::write(
@@ -131,14 +119,14 @@ run = "sh ./scripts/child-setup.sh"
     fs::set_permissions(worktree.join("scripts/child-setup.sh"), perms).expect("chmod child");
     init_git_repo(&worktree);
     commit_all(&worktree, "init child");
-    let remote = temp_workspace(&format!("{name}-bare")).join("remote.git");
+    let remote = temp_workspace("effigy-bootstrap-cli", &format!("{name}-bare")).join("remote.git");
     init_bare_remote(&remote);
     attach_remote_and_push(&worktree, &remote);
     remote
 }
 
 fn create_root_remote_with_bootstrap(child_remote: &Path) -> PathBuf {
-    let worktree = temp_workspace("root-worktree");
+    let worktree = temp_workspace("effigy-bootstrap-cli", "root-worktree");
     fs::create_dir_all(worktree.join("scripts")).expect("mkdir root scripts");
     fs::write(
         worktree.join("effigy.toml"),
@@ -183,18 +171,18 @@ run = "sh ./scripts/start.sh"
     }
     init_git_repo(&worktree);
     commit_all(&worktree, "init root");
-    let remote = temp_workspace("root-bare").join("remote.git");
+    let remote = temp_workspace("effigy-bootstrap-cli", "root-bare").join("remote.git");
     init_bare_remote(&remote);
     attach_remote_and_push(&worktree, &remote);
     remote
 }
 
 fn create_plain_root_remote() -> PathBuf {
-    let worktree = temp_workspace("plain-root-worktree");
+    let worktree = temp_workspace("effigy-bootstrap-cli", "plain-root-worktree");
     fs::write(worktree.join("README.md"), "# plain root\n").expect("write plain readme");
     init_git_repo(&worktree);
     commit_all(&worktree, "init plain root");
-    let remote = temp_workspace("plain-root-bare").join("remote.git");
+    let remote = temp_workspace("effigy-bootstrap-cli", "plain-root-bare").join("remote.git");
     init_bare_remote(&remote);
     attach_remote_and_push(&worktree, &remote);
     remote
@@ -221,7 +209,7 @@ fn bootstrap_help_is_command_specific() {
 
 #[test]
 fn bootstrap_plan_json_reports_resolved_destination() {
-    let root = temp_workspace("plan-json");
+    let root = temp_workspace("effigy-bootstrap-cli", "plan-json");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
@@ -254,7 +242,7 @@ fn bootstrap_plan_json_reports_resolved_destination() {
 fn bootstrap_executes_root_child_and_start_via_binary() {
     let child_remote = create_child_remote("child-app");
     let root_remote = create_root_remote_with_bootstrap(&child_remote);
-    let cwd = temp_workspace("execution");
+    let cwd = temp_workspace("effigy-bootstrap-cli", "execution");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
@@ -294,7 +282,7 @@ fn bootstrap_executes_root_child_and_start_via_binary() {
 #[test]
 fn bootstrap_reports_missing_bootstrap_contract_via_binary() {
     let root_remote = create_plain_root_remote();
-    let cwd = temp_workspace("no-bootstrap-contract");
+    let cwd = temp_workspace("effigy-bootstrap-cli", "no-bootstrap-contract");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")

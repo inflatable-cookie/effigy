@@ -1,19 +1,14 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::{
-    render_bullet_section, render_info_notices, render_options_section, render_usage_section,
-};
+use super::shared::render_standard_topic_help;
 
 pub(crate) fn render_distribution_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
-    renderer.section("distribution Help")?;
-    render_info_notices(
+    render_standard_topic_help(
         renderer,
+        "distribution",
         &[
             "Validate release/distribution prerequisites and generate closeout evidence from artifact logs.",
             "Keep repo-specific file lists and workflow policies declarative where possible; these commands own the durable validation/reporting engine.",
         ],
-    )?;
-    render_usage_section(
-        renderer,
         &[
             "effigy distribution validate-metadata [--repo <PATH>] [--tag <TAG>] [--json]",
             "effigy distribution check-glibc-floor [--repo <PATH>] --binary <PATH> --max-glibc <VER> [--json]",
@@ -24,9 +19,6 @@ pub(crate) fn render_distribution_help<R: HelpRenderer>(renderer: &mut R) -> Hel
             "effigy distribution write-summary [--repo <PATH>] --tag <TAG> --artifacts-dir <DIR> [--crate-version <VER>] [--repo-url <URL>] [--brew-formula <NAME>] [--homebrew-executed] [--log-file <NAME>]... [--json]",
             "effigy --json distribution validate-artifacts [--repo <PATH>] --artifacts-dir <DIR>",
         ],
-    )?;
-    render_options_section(
-        renderer,
         &[
             ("--repo <PATH>", "Override target repository path"),
             (
@@ -70,11 +62,6 @@ pub(crate) fn render_distribution_help<R: HelpRenderer>(renderer: &mut R) -> Hel
             ("--json", "Render machine-readable distribution payloads"),
             ("-h, --help", "Print command help"),
         ],
-    )?;
-    render_bullet_section(
-        renderer,
-        "Examples",
-        "commands",
         &[
             "effigy distribution validate-metadata --tag v0.2.5",
             "effigy distribution check-glibc-floor --binary ./effigy-x86_64-unknown-linux-gnu --max-glibc 2.35",
@@ -85,6 +72,5 @@ pub(crate) fn render_distribution_help<R: HelpRenderer>(renderer: &mut R) -> Hel
             "effigy distribution write-summary --tag v0.2.5 --artifacts-dir ./artifacts/distribution-v0.2.5 --homebrew-executed --log-file 01-tag-install-validation.log",
             "effigy distribution generate-closeout --tag v0.2.5 --artifacts-dir ./artifacts/distribution-v0.2.5 --expect-homebrew --output ./tmp/closeout.md",
         ],
-    )?;
-    Ok(())
+    )
 }

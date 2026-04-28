@@ -53,6 +53,36 @@ pub(in crate::runner::tests) fn install_fake_container_runtime(root: &Path) -> E
     EnvGuard::set_many(&[("PATH", Some(format!("{}:{old_path}", bin_dir.display())))])
 }
 
+pub(in crate::runner::tests) fn install_fake_docker_ps_with_stale_project(
+    root: &Path,
+    stale_project_name: &str,
+) -> EnvGuard {
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
+    let canonical_root = root.canonicalize().expect("canonical root");
+
+    let docker = bin_dir.join("docker");
+    let docker_log = root.join("fake-docker.log");
+    fs::write(
+        &docker,
+        format!(
+            "#!/bin/sh\nlog='{}'\nprintf 'docker:%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = ps ]; then\n  printf 'demo-app-1\\tUp 2 minutes\\t\\t{}\\t{}\\tapp\\n'\n  exit 0\nfi\nprintf 'unexpected:%s\\n' \"$*\" >> \"$log\"\nexit 0\n",
+            docker_log.display(),
+            stale_project_name,
+            canonical_root.display()
+        ),
+    )
+    .expect("write fake docker");
+    let mut perms = fs::metadata(&docker)
+        .expect("stat fake docker")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&docker, perms).expect("chmod fake docker");
+
+    let old_path = std::env::var("PATH").ok().unwrap_or_default();
+    EnvGuard::set_many(&[("PATH", Some(format!("{}:{old_path}", bin_dir.display())))])
+}
+
 pub(in crate::runner::tests) fn write_catalogs_with_tasks(
     root: &Path,
     catalogs: &[(&str, &[(&str, &str)])],
@@ -175,6 +205,122 @@ pub(in crate::runner::tests) fn write_managed_tui_dev_manifest_with_extra(
         root,
         &format!("[tasks.dev]\nmode = \"tui\"\nconcurrent = {concurrent}\n\n{extra_sections}\n"),
     );
+}
+
+pub(in crate::runner::tests) fn write_managed_tui_container_lifecycle_manifest(
+    root: &Path,
+    concurrent: &str,
+    extra_task_fields: &str,
+    extra_container_sections: &str,
+) {
+    let extra_task_fields = if extra_task_fields.is_empty() {
+        String::new()
+    } else {
+        format!("{extra_task_fields}\n")
+    };
+    let extra_container_sections = if extra_container_sections.is_empty() {
+        String::new()
+    } else {
+        format!("\n{extra_container_sections}")
+    };
+    write_root_manifest(
+        root,
+        &format!(
+            r#"[tasks.dev]
+mode = "tui"
+workspace = "app"
+container_lifecycle = true
+{extra_task_fields}concurrent = {concurrent}
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+working_dir = "/workspace"{extra_container_sections}
+"#
+        ),
+    );
+    fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
+}
+
+pub(in crate::runner::tests) fn write_managed_stream_container_lifecycle_manifest(
+    root: &Path,
+    concurrent: &str,
+    extra_task_fields: &str,
+    workspace_binding_fields: &str,
+    project_name: &str,
+    container_fields: &str,
+    extra_container_sections: &str,
+) {
+    let extra_task_fields = if extra_task_fields.is_empty() {
+        String::new()
+    } else {
+        format!("{extra_task_fields}\n")
+    };
+    let container_fields = if container_fields.is_empty() {
+        String::new()
+    } else {
+        format!("{container_fields}\n")
+    };
+    let extra_container_sections = if extra_container_sections.is_empty() {
+        String::new()
+    } else {
+        format!("\n{extra_container_sections}")
+    };
+    write_root_manifest(
+        root,
+        &format!(
+            r#"[tasks.dev]
+mode = "tui"
+workspace = "app"
+container_lifecycle = true
+{extra_task_fields}concurrent = {concurrent}
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+{workspace_binding_fields}
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "{project_name}"
+primary_service = "app"
+{container_fields}{extra_container_sections}
+"#
+        ),
+    );
+    fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
 }
 
 pub(in crate::runner::tests) fn write_catalog_manifest_with_alias(

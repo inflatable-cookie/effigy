@@ -288,6 +288,7 @@ PHP-FPM workspace / application server.
   - `extensions` (default `""`)
   - `document_root` (default `"public"`)
   - `working_dir` (default `"/var/www/html"`)
+  - `isolated_dirs` (default `[]`)
   - `node_version` (default `""`)
   - `node_global_packages` (default `""`)
   - `mount_host_composer_home` (default `false`)
@@ -296,11 +297,48 @@ PHP-FPM workspace / application server.
   - `composer_global_packages` (default `""`)
 - Exposed ports: none (FPM socket only).
 - Volumes: repo root (bind mount).
+- Hot-dir overlays:
+  - `isolated_dirs = ["vendor", "node_modules"]` moves those repo-root dirs
+    onto named volumes.
+  - entries are relative to `working_dir`, so `"packages/foo/vendor"` targets
+    `/var/www/html/packages/foo/vendor`.
 - Healthcheck: none built in.
 - Shell target: yes (`/bin/bash`).
 - Depends on: optional `mariadb`, `postgres`, `redis`, `memcached` in the
   same environment.
 - Gateway: not itself HTTP-facing; pair with `nginx` for route exposure.
+
+Composer state knobs:
+
+- `mount_host_composer_home = true` revives the old full host Composer-home
+  bind. Leave this off unless a repo explicitly wants host-owned global tools.
+- `mount_shared_composer_auth = true` mounts Effigy-managed shared auth/config
+  state so multiple containers can reuse the same Composer tokens without
+  sharing the host `vendor/bin`.
+- `mount_shared_composer_cache = true` mounts an Effigy-managed shared Composer
+  download cache for faster repeated installs.
+
+The normal path is:
+
+- container-owned Composer home and global packages inside the image/container
+- shared auth/config under `~/.effigy/shared/composer/`
+- shared cache under `~/.effigy/shared/composer-cache/`
+
+PHP runtime defaults:
+
+- Effigy writes a dev `.ini` fragment into the image.
+- It also increases PHP path caching for bind-mounted development trees.
+- `opcache` is explicitly enabled for FPM requests.
+- Dev defaults currently set:
+  - `realpath_cache_size = 4096K`
+  - `realpath_cache_ttl = 600`
+  - `opcache.enable = 1`
+  - `opcache.enable_cli = 0`
+  - `opcache.memory_consumption = 256`
+  - `opcache.interned_strings_buffer = 16`
+  - `opcache.max_accelerated_files = 20000`
+  - `opcache.validate_timestamps = 1`
+  - `opcache.revalidate_freq = 1`
 
 ## Gateway Eligibility Summary
 

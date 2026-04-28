@@ -22,10 +22,15 @@ services:
 {% endif %}
     volumes:
       - {% if mount_source %}{{ mount_source }}{% else %}{{ repo_root }}{% endif %}:{{ working_dir }}
+{% for dir in isolated_dirs %}
+      - {{ project_name }}-{{ service_name }}-{{ dir | replace("/", "-") }}:{{ working_dir }}/{{ dir }}
+{% endfor %}
     working_dir: {{ working_dir }}
     environment:
       DOCUMENT_ROOT: "{{ document_root }}"
       COMPOSER_HOME: "/home/dev/.config/composer"
+      PNPM_HOME: "/home/dev/.local/share/pnpm"
+      npm_config_store_dir: "{{ working_dir }}/.effigy/runtime/pnpm/store"
 {% if services.mariadb or services.postgres or services.redis or services.memcached %}
     depends_on:
 {% endif %}

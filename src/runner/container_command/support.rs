@@ -561,6 +561,7 @@ mod tests {
             on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
             shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
+            host_processes: Vec::new(),
         }
     }
 
@@ -642,6 +643,7 @@ mod tests {
                 tcp_target: None,
                 tls: false,
                 service: Some("workspace".to_owned()),
+                external_target: false,
             },
             super::RegisteredGatewayRoute {
                 domain: "db.demo.test".to_owned(),
@@ -651,6 +653,7 @@ mod tests {
                 tcp_target: Some("127.0.0.1:19932".to_owned()),
                 tls: false,
                 service: Some("postgres".to_owned()),
+                external_target: false,
             },
         ];
 
@@ -680,6 +683,7 @@ mod tests {
             tcp_target: Some("127.0.0.1:23306".to_owned()),
             tls: false,
             service: Some("db".to_owned()),
+            external_target: false,
         }];
 
         assert_eq!(

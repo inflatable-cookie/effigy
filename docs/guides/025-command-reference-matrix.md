@@ -224,6 +224,8 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
   environment's `primary_service` unless `--service` is supplied.
 - `gateway up`, `gateway down`, and `gateway setup-tls` may request host admin
   approval when resolver or certificate setup needs it.
+- routes with `tls = true` now redirect plain HTTP requests to the equivalent
+  HTTPS URL once the gateway TLS listener is available.
 - `container shell` is interactive and intentionally does not support `--json`.
 - `container status --all` and `container stats --all` are cross-project views
   rather than one-manifest queries.
@@ -242,6 +244,9 @@ effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
 - `workspace <NAME>` selects a named workspace; without a name it resolves
   `[systems.<system>].default_workspace`, the sole declared workspace, or an
   implied `default` workspace in that order.
+- mounted sibling repos listed in `systems.<name>.mounts` auto-adopt any
+  producer-declared `[isolation].paths` into workspace containers; use explicit
+  `systems.<name>.isolation` only for override cases.
 - `bundle list` shows all shipped top-level bundles referenced from `[bundle]`
   in `effigy.toml`; `bundle inspect <BUNDLE>` shows the accepted input schema
   and manifest paths that bundle injects by default; `bundle export <BUNDLE>
