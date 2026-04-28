@@ -139,7 +139,7 @@ fn run_manifest_task_decodelabs_bundle_defers_inside_container() {
 base = "decodelabs"
 host = "legacy.test"
 project_name = "legacy-dev"
-database = "legacy"
+databases = ["legacy"]
 "#,
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
@@ -206,7 +206,7 @@ fn run_manifest_task_decodelabs_bundle_defers_locally_inside_handoff_container()
 base = "decodelabs"
 host = "legacy.test"
 project_name = "legacy-dev"
-database = "legacy"
+databases = ["legacy"]
 "#,
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
@@ -257,7 +257,7 @@ fn run_manifest_task_decodelabs_handoff_local_deferral_prefers_composer_global_b
 base = "decodelabs"
 host = "legacy.test"
 project_name = "legacy-dev"
-database = "legacy"
+databases = ["legacy"]
 "#,
     );
     let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
@@ -315,7 +315,7 @@ fn run_manifest_task_decodelabs_container_lease_reaper_shuts_down_expired_env() 
 base = "decodelabs"
 host = "legacy.test"
 project_name = "legacy-dev"
-database = "legacy"
+databases = ["legacy"]
 "#,
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
