@@ -5,8 +5,9 @@ use super::{
 use effigy_core::resolver::ResolvedTarget;
 use effigy_release::normalize_verify_install_repo_url;
 use effigy_release::{
-    build_diff_preview, detect_pyproject_version_path, detect_version_file_kind,
-    format_release_tag, json_value_at_path, parse_indexed_review_inspection_request,
+    build_diff_preview, detect_cargo_version_path, detect_pyproject_version_path,
+    detect_version_file_kind, format_release_tag, json_value_at_path,
+    parse_indexed_review_inspection_request,
     render_changelog_preview_line as changelog_preview_line, render_execute_review_menu_lines,
     render_prepare_review_menu_lines, render_prepared_changelog_contents,
     render_updated_version_contents, replace_json_string_at_path_preserving_layout,
@@ -49,6 +50,22 @@ fn version_field_path_defaults_follow_known_formats() {
     assert_eq!(
         resolve_version_field_path(VersionFileKind::PyProjectToml, None).expect("default path"),
         None
+    );
+}
+
+#[test]
+fn detect_cargo_version_path_supports_workspace_inherited_versions() {
+    let direct: toml::Value =
+        toml::from_str("[package]\nversion = \"0.2.4\"\n").expect("direct cargo");
+    assert_eq!(detect_cargo_version_path(&direct), Some("package.version"));
+
+    let inherited: toml::Value = toml::from_str(
+        "[workspace.package]\nversion = \"0.2.4\"\n\n[package]\nversion.workspace = true\n",
+    )
+    .expect("inherited cargo");
+    assert_eq!(
+        detect_cargo_version_path(&inherited),
+        Some("workspace.package.version")
     );
 }
 
@@ -509,6 +526,10 @@ fn current_repo_release_config_matches_self_hosting_release_surfaces() {
     let config = load_release_config(root).expect("load release config");
 
     assert_eq!(config.version_source.path, root.join("Cargo.toml"));
+    assert_eq!(
+        config.version_source.field_path.as_deref(),
+        Some("workspace.package.version")
+    );
     assert_eq!(config.changelog_path, root.join("CHANGELOG.md"));
     assert_eq!(config.tag_format, "v{version}");
     assert_eq!(config.sync_files.len(), 1);

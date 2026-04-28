@@ -35,7 +35,7 @@ fn v0_3_transition_contract_targets_v0_2_13_as_the_compatibility_floor() {
 }
 
 #[test]
-fn v0_3_transition_contract_records_wrapper_retirement_break() {
+fn v0_3_transition_contract_records_intentional_breaks() {
     let transition = load_transition();
 
     assert!(transition
@@ -49,6 +49,32 @@ fn v0_3_transition_contract_records_wrapper_retirement_break() {
                 && intentional_break
                     .migration_note
                     .contains("effigy release gates")
+        }));
+    assert!(transition
+        .intentional_breaks
+        .iter()
+        .any(|intentional_break| {
+            intentional_break.surface == "managed concurrent task contract"
+                && intentional_break.change.contains("mode = \"tui\"")
+                && intentional_break
+                    .migration_note
+                    .contains("[[containers.<name>.host_processes]]")
+        }));
+    assert!(transition
+        .intentional_breaks
+        .iter()
+        .any(|intentional_break| {
+            intentional_break.surface == "legacy implicit root deferral"
+                && intentional_break.change.contains("composer.json")
+                && intentional_break.migration_note.contains("[defer]")
+        }));
+    assert!(transition
+        .intentional_breaks
+        .iter()
+        .any(|intentional_break| {
+            intentional_break.surface == "workspace and managed task config contract"
+                && intentional_break.change.contains(".effigy/runtime/compose")
+                && intentional_break.migration_note.contains("run_in")
         }));
 }
 

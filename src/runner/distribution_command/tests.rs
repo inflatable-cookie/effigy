@@ -1,4 +1,5 @@
 use super::ops::{run_preflight, run_validate_artifacts, run_validate_metadata, run_write_summary};
+use crate::contract_test_support::EnvGuard;
 use effigy_distribution::{
     command_exists, find_log_by_pattern, EffectiveDistributionPolicy, DEFAULT_BINARY_NAME,
     DEFAULT_BREW_FORMULA, DEFAULT_CLOSEOUT_NEXT_STEP, DEFAULT_CLOSEOUT_OWNER, DEFAULT_DOCS_TASK,
@@ -125,7 +126,8 @@ fn validate_metadata_skips_effigy_defaults_when_manifest_is_adopted() {
 #[test]
 fn current_repo_distribution_metadata_requires_only_workflow_bound_glibc_script() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    run_validate_metadata(root, &default_distribution_policy(), Some("v0.2.13"), false)
+    let current_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
+    run_validate_metadata(root, &default_distribution_policy(), Some(&current_tag), false)
         .expect("metadata should pass");
     assert!(
         !root
@@ -146,10 +148,12 @@ fn preflight_recommends_native_first_publish_command() {
     // builtin_contract_tests, contract_test_support) call set_current_dir
     // and can race with this test under cargo's parallel execution.
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
+    let current_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
     let output = run_preflight(
         repo_root,
         &default_distribution_policy(),
-        Some("v0.2.13"),
+        Some(&current_tag),
         true,
         true,
         None,
@@ -157,7 +161,9 @@ fn preflight_recommends_native_first_publish_command() {
     )
     .expect("preflight should render");
 
-    assert!(output.contains("effigy distribution first-publish --tag v0.2.13"));
+    assert!(output.contains(&format!(
+        "effigy distribution first-publish --tag {current_tag}"
+    )));
     assert!(!output.contains("check-distribution-first-publish.sh"));
 }
 

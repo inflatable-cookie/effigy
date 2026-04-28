@@ -158,6 +158,7 @@ pub(in crate::runner) fn routed_container_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract_test_support::EnvGuard;
 
     fn manifest_task() -> ManifestTask {
         ManifestTask::default()
@@ -187,6 +188,7 @@ mod tests {
 
     #[test]
     fn routes_host_when_no_dev_context_declared() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
 [containers]
@@ -210,6 +212,7 @@ primary_service = "app"
 
     #[test]
     fn sole_non_dev_container_and_system_do_not_capture_plain_tasks() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
 [containers.release]
@@ -236,6 +239,7 @@ container = "release"
 
     #[test]
     fn routes_to_dev_context_container_when_running() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
 [containers]
@@ -266,6 +270,7 @@ primary_service = "app"
 
     #[test]
     fn host_override_beats_dev_context() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
 [containers]
@@ -289,6 +294,7 @@ primary_service = "app"
 
     #[test]
     fn container_override_requires_container_target() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let mut task = manifest_task();
         task.run_in = Some(ManifestTaskRunIn::Container);
 
@@ -301,6 +307,7 @@ primary_service = "app"
 
     #[test]
     fn container_lifecycle_beats_manifest_default_host_run_in() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
 [containers]
@@ -331,6 +338,7 @@ primary_service = "app"
 
     #[test]
     fn explicit_host_run_in_still_beats_container_lifecycle() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
 [containers]
@@ -359,6 +367,7 @@ primary_service = "app"
 
     #[test]
     fn errors_when_multiple_dev_contexts_exist() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
 [containers]
@@ -390,6 +399,7 @@ primary_service = "worker"
 
     #[test]
     fn explicit_workspace_container_uses_target_primary_service() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
 [containers]
@@ -438,6 +448,7 @@ container = "jobs"
 
     #[test]
     fn manifest_default_run_in_host_beats_dev_context() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
 [containers]
@@ -463,6 +474,7 @@ primary_service = "app"
 
     #[test]
     fn workspace_binding_errors_until_runtime_support_lands() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let systems = systems_toml(
             r#"
 [systems]
@@ -489,6 +501,7 @@ default_workspace = "app"
 
     #[test]
     fn workspace_binding_uses_named_container_for_routing() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let systems = systems_toml(
             r#"
 [systems]
@@ -537,6 +550,7 @@ primary_service = "worker"
 
     #[test]
     fn implied_default_workspace_uses_default_container_for_routing() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let systems = systems_toml(
             r#"
 [systems]
@@ -573,6 +587,7 @@ primary_service = "workspace"
 
     #[test]
     fn inline_workspace_container_errors_until_policy_support_lands() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let systems = systems_toml(
             r#"
 [systems]

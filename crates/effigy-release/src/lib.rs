@@ -54,10 +54,10 @@ pub use text::{
 };
 pub use version::{
     build_changelog_mutation_detail_lines, build_diff_preview, build_version_mutation_detail_lines,
-    detect_pyproject_version_path, detect_version_file_kind, json_value_at_path,
-    read_current_version, render_changelog_preview_line, render_updated_version_contents,
-    render_version_preview_line, replace_json_string_at_path_preserving_layout,
-    resolve_version_field_path, toml_value_at_path,
+    detect_cargo_version_path, detect_pyproject_version_path, detect_version_file_kind,
+    json_value_at_path, read_current_version, render_changelog_preview_line,
+    render_updated_version_contents, render_version_preview_line,
+    replace_json_string_at_path_preserving_layout, resolve_version_field_path, toml_value_at_path,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -524,7 +524,8 @@ pub fn resolve_version_source(
                 path.display()
             ))
         })?;
-        let field_path = resolve_version_field_path(
+        let field_path = resolve_resolved_version_field_path(
+            &path,
             kind,
             config.and_then(|value| value.version_path.as_deref()),
         )?;
@@ -546,7 +547,7 @@ pub fn resolve_version_source(
                 path.display()
             ))
         })?;
-        let field_path = resolve_version_field_path(kind, None)?;
+        let field_path = resolve_resolved_version_field_path(&path, kind, None)?;
         return Ok(ResolvedVersionSource {
             path,
             kind,
@@ -557,6 +558,39 @@ pub fn resolve_version_source(
     Err(ReleaseError::TaskInvocation(
         "no release version file found; configure [release].version-file or add Cargo.toml, package.json, pyproject.toml, or VERSION at the repo root".to_owned(),
     ))
+}
+
+fn resolve_resolved_version_field_path(
+    path: &Path,
+    kind: VersionFileKind,
+    configured: Option<&str>,
+) -> Result<Option<String>, ReleaseError> {
+    if configured.is_some() {
+        return resolve_version_field_path(kind, configured);
+    }
+
+    match kind {
+        VersionFileKind::CargoToml => {
+            let raw = std::fs::read_to_string(path).map_err(|error| {
+                ReleaseError::TaskInvocation(format!(
+                    "failed to read release version file {}: {error}",
+                    path.display()
+                ))
+            })?;
+            let parsed = toml::from_str::<toml::Value>(&raw).map_err(|error| {
+                ReleaseError::TaskInvocation(format!("failed to parse {}: {error}", path.display()))
+            })?;
+            detect_cargo_version_path(&parsed)
+                .map(|value| Some(value.to_owned()))
+                .ok_or_else(|| {
+                    ReleaseError::TaskInvocation(format!(
+                        "could not find version field in {} (tried `package.version` and `workspace.package.version` via `package.version.workspace = true`)",
+                        path.display()
+                    ))
+                })
+        }
+        _ => resolve_version_field_path(kind, None),
+    }
 }
 
 pub fn resolve_config_path(
