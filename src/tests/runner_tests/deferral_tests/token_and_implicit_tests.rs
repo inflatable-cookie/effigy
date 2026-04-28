@@ -358,7 +358,7 @@ database = "legacy"
 }
 
 #[test]
-fn run_manifest_task_decodelabs_library_bundle_shares_lease_across_repos() {
+fn run_manifest_task_decodelabs_library_bundle_isolates_leases_across_repos_by_default() {
     let _guard = lock_test();
     let root = temp_workspace("decodelabs-library-shared-lease");
     let shared_root = root.join("libraries/decodelabs");
@@ -405,12 +405,70 @@ shared_root = "{}"
         &repo_b, "web",
     )
     .expect("read lease token for repo b");
+    let token_a = token_a.expect("expected lease token for repo a");
     assert!(
-        token_a.is_some(),
-        "expected shared library repos to see an active host-container lease"
+        token_b.is_none(),
+        "expected repo b to have no lease until it starts its own container runtime"
     );
-    assert_eq!(
+    run_task_expect_empty_output(
+        &repo_b,
+        "missing-task",
+        &["--watch"],
+        "second decodelabs-library bundle container deferral should also succeed",
+    );
+    let token_b = crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
+        &repo_b, "web",
+    )
+    .expect("read lease token for repo b after startup")
+    .expect("lease token for repo b after startup");
+    assert_ne!(
         token_a, token_b,
-        "expected shared library repos to see the same host-container lease"
+        "expected library repos to get separate host-container leases by default"
+    );
+}
+
+#[test]
+fn run_manifest_task_decodelabs_library_bundle_prepares_workspace_permissions_before_exec() {
+    let _guard = lock_test();
+    let root = temp_workspace("decodelabs-library-permission-prep");
+    let shared_root = root.join("libraries/decodelabs");
+    let repo = shared_root.join("zest");
+    std::fs::create_dir_all(&repo).expect("mkdir repo");
+    std::fs::create_dir(repo.join(".git")).expect("git dir");
+    write_root_manifest(
+        &repo,
+        &format!(
+            r#"[bundle]
+base = "decodelabs-library"
+shared_root = "{}"
+"#,
+            shared_root.display()
+        ),
+    );
+    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+
+    run_task_expect_empty_output(
+        &repo,
+        "missing-task",
+        &["--watch"],
+        "decodelabs-library bundle container deferral should prepare permissions",
+    );
+
+    let log = fs::read_to_string(&docker_log).expect("read fake docker log");
+    assert!(
+        log.contains("exec -T -u 0 app sh -lc"),
+        "expected root-owned permission prep exec before deferred command, got {log}"
+    );
+    assert!(
+        log.contains("/workspace-root/zest/vendor"),
+        "expected permission prep to include isolated vendor target, got {log}"
+    );
+    assert!(
+        log.contains("chown -fR"),
+        "expected permission prep chown command, got {log}"
+    );
+    assert!(
+        log.contains("exec -T -w /workspace-root/zest -u dev"),
+        "expected deferred workspace exec as dev user after prep, got {log}"
     );
 }

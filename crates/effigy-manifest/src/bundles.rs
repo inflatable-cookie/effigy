@@ -696,8 +696,8 @@ fn decodelabs_library_spec() -> BundleSpec {
                 name: "project_name".to_owned(),
                 value_type: BundleInputType::String,
                 required: false,
-                description: "Compose project name for the shared library container runtime.".to_owned(),
-                default: Some(Value::String("decodelabs-library-dev".to_owned())),
+                description: "Compose project name for the shared library container runtime. Defaults to a repo-specific name derived from `workspace_subdir`.".to_owned(),
+                default: None,
                 example: None,
             },
             BundleInputSpec {
@@ -739,17 +739,26 @@ fn decodelabs_library_spec() -> BundleSpec {
 const DECODELABS_PHP_EXTENSIONS: &[&str] = &[
     "bcmath",
     "apcu",
+    "bz2",
     "calendar",
+    "curl",
+    "gmp",
+    "imagick",
+    "mbstring",
     "pcntl",
-    "pdo_mysql",
-    "mysqli",
-    "intl",
     "exif",
-    "zip",
     "gd",
-    "redis",
+    "intl",
     "memcached",
+    "mysqli",
     "opcache",
+    "pdo_mysql",
+    "readline",
+    "redis",
+    "sockets",
+    "sqlite3",
+    "xml",
+    "zip",
     "event",
 ];
 
@@ -891,7 +900,7 @@ fn resolve_decodelabs_library_bundle(
             derive_bundle_workspace_subdir(manifest_path, &shared_root_mount.display().to_string())
         })?;
     let project_name = optional_bundle_string(inputs, "project_name")
-        .unwrap_or_else(|| "decodelabs-library-dev".to_owned());
+        .unwrap_or_else(|| default_decodelabs_library_project_name(&workspace_subdir));
     let system_name =
         optional_bundle_string(inputs, "system_name").unwrap_or_else(|| "dev".to_owned());
     let container_name =
@@ -971,6 +980,26 @@ run_in = "container"
         path: bundle_source_path("decodelabs-library"),
         error,
     })
+}
+
+fn default_decodelabs_library_project_name(workspace_subdir: &str) -> String {
+    let slug = workspace_subdir
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_owned();
+    if slug.is_empty() {
+        "decodelabs-library-dev".to_owned()
+    } else {
+        format!("decodelabs-library-{slug}-dev")
+    }
 }
 
 fn underlay_spec() -> BundleSpec {

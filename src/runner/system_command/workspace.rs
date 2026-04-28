@@ -364,7 +364,7 @@ fn maybe_start_workspace_gateway(policy: &EffectiveContainerPolicy) -> Result<()
     gateway_up_for_managed_task(&command)
 }
 
-fn ensure_workspace_permissions_ready(
+pub(crate) fn ensure_workspace_permissions_ready(
     workspace_repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     container_name: Option<&str>,
