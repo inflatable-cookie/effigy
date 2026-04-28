@@ -276,6 +276,54 @@ databases = ["contactpatch", "contactpatch_test"]
 }
 
 #[test]
+fn decodelabs_bundle_can_extend_bundle_provided_dns_routes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[manifest]
+extend = ["containers.web.dns.routes"]
+
+[bundle]
+base = "decodelabs"
+host = "cbs.legacy.test"
+project_name = "cbs-dev"
+database = "cbs"
+
+[containers.web.dns]
+routes = [
+  { domain = "borderway.legacy.test", tls = true, service = "web" },
+]
+"#,
+    )
+    .expect("write manifest");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let web = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("web"))
+        .expect("web container");
+    let dns = web.dns.as_ref().expect("dns");
+    let routes = dns
+        .routes
+        .iter()
+        .map(|route| (route.domain.as_str(), route.service.as_deref(), route.tls))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        routes,
+        vec![
+            ("cbs.legacy.test", Some("web"), Some(true)),
+            ("pma.cbs.legacy.test", Some("pma"), Some(true)),
+            ("borderway.legacy.test", Some("web"), Some(true)),
+        ]
+    );
+}
+
+#[test]
 fn decodelabs_library_bundle_derives_shared_workspace_runtime() {
     let shared_root = tempfile::tempdir().expect("shared root tempdir");
     let shared_root_path = shared_root

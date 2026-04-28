@@ -48,6 +48,8 @@ pub struct ManifestCompositionValueSource {
 struct ManifestSectionConfig {
     #[serde(default)]
     include: Vec<ManifestIncludeEntry>,
+    #[serde(default)]
+    extend: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -63,8 +65,6 @@ struct ManifestIncludeDirective {
     path: String,
     #[serde(default, rename = "override")]
     override_paths: Vec<String>,
-    #[serde(default, rename = "extend")]
-    extend_paths: Vec<String>,
     #[serde(default)]
     optional: bool,
 }
@@ -73,7 +73,6 @@ struct ManifestIncludeDirective {
 struct ManifestIncludeSpec {
     resolved_path: PathBuf,
     override_paths: Vec<String>,
-    extend_paths: Vec<String>,
     optional: bool,
 }
 
@@ -81,6 +80,7 @@ struct ManifestIncludeSpec {
 struct ComposedValue {
     value: Value,
     source_map: BTreeMap<String, PathBuf>,
+    extend_paths: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -96,7 +96,8 @@ pub fn load_task_manifest_with_inspection(
 ) -> Result<LoadedTaskManifest, ManifestError> {
     let mut session = CompositionSession::default();
     let mut composed = load_composed_value(manifest_path, &mut session)?;
-    let bundle_defaults = apply_bundle_defaults(manifest_path, &mut composed.value)?;
+    let bundle_defaults =
+        apply_bundle_defaults(manifest_path, &mut composed.value, &composed.extend_paths)?;
     if let Some(bundle_defaults) = bundle_defaults.as_ref() {
         record_missing_bundle_sources(
             "",
@@ -176,13 +177,14 @@ fn load_composed_value(
             detail: "manifest root must be a TOML table".to_owned(),
         })?;
 
-    let mut includes = take_include_specs(manifest_path, &mut table)?;
+    let (mut includes, manifest_extend_paths) = take_include_specs(manifest_path, &mut table)?;
     if session.stack.len() == 1 {
         append_local_overlay_include(manifest_path, &mut includes);
     }
     let mut composed = ComposedValue {
         value: Value::Table(table),
         source_map: BTreeMap::new(),
+        extend_paths: manifest_extend_paths,
     };
     record_value_sources("", &composed.value, manifest_path, &mut composed.source_map);
 
@@ -191,11 +193,23 @@ fn load_composed_value(
             continue;
         }
         let child = load_composed_value(&include.resolved_path, session)?;
+        for path in &child.extend_paths {
+            if include.override_paths.contains(path) {
+                return Err(ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "include `{}` declares `{}` in `override`, but the imported fragment declares it in `[manifest].extend`; pick one",
+                        include.resolved_path.display(),
+                        path
+                    ),
+                });
+            }
+        }
         session.include_graph.push(ManifestCompositionEdge {
             parent: manifest_path.to_path_buf(),
             child: include.resolved_path.clone(),
             override_paths: include.override_paths.clone(),
-            extend_paths: include.extend_paths.clone(),
+            extend_paths: child.extend_paths.clone(),
         });
         merge_values(
             "",
@@ -203,6 +217,7 @@ fn load_composed_value(
             &child.value,
             &child.source_map,
             &include,
+            &child.extend_paths,
             &mut session.overridden_paths,
             &mut composed.source_map,
             manifest_path,
@@ -252,7 +267,6 @@ fn append_local_overlay_include(manifest_path: &Path, includes: &mut Vec<Manifes
     includes.push(ManifestIncludeSpec {
         resolved_path: local_path,
         override_paths: Vec::new(),
-        extend_paths: Vec::new(),
         optional: true,
     });
 }
@@ -273,9 +287,9 @@ fn locate_git_root(start: &Path) -> Option<PathBuf> {
 fn take_include_specs(
     manifest_path: &Path,
     table: &mut toml::map::Map<String, Value>,
-) -> Result<Vec<ManifestIncludeSpec>, ManifestError> {
+) -> Result<(Vec<ManifestIncludeSpec>, Vec<String>), ManifestError> {
     let Some(section) = table.remove("manifest") else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     };
     let config: ManifestSectionConfig =
         section.try_into().map_err(|error| ManifestError::Compose {
@@ -285,38 +299,24 @@ fn take_include_specs(
     let parent = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let mut specs = Vec::with_capacity(config.include.len());
     for entry in config.include {
-        let (path, override_paths, extend_paths, optional) = match entry {
-            ManifestIncludeEntry::Path(path) => (path, Vec::new(), Vec::new(), false),
-            ManifestIncludeEntry::Detailed(detail) => (
-                detail.path,
-                detail.override_paths,
-                detail.extend_paths,
-                detail.optional,
-            ),
+        let (path, override_paths, optional) = match entry {
+            ManifestIncludeEntry::Path(path) => (path, Vec::new(), false),
+            ManifestIncludeEntry::Detailed(detail) => {
+                (detail.path, detail.override_paths, detail.optional)
+            }
         };
         let resolved_path = if Path::new(&path).is_absolute() {
             PathBuf::from(&path)
         } else {
             parent.join(&path)
         };
-        if let Some(conflict) = override_paths.iter().find(|p| extend_paths.contains(p)) {
-            return Err(ManifestError::Compose {
-                path: manifest_path.to_path_buf(),
-                detail: format!(
-                    "include `{}` declares `{}` in both `override` and `extend`; pick one",
-                    resolved_path.display(),
-                    conflict
-                ),
-            });
-        }
         specs.push(ManifestIncludeSpec {
             resolved_path,
             override_paths,
-            extend_paths,
             optional,
         });
     }
-    Ok(specs)
+    Ok((specs, config.extend))
 }
 
 fn merge_values(
@@ -325,6 +325,7 @@ fn merge_values(
     incoming: &Value,
     incoming_sources: &BTreeMap<String, PathBuf>,
     include: &ManifestIncludeSpec,
+    extend_paths: &[String],
     overridden_paths: &mut Vec<ManifestCompositionOverride>,
     current_sources: &mut BTreeMap<String, PathBuf>,
     root_manifest_path: &Path,
@@ -334,11 +335,7 @@ fn merge_values(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let extend_set = include
-        .extend_paths
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
+    let extend_set = extend_paths.iter().cloned().collect::<BTreeSet<_>>();
     let mut used_overrides = BTreeSet::new();
     let mut used_extends = BTreeSet::new();
     merge_value_inner(
@@ -662,9 +659,7 @@ mod tests {
             "effigy.toml",
             r#"
 [manifest]
-include = [
-  { path = "overlay.toml", extend = ["isolation.paths"] },
-]
+include = ["overlay.toml"]
 
 [isolation]
 paths = ["a", "b"]
@@ -674,6 +669,9 @@ paths = ["a", "b"]
             dir,
             "overlay.toml",
             r#"
+[manifest]
+extend = ["isolation.paths"]
+
 [isolation]
 paths = ["c", "d"]
 "#,
@@ -699,6 +697,46 @@ paths = ["c", "d"]
     }
 
     #[test]
+    fn child_manifest_extend_appends_without_parent_include_directive() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = ["overlay.toml"]
+
+[isolation]
+paths = ["a", "b"]
+"#,
+        );
+        write_manifest(
+            dir,
+            "overlay.toml",
+            r#"
+[manifest]
+extend = ["isolation.paths"]
+
+[isolation]
+paths = ["c", "d"]
+"#,
+        );
+
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        let paths = array_strings(&loaded.effective_value, "isolation.paths");
+        assert_eq!(
+            paths,
+            vec![
+                "a".to_owned(),
+                "b".to_owned(),
+                "c".to_owned(),
+                "d".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
     fn extend_on_non_array_path_errors() {
         let tmp = tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -707,9 +745,7 @@ paths = ["c", "d"]
             "effigy.toml",
             r#"
 [manifest]
-include = [
-  { path = "overlay.toml", extend = ["shell.run"] },
-]
+include = ["overlay.toml"]
 
 [shell]
 run = "primary"
@@ -719,6 +755,9 @@ run = "primary"
             dir,
             "overlay.toml",
             r#"
+[manifest]
+extend = ["shell.run"]
+
 [shell]
 run = "secondary"
 "#,
@@ -733,7 +772,7 @@ run = "secondary"
     }
 
     #[test]
-    fn extend_and_override_on_same_path_errors() {
+    fn include_side_extend_is_rejected() {
         let tmp = tempdir().expect("tempdir");
         let dir = tmp.path();
         let root = write_manifest(
@@ -743,29 +782,14 @@ run = "secondary"
 [manifest]
 include = [
   { path = "overlay.toml",
-    extend = ["isolation.paths"],
-    override = ["isolation.paths"] },
+    extend = ["isolation.paths"] },
 ]
-
-[isolation]
-paths = ["a"]
 "#,
         );
-        write_manifest(
-            dir,
-            "overlay.toml",
-            r#"
-[isolation]
-paths = ["b"]
-"#,
-        );
-
         let err = load_task_manifest_with_inspection(&root).unwrap_err();
         let detail = format!("{err}");
-        assert!(
-            detail.contains("declares `isolation.paths` in both `override` and `extend`"),
-            "{detail}"
-        );
+        assert!(detail.contains("invalid `[manifest]` section"), "{detail}");
+        assert!(detail.contains("ManifestIncludeEntry"), "{detail}");
     }
 
     #[test]
@@ -780,12 +804,20 @@ paths = ["b"]
             "effigy.toml",
             r#"
 [manifest]
-include = [
-  { path = "overlay.toml", extend = ["isolation.paths"] },
-]
+include = ["overlay.toml"]
 "#,
         );
-        write_manifest(dir, "overlay.toml", "[isolation]\npaths = [\"a\"]\n");
+        write_manifest(
+            dir,
+            "overlay.toml",
+            r#"
+[manifest]
+extend = ["isolation.paths"]
+
+[isolation]
+paths = ["a"]
+"#,
+        );
 
         load_task_manifest_with_inspection(&root)
             .expect("non-conflicting extend should compose cleanly");
@@ -848,7 +880,7 @@ include = [
             r#"
 [manifest]
 include = [
-  { path = "overlay.toml", optional = true, extend = ["isolation.paths"] },
+  { path = "overlay.toml", optional = true },
 ]
 
 [isolation]
@@ -859,6 +891,9 @@ paths = ["a"]
             dir,
             "overlay.toml",
             r#"
+[manifest]
+extend = ["isolation.paths"]
+
 [isolation]
 paths = ["b"]
 "#,
@@ -952,7 +987,7 @@ paths = ["b"]
             r#"
 [manifest]
 include = [
-  { path = "effigy.local.toml", optional = true, extend = ["isolation.paths"] },
+  { path = "effigy.local.toml", optional = true },
 ]
 
 [isolation]
@@ -963,6 +998,9 @@ paths = ["a"]
             dir,
             "effigy.local.toml",
             r#"
+[manifest]
+extend = ["isolation.paths"]
+
 [isolation]
 paths = ["b"]
 "#,
@@ -992,9 +1030,7 @@ paths = ["b"]
             "effigy.toml",
             r#"
 [manifest]
-include = [
-  { path = "overlay.toml", extend = ["scan.god_files.include"] },
-]
+include = ["overlay.toml"]
 
 [scan.god_files]
 warn = 500
@@ -1005,6 +1041,9 @@ include = ["src/**"]
             dir,
             "overlay.toml",
             r#"
+[manifest]
+extend = ["scan.god_files.include"]
+
 [scan.god_files]
 include = ["overlay/**"]
 "#,

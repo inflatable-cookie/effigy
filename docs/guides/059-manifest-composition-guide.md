@@ -82,18 +82,17 @@ Meaning:
 
 Override is path-scoped and replaces the whole addressed value.
 
-For arrays specifically, `extend = [...]` appends instead of replacing:
+For arrays specifically, `[manifest].extend = [...]` appends instead of
+replacing:
 
 ```toml
 [manifest]
-include = [
-  { path = "envs/cumberland/effigy.env.toml",
-    extend = ["containers.web.dns.domains"] },
-]
+extend = ["containers.web.dns.domains"]
+include = ["envs/cumberland/effigy.env.toml"]
 ```
 
-This is the right tool when an overlay needs to grow a shared list (DNS
-routes, env-schema paths, scan globs) without restating every existing
+This is the right tool when an imported fragment needs to grow a shared list
+(DNS routes, env-schema paths, scan globs) without restating every existing
 entry. `extend` rejects non-array paths and conflicts with `override` on
 the same path — pick one per path.
 
@@ -119,9 +118,9 @@ include list. The synthetic include is appended last, so the local file
 always wins over committed layers (consistent with "local overrides
 committed").
 
-The local file can carry its own `[manifest].include` block — including
-`extend`, `override`, and further `optional` directives — to layer in
-additional env folders or per-machine fragments.
+The local file can carry its own `[manifest]` block — including
+`extend`, `include`, `override`, and further `optional` directives — to layer
+in additional env folders or per-machine fragments.
 
 The first time auto-discovery activates against a repo with a `.git`
 directory, Effigy idempotently appends `effigy.local.toml` to that
