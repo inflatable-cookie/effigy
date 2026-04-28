@@ -34,6 +34,16 @@ During v0.x, MINOR bumps may include breaking changes.
   default transparent routing mode.
 
 ### Added
+- Accept a structured table form on `[containers.<name>.host].mounts`
+  alongside the legacy `"host:container[:options]"` string form, with an
+  `external = true` opt-in for sourcing mounts from outside the repo
+  root. The structured `host` field also supports `${VAR}` (process env)
+  and `~` expansion. Without `external = true`, the existing
+  repo-relative containment policy still applies; with it, the source
+  may live anywhere on disk but must canonicalise to an absolute path
+  (use `~/...`, `${VAR}`, or a literal absolute path). Host-mount
+  validation now happens at policy-load time instead of later
+  validation, so misconfigurations surface earlier.
 - Add `domains = [...]` and `domain_defaults = { ... }` sugar on
   `[containers.<name>.dns]`. Each domain in `domains` expands into a
   route inheriting `tls`, `port`, and `service` from `domain_defaults`,

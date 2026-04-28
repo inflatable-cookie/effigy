@@ -311,6 +311,101 @@ routes = [{ domain = "clientname.test", port = "web" }]
 }
 
 #[test]
+fn validate_manifest_schema_accepts_structured_external_host_mount() {
+    let manifest: Value = toml::from_str(
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.web.host]
+mounts = [
+  "./:/workspace",
+  { host = "${PERSONAL_SSH_CONFIG}",
+    container = "/home/dev/.ssh/config",
+    external = true,
+    options = ["ro"] },
+]
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "structured external mount should be accepted; findings: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_unknown_field_on_structured_host_mount() {
+    let manifest: Value = toml::from_str(
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.web.host]
+mounts = [
+  { host = "./", container = "/workspace", bogus_field = "x" },
+]
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.iter().any(|finding| finding
+            .evidence
+            .contains("containers.web.host.mounts[0].bogus_field")),
+        "expected unknown-field finding, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_non_boolean_external_on_host_mount() {
+    let manifest: Value = toml::from_str(
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+
+[containers.web.host]
+mounts = [
+  { host = "./", container = "/workspace", external = "yes" },
+]
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.iter().any(|finding| finding
+            .evidence
+            .contains("containers.web.host.mounts[0].external")),
+        "expected external-type finding, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
 fn validate_manifest_schema_accepts_manifest_include_section() {
     let manifest: Value = toml::from_str(
         r#"

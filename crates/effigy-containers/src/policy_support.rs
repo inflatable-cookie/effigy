@@ -911,45 +911,6 @@ fn configured_media_mounts(config: &ManifestContainerConfig) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub(crate) fn validate_declared_mounts(
-    repo_root: &Path,
-    container_name: &str,
-    mounts: &[String],
-) -> Result<(), ContainerPolicyError> {
-    let repo_root = repo_root
-        .canonicalize()
-        .map_err(|error| ContainerPolicyError::Read {
-            path: repo_root.to_path_buf(),
-            error,
-        })?;
-    for mount in mounts {
-        let source = mount.split(':').next().unwrap_or_default().trim();
-        if source.is_empty() {
-            return Err(ContainerPolicyError::TaskInvocation(format!(
-                "container `{container_name}` has invalid mount `{mount}`; expected `<repo-relative-source>:<target>`"
-            )));
-        }
-        let source_path = Path::new(source);
-        if source_path.is_absolute() {
-            return Err(ContainerPolicyError::TaskInvocation(format!(
-                "container `{container_name}` mount `{mount}` must use a repo-relative source path"
-            )));
-        }
-        let resolved = repo_root.join(source_path);
-        let canonical = resolved.canonicalize().map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "container `{container_name}` mount source `{source}` is invalid: {error}"
-            ))
-        })?;
-        if canonical.strip_prefix(&repo_root).is_err() {
-            return Err(ContainerPolicyError::TaskInvocation(format!(
-                "container `{container_name}` mount `{mount}` escapes the repo root"
-            )));
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn validate_media_mounts(
     repo_root: &Path,
     container_name: &str,
