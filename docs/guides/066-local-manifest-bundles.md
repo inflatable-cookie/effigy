@@ -38,7 +38,7 @@ base_path = "bundles/underlay"
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "underlay-reference"
-database = "acme"
+databases = ["acme"]
 ```
 
 After that, edits in `bundles/underlay/` are repo-owned. They no longer

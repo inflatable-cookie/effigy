@@ -17,6 +17,7 @@ fn resolver_file_contents_format() {
 #[test]
 fn resolver_spec_has_correct_path_and_content() {
     let spec = resolver_file_spec("test", 15353);
+    assert_eq!(spec.suffix, "test");
     assert_eq!(spec.path, PathBuf::from("/etc/resolver/test"));
     assert!(spec.content.contains("port 15353"));
 }
@@ -71,6 +72,19 @@ fn route_driven_suffixes_strip_trailing_dot_and_dedupe() {
 
     let suffixes = route_driven_resolver_suffixes(domains, "test");
     assert_eq!(suffixes, vec!["dev.cumberland.co.uk".to_string()]);
+}
+
+#[test]
+fn route_driven_suffixes_drop_invalid_domains() {
+    let domains = vec![
+        "valid.example.com".to_string(),
+        "../escape".to_string(),
+        "bad/label.example.com".to_string(),
+        "-bad.example.com".to_string(),
+    ];
+
+    let suffixes = route_driven_resolver_suffixes(domains, "test");
+    assert_eq!(suffixes, vec!["valid.example.com".to_string()]);
 }
 
 #[test]

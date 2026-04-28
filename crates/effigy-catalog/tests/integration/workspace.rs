@@ -193,14 +193,11 @@ fn workspace_rust_bun_emits_named_volumes_for_subproject_dirs() {
                 toml::Value::String("underlay-reference".to_string()),
             );
             p.insert(
-                "cargo_target_dirs".to_string(),
-                toml::Value::Array(vec![toml::Value::String("acme-api".to_string())]),
-            );
-            p.insert(
-                "node_modules_dirs".to_string(),
+                "isolated_dirs".to_string(),
                 toml::Value::Array(vec![
-                    toml::Value::String("acme-client".to_string()),
-                    toml::Value::String("acme-ui".to_string()),
+                    toml::Value::String("acme-api/target".to_string()),
+                    toml::Value::String("acme-client/node_modules".to_string()),
+                    toml::Value::String("acme-ui/node_modules".to_string()),
                 ]),
             );
             p
@@ -234,22 +231,22 @@ fn workspace_rust_bun_emits_named_volumes_for_subproject_dirs() {
         volume_strings.contains(
             &"underlay-reference-dev-workspace-acme-api-target:/workspace-root/underlay-reference/acme-api/target"
         ),
-        "expected per-subproject cargo target volume mount; got {volume_strings:?}"
+        "expected isolated target volume mount; got {volume_strings:?}"
     );
     assert!(
         volume_strings.contains(
             &"underlay-reference-dev-workspace-acme-client-node-modules:/workspace-root/underlay-reference/acme-client/node_modules"
         ),
-        "expected per-subproject node_modules volume mount; got {volume_strings:?}"
+        "expected isolated node_modules volume mount; got {volume_strings:?}"
     );
     assert!(
         volume_strings.contains(
             &"underlay-reference-dev-workspace-acme-ui-node-modules:/workspace-root/underlay-reference/acme-ui/node_modules"
         ),
-        "expected per-subproject node_modules volume mount; got {volume_strings:?}"
+        "expected isolated node_modules volume mount; got {volume_strings:?}"
     );
 
-    // Top-level named volumes should include the per-subproject ones, so
+    // Top-level named volumes should include the isolated-dir ones, so
     // compose actually creates persistent volumes rather than anonymous ones.
     let vol_names: Vec<&str> = result.volumes.iter().map(|v| v.name.as_str()).collect();
     assert!(vol_names.contains(&"underlay-reference-dev-workspace-cargo-registry"));

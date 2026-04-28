@@ -814,6 +814,7 @@ name = "effigy-env"
 version = "0.2.13"
 dependencies = [
  "regex",
+ "tempfile",
  "zeroize",
 ]
 

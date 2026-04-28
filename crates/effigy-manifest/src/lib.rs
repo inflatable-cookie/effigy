@@ -216,7 +216,15 @@ fn validate_dns_routes(
             )?;
         }
     }
-    for route in &dns.routes {
+    for route in dns.resolved_routes() {
+        validate_dns_domain_name(
+            manifest_path,
+            route.domain.as_str(),
+            &format!(
+                "containers.{container_name}.dns.routes[{}].domain",
+                route.domain
+            ),
+        )?;
         if route.service.is_some() && route.target_host.is_some() {
             return Err(ManifestError::Compose {
                 path: manifest_path.to_path_buf(),
@@ -235,6 +243,62 @@ fn validate_dns_routes(
                     route.domain
                 ),
             )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_dns_domain_name(
+    manifest_path: &Path,
+    raw: &str,
+    field: &str,
+) -> Result<(), ManifestError> {
+    let trimmed = raw.trim().trim_end_matches('.');
+    if trimmed.is_empty() {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!("{field} is empty"),
+        });
+    }
+    if trimmed.len() > 253 {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!("{field} = `{raw}` exceeds 253 characters"),
+        });
+    }
+    for label in trimmed.split('.') {
+        if label.is_empty() {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!("{field} = `{raw}` contains an empty label"),
+            });
+        }
+        if label.len() > 63 {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "{field} = `{raw}` contains label `{label}` longer than 63 characters"
+                ),
+            });
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "{field} = `{raw}` contains label `{label}` that starts or ends with `-`"
+                ),
+            });
+        }
+        if !label
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "{field} = `{raw}` contains label `{label}` with characters outside ASCII letters, digits, or `-`"
+                ),
+            });
         }
     }
     Ok(())
@@ -438,6 +502,37 @@ domain_defaults = { tls = true, target_host = "127.0.0.1:8080" }
         manifest
             .validate(Path::new("/tmp/effigy.toml"))
             .expect("expected valid manifest");
+    }
+
+    #[test]
+    fn route_domain_rejects_path_characters() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[containers.web.dns]
+routes = [{ domain = "../escape", target_host = "127.0.0.1:8080" }]
+"#,
+        );
+        let detail = err(&manifest);
+        assert!(detail.contains("contains an empty label"), "got: {detail}");
+    }
+
+    #[test]
+    fn sugar_domain_rejects_leading_dash_label() {
+        let manifest = parse(
+            r#"
+[containers.web]
+primary_service = "app"
+
+[containers.web.dns]
+domains = ["-bad.example.test"]
+domain_defaults = { tls = true, target_host = "127.0.0.1:8080" }
+"#,
+        );
+        let detail = err(&manifest);
+        assert!(detail.contains("starts or ends with `-`"), "got: {detail}");
     }
 }
 

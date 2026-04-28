@@ -142,3 +142,25 @@ mounts = ["./external/underlay:/workspace-root/underlay"]
 
     assert_builtin_ok_empty(root, "underlay/validate", &[]);
 }
+
+#[test]
+fn discover_catalogs_skips_runtime_artifact_directories() {
+    let root = temp_workspace("catalog-discovery-skips-runtime-artifacts");
+    let runtime_catalog = create_workspace_dir(&root, ".effigy/runtime/fake-catalog");
+
+    write_manifest(&root.join("effigy.toml"), "");
+    write_manifest(
+        &runtime_catalog.join("effigy.toml"),
+        r#"[catalog]
+alias = "fake-runtime"
+"#,
+    );
+
+    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    assert!(
+        catalogs
+            .iter()
+            .all(|catalog| catalog.alias != "fake-runtime"),
+        "runtime artifact dirs under .effigy should not be discovered as catalogs"
+    );
+}

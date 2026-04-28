@@ -6,7 +6,7 @@ base = "underlay"
 host = "app.test"
 project_name = "underlay-app-dev"
 workspace_subdir = "underlay-app"
-database = "acme"
+databases = ["acme"]
 
 [bundle.dirs]
 docs = "app-docs"

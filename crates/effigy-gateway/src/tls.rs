@@ -20,6 +20,22 @@ use rustls::sign::CertifiedKey;
 
 use crate::error::GatewayError;
 
+/// Optional explicit mkcert program path used by elevated gateway runs.
+///
+/// The runner resolves this from a bounded set of trusted host directories
+/// before privilege escalation so the root-owned gateway daemon does not need
+/// to trust a caller-controlled `PATH`.
+pub const MKCERT_BIN_ENV: &str = "EFFIGY_GATEWAY_MKCERT_BIN";
+
+const SAFE_MKCERT_SEARCH_DIRS: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+];
+
 /// TLS certificate configuration.
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
@@ -35,7 +51,7 @@ impl TlsConfig {
 
     /// Check whether mkcert is installed and available.
     pub fn mkcert_available() -> bool {
-        Command::new("mkcert")
+        mkcert_command()
             .arg("-help")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -50,7 +66,7 @@ impl TlsConfig {
             return false;
         }
 
-        let check = Command::new("mkcert")
+        let check = mkcert_command()
             .arg("-check")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
@@ -80,13 +96,14 @@ impl TlsConfig {
     ///
     /// This typically requires user interaction (sudo prompt).
     pub fn install_ca() -> Result<(), GatewayError> {
-        let output = Command::new("mkcert")
-            .arg("-install")
-            .output()
-            .map_err(|e| GatewayError::TlsError {
-                domain: "<CA>".to_string(),
-                reason: format!("failed to run mkcert -install: {e}"),
-            })?;
+        let output =
+            mkcert_command()
+                .arg("-install")
+                .output()
+                .map_err(|e| GatewayError::TlsError {
+                    domain: "<CA>".to_string(),
+                    reason: format!("failed to run mkcert -install: {e}"),
+                })?;
 
         if !output.status.success() {
             return Err(GatewayError::TlsError {
@@ -124,7 +141,7 @@ impl TlsConfig {
             });
         }
 
-        let output = Command::new("mkcert")
+        let output = mkcert_command()
             .arg("-cert-file")
             .arg(&cert_path)
             .arg("-key-file")
@@ -456,7 +473,7 @@ fn mkcert_ca_exists() -> bool {
 /// `mkcert -CAROOT`. Returns `None` when mkcert is not on `PATH` or the
 /// command fails.
 pub fn mkcert_ca_root() -> Option<PathBuf> {
-    let output = Command::new("mkcert").arg("-CAROOT").output().ok()?;
+    let output = mkcert_command().arg("-CAROOT").output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -481,6 +498,28 @@ pub fn mkcert_root_ca_pem() -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+fn mkcert_command() -> Command {
+    if let Some(program) = resolved_mkcert_program() {
+        return Command::new(program);
+    }
+    Command::new("mkcert")
+}
+
+/// Resolve the mkcert program from an explicit absolute override or a bounded
+/// set of trusted install prefixes.
+pub fn resolved_mkcert_program() -> Option<PathBuf> {
+    if let Some(explicit) = std::env::var_os(MKCERT_BIN_ENV).map(PathBuf::from) {
+        if explicit.is_absolute() && explicit.is_file() {
+            return Some(explicit);
+        }
+    }
+
+    SAFE_MKCERT_SEARCH_DIRS
+        .iter()
+        .map(|dir| Path::new(dir).join("mkcert"))
+        .find(|path| path.is_file())
 }
 
 #[cfg(target_os = "macos")]

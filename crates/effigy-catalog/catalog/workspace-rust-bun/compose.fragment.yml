@@ -18,11 +18,8 @@ services:
     volumes:
       - {{ project_name }}-{{ service_name }}-cargo-registry:/usr/local/cargo/registry
       - {{ project_name }}-{{ service_name }}-cargo-git:/usr/local/cargo/git
-{% for dir in cargo_target_dirs %}
-      - {{ project_name }}-{{ service_name }}-{{ dir | replace("/", "-") }}-target:{{ workspace_mount }}{% if working_subdir %}/{{ working_subdir }}{% endif %}/{{ dir }}/target
-{% endfor %}
-{% for dir in node_modules_dirs %}
-      - {{ project_name }}-{{ service_name }}-{{ dir | replace("/", "-") }}-node-modules:{{ workspace_mount }}{% if working_subdir %}/{{ working_subdir }}{% endif %}/{{ dir }}/node_modules
+{% for dir in isolated_dirs %}
+      - {{ project_name }}-{{ service_name }}-{{ dir | replace("/", "-") | replace("_", "-") }}:{{ workspace_mount }}{% if working_subdir %}/{{ working_subdir }}{% endif %}/{{ dir }}
 {% endfor %}
 {% if host_ports %}
     ports:

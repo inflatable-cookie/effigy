@@ -16,7 +16,7 @@ base = "underlay"
 host = "acme.test"
 project_name = "underlay-reference-dev"
 workspace_subdir = "underlay-reference"
-database = "acme"
+databases = ["acme"]
 
 [bundle.dirs]
 docs = "acme-docs"
@@ -326,7 +326,7 @@ base = "underlay"
 host = "acme.test"
 project_name = "underlay-reference-dev"
 workspace_subdir = "underlay-reference"
-database = "acme"
+databases = ["acme"]
 system_name = "stage"
 container_name = "infra"
 workspace_service_name = "dev-shell"
@@ -392,7 +392,7 @@ base = "underlay"
 host = "acme.test"
 project_name = "underlay-reference-dev"
 workspace_subdir = "underlay-reference"
-database = "acme"
+databases = ["acme"]
 
 [bundle.dirs]
 api = "acme-api"
@@ -441,7 +441,7 @@ base = "underlay"
 host = "acme.test"
 project_name = "underlay-reference-dev"
 workspace_subdir = "underlay-reference"
-database = "acme"
+databases = ["acme"]
 
 [bundle.dirs]
 api = "acme-api"
@@ -536,7 +536,7 @@ base = "underlay"
 host = "acme.test"
 project_name = "underlay-reference-dev"
 workspace_subdir = "underlay-reference"
-database = "acme"
+databases = ["acme"]
 
 [bundle.dirs]
 api = "acme-api"
@@ -558,32 +558,24 @@ admin = "acme-admin"
         .and_then(|stack| stack.services.get("workspace"))
         .expect("workspace service");
 
-    let cargo_dirs: Vec<&str> = workspace
+    let isolated_dirs: Vec<&str> = workspace
         .params
-        .get("cargo_target_dirs")
+        .get("isolated_dirs")
         .and_then(|value| value.as_array())
-        .expect("cargo_target_dirs")
+        .expect("isolated_dirs")
         .iter()
         .filter_map(|value| value.as_str())
         .collect();
     assert_eq!(
-        cargo_dirs,
-        vec!["acme-api"],
-        "underlay bundle should expose the api subproject's target/ as a named volume"
-    );
-
-    let node_dirs: Vec<&str> = workspace
-        .params
-        .get("node_modules_dirs")
-        .and_then(|value| value.as_array())
-        .expect("node_modules_dirs")
-        .iter()
-        .filter_map(|value| value.as_str())
-        .collect();
-    assert_eq!(
-        node_dirs,
-        vec!["acme-client", "acme-ui", "acme-front", "acme-admin"],
-        "underlay bundle should expose each bun frontend's node_modules as a named volume"
+        isolated_dirs,
+        vec![
+            "acme-api/target",
+            "acme-client/node_modules",
+            "acme-ui/node_modules",
+            "acme-front/node_modules",
+            "acme-admin/node_modules",
+        ],
+        "underlay bundle should expose each isolated writable dir through one shared list"
     );
 }
 
@@ -599,7 +591,7 @@ base = "underlay"
 host = "app.test"
 project_name = "underlay-app-dev"
 workspace_subdir = "underlay-app"
-database = "acme"
+databases = ["acme"]
 "#,
     )
     .expect("write manifest");
@@ -614,27 +606,23 @@ database = "acme"
         .and_then(|stack| stack.services.get("workspace"))
         .expect("workspace service");
 
-    let cargo_dirs: Vec<&str> = workspace
+    let isolated_dirs: Vec<&str> = workspace
         .params
-        .get("cargo_target_dirs")
+        .get("isolated_dirs")
         .and_then(|value| value.as_array())
-        .expect("cargo_target_dirs")
-        .iter()
-        .filter_map(|value| value.as_str())
-        .collect();
-    assert_eq!(cargo_dirs, vec!["app-api"]);
-
-    let node_dirs: Vec<&str> = workspace
-        .params
-        .get("node_modules_dirs")
-        .and_then(|value| value.as_array())
-        .expect("node_modules_dirs")
+        .expect("isolated_dirs")
         .iter()
         .filter_map(|value| value.as_str())
         .collect();
     assert_eq!(
-        node_dirs,
-        vec!["app-client", "app-ui", "app-front", "app-admin"]
+        isolated_dirs,
+        vec![
+            "app-api/target",
+            "app-client/node_modules",
+            "app-ui/node_modules",
+            "app-front/node_modules",
+            "app-admin/node_modules",
+        ]
     );
 }
 
@@ -650,7 +638,7 @@ base = "underlay"
 host = "acowtancy.test"
 project_name = "acowtancy-dev"
 workspace_subdir = "acowtancy"
-database = "acowtancy"
+databases = ["acowtancy"]
 
 [bundle.routes]
 front = "cream"

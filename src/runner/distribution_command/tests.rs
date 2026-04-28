@@ -127,8 +127,13 @@ fn validate_metadata_skips_effigy_defaults_when_manifest_is_adopted() {
 fn current_repo_distribution_metadata_requires_only_workflow_bound_glibc_script() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let current_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
-    run_validate_metadata(root, &default_distribution_policy(), Some(&current_tag), false)
-        .expect("metadata should pass");
+    run_validate_metadata(
+        root,
+        &default_distribution_policy(),
+        Some(&current_tag),
+        false,
+    )
+    .expect("metadata should pass");
     assert!(
         !root
             .join("scripts/check-distribution-first-publish.sh")

@@ -49,7 +49,7 @@ for the full emission contract, including `--dry-run` / `--force` / `--json`.
 After emission, edit:
 
 1. Update `[bundle]` in `effigy.toml`: `host`, `project_name`,
-   `workspace_subdir`, `database`, and the optional `api_port` /
+   `workspace_subdir`, `databases`, and the optional `api_port` /
    `admin_port` / `front_port` overrides.
    When the repo uses different app package names, also set
    `[bundle.dirs]` (`docs`, `api`, `client`, optional `ui`, `front`, `admin`). When the repo

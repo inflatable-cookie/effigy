@@ -13,7 +13,7 @@ fn decodelabs_bundle_resolves_defaults_and_allows_block_overrides() {
 base = "decodelabs"
 host = "contact-patch.legacy.test"
 project_name = "contactpatch-dev"
-database = "contactpatch"
+databases = ["contactpatch"]
 
 [containers.web.services.db]
 version = "11.0"
@@ -171,7 +171,7 @@ fn decodelabs_bundle_renames_system_container_and_workspace_service() {
 base = "decodelabs"
 host = "contact-patch.legacy.test"
 project_name = "contactpatch-dev"
-database = "contactpatch"
+databases = ["contactpatch"]
 system_name = "stage"
 container_name = "shop"
 workspace_service_name = "php"
@@ -229,7 +229,7 @@ fn decodelabs_bundle_rejects_legacy_name_key() {
 name = "decodelabs"
 host = "contact-patch.legacy.test"
 project_name = "contactpatch-dev"
-database = "contactpatch"
+databases = ["contactpatch"]
 "#,
     )
     .expect("write manifest");
@@ -299,7 +299,7 @@ extend = ["containers.web.dns.routes"]
 base = "decodelabs"
 host = "cbs.legacy.test"
 project_name = "cbs-dev"
-database = "cbs"
+databases = ["cbs"]
 
 [containers.web.dns]
 routes = [
@@ -356,7 +356,7 @@ extend = ["containers.web.dns.routes"]
 base = "decodelabs"
 host = "cbs.legacy.test"
 project_name = "cbs-dev"
-database = "cbs"
+databases = ["cbs"]
 
 [containers.web.dns]
 routes = [
@@ -414,7 +414,7 @@ extend = ["containers.web.dns.routes", "containers.web.dns.domains"]
 base = "decodelabs"
 host = "cbs.legacy.test"
 project_name = "cbs-dev"
-database = "cbs"
+databases = ["cbs"]
 
 [containers.web.dns]
 domains = ["admin.cbs.legacy.test"]

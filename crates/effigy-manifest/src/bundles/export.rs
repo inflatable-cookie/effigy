@@ -208,7 +208,7 @@ routes = [
 [containers.{{{{ inputs.container_name }}}}.aliases]
 php = "{{{{ inputs.workspace_service_name }}}}"
 composer = {{ service = "{{{{ inputs.workspace_service_name }}}}", command = "composer" }}
-mysql = {{ service = "db", command = "mysql -uroot{{% raw %}}{{% if services.db.params.password %}} -p{{{{ services.db.params.password }}}}{{% endif %}}{{% endraw %}} {{{{ inputs.database }}}}" }}
+mysql = {{ service = "db", command = "mysql -uroot{{% raw %}}{{% if services.db.params.password %}} -p{{{{ services.db.params.password }}}}{{% endif %}}{{% endraw %}} {{{{ inputs.databases|first }}}}" }}
 
 [containers.{{{{ inputs.container_name }}}}.services.{{{{ inputs.workspace_service_name }}}}]
 catalog = "php-fpm"
@@ -229,7 +229,7 @@ service = "{{{{ inputs.workspace_service_name }}}}"
 
 [containers.{{{{ inputs.container_name }}}}.services.db]
 catalog = "mariadb"
-database = "{{{{ inputs.database }}}}"
+database = "{{{{ inputs.databases|first }}}}"
 databases = [{{% for database in inputs.databases %}}"{{{{ database }}}}"{{% if not loop.last %}}, {{% endif %}}{{% endfor %}}]
 
 [containers.{{{{ inputs.container_name }}}}.services.pma]
@@ -363,25 +363,23 @@ host_ports = [
   "{{ inputs.admin_port }}:{{ inputs.admin_port }}",
   "{{ inputs.front_port }}:{{ inputs.front_port }}",
 ]
-cargo_target_dirs = [
-  "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}",
-]
-node_modules_dirs = [
-  "{% if inputs.dirs.client %}{{ inputs.dirs.client }}{% else %}app-client{% endif %}",
-  "{% if inputs.dirs.ui %}{{ inputs.dirs.ui }}{% else %}app-ui{% endif %}",
-  "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}",
-  "{% if inputs.dirs.admin %}{{ inputs.dirs.admin }}{% else %}app-admin{% endif %}",
+isolated_dirs = [
+  "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/target",
+  "{% if inputs.dirs.client %}{{ inputs.dirs.client }}{% else %}app-client{% endif %}/node_modules",
+  "{% if inputs.dirs.ui %}{{ inputs.dirs.ui }}{% else %}app-ui{% endif %}/node_modules",
+  "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}/node_modules",
+  "{% if inputs.dirs.admin %}{{ inputs.dirs.admin }}{% else %}app-admin{% endif %}/node_modules",
 ]
 
 [containers.{{ inputs.container_name }}.services.postgres]
 catalog = "postgres"
-database = "{{ inputs.database }}"
+database = "{{ inputs.databases|first }}"
 databases = [{% for database in inputs.databases %}"{{ database }}"{% if not loop.last %}, {% endif %}{% endfor %}]
 
 [containers.{{ inputs.container_name }}.services.dbgate]
 catalog = "dbgate"
 database_host = "postgres"
-database = "{{ inputs.database }}"
+database = "{{ inputs.databases|first }}"
 connection_label = "{{ inputs.project_name }}"
 
 [containers.{{ inputs.container_name }}.services.mailpit]
@@ -478,19 +476,34 @@ pub(super) fn underlay_export_template() -> String {
     UNDERLAY_EXPORT_TEMPLATE.to_owned()
 }
 
-/// Derive cargo `target/` named-volume subprojects for the underlay bundle
-/// from `[bundle.dirs]`. The `api` slot is the conventional Rust crate in the
-/// underlay shape; other slots are bun frontends and never carry a Rust target.
-pub(super) fn underlay_cargo_target_dirs(inputs: &BTreeMap<String, Value>) -> Vec<String> {
+/// Derive isolated writable directories for the underlay workspace bundle from
+/// `[bundle.dirs]`. The public surface is a single `isolated_dirs` list whose
+/// entries are relative to the workspace `working_dir`.
+pub(super) fn underlay_isolated_dirs(inputs: &BTreeMap<String, Value>) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(api) = optional_bundle_string(inputs, "dirs.api") {
-        let trimmed = api.trim();
-        if !trimmed.is_empty() {
-            out.push(trimmed.to_owned());
-        }
-    } else {
-        out.push("app-api".to_owned());
+
+    let api = optional_bundle_string(inputs, "dirs.api").unwrap_or_else(|| "app-api".to_owned());
+    let api = api.trim();
+    if !api.is_empty() {
+        out.push(format!("{api}/target"));
     }
+
+    for value in [
+        optional_bundle_string(inputs, "dirs.client").unwrap_or_else(|| "app-client".to_owned()),
+        optional_bundle_string(inputs, "dirs.ui").unwrap_or_else(|| "app-ui".to_owned()),
+        optional_bundle_string(inputs, "dirs.front").unwrap_or_else(|| "app-front".to_owned()),
+        optional_bundle_string(inputs, "dirs.admin").unwrap_or_else(|| "app-admin".to_owned()),
+    ] {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let isolated = format!("{trimmed}/node_modules");
+        if !out.contains(&isolated) {
+            out.push(isolated);
+        }
+    }
+
     out
 }
 
@@ -541,44 +554,6 @@ pub(super) fn underlay_optional_docs_qa_steps(inputs: &BTreeMap<String, Value>) 
             "  {{ task = \"{trimmed}/qa:docs\" }},\n  {{ task = \"{trimmed}/qa:northstar\" }},\n"
         )
     }
-}
-
-/// Derive `node_modules/` named-volume subprojects for the underlay bundle
-/// from `[bundle.dirs]`. The `client`, `ui`, `front`, and `admin` slots are
-/// the conventional bun frontends; each gets its own named volume to keep
-/// installed deps off the host bind mount.
-pub(super) fn underlay_node_modules_dirs(inputs: &BTreeMap<String, Value>) -> Vec<String> {
-    let candidates = [
-        (
-            "dirs.client",
-            optional_bundle_string(inputs, "dirs.client")
-                .unwrap_or_else(|| "app-client".to_owned()),
-        ),
-        (
-            "dirs.ui",
-            optional_bundle_string(inputs, "dirs.ui").unwrap_or_else(|| "app-ui".to_owned()),
-        ),
-        (
-            "dirs.front",
-            optional_bundle_string(inputs, "dirs.front").unwrap_or_else(|| "app-front".to_owned()),
-        ),
-        (
-            "dirs.admin",
-            optional_bundle_string(inputs, "dirs.admin").unwrap_or_else(|| "app-admin".to_owned()),
-        ),
-    ];
-    let mut out: Vec<String> = Vec::new();
-    for (_, value) in candidates {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let owned = trimmed.to_owned();
-        if !out.contains(&owned) {
-            out.push(owned);
-        }
-    }
-    out
 }
 
 pub(super) fn render_toml_string_array(values: &[String]) -> String {
