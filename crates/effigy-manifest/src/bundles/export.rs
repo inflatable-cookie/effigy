@@ -400,6 +400,49 @@ routes = [
   { domain = "minio.{{ inputs.host }}", port = 9001, service = "minio" },
 ]
 
+[tasks.health]
+run = [
+{% if inputs.dirs.docs %}  { task = "{{ inputs.dirs.docs }}/health" },
+{% endif %}  { task = "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/health" },
+  { task = "{% if inputs.dirs.client %}{{ inputs.dirs.client }}{% else %}app-client{% endif %}/health" },
+{% if inputs.dirs.ui %}  { task = "{{ inputs.dirs.ui }}/health" },
+{% endif %}  { task = "{% if inputs.dirs.admin %}{{ inputs.dirs.admin }}{% else %}app-admin{% endif %}/health" },
+  { task = "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}/health" },
+]
+
+[tasks.validate]
+run = [
+  { task = "underlay/validate" },
+{% if inputs.dirs.docs %}  { task = "{{ inputs.dirs.docs }}/validate" },
+{% endif %}  { task = "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/validate" },
+  { task = "{% if inputs.dirs.client %}{{ inputs.dirs.client }}{% else %}app-client{% endif %}/validate" },
+{% if inputs.dirs.ui %}  { task = "{{ inputs.dirs.ui }}/validate" },
+{% endif %}  { task = "{% if inputs.dirs.admin %}{{ inputs.dirs.admin }}{% else %}app-admin{% endif %}/validate" },
+  { task = "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}/validate" },
+]
+
+[tasks.qa]
+run = [
+  { task = "health" },
+  { task = "validate" },
+{% if inputs.dirs.docs %}  { task = "{{ inputs.dirs.docs }}/qa:docs" },
+  { task = "{{ inputs.dirs.docs }}/qa:northstar" },
+{% endif %}]
+
+[tasks.dev]
+mode = "tui"
+container_lifecycle = true
+gateway = true
+health_wait = true
+concurrent = [
+  { name = "admin", task = "{% if inputs.dirs.admin %}{{ inputs.dirs.admin }}{% else %}app-admin{% endif %}/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 6, tab = 1 },
+  { name = "front", task = "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 5, tab = 2 },
+  { name = "jobs", task = "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/jobs", start = 4, tab = 3, start_after_ms = 1500 },
+  { name = "api", task = "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/api", start = 3, tab = 4 },
+  { role = "shell", service = "{{ inputs.workspace_service_name }}", start = 2, tab = 5 },
+  { role = "lifecycle", start = 1, tab = 6 },
+]
+
 [bootstrap]
 run = [
   { rhai = "{{ bundle.root }}/scripts/bootstrap-env.rhai" },
@@ -449,6 +492,55 @@ pub(super) fn underlay_cargo_target_dirs(inputs: &BTreeMap<String, Value>) -> Ve
         out.push("app-api".to_owned());
     }
     out
+}
+
+pub(super) fn underlay_dir_or_default(
+    inputs: &BTreeMap<String, Value>,
+    path: &str,
+    fallback: &str,
+) -> String {
+    optional_bundle_string(inputs, path).unwrap_or_else(|| fallback.to_owned())
+}
+
+pub(super) fn underlay_optional_dir_step(
+    inputs: &BTreeMap<String, Value>,
+    path: &str,
+    fallback: &str,
+    task: &str,
+) -> String {
+    let dir = optional_bundle_string(inputs, path).unwrap_or_else(|| fallback.to_owned());
+    let trimmed = dir.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("  {{ task = \"{trimmed}/{task}\" }},\n")
+    }
+}
+
+pub(super) fn underlay_optional_docs_step(inputs: &BTreeMap<String, Value>, task: &str) -> String {
+    let Some(dir) = optional_bundle_string(inputs, "dirs.docs") else {
+        return String::new();
+    };
+    let trimmed = dir.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("  {{ task = \"{trimmed}/{task}\" }},\n")
+    }
+}
+
+pub(super) fn underlay_optional_docs_qa_steps(inputs: &BTreeMap<String, Value>) -> String {
+    let Some(dir) = optional_bundle_string(inputs, "dirs.docs") else {
+        return String::new();
+    };
+    let trimmed = dir.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "  {{ task = \"{trimmed}/qa:docs\" }},\n  {{ task = \"{trimmed}/qa:northstar\" }},\n"
+        )
+    }
 }
 
 /// Derive `node_modules/` named-volume subprojects for the underlay bundle

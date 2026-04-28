@@ -18,6 +18,9 @@ project_name = "underlay-reference-dev"
 workspace_subdir = "underlay-reference"
 database = "acme"
 
+[bundle.dirs]
+docs = "acme-docs"
+
 [systems.dev]
 mounts = ["../underlay", "../poodle"]
 
@@ -182,6 +185,105 @@ run = "printf seed"
 
     let seed = manifest.tasks.get("seed").expect("seed task");
     assert_eq!(seed.run_in(), ManifestTaskRunIn::Host);
+
+    let health = manifest.tasks.get("health").expect("health task");
+    let ManifestManagedRun::Sequence(health_steps) = health.run.as_ref().expect("health run")
+    else {
+        panic!("health should use a managed sequence");
+    };
+    let health_tasks: Vec<&str> = health_steps
+        .iter()
+        .map(|step| match step {
+            ManifestManagedRunStep::Step(step) => step.task.as_deref().expect("health step task"),
+            ManifestManagedRunStep::Command(_) => {
+                panic!("health should not use bare command steps")
+            }
+        })
+        .collect();
+    assert_eq!(
+        health_tasks,
+        vec![
+            "underlay/check:exports",
+            "underlay/check:component-test-hygiene",
+            "acme-docs/health",
+            "app-api/health",
+            "app-client/health",
+            "app-ui/health",
+            "app-admin/health",
+            "app-front/health",
+        ]
+    );
+
+    let validate = manifest.tasks.get("validate").expect("validate task");
+    let ManifestManagedRun::Sequence(validate_steps) = validate.run.as_ref().expect("validate run")
+    else {
+        panic!("validate should use a managed sequence");
+    };
+    let validate_tasks: Vec<&str> = validate_steps
+        .iter()
+        .map(|step| match step {
+            ManifestManagedRunStep::Step(step) => step.task.as_deref().expect("validate step task"),
+            ManifestManagedRunStep::Command(_) => {
+                panic!("validate should not use bare command steps")
+            }
+        })
+        .collect();
+    assert_eq!(
+        validate_tasks,
+        vec![
+            "underlay/validate",
+            "acme-docs/validate",
+            "app-api/validate",
+            "app-client/validate",
+            "app-ui/validate",
+            "app-admin/validate",
+            "app-front/validate",
+        ]
+    );
+
+    let qa = manifest.tasks.get("qa").expect("qa task");
+    let ManifestManagedRun::Sequence(qa_steps) = qa.run.as_ref().expect("qa run") else {
+        panic!("qa should use a managed sequence");
+    };
+    let qa_tasks: Vec<&str> = qa_steps
+        .iter()
+        .map(|step| match step {
+            ManifestManagedRunStep::Step(step) => step.task.as_deref().expect("qa step task"),
+            ManifestManagedRunStep::Command(_) => panic!("qa should not use bare command steps"),
+        })
+        .collect();
+    assert_eq!(
+        qa_tasks,
+        vec![
+            "health",
+            "validate",
+            "acme-docs/qa:docs",
+            "acme-docs/qa:northstar",
+        ]
+    );
+
+    let dev_task = manifest.tasks.get("dev").expect("dev task");
+    assert_eq!(dev_task.mode.as_deref(), Some("tui"));
+    assert_eq!(dev_task.container_lifecycle, Some(true));
+    assert_eq!(dev_task.gateway, Some(true));
+    assert_eq!(dev_task.health_wait, Some(true));
+    assert_eq!(dev_task.concurrent.len(), 6);
+    let concurrent_tasks: Vec<Option<&str>> = dev_task
+        .concurrent
+        .iter()
+        .map(|entry| entry.task.as_deref())
+        .collect();
+    assert_eq!(
+        concurrent_tasks,
+        vec![
+            Some("app-admin/dev"),
+            Some("app-front/dev"),
+            Some("app-api/jobs"),
+            Some("app-api/api"),
+            None,
+            None,
+        ]
+    );
 
     for task_name in [
         "smoke:error-logging",

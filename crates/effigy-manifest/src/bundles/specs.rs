@@ -6,7 +6,8 @@ use toml::Value;
 use super::export::{
     infer_underlay_bundle_source, materialize_shipped_bundle_assets,
     render_shipped_bundle_template, render_toml_string_array, underlay_bootstrap_sync_paths,
-    underlay_cargo_target_dirs, underlay_node_modules_dirs,
+    underlay_cargo_target_dirs, underlay_dir_or_default, underlay_node_modules_dirs,
+    underlay_optional_dir_step, underlay_optional_docs_qa_steps, underlay_optional_docs_step,
 };
 use super::{
     bundle_shared_root_path, bundle_source_path, derive_bundle_workspace_subdir,
@@ -734,6 +735,45 @@ routes = [
   { domain = "minio.__HOST__", port = 9001, service = "minio" },
 ]
 
+[tasks.health]
+run = [
+  { task = "underlay/check:exports" },
+  { task = "underlay/check:component-test-hygiene" },
+  __DOCS_HEALTH__  { task = "__API_DIR__/health" },
+  { task = "__CLIENT_DIR__/health" },
+  __UI_HEALTH__  { task = "__ADMIN_DIR__/health" },
+  { task = "__FRONT_DIR__/health" },
+]
+
+[tasks.validate]
+run = [
+  { task = "underlay/validate" },
+  __DOCS_VALIDATE__  { task = "__API_DIR__/validate" },
+  { task = "__CLIENT_DIR__/validate" },
+  __UI_VALIDATE__  { task = "__ADMIN_DIR__/validate" },
+  { task = "__FRONT_DIR__/validate" },
+]
+
+[tasks.qa]
+run = [
+  { task = "health" },
+  { task = "validate" },
+  __DOCS_QA__]
+
+[tasks.dev]
+mode = "tui"
+container_lifecycle = true
+gateway = true
+health_wait = true
+concurrent = [
+  { name = "admin", task = "__ADMIN_DIR__/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 6, tab = 1 },
+  { name = "front", task = "__FRONT_DIR__/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 5, tab = 2 },
+  { name = "jobs", task = "__API_DIR__/jobs", start = 4, tab = 3, start_after_ms = 1500 },
+  { name = "api", task = "__API_DIR__/api", start = 3, tab = 4 },
+  { role = "shell", service = "__WORKSPACE_SERVICE_NAME__", start = 2, tab = 5 },
+  { role = "lifecycle", start = 1, tab = 6 },
+]
+
 [bootstrap]
 run = [
   { rhai = "{{ bundle.root }}/scripts/bootstrap-env.rhai" },
@@ -790,6 +830,39 @@ run_in = "host"
             .replace("__UNDERLAY_SOURCE__", &underlay_source)
             .replace("__POODLE_SOURCE__", &poodle_source)
             .replace("__BOOTSTRAP_SYNC_COMMAND__", &bootstrap_sync_command)
+            .replace(
+                "__DOCS_HEALTH__",
+                &underlay_optional_docs_step(inputs, "health"),
+            )
+            .replace(
+                "__DOCS_VALIDATE__",
+                &underlay_optional_docs_step(inputs, "validate"),
+            )
+            .replace("__DOCS_QA__", &underlay_optional_docs_qa_steps(inputs))
+            .replace(
+                "__API_DIR__",
+                &underlay_dir_or_default(inputs, "dirs.api", "app-api"),
+            )
+            .replace(
+                "__CLIENT_DIR__",
+                &underlay_dir_or_default(inputs, "dirs.client", "app-client"),
+            )
+            .replace(
+                "__UI_HEALTH__",
+                &underlay_optional_dir_step(inputs, "dirs.ui", "app-ui", "health"),
+            )
+            .replace(
+                "__UI_VALIDATE__",
+                &underlay_optional_dir_step(inputs, "dirs.ui", "app-ui", "validate"),
+            )
+            .replace(
+                "__ADMIN_DIR__",
+                &underlay_dir_or_default(inputs, "dirs.admin", "app-admin"),
+            )
+            .replace(
+                "__FRONT_DIR__",
+                &underlay_dir_or_default(inputs, "dirs.front", "app-front"),
+            )
             .replace("__CARGO_TARGET_DIRS__", &cargo_target_dirs)
             .replace("__NODE_MODULES_DIRS__", &node_modules_dirs)
             .replace("__DEFAULT_WORKSPACE__", &default_workspace),

@@ -9,6 +9,7 @@ workspace_subdir = "underlay-app"
 database = "acme"
 
 [bundle.dirs]
+docs = "app-docs"
 api = "app-api"
 client = "app-client"
 ui = "app-ui"
@@ -17,39 +18,3 @@ admin = "app-admin"
 
 [systems.dev]
 mounts = []
-
-[tasks.health]
-run_in = "host"
-run = [
-  { task = "app-api/health" },
-  { task = "app-admin/health" },
-  { task = "app-front/health" },
-]
-
-[tasks.validate]
-run_in = "host"
-run = [
-  { task = "app-api/validate" },
-  { task = "app-admin/validate" },
-  { task = "app-front/validate" },
-]
-
-[tasks.qa]
-run_in = "host"
-run = [
-  { task = "health" },
-  { task = "validate" },
-]
-
-[tasks.dev]
-mode = "tui"
-container_lifecycle = true
-gateway = true
-health_wait = true
-concurrent = [
-  { role = "lifecycle", start = 1, tab = 5 },
-  { role = "shell", service = "workspace", start = 2, tab = 4 },
-  { task = "app-api/dev", start = 3, tab = 3 },
-  { name = "front", task = "app-front/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 4, tab = 2 },
-  { name = "admin", task = "app-admin/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 5, tab = 1 },
-]
