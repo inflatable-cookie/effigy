@@ -772,7 +772,7 @@ Notes:
 }
 ```
 
-## Completion and Interactive Tooling
+## Completion
 
 ### 18) Completion (`effigy.completion.v1`)
 
@@ -798,6 +798,8 @@ Notes:
   ]
 }
 ```
+
+## Completion Candidates
 
 ### 19) Completion Candidates (`effigy.completion.candidates.v1`)
 
