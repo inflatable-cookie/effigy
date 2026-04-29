@@ -5,9 +5,14 @@ Use this guide when you want Effigy to feel simple in day-to-day work.
 This page focuses on the common human workflows first, then links to the deeper
 reference pages behind them.
 
+Use this after the quick start. If you still need the first ten minutes, go
+back to [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md).
+
 ## 1) Start By Asking The Repo What Exists
 
-The first question should be "what can this repo already do?"
+Once the CLI is installed and the repo is open, the first useful question is:
+
+- what can this repo already do?
 
 ```sh
 effigy tasks
@@ -32,8 +37,10 @@ effigy test
 effigy app/db:reset
 ```
 
-The important shift is that you stop teaching people where a script lives and
-start teaching them the task name that expresses the intent.
+The shift is simple:
+
+- stop teaching people where a script lives
+- start teaching them the task name that expresses the intent
 
 Deep dive:
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
@@ -78,7 +85,8 @@ effigy watch --owner effigy --once test
 effigy watch --owner effigy --max-runs 2 test
 ```
 
-Use watch mode when you want bounded reruns with explicit ownership rules
+Use watch mode when you want bounded reruns with explicit control over who owns
+the watch loop
 instead of nested watcher loops.
 
 Deep dive:
@@ -120,11 +128,11 @@ Use the commands in this order:
 - `gateway` when the repo declares local domains or TLS-backed routes
 - `exec` when you need one ad-hoc command in the dev container without opening
   a long-lived shell
-- a repo-owned managed task such as `effigy dev` when the repo wants one named
+- a managed task such as `effigy dev` when the repo wants one named
   front door for the whole local session
 
-The important shift is that local bring-up should feel like one product-owned
-path, not one-off compose commands plus wrapper scripts plus tribal knowledge.
+The point is that local bring-up should feel like one built-in path, not
+one-off compose commands plus wrapper scripts plus tribal knowledge.
 
 Deep dive:
 - [`063-container-system-guide.md`](./063-container-system-guide.md)
@@ -183,8 +191,8 @@ effigy demo history login-smoke --limit 5
 effigy demo run login-smoke
 ```
 
-Use demos when the repo should name what the proof covers and keep operator
-review inside one surface.
+Use demos when the repo should name what the proof covers and keep review in
+one place.
 
 Deep dive:
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
@@ -203,9 +211,9 @@ effigy distribution preflight --tag v0.3.0
 effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.3.0
 ```
 
-Use `release` for repo-owned release readiness and mutation flow. Use
+Use `release` for release readiness and mutation flow. Use
 `distribution` for artifact validation, GLIBC checks, first-publish evidence,
-and closeout material where that bounded surface fits your repo.
+and closeout material where that built-in path fits your repo.
 
 Deep dive:
 - [`051-release-orchestration.md`](./051-release-orchestration.md)
@@ -214,7 +222,7 @@ Deep dive:
 
 ## 9) When Effigy Still Feels Hard
 
-That usually means the product surface or manifest still needs work.
+That usually means the built-in path or manifest still needs work.
 
 Common signals:
 
@@ -242,7 +250,7 @@ After this guide, you should have a clearer default path for:
 - using one coherent local-dev path for services, containers, gateway, exec,
   and repo-owned dev sessions
 - using built-ins for health, watch, and scans
-- using demos as an explicit proof surface instead of script sprawl
+- using demos as an explicit proof path instead of script sprawl
 - using native release and distribution commands instead of wrapper-script
   bundles
 - spotting the next piece of repo friction that should move into Effigy

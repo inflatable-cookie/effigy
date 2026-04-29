@@ -40,6 +40,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - The top surfaces were then de-duplicated again so `README.md`, `docs/README.md`,
   `guides/README.md`, and `021` route newcomers through fewer overlapping
   “start here” and “read next” paths.
+- The top docs were then softened again so they read less like maintainers
+  talking to themselves and more like product docs, especially around local
+  dev, demos, and release wording.
 - The `063` container guide was also tightened into a shorter operator page, so
   it focuses more directly on declaration, lifecycle commands, data surfaces,
   and DNS behavior.

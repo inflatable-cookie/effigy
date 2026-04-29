@@ -22,12 +22,10 @@ After that, choose one path below.
 Read:
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
-- [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
 
-Use when:
-- you are learning the CLI
-- you want to run repo tasks without hunting through the repo
-- you need the routing rules
+Then add:
+- [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
+  only when routing still feels ambiguous
 
 ### Build or clean up `effigy.toml`
 
@@ -141,6 +139,8 @@ Use these when you need lookup material, not onboarding:
 - Archive: [`archive/README.md`](./archive/README.md)
 
 ## Full Guide Inventory
+
+This section is inventory, not a recommended reading order.
 
 ### Core Runtime
 
