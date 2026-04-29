@@ -42,10 +42,25 @@ type = "bool"
 default = true
 description = "Mount the host's `~/.ssh/known_hosts` read-only into the workspace container so git/ssh from inside the container does not prompt on first connection to known remotes. Skipped silently when the host file does not exist."
 
+[params.mount_host_ssh_dir]
+type = "bool"
+default = false
+description = "Mount the host's full `~/.ssh` directory read-only at `/home/dev/.ssh` for trusted local-dev cases that depend on private key files, `IdentityFile`, or `IdentitiesOnly`. Takes precedence over the narrower SSH config and known_hosts mounts."
+
+[params.ssh_dir_path]
+type = "string"
+default = ""
+description = "Explicit path to a host SSH directory to mount read-only at `/home/dev/.ssh`. Supports `${VAR}` and `~`. Takes precedence over `mount_host_ssh_dir`, `mount_host_ssh_config`, and `ssh_config_path`."
+
 [params.mount_host_ssh_config]
 type = "bool"
-default = true
-description = "Mount the host's `~/.ssh/config` read-only into the workspace container so deploy/host aliases, identity files, and per-host options defined on the developer's machine apply inside the container without copying. Skipped silently when the host file does not exist."
+default = false
+description = "Mount the host's `~/.ssh/config` read-only into the workspace container when you explicitly want container SSH to reuse a container-safe host config. Disabled by default because many host configs depend on local-only `IdentityFile`, `Include`, or `IdentitiesOnly` rules that should stay explicit in container use. Skipped silently when the host file does not exist."
+
+[params.ssh_config_path]
+type = "string"
+default = ""
+description = "Explicit path to a container-safe SSH config file to mount at `/home/dev/.ssh/config`. Supports `${VAR}` and `~`. Takes precedence over `mount_host_ssh_config`."
 
 [params.forward_host_ssh_agent]
 type = "bool"

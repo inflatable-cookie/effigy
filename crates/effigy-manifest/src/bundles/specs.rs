@@ -222,6 +222,7 @@ catalog = "php-fpm"
 version = "8.4"
 document_root = "."
 isolated_dirs = ["vendor", "node_modules"]
+mount_host_ssh_dir = true
 node_version = "20"
 node_global_packages = ["eclint"]
 composer_global_packages = ["decodelabs/effigy"]

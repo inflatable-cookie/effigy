@@ -222,63 +222,153 @@ mod host_git_mount_tests {
     }
 
     #[test]
-    fn ssh_config_mount_renders_sanitized_copy_when_present() {
+    fn ssh_dir_mount_renders_host_dir_when_enabled() {
+        let home = temp_dir("ssh-dir-present");
+        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+        fs::write(home.join(".ssh").join("config"), "Host deploy\n").expect("write config");
+        let mut params = enabled_params();
+        params.insert("mount_host_ssh_dir".to_owned(), toml::Value::Boolean(true));
+        let config = make_config("php-fpm", params);
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_ssh_dir_mount(&config, "workspace")
+        })
+        .expect("expected mount");
+
+        assert_eq!(mount.target, "/home/dev/.ssh");
+        assert!(mount.rendered.ends_with(":/home/dev/.ssh:ro"));
+        assert!(
+            mount.rendered.contains(home.join(".ssh").to_str().unwrap()),
+            "rendered should reference host dir: {}",
+            mount.rendered
+        );
+    }
+
+    #[test]
+    fn ssh_dir_mount_uses_explicit_path_when_set() {
+        let dir = temp_dir("ssh-dir-explicit");
+        let ssh_dir = dir.join("ssh-home");
+        fs::create_dir_all(&ssh_dir).expect("mkdir ssh dir");
+        fs::write(ssh_dir.join("config"), "Host gideonreeling.co.uk\n").expect("write");
+        let mut params = enabled_params();
+        params.insert(
+            "ssh_dir_path".to_owned(),
+            toml::Value::String(ssh_dir.display().to_string()),
+        );
+        let config = make_config("workspace-rust-bun", params);
+
+        let mount = build_host_ssh_dir_mount(&config, "workspace").expect("expected mount");
+
+        assert_eq!(mount.target, "/home/dev/.ssh");
+        assert!(
+            mount.rendered.contains(ssh_dir.to_str().unwrap()),
+            "rendered should reference explicit dir: {}",
+            mount.rendered
+        );
+    }
+
+    #[test]
+    fn ssh_dir_mount_is_opt_in() {
+        let home = temp_dir("ssh-dir-opt-in");
+        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+        let config = make_config("php-fpm", enabled_params());
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_ssh_dir_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
+    }
+
+    #[test]
+    fn known_hosts_mount_skipped_when_full_ssh_dir_is_enabled() {
+        let home = temp_dir("known-hosts-skip-full-ssh");
+        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+        fs::write(
+            home.join(".ssh").join("known_hosts"),
+            "github.com ssh-ed25519 AAAA",
+        )
+        .expect("write known_hosts");
+        let mut params = enabled_params();
+        params.insert("mount_host_ssh_dir".to_owned(), toml::Value::Boolean(true));
+        let config = make_config("node", params);
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_ssh_known_hosts_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
+    }
+
+    #[test]
+    fn ssh_config_mount_renders_host_file_when_enabled() {
         let home = temp_dir("ssh-config-present");
-        let repo = temp_dir("ssh-config-present-repo");
         fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
         fs::write(
             home.join(".ssh").join("config"),
             "Host deploy\n  Hostname deploy.example.com\n  User deploy\n  IdentityFile ~/.ssh/id_ed25519\n  IdentitiesOnly yes\n",
         )
         .expect("write ssh config");
-        let config = make_config("php-fpm", enabled_params());
+        let mut params = enabled_params();
+        params.insert(
+            "mount_host_ssh_config".to_owned(),
+            toml::Value::Boolean(true),
+        );
+        let config = make_config("php-fpm", params);
 
         let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&repo, &config, "workspace")
+            build_host_ssh_config_mount(&config, "workspace")
         })
-        .expect("ok")
         .expect("expected mount");
 
         assert_eq!(mount.target, "/home/dev/.ssh/config");
         assert!(mount.rendered.ends_with(":/home/dev/.ssh/config:ro"));
-        let materialized = repo.join(".effigy/runtime/ssh/config");
         assert!(
-            mount.rendered.contains(materialized.to_str().unwrap()),
-            "rendered should reference materialized path: {}",
+            mount
+                .rendered
+                .contains(home.join(".ssh").join("config").to_str().unwrap()),
+            "rendered should reference host path: {}",
             mount.rendered
         );
-        let body = fs::read_to_string(&materialized).expect("read materialized config");
-        assert!(body.contains("Host deploy"));
-        assert!(body.contains("Hostname deploy.example.com"));
-        assert!(body.contains("User deploy"));
-        assert!(
-            !body.to_lowercase().contains("identityfile"),
-            "IdentityFile should be stripped: {body}"
+    }
+
+    #[test]
+    fn ssh_config_mount_skipped_when_full_ssh_dir_is_enabled() {
+        let home = temp_dir("ssh-config-skip-full-ssh");
+        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+        fs::write(home.join(".ssh").join("config"), "Host x\n").expect("write");
+        let mut params = enabled_params();
+        params.insert("mount_host_ssh_dir".to_owned(), toml::Value::Boolean(true));
+        params.insert(
+            "mount_host_ssh_config".to_owned(),
+            toml::Value::Boolean(true),
         );
-        assert!(
-            !body.to_lowercase().contains("identitiesonly"),
-            "IdentitiesOnly should be stripped: {body}"
-        );
+        let config = make_config("php-fpm", params);
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_ssh_config_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
     }
 
     #[test]
     fn ssh_config_mount_skipped_when_host_file_missing() {
         let home = temp_dir("ssh-config-missing");
-        let repo = temp_dir("ssh-config-missing-repo");
         fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
-        let config = make_config("workspace-rust-bun", enabled_params());
+        let mut params = enabled_params();
+        params.insert(
+            "mount_host_ssh_config".to_owned(),
+            toml::Value::Boolean(true),
+        );
+        let config = make_config("workspace-rust-bun", params);
 
         let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&repo, &config, "workspace")
-        })
-        .expect("ok");
+            build_host_ssh_config_mount(&config, "workspace")
+        });
         assert!(mount.is_none());
     }
 
     #[test]
     fn ssh_config_mount_skipped_when_param_disabled() {
         let home = temp_dir("ssh-config-disabled");
-        let repo = temp_dir("ssh-config-disabled-repo");
         fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
         fs::write(home.join(".ssh").join("config"), "Host x\n").expect("write");
         let mut params = enabled_params();
@@ -289,46 +379,102 @@ mod host_git_mount_tests {
         let config = make_config("php-fpm", params);
 
         let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&repo, &config, "workspace")
-        })
-        .expect("ok");
+            build_host_ssh_config_mount(&config, "workspace")
+        });
         assert!(mount.is_none());
     }
 
     #[test]
     fn ssh_config_mount_skipped_for_non_workspace_catalogs() {
         let home = temp_dir("ssh-config-non-workspace");
-        let repo = temp_dir("ssh-config-non-workspace-repo");
         fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
         fs::write(home.join(".ssh").join("config"), "Host x\n").expect("write");
-        let config = make_config("postgres", enabled_params());
+        let mut params = enabled_params();
+        params.insert(
+            "mount_host_ssh_config".to_owned(),
+            toml::Value::Boolean(true),
+        );
+        let config = make_config("postgres", params);
 
         let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&repo, &config, "workspace")
-        })
-        .expect("ok");
+            build_host_ssh_config_mount(&config, "workspace")
+        });
         assert!(mount.is_none());
     }
 
     #[test]
-    fn ssh_config_sanitizer_strips_identity_lines_case_insensitive() {
-        let raw = "Host deploy\n  HostName deploy.example.com\n  IDENTITYFILE ~/.ssh/id_a\n\tidentitiesonly yes\n  User deploy\n  ProxyJump bastion\n";
-        let cleaned = super::super::sanitize_ssh_config_for_container(raw);
-        assert!(cleaned.contains("Host deploy"));
-        assert!(cleaned.contains("HostName deploy.example.com"));
-        assert!(cleaned.contains("User deploy"));
-        assert!(cleaned.contains("ProxyJump bastion"));
-        assert!(!cleaned.to_lowercase().contains("identityfile"));
-        assert!(!cleaned.to_lowercase().contains("identitiesonly"));
+    fn ssh_config_mount_uses_explicit_path_when_set() {
+        let dir = temp_dir("ssh-config-explicit");
+        let config_path = dir.join("ssh_config");
+        fs::write(&config_path, "Host gideonreeling.co.uk\n  User tom\n").expect("write");
+        let mut params = enabled_params();
+        params.insert(
+            "ssh_config_path".to_owned(),
+            toml::Value::String(config_path.display().to_string()),
+        );
+        let config = make_config("php-fpm", params);
+
+        let mount = build_host_ssh_config_mount(&config, "workspace").expect("expected mount");
+
+        assert_eq!(mount.target, "/home/dev/.ssh/config");
+        assert!(
+            mount.rendered.contains(config_path.to_str().unwrap()),
+            "rendered should reference explicit path: {}",
+            mount.rendered
+        );
     }
 
     #[test]
-    fn ssh_config_sanitizer_handles_equals_separator() {
-        let raw = "Host x\n  IdentityFile=~/.ssh/id\n  IdentitiesOnly=yes\n  User=tom\n";
-        let cleaned = super::super::sanitize_ssh_config_for_container(raw);
-        assert!(cleaned.contains("User=tom"));
-        assert!(!cleaned.to_lowercase().contains("identityfile"));
-        assert!(!cleaned.to_lowercase().contains("identitiesonly"));
+    fn ssh_config_mount_explicit_path_wins_over_host_toggle() {
+        let home = temp_dir("ssh-config-precedence-home");
+        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+        fs::write(home.join(".ssh").join("config"), "Host from-home\n").expect("write");
+
+        let dir = temp_dir("ssh-config-precedence-explicit");
+        let config_path = dir.join("ssh_config");
+        fs::write(&config_path, "Host from-explicit\n").expect("write");
+
+        let mut params = enabled_params();
+        params.insert(
+            "mount_host_ssh_config".to_owned(),
+            toml::Value::Boolean(true),
+        );
+        params.insert(
+            "ssh_config_path".to_owned(),
+            toml::Value::String(config_path.display().to_string()),
+        );
+        let config = make_config("php-fpm", params);
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_ssh_config_mount(&config, "workspace")
+        })
+        .expect("expected mount");
+
+        assert!(
+            mount.rendered.contains(config_path.to_str().unwrap()),
+            "explicit path should win over host toggle: {}",
+            mount.rendered
+        );
+        assert!(
+            !mount
+                .rendered
+                .contains(home.join(".ssh").join("config").to_str().unwrap()),
+            "host path should not be used when explicit path is set: {}",
+            mount.rendered
+        );
+    }
+
+    #[test]
+    fn ssh_config_mount_is_opt_in() {
+        let home = temp_dir("ssh-config-opt-in");
+        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+        fs::write(home.join(".ssh").join("config"), "Host x\n").expect("write");
+        let config = make_config("workspace-rust-bun", enabled_params());
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_ssh_config_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
     }
 
     #[test]

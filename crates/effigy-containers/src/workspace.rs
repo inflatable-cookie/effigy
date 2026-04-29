@@ -11,7 +11,10 @@ use effigy_manifest::{
     ManifestWorkspaceConfig,
 };
 
-use crate::{policy_support::effigy_home_dir, ContainerPolicyError, EffectiveContainerPolicy};
+use crate::{
+    mount_spec::expand_host_path, policy_support::effigy_home_dir, ContainerPolicyError,
+    EffectiveContainerPolicy,
+};
 
 const PHP_FPM_COMPOSER_HOME_TARGET: &str = "/home/dev/.config/composer";
 const PHP_FPM_COMPOSER_CACHE_TARGET: &str = "/home/dev/.cache/composer";
@@ -28,9 +31,13 @@ const HOST_MKCERT_ROOT_CA_TARGET: &str = "/usr/local/share/ca-certificates/effig
 /// Container target for the host `~/.ssh/known_hosts` mount.
 const HOST_SSH_KNOWN_HOSTS_TARGET: &str = "/home/dev/.ssh/known_hosts";
 
-/// Container target for the host `~/.ssh/config` mount. Mounted read-only
-/// so deploy/host aliases, identity files, and per-host options defined on
-/// the developer's machine apply inside the container without copying.
+/// Container target for the host SSH directory mount when the caller opts
+/// into reusing a full host SSH home inside the workspace container.
+const HOST_SSH_DIR_TARGET: &str = "/home/dev/.ssh";
+
+/// Container target for the SSH config file mounted into workspace
+/// containers. The source may be the host's `~/.ssh/config` when explicitly
+/// enabled, or a dedicated per-machine config path via `ssh_config_path`.
 const HOST_SSH_CONFIG_TARGET: &str = "/home/dev/.ssh/config";
 
 /// Container target where Colima's forwarded host SSH agent socket is bind
@@ -301,11 +308,15 @@ fn build_workspace_runtime_mounts(
     if let Some(mount) = build_host_git_config_mount(config, primary_service) {
         mounts.push(mount);
     }
-    if let Some(mount) = build_host_ssh_known_hosts_mount(config, primary_service) {
+    if let Some(mount) = build_host_ssh_dir_mount(config, primary_service) {
         mounts.push(mount);
-    }
-    if let Some(mount) = build_host_ssh_config_mount(repo_root, config, primary_service)? {
-        mounts.push(mount);
+    } else {
+        if let Some(mount) = build_host_ssh_known_hosts_mount(config, primary_service) {
+            mounts.push(mount);
+        }
+        if let Some(mount) = build_host_ssh_config_mount(config, primary_service) {
+            mounts.push(mount);
+        }
     }
     if let Some(mount) = build_host_ssh_agent_mount(config, primary_service) {
         mounts.push(mount);
@@ -350,6 +361,12 @@ fn build_host_ssh_known_hosts_mount(
     primary_service: &str,
 ) -> Option<RenderedWorkspaceMount> {
     let service = config.services.get(primary_service)?;
+    if resolve_host_ssh_dir_path(service)
+        .as_deref()
+        .is_some_and(Path::is_dir)
+    {
+        return None;
+    }
     if !is_git_aware_workspace_service(service)
         || !service_bool_param(service, "mount_host_ssh_known_hosts", true)
     {
@@ -367,93 +384,83 @@ fn build_host_ssh_known_hosts_mount(
     })
 }
 
-/// Materialize a sanitized copy of the host's `~/.ssh/config` under
-/// `<repo_root>/.effigy/runtime/ssh/config` and bind-mount that file
-/// read-only at [`HOST_SSH_CONFIG_TARGET`].
+/// Bind-mount the host's `~/.ssh/config` read-only at
+/// [`HOST_SSH_CONFIG_TARGET`] when the caller explicitly opts in.
 ///
-/// Why sanitize rather than mount directly: a typical developer config
-/// declares `IdentityFile ~/.ssh/...` and `IdentitiesOnly yes` per host.
-/// Inside the container the private keys are not present (auth runs
-/// through the forwarded SSH agent), and `IdentitiesOnly yes` would tell
-/// ssh to ignore the agent — so deploys would fail with "Permission
-/// denied (publickey)". The sanitized copy keeps alias-mapping
-/// directives (`Hostname`, `User`, `Port`, `ProxyJump`, etc.) so host
-/// aliases still resolve, while letting the agent supply keys.
+/// This stays off by default. Many host SSH configs depend on local-only
+/// `IdentityFile`, `Include`, or `IdentitiesOnly` rules that do not map
+/// cleanly into the container. Effigy now prefers the simpler default:
+/// forwarded SSH agent plus `known_hosts` plus `gitconfig`, with full SSH
+/// config mounting reserved for container-safe explicit setups.
 ///
-/// Returns `Ok(None)` (silently skipped) when:
+/// Returns `None` (silently skipped) when:
 /// - the primary service is not a git-aware workspace catalog,
-/// - `mount_host_ssh_config = false` per service,
-/// - or the host has no `~/.ssh/config`.
+/// - `ssh_config_path` and `mount_host_ssh_config` are both unset,
+/// - the configured path cannot be expanded,
+/// - or the selected host file does not exist.
 fn build_host_ssh_config_mount(
-    repo_root: &Path,
     config: &ManifestContainerConfig,
     primary_service: &str,
-) -> Result<Option<RenderedWorkspaceMount>, ContainerPolicyError> {
+) -> Option<RenderedWorkspaceMount> {
     let Some(service) = config.services.get(primary_service) else {
-        return Ok(None);
+        return None;
     };
-    if !is_git_aware_workspace_service(service)
-        || !service_bool_param(service, "mount_host_ssh_config", true)
+    if !is_git_aware_workspace_service(service) {
+        return None;
+    }
+    if resolve_host_ssh_dir_path(service)
+        .as_deref()
+        .is_some_and(Path::is_dir)
     {
-        return Ok(None);
+        return None;
     }
-    let Some(home) = host_home_dir() else {
-        return Ok(None);
+
+    let host_path = if let Some(raw) = service_string_param(service, "ssh_config_path") {
+        let expanded = expand_host_path(raw).ok()?;
+        PathBuf::from(expanded)
+    } else if service_bool_param(service, "mount_host_ssh_config", false) {
+        let home = host_home_dir()?;
+        home.join(".ssh").join("config")
+    } else {
+        return None;
     };
-    let host_path = home.join(".ssh").join("config");
+
     if !host_path.is_file() {
-        return Ok(None);
+        return None;
     }
-    let raw = std::fs::read_to_string(&host_path).map_err(|error| ContainerPolicyError::Read {
-        path: host_path.clone(),
-        error,
-    })?;
-    let sanitized = sanitize_ssh_config_for_container(&raw);
-
-    let runtime_dir = repo_root.join(".effigy").join("runtime").join("ssh");
-    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
-        path: repo_root.join(".gitignore"),
-        error,
-    })?;
-    std::fs::create_dir_all(&runtime_dir).map_err(|error| ContainerPolicyError::Read {
-        path: runtime_dir.clone(),
-        error,
-    })?;
-    let materialized = runtime_dir.join("config");
-    std::fs::write(&materialized, sanitized).map_err(|error| ContainerPolicyError::Read {
-        path: materialized.clone(),
-        error,
-    })?;
-
-    Ok(Some(RenderedWorkspaceMount {
+    Some(RenderedWorkspaceMount {
         target: HOST_SSH_CONFIG_TARGET.to_owned(),
-        rendered: format!("{}:{HOST_SSH_CONFIG_TARGET}:ro", materialized.display()),
+        rendered: format!("{}:{HOST_SSH_CONFIG_TARGET}:ro", host_path.display()),
         source: None,
         named_volume: None,
-    }))
+    })
 }
 
-/// Strip directives that don't apply inside the container: `IdentityFile`
-/// (paths reference host-side keys not mounted) and `IdentitiesOnly`
-/// (would force ssh to ignore the forwarded agent). Matching is
-/// case-insensitive on the first non-whitespace token; the rest of the
-/// file is preserved verbatim so alias mapping remains intact.
-fn sanitize_ssh_config_for_container(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for line in input.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        let first_token = trimmed
-            .split(|c: char| c.is_whitespace() || c == '=')
-            .next()
-            .unwrap_or("");
-        if first_token.eq_ignore_ascii_case("IdentityFile")
-            || first_token.eq_ignore_ascii_case("IdentitiesOnly")
-        {
-            continue;
-        }
-        out.push_str(line);
+/// Bind-mount a full host SSH directory read-only at [`HOST_SSH_DIR_TARGET`]
+/// when the caller explicitly opts into legacy or key-file-based SSH
+/// behavior inside the container.
+///
+/// This is a trusted local-dev escape hatch, not the default path. It gives
+/// container processes direct read access to whatever private keys, config,
+/// and known_hosts entries live under the mounted SSH directory.
+fn build_host_ssh_dir_mount(
+    config: &ManifestContainerConfig,
+    primary_service: &str,
+) -> Option<RenderedWorkspaceMount> {
+    let service = config.services.get(primary_service)?;
+    if !is_git_aware_workspace_service(service) {
+        return None;
     }
-    out
+    let host_path = resolve_host_ssh_dir_path(service)?;
+    if !host_path.is_dir() {
+        return None;
+    }
+    Some(RenderedWorkspaceMount {
+        target: HOST_SSH_DIR_TARGET.to_owned(),
+        rendered: format!("{}:{HOST_SSH_DIR_TARGET}:ro", host_path.display()),
+        source: None,
+        named_volume: None,
+    })
 }
 
 fn build_host_ssh_agent_mount(
@@ -897,6 +904,30 @@ fn service_bool_param(service: &ManifestContainerServiceConfig, key: &str, defau
         .get(key)
         .and_then(|value| value.as_bool())
         .unwrap_or(default)
+}
+
+fn resolve_host_ssh_dir_path(service: &ManifestContainerServiceConfig) -> Option<PathBuf> {
+    if let Some(raw) = service_string_param(service, "ssh_dir_path") {
+        let expanded = expand_host_path(raw).ok()?;
+        return Some(PathBuf::from(expanded));
+    }
+    if service_bool_param(service, "mount_host_ssh_dir", false) {
+        let home = host_home_dir()?;
+        return Some(home.join(".ssh"));
+    }
+    None
+}
+
+fn service_string_param<'a>(
+    service: &'a ManifestContainerServiceConfig,
+    key: &str,
+) -> Option<&'a str> {
+    service
+        .params
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn detect_host_composer_home() -> Result<Option<PathBuf>, ContainerPolicyError> {
