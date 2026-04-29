@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-04-29
+
 ### Added
 - Cross-repo agent skill at `skills/effigy/` teaching AI coding assistants
   (Claude Code, OpenAI Codex, Cursor, etc.) how to discover tasks, run
@@ -17,12 +19,6 @@ During v0.x, MINOR bumps may include breaking changes.
   bundle now supports optional `zest_port` / `zest_domain` inputs so legacy
   DecodeLabs sites can route a temporary Zest/Vite dev server through the
   local gateway instead of leaving it stranded on an internal container port.
-
-### Fixed
-- Task catalog discovery now skips `vendor/` as well as `node_modules/`,
-  `target/`, and `.effigy/`, avoiding slow scans and accidental task discovery
-  from dependency and build trees.
-- `php-fpm` catalog builds no longer fetch `install-php-extensions` from a live GitHub release URL during image build, avoiding transient 5xx failures on fresh PHP workspace and `decodelabs-library` builds.
 
 ### Changed
 - PHP workspaces now share one Effigy-managed Composer-home volume by default
@@ -37,6 +33,12 @@ During v0.x, MINOR bumps may include breaking changes.
 - The docs front doors and core guides were heavily tightened for new users:
   onboarding, install, local-dev, release, and catalog-authoring paths are now
   clearer, less repetitive, and less maintainers-only in tone.
+
+### Fixed
+- Task catalog discovery now skips `vendor/` as well as `node_modules/`,
+  `target/`, and `.effigy/`, avoiding slow scans and accidental task discovery
+  from dependency and build trees.
+- `php-fpm` catalog builds no longer fetch `install-php-extensions` from a live GitHub release URL during image build, avoiding transient 5xx failures on fresh PHP workspace and `decodelabs-library` builds.
 
 ## [0.3.0] - 2026-04-28
 
