@@ -509,13 +509,8 @@ working_dir = "/var/www/html"
             "rewritten compose should not mount the host composer home by default: {rewritten}"
         );
         assert!(
-            rewritten.contains("/shared/composer/auth.json:/home/dev/.config/composer/auth.json"),
-            "rewritten compose should mount shared composer auth by default: {rewritten}"
-        );
-        assert!(
-            rewritten
-                .contains("/shared/composer/config.json:/home/dev/.config/composer/config.json"),
-            "rewritten compose should mount shared composer config by default: {rewritten}"
+            rewritten.contains(":/home/dev/.config/composer"),
+            "rewritten compose should mount a shared composer home by default: {rewritten}"
         );
         assert!(
             rewritten.contains("/shared/composer-cache:/home/dev/.cache/composer"),
@@ -557,13 +552,8 @@ working_dir = "/var/www/html"
         let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
 
         assert!(
-            !rewritten.contains("/shared/composer/auth.json:/home/dev/.config/composer/auth.json"),
-            "rewritten compose should not mount shared composer auth when disabled: {rewritten}"
-        );
-        assert!(
-            !rewritten
-                .contains("/shared/composer/config.json:/home/dev/.config/composer/config.json"),
-            "rewritten compose should not mount shared composer config when disabled: {rewritten}"
+            !rewritten.contains(":/home/dev/.config/composer"),
+            "rewritten compose should not mount shared composer home when disabled: {rewritten}"
         );
         assert!(
             !rewritten.contains("/shared/composer-cache:/home/dev/.cache/composer"),
