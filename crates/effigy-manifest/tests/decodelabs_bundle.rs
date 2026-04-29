@@ -292,6 +292,73 @@ databases = ["contactpatch", "contactpatch_test"]
 }
 
 #[test]
+fn decodelabs_bundle_can_publish_optional_zest_route() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "decodelabs"
+host = "gideon.legacy.test"
+project_name = "gideon-dev"
+databases = ["gideon"]
+zest_port = 8938
+"#,
+    )
+    .expect("write manifest");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let web = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("web"))
+        .expect("web container");
+    let app = web.services.get("app").expect("app service");
+    let host_ports = app
+        .params
+        .get("host_ports")
+        .and_then(|value| value.as_array())
+        .expect("host_ports");
+    assert_eq!(
+        host_ports
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["8938:8938"]
+    );
+
+    let dns = web.dns.as_ref().expect("dns");
+    let routes = dns
+        .routes
+        .iter()
+        .map(|route| {
+            (
+                route.domain.as_str(),
+                route.service.as_deref(),
+                route.port,
+                route.tls,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        routes,
+        vec![
+            ("gideon.legacy.test", Some("web"), None, Some(true)),
+            ("pma.gideon.legacy.test", Some("pma"), None, Some(true)),
+            (
+                "zest.gideon.legacy.test",
+                Some("app"),
+                Some(8938),
+                Some(true)
+            ),
+        ]
+    );
+}
+
+#[test]
 fn decodelabs_bundle_can_extend_bundle_provided_dns_routes() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("effigy.toml");

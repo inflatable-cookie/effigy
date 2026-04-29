@@ -631,6 +631,16 @@ memory = 128
         "Dockerfile should use install-php-extensions"
     );
     assert!(
+        dockerfile_content.contains("COPY --from=mlocati/php-extension-installer:latest"),
+        "Dockerfile should copy install-php-extensions from the published installer image"
+    );
+    assert!(
+        !dockerfile_content.contains(
+            "https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions"
+        ),
+        "Dockerfile should not depend on the live GitHub release download URL at build time"
+    );
+    assert!(
         dockerfile_content.contains("composer"),
         "Dockerfile should install Composer"
     );

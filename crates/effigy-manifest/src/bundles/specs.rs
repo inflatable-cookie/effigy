@@ -80,6 +80,9 @@ pub(super) fn resolve_decodelabs_bundle(
         .unwrap_or_else(|| "app".to_owned());
     let default_workspace =
         optional_bundle_string(inputs, "default_workspace").unwrap_or_else(|| "app".to_owned());
+    let zest_port = optional_bundle_integer(inputs, "zest_port");
+    let zest_domain =
+        optional_bundle_string(inputs, "zest_domain").unwrap_or_else(|| format!("zest.{host}"));
 
     let rendered = DECODELABS_DEFAULTS_TEMPLATE
         .replace("__HOST__", &host)
@@ -96,11 +99,58 @@ pub(super) fn resolve_decodelabs_bundle(
             "__PHP_EXTENSIONS__",
             &render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  "),
         )
+        .replace(
+            "__ZEST_ROUTE__",
+            &decodelabs_zest_route_line(zest_port, &zest_domain, &workspace_service_name)?,
+        )
+        .replace(
+            "__ZEST_HOST_PORTS__",
+            &decodelabs_zest_host_ports_lines(zest_port)?,
+        )
         .replace("__DEFAULT_WORKSPACE__", &default_workspace);
 
     toml::from_str::<Value>(&rendered).map_err(|error| ManifestError::Parse {
         path: bundle_source_path("decodelabs"),
         error,
+    })
+}
+
+fn decodelabs_zest_route_line(
+    port: Option<i64>,
+    domain: &str,
+    workspace_service_name: &str,
+) -> Result<String, ManifestError> {
+    let Some(port) = port else {
+        return Ok(String::new());
+    };
+    let port = decodelabs_zest_port(port)?;
+    Ok(format!(
+        "  {{ domain = \"{domain}\", tls = true, port = {port}, service = \"{workspace_service_name}\" }},"
+    ))
+}
+
+fn decodelabs_zest_host_ports_lines(port: Option<i64>) -> Result<String, ManifestError> {
+    let Some(port) = port else {
+        return Ok(String::new());
+    };
+    let port = decodelabs_zest_port(port)?;
+    Ok(format!("  \"{port}:{port}\""))
+}
+
+fn decodelabs_zest_port(port: i64) -> Result<u16, ManifestError> {
+    if port <= 0 {
+        return Err(ManifestError::Render {
+            path: bundle_source_path("decodelabs"),
+            detail: format!(
+                "invalid `decodelabs` bundle input `zest_port = {port}`; expected a port in the range 1-65535"
+            ),
+        });
+    }
+    u16::try_from(port).map_err(|_| ManifestError::Render {
+        path: bundle_source_path("decodelabs"),
+        detail: format!(
+            "invalid `decodelabs` bundle input `zest_port = {port}`; expected a port in the range 1-65535"
+        ),
     })
 }
 

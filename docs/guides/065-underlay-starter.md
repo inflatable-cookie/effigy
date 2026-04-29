@@ -292,6 +292,8 @@ databases = ["my_database"]
 | `host`                   | _required_  | Primary local hostname. Gateway registers the `web` service on `<host>` and `pma.<host>`. |
 | `project_name`           | _required_  | Docker Compose project name for the generated stack.                          |
 | `databases`              | _required_  | MariaDB databases to create for the stack. Use `["app"]` for the normal single-db case; the first entry is also wired into the `mysql` workspace alias. |
+| `zest_port`              | optional    | Publish and gateway-route a temporary Zest/Vite dev server running inside the `app` workspace service. Use the same fixed port as the site's `vite.config.ts`. |
+| `zest_domain`            | optional    | Override the Zest/Vite route hostname. Defaults to `zest.<host>` when `zest_port` is set. |
 | `system_name`            | `"dev"`     | Name of the `[systems.<name>]` block rendered by the bundle.                  |
 | `container_name`         | `"web"`     | Name of the `[containers.<name>]` block and the default container.            |
 | `workspace_service_name` | `"app"`     | Name of the php-fpm service (also the `php` alias target and the `composer` service). |
@@ -312,8 +314,11 @@ databases = ["my_database"]
 
 - `https://<host>` -> `web`
 - `https://pma.<host>` -> `pma`
+- `https://zest.<host>` -> `app:<zest_port>` when `zest_port` is set
 
 TLS is enabled by default through `effigy gateway setup-tls`.
+The temporary Zest/Vite process still needs to bind `0.0.0.0` on that same
+fixed port for the route to answer from the host.
 
 ### Bundled tasks
 

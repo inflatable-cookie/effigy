@@ -497,6 +497,45 @@ fn php_fpm_supports_explicit_decodelabs_style_service_params() {
 }
 
 #[test]
+fn php_fpm_publishes_host_ports_when_requested() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "app".to_string(),
+        catalog: "php-fpm".to_string(),
+        params: {
+            let mut p = HashMap::new();
+            p.insert(
+                "host_ports".to_string(),
+                toml::Value::Array(vec![toml::Value::String("8938:8938".to_string())]),
+            );
+            p
+        },
+        variant: None,
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(
+            &services,
+            "test-project",
+            ".",
+            ".effigy-catalog",
+            1000,
+            1000,
+        )
+        .unwrap();
+
+    assert!(
+        result.compose_yaml.contains("ports:\n    - 8938:8938")
+            || result.compose_yaml.contains("ports:\n    - \"8938:8938\""),
+        "php-fpm should publish explicit host ports when requested:\n{}",
+        result.compose_yaml
+    );
+}
+
+#[test]
 fn assemble_full_lemp_stack() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
