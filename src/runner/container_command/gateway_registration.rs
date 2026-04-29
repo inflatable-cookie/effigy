@@ -270,15 +270,7 @@ fn resolve_gateway_shared_service_alias_routes(
     let occupied_domains = occupied_service_alias_domains(policy, project_alias_routes);
     let mut routes = Vec::new();
     for shared in &policy.shared_services {
-        let Some((domain_label, container_port)) =
-            effigy_containers::service_alias_contract(&shared.catalog)
-        else {
-            continue;
-        };
-        if shared.container_port != container_port {
-            continue;
-        }
-        let domain = format!("{domain_label}.{base_domain}");
+        let domain = format!("{}.{}", shared.domain_label, base_domain);
         if occupied_domains.contains(domain.as_str()) {
             continue;
         }
@@ -291,7 +283,7 @@ fn resolve_gateway_shared_service_alias_routes(
             domain,
             target: None,
             dns_ip: Some(loopback_ip),
-            tcp_port: Some(container_port),
+            tcp_port: Some(shared.container_port),
             tcp_target: if allocate_if_missing {
                 Some(format!("127.0.0.1:{}", shared.host_port))
             } else {

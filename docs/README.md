@@ -47,6 +47,7 @@ Start here:
 Then go deeper with:
 - [`guides/065-underlay-starter.md`](./guides/065-underlay-starter.md)
 - [`guides/067-catalog-services-reference.md`](./guides/067-catalog-services-reference.md)
+- [`guides/071-catalog-service-authoring.md`](./guides/071-catalog-service-authoring.md)
 - [`guides/069-workspace-host-integration.md`](./guides/069-workspace-host-integration.md)
 - [`guides/070-per-machine-overlays-and-external-mounts.md`](./guides/070-per-machine-overlays-and-external-mounts.md)
 

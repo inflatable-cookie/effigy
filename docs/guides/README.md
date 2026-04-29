@@ -47,6 +47,7 @@ Read:
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
 - [`065-underlay-starter.md`](./065-underlay-starter.md)
 - [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
+- [`071-catalog-service-authoring.md`](./071-catalog-service-authoring.md)
 - [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
 - [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)
 
@@ -54,6 +55,8 @@ Use when:
 - you want services, workspaces, gateway routing, and local domains
 - you are adopting the shipped bundles or service catalog
 - you need mounts, isolation, or per-machine overlays
+
+Use `071` only when you are changing the shipped catalog itself.
 
 ### Define and operate demos
 
@@ -183,6 +186,7 @@ This section is inventory, not a recommended reading order.
 - [`065-underlay-starter.md`](./065-underlay-starter.md)
 - [`066-local-manifest-bundles.md`](./066-local-manifest-bundles.md)
 - [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
+- [`071-catalog-service-authoring.md`](./071-catalog-service-authoring.md)
 - [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md)
 - [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
 - [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)

@@ -8,11 +8,8 @@ These fragments are what make `services.<svc> catalog = "<name>"` work. Each
 one is a small pinned compose fragment with a narrow parameter surface and
 explicit defaults.
 
-## Vision Alignment
-
-- Primary tags: `OPERATE`, `CONTRACT`, `ADOPT`
-- Target movement: one shipped reference for the whole catalog instead of
-  reading each `service.toml` in isolation.
+If you want to author or change a catalog service, use
+[`071-catalog-service-authoring.md`](./071-catalog-service-authoring.md).
 
 ## How To Use A Catalog Service
 
@@ -38,7 +35,7 @@ catalog = "postgres"
 catalog = "redis"
 ```
 
-Inspect the shipped catalog surface directly:
+Inspect the shipped bundle surface directly:
 
 ```sh
 effigy bundle list

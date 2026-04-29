@@ -259,6 +259,7 @@ primary_service = "app"
     policy.shared_services = vec![SharedServiceBinding {
         service_name: "db".to_owned(),
         catalog: "mariadb".to_owned(),
+        domain_label: "mysql".to_owned(),
         project_name: "effigy-shared-mariadb-deadbeef".to_owned(),
         compose_file: PathBuf::from("/tmp/shared/.effigy-compose.generated.yml"),
         host: "host.docker.internal".to_owned(),

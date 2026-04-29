@@ -17,6 +17,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Fixed
 
 ### Changed
+
+- Added a dedicated catalog service authoring guide and clarified the split
+  between consumer-facing catalog reference docs and shipped catalog source
+  ownership.
 - Workspace catalogs no longer mount the host's `~/.ssh/config` by default or rewrite it on the way into the container. The default SSH path is now simpler: forwarded agent plus `known_hosts` plus `gitconfig`, with full SSH config mounting as an explicit opt-in only when you have a container-safe config file.
 - Workspace catalogs now also accept `ssh_config_path` for the explicit container-safe SSH config case, so hosts that rely on `User`, alias, or bastion rules do not need the full host `~/.ssh/config` mounted wholesale.
 - Workspace catalogs now also accept `mount_host_ssh_dir` / `ssh_dir_path` for the trusted local-dev case where container SSH genuinely depends on private key files or `IdentityFile` rules. When enabled, Effigy mounts a full SSH directory read-only and skips the narrower SSH file mounts.
