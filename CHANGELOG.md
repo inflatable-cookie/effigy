@@ -24,6 +24,9 @@ During v0.x, MINOR bumps may include breaking changes.
   with the practical container guide, the release path no longer points at a
   deprecated runbook, and deprecated adoption pages stop reading like active
   inventory.
+- The main onboarding path was then tightened again so the root README starts
+  with existing-repo versus new-repo first steps, and the quick-start guides
+  stop carrying internal “Vision Alignment” framing at the top.
 - The `063` container guide was also tightened into a shorter operator page, so
   it focuses more directly on declaration, lifecycle commands, data surfaces,
   and DNS behavior.

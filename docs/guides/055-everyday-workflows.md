@@ -5,12 +5,6 @@ Use this guide when you want Effigy to feel simple in day-to-day work.
 This page focuses on the common human workflows first, then links to the deeper
 reference pages behind them.
 
-## Vision Alignment
-
-- Primary tags: `OPERATE`, `ROUTE`, `ADOPT`
-- Target movement: the most common repo workflows are obvious enough that
-  people reach for Effigy first instead of wrapper scripts or tribal knowledge.
-
 ## 1) Start By Asking The Repo What Exists
 
 The first question should be "what can this repo already do?"

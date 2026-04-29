@@ -50,13 +50,27 @@ cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.3.0
 
 ## Start Fast
 
-Initialize a manifest:
+Most people hit Effigy in one of two states:
+
+- the repo already uses Effigy
+- the repo is adopting it for the first time
+
+If the repo already has `effigy.toml`, start here:
+
+```bash
+effigy tasks
+effigy tasks --resolve test
+effigy test --plan
+effigy doctor --verbose
+```
+
+If the repo does not use Effigy yet, start here:
 
 ```bash
 effigy init
 ```
 
-Add a few obvious tasks to `effigy.toml`:
+For a brand-new repo, add a few obvious tasks to `effigy.toml`:
 
 ```toml
 [catalog]
@@ -68,13 +82,13 @@ build = "bun run build"
 "db:reset" = "./scripts/reset-db.sh"
 ```
 
-Ask the repo what exists, then run it:
+Then ask the repo what exists, and run something small:
 
 ```bash
 effigy tasks
-effigy dev
 effigy tasks --resolve test
 effigy test --plan
+effigy dev
 ```
 
 Leave `test` to the built-in runner unless you intentionally want
@@ -116,13 +130,13 @@ Read next:
 ### Keep web-service dependencies off the host
 
 Use the system/container surface when a repo needs databases, queues, blob
-stores or language stack workspaces without installing that full stack
+stores, or language stack workspaces without installing that full stack
 directly on the machine.
 
 ```bash
 effigy container up
-effigy container status
 effigy gateway status
+effigy container status
 effigy dev
 ```
 
@@ -173,9 +187,9 @@ Read next:
 - [`062-distribution-system-guide.md`](./docs/guides/062-distribution-system-guide.md) for distribution commands and evidence
 - [`049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md) for maintainer policy
 
-## Shipped `v0.3` Surface
+## Main Surfaces
 
-Effigy `v0.3` ships:
+Effigy currently ships:
 - task routing and manifest composition
 - built-in test, doctor, watch, init, migrate, config, docs, contracts, and
   release surfaces

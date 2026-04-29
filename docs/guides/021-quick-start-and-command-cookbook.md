@@ -6,12 +6,6 @@ Use this page when you want the first ten minutes to feel clear. Use
 [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) when you
 need the full command and flag surface.
 
-## Vision Alignment
-
-- Primary tags: `OPERATE`, `ROUTE`
-- Target movement: first-run workflows stay short, obvious, and close to the
-  command surface people will actually use every day.
-
 ## 1) Quick Start (5 Minutes)
 
 Start with the CLI itself:
