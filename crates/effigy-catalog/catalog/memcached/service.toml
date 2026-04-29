@@ -12,6 +12,13 @@ type = "integer"
 default = 64
 description = "Maximum memory in MB"
 
+[capabilities]
+loopback_alias_label = "memcached"
+loopback_alias_port = 11211
+shared_service = true
+shared_host_env_vars = ["MEMCACHED_HOST"]
+shared_port_env_vars = ["MEMCACHED_PORT"]
+
 [ports]
 default = [11211]
 description = "Memcached protocol port"

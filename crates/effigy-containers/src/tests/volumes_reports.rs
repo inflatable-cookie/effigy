@@ -264,6 +264,8 @@ primary_service = "app"
         host: "host.docker.internal".to_owned(),
         host_port: 8106,
         container_port: 3306,
+        host_env_vars: vec!["DB_HOST".to_owned(), "MYSQL_HOST".to_owned()],
+        port_env_vars: vec!["DB_PORT".to_owned(), "MYSQL_PORT".to_owned()],
     }];
 
     let report = status_report(&policy, true, None, None);

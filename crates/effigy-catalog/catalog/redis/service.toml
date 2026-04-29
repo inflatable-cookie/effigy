@@ -10,6 +10,11 @@ description = "Redis major version"
 [capabilities]
 exec_target = true
 shell = "/bin/sh"
+loopback_alias_label = "redis"
+loopback_alias_port = 6379
+shared_service = true
+shared_host_env_vars = ["REDIS_HOST"]
+shared_port_env_vars = ["REDIS_PORT"]
 
 [ports]
 default = [6379]

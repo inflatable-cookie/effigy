@@ -19,6 +19,8 @@ description = "Web UI port for viewing caught emails"
 
 [capabilities]
 exec_target = false
+loopback_alias_label = "smtp"
+loopback_alias_port = 1025
 
 [ports]
 default = [1025, 8025]

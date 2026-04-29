@@ -15,6 +15,8 @@ description = "JVM heap size (keep reasonable for local dev)"
 [capabilities]
 exec_target = true
 shell = "/bin/bash"
+loopback_alias_label = "search"
+loopback_alias_port = 9200
 
 [volumes.data]
 mount = "/usr/share/elasticsearch/data"

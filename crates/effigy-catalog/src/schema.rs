@@ -98,6 +98,43 @@ pub struct Capabilities {
     /// Default shell for interactive exec (e.g., "/bin/bash").
     #[serde(default)]
     pub shell: Option<String>,
+
+    /// Whether Effigy should apply the workspace host-integration mounts for
+    /// git and SSH when this catalog is the primary workspace service.
+    #[serde(default)]
+    pub workspace_host_integration: bool,
+
+    /// Whether the catalog image's entrypoint installs a mounted mkcert root CA
+    /// into the system trust store on container startup.
+    #[serde(default)]
+    pub installs_mkcert_ca: bool,
+
+    /// Optional DNS label Effigy should publish as a per-service loopback alias
+    /// when this catalog appears in a container stack.
+    #[serde(default)]
+    pub loopback_alias_label: Option<String>,
+
+    /// Container port that backs the published loopback alias. When absent, no
+    /// alias contract is emitted even if the catalog exposes normal ports.
+    #[serde(default)]
+    pub loopback_alias_port: Option<u16>,
+
+    /// Whether this catalog is eligible for the bounded `shared = true`
+    /// backing-service path.
+    #[serde(default)]
+    pub shared_service: bool,
+
+    /// Environment variable names that should receive the shared service host
+    /// value when this catalog is reused through the bounded shared-service
+    /// path.
+    #[serde(default)]
+    pub shared_host_env_vars: Vec<String>,
+
+    /// Environment variable names that should receive the shared service port
+    /// value when this catalog is reused through the bounded shared-service
+    /// path.
+    #[serde(default)]
+    pub shared_port_env_vars: Vec<String>,
 }
 
 /// Volume declaration for a service.

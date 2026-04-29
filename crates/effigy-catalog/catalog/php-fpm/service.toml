@@ -105,6 +105,8 @@ description = "Mount the host's mkcert root CA (`$(mkcert -CAROOT)/rootCA.pem`) 
 [capabilities]
 exec_target = true
 shell = "/bin/bash"
+workspace_host_integration = true
+installs_mkcert_ca = true
 
 [depends_on]
 optional = ["mariadb", "postgres", "redis", "memcached"]

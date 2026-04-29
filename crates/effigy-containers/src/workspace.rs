@@ -5,6 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
+use effigy_catalog::CatalogResolver;
 use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_manifest::{
     load_task_manifest, LibraryMount, ManifestContainerConfig, ManifestContainerServiceConfig,
@@ -13,7 +14,7 @@ use effigy_manifest::{
 
 use crate::{
     mount_spec::expand_host_path, policy_support::effigy_home_dir, ContainerPolicyError,
-    EffectiveContainerPolicy,
+    EffectiveContainerPolicy, PROJECT_LOCAL_CATALOG_DIR,
 };
 
 const PHP_FPM_COMPOSER_HOME_TARGET: &str = "/home/dev/.config/composer";
@@ -53,18 +54,11 @@ const HOST_SSH_AGENT_SOCKET_TARGET: &str = "/run/host-services/ssh-auth.sock";
 /// regardless of how Colima hardens the forwarded original.
 const WORKSPACE_SSH_AUTH_SOCK_BRIDGED: &str = "/tmp/effigy-ssh-auth.sock";
 
-/// Catalogs whose primary service is treated as a workspace shell target. The
-/// host-git / host-ssh mounts only apply when the primary service uses one of
-/// these catalogs — they're the catalogs where a developer is plausibly going
-/// to run `git push` from inside the container.
-const WORKSPACE_GIT_AWARE_CATALOGS: &[&str] = &["php-fpm", "workspace-rust-bun", "node"];
-
-/// Catalogs whose `effigy-entrypoint` runs `update-ca-certificates` when the
-/// mkcert root CA is mounted at [`HOST_MKCERT_ROOT_CA_TARGET`]. Adding a
-/// catalog to this list without also wiring the entrypoint hook would mount
-/// the cert but never install it into the system trust store, so HTTPS calls
-/// would still fail.
-const WORKSPACE_MKCERT_TRUST_CATALOGS: &[&str] = &["php-fpm", "workspace-rust-bun"];
+#[derive(Debug, Clone, Copy, Default)]
+struct WorkspaceCatalogCapabilities {
+    workspace_host_integration: bool,
+    installs_mkcert_ca: bool,
+}
 
 pub(crate) fn materialize_runtime_workspace_mount_rewrite(
     repo_root: &Path,
@@ -192,7 +186,7 @@ fn rewrite_workspace_mounts_for_direct_compose(
         library_mounts,
     )?;
     inject_workspace_named_volumes(&mut parsed, &injected_mounts);
-    let injected_env = build_workspace_runtime_environment(config, primary_service);
+    let injected_env = build_workspace_runtime_environment(repo_root, config, primary_service)?;
     {
         let services = parsed
             .get_mut("services")
@@ -281,6 +275,8 @@ fn build_workspace_runtime_mounts(
         source: Some(canonical_repo_root.clone()),
         named_volume: None,
     }];
+    let catalog_capabilities =
+        load_workspace_catalog_capabilities(repo_root, config, primary_service)?;
     for raw in &workspace.mounts {
         mounts.push(parse_workspace_extra_mount(
             repo_root,
@@ -305,41 +301,59 @@ fn build_workspace_runtime_mounts(
     if let Some(mount) = build_shared_composer_cache_mount(config, primary_service)? {
         mounts.push(mount);
     }
-    if let Some(mount) = build_host_git_config_mount(config, primary_service) {
+    if let Some(mount) = build_host_git_config_mount(config, primary_service, catalog_capabilities)
+    {
         mounts.push(mount);
     }
-    if let Some(mount) = build_host_ssh_dir_mount(config, primary_service) {
+    if let Some(mount) = build_host_ssh_dir_mount(config, primary_service, catalog_capabilities) {
         mounts.push(mount);
     } else {
-        if let Some(mount) = build_host_ssh_known_hosts_mount(config, primary_service) {
+        if let Some(mount) =
+            build_host_ssh_known_hosts_mount(config, primary_service, catalog_capabilities)
+        {
             mounts.push(mount);
         }
-        if let Some(mount) = build_host_ssh_config_mount(config, primary_service) {
+        if let Some(mount) =
+            build_host_ssh_config_mount(config, primary_service, catalog_capabilities)
+        {
             mounts.push(mount);
         }
     }
-    if let Some(mount) = build_host_ssh_agent_mount(config, primary_service) {
+    if let Some(mount) = build_host_ssh_agent_mount(config, primary_service, catalog_capabilities) {
         mounts.push(mount);
     }
-    if let Some(mount) = build_host_mkcert_ca_mount(config, primary_service) {
+    if let Some(mount) = build_host_mkcert_ca_mount(config, primary_service, catalog_capabilities) {
         mounts.push(mount);
     }
     Ok(mounts)
 }
 
-/// Returns true when the primary service uses a catalog where the host-git
-/// integration applies. Centralized so additions to
-/// [`WORKSPACE_GIT_AWARE_CATALOGS`] cover every helper at once.
-fn is_git_aware_workspace_service(service: &ManifestContainerServiceConfig) -> bool {
-    WORKSPACE_GIT_AWARE_CATALOGS.contains(&service.catalog.as_str())
+fn load_workspace_catalog_capabilities(
+    repo_root: &Path,
+    config: &ManifestContainerConfig,
+    primary_service: &str,
+) -> Result<WorkspaceCatalogCapabilities, ContainerPolicyError> {
+    let Some(service) = config.services.get(primary_service) else {
+        return Ok(WorkspaceCatalogCapabilities::default());
+    };
+    let resolver = CatalogResolver::new(
+        project_local_catalog_dir(repo_root),
+        user_global_catalog_dir(),
+    );
+    let fragment = resolver.resolve(&service.catalog)?;
+    Ok(WorkspaceCatalogCapabilities {
+        workspace_host_integration: fragment.schema.capabilities.workspace_host_integration,
+        installs_mkcert_ca: fragment.schema.capabilities.installs_mkcert_ca,
+    })
 }
 
 fn build_host_git_config_mount(
     config: &ManifestContainerConfig,
     primary_service: &str,
+    catalog_capabilities: WorkspaceCatalogCapabilities,
 ) -> Option<RenderedWorkspaceMount> {
     let service = config.services.get(primary_service)?;
-    if !is_git_aware_workspace_service(service)
+    if !catalog_capabilities.workspace_host_integration
         || !service_bool_param(service, "mount_host_git_config", true)
     {
         return None;
@@ -359,6 +373,7 @@ fn build_host_git_config_mount(
 fn build_host_ssh_known_hosts_mount(
     config: &ManifestContainerConfig,
     primary_service: &str,
+    catalog_capabilities: WorkspaceCatalogCapabilities,
 ) -> Option<RenderedWorkspaceMount> {
     let service = config.services.get(primary_service)?;
     if resolve_host_ssh_dir_path(service)
@@ -367,7 +382,7 @@ fn build_host_ssh_known_hosts_mount(
     {
         return None;
     }
-    if !is_git_aware_workspace_service(service)
+    if !catalog_capabilities.workspace_host_integration
         || !service_bool_param(service, "mount_host_ssh_known_hosts", true)
     {
         return None;
@@ -401,11 +416,12 @@ fn build_host_ssh_known_hosts_mount(
 fn build_host_ssh_config_mount(
     config: &ManifestContainerConfig,
     primary_service: &str,
+    catalog_capabilities: WorkspaceCatalogCapabilities,
 ) -> Option<RenderedWorkspaceMount> {
     let Some(service) = config.services.get(primary_service) else {
         return None;
     };
-    if !is_git_aware_workspace_service(service) {
+    if !catalog_capabilities.workspace_host_integration {
         return None;
     }
     if resolve_host_ssh_dir_path(service)
@@ -446,9 +462,10 @@ fn build_host_ssh_config_mount(
 fn build_host_ssh_dir_mount(
     config: &ManifestContainerConfig,
     primary_service: &str,
+    catalog_capabilities: WorkspaceCatalogCapabilities,
 ) -> Option<RenderedWorkspaceMount> {
     let service = config.services.get(primary_service)?;
-    if !is_git_aware_workspace_service(service) {
+    if !catalog_capabilities.workspace_host_integration {
         return None;
     }
     let host_path = resolve_host_ssh_dir_path(service)?;
@@ -466,9 +483,10 @@ fn build_host_ssh_dir_mount(
 fn build_host_ssh_agent_mount(
     config: &ManifestContainerConfig,
     primary_service: &str,
+    catalog_capabilities: WorkspaceCatalogCapabilities,
 ) -> Option<RenderedWorkspaceMount> {
     let service = config.services.get(primary_service)?;
-    if !is_git_aware_workspace_service(service)
+    if !catalog_capabilities.workspace_host_integration
         || !service_bool_param(service, "forward_host_ssh_agent", true)
     {
         return None;
@@ -497,9 +515,10 @@ fn build_host_ssh_agent_mount(
 fn build_host_mkcert_ca_mount(
     config: &ManifestContainerConfig,
     primary_service: &str,
+    catalog_capabilities: WorkspaceCatalogCapabilities,
 ) -> Option<RenderedWorkspaceMount> {
     let service = config.services.get(primary_service)?;
-    if !WORKSPACE_MKCERT_TRUST_CATALOGS.contains(&service.catalog.as_str())
+    if !catalog_capabilities.installs_mkcert_ca
         || !service_bool_param(service, "mount_host_mkcert_ca", true)
     {
         return None;
@@ -522,6 +541,16 @@ fn host_mkcert_root_ca_pem() -> Option<PathBuf> {
         return value;
     }
     effigy_gateway::tls::mkcert_root_ca_pem()
+}
+
+fn project_local_catalog_dir(repo_root: &Path) -> Option<PathBuf> {
+    let path = repo_root.join(PROJECT_LOCAL_CATALOG_DIR);
+    path.is_dir().then_some(path)
+}
+
+fn user_global_catalog_dir() -> Option<PathBuf> {
+    let path = effigy_home_dir()?.join("catalog");
+    path.is_dir().then_some(path)
 }
 
 /// Resolve the host's home directory. Tests can override via
@@ -1195,11 +1224,14 @@ fn rewrite_workspace_service_volumes(
 /// service alongside the rewritten volume list. Currently just
 /// `SSH_AUTH_SOCK` when host SSH agent forwarding is active.
 fn build_workspace_runtime_environment(
+    repo_root: &Path,
     config: &ManifestContainerConfig,
     primary_service: &str,
-) -> std::collections::BTreeMap<String, String> {
+) -> Result<std::collections::BTreeMap<String, String>, ContainerPolicyError> {
     let mut env = std::collections::BTreeMap::new();
-    if build_host_ssh_agent_mount(config, primary_service).is_some() {
+    let catalog_capabilities =
+        load_workspace_catalog_capabilities(repo_root, config, primary_service)?;
+    if build_host_ssh_agent_mount(config, primary_service, catalog_capabilities).is_some() {
         // Point at the catalog image's socat-bridged socket rather than
         // the raw bind-mounted path: the forwarded original is root-owned
         // inside the Colima VM and the bridge is what the workspace user
@@ -1209,7 +1241,7 @@ fn build_workspace_runtime_environment(
             WORKSPACE_SSH_AUTH_SOCK_BRIDGED.to_owned(),
         );
     }
-    env
+    Ok(env)
 }
 
 /// Merge `additions` into the primary service's `environment:` block,

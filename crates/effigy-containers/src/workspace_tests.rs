@@ -143,6 +143,70 @@ mod host_git_mount_tests {
         BTreeMap::new()
     }
 
+    fn capabilities_for(catalog: &str) -> WorkspaceCatalogCapabilities {
+        let config = make_config(catalog, enabled_params());
+        let repo_root = temp_dir("catalog-capabilities");
+        load_workspace_catalog_capabilities(&repo_root, &config, "workspace")
+            .expect("load catalog capabilities")
+    }
+
+    fn build_host_git_config_mount(
+        config: &ManifestContainerConfig,
+        primary_service: &str,
+    ) -> Option<RenderedWorkspaceMount> {
+        let capabilities = capabilities_for(&config.services[primary_service].catalog);
+        super::super::build_host_git_config_mount(config, primary_service, capabilities)
+    }
+
+    fn build_host_ssh_known_hosts_mount(
+        config: &ManifestContainerConfig,
+        primary_service: &str,
+    ) -> Option<RenderedWorkspaceMount> {
+        let capabilities = capabilities_for(&config.services[primary_service].catalog);
+        super::super::build_host_ssh_known_hosts_mount(config, primary_service, capabilities)
+    }
+
+    fn build_host_ssh_dir_mount(
+        config: &ManifestContainerConfig,
+        primary_service: &str,
+    ) -> Option<RenderedWorkspaceMount> {
+        let capabilities = capabilities_for(&config.services[primary_service].catalog);
+        super::super::build_host_ssh_dir_mount(config, primary_service, capabilities)
+    }
+
+    fn build_host_ssh_config_mount(
+        config: &ManifestContainerConfig,
+        primary_service: &str,
+    ) -> Option<RenderedWorkspaceMount> {
+        let capabilities = capabilities_for(&config.services[primary_service].catalog);
+        super::super::build_host_ssh_config_mount(config, primary_service, capabilities)
+    }
+
+    fn build_host_ssh_agent_mount(
+        config: &ManifestContainerConfig,
+        primary_service: &str,
+    ) -> Option<RenderedWorkspaceMount> {
+        let capabilities = capabilities_for(&config.services[primary_service].catalog);
+        super::super::build_host_ssh_agent_mount(config, primary_service, capabilities)
+    }
+
+    fn build_host_mkcert_ca_mount(
+        config: &ManifestContainerConfig,
+        primary_service: &str,
+    ) -> Option<RenderedWorkspaceMount> {
+        let capabilities = capabilities_for(&config.services[primary_service].catalog);
+        super::super::build_host_mkcert_ca_mount(config, primary_service, capabilities)
+    }
+
+    fn build_workspace_runtime_environment(
+        config: &ManifestContainerConfig,
+        primary_service: &str,
+    ) -> std::collections::BTreeMap<String, String> {
+        let repo_root = temp_dir("runtime-environment");
+        super::super::build_workspace_runtime_environment(&repo_root, config, primary_service)
+            .expect("build workspace runtime environment")
+    }
+
     #[test]
     fn gitconfig_mount_renders_read_only_when_host_file_exists() {
         let home = temp_dir("gitconfig-present");

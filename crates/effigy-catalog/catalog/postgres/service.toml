@@ -25,6 +25,11 @@ description = "Superuser password (local dev only)"
 [capabilities]
 exec_target = true
 shell = "/bin/bash"
+loopback_alias_label = "postgres"
+loopback_alias_port = 5432
+shared_service = true
+shared_host_env_vars = ["POSTGRES_HOST", "PGHOST"]
+shared_port_env_vars = ["POSTGRES_PORT", "PGPORT"]
 
 [volumes.data]
 mount = "/var/lib/postgresql/data"
