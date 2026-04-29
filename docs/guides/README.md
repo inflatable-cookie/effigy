@@ -45,8 +45,8 @@ Use when:
 ### Run a host-clean local stack
 
 Read:
-- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
 - [`063-container-system-guide.md`](./063-container-system-guide.md)
+- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
 - [`065-underlay-starter.md`](./065-underlay-starter.md)
 - [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
 - [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
@@ -204,14 +204,14 @@ Deprecated but still link-stable:
 
 ### Distribution and Adoption
 
-- [`045-vision-next-task-allowlist-maintenance.md`](./045-vision-next-task-allowlist-maintenance.md)
-- [`046-vision-next-task-allowlist-pr-checklist-snippet.md`](./046-vision-next-task-allowlist-pr-checklist-snippet.md)
 - [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
 
 Deprecated but still link-stable:
+- [`045-vision-next-task-allowlist-maintenance.md`](./045-vision-next-task-allowlist-maintenance.md)
+- [`046-vision-next-task-allowlist-pr-checklist-snippet.md`](./046-vision-next-task-allowlist-pr-checklist-snippet.md)
 - [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
 - [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
 - [`044-distribution-first-publish-execution-runbook.md`](./044-distribution-first-publish-execution-runbook.md)

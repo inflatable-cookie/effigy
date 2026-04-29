@@ -20,6 +20,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - The `064` system and workspace guide was then rewritten into a much smaller
   mental-model page so it explains the local-dev contract without carrying as
   much theory and implementation framing.
+- The docs front doors were then cleaned up again so the local-dev path leads
+  with the practical container guide, the release path no longer points at a
+  deprecated runbook, and deprecated adoption pages stop reading like active
+  inventory.
 - The `063` container guide was also tightened into a shorter operator page, so
   it focuses more directly on declaration, lifecycle commands, data surfaces,
   and DNS behavior.
