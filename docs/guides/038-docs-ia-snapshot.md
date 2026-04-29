@@ -1,122 +1,130 @@
-# 038 - Docs IA Snapshot
+# 038 - Docs IA Review
 
-Use this snapshot when you need a fast map of the active documentation system
-without re-reading every guide.
+Use this page when the question is not "where is one guide?" but "is the guide
+set itself shaped sensibly?"
 
-This page is intentionally lighter than a full catalog. It highlights the
-current entry points, the main guide clusters, and the support docs that keep
-the system coherent.
+This is the current portfolio review for the active guide set.
 
-## Start Here
+## Current Judgment
 
-Choose the entry point by reader intent:
+The main problem is not missing docs. It is too many similarly weighted docs,
+too many long guides, and too much internal or governance material living in
+the same public guide layer as user-facing product docs.
 
-- newcomer or evaluator: [`../../README.md`](../../README.md)
-- docs system overview: [`../README.md`](../README.md), then [`./README.md`](./README.md)
+The current front doors are now better:
+- [`../../README.md`](../../README.md)
+- [`../README.md`](../README.md)
+- [`README.md`](./README.md)
 
-Primary docs entry points:
+The next problem is the portfolio underneath them.
 
-- repository front door: [`../../README.md`](../../README.md)
-- docs hub: [`../README.md`](../README.md)
-- practical guide hub: [`README.md`](./README.md)
+## Keep As Primary
 
-## Current Information Architecture
+These guides are part of the real product learning path and should stay in the
+main user-facing set:
 
-### Front Doors
+- `021` quick start
+- `022` manifest cookbook
+- `023` troubleshooting
+- `025` command reference
+- `055` everyday workflows
+- `058` demo system guide
+- `059` manifest composition
+- `061` Rhai script steps
+- `062` distribution system guide
+- `063` container system guide
+- `064` system, workspace, and dev contract
+- `065` underlay starter
+- `067` catalog services reference
+- `069` workspace host integration
+- `070` per-machine overlays and external mounts
 
-| Surface | Purpose | Primary Audience | Update Trigger |
-| --- | --- | --- | --- |
-| `README.md` | product promise, quick start, main workflows | New User, Operator | top-level product workflow or install story changes |
-| `docs/README.md` | docs system routing by goal | New User, Operator, Maintainer | docs structure or primary reading paths change |
-| `docs/guides/README.md` | practical guide navigation | Operator, Contributor, Maintainer | guide lineup or recommended paths change |
+## Keep As Secondary Deep Dives
 
-### Core Operator Guides
+These are valid docs, but they should not compete with onboarding pages:
 
-| Guide | Purpose | Primary Audience | Trigger to Update |
-| --- | --- | --- | --- |
-| `021` Quick start and command cookbook | first-run command path | New User, Operator | obvious first-use workflows change |
-| `055` Everyday workflows | day-to-day human workflows | Operator | common operator path changes |
-| `022` Manifest cookbook | `effigy.toml` patterns | Operator, Maintainer | manifest contract changes |
-| `025` Command reference matrix | command and flag lookup | Operator, Maintainer | command/flag/schema changes |
-| `023` Troubleshooting recipes | symptom to fix path | Operator, CI Owner | user-facing failures or diagnostics change |
+- `016` task routing precedence
+- `017` JSON output contracts
+- `018` doctor explain mode
+- `019` watch, init, and migrate
+- `024` CI and automation recipes
+- `026` JSON payload examples
+- `028` migration quick paths
+- `048` built-in test suite lifecycle and env
+- `050` env schema integration
+- `051` release orchestration
+- `052` changelog workflows
+- `056` Northstar + Effigy consumer repo contract
 
-### Runtime and Contract Deep Dives
+## Merge Candidates
 
-| Guide | Purpose | Primary Audience | Trigger to Update |
-| --- | --- | --- | --- |
-| `016` Task routing precedence | selector resolution rules | Operator, Maintainer | routing logic changes |
-| `018` Doctor explain mode | routing diagnosis details | Operator, Maintainer | explain behavior or fields change |
-| `019` Watch, init, and migrate | setup and rerun flows | Operator | built-in watch/init/migrate behavior changes |
-| `017` JSON output contracts | canonical machine-facing contract | CI Owner, Maintainer | envelope or payload rules change |
-| `026` JSON payload examples | realistic machine-facing samples | CI Owner, Maintainer | payload field sets change |
-| `024` CI and automation recipes | CI and automation patterns | CI Owner, Maintainer | workflow wiring or automation guidance changes |
+These guides look real, but the portfolio is paying too much fragmentation cost:
 
-### Release and Change Communication
+| Guides | Problem | Likely End State |
+| --- | --- | --- |
+| `041`, `042`, `044`, `049` | release/distribution policy is split across too many pages | one public operator path plus one maintainer policy/reference layer |
+| `029`, `035`, `037`, `039`, `040` | docs operations are spread across overlapping maintenance/process pages | one docs maintenance playbook plus one archive/deprecation policy |
+| `027` and parts of `022` | snippet content competes with the cookbook | fold high-value snippets into `022`, demote the rest to reference |
+| `024` and parts of `026` | CI recipes and JSON examples overlap heavily | keep both only if they stay clearly recipe vs sample-reference |
 
-| Guide | Purpose | Primary Audience | Trigger to Update |
-| --- | --- | --- | --- |
-| `051` Release orchestration | built-in release flow and config | Maintainer | release command or config behavior changes |
-| `052` Changelog workflows | changelog CLI and policy | Maintainer | changelog workflow or library surface changes |
-| `036` Release notes authoring | human release-note structure | Maintainer | release-note requirements change |
-| `014` Release checklist template | execution checklist | Maintainer | release process or gates change |
+## Rename Candidates
 
-### Docs Operations and Contribution
+These names are technically accurate but not strong enough for new readers:
 
-| Guide | Purpose | Primary Audience | Trigger to Update |
-| --- | --- | --- | --- |
-| `029` Docs QA checklist and validation | docs validation flow | Contributor, Maintainer | docs QA commands or policy checks change |
-| `030` Contributor onboarding | first-pass contributor setup | Contributor | onboarding command flow changes |
-| `033` Style and terminology guide | writing standard | Contributor, Maintainer | editorial standards change |
-| `037` Documentation contribution playbook | docs update workflow | Contributor, Maintainer | docs contribution process changes |
-| `035` Guide ownership and update triggers | ownership and trigger matrix | Maintainer | ownership or trigger policy changes |
+| Current | Problem | Better Direction |
+| --- | --- | --- |
+| `064-system-workspace-and-dev-contract` | sounds internal and abstract | now partially improved in-page, but the filename still wants a future rename toward local-dev framing |
+| `062-distribution-system-guide` | "distribution" is not obvious to many readers | consider a release-and-distribution operator framing |
+| `048-built-in-test-suite-lifecycle-and-env` | too wide and too abstract | narrow to testing and env behavior |
+| `056-northstar-effigy-consumer-repo-contract` | correct but intimidating | likely keep as advanced/adoption reference, not a front-door guide |
 
-### Supplemental and Historical Support
+## Archive Candidates
 
-| Guide | Purpose | Primary Audience | Trigger to Update |
-| --- | --- | --- | --- |
-| `027` Copy/paste snippets | quick bootstrap fragments | Operator, Contributor | recommended starter patterns change |
-| `028` Migration quick paths | scenario-based migration paths | Operator, Maintainer | migration strategy changes |
-| `archive/031` Docs navigation cleanup | historical navigation cleanup record | Maintainer | no longer actively maintained |
-| `archive/032` Docs consistency sweep and changelog | historical docs sweep record | Maintainer | no longer actively maintained |
-| `038` Docs IA snapshot | current IA summary | Maintainer, Contributor | primary docs structure changes |
-| `archive/028-docs-flow-map` | archived linear-flow navigation map | Maintainer | hub README now owns goal-driven navigation directly |
+These should not stay in the active guide conversation:
 
-## How To Use This Snapshot
+| Guide | Why |
+| --- | --- |
+| `045` vision next-task allowlist maintenance | narrow internal policy, not a public product guide |
+| `046` vision next-task allowlist PR checklist snippet | PR support artifact, not a user-facing guide |
+| older historical cleanup records already under `archive/` | correct where they are; do not promote them again |
 
-- planning a docs change: identify the relevant cluster first, then update the
-  entry point if discoverability changes
-- reviewing a product change: use the trigger columns to decide which guides
-  move with it
-- onboarding a contributor: pair `030`, `037`, and the practical guide hub
-  instead of sending people into the whole docs tree
+## What This Means For The Next Sweep
 
-## Notes
+The next useful consolidation batches are:
 
-- The practical center of gravity has moved toward the top-level README, the
-  docs hub, and the guides hub rather than one linear reading order.
-- `055-everyday-workflows.md` is now part of the main operator path and should
-  be kept in sync with any major workflow simplifications or new friction
-  points.
-- `028-migration-quick-paths.md` is the sole active guide under number 028.
-  The earlier `028-docs-flow-map.md` duplicated the hub README's goal-driven
-  navigation and now lives in `archive/` per policy 040.
+1. Release/distribution docs:
+   - done: `041`, `042`, and `044` are deprecated
+   - done: `049`, `051`, and `062` now have cleaner, less overlapping roles
+   - remaining cleanup: trim depth further only if real user confusion remains
+2. Docs-maintenance docs:
+   - done first pass: `037` is now the primary maintenance playbook, `029` is the active QA checklist, `040` is the archive/deprecation policy, and `035` plus `039` are now deprecated
+   - remaining cleanup: reduce overlap inside `029` and trim stale policy detail from the deprecated pair if they stay in-tree long term
+3. Guide naming:
+   - rename the most abstract user-facing titles without rewriting every deep
+     page at once
+4. Oversized active guides:
+   - done: `022`, `026`, `063`, and `064` now have much better structure and
+     entry framing
+   - done: `025` is now a much tighter lookup page instead of a giant command
+     wall
+   - remaining cleanup: keep trimming only where real user confusion still
+     shows up
 
 ## Expected Outcome
 
-- maintainers can identify the active front doors and guide clusters quickly
-- contributors can tell which support docs exist to reduce drift
-- large docs changes can be scoped without rediscovering the whole IA
+- maintainers can tell which guides are core, secondary, merge candidates, or
+  archive candidates
+- future docs cleanup can happen in deliberate batches instead of random prose
+  churn
+- the front doors can stay clean while the deeper guide set is reduced
 
 ## Related Guides
 
-- [`archive/031-docs-navigation-cleanup.md`](./archive/031-docs-navigation-cleanup.md)
-- [`archive/032-docs-consistency-sweep-and-changelog.md`](./archive/032-docs-consistency-sweep-and-changelog.md)
-- [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
-- [`037-documentation-contribution-playbook.md`](./037-documentation-contribution-playbook.md)
+- [`../README.md`](../README.md)
+- [`README.md`](./README.md)
+- [`040-docs-archive-and-deprecation-policy.md`](./040-docs-archive-and-deprecation-policy.md)
 
 ## Next Step
 
-After a significant docs restructure or feature-surface sweep, refresh this
-snapshot and then verify that [`README.md`](../../README.md),
-[`docs/README.md`](../README.md), and [`docs/guides/README.md`](./README.md)
-still reflect the same current reading paths.
+Take the release/distribution cluster next and reduce it to a smaller public
+surface before touching the docs-maintenance cluster.

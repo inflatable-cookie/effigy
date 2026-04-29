@@ -1,3 +1,7 @@
+> Status: Deprecated
+> Superseded by: [`037-documentation-contribution-playbook.md`](./037-documentation-contribution-playbook.md)
+> Kept for: historical trigger-matrix detail
+
 # 035 - Guide Ownership and Update Triggers
 
 This guide defines when documentation updates are required after code, contract, or workflow changes.

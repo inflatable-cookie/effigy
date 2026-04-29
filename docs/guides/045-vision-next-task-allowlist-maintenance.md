@@ -1,3 +1,7 @@
+> Status: Deprecated
+> Superseded by: internal docs-policy maintenance only
+> Kept for: narrow historical and repo-specific lint policy work
+
 # 045 - Vision Next-Task Allowlist Maintenance
 
 Use this guide when updating `docs/scripts/fixtures/vision-next-task/actionable-verbs.txt`.

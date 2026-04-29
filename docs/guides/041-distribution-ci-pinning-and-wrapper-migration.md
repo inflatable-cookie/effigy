@@ -1,3 +1,7 @@
+> Status: Deprecated
+> Superseded by: [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) and [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+> Kept for: historical CI pinning and wrapper-migration detail
+
 # 041 - Distribution CI Pinning and Wrapper Migration
 
 This guide standardizes deterministic CI installs and migration from legacy `bun effigy` wrappers to direct binary usage.

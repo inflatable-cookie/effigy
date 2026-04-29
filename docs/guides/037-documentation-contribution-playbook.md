@@ -5,6 +5,15 @@ Use this playbook for any docs-affecting change.
 Use it when the question is not "how do I write prose?" but "which docs move
 with this product change, and how do I prove I updated the right ones?"
 
+This is the primary guide for docs maintenance work.
+
+Use:
+- this guide for change scoping and update rules
+- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+  for the actual QA checklist and commands
+- [`040-docs-archive-and-deprecation-policy.md`](./040-docs-archive-and-deprecation-policy.md)
+  for retirement, merge, archive, and deprecation rules
+
 ## Start Here
 
 Work in this order:
@@ -13,6 +22,13 @@ Work in this order:
 2. Update the matching docs surfaces in the same batch.
 3. Run the docs QA bundle.
 4. Run JSON contract checks too if the change affects machine-facing output.
+
+If you only need the shortest maintenance path:
+
+1. update the affected docs in the same batch as the behavior change
+2. run `effigy qa:docs`
+3. run `effigy docs check-workflow-paths`
+4. widen to JSON or broader QA only when the change actually touches that surface
 
 ## 1) Choose Change Type
 
@@ -158,10 +174,9 @@ Escalate docs scope when:
 - [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
 - [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
 - [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
-- [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
 - [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
 - [`038-docs-ia-snapshot.md`](./038-docs-ia-snapshot.md)
-- [`039-docs-drift-monitoring.md`](./039-docs-drift-monitoring.md)
+- [`040-docs-archive-and-deprecation-policy.md`](./040-docs-archive-and-deprecation-policy.md)
 
 ## Next Step
 

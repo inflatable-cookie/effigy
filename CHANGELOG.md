@@ -20,6 +20,12 @@ During v0.x, MINOR bumps may include breaking changes.
 - The `064` system and workspace guide was then rewritten into a much smaller
   mental-model page so it explains the local-dev contract without carrying as
   much theory and implementation framing.
+- The `063` container guide was also tightened into a shorter operator page, so
+  it focuses more directly on declaration, lifecycle commands, data surfaces,
+  and DNS behavior.
+- The `025` command reference was tightened into a real lookup page by
+  replacing the giant command and constraints walls with grouped command-family
+  shapes and the main sharp-edge notes.
 
 ## [0.3.0] - 2026-04-28
 

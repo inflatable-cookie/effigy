@@ -1,3 +1,7 @@
+> Status: Deprecated
+> Superseded by: internal PR support only
+> Kept for: narrow historical and repo-specific lint policy work
+
 # 046 - Vision Next-Task Allowlist PR Checklist Snippet
 
 Use this snippet when a PR changes:

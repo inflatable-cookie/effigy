@@ -1,24 +1,33 @@
-# 051 - Release Orchestration
+# 051 - Release Workflow
 
 Use this guide when you want Effigy to own release readiness, preparation,
 execution preflight, install verification, and release-note extraction from a
 repo-local `[release]` contract.
 
-This is the canonical reference for the shipped `effigy release` surface. Use
-[`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
-for policy and human approval rules; use this guide for the actual command and
-config contract.
+This is the canonical guide for the shipped `effigy release` surface.
 
-## Vision Alignment
-
-- Primary tags: `RELEASE`, `OPERATE`, `MAINT`
-- Target movement: release operation becomes a documented Effigy surface instead
-  of drifting into repo-local wrapper scripts and one-off release notes logic.
+Use:
+- this guide for the release workflow and `[release]` config
+- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+  for maintainer policy and binary channel rules
+- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) for
+  the wider distribution commands
+- [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
+  for changelog-specific work
 
 ## Start Here
 
 Use this guide when a repo is ready to put release work behind one built-in
 surface instead of a growing set of shell steps.
+
+If you only need the shortest operator path, use:
+
+- `simulate`
+- `status --check-gates`
+- `prepare --plan`
+- `prepare --yes --check-gates`
+- `execute --plan`
+- `execute --yes`
 
 If you are approaching the release flow for the first time, start with:
 
@@ -40,7 +49,7 @@ Use the commands by intent:
 - `release:linux:rehearse` when pre-release prep should prove the Linux build
   path locally before CI
 
-## 1) Command Surface
+## 1) Core Commands
 
 Current built-in release commands:
 
@@ -50,55 +59,24 @@ Current built-in release commands:
 - `effigy release gates`
   - run configured release gates as a standalone fail-fast timed check
 - `effigy release resume`
-  - prepared-state recovery entrypoint for an existing `.release-prepared.json`
-  - summarizes prepared version/tag, stale state, working-tree drift, and
-    source-fingerprint drift since prepare time
-  - text mode can hand operators directly into the interactive execute review
-    flow after they inspect prepared state or drift details
-  - recovery menu includes direct `gates`, `reprepare`, and `discard`
-    shortcuts for common recovery paths
+  - recover an existing `.release-prepared.json` state and inspect drift
 - `effigy release simulate`
-  - full dry-run preview of gates, suggested-versus-selected version/tag
-    metadata, and file mutations with no written state; accepts
-    `--version <SEMVER>` for deliberate non-destructive overrides
+  - full dry-run preview of gates, version and tag selection, and file
+    mutations with no written state; accepts `--version <SEMVER>`
 - `effigy release prepare --plan`
-  - preview the exact version-file and changelog mutations Effigy would apply;
-    accepts `--version <SEMVER>` for deliberate non-interactive overrides
-  - both preview surfaces now show per-file mutation details plus concise
-    inline diff snippets for the supported write mutations
-  - `--dry-run` is a supported alias for this preview mode
+  - preview the exact version-file and changelog mutations; accepts
+    `--version <SEMVER>`; `--dry-run` is an alias
 - `effigy release prepare`
-  - text-mode menu-driven prepare review; operators can jump between version
-    review, mutation review, gate results, and final approval before Effigy
-    writes release changes
-  - during mutation review, operators can inspect a single planned file
-    mutation in detail before continuing
-  - the menu keeps the selected version, planned tag, and a compact command
-    legend visible while the operator reviews
-  - reviewed menu sections are marked in-place so maintainers can see what they
-    have already inspected before applying
+  - text-mode review before Effigy writes release changes
 - `effigy release prepare --yes`
   - apply supported mutations and write `.release-prepared.json` without
     committing, tagging, or pushing; accepts `--version <SEMVER>` for
     deliberate non-interactive overrides
 - `effigy release execute --plan`
-  - validate `.release-prepared.json` and the current working tree before any
-    irreversible step; stale state requires explicit `--allow-stale`
-  - also detects branch drift, HEAD movement, and prepared-file content drift
-    from the fingerprints recorded at prepare time
-  - `--dry-run` is a supported alias for this preview mode
+  - validate prepared state and working tree before any irreversible step;
+    detects stale state and source drift; `--dry-run` is an alias
 - `effigy release execute`
-  - text-mode menu-driven execute review, including stale-state
-    acknowledgement when needed, before commit/tag/push
-  - operators can inspect one stale warning or working-tree item in detail
-    during interactive review, and blocked execute preflights expose the same
-    drill-down before returning failure
-  - the menu keeps the stale acknowledgement state, prepared version/tag, and
-    a compact command legend visible while the operator reviews
-  - reviewed menu sections are marked in-place so maintainers can see what they
-    have already inspected before executing
-  - recovery menu and blocked-preflight browser include direct `gates`,
-    `reprepare`, and `discard` shortcuts
+  - text-mode final review before commit, tag, and push
 - `effigy release execute --yes`
   - create the release commit and tag, push to `origin`, and clean up the state
   file only after a full success; stale state requires explicit `--allow-stale`
@@ -269,7 +247,7 @@ effigy release verify-install --tag vX.Y.Z
 `--repo-url <URL>` explicitly. Both paths accept normal HTTPS/file URLs, and
 scp-style SSH remotes are normalized automatically for the install step.
 
-What each step proves:
+What each step is for:
 
 1. `simulate`
    - safe preview, no file writes, no state file
@@ -278,30 +256,17 @@ What each step proves:
 2. `status --check-gates`
    - release readiness from current repo state plus gates
 3. `prepare`
-   - shows the prepare preview and asks for confirmation before writing
-   - keeps the current selected version and command legend visible while you
-     review
+   - interactive review before writing
 4. `prepare --plan`
    - exact proposed version-file and changelog mutation preview
-   - blocked output now includes suggested remediation actions alongside the
-     blockers
-   - `--dry-run` is an equivalent alias when teams prefer that spelling
 5. `prepare --yes --check-gates`
    - writes supported release changes and `.release-prepared.json`
 6. `resume`
-   - summarizes the prepared state and drift since prepare time
-   - useful when a release pauses between prepare and execute or when you need
-     to recover context before re-entering execute review
+   - re-enter a prepared release and inspect drift since prepare time
 7. `execute`
-   - shows the execute preflight and asks for final confirmation before
-     commit/tag/push
-   - keeps the current stale acknowledgement state and command legend visible
-     while you review
+   - interactive final confirmation before commit, tag, and push
 8. `execute --plan`
    - confirms the prepared state still matches the working tree
-   - blocked output now includes suggested remediation actions alongside the
-     blockers
-   - `--dry-run` is an equivalent alias when teams prefer that spelling
 9. `execute --yes`
    - commits, tags, pushes, and removes prepared state on success
 10. `verify-install`
@@ -390,21 +355,12 @@ Recommended migration direction:
   runs
 - use `effigy release verify-install` instead of bespoke tag-install helpers
 
-For Effigy itself:
-
-- `smoke:release` is the repo's native binary-artifact smoke task
-- `effigy distribution first-publish` is the repo's native publish/install
-  orchestration entrypoint inside a still-bounded Cargo-centric distribution
-  contract
-- `scripts/check-linux-glibc-floor.sh` remains an intentional shell boundary
-  because it depends on Linux binary-inspection tooling
-
 ## 10) Current Limits
 
 Still intentionally not shipped:
 
-- custom interactive editing flows such as operator-selected version overrides
-  beyond a single semver override, or full inline/unified diffs before apply
+- custom interactive editing flows beyond a single semver override, or full
+  inline/unified diffs before apply
 - automatic workflow migration in `.github/workflows/` without explicit human
   approval
 - a claim that the fuller `distribution first-publish` path is already
@@ -413,9 +369,8 @@ Still intentionally not shipped:
 ## Expected Outcome
 
 After applying this guide, a repo can describe release operation in one
-declarative `[release]` section, run release readiness and preparation through
-Effigy, and keep any remaining wrapper scripts as explicit compatibility
-surfaces rather than as the primary release logic.
+`[release]` section and run readiness, preparation, execution, and
+verification through built-in commands instead of wrapper scripts.
 
 ## Related Guides
 
@@ -427,5 +382,5 @@ surfaces rather than as the primary release logic.
 ## Next Step
 
 After adding `[release]` to a repo, run `effigy release simulate` and
-`effigy release status --check-gates` before replacing any existing
-release wrapper or CI entrypoint.
+`effigy release status --check-gates` before replacing any existing release
+wrapper or CI entrypoint.

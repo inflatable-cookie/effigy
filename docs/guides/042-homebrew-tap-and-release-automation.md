@@ -1,3 +1,7 @@
+> Status: Deprecated
+> Superseded by: [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) and [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+> Kept for: historical Homebrew-tap implementation detail
+
 # 042 - Homebrew Tap and Release Automation
 
 This guide defines the Homebrew channel workflow for Effigy releases, including formula updates, checksum strategy, and release automation hooks.
