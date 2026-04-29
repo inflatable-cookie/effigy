@@ -313,16 +313,16 @@ Composer state knobs:
 
 - `mount_host_composer_home = true` revives the old full host Composer-home
   bind. Leave this off unless a repo explicitly wants host-owned global tools.
-- `mount_shared_composer_auth = true` mounts Effigy-managed shared auth/config
-  state so multiple containers can reuse the same Composer tokens without
-  sharing the host `vendor/bin`.
+- `mount_shared_composer_auth = true` mounts one Effigy-managed shared
+  Composer-home volume at `/home/dev/.config/composer` so PHP workspaces can
+  reuse the same auth, config, and Composer global state without binding the
+  host Composer directory.
 - `mount_shared_composer_cache = true` mounts an Effigy-managed shared Composer
   download cache for faster repeated installs.
 
 The normal path is:
 
-- container-owned Composer home and global packages inside the image/container
-- shared auth/config under `~/.effigy/shared/composer/`
+- shared Composer home on a named Docker volume
 - shared cache under `~/.effigy/shared/composer-cache/`
 - `COMPOSER_CACHE_DIR` is pinned to `/home/dev/.cache/composer` so Composer
   actually uses the shared cache mount rather than defaulting back under

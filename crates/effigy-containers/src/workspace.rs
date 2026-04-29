@@ -19,6 +19,7 @@ use crate::{
 
 const PHP_FPM_COMPOSER_HOME_TARGET: &str = "/home/dev/.config/composer";
 const PHP_FPM_COMPOSER_CACHE_TARGET: &str = "/home/dev/.cache/composer";
+const SHARED_COMPOSER_HOME_VOLUME_SOURCE: &str = "effigy-shared-composer-home";
 
 /// Container target for the host `~/.gitconfig` mount.
 const HOST_GIT_CONFIG_TARGET: &str = "/home/dev/.gitconfig";
@@ -296,7 +297,9 @@ fn build_workspace_runtime_mounts(
     if let Some(mount) = host_composer_home_mount {
         mounts.push(mount);
     } else {
-        mounts.extend(build_shared_composer_auth_mounts(config, primary_service)?);
+        if let Some(mount) = build_shared_composer_home_mount(config, primary_service)? {
+            mounts.push(mount);
+        }
     }
     if let Some(mount) = build_shared_composer_cache_mount(config, primary_service)? {
         mounts.push(mount);
@@ -691,50 +694,24 @@ fn build_host_composer_home_mount(
     }))
 }
 
-fn build_shared_composer_auth_mounts(
+fn build_shared_composer_home_mount(
     config: &ManifestContainerConfig,
     primary_service: &str,
-) -> Result<Vec<RenderedWorkspaceMount>, ContainerPolicyError> {
+) -> Result<Option<RenderedWorkspaceMount>, ContainerPolicyError> {
     let Some(service) = config.services.get(primary_service) else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
     if service.catalog != "php-fpm"
         || !service_bool_param(service, "mount_shared_composer_auth", true)
     {
-        return Ok(Vec::new());
+        return Ok(None);
     }
-    let Some(effigy_home) = effigy_home_dir() else {
-        return Ok(Vec::new());
-    };
-    let shared_dir = effigy_home.join("shared").join("composer");
-    std::fs::create_dir_all(&shared_dir).map_err(|error| ContainerPolicyError::Read {
-        path: shared_dir.clone(),
-        error,
-    })?;
-
-    let mut mounts = Vec::new();
-    for file_name in ["auth.json", "config.json"] {
-        let source = shared_dir.join(file_name);
-        if !source.exists() {
-            std::fs::write(&source, "{}\n").map_err(|error| ContainerPolicyError::Read {
-                path: source.clone(),
-                error,
-            })?;
-        }
-        mounts.push(RenderedWorkspaceMount {
-            target: format!("{PHP_FPM_COMPOSER_HOME_TARGET}/{file_name}"),
-            rendered: format!(
-                "{}:{}/{}",
-                source.display(),
-                PHP_FPM_COMPOSER_HOME_TARGET,
-                file_name
-            ),
-            source: None,
-            named_volume: None,
-        });
-    }
-
-    Ok(mounts)
+    Ok(Some(RenderedWorkspaceMount {
+        target: PHP_FPM_COMPOSER_HOME_TARGET.to_owned(),
+        rendered: format!("{SHARED_COMPOSER_HOME_VOLUME_SOURCE}:{PHP_FPM_COMPOSER_HOME_TARGET}"),
+        source: None,
+        named_volume: Some(SHARED_COMPOSER_HOME_VOLUME_SOURCE.to_owned()),
+    }))
 }
 
 fn build_shared_composer_cache_mount(
