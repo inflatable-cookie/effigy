@@ -99,3 +99,10 @@ Canonical reference:
 Use the repo-local style reference for internal work and normal replies:
 
 - `docs/policy/internal-writing-style.md`
+
+## Cross-Repo Agent Skill
+
+Agents working in other repos that use Effigy should install the bundled
+agent skill: `npx skills add inflatable-cookie/effigy`. Source lives at
+[`skills/effigy/`](./skills/effigy/) and works in Claude Code, Codex CLI,
+Cursor, and any other agent that consumes the open `SKILL.md` standard.
