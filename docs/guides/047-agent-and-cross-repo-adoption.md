@@ -101,6 +101,37 @@ Adjust the file list to match the repo's real agent-facing surfaces. The point
 is to fail the docs/agent QA bundle when current-directory repo overrides start
 showing up as copied defaults.
 
+## 3a) Cross-Repo Agent Skill
+
+For agents working in repos that use Effigy but don't host Effigy-specific
+guidance, install the bundled agent skill:
+
+```bash
+npx skills add inflatable-cookie/effigy
+```
+
+The skill follows the open
+[Agent Skills](https://agentskills.io/specification) standard and works in
+Claude Code, OpenAI Codex, Cursor, and any other agent that consumes
+`SKILL.md`. Source: [`skills/effigy/`](../../skills/effigy/) in this repo.
+
+The skill front door is intentionally light (~150 lines) and routes to topic
+references for footguns, discovery loop, selector routing, common workflows,
+JSON envelopes, config shapes, and release protocol. Agents read the
+references on demand without re-fetching the front door.
+
+Manual install for agents `npx skills` doesn't cover:
+
+```bash
+mkdir -p ~/.claude/skills && cp -r skills/effigy ~/.claude/skills/effigy
+mkdir -p ~/.agents/skills && cp -r skills/effigy ~/.agents/skills/effigy
+mkdir -p ~/.cursor/skills && cp -r skills/effigy ~/.cursor/skills/effigy
+```
+
+The skill is the recommended cross-repo entry point. The `AGENTS.md` snippet
+in section 3 still serves repos that want Effigy-first execution baked into
+their own project instructions; the two are complementary.
+
 ## 4) Minimum Adoption Criteria
 
 A repo should not claim “Effigy is the default development loop” until all of

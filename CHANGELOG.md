@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- Cross-repo agent skill at `skills/effigy/` teaching AI coding assistants
+  (Claude Code, OpenAI Codex, Cursor, etc.) how to discover tasks, run
+  common workflows, parse `--json` envelopes, and avoid release/CI footguns
+  in any repo that uses Effigy. Installs via
+  `npx skills add inflatable-cookie/effigy` and follows the open
+  [Agent Skills](https://agentskills.io/specification) standard.
+
 ### Fixed
 - Workspace containers (`php-fpm`, `workspace-rust-bun`, `node`) now also mount the host's `~/.ssh/config` read-only at `/home/dev/.ssh/config` when present, so deploy/host aliases, identity files, and per-host options defined on the developer's machine apply inside the container without copying. Pairs with the existing `~/.ssh/known_hosts` mount and `SSH_AUTH_SOCK` forwarding. Opt out via `mount_host_ssh_config = false` on the catalog service.
 - The mounted `~/.ssh/config` is now a sanitized copy materialized under `<repo>/.effigy/runtime/ssh/config`, with `IdentityFile` and `IdentitiesOnly` directives stripped. Host configs typically reference private key paths that aren't present inside the container, and `IdentitiesOnly yes` would force ssh to ignore the forwarded agent — both broke `git push` / deploy tasks with "Permission denied (publickey)" even though the agent socket was wired up correctly. Alias-mapping directives (`Hostname`, `User`, `Port`, `ProxyJump`, etc.) are preserved, so host aliases still resolve.
