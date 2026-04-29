@@ -669,11 +669,14 @@ mod tests {
             test_policy_with_shared_services(vec![effigy_containers::SharedServiceBinding {
                 service_name: "db".to_owned(),
                 catalog: "mariadb".to_owned(),
+                domain_label: "mysql".to_owned(),
                 project_name: "effigy-shared-mariadb-deadbeef".to_owned(),
                 compose_file: PathBuf::from("/tmp/shared-db/docker-compose.yml"),
                 host: "host.docker.internal".to_owned(),
                 host_port: 23306,
                 container_port: 3306,
+                host_env_vars: Vec::new(),
+                port_env_vars: Vec::new(),
             }]);
         let routes = vec![super::RegisteredGatewayRoute {
             domain: "db.demo.test".to_owned(),

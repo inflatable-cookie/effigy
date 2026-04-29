@@ -164,3 +164,42 @@ alias = "fake-runtime"
         "runtime artifact dirs under .effigy should not be discovered as catalogs"
     );
 }
+
+#[test]
+fn discover_catalogs_skips_dependency_and_build_directories() {
+    let root = temp_workspace("catalog-discovery-skips-dependency-build-dirs");
+    let node_catalog = create_workspace_dir(&root, "node_modules/fake-package");
+    let vendor_catalog = create_workspace_dir(&root, "vendor/fake-package");
+    let target_catalog = create_workspace_dir(&root, "target/fake-crate");
+
+    write_manifest(&root.join("effigy.toml"), "");
+    write_manifest(
+        &node_catalog.join("effigy.toml"),
+        r#"[catalog]
+alias = "fake-node"
+"#,
+    );
+    write_manifest(
+        &vendor_catalog.join("effigy.toml"),
+        r#"[catalog]
+alias = "fake-vendor"
+"#,
+    );
+    write_manifest(
+        &target_catalog.join("effigy.toml"),
+        r#"[catalog]
+alias = "fake-target"
+"#,
+    );
+
+    let catalogs = discover_catalogs(&root).expect("discover catalogs");
+    assert!(
+        catalogs.iter().all(|catalog| {
+            !matches!(
+                catalog.alias.as_str(),
+                "fake-node" | "fake-vendor" | "fake-target"
+            )
+        }),
+        "dependency/build dirs should not be discovered as catalogs"
+    );
+}

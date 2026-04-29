@@ -13,8 +13,16 @@ During v0.x, MINOR bumps may include breaking changes.
   in any repo that uses Effigy. Installs via
   `npx skills add inflatable-cookie/effigy` and follows the open
   [Agent Skills](https://agentskills.io/specification) standard.
+- `php-fpm` now accepts explicit `host_ports`, and the shipped `decodelabs`
+  bundle now supports optional `zest_port` / `zest_domain` inputs so legacy
+  DecodeLabs sites can route a temporary Zest/Vite dev server through the
+  local gateway instead of leaving it stranded on an internal container port.
 
 ### Fixed
+- Task catalog discovery now skips `vendor/` as well as `node_modules/`,
+  `target/`, and `.effigy/`, avoiding slow scans and accidental task discovery
+  from dependency and build trees.
+- `php-fpm` catalog builds no longer fetch `install-php-extensions` from a live GitHub release URL during image build, avoiding transient 5xx failures on fresh PHP workspace and `decodelabs-library` builds.
 
 ### Changed
 

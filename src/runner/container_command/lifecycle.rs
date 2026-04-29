@@ -441,6 +441,13 @@ mod tests {
         SharedServiceBinding {
             service_name: name.to_owned(),
             catalog: catalog.to_owned(),
+            domain_label: match catalog {
+                "mariadb" => "mysql".to_owned(),
+                "postgres" => "postgres".to_owned(),
+                "redis" => "redis".to_owned(),
+                "memcached" => "memcached".to_owned(),
+                other => panic!("unexpected shared catalog {other}"),
+            },
             project_name: format!("effigy-shared-{catalog}"),
             compose_file: Path::new("/tmp").join(format!("{name}-{catalog}.yml")),
             host: "host.docker.internal".to_owned(),
@@ -452,6 +459,8 @@ mod tests {
                 "memcached" => 11211,
                 other => panic!("unexpected shared catalog {other}"),
             },
+            host_env_vars: Vec::new(),
+            port_env_vars: Vec::new(),
         }
     }
 
