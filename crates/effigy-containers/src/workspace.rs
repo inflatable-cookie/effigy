@@ -421,9 +421,7 @@ fn build_host_ssh_config_mount(
     primary_service: &str,
     catalog_capabilities: WorkspaceCatalogCapabilities,
 ) -> Option<RenderedWorkspaceMount> {
-    let Some(service) = config.services.get(primary_service) else {
-        return None;
-    };
+    let service = config.services.get(primary_service)?;
     if !catalog_capabilities.workspace_host_integration {
         return None;
     }
