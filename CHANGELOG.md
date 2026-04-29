@@ -15,10 +15,11 @@ During v0.x, MINOR bumps may include breaking changes.
   [Agent Skills](https://agentskills.io/specification) standard.
 
 ### Fixed
-- Workspace containers (`php-fpm`, `workspace-rust-bun`, `node`) now also mount the host's `~/.ssh/config` read-only at `/home/dev/.ssh/config` when present, so deploy/host aliases, identity files, and per-host options defined on the developer's machine apply inside the container without copying. Pairs with the existing `~/.ssh/known_hosts` mount and `SSH_AUTH_SOCK` forwarding. Opt out via `mount_host_ssh_config = false` on the catalog service.
-- The mounted `~/.ssh/config` is now a sanitized copy materialized under `<repo>/.effigy/runtime/ssh/config`, with `IdentityFile` and `IdentitiesOnly` directives stripped. Host configs typically reference private key paths that aren't present inside the container, and `IdentitiesOnly yes` would force ssh to ignore the forwarded agent — both broke `git push` / deploy tasks with "Permission denied (publickey)" even though the agent socket was wired up correctly. Alias-mapping directives (`Hostname`, `User`, `Port`, `ProxyJump`, etc.) are preserved, so host aliases still resolve.
 
 ### Changed
+- Workspace catalogs no longer mount the host's `~/.ssh/config` by default or rewrite it on the way into the container. The default SSH path is now simpler: forwarded agent plus `known_hosts` plus `gitconfig`, with full SSH config mounting as an explicit opt-in only when you have a container-safe config file.
+- Workspace catalogs now also accept `ssh_config_path` for the explicit container-safe SSH config case, so hosts that rely on `User`, alias, or bastion rules do not need the full host `~/.ssh/config` mounted wholesale.
+- Workspace catalogs now also accept `mount_host_ssh_dir` / `ssh_dir_path` for the trusted local-dev case where container SSH genuinely depends on private key files or `IdentityFile` rules. When enabled, Effigy mounts a full SSH directory read-only and skips the narrower SSH file mounts.
 - The docs front doors were reorganized around a smaller set of real user journeys, so new readers hit clear onboarding, manifest, local-dev, demo, automation, and release paths instead of a flat wall of equally weighted guides.
 - The guide portfolio review now explicitly separates primary guides, secondary deep dives, merge candidates, rename candidates, and archive candidates, and the narrow vision allowlist maintenance pages are now marked deprecated instead of reading like active product guides.
 - The release/distribution docs now present `062`, `051`, `049`, and `052` as the active public path, while the older CI pinning, Homebrew-tap, and first-publish runbooks are marked deprecated instead of competing with that surface.

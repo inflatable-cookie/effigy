@@ -132,9 +132,9 @@ the container at:
 
 ## Host Git/SSH Integration
 
-Three default-on params on the `php-fpm`, `workspace-rust-bun`, and `node`
-catalogs fold host credentials into the workspace container without copying
-private material.
+Two default-on params plus one explicit opt-in param on the `php-fpm`,
+`workspace-rust-bun`, and `node` catalogs fold host credentials into the
+workspace container without copying private material.
 
 ### `mount_host_git_config` (default `true`)
 
@@ -147,6 +147,67 @@ Skipped silently when the host file does not exist.
 Binds `~/.ssh/known_hosts` read-only at `/home/dev/.ssh/known_hosts` so
 git/ssh from inside the container does not prompt on first connection to
 known remotes. Skipped silently when the host file does not exist.
+
+### `mount_host_ssh_dir` / `ssh_dir_path` (default off / empty)
+
+Mounts a full SSH directory read-only at `/home/dev/.ssh`.
+
+Use this when the container genuinely needs:
+
+- private key files
+- `IdentityFile`
+- `IdentitiesOnly`
+- a full SSH home that behaves like the host
+
+This is the blunt trusted-local-dev escape hatch. It is not the default
+because every process in the container can read whatever private material
+lives in that mounted SSH directory.
+
+When this is enabled, Effigy skips the narrower `known_hosts` and
+`config` file mounts and just mounts the full directory instead.
+
+Prefer `ssh_dir_path` over `mount_host_ssh_dir` when you want an explicit
+per-machine SSH home instead of the entire host `~/.ssh`.
+
+### `mount_host_ssh_config` (default `false`)
+
+Mounts `~/.ssh/config` read-only at `/home/dev/.ssh/config` only when you
+explicitly opt in.
+
+This is off by default on purpose:
+
+- many host SSH configs point at local `IdentityFile` paths that do not exist
+  in the container
+- many also rely on `IdentitiesOnly yes`, `Include`, or other host-specific
+  rules that can break agent-backed auth inside containers
+- silently rewriting those files is brittle and can turn SSH into confusing
+  `Permission denied (publickey)` failures
+
+So the normal default is:
+
+- agent forwarding
+- `known_hosts`
+- `gitconfig`
+- no mounted SSH config
+
+If you need aliases, bastions, or explicit key selection inside the container,
+prefer `ssh_config_path` and point it at a container-safe SSH config you own
+explicitly.
+
+### `ssh_config_path` (default empty)
+
+Mounts an explicit SSH config file at `/home/dev/.ssh/config`.
+
+- supports `${VAR}` and `~`
+- takes precedence over `mount_host_ssh_config`
+- should point at a file that makes sense inside the container
+
+That usually means:
+
+- keep `User`, `HostName`, `Port`, `ProxyJump`, and alias mapping
+- avoid `IdentityFile` unless that private key is also being mounted
+- avoid `IdentitiesOnly yes` unless you really want to bypass the forwarded
+  agent
 
 ### `forward_host_ssh_agent` (default `true`)
 
@@ -185,13 +246,22 @@ pieces of glue that the integration relies on:
 
 ### Override per service
 
-Disable any of the three mounts in the manifest:
+Disable any of the defaults or opt into SSH config in the manifest:
 
 ```toml
 [containers.web.services.app]
 catalog = "php-fpm"
 forward_host_ssh_agent = false
 mount_host_git_config = false
+ssh_config_path = "~/.config/effigy/gideon/ssh_config"
+```
+
+Or, for trusted local-dev cases that depend on real SSH key files:
+
+```toml
+[containers.web.services.app]
+catalog = "php-fpm"
+ssh_dir_path = "~/.config/effigy/gideon/ssh-home"
 ```
 
 Or set a manifest-level `SSH_AUTH_SOCK` to win over Effigy's default — the
@@ -219,8 +289,12 @@ forwarded into the VM at `/run/host-services/ssh-auth.sock` by default. If
 `ssh-add -l` reports `The agent has no identities`, your host agent simply
 has no keys loaded — run `ssh-add ~/.ssh/<key>` outside the container and
 retry. If keys are listed but `git push` still returns `Permission denied
-(publickey)`, that's a remote-side authorization issue for whichever key is
-loaded.
+(publickey)`, first check whether the same remote works from the host with the
+same agent. If it only works on the host because of host-only SSH config rules
+like `User tom`, `ProxyJump`, or a host alias, add an explicit
+`ssh_config_path` instead of assuming the container can reuse the host file
+safely. If it depends on private key files or `IdentityFile` rules, use
+`ssh_dir_path` instead.
 
 If you suspect Colima itself isn't forwarding the agent (the bridge log
 under `/var/log/effigy-ssh-bridge.log` reports `host_sock missing`), stop

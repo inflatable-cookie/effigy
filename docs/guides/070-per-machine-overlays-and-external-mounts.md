@@ -184,6 +184,30 @@ This file plus the corresponding identity key plus a populated
 developers can route the same alias through different bastions
 without touching the repo.
 
+If a workspace container needs that SSH config too, point the service at
+it explicitly:
+
+```toml
+[containers.stack.services.app]
+catalog = "php-fpm"
+ssh_config_path = "~/.config/<project>/<env-name>/ssh_config"
+```
+
+That is the preferred path over mounting the host's full `~/.ssh/config`.
+
+If the container really needs the matching key files too, use a dedicated
+SSH home instead of the host's whole `~/.ssh`:
+
+```toml
+[containers.stack.services.app]
+catalog = "php-fpm"
+ssh_dir_path = "~/.config/<project>/<env-name>/ssh-home"
+```
+
+That keeps the container-facing SSH material explicit and per-machine,
+instead of implicitly reusing everything under the host account's
+default SSH home.
+
 ### 5. Author the env folder's README
 
 Write the new-developer onboarding into `envs/<env-name>/README.md`.

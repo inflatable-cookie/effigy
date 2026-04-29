@@ -56,6 +56,12 @@ version = "11.0"
     );
     assert_eq!(
         app.params
+            .get("mount_host_ssh_dir")
+            .and_then(|value| value.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        app.params
             .get("isolated_dirs")
             .and_then(|value| value.as_array())
             .expect("isolated_dirs")
