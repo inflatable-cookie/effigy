@@ -7,11 +7,11 @@ This is the mental-model guide for:
 
 - `effigy system ...`
 - `effigy workspace`
-- repo-owned `dev` tasks that bind to a system
-- the relationship between those surfaces and `effigy container ...`
+- `dev` tasks that bind to a system
+- the relationship between those commands and `effigy container ...`
 
 Use:
-- this guide for the model and naming contract
+- this guide for the model and naming rules
 - [`063-container-system-guide.md`](./063-container-system-guide.md) for the
   direct container commands
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
@@ -30,26 +30,26 @@ Use this page when you want to answer any of these:
 
 Short answer:
 
-- `dev` keeps its historic role as the repo-owned concurrent runner
-- `system` is the substrate lifecycle surface
-- `workspace` is the Linux-native maintenance surface
-- `container` remains the direct compose and data-lifecycle surface
+- `dev` keeps its historic role as the concurrent runner
+- `system` is the infra lifecycle command
+- `workspace` is the Linux-native maintenance command
+- `container` remains the direct compose and data-lifecycle command
 
 ## The Model
 
 Effigy local dev has three layers:
 
 - `system`
-  - owns substrate lifecycle: VM, compose, gateway, workspace handoff
+  - owns infra lifecycle: VM, compose, gateway, workspace handoff
 - `workspace`
   - gets you into the Linux-native maintenance environment inside that system
 - `dev`
-  - runs the repo-owned app runtime against the resolved system
+  - runs the app runtime against the resolved system
 
-That split matters because substrate lifecycle and app lifecycle are not the
+That split matters because infra lifecycle and app lifecycle are not the
 same thing:
 
-- substrate: database, object storage, mail, gateway, workspace container
+- infra: database, object storage, mail, gateway, workspace container
 - app runtime: API, jobs, Vite servers, watchers, shells, tabs
 
 Effigy keeps them separate so package installs, repairs, migrations, and other
@@ -59,7 +59,7 @@ maintenance work do not have to hide inside normal app startup.
 
 ### `effigy system ...`
 
-This is the public substrate lifecycle surface:
+This is the public infra lifecycle command:
 
 ```sh
 effigy system up
@@ -70,7 +70,7 @@ effigy system logs
 
 Use it when you want to:
 
-- bring the substrate up first
+- bring the infra up first
 - inspect or repair infra without launching the app
 - keep the system running across several commands
 
@@ -91,15 +91,15 @@ Use it for:
 - migrations
 - cache cleanup
 - one-off maintenance commands
-- direct investigation inside the runtime substrate
+- direct investigation inside the runtime environment
 
 ### `effigy dev`
 
 `dev` keeps its historic meaning:
 
-- resolve the repo-owned `dev` task
-- run the repo-owned `concurrent` shape
-- do not turn `dev` into a hidden system-repair or package-management surface
+- resolve the repo's `dev` task
+- run the repo's `concurrent` shape
+- do not turn `dev` into a hidden system-repair or package-management command
 
 If `dev` requires a system and the system is down, Effigy may bring it up
 first. On exit, it should only close that system back down if this `dev`
@@ -146,17 +146,18 @@ Contract:
    - stop it only if this invocation started it and policy says to
    - otherwise leave it alone
 
-That makes `workspace` behave like a leased session into the runtime substrate.
+That makes `workspace` behave like a leased session into the runtime
+environment.
 
 ## Everyday DX Rule
 
-Dependency mutation belongs on the explicit maintenance surface, not hidden
+Dependency mutation belongs on the explicit maintenance command, not hidden
 inside `dev`.
 
 Allowed `dev` behavior:
 
-- validate that required substrate exists
-- auto-start missing substrate when needed
+- validate that required infra exists
+- auto-start missing infra when needed
 - perform small, deterministic startup prep that is clearly part of app launch
 
 Bad default `dev` behavior:
@@ -181,7 +182,7 @@ effigy dev
 The public manifest language should match the command language:
 
 - `system`
-  - composed substrate environment
+  - composed infra environment
 - `workspace`
   - named execution space inside a system
 - `container`
@@ -254,7 +255,7 @@ Rules:
 Both command families are still public, but they do different jobs.
 
 - `system`
-  - owns substrate lifecycle for `[systems.<name>]`
+  - owns infra lifecycle for `[systems.<name>]`
   - includes VM/profile, compose, gateway, workspace handoff, and recovery
 - `container`
   - owns direct compose lifecycle and data lifecycle for
@@ -310,7 +311,7 @@ effigy system down
 
 Behavior:
 
-- user explicitly owns substrate lifecycle
+- user explicitly owns infra lifecycle
 - later `workspace` and `dev` leave the running system alone
 
 ## Maintainer Notes
@@ -320,9 +321,9 @@ This page should stay focused on the model, not implementation archaeology.
 If a future change does not alter one of these public ideas:
 
 - `dev` owns app runtime
-- `system` owns substrate lifecycle
+- `system` owns infra lifecycle
 - `workspace` owns Linux-native maintenance access
-- `container` remains the lower-level compose and data surface
+- `container` remains the lower-level compose and data path
 
 then it probably belongs in architecture docs or command-specific guides, not
 here.
@@ -337,6 +338,6 @@ here.
 
 ## Next Step
 
-Use this page when deciding whether a new local-dev surface belongs on
+Use this page when deciding whether a new local-dev command belongs on
 `system`, `workspace`, `dev`, or `container` before adding another command or
 manifest knob.

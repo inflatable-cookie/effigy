@@ -7,15 +7,14 @@ trying to do, then follow one path.
 
 ## Start Here
 
-1. Read [`../README.md`](../README.md) for the product shape and the shortest
-   first-run path.
+1. Read [`../README.md`](../README.md) for install and the shortest first-run
+   path.
 2. Read [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md)
-   for the first useful commands.
+   for the first ten minutes.
 3. Read [`guides/055-everyday-workflows.md`](./guides/055-everyday-workflows.md)
-   for normal day-to-day use.
+   when the basics are working and you want the normal day-to-day flow.
 
-If you only need one more page after that, it is usually
-[`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md).
+After that, choose one path below.
 
 ## Choose A Path
 

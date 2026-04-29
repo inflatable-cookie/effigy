@@ -1,8 +1,17 @@
-# 010 - PATH Installation and Release Workflow
+# 010 - Local PATH Install for Effigy Maintainers
 
-This guide defines the recommended local install flow and release checklist for Effigy.
+This guide is for people working on Effigy itself.
 
-## 1) Local Development Invocation
+Use it when you want:
+
+- a stable local `effigy` binary on `PATH`
+- a separate dev wrapper pointing at the live checkout
+- a clean daily workflow while iterating on the Effigy repo
+
+This is not the general user install page. For normal user installation, start
+at the repo [`README.md`](../../README.md).
+
+## 1) Source-Run Invocation
 
 Use this mode when you want changes to propagate immediately from source:
 
@@ -10,20 +19,10 @@ Use this mode when you want changes to propagate immediately from source:
 cargo run --manifest-path /abs/path/to/effigy/Cargo.toml --bin effigy -- <args...>
 ```
 
-First-class local dev wrapper in the Effigy repo:
+First-class dev wrapper in the Effigy repo:
 
 ```bash
 /abs/path/to/effigy/scripts/effigy-dev <args...>
-```
-
-Common wrapper in consumer repos:
-
-```json
-{
-  "scripts": {
-    "effigy": "cargo run --manifest-path ../effigy/Cargo.toml --bin effigy --"
-  }
-}
 ```
 
 ## 2) PATH-First Invocation (Recommended Daily Use)
@@ -62,40 +61,17 @@ Recommended local channel contract:
 If an old shell alias still defines `effigy`, remove it from your shell rc after
 linking the real commands.
 
-## 3) Fallback Strategy
+## 3) Daily Rule
 
-Keep `bun effigy ...` wrapper scripts only as a temporary compatibility
-fallback while teams migrate to PATH-first usage. Do not replace them with
-`package.json` scripts that re-export Effigy tasks.
+Prefer:
 
-Recommended policy:
-- primary: direct `effigy ...`
-- fallback: temporary `bun effigy ...` wrapper (cargo-run), not package-script
-  shims
-- migration runbook: [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
+- `effigy ...` for the installed binary
+- `effigy-dev ...` when you explicitly want the live checkout
 
-## 4) Versioning
+Do not treat package-manager wrappers as the normal interface when working on
+Effigy itself.
 
-Effigy uses semantic versioning:
-- patch: bug fixes and non-breaking behavior improvements,
-- minor: backward-compatible feature additions,
-- major: breaking command/cfg behavior.
-
-For now, version is controlled in `Cargo.toml`.
-
-## 5) Release Checklist
-
-1. Run release gates in one pass: `effigy release gates`.
-   - compatibility fallback: `cargo qa-release`
-2. Validate install from the release tag:
-   - `effigy release verify-install --tag v0.__.__`
-3. CLI help and core commands run from installed PATH binary.
-4. Wrapper fallback still operational in at least one consumer repo.
-5. Update roadmap/log docs with validation evidence.
-6. Bump `Cargo.toml` version if required.
-7. Commit, tag, and push release branch.
-
-## 6) Smoke Matrix
+## 4) Smoke Matrix
 
 | Mode | Command | Expected |
 |---|---|---|
@@ -103,19 +79,17 @@ For now, version is controlled in `Cargo.toml`.
 | Dev wrapper | `effigy-dev doctor --repo <workspace>` | Doctor report rendered from current checkout, exit 0 |
 | PATH binary | `effigy --help` | Usage shown, exit 0 |
 | PATH binary | `effigy doctor --repo <workspace>` | Doctor report rendered, exit 0 |
-| Wrapper fallback | `bun effigy tasks` | Catalogs listed, exit 0 |
-
-## 7) Notes
+## 5) Notes
 
 If cargo lock contention causes delayed startup for wrapper mode, direct PATH invocation avoids the cargo-run lock path.
 
 ## Related Guides
 
-- [`014-release-checklist-template.md`](./014-release-checklist-template.md)
-- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
-- [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
-- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
+- [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+- [`051-release-orchestration.md`](./051-release-orchestration.md)
 
 ## Next Step
 
-After confirming install mode and smoke matrix, run the release checklist in [`014-release-checklist-template.md`](./014-release-checklist-template.md) for your target version.
+After confirming local PATH install works, use the release guides only when you
+are actually cutting a release.

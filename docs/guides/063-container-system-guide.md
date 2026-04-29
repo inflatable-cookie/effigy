@@ -7,13 +7,13 @@ Use this guide when a repo wants a host-clean local environment with:
 - local domains and gateway routing
 - explicit lifecycle control through `effigy container ...`
 
-This is the practical command guide for the container surface.
+This is the practical command guide for the container commands.
 
 Use:
 - this guide for the direct `effigy container ...` commands and container
   manifest shape
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
-  for the mental model behind `system`, `workspace`, and `dev`
+  for the model behind `system`, `workspace`, and `dev`
 - [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
   for the shipped service catalog inputs
 
@@ -23,7 +23,7 @@ Shortest path:
 
 1. declare a named container in `effigy.toml`
 2. run `effigy container up`
-3. use `effigy container shell` or a repo-owned task such as `effigy dev`
+3. use `effigy container shell` or a task such as `effigy dev`
 4. run `effigy container down` when you want the environment gone
 
 Common commands:
@@ -67,7 +67,7 @@ Use `container` when you want to:
 - bring a declared local environment up or down directly
 - inspect logs or open a shell in one container service
 - export, import, reset, or eject environment data
-- operate a simple compose-backed repo without the fuller `system` surface
+- operate a simple compose-backed repo without the fuller `system` setup
 
 If the question is instead:
 
@@ -227,8 +227,8 @@ Generated-compose environments support:
 - `reset --keep-data`
 - `eject`
 
-These stay on the generated-compose path so Effigy can keep strong ownership of
-the runtime data contract.
+These stay on the generated-compose path so Effigy can keep the runtime data
+behavior predictable.
 
 ## DNS and Gateway
 
@@ -270,5 +270,5 @@ Still intentionally narrow:
 ## Next Step
 
 Use this page when deciding whether a repo should stay on direct
-`effigy container ...` ownership or graduate to the broader `system` and
-`workspace` surface.
+`effigy container ...` commands or move to the broader `system` and
+`workspace` model.

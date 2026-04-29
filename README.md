@@ -2,44 +2,49 @@
 
 Effigy is a repo runtime for developer work.
 
-It gives a repo one CLI for:
-- task routing
-- manifest-owned local environments
-- proof demos
-- machine-safe JSON output
-- release and distribution workflows
-
 Instead of remembering whether something lives in `package.json`, Cargo, a
 shell script, a nested workspace, or a local container stack, you ask Effigy.
 
 ## What It Does
 
 - Run repo and nested tasks with `effigy <task>` or `effigy <catalog>/<task>`
-- Inspect what a repo exposes with `effigy tasks`
-- Keep local web/service stacks off the host with `effigy container ...`,
-  `effigy system ...`, and `effigy workspace`
-- Route local domains through the built-in gateway with TLS, DNS, and port
-  management
-- Define proof demos in the manifest and operate them with `effigy demo ...`
-- Use stable JSON output for CI, agents, and other machine consumers
-- Run release and distribution workflows from first-class built-ins instead of
-  repo-local shell wrappers
+- Show what a repo exposes with `effigy tasks`
+- Keep local web and service stacks off the host with `container`, `system`,
+  and `workspace`
+- Define proof demos, machine-safe JSON output, and release flows in the same
+  CLI instead of repo-local shell wrappers
 
 ## Install
 
-Homebrew on macOS:
+macOS with Homebrew:
 
 ```bash
 brew install inflatable-cookie/tap/effigy
 ```
 
-Prebuilt binary on macOS or Linux:
+Linux with a prebuilt binary:
 
 ```bash
-curl -fsSL https://github.com/inflatable-cookie/effigy/releases/latest/download/effigy-$(uname -m | sed 's/arm64/aarch64/')-$(uname -s | tr A-Z a-z | sed 's/darwin/apple-darwin/;s/linux/unknown-linux-gnu/') -o /usr/local/bin/effigy && chmod +x /usr/local/bin/effigy
+curl -fsSL https://github.com/inflatable-cookie/effigy/releases/latest/download/effigy-x86_64-unknown-linux-gnu -o /usr/local/bin/effigy && chmod +x /usr/local/bin/effigy
 ```
 
-Linux note: release binaries target an Ubuntu 22.04 baseline and expect
+Linux ARM64:
+
+```bash
+curl -fsSL https://github.com/inflatable-cookie/effigy/releases/latest/download/effigy-aarch64-unknown-linux-gnu -o /usr/local/bin/effigy && chmod +x /usr/local/bin/effigy
+```
+
+macOS direct binary:
+
+```bash
+# Apple Silicon
+curl -fsSL https://github.com/inflatable-cookie/effigy/releases/latest/download/effigy-aarch64-apple-darwin -o /usr/local/bin/effigy && chmod +x /usr/local/bin/effigy
+
+# Intel
+curl -fsSL https://github.com/inflatable-cookie/effigy/releases/latest/download/effigy-x86_64-apple-darwin -o /usr/local/bin/effigy && chmod +x /usr/local/bin/effigy
+```
+
+Linux note: release binaries currently target an Ubuntu 22.04 baseline and expect
 `glibc >= 2.35`. If your distro is older, install from source instead.
 
 From source:
@@ -94,10 +99,6 @@ effigy dev
 Leave `test` to the built-in runner unless you intentionally want
 `tasks.test` to override it.
 
-If you want the guided version:
-- [`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md)
-- [`055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md)
-
 ## Common Paths
 
 ### Run tasks without hunting for them
@@ -129,7 +130,7 @@ Read next:
 
 ### Keep web-service dependencies off the host
 
-Use the system/container surface when a repo needs databases, queues, blob
+Use the system/container tools when a repo needs databases, queues, blob
 stores, or language stack workspaces without installing that full stack
 directly on the machine.
 
@@ -187,32 +188,18 @@ Read next:
 - [`062-distribution-system-guide.md`](./docs/guides/062-distribution-system-guide.md) for distribution commands and evidence
 - [`049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md) for maintainer policy
 
-## Main Surfaces
-
-Effigy currently ships:
-- task routing and manifest composition
-- built-in test, doctor, watch, init, migrate, config, docs, contracts, and
-  release surfaces
-- local systems, workspaces, containers, and gateway-backed DNS/TLS routing
-- service catalog fragments such as `workspace-rust-bun`, `php-fpm`,
-  `postgres`, `mariadb`, `dbgate`, `mailpit`, `minio`, and `phpmyadmin`
-- proof demos with receipts, history, artifacts, and the interactive demo
-  browser
-- local bundle export and repo-local bundle customization
-- built-in distribution and release orchestration
-
-For the version-by-version story, see [`CHANGELOG.md`](./CHANGELOG.md).
-
 ## Documentation
 
+- Start here: [`docs/README.md`](./docs/README.md)
+- Quick start: [`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md)
+- Everyday workflows: [`055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md)
 - Docs front door: [`docs/guides/README.md`](./docs/guides/README.md)
 - Full command reference: [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
-- Everyday workflows: [`055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md)
-- Quick start: [`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md)
+- Release history: [`CHANGELOG.md`](./CHANGELOG.md)
 
 ## Working On Effigy Itself
 
-This repo self-hosts Effigy. Common local checks:
+This repo uses Effigy itself. Common local checks:
 
 ```bash
 effigy qa:ci:fast
@@ -225,3 +212,6 @@ If `effigy` is not on `PATH` yet:
 ```bash
 cargo run --bin effigy -- bootstrap:local
 ```
+
+Local maintainer install and PATH-first usage:
+- [`010-path-installation-and-release.md`](./docs/guides/010-path-installation-and-release.md)
