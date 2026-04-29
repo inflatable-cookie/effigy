@@ -304,7 +304,7 @@ fn build_workspace_runtime_mounts(
     if let Some(mount) = build_host_ssh_known_hosts_mount(config, primary_service) {
         mounts.push(mount);
     }
-    if let Some(mount) = build_host_ssh_config_mount(config, primary_service) {
+    if let Some(mount) = build_host_ssh_config_mount(repo_root, config, primary_service)? {
         mounts.push(mount);
     }
     if let Some(mount) = build_host_ssh_agent_mount(config, primary_service) {
@@ -367,26 +367,93 @@ fn build_host_ssh_known_hosts_mount(
     })
 }
 
+/// Materialize a sanitized copy of the host's `~/.ssh/config` under
+/// `<repo_root>/.effigy/runtime/ssh/config` and bind-mount that file
+/// read-only at [`HOST_SSH_CONFIG_TARGET`].
+///
+/// Why sanitize rather than mount directly: a typical developer config
+/// declares `IdentityFile ~/.ssh/...` and `IdentitiesOnly yes` per host.
+/// Inside the container the private keys are not present (auth runs
+/// through the forwarded SSH agent), and `IdentitiesOnly yes` would tell
+/// ssh to ignore the agent — so deploys would fail with "Permission
+/// denied (publickey)". The sanitized copy keeps alias-mapping
+/// directives (`Hostname`, `User`, `Port`, `ProxyJump`, etc.) so host
+/// aliases still resolve, while letting the agent supply keys.
+///
+/// Returns `Ok(None)` (silently skipped) when:
+/// - the primary service is not a git-aware workspace catalog,
+/// - `mount_host_ssh_config = false` per service,
+/// - or the host has no `~/.ssh/config`.
 fn build_host_ssh_config_mount(
+    repo_root: &Path,
     config: &ManifestContainerConfig,
     primary_service: &str,
-) -> Option<RenderedWorkspaceMount> {
-    let service = config.services.get(primary_service)?;
+) -> Result<Option<RenderedWorkspaceMount>, ContainerPolicyError> {
+    let Some(service) = config.services.get(primary_service) else {
+        return Ok(None);
+    };
     if !is_git_aware_workspace_service(service)
         || !service_bool_param(service, "mount_host_ssh_config", true)
     {
-        return None;
+        return Ok(None);
     }
-    let host_path = host_home_dir()?.join(".ssh").join("config");
+    let Some(home) = host_home_dir() else {
+        return Ok(None);
+    };
+    let host_path = home.join(".ssh").join("config");
     if !host_path.is_file() {
-        return None;
+        return Ok(None);
     }
-    Some(RenderedWorkspaceMount {
+    let raw = std::fs::read_to_string(&host_path).map_err(|error| ContainerPolicyError::Read {
+        path: host_path.clone(),
+        error,
+    })?;
+    let sanitized = sanitize_ssh_config_for_container(&raw);
+
+    let runtime_dir = repo_root.join(".effigy").join("runtime").join("ssh");
+    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
+        path: repo_root.join(".gitignore"),
+        error,
+    })?;
+    std::fs::create_dir_all(&runtime_dir).map_err(|error| ContainerPolicyError::Read {
+        path: runtime_dir.clone(),
+        error,
+    })?;
+    let materialized = runtime_dir.join("config");
+    std::fs::write(&materialized, sanitized).map_err(|error| ContainerPolicyError::Read {
+        path: materialized.clone(),
+        error,
+    })?;
+
+    Ok(Some(RenderedWorkspaceMount {
         target: HOST_SSH_CONFIG_TARGET.to_owned(),
-        rendered: format!("{}:{HOST_SSH_CONFIG_TARGET}:ro", host_path.display()),
+        rendered: format!("{}:{HOST_SSH_CONFIG_TARGET}:ro", materialized.display()),
         source: None,
         named_volume: None,
-    })
+    }))
+}
+
+/// Strip directives that don't apply inside the container: `IdentityFile`
+/// (paths reference host-side keys not mounted) and `IdentitiesOnly`
+/// (would force ssh to ignore the forwarded agent). Matching is
+/// case-insensitive on the first non-whitespace token; the rest of the
+/// file is preserved verbatim so alias mapping remains intact.
+fn sanitize_ssh_config_for_container(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for line in input.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let first_token = trimmed
+            .split(|c: char| c.is_whitespace() || c == '=')
+            .next()
+            .unwrap_or("");
+        if first_token.eq_ignore_ascii_case("IdentityFile")
+            || first_token.eq_ignore_ascii_case("IdentitiesOnly")
+        {
+            continue;
+        }
+        out.push_str(line);
+    }
+    out
 }
 
 fn build_host_ssh_agent_mount(

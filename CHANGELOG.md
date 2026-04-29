@@ -8,6 +8,7 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 - Workspace containers (`php-fpm`, `workspace-rust-bun`, `node`) now also mount the host's `~/.ssh/config` read-only at `/home/dev/.ssh/config` when present, so deploy/host aliases, identity files, and per-host options defined on the developer's machine apply inside the container without copying. Pairs with the existing `~/.ssh/known_hosts` mount and `SSH_AUTH_SOCK` forwarding. Opt out via `mount_host_ssh_config = false` on the catalog service.
+- The mounted `~/.ssh/config` is now a sanitized copy materialized under `<repo>/.effigy/runtime/ssh/config`, with `IdentityFile` and `IdentitiesOnly` directives stripped. Host configs typically reference private key paths that aren't present inside the container, and `IdentitiesOnly yes` would force ssh to ignore the forwarded agent — both broke `git push` / deploy tasks with "Permission denied (publickey)" even though the agent socket was wired up correctly. Alias-mapping directives (`Hostname`, `User`, `Port`, `ProxyJump`, etc.) are preserved, so host aliases still resolve.
 
 ### Changed
 - The docs front doors were reorganized around a smaller set of real user journeys, so new readers hit clear onboarding, manifest, local-dev, demo, automation, and release paths instead of a flat wall of equally weighted guides.
@@ -27,6 +28,18 @@ During v0.x, MINOR bumps may include breaking changes.
 - The main onboarding path was then tightened again so the root README starts
   with existing-repo versus new-repo first steps, and the quick-start guides
   stop carrying internal “Vision Alignment” framing at the top.
+- The install path was then simplified too: the root README now uses explicit
+  copy-safe install commands by platform, and guide `010` is now clearly the
+  maintainer-only local PATH install page instead of a mixed public install and
+  release checklist.
+- The root README was then tightened again so it stops restating the product
+  surface twice before the user reaches the main success paths and docs links.
+- The first-run path was then trimmed further so `021` stays focused on the
+  first ten minutes and `055` reads more clearly as the next layer of
+  day-to-day workflow guidance instead of a second quick-start page.
+- The top surfaces were then de-duplicated again so `README.md`, `docs/README.md`,
+  `guides/README.md`, and `021` route newcomers through fewer overlapping
+  “start here” and “read next” paths.
 - The `063` container guide was also tightened into a shorter operator page, so
   it focuses more directly on declaration, lifecycle commands, data surfaces,
   and DNS behavior.
