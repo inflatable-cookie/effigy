@@ -42,8 +42,8 @@ Then go deeper with:
 ### I want host-clean local dev with services, containers, and local domains
 
 Start here:
-- [`guides/064-system-workspace-and-dev-contract.md`](./guides/064-system-workspace-and-dev-contract.md)
 - [`guides/063-container-system-guide.md`](./guides/063-container-system-guide.md)
+- [`guides/064-system-workspace-and-dev-contract.md`](./guides/064-system-workspace-and-dev-contract.md)
 
 Then go deeper with:
 - [`guides/065-underlay-starter.md`](./guides/065-underlay-starter.md)
@@ -80,7 +80,6 @@ Start here:
 Then go deeper with:
 - [`guides/049-ci-binary-distribution-and-release-protocol.md`](./guides/049-ci-binary-distribution-and-release-protocol.md)
 - [`guides/052-changelog-workflows-and-northstar-profile.md`](./guides/052-changelog-workflows-and-northstar-profile.md)
-- [`guides/044-distribution-first-publish-execution-runbook.md`](./guides/044-distribution-first-publish-execution-runbook.md)
 
 ### I want to work on the docs themselves
 
@@ -94,7 +93,6 @@ Then go deeper with:
 
 ## Other Areas
 
-- Guide hub: [`guides/README.md`](./guides/README.md)
 - Architecture: [`architecture/`](./architecture/)
 - Contracts and JSON surfaces: [`contracts/README.md`](./contracts/README.md)
 - Roadmaps: [`roadmaps/README.md`](./roadmaps/README.md)
