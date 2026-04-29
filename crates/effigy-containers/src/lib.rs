@@ -31,7 +31,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use effigy_catalog::{volumes::ManagedVolume, CatalogError, ComposeOutput};
+use effigy_catalog::{volumes::ManagedVolume, CatalogError, CatalogResolver, ComposeOutput};
 use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_manifest::{
     load_task_manifest_with_inspection, resolve_task_execution_binding_from_parts,
@@ -45,7 +45,7 @@ pub(crate) const DEFAULT_COLIMA_PROFILE: &str = "effigy";
 const DEFAULT_ATTACH_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_HEALTH_TIMEOUT_SECS: u64 = 60;
 const GENERATED_RUNTIME_COMPOSE_DIR: &str = ".effigy/runtime/compose";
-const PROJECT_LOCAL_CATALOG_DIR: &str = "infra/dev/catalog";
+pub(crate) const PROJECT_LOCAL_CATALOG_DIR: &str = "infra/dev/catalog";
 const EJECTED_COMPOSE_DIR: &str = "infra/dev";
 const SHARED_SERVICE_HOST: &str = "host.docker.internal";
 const RUNTIME_DNS_FALLBACK_SERVERS: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
@@ -171,47 +171,61 @@ pub struct SharedServiceBinding {
     pub host: String,
     pub host_port: u16,
     pub container_port: u16,
+    pub host_env_vars: Vec<String>,
+    pub port_env_vars: Vec<String>,
 }
 
-pub fn service_alias_contract(catalog: &str) -> Option<(&'static str, u16)> {
-    match catalog {
-        "postgres" => Some(("postgres", 5432)),
-        "mariadb" | "mysql" => Some(("mysql", 3306)),
-        "redis" => Some(("redis", 6379)),
-        "memcached" => Some(("memcached", 11211)),
-        "elasticsearch" => Some(("search", 9200)),
-        "minio" | "s3" => Some(("s3", 9000)),
-        "mail" | "mailpit" => Some(("smtp", 1025)),
-        _ => None,
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CatalogNetworkContract {
+    pub domain_label: String,
+    pub container_port: u16,
+    pub shared_service: bool,
+    pub shared_host_env_vars: Vec<String>,
+    pub shared_port_env_vars: Vec<String>,
+}
+
+pub(crate) fn resolve_catalog_network_contract(
+    repo_root: Option<&Path>,
+    catalog: &str,
+) -> Result<Option<CatalogNetworkContract>, ContainerPolicyError> {
+    let resolver = CatalogResolver::new(
+        project_local_catalog_dir(repo_root),
+        user_global_catalog_dir(),
+    );
+    let fragment = resolver.resolve(catalog)?;
+    let capabilities = fragment.schema.capabilities;
+    let (Some(domain_label), Some(container_port)) = (
+        capabilities.loopback_alias_label,
+        capabilities.loopback_alias_port,
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(CatalogNetworkContract {
+        domain_label,
+        container_port,
+        shared_service: capabilities.shared_service,
+        shared_host_env_vars: capabilities.shared_host_env_vars,
+        shared_port_env_vars: capabilities.shared_port_env_vars,
+    }))
 }
 
 impl SharedServiceBinding {
     pub fn standard_env_vars(&self) -> Vec<(String, String)> {
         let port = self.host_port.to_string();
-        match self.catalog.as_str() {
-            "mariadb" => vec![
-                ("DB_HOST".to_owned(), self.host.clone()),
-                ("DB_PORT".to_owned(), port.clone()),
-                ("MYSQL_HOST".to_owned(), self.host.clone()),
-                ("MYSQL_PORT".to_owned(), port),
-            ],
-            "postgres" => vec![
-                ("POSTGRES_HOST".to_owned(), self.host.clone()),
-                ("POSTGRES_PORT".to_owned(), port.clone()),
-                ("PGHOST".to_owned(), self.host.clone()),
-                ("PGPORT".to_owned(), port),
-            ],
-            "redis" => vec![
-                ("REDIS_HOST".to_owned(), self.host.clone()),
-                ("REDIS_PORT".to_owned(), port),
-            ],
-            "memcached" => vec![
-                ("MEMCACHED_HOST".to_owned(), self.host.clone()),
-                ("MEMCACHED_PORT".to_owned(), port),
-            ],
-            _ => Vec::new(),
-        }
+        let mut vars = Vec::new();
+        vars.extend(
+            self.host_env_vars
+                .iter()
+                .cloned()
+                .map(|name| (name, self.host.clone())),
+        );
+        vars.extend(
+            self.port_env_vars
+                .iter()
+                .cloned()
+                .map(|name| (name, port.clone())),
+        );
+        vars
     }
 }
 
@@ -258,6 +272,18 @@ impl From<CatalogError> for ContainerPolicyError {
     fn from(value: CatalogError) -> Self {
         Self::Catalog(value)
     }
+}
+
+fn project_local_catalog_dir(repo_root: Option<&Path>) -> Option<PathBuf> {
+    let repo_root = repo_root?;
+    let path = repo_root.join(PROJECT_LOCAL_CATALOG_DIR);
+    path.is_dir().then_some(path)
+}
+
+fn user_global_catalog_dir() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    let path = PathBuf::from(home).join(".effigy").join("catalog");
+    path.is_dir().then_some(path)
 }
 
 pub fn load_container_policy(
@@ -634,7 +660,7 @@ fn build_effective_policy(
                 .filter(|value| !value.is_empty()),
         });
     }
-    let service_aliases = effective_service_aliases(config);
+    let service_aliases = effective_service_aliases(repo_root, config)?;
     if driver == ManifestContainerDriver::Colima {
         let runtime_routes = runtime_route_domains(&dns_routes, &service_aliases);
         materialize_runtime_dns_override(
@@ -909,21 +935,27 @@ fn default_workspace_identity_for_primary_service(
     }
 }
 
-fn effective_service_aliases(config: &ManifestContainerConfig) -> Vec<EffectiveServiceAlias> {
-    config
+fn effective_service_aliases(
+    repo_root: &Path,
+    config: &ManifestContainerConfig,
+) -> Result<Vec<EffectiveServiceAlias>, ContainerPolicyError> {
+    let mut aliases = Vec::new();
+    for (service_name, service) in config
         .services
         .iter()
         .filter(|(_name, service)| !service.shared.unwrap_or(false))
-        .filter_map(|(service_name, service)| {
-            service_alias_contract(&service.catalog).map(|(domain_label, container_port)| {
-                EffectiveServiceAlias {
-                    service: service_name.clone(),
-                    domain_label: domain_label.to_owned(),
-                    container_port,
-                }
-            })
-        })
-        .collect()
+    {
+        let Some(contract) = resolve_catalog_network_contract(Some(repo_root), &service.catalog)?
+        else {
+            continue;
+        };
+        aliases.push(EffectiveServiceAlias {
+            service: service_name.clone(),
+            domain_label: contract.domain_label,
+            container_port: contract.container_port,
+        });
+    }
+    Ok(aliases)
 }
 
 fn default_project_name_base(manifest: &effigy_manifest::TaskManifest, repo_root: &Path) -> String {

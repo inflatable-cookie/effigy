@@ -30,6 +30,8 @@ description = "MinIO web console port"
 [capabilities]
 exec_target = true
 shell = "/bin/sh"
+loopback_alias_label = "s3"
+loopback_alias_port = 9000
 
 [volumes.data]
 mount = "/data"

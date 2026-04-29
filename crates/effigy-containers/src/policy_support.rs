@@ -12,7 +12,7 @@ use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde_yaml::Value as YamlValue;
 
 use crate::{
-    mount_spec::resolve_host_mounts, service_alias_contract, ContainerPolicyError,
+    mount_spec::resolve_host_mounts, resolve_catalog_network_contract, ContainerPolicyError,
     SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, PROJECT_LOCAL_CATALOG_DIR,
     SHARED_SERVICE_HOST,
 };
@@ -79,7 +79,7 @@ pub(crate) fn resolve_compose_source(
         )));
     }
 
-    let shared_services = resolve_shared_service_bindings(config)?;
+    let shared_services = resolve_shared_service_bindings(repo_root, config)?;
     let local_services = config
         .services
         .iter()
@@ -256,6 +256,7 @@ fn build_service_declarations(
 }
 
 fn resolve_shared_service_bindings(
+    repo_root: &Path,
     config: &ManifestContainerConfig,
 ) -> Result<Vec<SharedServiceBinding>, ContainerPolicyError> {
     let mut bindings = Vec::new();
@@ -263,7 +264,7 @@ fn resolve_shared_service_bindings(
         if !service.shared.unwrap_or(false) {
             continue;
         }
-        validate_supported_shared_service(service_name, service)?;
+        let contract = validate_supported_shared_service(repo_root, service_name, service)?;
         let shared_project_name = shared_service_project_name(service);
         let output_dir = shared_service_output_dir(&shared_project_name)?;
         let declaration = ServiceDeclaration {
@@ -324,6 +325,8 @@ fn resolve_shared_service_bindings(
             host: SHARED_SERVICE_HOST.to_owned(),
             host_port: binding.host,
             container_port: binding.container,
+            host_env_vars: contract.shared_host_env_vars,
+            port_env_vars: contract.shared_port_env_vars,
         });
     }
     bindings.sort_by(|left, right| left.service_name.cmp(&right.service_name));
@@ -331,17 +334,17 @@ fn resolve_shared_service_bindings(
 }
 
 fn validate_supported_shared_service(
+    repo_root: &Path,
     service_name: &str,
     service: &ManifestContainerServiceConfig,
-) -> Result<(), ContainerPolicyError> {
-    match service.catalog.as_str() {
-        "mariadb" | "postgres" | "redis" | "memcached" => {}
-        other => {
-            return Err(ContainerPolicyError::TaskInvocation(format!(
-                "service `{service_name}` uses unsupported shared catalog `{other}`; the bounded shared-service path only supports `mariadb`, `postgres`, `redis`, and `memcached`"
-            )));
-        }
-    }
+) -> Result<crate::CatalogNetworkContract, ContainerPolicyError> {
+    let contract = resolve_catalog_network_contract(Some(repo_root), &service.catalog)?;
+    let Some(contract) = contract.filter(|value| value.shared_service) else {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "service `{service_name}` uses unsupported shared catalog `{}`; the bounded shared-service path only supports catalogs that declare `shared_service = true`",
+            service.catalog
+        )));
+    };
     if service.variant.is_some() {
         return Err(ContainerPolicyError::TaskInvocation(format!(
             "service `{service_name}` cannot combine `shared = true` with `variant`; the bounded shared-service path only supports standalone backing-service catalogs"
@@ -352,7 +355,7 @@ fn validate_supported_shared_service(
             "service `{service_name}` cannot combine `shared = true` with `config`; the bounded shared-service path only supports standalone backing-service catalogs"
         )));
     }
-    Ok(())
+    Ok(contract)
 }
 
 fn shared_service_project_name(service: &ManifestContainerServiceConfig) -> String {
@@ -623,21 +626,24 @@ fn project_loopback_port_rules(
     else {
         return Ok(Vec::new());
     };
-    Ok(config
+    let mut rules = Vec::new();
+    for (service_name, service) in config
         .services
         .iter()
         .filter(|(_service_name, service)| !service.shared.unwrap_or(false))
-        .filter_map(|(service_name, service)| {
-            service_alias_contract(&service.catalog).map(|(_label, container_port)| {
-                LoopbackPortRule {
-                    loopback_ip,
-                    service_name: service_name.clone(),
-                    container_port,
-                    keep_runtime_host_binding: true,
-                }
-            })
-        })
-        .collect())
+    {
+        let Some(contract) = resolve_catalog_network_contract(Some(repo_root), &service.catalog)?
+        else {
+            continue;
+        };
+        rules.push(LoopbackPortRule {
+            loopback_ip,
+            service_name: service_name.clone(),
+            container_port: contract.container_port,
+            keep_runtime_host_binding: true,
+        });
+    }
+    Ok(rules)
 }
 
 fn shared_service_loopback_port_rules(
@@ -646,7 +652,10 @@ fn shared_service_loopback_port_rules(
     service_name: &str,
     service: &ManifestContainerServiceConfig,
 ) -> Result<Vec<LoopbackPortRule>, ContainerPolicyError> {
-    let Some((_label, container_port)) = service_alias_contract(&service.catalog) else {
+    let resolver = CatalogResolver::new(None, user_global_catalog_dir());
+    let fragment = resolver.resolve(&service.catalog)?;
+    let capabilities = fragment.schema.capabilities;
+    let Some(container_port) = capabilities.loopback_alias_port else {
         return Ok(Vec::new());
     };
     let Some(loopback_ip) = load_or_allocate_loopback_ip(

@@ -25,6 +25,11 @@ description = "Root password (local dev only)"
 [capabilities]
 exec_target = true
 shell = "/bin/bash"
+loopback_alias_label = "mysql"
+loopback_alias_port = 3306
+shared_service = true
+shared_host_env_vars = ["DB_HOST", "MYSQL_HOST"]
+shared_port_env_vars = ["DB_PORT", "MYSQL_PORT"]
 
 [volumes.data]
 mount = "/var/lib/mysql"
