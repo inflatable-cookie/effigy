@@ -166,6 +166,7 @@ pub struct EffectiveServiceAlias {
 pub struct SharedServiceBinding {
     pub service_name: String,
     pub catalog: String,
+    pub domain_label: String,
     pub project_name: String,
     pub compose_file: PathBuf,
     pub host: String,

@@ -320,6 +320,7 @@ fn resolve_shared_service_bindings(
         bindings.push(SharedServiceBinding {
             service_name: service_name.clone(),
             catalog: service.catalog.clone(),
+            domain_label: contract.domain_label,
             project_name: shared_project_name,
             compose_file: write.compose_path,
             host: SHARED_SERVICE_HOST.to_owned(),
