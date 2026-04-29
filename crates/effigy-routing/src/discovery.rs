@@ -201,7 +201,7 @@ fn mount_source_path(raw: &str) -> Option<PathBuf> {
 pub(super) fn should_skip_dir(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|n| n.to_str()),
-        Some(".git" | ".effigy" | "node_modules" | "target" | ".next")
+        Some(".git" | ".effigy" | "node_modules" | "vendor" | "target" | ".next")
     )
 }
 

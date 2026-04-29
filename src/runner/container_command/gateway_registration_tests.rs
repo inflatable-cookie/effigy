@@ -93,11 +93,20 @@ fn shared_service(
     SharedServiceBinding {
         service_name: service_name.to_owned(),
         catalog: catalog.to_owned(),
+        domain_label: match catalog {
+            "mariadb" => "mysql".to_owned(),
+            "postgres" => "postgres".to_owned(),
+            "redis" => "redis".to_owned(),
+            "memcached" => "memcached".to_owned(),
+            other => panic!("unexpected shared catalog {other}"),
+        },
         project_name: project_name.to_owned(),
         compose_file: PathBuf::from(format!("/tmp/{project_name}/docker-compose.shared.yml")),
         host: "127.0.0.1".to_owned(),
         host_port,
         container_port,
+        host_env_vars: Vec::new(),
+        port_env_vars: Vec::new(),
     }
 }
 
