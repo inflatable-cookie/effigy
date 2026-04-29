@@ -1,0 +1,46 @@
+[bundle]
+name = "decodelabs-library"
+description = "DecodeLabs library workspace with a shared php-fpm dev container, explicit container-side Composer-global Effigy deferral, and no default web/db/gateway services."
+defaults = "defaults.toml"
+
+[[inputs]]
+name = "shared_root"
+type = "string"
+description = "Host path mounted into the shared library container root. Defaults to the parent directory of the consuming repo (`../`)."
+default = "../"
+example = "../"
+
+[[inputs]]
+name = "workspace_subdir"
+type = "string"
+description = "Repo path under `shared_root` used as the workspace CWD. Defaults to the consuming repo's relative path under `shared_root`."
+example = "collections"
+
+[[inputs]]
+name = "project_name"
+type = "string"
+description = "Compose project name for the shared library container runtime. Defaults to a repo-specific name derived from `workspace_subdir`."
+
+[[inputs]]
+name = "system_name"
+type = "string"
+description = "Name of the `[systems.<name>]` block rendered by the bundle."
+default = "dev"
+
+[[inputs]]
+name = "container_name"
+type = "string"
+description = "Name of the `[containers.<name>]` block hosting the shared library runtime."
+default = "web"
+
+[[inputs]]
+name = "workspace_service_name"
+type = "string"
+description = "Name of the php-fpm workspace service inside the shared runtime container."
+default = "app"
+
+[[inputs]]
+name = "default_workspace"
+type = "string"
+description = "Name of the `[systems.<system>.workspaces.<name>]` workspace treated as the system default."
+default = "app"

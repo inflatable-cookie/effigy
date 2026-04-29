@@ -264,7 +264,7 @@ fn resolve_bundle_defaults(
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LocalBundleDescriptor {
+pub(super) struct LocalBundleDescriptor {
     bundle: LocalBundleMetadata,
     #[serde(default)]
     inputs: Vec<LocalBundleInputDescriptor>,
@@ -272,7 +272,7 @@ struct LocalBundleDescriptor {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LocalBundleMetadata {
+pub(super) struct LocalBundleMetadata {
     name: String,
     #[serde(default, rename = "description")]
     _description: String,
@@ -282,7 +282,7 @@ struct LocalBundleMetadata {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LocalBundleInputDescriptor {
+pub(super) struct LocalBundleInputDescriptor {
     name: String,
     #[serde(rename = "type")]
     value_type: BundleInputType,
@@ -298,6 +298,35 @@ struct LocalBundleInputDescriptor {
 
 fn default_local_bundle_defaults_file() -> String {
     "effigy.toml".to_owned()
+}
+
+pub(super) fn parse_bundle_descriptor_source(
+    path: &Path,
+    source: &str,
+) -> Result<LocalBundleDescriptor, ManifestError> {
+    toml::from_str::<LocalBundleDescriptor>(source).map_err(|error| ManifestError::Parse {
+        path: path.to_path_buf(),
+        error,
+    })
+}
+
+pub(super) fn bundle_spec_from_descriptor(descriptor: &LocalBundleDescriptor) -> BundleSpec {
+    BundleSpec {
+        name: descriptor.bundle.name.clone(),
+        description: descriptor.bundle._description.clone(),
+        inputs: descriptor
+            .inputs
+            .iter()
+            .map(|input| BundleInputSpec {
+                name: input.name.clone(),
+                value_type: input.value_type,
+                required: input.required,
+                description: input._description.clone(),
+                default: input.default.clone(),
+                example: input.example.clone(),
+            })
+            .collect(),
+    }
 }
 
 fn resolve_local_bundle_defaults(
@@ -321,13 +350,7 @@ fn resolve_local_bundle_defaults(
             path: descriptor_path.clone(),
             error,
         })?;
-    let descriptor =
-        toml::from_str::<LocalBundleDescriptor>(&descriptor_source).map_err(|error| {
-            ManifestError::Parse {
-                path: descriptor_path.clone(),
-                error,
-            }
-        })?;
+    let descriptor = parse_bundle_descriptor_source(&descriptor_path, &descriptor_source)?;
     validate_local_bundle_descriptor(manifest_path, &descriptor)?;
     let resolved_inputs = resolve_local_bundle_inputs(manifest_path, &descriptor, inputs)?;
 

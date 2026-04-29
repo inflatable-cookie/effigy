@@ -61,29 +61,21 @@ pub(super) struct BundleExportFile {
 
 const DECODELABS_ASSETS: &[EmbeddedBundleAsset] = &[EmbeddedBundleAsset {
     path: "scripts/seed-latest-db-dump.rhai",
-    contents: include_str!(
-        "../../../effigy-catalog/starters/decodelabs/scripts/seed-latest-db-dump.rhai"
-    ),
+    contents: include_str!("../../bundles/decodelabs/scripts/seed-latest-db-dump.rhai"),
 }];
 
 const UNDERLAY_ASSETS: &[EmbeddedBundleAsset] = &[
     EmbeddedBundleAsset {
         path: "scripts/bootstrap-env.rhai",
-        contents: include_str!(
-            "../../../effigy-catalog/starters/underlay/scripts/bootstrap-env.rhai"
-        ),
+        contents: include_str!("../../bundles/underlay/scripts/bootstrap-env.rhai"),
     },
     EmbeddedBundleAsset {
         path: "scripts/dev/ui-setup.rhai",
-        contents: include_str!(
-            "../../../effigy-catalog/starters/underlay/scripts/dev/ui-setup.rhai"
-        ),
+        contents: include_str!("../../bundles/underlay/scripts/dev/ui-setup.rhai"),
     },
     EmbeddedBundleAsset {
         path: "scripts/error-reporting.rhai",
-        contents: include_str!(
-            "../../../effigy-catalog/starters/underlay/scripts/error-reporting.rhai"
-        ),
+        contents: include_str!("../../bundles/underlay/scripts/error-reporting.rhai"),
     },
 ];
 
@@ -184,296 +176,17 @@ pub(super) fn bundle_input_type_literal(value_type: BundleInputType) -> &'static
 
 pub(super) fn decodelabs_export_template() -> String {
     let extensions = render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  ");
-    format!(
-        r#"[containers]
-default = "{{{{ inputs.container_name }}}}"
-
-[containers.{{{{ inputs.container_name }}}}]
-driver = "colima"
-startup = "detached"
-project_name = "{{{{ inputs.project_name }}}}"
-primary_service = "{{{{ inputs.workspace_service_name }}}}"
-working_dir = "/var/www/html"
-
-[containers.{{{{ inputs.container_name }}}}.lifecycle]
-on_task_exit = "stop"
-shutdown = "graceful"
-
-[containers.{{{{ inputs.container_name }}}}.dns]
-routes = [
-  {{ domain = "{{{{ inputs.host }}}}", tls = true, service = "web" }},
-  {{ domain = "pma.{{{{ inputs.host }}}}", tls = true, service = "pma" }},
-]
-
-[containers.{{{{ inputs.container_name }}}}.aliases]
-php = "{{{{ inputs.workspace_service_name }}}}"
-composer = {{ service = "{{{{ inputs.workspace_service_name }}}}", command = "composer" }}
-mysql = {{ service = "db", command = "mysql -uroot{{% raw %}}{{% if services.db.params.password %}} -p{{{{ services.db.params.password }}}}{{% endif %}}{{% endraw %}} {{{{ inputs.databases|first }}}}" }}
-
-[containers.{{{{ inputs.container_name }}}}.services.{{{{ inputs.workspace_service_name }}}}]
-catalog = "php-fpm"
-version = "8.4"
-document_root = "."
-node_version = "20"
-node_global_packages = ["eclint"]
-composer_global_packages = ["decodelabs/effigy"]
-extensions = [
-{extensions}
-]
-
-[containers.{{{{ inputs.container_name }}}}.services.web]
-catalog = "nginx"
-variant = "decodelabs"
-document_root = "."
-service = "{{{{ inputs.workspace_service_name }}}}"
-
-[containers.{{{{ inputs.container_name }}}}.services.db]
-catalog = "mariadb"
-database = "{{{{ inputs.databases|first }}}}"
-databases = [{{% for database in inputs.databases %}}"{{{{ database }}}}"{{% if not loop.last %}}, {{% endif %}}{{% endfor %}}]
-
-[containers.{{{{ inputs.container_name }}}}.services.pma]
-catalog = "phpmyadmin"
-database_host = "db"
-
-[containers.{{{{ inputs.container_name }}}}.services.memcache]
-catalog = "memcached"
-memory = 128
-
-[containers.{{{{ inputs.container_name }}}}.services.redis]
-catalog = "redis"
-
-[systems]
-default = "{{{{ inputs.system_name }}}}"
-
-[systems.{{{{ inputs.system_name }}}}]
-default_workspace = "{{{{ inputs.default_workspace }}}}"
-container = "{{{{ inputs.container_name }}}}"
-
-[systems.{{{{ inputs.system_name }}}}.workspaces.{{{{ inputs.default_workspace }}}}]
-
-[tasks.dev]
-workspace = "{{{{ inputs.default_workspace }}}}"
-
-[tasks.seed]
-workspace = "{{{{ inputs.default_workspace }}}}"
-stay_in_shell = true
-run_in = "container"
-run = [{{ rhai = "{{{{ bundle.root }}}}/scripts/seed-latest-db-dump.rhai" }}]
-
-[tasks.release]
-run = "\"${{COMPOSER_HOME:-$HOME/.config/composer}}/vendor/bin/effigy\" release"
-
-[defer]
-run = "\"${{COMPOSER_HOME:-$HOME/.config/composer}}/vendor/bin/effigy\" {{request}} {{args}}"
-run_in = "container"
-"#
-    )
+    include_str!("../../bundles/decodelabs/export.toml").replace("__PHP_EXTENSIONS__", &extensions)
 }
 
 pub(super) fn decodelabs_library_export_template() -> String {
     let extensions = render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  ");
-    format!(
-        r#"[containers]
-default = "{{{{ inputs.container_name }}}}"
-
-[containers.{{{{ inputs.container_name }}}}]
-driver = "colima"
-startup = "detached"
-project_name = "{{{{ inputs.project_name }}}}"
-primary_service = "{{{{ inputs.workspace_service_name }}}}"
-working_dir = "/workspace-root"
-
-[containers.{{{{ inputs.container_name }}}}.lifecycle]
-on_task_exit = "stop"
-shutdown = "graceful"
-
-[containers.{{{{ inputs.container_name }}}}.aliases]
-php = "{{{{ inputs.workspace_service_name }}}}"
-composer = {{ service = "{{{{ inputs.workspace_service_name }}}}", command = "composer" }}
-
-[containers.{{{{ inputs.container_name }}}}.services.{{{{ inputs.workspace_service_name }}}}]
-catalog = "php-fpm"
-version = "8.4"
-document_root = "."
-working_dir = "/workspace-root"
-mount_source = "{{{{ inputs.shared_root }}}}"
-node_version = "20"
-node_global_packages = ["eclint"]
-composer_global_packages = ["decodelabs/effigy"]
-extensions = [
-{extensions}
-]
-
-[systems]
-default = "{{{{ inputs.system_name }}}}"
-
-[systems.{{{{ inputs.system_name }}}}]
-container = "{{{{ inputs.container_name }}}}"
-default_workspace = "{{{{ inputs.default_workspace }}}}"
-working_dir = "/workspace-root/{{{{ inputs.workspace_subdir }}}}"
-user = "dev"
-home = "/home/dev"
-
-[systems.{{{{ inputs.system_name }}}}.workspaces.{{{{ inputs.default_workspace }}}}]
-
-[tasks.dev]
-workspace = "{{{{ inputs.default_workspace }}}}"
-
-[defer]
-run = "\"${{COMPOSER_HOME:-$HOME/.config/composer}}/vendor/bin/effigy\" {{request}} {{args}}"
-run_in = "container"
-"#
-    )
+    include_str!("../../bundles/decodelabs-library/export.toml")
+        .replace("__PHP_EXTENSIONS__", &extensions)
 }
 
-const UNDERLAY_EXPORT_TEMPLATE: &str = r#"[package_manager]
-js = "bun"
-
-[systems]
-default = "{{ inputs.system_name }}"
-
-[systems.{{ inputs.system_name }}]
-container = "{{ inputs.container_name }}"
-default_workspace = "{{ inputs.default_workspace }}"
-working_dir = "/workspace-root/{{ inputs.workspace_subdir }}"
-user = "dev"
-home = "/home/dev"
-mounts = []
-
-[systems.{{ inputs.system_name }}.workspaces.{{ inputs.default_workspace }}]
-
-[containers]
-default = "{{ inputs.container_name }}"
-
-[containers.{{ inputs.container_name }}]
-startup = "detached"
-context = "{{ inputs.system_name }}"
-project_name = "{{ inputs.project_name }}"
-primary_service = "{{ inputs.workspace_service_name }}"
-
-[containers.{{ inputs.container_name }}.aliases]
-psql = "postgres"
-
-[containers.{{ inputs.container_name }}.services.{{ inputs.workspace_service_name }}]
-catalog = "workspace-rust-bun"
-working_subdir = "{{ inputs.workspace_subdir }}"
-host_ports = [
-  "{{ inputs.api_port }}:{{ inputs.api_port }}",
-  "{{ inputs.admin_port }}:{{ inputs.admin_port }}",
-  "{{ inputs.front_port }}:{{ inputs.front_port }}",
-]
-isolated_dirs = [
-  "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/target",
-  "{% if inputs.dirs.client %}{{ inputs.dirs.client }}{% else %}app-client{% endif %}/node_modules",
-  "{% if inputs.dirs.ui %}{{ inputs.dirs.ui }}{% else %}app-ui{% endif %}/node_modules",
-  "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}/node_modules",
-  "{% if inputs.dirs.admin %}{{ inputs.dirs.admin }}{% else %}app-admin{% endif %}/node_modules",
-]
-
-[containers.{{ inputs.container_name }}.services.postgres]
-catalog = "postgres"
-database = "{{ inputs.databases|first }}"
-databases = [{% for database in inputs.databases %}"{{ database }}"{% if not loop.last %}, {% endif %}{% endfor %}]
-
-[containers.{{ inputs.container_name }}.services.dbgate]
-catalog = "dbgate"
-database_host = "postgres"
-database = "{{ inputs.databases|first }}"
-connection_label = "{{ inputs.project_name }}"
-
-[containers.{{ inputs.container_name }}.services.mailpit]
-catalog = "mailpit"
-
-[containers.{{ inputs.container_name }}.services.minio]
-catalog = "minio"
-
-[containers.{{ inputs.container_name }}.dns]
-routes = [
-  { domain = "{% if inputs.routes.front %}{{ inputs.routes.front }}.{{ inputs.host }}{% else %}{{ inputs.host }}{% endif %}", tls = true, port = {{ inputs.front_port }}, service = "{{ inputs.workspace_service_name }}" },
-  { domain = "{% if inputs.routes.admin %}{{ inputs.routes.admin }}.{{ inputs.host }}{% else %}{{ inputs.host }}{% endif %}", tls = true, port = {{ inputs.admin_port }}, service = "{{ inputs.workspace_service_name }}" },
-  { domain = "{% if inputs.routes.api %}{{ inputs.routes.api }}.{{ inputs.host }}{% else %}{{ inputs.host }}{% endif %}", tls = true, port = {{ inputs.api_port }}, service = "{{ inputs.workspace_service_name }}" },
-  { domain = "dbgate.{{ inputs.host }}", tls = true, port = 3000, service = "dbgate" },
-  { domain = "mailpit.{{ inputs.host }}", port = 8025, service = "mailpit" },
-  { domain = "minio.{{ inputs.host }}", port = 9001, service = "minio" },
-]
-
-[tasks.health]
-run = [
-{% if inputs.dirs.docs %}  { task = "{{ inputs.dirs.docs }}/health" },
-{% endif %}  { task = "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/health" },
-  { task = "{% if inputs.dirs.client %}{{ inputs.dirs.client }}{% else %}app-client{% endif %}/health" },
-{% if inputs.dirs.ui %}  { task = "{{ inputs.dirs.ui }}/health" },
-{% endif %}  { task = "{% if inputs.dirs.admin %}{{ inputs.dirs.admin }}{% else %}app-admin{% endif %}/health" },
-  { task = "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}/health" },
-]
-
-[tasks.validate]
-run = [
-  { task = "underlay/validate" },
-{% if inputs.dirs.docs %}  { task = "{{ inputs.dirs.docs }}/validate" },
-{% endif %}  { task = "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/validate" },
-  { task = "{% if inputs.dirs.client %}{{ inputs.dirs.client }}{% else %}app-client{% endif %}/validate" },
-{% if inputs.dirs.ui %}  { task = "{{ inputs.dirs.ui }}/validate" },
-{% endif %}  { task = "{% if inputs.dirs.admin %}{{ inputs.dirs.admin }}{% else %}app-admin{% endif %}/validate" },
-  { task = "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}/validate" },
-]
-
-[tasks.qa]
-run = [
-  { task = "health" },
-  { task = "validate" },
-{% if inputs.dirs.docs %}  { task = "{{ inputs.dirs.docs }}/qa:docs" },
-  { task = "{{ inputs.dirs.docs }}/qa:northstar" },
-{% endif %}]
-
-[tasks.dev]
-mode = "tui"
-container_lifecycle = true
-gateway = true
-health_wait = true
-concurrent = [
-  { name = "front", task = "{% if inputs.dirs.front %}{{ inputs.dirs.front }}{% else %}app-front{% endif %}/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 6, tab = 1 },
-  { name = "admin", task = "{% if inputs.dirs.admin %}{{ inputs.dirs.admin }}{% else %}app-admin{% endif %}/dev", setup = [{ rhai = "{{ bundle.root }}/scripts/dev/ui-setup.rhai" }], start = 5, tab = 2 },
-  { name = "api", task = "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/api", start = 4, tab = 3 },
-  { name = "jobs", task = "{% if inputs.dirs.api %}{{ inputs.dirs.api }}{% else %}app-api{% endif %}/jobs", start = 3, tab = 4, start_after_ms = 1500 },
-  { role = "shell", service = "{{ inputs.workspace_service_name }}", start = 2, tab = 5 },
-  { role = "lifecycle", start = 1, tab = 6 },
-]
-
-[bootstrap]
-run = [
-  { rhai = "{{ bundle.root }}/scripts/bootstrap-env.rhai" },
-  { task = "container up --detach" },
-  { task = "bootstrap deps sync {% if inputs.sources.underlay %}{{ inputs.sources.underlay }}{% else %}../underlay{% endif %}{% if inputs.dirs.api %} {{ inputs.dirs.api }}{% else %} app-api{% endif %}{% if inputs.dirs.client %} {{ inputs.dirs.client }}{% else %} app-client{% endif %}{% if inputs.dirs.ui %} {{ inputs.dirs.ui }}{% else %} app-ui{% endif %}{% if inputs.dirs.front %} {{ inputs.dirs.front }}{% else %} app-front{% endif %}{% if inputs.dirs.admin %} {{ inputs.dirs.admin }}{% else %} app-admin{% endif %}" },
-]
-start = "dev"
-
-[[bootstrap.children]]
-path = "{% if inputs.sources.underlay %}{{ inputs.sources.underlay }}{% else %}../underlay{% endif %}"
-repo = "git@github.com:inflatable-cookie/underlay.git"
-branch = "main"
-
-[[bootstrap.children]]
-path = "{% if inputs.sources.poodle %}{{ inputs.sources.poodle }}{% else %}../poodle{% endif %}"
-repo = "git@github.com:inflatable-cookie/poodle.git"
-branch = "main"
-
-[tasks."smoke:error-logging"]
-run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
-run_in = "host"
-
-[tasks."metrics:error-log"]
-run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
-run_in = "host"
-
-[tasks."validate:error-reporting"]
-run = [{ rhai = "{{ bundle.root }}/scripts/error-reporting.rhai" }]
-run_in = "host"
-"#;
-
 pub(super) fn underlay_export_template() -> String {
-    UNDERLAY_EXPORT_TEMPLATE.to_owned()
+    include_str!("../../bundles/underlay/export.toml").to_owned()
 }
 
 /// Derive isolated writable directories for the underlay workspace bundle from
