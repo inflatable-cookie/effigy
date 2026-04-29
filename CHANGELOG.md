@@ -25,55 +25,18 @@ During v0.x, MINOR bumps may include breaking changes.
 - `php-fpm` catalog builds no longer fetch `install-php-extensions` from a live GitHub release URL during image build, avoiding transient 5xx failures on fresh PHP workspace and `decodelabs-library` builds.
 
 ### Changed
-
-- Added a dedicated catalog service authoring guide and clarified the split
-  between consumer-facing catalog reference docs and shipped catalog source
-  ownership.
 - PHP workspaces now share one Effigy-managed Composer-home volume by default
   instead of only sharing auth/config files, so Composer tokens and global
   state persist across repos unless the host Composer home is mounted
   explicitly.
-- Workspace catalogs no longer mount the host's `~/.ssh/config` by default or rewrite it on the way into the container. The default SSH path is now simpler: forwarded agent plus `known_hosts` plus `gitconfig`, with full SSH config mounting as an explicit opt-in only when you have a container-safe config file.
-- Workspace catalogs now also accept `ssh_config_path` for the explicit container-safe SSH config case, so hosts that rely on `User`, alias, or bastion rules do not need the full host `~/.ssh/config` mounted wholesale.
-- Workspace catalogs now also accept `mount_host_ssh_dir` / `ssh_dir_path` for the trusted local-dev case where container SSH genuinely depends on private key files or `IdentityFile` rules. When enabled, Effigy mounts a full SSH directory read-only and skips the narrower SSH file mounts.
-- The docs front doors were reorganized around a smaller set of real user journeys, so new readers hit clear onboarding, manifest, local-dev, demo, automation, and release paths instead of a flat wall of equally weighted guides.
-- The guide portfolio review now explicitly separates primary guides, secondary deep dives, merge candidates, rename candidates, and archive candidates, and the narrow vision allowlist maintenance pages are now marked deprecated instead of reading like active product guides.
-- The release/distribution docs now present `062`, `051`, `049`, and `052` as the active public path, while the older CI pinning, Homebrew-tap, and first-publish runbooks are marked deprecated instead of competing with that surface.
-- The active release cluster now has clearer boundaries: `051` owns the release cut workflow, `062` owns distribution commands, `049` owns maintainer policy and CI install rules, and `052` owns changelog-specific work.
-- The active release guides were then tightened further so `049`, `051`, and `062` read more like operator references and less like internal history or rollout notes.
-- The docs-maintenance cluster now has clearer boundaries too: `037` owns the maintenance playbook, `029` owns the QA checklist, `040` owns archive/deprecation policy, and the overlapping trigger/drift guides are now deprecated.
-- The local-dev guides now front-load the practical split more clearly too: `063` is the direct container command guide, while `064` is the mental-model guide for `system`, `workspace`, and repo-owned `dev`.
-- The `064` system and workspace guide was then rewritten into a much smaller
-  mental-model page so it explains the local-dev contract without carrying as
-  much theory and implementation framing.
-- The docs front doors were then cleaned up again so the local-dev path leads
-  with the practical container guide, the release path no longer points at a
-  deprecated runbook, and deprecated adoption pages stop reading like active
-  inventory.
-- The main onboarding path was then tightened again so the root README starts
-  with existing-repo versus new-repo first steps, and the quick-start guides
-  stop carrying internal “Vision Alignment” framing at the top.
-- The install path was then simplified too: the root README now uses explicit
-  copy-safe install commands by platform, and guide `010` is now clearly the
-  maintainer-only local PATH install page instead of a mixed public install and
-  release checklist.
-- The root README was then tightened again so it stops restating the product
-  surface twice before the user reaches the main success paths and docs links.
-- The first-run path was then trimmed further so `021` stays focused on the
-  first ten minutes and `055` reads more clearly as the next layer of
-  day-to-day workflow guidance instead of a second quick-start page.
-- The top surfaces were then de-duplicated again so `README.md`, `docs/README.md`,
-  `guides/README.md`, and `021` route newcomers through fewer overlapping
-  “start here” and “read next” paths.
-- The top docs were then softened again so they read less like maintainers
-  talking to themselves and more like product docs, especially around local
-  dev, demos, and release wording.
-- The `063` container guide was also tightened into a shorter operator page, so
-  it focuses more directly on declaration, lifecycle commands, data surfaces,
-  and DNS behavior.
-- The `025` command reference was tightened into a real lookup page by
-  replacing the giant command and constraints walls with grouped command-family
-  shapes and the main sharp-edge notes.
+- Workspace SSH integration is simpler and more explicit now: host
+  `~/.ssh/config` is no longer mounted or rewritten by default, container-safe
+  config mounting is opt-in via `ssh_config_path`, and trusted local-dev cases
+  can mount a full read-only SSH directory via `mount_host_ssh_dir` /
+  `ssh_dir_path`.
+- The docs front doors and core guides were heavily tightened for new users:
+  onboarding, install, local-dev, release, and catalog-authoring paths are now
+  clearer, less repetitive, and less maintainers-only in tone.
 
 ## [0.3.0] - 2026-04-28
 
