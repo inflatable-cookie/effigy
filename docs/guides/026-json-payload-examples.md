@@ -13,34 +13,43 @@ effigy --json <command>
 
 At runtime, these payloads are returned inside the top-level `effigy.command.v1` envelope in `result` (or in `error.details` for certain failures).
 
-
-## Vision Alignment
-
-- Primary tags: `CONTRACT`, `RELEASE`
-- Target movement: payload examples remain trustworthy fixtures for schema-aware consumers and release validation.
-
 ## Start Here
 
 Use this page in two passes:
 
-- first, confirm the envelope shape in `effigy.command.v1`
-- then jump to the command-specific payload you are integrating against
+1. confirm the outer envelope shape in `effigy.command.v1`
+2. jump straight to the payload family you are integrating against
 
-Common starting points:
+Start with the family that matches your job:
 
-- `Tasks` when you need discovery or routing data
-- `Doctor` or `Doctor Explain` when you need health or routing reasoning
-- `Bootstrap` when you need clone-or-update bring-up planning or execution data
-- `Test Plan` and `Test Results` when you are integrating test automation
-- `Scan *` payloads when you need raw repo-health findings instead of doctor
-  normalization
+- task discovery or routing:
+  `Tasks`, `Doctor Explain`, `Task Run`
+- health, repo checks, or diagnostics:
+  `Doctor` and the `Scan *` payloads
+- test automation:
+  `Test Plan`, `Test Results`, `Watch`
+- bootstrap and setup:
+  `Bootstrap`, `Init`, `Migrate`, `Config`, `Unlock`
+- shell completion or editor integration:
+  `Completion`, `Completion Candidates`
 
 Companion references:
 
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 
-## 1) Envelope Example (`effigy.command.v1`)
+## How To Use This Guide
+
+- treat the samples here as shape examples, not a promise that every field
+  ordering choice matters
+- use [`017-json-output-contracts.md`](./017-json-output-contracts.md) for the
+  formal schema and contract rules
+- use this guide when you want realistic payloads before writing assertions,
+  adapters, or fixtures
+
+## Envelope and Core Routing
+
+### 1) Envelope Example (`effigy.command.v1`)
 
 ```json
 {
@@ -63,7 +72,7 @@ Companion references:
 }
 ```
 
-## 2) Tasks (`effigy.tasks.v1`)
+### 2) Tasks (`effigy.tasks.v1`)
 
 ```json
 {
@@ -121,7 +130,9 @@ Companion references:
 }
 ```
 
-## 3) Doctor (`effigy.doctor.v1`)
+## Health and Diagnostics
+
+### 3) Doctor (`effigy.doctor.v1`)
 
 ```json
 {
@@ -179,7 +190,7 @@ Companion references:
 
 The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`, `scan.generated-assets`, `scan.generated-in-src`, and `scan.attention-markers` when those scanners are enabled for doctor.
 
-## 4) Doctor Explain (`effigy.doctor.explain.v1`)
+### 4) Doctor Explain (`effigy.doctor.explain.v1`)
 
 ```json
 {
@@ -226,7 +237,9 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 5) Test Plan (`effigy.test.plan.v1`)
+## Test and Watch Payloads
+
+### 5) Test Plan (`effigy.test.plan.v1`)
 
 ```json
 {
@@ -266,7 +279,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 6) Test Results (`effigy.test.results.v1`)
+### 6) Test Results (`effigy.test.results.v1`)
 
 ```json
 {
@@ -302,7 +315,7 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 7) Watch (`effigy.watch.v1`)
+### 7) Watch (`effigy.watch.v1`)
 
 ```json
 {
@@ -313,7 +326,9 @@ The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`,
 }
 ```
 
-## 8) Bootstrap (`effigy.bootstrap.v1`)
+## Setup, Bootstrap, and Config
+
+### 8) Bootstrap (`effigy.bootstrap.v1`)
 
 ```json
 {
@@ -420,7 +435,9 @@ Read these fields first:
 - `children` for per-child destination, branch, repo state, and warning detail
 - `start` for whether bring-up launch was requested and whether it actually ran
 
-## 9) Scan God Files (`effigy.scan.god-files.v1`)
+## Scan Payloads
+
+### 9) Scan God Files (`effigy.scan.god-files.v1`)
 
 ```json
 {
@@ -458,7 +475,7 @@ Read these fields first:
 }
 ```
 
-## 10) Scan Duplicate Blocks (`effigy.scan.duplicate-blocks.v1`)
+### 10) Scan Duplicate Blocks (`effigy.scan.duplicate-blocks.v1`)
 
 ```json
 {
@@ -523,7 +540,7 @@ Read these fields first:
 }
 ```
 
-## 11) Scan Comment Ratio (`effigy.scan.comment-ratio.v1`)
+### 11) Scan Comment Ratio (`effigy.scan.comment-ratio.v1`)
 
 ```json
 {
@@ -564,7 +581,7 @@ Read these fields first:
 }
 ```
 
-## 12) Scan Generated Assets (`effigy.scan.generated-assets.v1`)
+### 12) Scan Generated Assets (`effigy.scan.generated-assets.v1`)
 
 ```json
 {
@@ -601,7 +618,7 @@ Read these fields first:
 }
 ```
 
-## 13) Scan Generated In Src (`effigy.scan.generated-in-src.v1`)
+### 13) Scan Generated In Src (`effigy.scan.generated-in-src.v1`)
 
 ```json
 {
@@ -648,7 +665,7 @@ Read these fields first:
 }
 ```
 
-## 14) Init (`effigy.init.v1`, `effigy.init.list.v1`)
+### 14) Init (`effigy.init.v1`, `effigy.init.list.v1`)
 
 `effigy init <name>` / `effigy init --dry-run` / `effigy init --force`:
 
@@ -697,7 +714,7 @@ Notes:
 }
 ```
 
-## 15) Migrate (`effigy.migrate.v1`)
+### 15) Migrate (`effigy.migrate.v1`)
 
 ```json
 {
@@ -724,7 +741,7 @@ Notes:
 }
 ```
 
-## 16) Config (`effigy.config.v1`)
+### 16) Config (`effigy.config.v1`)
 
 ```json
 {
@@ -739,7 +756,7 @@ Notes:
 }
 ```
 
-## 17) Unlock (`effigy.unlock.v1`)
+### 17) Unlock (`effigy.unlock.v1`)
 
 ```json
 {
@@ -755,7 +772,9 @@ Notes:
 }
 ```
 
-## 18) Completion (`effigy.completion.v1`)
+## Completion and Interactive Tooling
+
+### 18) Completion (`effigy.completion.v1`)
 
 ```json
 {
@@ -780,7 +799,7 @@ Notes:
 }
 ```
 
-## 19) Completion Candidates (`effigy.completion.candidates.v1`)
+### 19) Completion Candidates (`effigy.completion.candidates.v1`)
 
 Warm-hit example:
 
@@ -828,7 +847,9 @@ Miss example (invalid env policy fallback):
 }
 ```
 
-## 20) Scan Attention Markers (`effigy.scan.attention-markers.v1`)
+## More Scan Payloads
+
+### 20) Scan Attention Markers (`effigy.scan.attention-markers.v1`)
 
 ```json
 {
@@ -879,7 +900,7 @@ Miss example (invalid env policy fallback):
 }
 ```
 
-## 21) Scan Stale Suppressions (`effigy.scan.stale-suppressions.v1`)
+### 21) Scan Stale Suppressions (`effigy.scan.stale-suppressions.v1`)
 
 ```json
 {
@@ -922,7 +943,9 @@ Miss example (invalid env policy fallback):
 }
 ```
 
-## 22) Task Run (`effigy.task.run.v1`)
+## Execution Payloads
+
+### 22) Task Run (`effigy.task.run.v1`)
 
 ```json
 {

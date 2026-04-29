@@ -1,21 +1,36 @@
-# 049 - CI Binary Distribution and Release Protocol
+# 049 - CI Binary Distribution and Release Policy
 
-Use this guide as the authoritative reference for how Effigy binaries are built,
-published, and consumed by CI runners in other projects. All agent threads
-working on release, distribution, or cross-repo CI integration must follow the
-protocols defined here.
+Use this guide when the job is maintainership policy:
+- how Effigy binaries are published
+- how consumer CI should install them
+- what release rules agents and maintainers must follow
 
-## Vision Alignment
+This is not the first page for cutting a release.
 
-- Primary tags: `RELEASE`, `MAINT`, `OPERATE`
-- Target movement: CI runners in consumer repos can install a pinned Effigy
-  binary in seconds without a Rust toolchain.
+Use:
+- [`051-release-orchestration.md`](./051-release-orchestration.md) for the
+  actual `effigy release ...` workflow
+- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) for
+  the shipped distribution commands
+- [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
+  for changelog-specific work
 
-## 1) Current State
+## Start Here
 
-- Release posture: deliberate `v0.3` prep is active; use exact versions in
-  consumer CI instead of relying on this guide to imply a moving "current"
-  number
+If you only need the operational policy surface, read these sections first:
+
+1. `2) Target Channel Stack for CI`
+2. `4) Release Workflow Pipeline`
+3. `5) Consumer CI Install Pattern`
+4. `7) Agent Thread Protocols`
+
+Read the rest when you need platform matrix, versioning rules, or rollback
+detail.
+
+## 1) Current Policy Surface
+
+- Release posture: use exact versions in consumer CI instead of relying on this
+  guide to imply a moving "current" number
 - Active workflows in `.github/workflows/`:
   - `ci.yml` — PR and push validation (format, clippy, tests)
   - `release-binaries.yml` — tag-triggered: gates → build → GitHub Release → Homebrew tap
@@ -24,37 +39,6 @@ protocols defined here.
   - **Homebrew** — `brew install inflatable-cookie/tap/effigy` (macOS, prebuilt binaries)
   - **GitHub Releases** — prebuilt binaries for macOS (arm64, x86_64) and Linux (x86_64)
   - **`cargo install` from tag** — fallback when prebuilt binaries are unavailable
-
-### 1a) Rehearsal Status
-
-As of 2026-03-11, the built-in `effigy release ...` flow has now passed:
-
-- a zero-risk local rehearsal against the real Effigy repo contents
-- a hosted throwaway-repo rehearsal that created and pushed real release tags
-- the tag-triggered `Release Binaries` workflow on GitHub
-- hosted PR validation for `CI` and `JSON Contracts` after release-command
-  parity fixes
-
-Decision boundary:
-
-- the built-in release path is now proven in production on the real Effigy repo
-- wrapper retirement and any further simplification remain deliberate
-  follow-up decisions, not automatic consequences of the first live release
-
-Canonical rehearsal summary:
-- [`../logs/2026-03/11-180500-release-cutover-readiness-rehearsal-brief.md`](../logs/2026-03/11-180500-release-cutover-readiness-rehearsal-brief.md)
-
-Workflow-cutover update:
-
-- `.github/workflows/release-binaries.yml` now uses built-in
-  `effigy changelog extract` for GitHub Release notes instead of the legacy
-  inline `sed` extraction path
-- that cutover was validated on the hosted rehearsal repo via a real tag push
-  and published GitHub Release:
-  [`../logs/2026-03/11-183500-release-workflow-cutover-hosted-validation.md`](../logs/2026-03/11-183500-release-workflow-cutover-hosted-validation.md)
-- the workflow cutover is live in production
-- wrapper retirement remains a deliberate follow-up choice rather than an
-  immediate post-release requirement
 
 ## 2) Target Channel Stack for CI
 
@@ -131,10 +115,7 @@ tag push (v*)
   └─ 7. crates.io publish (existing, when ready)
 ```
 
-### 4c) Release Gate Prerequisite
-
 The cross-compile and publish stages must not run unless release gates pass.
-This is enforced by workflow job dependency, not by convention.
 
 ## 5) Consumer CI Install Pattern
 
@@ -234,120 +215,17 @@ When a human asks an agent to create a release, the agent must follow these
 steps in order. No step may be skipped. If any step fails, the agent must stop
 and resolve the failure before continuing.
 
-Current command surface:
-- `effigy release status` is available as a non-destructive readiness check for
-  `[release]` config, version-file detection, changelog validity, and optional
-  gates.
-- `effigy release gates` is available as a standalone timed gate runner with
-  fail-fast behavior and JSON output, so release readiness can be checked
-  independently from prepare/execute flows.
-- `effigy release verify-install` is available as the built-in tag-install
-  validation command. It installs the tagged binary from git into a temporary
-  root and checks the installed binary against a fixture repo before succeeding.
-- Remaining shell boundaries are different: keep
-  `scripts/check-linux-glibc-floor.sh` and `scripts/effigy-dev` unless their
-  external-binary or platform-tooling responsibilities change materially.
-- The built-in release flow has now completed local rehearsal, hosted
-  rehearsal, and a real production Effigy release through the built-in
-  prepare/execute path, including real GitHub tag-triggered workflow execution.
-  The operator rule still stands: releases remain explicit human decisions and
-  should be monitored closely while the workflow matures.
-- `effigy release simulate` is available as a full dry-run that runs release
-  gates, previews version/changelog mutations, shows the commit/tag that would
-  be created without writing files or `.release-prepared.json`, and accepts
-  `--version <SEMVER>` when operators want a deliberate no-write preview of a
-  non-default valid release version.
-- `effigy release simulate` and `effigy release prepare --plan` now include
-  richer per-file mutation previews, including concise inline diff snippets, so
-  operator review is no longer limited to one-line before/after summaries.
-- Effigy’s own repo now declares a baseline `[release]` section in
-  `effigy.toml`, and the local no-tag gate path is
-  `effigy release gates`.
-- `cargo qa-release` now maps directly to `effigy release gates`
-  instead of going through a separate helper binary that shells out to the
-  compatibility wrapper.
-- `effigy release prepare --plan` is available as a non-destructive preview of
-  the proposed version/changelog mutations, but it does not write files.
-- Plain `effigy release prepare` is now available in text mode as a
-  menu-driven review flow. Operators can jump between version review, mutation
-  review, gate results when applicable, and final approval before applying the
-  prepare step. During version review, they can keep the current selection or
-  enter a different valid semver deliberately. During mutation review, they can
-  inspect one planned file mutation in detail before continuing. The menu keeps
-  the selected version, planned tag, a compact command legend, and reviewed
-  section markers visible while the operator reviews.
-- `effigy release prepare --yes` is available as a non-interactive apply path
-  that writes the supported version/changelog updates and `.release-prepared.json`
-  state. For Cargo-based repos, configured `release.sync-files = ["Cargo.lock"]`
-  entries are now applied during prepare. When `[release.gates]` is configured,
-  it requires `--check-gates`.
-- `effigy release prepare --plan --version X.Y.Z` and
-  `effigy release prepare --yes --version X.Y.Z` are now available when an
-  operator wants to keep the normal changelog-derived suggestion visible but
-  deliberately preview or apply a different valid semver.
-- `effigy release execute --plan` is available as a non-destructive preflight
-  that loads `.release-prepared.json`, warns on stale state, and checks the git
-  working tree for missing or unexpected changes before any irreversible
-  release step. Prepared state now also records source fingerprints, so the
-  plan can detect branch drift, HEAD movement, and prepared-file content drift
-  since prepare time. When the prepared state is stale, the plan requires
-  explicit `--allow-stale` before it reports execution readiness.
-- `effigy release resume` is available as the dedicated recovery entrypoint for
-  an existing `.release-prepared.json` state. It summarizes the prepared
-  version/tag, highlights stale state plus working-tree drift since prepare
-  time, and now also surfaces branch/HEAD/content drift from prepared-state
-  source fingerprints. In text mode it can hand operators directly into the
-  interactive execute review flow without rediscovering that state from
-  scratch, and it now exposes direct `gates`, `reprepare`, and `discard`
-  shortcuts for common recovery paths.
-- Plain `effigy release execute` is now available in text mode as a final
-  menu-driven review flow covering stale-state acknowledgement when needed,
-  prepared-state review, working-tree review, and final approval before
-  commit/tag/push. Operators can jump between those sections instead of stepping
-  through them linearly, inspect one stale warning or working-tree item in
-  detail before proceeding, and blocked execute preflights also allow that
-  drill-down before returning the failure. The menu keeps the current stale
-  acknowledgement state, prepared version/tag, a compact command legend, and
-  reviewed section markers visible while the operator reviews. It now also
-  exposes direct `gates`, `reprepare`, and `discard` recovery shortcuts from
-  the review menu and the blocked-preflight browser.
-- Blocked `effigy release prepare --plan`, `effigy release execute --plan`, and
-  matching text-mode failure output now append suggested remediation actions so
-  operators see the likely next fix path instead of only raw blocker strings.
-- `effigy release execute --yes` is available as a non-interactive execution
-  path that creates the release commit and tag, pushes branch and tag to
-  `origin`, prints post-release monitoring instructions, and removes
-  `.release-prepared.json` only after a full successful push. Stale prepared
-  state requires explicit `--allow-stale` in this non-interactive path.
-- The remaining prompt-driven roadmap work is about deeper editing and richer
-  inline diffs, not the presence of staged human approvals.
-
 1. **Determine the release version.**
-   - Run `effigy release status --check-gates` as a preflight when the repo has
-   `[release]` configured. Use it to spot version-file mismatches, changelog
-   issues, and gate failures before applying any release changes.
-   - Run `effigy release simulate` when you want the fullest safe preview:
-     gates, planned file mutations, commit message, tag, and the exact
-     no-state-file contract before touching the working tree. Add
-     `--version <SEMVER>` when you want that dry-run to preview a deliberate
-     valid version override without writing state.
-   - Run `effigy release prepare --plan` when you want to preview the exact
-     version-file and changelog mutations before touching the working tree.
-   - Run `effigy release prepare` when you want the built-in text-mode approval
-     flow: preview first, then confirm before Effigy writes release changes.
-   - Use `effigy release prepare --yes --check-gates` only when you explicitly
-     want Effigy to apply the prepared version/changelog changes and persist
-     `.release-prepared.json` without committing or tagging yet.
-   - Run `effigy release execute --plan` after preparation when you want
-     Effigy to validate the prepared state file and current git working tree
-     before any future commit/tag/push execution flow.
-   - Run `effigy release execute` when you want the built-in text-mode final
-     confirmation flow before commit/tag/push.
-   - Use `effigy release execute --yes` only when you explicitly want Effigy
-     to perform the irreversible release step non-interactively. If push fails,
-     Effigy keeps the prepared state file and refuses to re-tag on retry.
-   - Run `effigy release verify-install --tag <TAG> [--repo-url <URL>]` when
-     you need tag-install validation.
+   - Run `effigy release status --check-gates` first.
+   - Run `effigy release simulate` for the full safe preview.
+   - Run `effigy release prepare --plan` for the exact file mutation preview.
+   - Use `effigy release prepare` for text-mode review.
+   - Use `effigy release prepare --yes --check-gates` to write prepared state.
+   - Run `effigy release execute --plan` after prepare.
+   - Use `effigy release execute` for text-mode final review.
+   - Use `effigy release execute --yes` only for the irreversible step.
+   - Run `effigy release verify-install --tag <TAG> [--repo-url <URL>]` after
+     the tag exists.
    - Treat the built-in release previews as the source of truth for version
      selection:
      - `effigy release status --check-gates`
@@ -387,7 +265,7 @@ Current command surface:
 4. **Run release gates.**
    - Run `effigy release gates` when the repo has `[release.gates]` configured
      and you want the built-in sequential fail-fast gate runner.
-   - Otherwise execute `effigy release gates` (or `cargo qa-release`).
+   - Otherwise execute `effigy release gates`.
    - All gates must pass. If any fail, fix the issue and re-run.
    - Do not proceed until gates pass cleanly.
 
@@ -458,19 +336,6 @@ All release workflows are now active in `.github/workflows/`:
 
 Workflow changes still require explicit human approval.
 
-## 8a) Remaining Human-Gated Adoption Work
-
-The release command surface is shipped in the codebase. The remaining open work
-in this protocol is intentionally human-gated adoption work:
-
-- keeping release docs, gate config, and operator guidance pointed at the
-  built-in release commands
-- continuing release monitoring and adoption follow-through after the first
-  production built-in release
-
-Historical workflow audit:
-- [`../logs/2026-03/11-170500-release-binaries-changelog-extract-cutover-review.md`](../logs/2026-03/11-170500-release-binaries-changelog-extract-cutover-review.md)
-
 ## 8b) Wrapper Retirement Record
 
 Effigy's compatibility-only release wrappers are already retired. The historical
@@ -526,6 +391,6 @@ If a released binary is broken:
 
 ## Next Step
 
-Use the built-in release flow in guide `051` for future releases, then execute
-the distribution follow-through in guide `044` when a release window requires
-artifact-level acceptance checks.
+Use the built-in release flow in guide `051` for the actual release cut, then
+return here only when you need channel policy, consumer CI install rules, or
+agent-governed release constraints.

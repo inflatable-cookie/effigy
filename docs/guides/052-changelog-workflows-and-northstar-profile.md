@@ -1,7 +1,16 @@
-# 052 - Changelog Workflows and Northstar Profile
+# 052 - Changelog Workflow
 
 Use this guide when you want to understand Effigy's changelog contract as both
 a CLI workflow and a reusable library surface.
+
+This guide is narrower than the release guides.
+
+Use:
+- this guide for `effigy changelog ...`
+- [`051-release-orchestration.md`](./051-release-orchestration.md) for the
+  actual release cut flow
+- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+  for maintainer release policy
 
 ## Vision Alignment
 

@@ -169,9 +169,9 @@ effigy release execute --plan
 ```
 
 Read next:
-- [`051-release-orchestration.md`](./docs/guides/051-release-orchestration.md)
-- [`062-distribution-system-guide.md`](./docs/guides/062-distribution-system-guide.md)
-- [`049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md)
+- [`051-release-orchestration.md`](./docs/guides/051-release-orchestration.md) for the release cut flow
+- [`062-distribution-system-guide.md`](./docs/guides/062-distribution-system-guide.md) for distribution commands and evidence
+- [`049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md) for maintainer policy
 
 ## Shipped `v0.3` Surface
 

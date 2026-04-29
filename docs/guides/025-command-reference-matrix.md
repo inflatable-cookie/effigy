@@ -1,12 +1,7 @@
 # 025 - Command Reference Matrix
 
-This matrix is a quick operator reference for Effigy commands, key flags, JSON payload schemas, and deep-dive guides.
-
-
-## Vision Alignment
-
-- Primary tags: `ROUTE`, `CONTRACT`, `OPERATE`
-- Target movement: command lookup stays fast while linking every surface to stable schemas and deep-dive guidance.
+This is the fast lookup page for Effigy commands, key flags, JSON schemas, and
+the right deeper guide.
 
 ## Start Here
 
@@ -27,6 +22,14 @@ For narrative workflow guidance instead of lookup, start with:
 
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
+
+## How To Use This Reference
+
+- use `Pick The Right Command Quickly` when you need the right command family
+- use `Primary Commands` when you need one-screen command lookup
+- use `Command Shapes` when you need exact invocation form
+- use `Scope Notes and Constraints` when a surface has limits or surprising rules
+- use `Common Recipes` when you want a few known-good combinations
 
 ## Pick The Right Command Quickly
 
@@ -56,7 +59,7 @@ For narrative workflow guidance instead of lookup, start with:
 - Need distribution validation, GLIBC checks, artifact validation, or
   first-publish evidence: use `effigy distribution`.
 
-## 1) Primary Commands
+## Primary Commands
 
 | Command | Purpose | Key Flags | JSON Schema(s) | Deep Dive |
 | --- | --- | --- | --- | --- |
@@ -88,10 +91,9 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy release` | Inspect release readiness, run gates, preview or apply release mutations, resume prepared-state review, execute release flow, and verify tagged installs | `status`, `gates`, `resume`, `simulate`, `prepare`, `execute`, `verify-install`, `--check-gates`, `--plan`, `--dry-run`, `--yes`, `--version`, `--allow-stale`, `--tag`, `--repo-url`, `--json` | `effigy.release.status.v1`, `effigy.release.gates.v1`, `effigy.release.resume.v1`, `effigy.release.simulate.v1`, `effigy.release.prepare.plan.v1`, `effigy.release.prepare.v1`, `effigy.release.execute.plan.v1`, `effigy.release.execute.v1`, `effigy.release.verify-install.v1` | `051-release-orchestration.md` |
 | `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules | passthrough args, `--json` | `effigy.task.run.v1` | `022-manifest-cookbook.md` |
 
-## 2) Global JSON Envelope
+## JSON Envelope
 
 For sample payloads per schema, see [`026-json-payload-examples.md`](./026-json-payload-examples.md).
-
 
 Canonical JSON mode:
 
@@ -105,272 +107,141 @@ All command JSON responses are wrapped in:
 
 See [`017-json-output-contracts.md`](./017-json-output-contracts.md) for envelope and payload details.
 
-## 3) Command Shapes
+## Command Shapes
+
+This page is a lookup surface, not the full generated help output. Use these
+family shapes first, then `effigy <command> --help` for the exhaustive flag
+set.
+
+### Core Discovery and Diagnostics
 
 ```sh
-effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json] [--pretty true|false]
-effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]
-effigy doctor [--repo <PATH>] <task> -- <args> [--json]
-effigy docs check-links [--repo <PATH>] [<FILE>...] [--json]
-effigy docs check-json-examples [--repo <PATH>] [--file <PATH>] [--section <TITLE>] [--min-blocks <N>] [--require <TEXT>]... [--require-block <N:TEXT>]... [--json]
-effigy docs check-headings [--repo <PATH>] <FILE>... --require-heading <TEXT>... [--json]
-effigy docs check-paths [--repo <PATH>] <PATH>... [--json]
-effigy docs check-contains [--repo <PATH>] <FILE>... --require <TEXT>... [--json]
-effigy docs check-forbidden [--repo <PATH>] <FILE>... --forbid <TEXT>... [--json]
-effigy docs check-index [--repo <PATH>] [--policy-index <NAME>] [--dir <PATH>] [--index <PATH>] [--json]
-effigy docs check-next-action [--repo <PATH>] [--policy <NAME>] [--json]
-effigy docs check-workflow-paths [--repo <PATH>] [--dir <PATH>] [--json]
-effigy docs add-log-index [--repo <PATH>] <LOG_FILE> [--json]
-effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected|--print-selected=json] [--json]
-effigy contracts validate-selection [--repo <PATH>] [--contract <PATH>] [--artifact <PATH>] [--json]
-effigy service list [--repo <PATH>] [--json]
-effigy service extract <SERVICE> [--repo <PATH>] [--dir <PATH>] [--json]
-effigy exec [--repo <PATH>] [--service <NAME>] [--json] <COMMAND> [ARGS...]
-effigy gateway up [--json]
-effigy gateway down [--json]
-effigy gateway status [--json]
-effigy gateway setup-tls [--json]
-effigy distribution preflight [--repo <PATH>] [--tag <TAG>] [--skip-docs] [--skip-smoke] [--output <PATH>] [--json]
-effigy distribution validate-metadata [--repo <PATH>] [--tag <TAG>] [--json]
-effigy distribution check-glibc-floor [--repo <PATH>] --binary <PATH> --max-glibc <VER> [--json]
-effigy distribution first-publish [--repo <PATH>] --tag <TAG> [--crate-version <VER>] [--repo-url <URL>] [--brew-formula <NAME>] [--skip-homebrew] [--artifacts-dir <DIR>] [--json]
-effigy distribution validate-artifacts [--repo <PATH>] --artifacts-dir <DIR> [--expect-homebrew] [--json]
-effigy distribution generate-closeout [--repo <PATH>] --tag <TAG> --artifacts-dir <DIR> [--output <PATH>] [--owner <NAME>] [--expect-homebrew] [--json]
-effigy distribution write-summary [--repo <PATH>] --tag <TAG> --artifacts-dir <DIR> [--crate-version <VER>] [--repo-url <URL>] [--brew-formula <NAME>] [--homebrew-executed] [--log-file <NAME>]... [--json]
-effigy container up [--repo <PATH>] [--attach|--detach] [--json]
-effigy container <NAME> up [--repo <PATH>] [--attach|--detach] [--json]
-effigy container down [--repo <PATH>] [--json]
-effigy container <NAME> down [--repo <PATH>] [--json]
-effigy container status [--repo <PATH>] [--json]
-effigy container status --all [--json]
-effigy container stats --all [--json]
-effigy container <NAME> status [--repo <PATH>] [--json]
-effigy container data list [--repo <PATH>] [--json]
-effigy container <NAME> data list [--repo <PATH>] [--json]
-effigy container data export <VOLUME> <PATH> [--repo <PATH>] [--json]
-effigy container <NAME> data export <VOLUME> <PATH> [--repo <PATH>] [--json]
-effigy container data import <VOLUME> <PATH> [--repo <PATH>] [--json]
-effigy container <NAME> data import <VOLUME> <PATH> [--repo <PATH>] [--json]
-effigy container data pull-production [--repo <PATH>] [--json]
-effigy container <NAME> data pull-production [--repo <PATH>] [--json]
-effigy container <NAME> logs [--repo <PATH>] [--service <NAME>] [--follow] [--json]
-effigy container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>]
-effigy container <NAME> reset [--repo <PATH>] [--keep-data] [--json]
-effigy container <NAME> eject [--repo <PATH>] [--json]
-effigy system up [--system <NAME>] [--repo <PATH>] [--json]
-effigy system down [--system <NAME>] [--repo <PATH>] [--json]
-effigy system status [--system <NAME>] [--repo <PATH>] [--json]
-effigy system logs [--system <NAME>] [--repo <PATH>] [--follow]
-effigy system repair [--system <NAME>] [--repo <PATH>] [--json]
-effigy system reset-runtime [--system <NAME>] [--repo <PATH>] [--json]
-effigy workspace [<WORKSPACE>] [--system <NAME>] [--repo <PATH>]
-effigy bundle list [--json]
-effigy bundle inspect <BUNDLE> [--json]
-effigy bundle export <BUNDLE> --path <DIR> [--json]
+effigy tasks [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json]
+effigy doctor [--fix] [--verbose] [--json]
+effigy doctor <task> -- <args> [--json]
+effigy config --inspect [--path <dotted.path>] [--json]
+effigy config --schema [--minimal] [--target <manifest|section>] [--runner <runner>] [--json]
+```
+
+### Docs, Contracts, and Scans
+
+```sh
+effigy docs <check> [ARGS...] [--json]
+effigy contracts check-json [--fast|--full] [--changed-only <BASE>] [--print-selected|--print-selected=json] [--json]
+effigy contracts validate-selection [--contract <PATH>] [--artifact <PATH>] [--json]
+effigy scan <scanner> [SCANNER FLAGS...] [--json]
+```
+
+Common values:
+
+- docs checks: `check-links`, `check-json-examples`, `check-headings`,
+  `check-paths`, `check-contains`, `check-forbidden`, `check-index`,
+  `check-next-action`, `check-workflow-paths`, `add-log-index`
+- scanners: `god-files`, `duplicate-blocks`, `comment-ratio`,
+  `generated-assets`, `generated-in-src`, `attention-markers`,
+  `stale-suppressions`
+
+### Local Runtime and Services
+
+```sh
+effigy service list [--json]
+effigy service extract <SERVICE> [--dir <PATH>] [--json]
+effigy exec [--service <NAME>] [--json] <COMMAND> [ARGS...]
+effigy gateway <up|down|status|setup-tls> [--json]
+effigy container [<NAME>] <up|down|status|logs|shell|reset|eject> [FLAGS...]
+effigy container [<NAME>] data <list|export|import|pull-production> [ARGS...] [--json]
+effigy system <up|down|status|logs|repair|reset-runtime> [--system <NAME>] [--json]
+effigy workspace [<WORKSPACE>] [--system <NAME>]
+```
+
+### Bundles, Bootstrap, and Demos
+
+```sh
+effigy bundle <list|inspect|export> [ARGS...] [--json]
 effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--start] [--plan] [--json]
-effigy demo list [--search <TEXT>] [--owner <NAME>] [--tag <TAG>] [--mode <MODE>] [--cover <AREA>] [--status <STATUS>] [--gap <GAP>] [--stale-only] [--group-by <FIELD>] [--repo <PATH>] [--json]
-effigy demo browser [--group-by <FIELD>] [--repo <PATH>]
-effigy demo inspect <DEMO_ID> [--repo <PATH>] [--json]
-effigy demo history <DEMO_ID> [--limit <N>] [--outcome <OUTCOME>] [--attempt <ATTEMPT_ID> | --ordinal <N>] [--repo <PATH>] [--json]
-effigy demo run <DEMO_ID> [--repo <PATH>] [--json]
-effigy demo stop <DEMO_ID> [--repo <PATH>] [--json]
-effigy demo input <DEMO_ID> --text <TEXT> [--append-newline] [--repo <PATH>] [--json]
-effigy demo resize <DEMO_ID> --cols <COLS> --rows <ROWS> [--repo <PATH>] [--json]
-effigy demo rerun <DEMO_ID> [--repo <PATH>] [--json]
-effigy scan god-files [--threshold <N>] [--high <N>] [--critical <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
-effigy scan duplicate-blocks [--threshold <N>] [--high <N>] [--critical <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
-effigy scan comment-ratio [--threshold <RATIO>] [--high <RATIO>] [--critical <RATIO>] [--min-code-lines <N>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
-effigy scan generated-assets [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
-effigy scan generated-in-src [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>] [--source-root <GLOB>] [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
-effigy scan attention-markers [--show-warnings] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
-effigy scan stale-suppressions [--show-warnings] [--warning-marker <VALUE>] [--high-marker <VALUE>] [--critical-marker <VALUE>] [--markdown] [--out <PATH>] [--fail-on-findings] [--no-gitignore] [--include <GLOB>] [--exclude <GLOB>] [--json]
+effigy bootstrap deps sync [<path>...] [--js-only|--rust-only] [--json]
+effigy demo <list|browser|inspect|history|run|stop|input|resize|rerun> [ARGS...] [--json]
+```
+
+### Testing and Project Workflow
+
+```sh
 effigy test [--plan] [--verbose-results] [--tui] [suite] [runner args]
 effigy watch --owner <effigy|external> [--debounce-ms <MS>] [--include <GLOB>] [--exclude <GLOB>] <task> [task args]
-effigy watch --owner effigy --once <task> [task args]
 effigy init [<name>] [--dry-run] [--force] [--json]
 effigy init --list [--json]
 effigy migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]
-effigy config [--inspect] [--path <dotted.path>] [--json]
-effigy config [--schema] [--minimal] [--target <manifest|section>] [--runner <runner>] [--json]
-effigy bootstrap deps sync [<path>...] [--js-only|--rust-only] [--json]
+effigy <task> [task args]
+effigy <catalog>/<task> [task args]
+```
+
+### Cache, Completion, Changelog, and Release
+
+```sh
 effigy unlock [--all | <scope>...] [--json]
 effigy cache inspect [<selector>] [--json]
 effigy cache invalidate [<selector>...] [--all] [--json]
 effigy completion <bash|zsh|fish> [--json]
-effigy completion candidates [--repo <PATH>] [--prefix <value>] [--json]
-effigy changelog validate [FILE] [--json]
-effigy changelog format [FILE] [--write|--preview]
-effigy changelog analyze [FILE] [--json]
-effigy changelog extract [FILE] --version <VERSION>
-effigy release status [--repo <PATH>] [--check-gates] [--json]
-effigy release gates [--repo <PATH>] [--json]
-effigy release resume [--repo <PATH>] [--allow-stale] [--json]
-effigy release verify-install [--repo <PATH>] [--tag <TAG>] [--repo-url <URL>] [--json]
-effigy release simulate [--repo <PATH>] [--version <SEMVER>] [--json]
-effigy release prepare [--repo <PATH>] [--check-gates]
-effigy release prepare (--plan|--dry-run) [--repo <PATH>] [--check-gates] [--version <SEMVER>] [--json]
-effigy release prepare --yes [--repo <PATH>] [--check-gates] [--version <SEMVER>] [--json]
-effigy release execute [--repo <PATH>] [--allow-stale]
-effigy release execute (--plan|--dry-run) [--repo <PATH>] [--allow-stale] [--json]
-effigy release execute --yes [--repo <PATH>] [--allow-stale] [--json]
+effigy completion candidates [--prefix <value>] [--json]
+effigy changelog <validate|format|analyze|extract> [ARGS...] [--json]
+effigy release <status|gates|resume|simulate|prepare|execute|verify-install> [ARGS...] [--json]
+effigy distribution <preflight|validate-metadata|check-glibc-floor|first-publish|validate-artifacts|generate-closeout|write-summary> [ARGS...] [--json]
 ```
 
-## 4) Scope Notes and Constraints
+## Scope Notes and Constraints
 
-- `tasks --pretty false` is valid only with `--json`.
-- `watch --json` requires bounded mode (`--once` or `--max-runs`).
-- `watch --owner` is required; `external` owner blocks nested watch loops.
-- `exec` uses the manifest dev-context container and defaults to that
-  environment's `primary_service` unless `--service` is supplied.
+Use the deeper guides for full surface detail. The main sharp edges here are:
+
+- `tasks --pretty false` is valid only with `--json`
+- `watch --owner` is required
+- `watch --json` requires bounded mode such as `--once` or `--max-runs`
+- `exec` runs inside the manifest dev-context container and defaults to that
+  environment's `primary_service` unless `--service` is supplied
 - `gateway up`, `gateway down`, and `gateway setup-tls` may request host admin
-  approval when resolver or certificate setup needs it.
-- routes with `tls = true` now redirect plain HTTP requests to the equivalent
-  HTTPS URL once the gateway TLS listener is available.
-- `container shell` is interactive and intentionally does not support `--json`.
+  approval
+- routes with `tls = true` redirect plain HTTP to HTTPS once the gateway TLS
+  listener is available
+- `container shell` and `workspace` are interactive and intentionally do not
+  support `--json`
 - `container status --all` and `container stats --all` are cross-project views
-  rather than one-manifest queries.
-- generated-compose data lifecycle commands (`data list`, `data export`,
-  `data import`, `data pull-production`, `reset --keep-data`) stay on the
-  product-owned path and do not widen direct `compose_file` ownership.
-- `system` resolves the manifest's default system (`[systems].default`) or
-  accepts an explicit `--system <NAME>` when multiple systems are declared.
-- `system logs` is a streaming surface; `--follow` keeps it attached and
-  `--json` is intentionally not accepted there.
-- `system repair` and `system reset-runtime` are recovery surfaces; both emit
-  `effigy.system.recover.v1` under `--json` and are the canonical way to
-  recover from half-up substrate state before falling back to manual cleanup.
-- `workspace` is interactive by design and does not support `--json`; it opens
-  the resolved workspace shell after ensuring the selected system is up.
-- `workspace <NAME>` selects a named workspace; without a name it resolves
-  `[systems.<system>].default_workspace`, the sole declared workspace, or an
-  implied `default` workspace in that order.
-- mounted sibling repos listed in `systems.<name>.mounts` auto-adopt any
-  producer-declared `[isolation].paths` into workspace containers; use explicit
-  `systems.<name>.isolation` only for override cases.
-- `bundle list` shows all shipped top-level bundles referenced from `[bundle]`
-  in `effigy.toml`; `bundle inspect <BUNDLE>` shows the accepted input schema
-  and manifest paths that bundle injects by default; `bundle export <BUNDLE>
-  --path <DIR>` writes a local `base_path` bundle directory for repo-owned
-  modifications.
-- `init --list` enumerates available starter manifests; `init <name>` writes
-  the named starter (shipped names include `minimal`, `underlay`, `northstar`).
-- `bootstrap` is stateless by default: destination is cwd-relative unless `--path`
-  is supplied.
-- `bootstrap` runs `start` only when `--start` is supplied.
-- `bootstrap` fails fast on dirty existing checkouts or remote mismatches.
-- `demo inspect` reads declared or generated receipt/artifact references and
-  normalizes the latest known proof state and any active in-flight attempt
-  without executing the demo. It also reports action availability, receipt
-  freshness, whether a recorded receipt is currently present, a bounded
-  recent-attempt history for terminal demo outcomes, and a runner-owned active
-  terminal/session handoff with transport metadata, recent output snapshots,
-  and explicit no-nested-TUI signaling.
-- `demo history` gives one demo's retained terminal-attempt history a separate
-  query surface, with optional `--limit <N>` trimming and `--outcome
-  <OUTCOME>` narrowing, so operators can focus on result timeline review
-  without widening `demo list` or the browser.
-- `demo history --attempt <ATTEMPT_ID>` and `demo history --ordinal <N>` drill
-  into one retained historical result inside that same one-demo query surface
-  instead of forcing browser or list density to carry prior-result review.
-- `demo list` supports bounded browser-style discovery with focused filters and
-  grouping, but it deliberately stops short of UI behavior or rich browsing
-  state.
-- `demo browser` is the first interactive browser client for that surface. It
-  now uses `Tab` / `Shift+Tab` for list/detail focus, `←` / `→` for detail-tab
-  switching, `↑` / `↓` for in-pane navigation, an action sheet for bounded
-  `run`/`stop`/`rerun`/refresh behavior, direct artifact/history activation from
-  the detail side, and a single filter sheet for the shipped `demo list`
-  metadata dimensions including tag, mode, and cover. Integrated retained-
-  history review and a live terminal tab are now in place for the bounded
-  honest runtime cases; the browser still must not launch nested TUIs.
-- `demo run` executes either a declared task-backed or run-backed entrypoint,
-  writes a normalized receipt, and refreshes the latest-attempt state that
-  `demo inspect` reports.
-- `demo stop` only works for demos whose active attempt is directly owned by
-  the runner; task-backed demos still report an explicit unstoppability
-  boundary.
-- `demo input` is the bounded text-forwarding surface for detached active demo
-  terminal sessions when the runtime reports input availability.
-- `demo resize` is the bounded geometry handoff for active demo terminal
-  sessions when the runtime reports resize availability.
-- `demo rerun` starts a fresh attempt and fails if the demo already has an
-  active attempt.
-- task execution locks on `task:<name>` by default; use `tasks.<name>.lock = "<shared-name>"` to opt multiple tasks into the same `shared:<name>` scope.
-- managed `mode = "tui"` tasks also acquire `profile:<task>/<profile>` in addition to the task or shared scope.
-- managed `concurrent` entries accept `shutdown_on_exit = true` when one
-  process should terminate the whole managed session after it exits.
-- `scan god-files` accepts either `--json` or `--markdown`, not both.
-- `scan god-files --out <PATH>` resolves relative paths from the scanned repo root.
-- `scan god-files` hides warning rows in terminal text output unless `--show-warnings` is set.
-- `scan.god_files` config can set defaults for thresholds, output format/path, traversal globs, and doctor participation.
-- `scan duplicate-blocks` accepts either `--json` or `--markdown`, not both.
-- `scan duplicate-blocks --out <PATH>` resolves relative paths from the scanned repo root.
-- `scan duplicate-blocks` hides warning rows in terminal text output unless `--show-warnings` is set.
-- `scan.duplicate_blocks` config can set defaults for thresholds, minimum occurrence count, output format/path, traversal globs, and doctor participation.
-- `scan.duplicate_blocks` remains doctor-opt-in by default; the current `acowtancy` benchmark is useful but too expensive/noisy for default doctor runs.
-- `scan comment-ratio` accepts either `--json` or `--markdown`, not both.
-- `scan comment-ratio --out <PATH>` resolves relative paths from the scanned repo root.
-- `scan comment-ratio` hides warning rows in terminal text output unless `--show-warnings` is set.
-- `scan.comment_ratio` config can set defaults for ratio thresholds, minimum code lines, output format/path, traversal globs, and doctor participation.
-- `scan.comment_ratio` now defaults to doctor participation; the current `acowtancy` benchmark took about `2.4s` and produced `15` findings, which is acceptable for default health runs.
-- `scan generated-assets` accepts either `--json` or `--markdown`, not both.
-- `scan generated-assets --out <PATH>` resolves relative paths from the scanned repo root.
-- `scan generated-assets` hides warning rows in terminal text output unless `--show-warnings` is set.
-- `scan.generated_assets` config can set defaults for byte thresholds, output format/path, and traversal globs.
-- `scan generated-in-src` accepts either `--json` or `--markdown`, not both.
-- `scan generated-in-src --out <PATH>` resolves relative paths from the scanned repo root.
-- `scan generated-in-src` hides warning rows in terminal text output unless `--show-warnings` is set.
-- `scan.generated_in_src` config can set defaults for byte thresholds, source-root globs, output format/path, and doctor participation.
-- `scan.generated_in_src` now defaults to doctor participation; the current `acowtancy` benchmark took about `2.1s` and produced `4` warning-level findings, which is acceptable for default health runs.
-- `scan attention-markers` accepts either `--json` or `--markdown`, not both.
-- `scan attention-markers --out <PATH>` resolves relative paths from the scanned repo root.
-- `scan attention-markers` hides warning rows in terminal text output unless `--show-warnings` is set.
-- `scan attention-markers` does not accept threshold flags; marker families come from defaults or `[scan.attention_markers]`.
-- `scan.attention_markers` config can set defaults for marker families, output format/path, traversal globs, and doctor participation.
-- `scan stale-suppressions` accepts either `--json` or `--markdown`, not both.
-- `scan stale-suppressions --out <PATH>` resolves relative paths from the scanned repo root.
-- `scan stale-suppressions` hides warning rows in terminal text output unless `--show-warnings` is set.
-- `scan stale-suppressions` does not accept threshold flags; suppression families come from defaults or `[scan.stale_suppressions]`.
-- `scan.stale_suppressions` config can set defaults for marker families, output format/path, traversal globs, and doctor participation.
-- `config --minimal` requires `--schema`.
-- `config --inspect` cannot be combined with `--schema`.
-- `config --path` requires `--inspect`.
-- `config --runner` requires `--schema --target test`.
-- `config --inspect` is the native way to inspect include order, override
-  results, and effective value sources for `[manifest].include`.
-- `config --inspect --path <dotted.path>` narrows that view to one effective
-  value, its source file, and any matching override history.
-- `unlock` accepts either explicit scopes or `--all` (not both).
-- `cache` phase-1 works only for tasks with explicit `[tasks.<name>.cache]` opt-in.
-- `cache invalidate` accepts selectors or `--all` (not both).
-- release operator flows should prefer the built-in `effigy release ...`
-  surface; legacy wrapper scripts are backup channels documented in guide `049`
-  rather than the primary manual interface.
-- task-local runtime env is supported with `env = { KEY = "value" }` under task definitions (full table or compact inline table).
-- run arrays also support env directives (`{ env = { ... } }` or `{ env = "<profile>" }`) to update env for later entries in the chain.
-- run-array env directives also support cross-catalog indirection via `env = "<catalog-path>/<name>"` (path relative to current catalog unless absolute).
-- top-level `[env]` defines reusable named entries for run-array indirection; entries can be direct values (`NAME = "value"`) or grouped profile arrays (`name = [{ KEY = "value" }, ...]`).
-- when a named env entry is not defined in `[env]`, effigy falls back to process env and `.env` lookup for that key.
-- task-level `env_file` and run-step `{ env_file = ... }` can override dotenv fallback source (`.env` by default); supports string or ordered array where first file containing a key wins.
-- run-step `env`/`env_file` directives can be standalone no-op state updates (no `run` or `task` key required).
-- for cross-catalog `env = "<catalog-path>/<name>"`, dotenv fallback uses that target catalog root (including `env_file` overrides) and does not check process env.
-- `tasks.<name>.env` values support `{project}` and `{repo}` catalog-root token substitution.
-- built-in `test` automatically applies manifest `[env]` `CARGO_*` values to cargo suites (`cargo-nextest` and `cargo-test`), including grouped profile entries.
-- when manifest `[env]` does not define `CARGO_HOME` or `CARGO_TARGET_DIR`, built-in `test` falls back per target root: process env first, then `<target-root>/.env`.
-- built-in cargo-env matching mode is configured via `[test].cargo_env_match` (`executable-only`, `prefix-aware`, `shell-aware`).
-- `effigy test --plan` target output (text and JSON) includes effective `cargo_env_match` per target.
-- `effigy test --verbose-results` text output and `effigy.test.results.v1` targets include effective `cargo_env_match` per target.
-- built-in cargo-env auto-apply matching accepts optional `env`/`exec`/`command` wrappers, leading `KEY=value` assignments, and path-qualified cargo binaries.
-- shell-wrapped commands such as `sh -lc "cargo test --workspace"` are matched only when `[test].cargo_env_match = "shell-aware"`.
-- `completion` command list is sourced from the built-in command index (`BUILTIN_TASKS`) to reduce drift with command discovery output.
-- `completion candidates` includes built-ins plus discovered `<task>` and `<catalog>/<task>` selectors.
-- `completion candidates` JSON payload reports `cache_hit`, `cache_state`, `cache_age_ms` (on hit), `cache_ttl_ms` (on hit), `effective_cache_ttl_ms`, `cache_ttl_source`, and `manifest_count` for memoized candidate scans.
-- `cache_state` values: `miss_initial`, `hit`, `miss_ttl`, `miss_manifest_change`.
-- `miss_manifest_change` is triggered from manifest stamp drift (mtime/size/content digest), so cache invalidation is not dependent on timestamp granularity alone.
-- Completion candidates cache TTL can be tuned with `EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS` (bounded to `100..60000`, default `2000`).
-- `cache_ttl_source` values: `default`, `env`, `env_invalid` (invalid env values fall back to default TTL).
+- generated-compose data lifecycle stays on the product-owned path and does not
+  widen direct `compose_file` ownership
+- `system logs` is streaming and intentionally does not support `--json`
+- `system repair` and `system reset-runtime` are the recovery surfaces for
+  half-up substrate state
+- mounted sibling repos listed in `systems.<name>.mounts` auto-adopt
+  producer-declared isolation paths into workspace containers
+- `bundle export <BUNDLE> --path <DIR>` writes a local `base_path` bundle
+  directory for repo-owned modifications
+- `bootstrap` is stateless by default, runs `start` only with `--start`, and
+  fails fast on dirty existing checkouts or remote mismatches
+- demo surfaces are intentionally bounded:
+  - `inspect` reports current declared and retained state
+  - `history` is one-demo retained-history review
+  - `run` starts a new attempt
+  - `stop` only works for runner-owned active attempts
+  - `browser` is interactive but must not launch nested TUIs
+- task execution locks on `task:<name>` by default; `tasks.<name>.lock` opts
+  several tasks into a shared lock scope
+- managed `mode = "tui"` tasks also acquire `profile:<task>/<profile>`
+- managed `concurrent` entries accept `shutdown_on_exit = true`
+- all scan commands accept either `--json` or `--markdown`, not both
+- scan `--out <PATH>` values resolve relative to the scanned repo root
+- `config --minimal` requires `--schema`
+- `config --inspect` cannot be combined with `--schema`
+- `config --path` requires `--inspect`
+- `config --runner` requires `--schema --target test`
+- `unlock` accepts either explicit scopes or `--all`, not both
+- `cache invalidate` accepts selectors or `--all`, not both
+- release operator flows should prefer built-in `effigy release ...` commands,
+  not wrapper scripts
+- top-level `[env]`, task-local `env`, and run-array env directives all
+  participate in task execution; use the env guide for the full fallback and
+  indirection rules
+- completion candidates are cached and include both built-ins and discovered
+  task selectors
 
-## 5) Common Recipes
+## Common Recipes
 
 Routing diagnosis:
 

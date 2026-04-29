@@ -1,36 +1,37 @@
-# 022 - Manifest Cookbook (`effigy.toml` Patterns)
+# 022 - Manifest Cookbook
 
-This cookbook provides copy-paste manifest patterns you can adapt directly.
+This guide is the copy-paste pattern bank for `effigy.toml`.
 
-Use it when the next improvement should happen in `effigy.toml` instead of in
-another wrapper script, shell note, or team-specific convention.
+Use it when the next improvement should happen in the manifest instead of in
+another wrapper script, shell note, or repo-local convention.
 
-If you want the narrative front doors first, start with:
+This is not the best first page if you want narrative explanation first.
 
-- [`058-demo-system-guide.md`](./058-demo-system-guide.md) for the demo system
+Use:
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-  for `[manifest].include` and fragment layout
+  for fragment layout and `[manifest].include`
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
-  for the composed `system` / `workspace` runtime model
+  for the mental model behind `system`, `workspace`, and `dev`
 - [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md) for
-  Effigy-native scripting in Rust-first repos
-
-
-## Vision Alignment
-
-- Primary tags: `ROUTE`, `MAINT`
-- Target movement: manifest patterns encode maintainable routing and execution conventions with minimal ambiguity.
+  Effigy-native scripting
+- [`058-demo-system-guide.md`](./058-demo-system-guide.md) for the demo system
 
 ## Start Here
 
 Pick the first pattern by the friction you want to remove:
 
-- Need one clean starting point: use `Small Single-Repo Starter`.
-- Need a few simple commands and task chains: use `Compact Tasks + Task Chain`.
-- Need env/test/workflow behavior to be explicit: jump to `Run-Array Env
-  Directives` and `Built-in Test Fanout`.
-- Need repo-health checks without more custom tooling: jump to the `scan.*`
-  patterns.
+- one clean starting point:
+  `Small Single-Repo Starter`
+- simple commands, task chains, or file splits:
+  `Compact Tasks and Task Chains` and `Split One Manifest Into Focused Fragments`
+- local dev systems, workspaces, or mounted sibling repos:
+  `Managed Dev Stack`, `Mounted Sibling Isolation`, and `System and Workspace Patterns`
+- demos or lightweight Rust-first glue:
+  `Demo Registry Foundation` and `Rhai Script Step For Rust-First Glue`
+- tests, deferral, or bootstrap interop:
+  `Testing and Legacy Interop`
+- repo-health scans without more custom tooling:
+  `Built-in Scans`
 
 Useful companion commands while editing:
 
@@ -51,7 +52,9 @@ effigy test --plan
 - When the manifest starts to explain the repo better than a README snippet,
   you are moving in the right direction.
 
-## 1) Small Single-Repo Starter
+## Foundation Patterns
+
+### Small Single-Repo Starter
 
 ```toml
 [catalog]
@@ -66,7 +69,7 @@ check = [{ task = "fmt" }, { task = "lint" }]
 Use when you want one local catalog with explicit command ownership while
 leaving `effigy test` available as the built-in test entrypoint.
 
-## 2) Compact Tasks + Task Chain
+### Compact Tasks and Task Chains
 
 ```toml
 [tasks]
@@ -79,7 +82,7 @@ worker = "cargo run -p worker {args}"
 
 Use compact syntax for straightforward run commands and lightweight chains.
 
-## 2b) Split One Manifest Into Focused Fragments
+### Split One Manifest Into Focused Fragments
 
 ```toml
 [manifest]
@@ -119,7 +122,7 @@ Composition rules:
   `override = [...]`.
 - override is path-scoped and replaces the whole addressed value.
 
-## 2c) Producer Isolation + Mounted Consumer Adoption
+### Mounted Sibling Isolation
 
 Producer repo:
 
@@ -166,7 +169,7 @@ Use `--path <dotted.path>` when the full composed view is too broad and the real
 question is “where did this one effective value come from?” or “which override
 replaced it?”
 
-## 2c) Demo Registry Foundation
+### Demo Registry Foundation
 
 ```toml
 [demos.login-smoke]
@@ -274,7 +277,9 @@ Migration note:
   for the practical extraction and inline-`run = [ ... ]` path instead of
   expanding this cookbook section further.
 
-## 3) Full Task Table with Runtime Controls
+## Task and Runtime Patterns
+
+### Full Task Table with Runtime Controls
 
 ```toml
 [tasks.build]
@@ -304,7 +309,7 @@ run = "bun run dev"
 `[task_defaults]` only applies to tasks defined in that manifest file. Task-level
 `run_in` still wins when both are present.
 
-## 4) DAG-Style Validation Flow
+### Validation and Run Arrays
 
 ```toml
 [tasks.validate]
@@ -335,7 +340,7 @@ Run-array step fields (in-process executor):
 it sets the default for whole tasks defined in the same manifest. Per-step
 overrides happen inline on the array entry itself.
 
-## 4a) Rhai Script Step For Rust-First Glue
+#### Rhai Script Step For Rust-First Glue
 
 ```toml
 [tasks.link:local]
@@ -368,7 +373,7 @@ Do not use this to fake shell pipelines or replace frontend build tooling.
 For the full host API and v1 limits, use
 [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md).
 
-## 4b) Run-Array Env Directives
+#### Run-Array Env Directives
 
 ```toml
 [env]
@@ -406,7 +411,7 @@ Behavior:
 - `{project}`/`{repo}` in env values always resolve from the task currently executing
 - `.env` parsing accepts `KEY=value` and `export KEY=value`; matching single/double quotes are stripped from values
 
-## 5) Managed Dev Stack (`mode = "tui"`)
+### Managed Dev Stack (`mode = "tui"`)
 
 ```toml
 [tasks.dev]
@@ -492,7 +497,9 @@ Lock behavior:
 - managed TUI tasks still add `profile:<task>/<profile>` so profile-specific runs stay isolated
 - recover specific collisions with `effigy unlock task:<name>`, `effigy unlock shared:<name>`, or `effigy unlock profile:<task>/<profile>`
 
-## 6) Built-in Test Fanout and Suite Source of Truth
+## Testing and Legacy Interop
+
+### Built-in Test Fanout and Suite Source of Truth
 
 ```toml
 [package_manager]
@@ -533,7 +540,7 @@ teardown_policy = "always"
 
 Use this to replace custom wrapper scripts while keeping `effigy test` as the only operator entrypoint.
 
-## 7) Minimal Test Runner Override Only
+### Minimal Test Runner Override Only
 
 ```toml
 [test.runners]
@@ -543,7 +550,7 @@ vitest = "bun x vitest run"
 
 Use when auto-detection is fine but default commands need tuning.
 
-## 8) Deferral Fallback for Legacy Interop
+### Deferral Fallback for Legacy Interop
 
 ```toml
 [defer]
@@ -559,7 +566,7 @@ Notes:
 - explicitly deferred built-ins disappear from general help and from the built-in section in `effigy tasks`
 - pure PHP-legacy repos using the automatic `composer.json` + `effigy.json` fallback already defer `release` by default, so you only need `builtins = [...]` when you are bypassing additional built-ins or overriding that implicit mode with explicit `[defer]`
 
-## 8b) Bootstrap Repo Bring-Up
+### Bootstrap Repo Bring-Up
 
 ```toml
 [bootstrap]
@@ -593,7 +600,9 @@ Behavior:
 - existing dirty or mismatched checkouts fail fast instead of being silently
   repurposed
 
-## 9) Shell Override for Managed Tabs
+## Developer Session Patterns
+
+### Shell Override for Managed Tabs
 
 ```toml
 [shell]
@@ -602,7 +611,7 @@ run = "exec ${SHELL:-/bin/zsh} -i"
 
 Use when you need predictable interactive shell startup behavior in TUI shell tabs.
 
-## 10) Explicit Task Cache (Phase 1)
+### Explicit Task Cache (Phase 1)
 
 ```toml
 [tasks.build]
@@ -627,7 +636,9 @@ Inspection and invalidation:
 - `effigy cache invalidate build`
 - `effigy cache invalidate --all`
 
-## 11) Built-in God-File Scanner
+## Built-in Scans
+
+### Built-in God-File Scanner
 
 ```toml
 [scan.god_files]
@@ -660,7 +671,7 @@ Behavior:
 - doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-god-files.md`
 - `doctor = false` keeps the config available for `scan` without surfacing it in `effigy doctor`
 
-## 12) Built-in Generated-Assets Scanner
+### Built-in Generated-Assets Scanner
 
 ```toml
 [scan.generated_assets]
@@ -692,7 +703,7 @@ Behavior:
 - `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
 - doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-generated-assets.md`
 
-## 13) Built-in Duplicate-Blocks Scanner
+### Built-in Duplicate-Blocks Scanner
 
 ```toml
 [scan.duplicate_blocks]
@@ -726,7 +737,7 @@ Behavior:
 - `effigy doctor` can include the same scanner when `doctor = true`, with file-level details written to `.effigy/reports/doctor/scan-duplicate-blocks.md`
 - keep `doctor = false` as the default; the current `acowtancy` benchmark takes about `16.9s` and yields enough findings that this is better as an opt-in health check
 
-## 14) Built-in Generated-In-Src Scanner
+### Built-in Generated-In-Src Scanner
 
 ```toml
 [scan.generated_in_src]
@@ -761,7 +772,7 @@ Behavior:
 - doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-generated-in-src.md`
 - keep `doctor = true` as the default; the current `acowtancy` benchmark takes about `2.1s` and yields `4` warning-level findings, which is acceptable for default health runs
 
-## 15) Built-in Attention-Markers Scanner
+### Built-in Attention-Markers Scanner
 
 ```toml
 [scan.attention_markers]
@@ -793,7 +804,7 @@ Behavior:
 - `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
 - doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-attention-markers.md`
 
-## 16) Built-in Comment-Ratio Scanner
+### Built-in Comment-Ratio Scanner
 
 ```toml
 [scan.comment_ratio]
@@ -828,7 +839,7 @@ Behavior:
 - doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-comment-ratio.md`
 - keep `doctor = true` as the default; the current `acowtancy` benchmark takes about `2.4s` and yields `15` findings, which is acceptable for default health runs
 
-## 17) Built-in Stale-Suppressions Scanner
+### Built-in Stale-Suppressions Scanner
 
 ```toml
 [scan.stale_suppressions]
@@ -861,7 +872,9 @@ Behavior:
 - doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-stale-suppressions.md`
 - keep `doctor = false` as the default; the current `acowtancy` benchmark takes about `3.9s` and yields `69` findings, which is useful but too noisy for routine doctor runs
 
-## 18) Task-Local Runtime Env (Cargo Isolation)
+## System and Workspace Patterns
+
+### Task-Local Runtime Env (Cargo Isolation)
 
 Compact inline-table shape:
 
@@ -897,7 +910,7 @@ Behavior:
 - set `[test].cargo_env_match = "prefix-aware"` (default) to include wrapper/prefix forms like `env KEY=value cargo ...`
 - set `[test].cargo_env_match = "shell-aware"` to include shell-wrapped forms like `sh -lc 'cargo test --workspace'`
 
-## 18b) Flattened `[systems.<name>]` Substrate
+### Flattened `[systems.<name>]` Substrate
 
 ```toml
 [systems]
@@ -951,7 +964,7 @@ Typical commands:
 - `effigy system repair` or `effigy system reset-runtime` for recovery
 - `effigy workspace` to open the resolved workspace shell after system is up
 
-## 19) Multi-Catalog Monorepo Baseline
+### Multi-Catalog Monorepo Baseline
 
 Root `effigy.toml`:
 

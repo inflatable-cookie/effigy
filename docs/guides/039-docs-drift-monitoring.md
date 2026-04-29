@@ -1,3 +1,7 @@
+> Status: Deprecated
+> Superseded by: [`037-documentation-contribution-playbook.md`](./037-documentation-contribution-playbook.md) and [`040-docs-archive-and-deprecation-policy.md`](./040-docs-archive-and-deprecation-policy.md)
+> Kept for: historical recurring drift-check detail
+
 # 039 - Docs Drift Monitoring
 
 Use this guide for recurring documentation maintenance.

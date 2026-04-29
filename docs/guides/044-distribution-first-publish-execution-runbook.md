@@ -1,3 +1,7 @@
+> Status: Deprecated
+> Superseded by: [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) and [`051-release-orchestration.md`](./051-release-orchestration.md)
+> Kept for: historical first-publish execution detail
+
 # 044 - Distribution First-Publish Execution Runbook
 
 Use this runbook for the first release cycle that should close remaining Distribution acceptance criteria.

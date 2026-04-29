@@ -1,195 +1,146 @@
 # Effigy Guides
 
-Use this page to jump from a user goal to the right practical guide.
+This page is the practical guide map.
 
-The intent is simple: show the obvious next read first, then hand off to deeper
-pages only when you need more detail.
+The old problem here was simple: too many guides were presented at the same
+level. This version narrows the front door down to a few real user journeys.
 
 ## Start Here
 
+If you are new to Effigy, read these in order:
+
 1. [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
-   for the first useful commands.
-2. [`055-everyday-workflows.md`](./055-everyday-workflows.md) for the common
-   day-to-day paths Effigy should make easy.
-3. [`058-demo-system-guide.md`](./058-demo-system-guide.md) for the demo
-   registry, browser, terminal, and history surface.
-4. [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-   for splitting `effigy.toml` into focused fragments.
-5. [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
-   for moving a repo from demo scripts and wrapper tasks onto the native demo
-   surface.
-6. [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md) for
-   Effigy-native scripting in Rust-first repos.
-7. [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md) for
-   the first-class Rhai helper coverage matrix.
-8. [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
-   for optional distribution built-ins and cross-repo adoption posture.
-9. [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
-   for the intended public `system`, `workspace`, and `dev` lifecycle model.
-10. [`063-container-system-guide.md`](./063-container-system-guide.md) for the
-   current container-backed implementation surface.
-11. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) for copy-paste
-   `effigy.toml` patterns.
-12. [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) for
-   the full command and flag surface.
-13. [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md) when the
-   job is "clone this repo here and bring it up."
+2. [`055-everyday-workflows.md`](./055-everyday-workflows.md)
+3. [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 
-## By Goal
+After that, choose one path below.
 
-### I want to get started fast
+## By User Goal
 
+### Get started and run work
+
+Read:
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-- [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
-
-### I want to clone a repo here and bring it up
-
-- [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
-
-### I want to run tasks and understand routing
-
-- [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`016-task-routing-precedence.md`](./016-task-routing-precedence.md)
-- [`015-deferral-fallback-migration.md`](./015-deferral-fallback-migration.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 
-### I want a host-clean local web/dev environment
+Use when:
+- you are learning the CLI
+- you want to run repo tasks without hunting through the repo
+- you need the routing rules
 
-- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
-  for the intended public model where `system` owns substrate lifecycle and
-  `dev` keeps its historic app-runtime role.
-- [`../architecture/020-container-infrastructure-design.md`](../architecture/020-container-infrastructure-design.md)
-  for the full architecture design (service catalog, transparent execution,
-  gateway, data lifecycle).
-- [`063-container-system-guide.md`](./063-container-system-guide.md)
-- [`065-underlay-starter.md`](./065-underlay-starter.md) for the shipped
-  `underlay` and `decodelabs` bundles (Rust + Bun or PHP-native stacks)
-  built on the current system/workspace/catalog model, adopted via
-  `effigy init underlay` or `base = "decodelabs"` in `[bundle]`.
-- [`066-local-manifest-bundles.md`](./066-local-manifest-bundles.md) for
-  defining repo-local bundle directories with `bundle.toml` metadata and
-  templated Effigy defaults.
-- [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
-  for the full shipped catalog of service fragments (postgres, dbgate, pgweb,
-  mariadb, redis, memcached, mailpit, minio, elasticsearch, phpmyadmin, nginx,
-  php-fpm, workspace-rust-bun) with inputs, ports, and gateway eligibility.
-- [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
-  for user-global library mounts, mounted-repo isolation, and host git/SSH
-  integration into workspace containers (gitconfig, known_hosts, agent
-  forwarding).
-- [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)
-  for the per-machine `effigy.local.toml` workflow that combines auto-discovery,
-  `extend`/`optional` includes, domain sugar, and external host mounts to ship
-  opt-in environments without committing personal infrastructure.
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+### Build or clean up `effigy.toml`
+
+Read:
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
+- [`050-env-schema-integration.md`](./050-env-schema-integration.md)
+- [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
 
-### I want to define or operate proof demos
+Use when:
+- you are adopting Effigy in a repo
+- you need env handling, includes, or migration help
+- you want copy-paste manifest patterns
 
+### Run a host-clean local stack
+
+Read:
+- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
+- [`063-container-system-guide.md`](./063-container-system-guide.md)
+- [`065-underlay-starter.md`](./065-underlay-starter.md)
+- [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
+- [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
+- [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)
+
+Use when:
+- you want services, workspaces, gateway routing, and local domains
+- you are adopting the shipped bundles or service catalog
+- you need mounts, isolation, or per-machine overlays
+
+### Define and operate demos
+
+Read:
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 
-### I want to split `effigy.toml` into focused fragments
+Use when:
+- you want manifest-owned proof demos
+- you need receipts, history, artifacts, or the demo browser
 
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
+### Script Effigy with Rhai
 
-### I want Effigy-native scripting for a Rust-first repo
-
+Read:
 - [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
 - [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md)
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 
-### I want testing, watch mode, init, or migrate
+Use when:
+- shell glue is getting awkward
+- you want typed host helpers instead of more bash
 
-- [`013-testing-orchestration.md`](./013-testing-orchestration.md)
-- [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
-- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
+### Automate with JSON, CI, or agents
 
-### I want health checks, scans, or troubleshooting
-
-- [`018-doctor-explain-mode.md`](./018-doctor-explain-mode.md)
-- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-
-### I want env and schema handling to be explicit
-
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
-- [`050-env-schema-integration.md`](./050-env-schema-integration.md)
-
-### I want CI, agents, or machine consumers
-
+Read:
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 - [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 
-If the goal is full repo adoption:
-- let the `northstar-effigy` skill own bootstrap/scaffolding
-- let Effigy own generic validation, JSON contracts, and release/runtime
-  surfaces
+Use when:
+- another tool is calling Effigy
+- you need stable JSON
+- you are adopting Effigy across multiple repos
 
-### I want built-in release workflows
+### Release and distribute Effigy-managed software
 
-- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
-- [`051-release-orchestration.md`](./051-release-orchestration.md)
-- [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
+Read:
+- [`051-release-orchestration.md`](./051-release-orchestration.md) for the
+  release cut workflow
+- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) for
+  distribution commands and evidence flows
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
-- [`044-distribution-first-publish-execution-runbook.md`](./044-distribution-first-publish-execution-runbook.md)
+  for maintainer policy and CI install rules
+- [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
+  for changelog-only work
 
-### I want docs standards and maintenance rules
+Use when:
+- you want release gates, prepare/execute flows, or distribution checks
+- you need changelog extraction or release evidence
 
+Older narrow runbooks for CI pinning, Homebrew-tap wiring, and first-publish
+execution are now deprecated and kept only for historical detail.
+
+### Health, testing, watch mode, and troubleshooting
+
+Read:
+- [`013-testing-orchestration.md`](./013-testing-orchestration.md)
+- [`018-doctor-explain-mode.md`](./018-doctor-explain-mode.md)
+- [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
+- [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
+- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
+
+Use when:
+- you need built-in health flows
+- something is failing and you need the shortest path to diagnosis
+
+### Work on the docs themselves
+
+Read:
+- [`037-documentation-contribution-playbook.md`](./037-documentation-contribution-playbook.md)
 - [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
 - [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
-- [`037-documentation-contribution-playbook.md`](./037-documentation-contribution-playbook.md)
+- [`040-docs-archive-and-deprecation-policy.md`](./040-docs-archive-and-deprecation-policy.md)
 
-## Fast Reference
+## Reference Surfaces
 
-### Common Commands
+Use these when you need lookup material, not onboarding:
 
-```sh
-effigy tasks
-effigy tasks --resolve test
-effigy doctor --verbose
-effigy test --plan
-effigy watch --owner effigy --once test
-effigy init
-effigy migrate --from package.json
-effigy --json tasks
-```
+- Full command reference: [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+- Copy-paste snippets: [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
+- Glossary: [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
+- Archive: [`archive/README.md`](./archive/README.md)
 
-### Env Resolution Cheatsheet
-
-- Reusable named values live in top-level `[env]`.
-- Run arrays can apply env in sequence with `{ env = "NAME" }`,
-  `{ env = { KEY = "value" } }`, and `{ env_file = ".env.test" }`.
-- Named env resolution order is:
-  1. current catalog `[env]`
-  2. process environment
-  3. dotenv fallback (`.env` unless overridden)
-- Cross-catalog env refs use `env = "<catalog-path>/<name>"`.
-- Built-in cargo suites inherit manifest `CARGO_*` values during
-  `effigy test`.
-
-Details:
-- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
-- [`050-env-schema-integration.md`](./050-env-schema-integration.md)
-
-## Full Guide Map
+## Full Guide Inventory
 
 ### Core Runtime
 
@@ -205,21 +156,10 @@ Details:
 - [`019-watch-init-migrate-foundation.md`](./019-watch-init-migrate-foundation.md)
 - [`020-dag-lock-policy-baseline.md`](./020-dag-lock-policy-baseline.md)
 
-### Workflow Guides
+### Workflow and Feature Guides
 
 - [`021-quick-start-and-command-cookbook.md`](./021-quick-start-and-command-cookbook.md)
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
-- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
-- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
-- [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
-- [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
-- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
-- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
-- [`063-container-system-guide.md`](./063-container-system-guide.md)
-- [`065-underlay-starter.md`](./065-underlay-starter.md)
-- [`066-local-manifest-bundles.md`](./066-local-manifest-bundles.md)
-- [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
-- [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
@@ -233,7 +173,19 @@ Details:
 - [`054-release-checkpoint-log-template.md`](./054-release-checkpoint-log-template.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
+- [`058-demo-system-guide.md`](./058-demo-system-guide.md)
+- [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+- [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md)
+- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
+- [`063-container-system-guide.md`](./063-container-system-guide.md)
+- [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
+- [`065-underlay-starter.md`](./065-underlay-starter.md)
+- [`066-local-manifest-bundles.md`](./066-local-manifest-bundles.md)
+- [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
+- [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md)
+- [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
+- [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)
 
 ### Docs and Governance
 
@@ -241,44 +193,25 @@ Details:
 - [`030-contributor-onboarding-15-minutes.md`](./030-contributor-onboarding-15-minutes.md)
 - [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
 - [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
-- [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
 - [`036-release-notes-authoring-template-and-examples.md`](./036-release-notes-authoring-template-and-examples.md)
 - [`037-documentation-contribution-playbook.md`](./037-documentation-contribution-playbook.md)
 - [`038-docs-ia-snapshot.md`](./038-docs-ia-snapshot.md)
-- [`039-docs-drift-monitoring.md`](./039-docs-drift-monitoring.md)
 - [`040-docs-archive-and-deprecation-policy.md`](./040-docs-archive-and-deprecation-policy.md)
+
+Deprecated but still link-stable:
+- [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
+- [`039-docs-drift-monitoring.md`](./039-docs-drift-monitoring.md)
 
 ### Distribution and Adoption
 
-- [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
-- [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
-- [`044-distribution-first-publish-execution-runbook.md`](./044-distribution-first-publish-execution-runbook.md)
 - [`045-vision-next-task-allowlist-maintenance.md`](./045-vision-next-task-allowlist-maintenance.md)
 - [`046-vision-next-task-allowlist-pr-checklist-snippet.md`](./046-vision-next-task-allowlist-pr-checklist-snippet.md)
 - [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
-- [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+- [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
 
-### Archive
-
-Deprecated/superseded guides live under
-[`archive/`](./archive/README.md). Inbound links still resolve, but these
-guides are no longer part of primary onboarding:
-
-- [`archive/028-docs-flow-map.md`](./archive/028-docs-flow-map.md) — superseded by this hub's "By Goal" section
-- [`archive/031-docs-navigation-cleanup.md`](./archive/031-docs-navigation-cleanup.md) — historical docs-cleanup change record
-- [`archive/032-docs-consistency-sweep-and-changelog.md`](./archive/032-docs-consistency-sweep-and-changelog.md) — superseded by `039-docs-drift-monitoring.md`
-- [`archive/043-wrapper-channel-evaluation-and-policy.md`](./archive/043-wrapper-channel-evaluation-and-policy.md) — superseded by `041-distribution-ci-pinning-and-wrapper-migration.md` + `042-homebrew-tap-and-release-automation.md`
-- [`archive/053-release-wrapper-retirement-record-template.md`](./archive/053-release-wrapper-retirement-record-template.md) — superseded by `051-release-orchestration.md` + `054-release-checkpoint-log-template.md`
-
-## Standards Used In These Guides
-
-- Canonical JSON mode wording is `effigy --json <command>`.
-- Canonical terms are `selector`, `routing`, and `deferral`.
-- Practical guides should end with `Expected Outcome`, `Related Guides`, and
-  `Next Step`.
-
-References:
-- [`033-style-and-terminology-guide.md`](./033-style-and-terminology-guide.md)
-- [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
+Deprecated but still link-stable:
+- [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
+- [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
+- [`044-distribution-first-publish-execution-runbook.md`](./044-distribution-first-publish-execution-runbook.md)
