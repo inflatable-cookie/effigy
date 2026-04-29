@@ -188,6 +188,17 @@ Read next:
 - [`062-distribution-system-guide.md`](./docs/guides/062-distribution-system-guide.md) for distribution commands and evidence
 - [`049-ci-binary-distribution-and-release-protocol.md`](./docs/guides/049-ci-binary-distribution-and-release-protocol.md) for maintainer policy
 
+## Agent Skill
+
+Cross-repo agent skill teaches Claude Code, OpenAI Codex, Cursor (and 50+
+other agents) how to use Effigy in any repo:
+
+```bash
+npx skills add inflatable-cookie/effigy -g
+```
+
+Drop `-g` for project-local install. Source: [`skills/effigy/`](./skills/effigy/).
+
 ## Documentation
 
 - Start here: [`docs/README.md`](./docs/README.md)
