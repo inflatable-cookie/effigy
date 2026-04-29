@@ -290,13 +290,16 @@ PHP-FPM workspace / application server.
   - `document_root` (default `"public"`)
   - `working_dir` (default `"/var/www/html"`)
   - `isolated_dirs` (default `[]`)
+  - `host_ports` (default `[]`) — explicit host port bindings for temporary
+    workspace-side servers such as a Vite/Zest dev process
   - `node_version` (default `""`)
   - `node_global_packages` (default `""`)
   - `mount_host_composer_home` (default `false`)
   - `mount_shared_composer_auth` (default `true`)
   - `mount_shared_composer_cache` (default `true`)
   - `composer_global_packages` (default `""`)
-- Exposed ports: none (FPM socket only).
+- Exposed ports: none by default; explicit `host_ports` can publish
+  workspace-side development servers.
 - Volumes: repo root (bind mount).
 - Hot-dir overlays:
   - `isolated_dirs = ["vendor", "node_modules"]` moves those repo-root dirs

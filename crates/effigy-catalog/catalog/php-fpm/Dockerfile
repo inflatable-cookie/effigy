@@ -9,8 +9,10 @@ ARG NODE_GLOBAL_PACKAGES=""
 # ── install-php-extensions ────────────────────────────────────────────
 # Community standard tool that handles system-dependency resolution,
 # pecl vs core detection, and cross-platform builds for PHP extensions.
-# https://github.com/mlocati/docker-php-extension-installer
-ADD --chmod=0755 https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/
+# Copy it from the published installer image instead of fetching a GitHub
+# release URL at build time, which makes fresh builds brittle when GitHub
+# serves transient 5xx responses.
+COPY --from=mlocati/php-extension-installer:latest /usr/bin/install-php-extensions /usr/local/bin/
 
 # ── System tools ──────────────────────────────────────────────────────
 # Tools that are useful for development regardless of which extensions

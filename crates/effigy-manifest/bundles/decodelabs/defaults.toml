@@ -16,6 +16,7 @@ shutdown = "graceful"
 routes = [
   { domain = "__HOST__", tls = true, service = "web" },
   { domain = "pma.__HOST__", tls = true, service = "pma" },
+__ZEST_ROUTE__
 ]
 
 [containers.__CONTAINER_NAME__.aliases]
@@ -28,6 +29,9 @@ catalog = "php-fpm"
 version = "8.4"
 document_root = "."
 isolated_dirs = ["vendor", "node_modules"]
+host_ports = [
+__ZEST_HOST_PORTS__
+]
 mount_host_ssh_dir = true
 node_version = "20"
 node_global_packages = ["eclint"]

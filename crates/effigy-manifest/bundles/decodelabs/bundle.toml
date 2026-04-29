@@ -47,3 +47,15 @@ name = "default_workspace"
 type = "string"
 description = "Name of the `[systems.<system>.workspaces.<name>]` workspace treated as the system default."
 default = "app"
+
+[[inputs]]
+name = "zest_port"
+type = "integer"
+description = "Optional port to publish and route to the temporary Zest/Vite dev server that runs inside the PHP workspace container."
+example = 8938
+
+[[inputs]]
+name = "zest_domain"
+type = "string"
+description = "Optional hostname for the temporary Zest/Vite dev server route. Defaults to `zest.<host>` when `zest_port` is set."
+example = "zest.gideon.legacy.test"

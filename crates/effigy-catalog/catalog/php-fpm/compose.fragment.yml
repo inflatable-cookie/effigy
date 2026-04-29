@@ -25,6 +25,12 @@ services:
 {% for dir in isolated_dirs %}
       - {{ project_name }}-{{ service_name }}-{{ dir | replace("/", "-") | replace("_", "-") }}:{{ working_dir }}/{{ dir }}
 {% endfor %}
+{% if host_ports %}
+    ports:
+{% for port in host_ports %}
+      - "{{ port }}"
+{% endfor %}
+{% endif %}
     working_dir: {{ working_dir }}
     environment:
       DOCUMENT_ROOT: "{{ document_root }}"

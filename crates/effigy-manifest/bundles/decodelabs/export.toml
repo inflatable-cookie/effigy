@@ -16,6 +16,9 @@ shutdown = "graceful"
 routes = [
   { domain = "{{ inputs.host }}", tls = true, service = "web" },
   { domain = "pma.{{ inputs.host }}", tls = true, service = "pma" },
+{% if inputs.zest_port %}
+  { domain = "{{ inputs.zest_domain or "zest." ~ inputs.host }}", tls = true, port = {{ inputs.zest_port }}, service = "{{ inputs.workspace_service_name }}" },
+{% endif %}
 ]
 
 [containers.{{ inputs.container_name }}.aliases]
@@ -28,6 +31,11 @@ catalog = "php-fpm"
 version = "8.4"
 document_root = "."
 isolated_dirs = ["vendor", "node_modules"]
+{% if inputs.zest_port %}
+host_ports = ["{{ inputs.zest_port }}:{{ inputs.zest_port }}"]
+{% else %}
+host_ports = []
+{% endif %}
 mount_host_ssh_dir = true
 node_version = "20"
 node_global_packages = ["eclint"]

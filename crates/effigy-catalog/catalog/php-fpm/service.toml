@@ -32,6 +32,11 @@ type = "list"
 default = []
 description = "Directory paths (relative to `working_dir`) that should be backed by named Docker volumes instead of the host bind mount, e.g. `[\"vendor\", \"node_modules\"]` or `[\"packages/foo/vendor\"]`."
 
+[params.host_ports]
+type = "list"
+default = []
+description = "Explicit host port bindings to publish from the workspace container, e.g. `[\"5173:5173\"]` for a temporary Vite/Zest dev server."
+
 [params.node_version]
 type = "string"
 default = ""
