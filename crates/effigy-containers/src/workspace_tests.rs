@@ -222,40 +222,63 @@ mod host_git_mount_tests {
     }
 
     #[test]
-    fn ssh_config_mount_renders_read_only_when_present() {
+    fn ssh_config_mount_renders_sanitized_copy_when_present() {
         let home = temp_dir("ssh-config-present");
+        let repo = temp_dir("ssh-config-present-repo");
         fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
         fs::write(
             home.join(".ssh").join("config"),
-            "Host deploy\n  Hostname deploy.example.com\n  User deploy\n",
+            "Host deploy\n  Hostname deploy.example.com\n  User deploy\n  IdentityFile ~/.ssh/id_ed25519\n  IdentitiesOnly yes\n",
         )
         .expect("write ssh config");
         let config = make_config("php-fpm", enabled_params());
 
         let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&config, "workspace")
+            build_host_ssh_config_mount(&repo, &config, "workspace")
         })
+        .expect("ok")
         .expect("expected mount");
 
         assert_eq!(mount.target, "/home/dev/.ssh/config");
         assert!(mount.rendered.ends_with(":/home/dev/.ssh/config:ro"));
+        let materialized = repo.join(".effigy/runtime/ssh/config");
+        assert!(
+            mount.rendered.contains(materialized.to_str().unwrap()),
+            "rendered should reference materialized path: {}",
+            mount.rendered
+        );
+        let body = fs::read_to_string(&materialized).expect("read materialized config");
+        assert!(body.contains("Host deploy"));
+        assert!(body.contains("Hostname deploy.example.com"));
+        assert!(body.contains("User deploy"));
+        assert!(
+            !body.to_lowercase().contains("identityfile"),
+            "IdentityFile should be stripped: {body}"
+        );
+        assert!(
+            !body.to_lowercase().contains("identitiesonly"),
+            "IdentitiesOnly should be stripped: {body}"
+        );
     }
 
     #[test]
     fn ssh_config_mount_skipped_when_host_file_missing() {
         let home = temp_dir("ssh-config-missing");
+        let repo = temp_dir("ssh-config-missing-repo");
         fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
         let config = make_config("workspace-rust-bun", enabled_params());
 
         let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&config, "workspace")
-        });
+            build_host_ssh_config_mount(&repo, &config, "workspace")
+        })
+        .expect("ok");
         assert!(mount.is_none());
     }
 
     #[test]
     fn ssh_config_mount_skipped_when_param_disabled() {
         let home = temp_dir("ssh-config-disabled");
+        let repo = temp_dir("ssh-config-disabled-repo");
         fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
         fs::write(home.join(".ssh").join("config"), "Host x\n").expect("write");
         let mut params = enabled_params();
@@ -266,22 +289,46 @@ mod host_git_mount_tests {
         let config = make_config("php-fpm", params);
 
         let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&config, "workspace")
-        });
+            build_host_ssh_config_mount(&repo, &config, "workspace")
+        })
+        .expect("ok");
         assert!(mount.is_none());
     }
 
     #[test]
     fn ssh_config_mount_skipped_for_non_workspace_catalogs() {
         let home = temp_dir("ssh-config-non-workspace");
+        let repo = temp_dir("ssh-config-non-workspace-repo");
         fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
         fs::write(home.join(".ssh").join("config"), "Host x\n").expect("write");
         let config = make_config("postgres", enabled_params());
 
         let mount = with_test_host_home(Some(&home), || {
-            build_host_ssh_config_mount(&config, "workspace")
-        });
+            build_host_ssh_config_mount(&repo, &config, "workspace")
+        })
+        .expect("ok");
         assert!(mount.is_none());
+    }
+
+    #[test]
+    fn ssh_config_sanitizer_strips_identity_lines_case_insensitive() {
+        let raw = "Host deploy\n  HostName deploy.example.com\n  IDENTITYFILE ~/.ssh/id_a\n\tidentitiesonly yes\n  User deploy\n  ProxyJump bastion\n";
+        let cleaned = super::super::sanitize_ssh_config_for_container(raw);
+        assert!(cleaned.contains("Host deploy"));
+        assert!(cleaned.contains("HostName deploy.example.com"));
+        assert!(cleaned.contains("User deploy"));
+        assert!(cleaned.contains("ProxyJump bastion"));
+        assert!(!cleaned.to_lowercase().contains("identityfile"));
+        assert!(!cleaned.to_lowercase().contains("identitiesonly"));
+    }
+
+    #[test]
+    fn ssh_config_sanitizer_handles_equals_separator() {
+        let raw = "Host x\n  IdentityFile=~/.ssh/id\n  IdentitiesOnly=yes\n  User=tom\n";
+        let cleaned = super::super::sanitize_ssh_config_for_container(raw);
+        assert!(cleaned.contains("User=tom"));
+        assert!(!cleaned.to_lowercase().contains("identityfile"));
+        assert!(!cleaned.to_lowercase().contains("identitiesonly"));
     }
 
     #[test]
