@@ -42,6 +42,11 @@ type = "bool"
 default = true
 description = "Mount the host's `~/.ssh/known_hosts` read-only into the workspace container so git/ssh from inside the container does not prompt on first connection to known remotes. Skipped silently when the host file does not exist."
 
+[params.mount_host_ssh_config]
+type = "bool"
+default = true
+description = "Mount the host's `~/.ssh/config` read-only into the workspace container so deploy/host aliases, identity files, and per-host options defined on the developer's machine apply inside the container without copying. Skipped silently when the host file does not exist."
+
 [params.forward_host_ssh_agent]
 type = "bool"
 default = true

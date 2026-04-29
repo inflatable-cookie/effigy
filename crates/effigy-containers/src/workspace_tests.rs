@@ -222,6 +222,69 @@ mod host_git_mount_tests {
     }
 
     #[test]
+    fn ssh_config_mount_renders_read_only_when_present() {
+        let home = temp_dir("ssh-config-present");
+        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+        fs::write(
+            home.join(".ssh").join("config"),
+            "Host deploy\n  Hostname deploy.example.com\n  User deploy\n",
+        )
+        .expect("write ssh config");
+        let config = make_config("php-fpm", enabled_params());
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_ssh_config_mount(&config, "workspace")
+        })
+        .expect("expected mount");
+
+        assert_eq!(mount.target, "/home/dev/.ssh/config");
+        assert!(mount.rendered.ends_with(":/home/dev/.ssh/config:ro"));
+    }
+
+    #[test]
+    fn ssh_config_mount_skipped_when_host_file_missing() {
+        let home = temp_dir("ssh-config-missing");
+        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+        let config = make_config("workspace-rust-bun", enabled_params());
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_ssh_config_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
+    }
+
+    #[test]
+    fn ssh_config_mount_skipped_when_param_disabled() {
+        let home = temp_dir("ssh-config-disabled");
+        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+        fs::write(home.join(".ssh").join("config"), "Host x\n").expect("write");
+        let mut params = enabled_params();
+        params.insert(
+            "mount_host_ssh_config".to_owned(),
+            toml::Value::Boolean(false),
+        );
+        let config = make_config("php-fpm", params);
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_ssh_config_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
+    }
+
+    #[test]
+    fn ssh_config_mount_skipped_for_non_workspace_catalogs() {
+        let home = temp_dir("ssh-config-non-workspace");
+        fs::create_dir_all(home.join(".ssh")).expect("mkdir .ssh");
+        fs::write(home.join(".ssh").join("config"), "Host x\n").expect("write");
+        let config = make_config("postgres", enabled_params());
+
+        let mount = with_test_host_home(Some(&home), || {
+            build_host_ssh_config_mount(&config, "workspace")
+        });
+        assert!(mount.is_none());
+    }
+
+    #[test]
     fn ssh_agent_mount_renders_when_socket_present() {
         let parent = temp_dir("agent-present");
         let socket_path = parent.join("ssh-auth.sock");

@@ -28,6 +28,11 @@ const HOST_MKCERT_ROOT_CA_TARGET: &str = "/usr/local/share/ca-certificates/effig
 /// Container target for the host `~/.ssh/known_hosts` mount.
 const HOST_SSH_KNOWN_HOSTS_TARGET: &str = "/home/dev/.ssh/known_hosts";
 
+/// Container target for the host `~/.ssh/config` mount. Mounted read-only
+/// so deploy/host aliases, identity files, and per-host options defined on
+/// the developer's machine apply inside the container without copying.
+const HOST_SSH_CONFIG_TARGET: &str = "/home/dev/.ssh/config";
+
 /// Container target where Colima's forwarded host SSH agent socket is bind
 /// mounted. The forwarded socket inside the VM is root-owned, so the
 /// non-root workspace user cannot connect to it directly; the catalog image
@@ -299,6 +304,9 @@ fn build_workspace_runtime_mounts(
     if let Some(mount) = build_host_ssh_known_hosts_mount(config, primary_service) {
         mounts.push(mount);
     }
+    if let Some(mount) = build_host_ssh_config_mount(config, primary_service) {
+        mounts.push(mount);
+    }
     if let Some(mount) = build_host_ssh_agent_mount(config, primary_service) {
         mounts.push(mount);
     }
@@ -354,6 +362,28 @@ fn build_host_ssh_known_hosts_mount(
     Some(RenderedWorkspaceMount {
         target: HOST_SSH_KNOWN_HOSTS_TARGET.to_owned(),
         rendered: format!("{}:{HOST_SSH_KNOWN_HOSTS_TARGET}:ro", host_path.display()),
+        source: None,
+        named_volume: None,
+    })
+}
+
+fn build_host_ssh_config_mount(
+    config: &ManifestContainerConfig,
+    primary_service: &str,
+) -> Option<RenderedWorkspaceMount> {
+    let service = config.services.get(primary_service)?;
+    if !is_git_aware_workspace_service(service)
+        || !service_bool_param(service, "mount_host_ssh_config", true)
+    {
+        return None;
+    }
+    let host_path = host_home_dir()?.join(".ssh").join("config");
+    if !host_path.is_file() {
+        return None;
+    }
+    Some(RenderedWorkspaceMount {
+        target: HOST_SSH_CONFIG_TARGET.to_owned(),
+        rendered: format!("{}:{HOST_SSH_CONFIG_TARGET}:ro", host_path.display()),
         source: None,
         named_volume: None,
     })

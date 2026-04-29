@@ -6,6 +6,21 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- Workspace containers (`php-fpm`, `workspace-rust-bun`, `node`) now also mount the host's `~/.ssh/config` read-only at `/home/dev/.ssh/config` when present, so deploy/host aliases, identity files, and per-host options defined on the developer's machine apply inside the container without copying. Pairs with the existing `~/.ssh/known_hosts` mount and `SSH_AUTH_SOCK` forwarding. Opt out via `mount_host_ssh_config = false` on the catalog service.
+
+### Changed
+- The docs front doors were reorganized around a smaller set of real user journeys, so new readers hit clear onboarding, manifest, local-dev, demo, automation, and release paths instead of a flat wall of equally weighted guides.
+- The guide portfolio review now explicitly separates primary guides, secondary deep dives, merge candidates, rename candidates, and archive candidates, and the narrow vision allowlist maintenance pages are now marked deprecated instead of reading like active product guides.
+- The release/distribution docs now present `062`, `051`, `049`, and `052` as the active public path, while the older CI pinning, Homebrew-tap, and first-publish runbooks are marked deprecated instead of competing with that surface.
+- The active release cluster now has clearer boundaries: `051` owns the release cut workflow, `062` owns distribution commands, `049` owns maintainer policy and CI install rules, and `052` owns changelog-specific work.
+- The active release guides were then tightened further so `049`, `051`, and `062` read more like operator references and less like internal history or rollout notes.
+- The docs-maintenance cluster now has clearer boundaries too: `037` owns the maintenance playbook, `029` owns the QA checklist, `040` owns archive/deprecation policy, and the overlapping trigger/drift guides are now deprecated.
+- The local-dev guides now front-load the practical split more clearly too: `063` is the direct container command guide, while `064` is the mental-model guide for `system`, `workspace`, and repo-owned `dev`.
+- The `064` system and workspace guide was then rewritten into a much smaller
+  mental-model page so it explains the local-dev contract without carrying as
+  much theory and implementation framing.
+
 ## [0.3.0] - 2026-04-28
 
 ### Breaking
