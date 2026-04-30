@@ -202,20 +202,16 @@ fn resolve_running_service_container_name(
     policy: &EffectiveContainerPolicy,
     service: &str,
 ) -> Result<Option<String>, RunnerError> {
-    let repo_root = repo_root.to_string_lossy();
     let rows = list_running_compose_containers_for_profile(&policy.profile)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     Ok(select_running_service_container_name(
-        rows,
-        repo_root.as_ref(),
-        policy,
-        service,
+        rows, repo_root, policy, service,
     ))
 }
 
 fn select_running_service_container_name(
     rows: impl IntoIterator<Item = effigy_containers::exec::RunningComposeContainer>,
-    repo_root: &str,
+    repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     service: &str,
 ) -> Option<String> {
@@ -223,10 +219,9 @@ fn select_running_service_container_name(
         .find(|row| {
             row.project_name.as_deref() == Some(policy.project_name.as_str())
                 && row.service.as_deref() == Some(service)
-                && row
-                    .working_dir
-                    .as_deref()
-                    .is_none_or(|working_dir| working_dir == repo_root)
+                && row.working_dir.as_deref().is_none_or(|working_dir| {
+                    effigy_runtime::read::working_dir_belongs_to_repo(working_dir, repo_root)
+                })
         })
         .map(|row| row.container_name)
 }
@@ -341,7 +336,8 @@ mod tests {
             },
         ];
 
-        let resolved = select_running_service_container_name(rows, "/tmp/repo", &policy, "app");
+        let resolved =
+            select_running_service_container_name(rows, Path::new("/tmp/repo"), &policy, "app");
 
         assert_eq!(resolved.as_deref(), Some("demo-app-1"));
     }

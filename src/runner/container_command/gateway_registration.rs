@@ -677,12 +677,10 @@ fn row_matches_policy_project(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> bool {
-    let repo_root = repo_root.to_string_lossy();
     row.project_name.as_deref() == Some(policy.project_name.as_str())
-        && row
-            .working_dir
-            .as_deref()
-            .is_none_or(|working_dir| working_dir == repo_root.as_ref())
+        && row.working_dir.as_deref().is_none_or(|working_dir| {
+            effigy_runtime::read::working_dir_belongs_to_repo(working_dir, repo_root)
+        })
 }
 
 fn row_publishes_host_port(row: &RunningComposeContainer, target_port: u16) -> bool {
