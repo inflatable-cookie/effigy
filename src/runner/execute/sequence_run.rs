@@ -521,6 +521,7 @@ fn apply_builtin_repo_override(mut command: Command, repo_root: &Path) -> Comman
     match &mut command {
         Command::Docs(args) => args.repo_override = Some(repo_root),
         Command::Demo(args) => args.repo_override = Some(repo_root),
+        Command::Deploy(args) => args.repo_override = Some(repo_root),
         Command::Contracts(args) => args.repo_override = Some(repo_root),
         Command::Exec(args) => args.repo_override = Some(repo_root),
         Command::Service(args) => args.repo_override = Some(repo_root),

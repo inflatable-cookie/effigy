@@ -11,6 +11,7 @@ pub enum Command {
     Version,
     Bundle(BundleArgs),
     Changelog(ChangelogArgs),
+    Deploy(DeployArgs),
     Defer(DeferArgs),
     Exec(ExecArgs),
     System(SystemArgs),
@@ -85,6 +86,7 @@ pub enum HelpTopic {
     General,
     Bundle,
     Changelog,
+    Deploy,
     Defer,
     Exec,
     System,
@@ -111,6 +113,18 @@ pub struct ChangelogArgs {
     pub subcommand: ChangelogSubcommand,
     pub file: Option<PathBuf>,
     pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeployArgs {
+    pub subcommand: DeploySubcommand,
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeploySubcommand {
+    Model,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

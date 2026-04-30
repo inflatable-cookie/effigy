@@ -1,5 +1,6 @@
 use crate::tests::prelude::{
-    parse_command, Command, DoctorArgs, PathBuf, TaskInvocation, TasksArgs,
+    parse_command, Command, DeployArgs, DeploySubcommand, DoctorArgs, PathBuf, TaskInvocation,
+    TasksArgs,
 };
 
 #[test]
@@ -98,6 +99,26 @@ fn parse_tasks_supports_json_flag() {
             resolve_selector: None,
             output_json: true,
             pretty_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_deploy_model_with_repo_and_json() {
+    let cmd = parse_command(vec![
+        "deploy".to_owned(),
+        "model".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::Model,
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
         })
     );
 }

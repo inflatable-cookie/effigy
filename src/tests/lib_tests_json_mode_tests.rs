@@ -1,7 +1,7 @@
 use super::prelude::{
     apply_global_json_flag, command_requests_json, BootstrapArgs, BootstrapSubcommand, Command,
-    DemoArgs, DemoListQuery, DemoSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand,
-    ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
+    DemoArgs, DemoListQuery, DemoSubcommand, DeployArgs, DeploySubcommand, DoctorArgs, GatewayArgs,
+    GatewaySubcommand, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
 };
 
 #[test]
@@ -79,11 +79,17 @@ fn command_requests_json_checks_task_or_global_mode() {
         repo_override: None,
         output_json: true,
     });
+    let cmd_deploy = Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Model,
+        repo_override: None,
+        output_json: true,
+    });
     assert!(command_requests_json(&cmd_doctor, false));
     assert!(command_requests_json(&cmd_gateway, false));
     assert!(command_requests_json(&cmd_demo, false));
     assert!(command_requests_json(&cmd_bootstrap, false));
     assert!(command_requests_json(&cmd_release, false));
+    assert!(command_requests_json(&cmd_deploy, false));
 }
 
 #[test]
@@ -129,6 +135,11 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         repo_override: None,
         output_json: false,
     });
+    let deploy_cmd = Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Model,
+        repo_override: None,
+        output_json: false,
+    });
 
     let version_applied = apply_global_json_flag(version_cmd, true);
     let tasks_applied = apply_global_json_flag(tasks_cmd, true);
@@ -137,6 +148,7 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
     let demo_applied = apply_global_json_flag(demo_cmd, true);
     let bootstrap_applied = apply_global_json_flag(bootstrap_cmd, true);
     let release_applied = apply_global_json_flag(release_cmd, true);
+    let deploy_applied = apply_global_json_flag(deploy_cmd, true);
     assert_eq!(version_applied, Command::Version);
     match tasks_applied {
         Command::Tasks(args) => assert!(args.output_json),
@@ -161,5 +173,9 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
     match release_applied {
         Command::Release(args) => assert!(args.output_json),
         other => panic!("expected release command, got: {other:?}"),
+    }
+    match deploy_applied {
+        Command::Deploy(args) => assert!(args.output_json),
+        other => panic!("expected deploy command, got: {other:?}"),
     }
 }

@@ -69,6 +69,11 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
             Some("doctor"),
         ),
         (
+            "effigy deploy",
+            "Inspect the provider-neutral production deployment model derived from the effective manifest",
+            Some("deploy"),
+        ),
+        (
             "effigy docs",
             "Run reusable docs QA checks such as markdown link, JSON example, and index validation",
             Some("docs"),

@@ -7,6 +7,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy help"));
     assert!(rendered.contains("effigy version"));
     assert!(rendered.contains("effigy exec"));
+    assert!(rendered.contains("effigy deploy"));
     assert!(rendered.contains("effigy gateway"));
     assert!(rendered.contains("effigy config"));
     assert!(rendered.contains("effigy demo"));
@@ -148,6 +149,17 @@ fn render_exec_help_shows_service_and_examples() {
     assert!(rendered.contains("effigy exec [--repo <PATH>] [--service <NAME>]"));
     assert!(rendered.contains("effigy exec composer install"));
     assert!(rendered.contains("[containers.<name>.aliases]"));
+}
+
+#[test]
+fn render_deploy_help_shows_underlay_json_first_batch() {
+    let rendered = render_help_text(HelpTopic::Deploy);
+    assert!(rendered.contains("deploy Help"));
+    assert!(rendered.contains("effigy deploy model"));
+    assert!(rendered.contains("--repo <PATH>"));
+    assert!(rendered.contains("--json"));
+    assert!(rendered.contains("Underlay"));
+    assert!(rendered.contains("provider-neutral"));
 }
 
 #[test]
