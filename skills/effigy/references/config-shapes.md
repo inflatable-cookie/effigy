@@ -75,12 +75,17 @@ First-run setup steps, executed by `effigy bootstrap`:
 
 ```toml
 [bootstrap]
-steps = [
-  { run = "cargo build --bin effigy" },
-  { run = "mkdir -p .local-install/bin" },
-  { task = "link:local" },
+run = [
+  { task = "bootstrap deps sync" },
+  { task = "doctor" },
 ]
+start = "dev"                              # single selector
+# start = ["container:up", "dev"]          # or array, sequential
+submodules = "recursive"
 ```
+
+`start` accepts a scalar selector or an array. Arrays run in declaration
+order; the first failure aborts the chain.
 
 ## `[release]`
 

@@ -939,11 +939,38 @@ pub struct ManifestBootstrapConfig {
     #[serde(default, alias = "setup")]
     pub run: Option<ManifestManagedRun>,
     #[serde(default)]
-    pub start: Option<String>,
+    pub start: Option<ManifestBootstrapStart>,
     #[serde(default)]
     pub submodules: Option<ManifestBootstrapSubmodulesPolicy>,
     #[serde(default)]
     pub children: Vec<ManifestBootstrapChildConfig>,
+}
+
+/// Selector(s) to run as the bootstrap start task.
+///
+/// Accepts either a single selector string or an array of selectors.
+/// Arrays run sequentially in declaration order; the first failure aborts
+/// the chain. Backward-compatible with the original scalar shape.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(untagged)]
+pub enum ManifestBootstrapStart {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl ManifestBootstrapStart {
+    /// Selectors in declaration order.
+    pub fn selectors(&self) -> Vec<&str> {
+        match self {
+            Self::Single(selector) => vec![selector.as_str()],
+            Self::Multiple(selectors) => selectors.iter().map(String::as_str).collect(),
+        }
+    }
+
+    /// Owned copy of all selectors in declaration order.
+    pub fn to_owned_selectors(&self) -> Vec<String> {
+        self.selectors().into_iter().map(String::from).collect()
+    }
 }
 
 #[derive(Debug, serde::Deserialize, Clone, Copy, PartialEq, Eq)]

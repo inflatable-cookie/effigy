@@ -29,7 +29,7 @@ pub struct BootstrapExecutionResult {
     pub submodules_applied: bool,
     pub root_run: Option<String>,
     pub child_results: Vec<BootstrapChildResult>,
-    pub start_task: Option<String>,
+    pub start_tasks: Vec<String>,
     pub start_ran: bool,
     pub warnings: Vec<String>,
 }
@@ -332,22 +332,28 @@ where
     }
 
     let mut start_ran = false;
-    let start_task = bootstrap.start.clone();
+    let start_tasks: Vec<String> = bootstrap
+        .start
+        .as_ref()
+        .map(|start| start.to_owned_selectors())
+        .unwrap_or_default();
     if request.start_requested {
-        let start_selector = start_task.as_ref().ok_or_else(|| {
-            BootstrapError::task_invocation(
+        if start_tasks.is_empty() {
+            return Err(BootstrapError::task_invocation(
                 "bootstrap start was requested but `[bootstrap].start` is not configured",
-            )
-        })?;
-        report_progress(BootstrapProgressEvent::StartTaskStarted {
-            destination: request.destination.clone(),
-            selector: start_selector.clone(),
-        });
-        run_task(&request.destination, start_selector, "bootstrap start")?;
-        report_progress(BootstrapProgressEvent::StartTaskFinished {
-            destination: request.destination.clone(),
-            selector: start_selector.clone(),
-        });
+            ));
+        }
+        for selector in &start_tasks {
+            report_progress(BootstrapProgressEvent::StartTaskStarted {
+                destination: request.destination.clone(),
+                selector: selector.clone(),
+            });
+            run_task(&request.destination, selector, "bootstrap start")?;
+            report_progress(BootstrapProgressEvent::StartTaskFinished {
+                destination: request.destination.clone(),
+                selector: selector.clone(),
+            });
+        }
         start_ran = true;
     }
 
@@ -361,7 +367,7 @@ where
         submodules_applied,
         root_run,
         child_results,
-        start_task,
+        start_tasks,
         start_ran,
         warnings,
     })
@@ -509,7 +515,8 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
         },
         "start": {
             "requested": result.request.start_requested,
-            "task": result.start_task,
+            "task": result.start_tasks.first(),
+            "tasks": result.start_tasks,
             "ran": result.start_ran,
         },
         "warnings": result.warnings,
@@ -569,10 +576,15 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
     } else {
         lines.push("children: none".to_owned());
     }
-    if let Some(start_task) = result.start_task.as_deref() {
+    if !result.start_tasks.is_empty() {
+        let label = if result.start_tasks.len() == 1 {
+            "start task"
+        } else {
+            "start tasks"
+        };
         lines.push(format!(
-            "start task: {} ({})",
-            start_task,
+            "{label}: {} ({})",
+            result.start_tasks.join(", "),
             if result.start_ran {
                 "ran"
             } else {

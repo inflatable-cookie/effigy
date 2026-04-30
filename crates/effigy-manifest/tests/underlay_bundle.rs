@@ -181,7 +181,13 @@ run = "printf seed"
         sync_step.task.as_deref(),
         Some("bootstrap deps sync ../underlay app-api app-client app-ui app-front app-admin")
     );
-    assert_eq!(bootstrap.start.as_deref(), Some("dev"));
+    assert_eq!(
+        bootstrap
+            .start
+            .as_ref()
+            .map(|start| start.to_owned_selectors()),
+        Some(vec!["dev".to_owned()])
+    );
 
     let seed = manifest.tasks.get("seed").expect("seed task");
     assert_eq!(seed.run_in(), ManifestTaskRunIn::Host);
