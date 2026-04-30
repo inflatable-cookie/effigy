@@ -117,7 +117,7 @@ fn load_resolved_container_policy(
     Ok(policy)
 }
 
-pub(super) fn is_primary_service_running(
+pub(in crate::runner) fn is_primary_service_running(
     repo_root: &std::path::Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<bool, RunnerError> {
