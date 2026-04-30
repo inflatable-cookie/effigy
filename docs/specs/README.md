@@ -26,12 +26,12 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`020-multi-project-gateway-expansion-and-service-dns-strict-lane.md`](./020-multi-project-gateway-expansion-and-service-dns-strict-lane.md)
-- [`batch-cards/README.md`](./batch-cards/README.md)
+- no active strict lane right now
 
 Queued next-lane specs:
 
-- [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md) — still gated on explicit release intent; resumes ahead of `020` whenever release execution is requested
+- none yet; `g03.001` is active at the roadmap level, but it has not been
+  promoted into a strict spec lane
 
 Paused but still useful:
 
@@ -46,17 +46,17 @@ Recently completed:
 - [`014-rust-native-gateway-strict-lane.md`](./014-rust-native-gateway-strict-lane.md)
 - [`012-container-context-and-transparent-execution-strict-lane.md`](./012-container-context-and-transparent-execution-strict-lane.md)
 - [`011-service-catalog-and-compose-assembly-strict-lane.md`](./011-service-catalog-and-compose-assembly-strict-lane.md)
+- [`020-multi-project-gateway-expansion-and-service-dns-strict-lane.md`](./020-multi-project-gateway-expansion-and-service-dns-strict-lane.md)
+- [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md)
 
 ## Next Task
 
-`g02.020` is the active strict lane as of 2026-04-22 (see
-`docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
+No strict lane is active.
 
-Execute batch card `303` — loopback-IP allocation and gateway setup
-integration. See
-[`batch-cards/303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md`](./batch-cards/303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md).
+Use the roadmap front doors first:
 
-`g02.007` remains queued, still gated on explicit release intent. If release
-execution is requested, it resumes ahead of `g02.020` with:
+- [`docs/roadmaps/README.md`](../roadmaps/README.md)
+- [`docs/roadmaps/g03/README.md`](../roadmaps/g03/README.md)
 
-`cargo run --bin effigy -- release prepare --yes --version 0.3.0 --check-gates`
+If `g03.001` needs tighter execution grammar, open a new strict lane from that
+roadmap instead of reviving old `g02` cards.

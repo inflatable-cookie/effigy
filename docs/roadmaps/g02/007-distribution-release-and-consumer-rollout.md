@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Queued
+Status: Paused
 Owner: Platform
 Created: 2026-04-15
 Depends on: 005, 027
@@ -34,7 +34,7 @@ Close the distribution lane properly by:
 
 ## Current Focus
 
-The release lane is intentionally deferred now.
+The original release lane is no longer the live queue.
 
 The local Linux rehearsal proof, Rhai dispatch hardening, modularization, and
 release-closure prep are all done. `115` is complete and the release posture is now:
@@ -79,8 +79,13 @@ The lane has now completed that bounded alignment slice:
 - the built-in release flow still defaults to a patch suggestion (`0.2.14`)
   unless the deliberate `0.3.0` target is chosen explicitly
 
-That leaves one explicit next move instead of another hidden prep batch:
-human-approved release execution for `v0.3.0`.
+That release execution work is now done:
+
+- `v0.3.0` shipped
+- `v0.3.1` shipped
+
+Any remaining consumer-rollout question should be re-sequenced deliberately
+instead of pretending this is still an active release-prep lane.
 
 Supported-boundary rule:
 
@@ -97,13 +102,7 @@ it is no longer only an Effigy-local product claim.
 
 ## Next Task
 
-This roadmap is queued behind `g02.020` as of 2026-04-22 (see
-`docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
+This roadmap is paused.
 
-Release execution stays gated on explicit operator intent. When release
-execution is explicitly requested, this roadmap resumes ahead of `g02.020`
-for the duration of the release path and starts with:
-
-`cargo run --bin effigy -- release prepare --yes --version 0.3.0 --check-gates`
-
-Otherwise, `g02.020` lands first, then this roadmap resumes.
+If broader consumer rollout work becomes real again, rehome it into the live
+generation instead of resuming the old `v0.3.0` release-prep lane.
