@@ -13,10 +13,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- [`311-implement-deploy-model-json-foundation.md`](./311-implement-deploy-model-json-foundation.md)
-  is the active ready card. `g03.001` now owns the live strict lane, and the
-  first bounded move is an Underlay-only `deploy model --json` foundation
-  before any provider export work starts.
+- no active ready card
+- `g03.001` is back in planning after the Underlay-only
+  `deploy model --json` foundation landed in `311`
+- the next move is to decide the widening seam before opening another execution
+  batch
 
 - [`304-decide-post-release-closure-v0-3-prep-follow-up.md`](./304-decide-post-release-closure-v0-3-prep-follow-up.md)
   is complete. The next `g02.007` move is now explicit again: one bounded
@@ -189,4 +190,5 @@ Staged next-lane card:
 
 ## Next Task
 
-Execute `311` for the `g03.001` deploy-model JSON foundation.
+Stop in planning and decide the next `g03.001` batch before resuming
+execution.
