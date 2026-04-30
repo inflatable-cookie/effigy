@@ -7,6 +7,17 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- Tasks that route into a container via the standard pipeline (e.g.
+  `[bootstrap].run` entries declared with `run_in = "container"`, or any
+  manifest-resolved task whose binding lands in a container) now auto-up
+  the compose stack when it is not running, instead of failing with
+  `container service \`<name>\` is not running`. The standard pipeline
+  now uses `is_primary_service_running` (compose-stack check) for routing
+  rather than the looser colima-profile check, and brings the stack up via
+  `compose up` + `ensure_colima_running` before re-routing — mirroring the
+  behaviour previously only available on the deferral path. This unblocks
+  `[bootstrap]` shapes like `run = [..., { task = "seed" }] start = "dev"`
+  where seed is declared `run_in = "container"`.
 - `effigy container status --all` and `effigy container stats --all` now
   discover stacks whose Docker compose `working_dir` label points inside the
   repo (e.g. `<repo>/.effigy/runtime/compose/` for generated compose) instead

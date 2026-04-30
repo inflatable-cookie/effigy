@@ -6,18 +6,23 @@ use super::super::super::exec_command::{
     run_routed_task_container_exec, run_routed_task_container_exec_with_policy,
 };
 use super::super::super::locking::io::acquire_scopes;
-use super::super::super::system_command::run_workspace_seeded_session;
+use super::super::super::system_command::{
+    is_primary_service_running, run_workspace_seeded_session,
+};
 use super::super::api::{resolve_container_execution_binding, ContainerExecutionBinding};
 use super::super::context::ExecutionTaskContext;
 use super::super::planning::ExecutionPreflight;
-use super::super::routing::{route_standard_task_execution, routed_container_target};
+use super::super::routing::{
+    route_standard_task_execution, routed_container_target, routed_not_running_container,
+    RoutedTaskExecution,
+};
 use super::{super::process_run, command};
 use crate::runner::error::RunnerError;
 use crate::runner::execute::nested;
 use crate::runner::execute::render;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
-use effigy_containers::compose::compose_args;
-use effigy_containers::exec::{colima_is_running, ensure_colima_running, run_docker_capture};
+use effigy_containers::compose::{compose_args, compose_up_args};
+use effigy_containers::exec::{ensure_colima_running, run_docker_capture};
 use effigy_containers::{
     load_container_policy, validate_compose_backend_runtime, validate_container_policy,
 };
@@ -100,23 +105,14 @@ pub(in crate::runner) fn run_standard_task(
         );
     }
 
-    let routed = route_standard_task_execution(
-        &preflight.selector.task_name,
-        selection
-            .catalog
-            .manifest
-            .task_defaults
-            .as_ref()
-            .and_then(|defaults| defaults.run_in),
-        selection.task,
-        selection.catalog.manifest.systems.as_ref(),
-        selection.catalog.manifest.containers.as_ref(),
-        |container_name| {
-            let policy =
-                load_container_policy(&selection.catalog.catalog_root, Some(container_name))?;
-            colima_is_running(&policy, &selection.catalog.catalog_root).map_err(Into::into)
-        },
-    )?;
+    let routed = route_with_running_check(preflight, selection)?;
+
+    let routed = if let Some(container_name) = routed_not_running_container(&routed.decision) {
+        ensure_routed_container_up(&selection.catalog.catalog_root, container_name)?;
+        route_with_running_check(preflight, selection)?
+    } else {
+        routed
+    };
 
     if should_stay_in_workspace_shell(preflight.output_json, selection.task, &container_binding) {
         return run_workspace_seeded_session(
@@ -191,6 +187,46 @@ pub(in crate::runner) fn run_standard_task(
         &context,
         secret_ref,
     )
+}
+
+fn route_with_running_check(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+) -> Result<RoutedTaskExecution, RunnerError> {
+    route_standard_task_execution(
+        &preflight.selector.task_name,
+        selection
+            .catalog
+            .manifest
+            .task_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.run_in),
+        selection.task,
+        selection.catalog.manifest.systems.as_ref(),
+        selection.catalog.manifest.containers.as_ref(),
+        |container_name| {
+            let policy =
+                load_container_policy(&selection.catalog.catalog_root, Some(container_name))?;
+            is_primary_service_running(&selection.catalog.catalog_root, &policy)
+        },
+    )
+}
+
+fn ensure_routed_container_up(repo_root: &Path, container_name: &str) -> Result<(), RunnerError> {
+    let policy = load_container_policy(repo_root, Some(container_name))
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    validate_container_policy(repo_root, &policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let _colima_started = ensure_colima_running(&policy, repo_root)?;
+    run_docker_capture(
+        repo_root,
+        &policy,
+        &compose_up_args(&policy),
+        "docker compose up",
+    )?;
+    Ok(())
 }
 
 fn should_stay_in_workspace_shell(

@@ -155,6 +155,13 @@ pub(in crate::runner) fn routed_container_target(
     }
 }
 
+pub(in crate::runner) fn routed_not_running_container(decision: &RoutingDecision) -> Option<&str> {
+    match &decision.target {
+        ExecTarget::ContainerNotRunning { container } => Some(container.as_str()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
