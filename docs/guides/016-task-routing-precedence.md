@@ -30,6 +30,8 @@ Catalog discovery walks the workspace tree recursively and includes symlinked di
 
 Notes:
 - symlinked catalogs are treated the same as physical directories for routing.
+- dependency/build trees are skipped during discovery, including `.effigy/`,
+  `node_modules/`, `vendor/`, and `target/`.
 - aliases must remain unique across all discovered manifests.
 - if duplicate aliases are found (including through symlinked paths), Effigy returns a catalog alias conflict error.
 
