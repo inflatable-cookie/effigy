@@ -7,6 +7,15 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- `effigy container status --all` and `effigy container stats --all` now
+  discover stacks whose Docker compose `working_dir` label points inside the
+  repo (e.g. `<repo>/.effigy/runtime/compose/` for generated compose) instead
+  of at the repo root. Discovery walks up from the labelled working dir
+  looking for `effigy.toml` (up to six levels) and groups containers by the
+  resolved repo. Previously, generated-compose stacks (decodelabs and any
+  other bundle that emits compose into `.effigy/runtime/compose/`) were
+  invisible to `status --all`, even though `effigy container down` from the
+  repo dir tore them down correctly.
 - `effigy bootstrap` start tasks that open a workspace shell (decodelabs-style
   `[tasks.dev]` with no `run`, only a workspace binding) now use the cloned
   repo as the resolved root instead of re-resolving from the parent invocation

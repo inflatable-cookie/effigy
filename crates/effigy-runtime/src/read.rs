@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use effigy_containers::{
     exec::{
@@ -266,6 +266,16 @@ pub(crate) struct DiscoveredRunningEnvironment {
     pub(crate) services: Vec<RunningComposeContainer>,
 }
 
+/// Maximum directory levels to walk up from a container's
+/// `com.docker.compose.project.working_dir` label looking for an
+/// `effigy.toml` marker.
+///
+/// Generated compose stacks live at `<repo>/.effigy/runtime/compose/`,
+/// which Docker labels as the project working_dir (three levels deep).
+/// `MAX_REPO_ROOT_WALKUP` allows for that plus a small grace margin so
+/// future relocations of the compose payload still resolve.
+const MAX_REPO_ROOT_WALKUP: usize = 6;
+
 pub(crate) fn discover_running_environments(
 ) -> Result<Vec<DiscoveredRunningEnvironment>, EffigyRuntimeError> {
     let rows = list_running_compose_containers()
@@ -275,9 +285,15 @@ pub(crate) fn discover_running_environments(
         let Some(project_name) = row.project_name.clone() else {
             continue;
         };
-        let Some(repo_root) = row.working_dir.clone() else {
+        let Some(working_dir) = row.working_dir.clone() else {
             continue;
         };
+        let Some(repo_path) =
+            resolve_effigy_repo_root(Path::new(&working_dir), MAX_REPO_ROOT_WALKUP)
+        else {
+            continue;
+        };
+        let repo_root = repo_path.display().to_string();
         grouped
             .entry((repo_root, project_name))
             .or_default()
@@ -287,9 +303,6 @@ pub(crate) fn discover_running_environments(
     let mut environments = Vec::new();
     for ((repo_root, project_name), mut services) in grouped {
         let repo_path = Path::new(&repo_root);
-        if !repo_path.join("effigy.toml").is_file() {
-            continue;
-        }
         let Ok(policies) = load_all_container_policies(repo_path) else {
             continue;
         };
@@ -325,8 +338,86 @@ pub(crate) fn discover_running_environments(
     Ok(environments)
 }
 
+/// Walk up from `start` looking for an `effigy.toml` marker.
+///
+/// Returns the first ancestor directory (inclusive of `start`) that
+/// contains an `effigy.toml`, or `None` if no marker is found within
+/// `max_depth` ancestors.
+fn resolve_effigy_repo_root(start: &Path, max_depth: usize) -> Option<PathBuf> {
+    let mut current = start;
+    for _ in 0..=max_depth {
+        if current.join("effigy.toml").is_file() {
+            return Some(current.to_path_buf());
+        }
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => return None,
+        }
+    }
+    None
+}
+
 fn load_port_registry() -> Option<PortRegistry> {
     let home = std::env::var_os("HOME")?;
     let path = Path::new(&home).join(".effigy/ports.json");
     PortRegistry::load(&path).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_effigy_repo_root, MAX_REPO_ROOT_WALKUP};
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn resolve_effigy_repo_root_returns_repo_when_started_at_repo_root() {
+        let temp = tempdir().expect("tempdir");
+        let repo = temp.path();
+        fs::write(repo.join("effigy.toml"), "[manifest]\n").expect("write manifest");
+
+        let resolved = resolve_effigy_repo_root(repo, MAX_REPO_ROOT_WALKUP).expect("resolved");
+
+        assert_eq!(resolved, repo);
+    }
+
+    #[test]
+    fn resolve_effigy_repo_root_walks_up_from_generated_compose_dir() {
+        let temp = tempdir().expect("tempdir");
+        let repo = temp.path();
+        fs::write(repo.join("effigy.toml"), "[manifest]\n").expect("write manifest");
+        let compose_dir = repo.join(".effigy/runtime/compose");
+        fs::create_dir_all(&compose_dir).expect("compose dir");
+
+        let resolved =
+            resolve_effigy_repo_root(&compose_dir, MAX_REPO_ROOT_WALKUP).expect("resolved");
+
+        assert_eq!(resolved, repo);
+    }
+
+    #[test]
+    fn resolve_effigy_repo_root_returns_none_when_no_marker_present() {
+        let temp = tempdir().expect("tempdir");
+        let stray = temp.path().join("a/b/c");
+        fs::create_dir_all(&stray).expect("stray dir");
+
+        let resolved = resolve_effigy_repo_root(&stray, 2);
+
+        assert!(resolved.is_none(), "got: {resolved:?}");
+    }
+
+    #[test]
+    fn resolve_effigy_repo_root_respects_max_depth() {
+        let temp = tempdir().expect("tempdir");
+        let repo = temp.path();
+        fs::write(repo.join("effigy.toml"), "[manifest]\n").expect("write manifest");
+        let deep = repo.join("a/b/c/d/e/f/g/h");
+        fs::create_dir_all(&deep).expect("deep dir");
+
+        // Eight levels deep — exceeds MAX_REPO_ROOT_WALKUP.
+        let resolved = resolve_effigy_repo_root(&deep, MAX_REPO_ROOT_WALKUP);
+        assert!(
+            resolved.is_none(),
+            "expected None for excessive depth, got: {resolved:?}"
+        );
+    }
 }
