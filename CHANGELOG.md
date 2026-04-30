@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- `effigy bootstrap` start tasks that open a workspace shell (decodelabs-style
+  `[tasks.dev]` with no `run`, only a workspace binding) now use the cloned
+  repo as the resolved root instead of re-resolving from the parent invocation
+  cwd. Previously, running `effigy bootstrap <repo>` from a parent directory
+  could fail with `could not resolve a project root from cwd <parent>` even
+  though the clone destination was a valid project root.
+
 ### Added
 - `[bootstrap].start` now accepts an array of selectors in addition to the
   original single-string form, so `effigy bootstrap --start` can run a

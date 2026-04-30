@@ -57,6 +57,22 @@ pub(in crate::runner) fn run_workspace(args: WorkspaceArgs) -> Result<String, Ru
     workspace::run_workspace(args)
 }
 
+pub(in crate::runner) fn run_workspace_with_repo_root(
+    repo_root: &Path,
+    system: Option<&str>,
+    workspace_name: Option<&str>,
+    repo_override: Option<std::path::PathBuf>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    workspace::run_workspace_with_repo_root(
+        repo_root,
+        system,
+        workspace_name,
+        repo_override,
+        output_json,
+    )
+}
+
 pub(in crate::runner) fn run_workspace_seeded_session(
     repo_root: &Path,
     container_name: Option<&str>,

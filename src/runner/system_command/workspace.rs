@@ -88,17 +88,40 @@ pub(super) fn run_workspace(args: WorkspaceArgs) -> Result<String, RunnerError> 
 
     let cwd = current_working_dir()?;
     let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
-    let repo_root = resolved.resolved_root;
-    let container_name = resolve_public_workspace_container(
-        &repo_root,
+    run_workspace_with_repo_root(
+        &resolved.resolved_root,
         args.system.as_deref(),
         args.workspace.as_deref(),
-        "workspace",
-    )?;
-    run_workspace_container_session(
-        &repo_root,
-        container_name.as_deref(),
         args.repo_override,
+        false,
+    )
+}
+
+/// Workspace shell entrypoint that takes an already-resolved `repo_root`.
+///
+/// The plain [`run_workspace`] entrypoint reads the process cwd, which is
+/// wrong for callers that have already resolved a target repo (e.g. the
+/// bootstrap start-task pipeline, which clones into a sibling directory
+/// before invoking the workspace task). Pass the resolved root in
+/// directly to avoid re-resolving from a parent cwd.
+pub(in crate::runner) fn run_workspace_with_repo_root(
+    repo_root: &Path,
+    system: Option<&str>,
+    workspace: Option<&str>,
+    repo_override: Option<PathBuf>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if output_json {
+        return Err(RunnerError::task_invocation(
+            "`effigy workspace` does not support `--json` because it opens an interactive shell",
+        ));
+    }
+    let container_name =
+        resolve_public_workspace_container(repo_root, system, workspace, "workspace")?;
+    run_workspace_container_session(
+        repo_root,
+        container_name.as_deref(),
+        repo_override,
         None,
         WorkspaceSessionOwnership::OwnStartedSystem,
     )
