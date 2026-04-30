@@ -17,6 +17,19 @@ fn map_repo_root_to_container_root() {
 }
 
 #[test]
+fn map_repo_root_does_not_emit_trailing_slash() {
+    // PathBuf::join("") otherwise emits "/var/www/html/" which nerdctl/runc
+    // rejects via "current working directory is outside of container mount
+    // namespace root" because it does not match the container's WORKDIR
+    // string exactly.
+    let m = mapper();
+    let result = m
+        .host_to_container(Path::new("/Users/tom/projects/client"))
+        .unwrap();
+    assert_eq!(result.to_string_lossy(), "/var/www/html");
+}
+
+#[test]
 fn map_subdirectory() {
     let m = mapper();
     let result = m
