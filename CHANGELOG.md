@@ -13,7 +13,9 @@ During v0.x, MINOR bumps may include breaking changes.
   dedicated aggregator task. Selectors run sequentially in declaration
   order and the first failure aborts the chain. The `effigy.bootstrap.v1`
   envelope now carries both `start.task` (first selector, for back-compat)
-  and `start.tasks` (full array).
+  and `start.tasks` (full array). Array entries can be bare selector
+  strings or table form (`{ task = "..." }`) — mixed arrays allowed,
+  mirroring the shape of `[bootstrap].run`.
 
 ## [0.3.1] - 2026-04-29
 

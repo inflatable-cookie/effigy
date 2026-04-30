@@ -81,11 +81,14 @@ run = [
 ]
 start = "dev"                              # single selector
 # start = ["container:up", "dev"]          # or array, sequential
+# start = [{ task = "container:up" }, { task = "dev" }]   # table form
 submodules = "recursive"
 ```
 
-`start` accepts a scalar selector or an array. Arrays run in declaration
-order; the first failure aborts the chain.
+`start` accepts a scalar selector or an array. Array entries are either
+bare selector strings or `{ task = "..." }` tables (mixed allowed).
+Args travel inline in the selector string (`"dev --foo bar"`). Arrays
+run in declaration order; the first failure aborts the chain.
 
 ## `[release]`
 
