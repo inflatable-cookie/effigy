@@ -154,7 +154,11 @@ pub(super) fn has_running_primary_service(
             Some(working_dir) => {
                 effigy_runtime::read::working_dir_belongs_to_repo(working_dir, repo_root)
             }
-            None => false,
+            // nerdctl-compose (colima backend) does not emit the
+            // `com.docker.compose.project.working_dir` label, so the running
+            // row carries no working_dir. project_name + service is then the
+            // strongest signal we have; trust it.
+            None => true,
         }
     })
 }

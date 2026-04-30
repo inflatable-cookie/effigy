@@ -44,6 +44,15 @@ impl CwdMapper {
     /// CWD. Returns an error if the host CWD is outside the repo root.
     pub fn host_to_container(&self, host_cwd: &Path) -> Result<PathBuf, ExecError> {
         let relative = self.relative_from_repo_root(host_cwd)?;
+        // `PathBuf::join("")` appends a trailing separator (e.g.
+        // `/var/www/html` → `/var/www/html/`). Some container runtimes
+        // (notably nerdctl/runc) treat that as a different path than the
+        // container's WORKDIR and reject it as "outside of container mount
+        // namespace root". When the host CWD equals the repo root, return
+        // the container working dir unchanged.
+        if relative.as_os_str().is_empty() {
+            return Ok(self.container_working_dir.clone());
+        }
         Ok(self.container_working_dir.join(relative))
     }
 

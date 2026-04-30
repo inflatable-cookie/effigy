@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use super::super::super::cache::ops::check_task_cache;
 use super::super::super::exec_command::{
@@ -118,6 +119,14 @@ pub(in crate::runner) fn run_standard_task(
         }
         rerouted
     } else {
+        // Container reported running, but persistent broken-namespace state
+        // can survive across runs (a previous `compose up --force-recreate`
+        // can leave the container in a transitional state where `-w` exec
+        // fails with "current working directory is outside of container
+        // mount namespace root"). Probe + restart-recover before dispatching.
+        if let Some((container_name, _)) = routed_container_target(&routed.decision) {
+            ensure_routed_container_exec_ready(&selection.catalog.catalog_root, container_name)?;
+        }
         routed
     };
 
@@ -227,13 +236,194 @@ fn ensure_routed_container_up(repo_root: &Path, container_name: &str) -> Result<
     validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let _colima_started = ensure_colima_running(&policy, repo_root)?;
+    // nerdctl-compose (unlike docker-compose) does NOT auto-create host
+    // bind-mount directories. Catalog fragments declare bind mounts like
+    // `<repo>/.effigy/runtime/data/<service>/mysql:/var/lib/mysql`, so
+    // pre-create those host paths or the runtime fails with `failed to
+    // fulfil mount request: open <path>: no such file or directory`.
+    prepare_host_bind_mount_dirs(repo_root, &policy)?;
     run_docker_capture(
         repo_root,
         &policy,
         &compose_up_args(&policy),
         "docker compose up",
     )?;
+    // After `compose up --force-recreate`, nerdctl/runc reports the
+    // container as `running` while its mount namespace is still in a
+    // transitional state. The first `exec` may fail with "current working
+    // directory is outside of container mount namespace root" until the
+    // namespace settles. Probe `-w <working_dir>` (the same condition real
+    // exec uses); if it fails to settle, restart the container once and
+    // re-probe.
+    let working_dir =
+        effigy_containers::load_container_exec_working_dir(repo_root, Some(container_name))
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    ensure_primary_service_exec_ready_with_recovery(repo_root, &policy, &working_dir)?;
     Ok(())
+}
+
+fn ensure_routed_container_exec_ready(
+    repo_root: &Path,
+    container_name: &str,
+) -> Result<(), RunnerError> {
+    let policy = load_container_policy(repo_root, Some(container_name))
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let working_dir =
+        effigy_containers::load_container_exec_working_dir(repo_root, Some(container_name))
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    ensure_primary_service_exec_ready_with_recovery(repo_root, &policy, &working_dir)
+}
+
+/// Probe the primary service for `-w <working_dir>` exec readiness.
+/// If the container is in a broken mount-namespace state, restart it once
+/// and re-probe. This is the recovery path for "current working directory
+/// is outside of container mount namespace root" errors that nerdctl/runc
+/// surface after a transitional `compose up --force-recreate` cycle.
+fn ensure_primary_service_exec_ready_with_recovery(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    working_dir: &Path,
+) -> Result<(), RunnerError> {
+    if probe_primary_service_exec_ready(repo_root, policy, working_dir, Duration::from_secs(2)) {
+        return Ok(());
+    }
+    // Recovery: restart the primary service, then re-probe with a longer
+    // window to allow the mount namespace to settle.
+    if restart_primary_service(repo_root, policy).is_ok()
+        && probe_primary_service_exec_ready(repo_root, policy, working_dir, Duration::from_secs(15))
+    {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(format!(
+        "container `{}` is not exec-ready: probe with `-w {}` failed even after restarting service `{}`. \
+         Try `colima nerdctl --profile {} -- restart <container>` manually, or `effigy container down {} && effigy container up {}`.",
+        policy.name,
+        working_dir.display(),
+        policy.primary_service,
+        policy.profile,
+        policy.name,
+        policy.name,
+    )))
+}
+
+fn probe_primary_service_exec_ready(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    working_dir: &Path,
+    timeout: Duration,
+) -> bool {
+    let working_dir_str = working_dir.to_string_lossy().into_owned();
+    let probe_args = compose_args(
+        policy,
+        [
+            "exec",
+            "-T",
+            "-w",
+            working_dir_str.as_str(),
+            policy.primary_service.as_str(),
+            "true",
+        ],
+    );
+    let started = Instant::now();
+    loop {
+        if let Ok(output) = run_docker_capture(
+            repo_root,
+            policy,
+            &probe_args,
+            "container exec readiness probe",
+        ) {
+            if output.status.success() {
+                return true;
+            }
+        }
+        if started.elapsed() >= timeout {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+fn restart_primary_service(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let restart_args = compose_args(policy, ["restart", policy.primary_service.as_str()]);
+    run_docker_capture(repo_root, policy, &restart_args, "docker compose restart")?;
+    Ok(())
+}
+
+/// Pre-create host bind-mount directories declared in the generated compose.
+///
+/// `nerdctl-compose` does not auto-create missing host paths the way
+/// `docker-compose` does. When a service declares a bind mount such as
+/// `<repo>/.effigy/runtime/data/db/mysql:/var/lib/mysql`, the host directory
+/// must exist before `compose up`, or runc aborts with
+/// `failed to fulfil mount request: open <path>: no such file or directory`.
+///
+/// We only mkdir paths that resolve under `repo_root` (the project's own
+/// state). Anything outside is left to the user.
+fn prepare_host_bind_mount_dirs(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    for compose_file in &policy.compose_files {
+        let raw = match std::fs::read_to_string(compose_file) {
+            Ok(text) => text,
+            Err(_) => continue,
+        };
+        let yaml: serde_yaml::Value = match serde_yaml::from_str(&raw) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let Some(services) = yaml.get("services").and_then(|s| s.as_mapping()) else {
+            continue;
+        };
+        for (_service_name, service_value) in services {
+            let Some(volumes) = service_value.get("volumes").and_then(|v| v.as_sequence()) else {
+                continue;
+            };
+            for volume in volumes {
+                let Some(spec) = volume.as_str() else {
+                    continue;
+                };
+                let Some(host_path) = parse_bind_mount_host_path(spec) else {
+                    continue;
+                };
+                let host_path = Path::new(host_path);
+                if !host_path.is_absolute() || !host_path.starts_with(repo_root) {
+                    continue;
+                }
+                // Only mkdir directory-style mounts. If the host path is a
+                // file (e.g. a config file mount), skip — the catalog writer
+                // produces those.
+                if let Some(extension) = host_path.extension() {
+                    let ext_str = extension.to_string_lossy();
+                    if matches!(
+                        ext_str.as_ref(),
+                        "conf" | "yml" | "yaml" | "toml" | "json" | "sql" | "ini" | "env"
+                    ) {
+                        continue;
+                    }
+                }
+                let _ = std::fs::create_dir_all(host_path);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Parse a docker compose short-form bind mount string, returning the host
+/// path component. Compose volume syntax: `<host>:<container>[:<options>]`.
+/// Returns `None` for named volumes (no leading `/` or `.`).
+fn parse_bind_mount_host_path(spec: &str) -> Option<&str> {
+    // Bind mounts have an absolute or relative host path; named volumes do
+    // not contain `/` or `.` in the host segment.
+    let host = spec.split(':').next()?;
+    if host.starts_with('/') || host.starts_with('.') || host.starts_with('~') {
+        Some(host)
+    } else {
+        None
+    }
 }
 
 fn should_stay_in_workspace_shell(

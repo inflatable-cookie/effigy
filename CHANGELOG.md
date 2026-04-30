@@ -7,6 +7,36 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- `CwdMapper::host_to_container` no longer emits a trailing path
+  separator when the host CWD equals the repo root. `PathBuf::join("")`
+  was producing `/var/www/html/`, which nerdctl/runc rejects as
+  `current working directory is outside of container mount namespace
+  root` because the literal `-w` argument has to match the container's
+  WORKDIR exactly. The mapper now returns the container working dir
+  unchanged when the relative path from repo root is empty, and a
+  regression test covers the case.
+- Container exec under Colima/nerdctl now recovers from the persistent
+  "current working directory is outside of container mount namespace root"
+  failure that runc surfaces after a transitional `compose up
+  --force-recreate` cycle. The auto-up path now probes `-w <working_dir>`
+  exec readiness (matching the condition real exec uses, not a generic
+  `true` exec) and, on failure, runs `compose restart <primary_service>`
+  once and re-probes. The same recovery also runs when entering a routed
+  task exec while the container is reported running, so a broken
+  mount-namespace state inherited from a previous run is repaired before
+  dispatch instead of failing the user's task. This unblocks `effigy
+  bootstrap` of consumer repos whose `[bootstrap].run` chains include
+  `run_in = "container"` tasks (e.g. `seed` running mysql commands).
+- `effigy` now pre-creates host bind-mount directories declared in the
+  generated compose before `compose up` runs. `nerdctl-compose` (unlike
+  `docker-compose`) does not auto-create missing host paths, so catalog
+  fragments such as `mariadb` that declare `<repo>/.effigy/runtime/data/db/mysql:/var/lib/mysql`
+  previously caused runc to abort with `failed to fulfil mount request:
+  open <path>: no such file or directory` when the project state directory
+  had been cleaned. We now walk the generated compose YAML, find bind
+  mounts under `repo_root`, and `mkdir -p` the host side. File-typed
+  mounts (`*.conf`, `*.sql`, `*.yml`, etc.) are left to the catalog writer
+  that produces them.
 - Tasks that route into a container via the standard pipeline (e.g.
   `[bootstrap].run` entries declared with `run_in = "container"`, or any
   manifest-resolved task whose binding lands in a container) now auto-up
@@ -20,21 +50,28 @@ During v0.x, MINOR bumps may include breaking changes.
   where seed is declared `run_in = "container"`.
 - Running-container discovery across the runner now walks up from the Docker
   compose `working_dir` label to find the nearest `effigy.toml` (up to six
-  levels) instead of requiring the label to equal the repo root. This fixes
-  generated-compose stacks (decodelabs and any other bundle that emits
-  compose into `<repo>/.effigy/runtime/compose/`), which were previously
-  invisible to `effigy container status --all`, `effigy container stats
-  --all`, the routing decision that decides whether a container task can
-  execute in-container, the exec transport that picks which compose service
-  container to attach to, the runtime-mismatch filter, and the gateway
-  registration project filter. A shared `working_dir_belongs_to_repo`
-  helper in `effigy-runtime` is used everywhere these comparisons happen.
-  Previously, even though `effigy container down` from the repo dir tore
-  stacks down correctly, container tasks dispatched via the standard
-  pipeline (e.g. `[bootstrap].run = [{ task = "seed" }]` with `seed`
-  declared `run_in = "container"`) would be re-routed to the host shell
-  after auto-up, because the just-started compose stack failed the strict
-  working-dir equality check.
+  levels) instead of requiring the label to equal the repo root, and treats
+  the absence of the label as a match (rather than a reject) when
+  `project_name` and `service` already agree. This fixes generated-compose
+  stacks (decodelabs and any other bundle that emits compose into
+  `<repo>/.effigy/runtime/compose/`) and Colima-backed stacks (where
+  `nerdctl-compose` does not emit the
+  `com.docker.compose.project.working_dir` label at all). The same logic
+  is now used by the routing decision that decides whether a container
+  task can execute in-container, the exec transport that picks which
+  compose service container to attach to, the runtime-mismatch filter,
+  and the gateway registration project filter. A shared
+  `working_dir_belongs_to_repo` helper in `effigy-runtime` is used
+  everywhere these comparisons happen. Previously, container tasks
+  dispatched via the standard pipeline (e.g. `[bootstrap].run = [{ task =
+  "seed" }]` with `seed` declared `run_in = "container"`) would auto-up
+  the compose stack and then immediately fall through to host execution
+  because the just-started Colima stack carried no `working_dir` label,
+  so `mysql` ran on the host with `command not found`. Note: `effigy
+  container status --all` and `stats --all` still need the
+  `working_dir` label to attribute a stack back to its source repo, so
+  Colima-backed stacks remain absent from those views; that gap is
+  separate from per-repo container task execution.
 - `effigy bootstrap` start tasks that open a workspace shell (decodelabs-style
   `[tasks.dev]` with no `run`, only a workspace binding) now use the cloned
   repo as the resolved root instead of re-resolving from the parent invocation
