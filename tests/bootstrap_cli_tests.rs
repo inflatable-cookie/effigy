@@ -219,6 +219,48 @@ run = "sh ./scripts/start-b.sh"
     remote
 }
 
+fn create_root_remote_with_table_start() -> PathBuf {
+    let worktree = temp_workspace("effigy-bootstrap-cli", "table-start-worktree");
+    fs::create_dir_all(worktree.join("scripts")).expect("mkdir table-start scripts");
+    fs::write(
+        worktree.join("effigy.toml"),
+        r#"[bootstrap]
+start = [{ task = "bootstrap:start-a" }, "bootstrap:start-b"]
+
+[tasks."bootstrap:start-a"]
+run = "sh ./scripts/start-a.sh"
+
+[tasks."bootstrap:start-b"]
+run = "sh ./scripts/start-b.sh"
+"#,
+    )
+    .expect("write table-start manifest");
+    fs::write(
+        worktree.join("scripts/start-a.sh"),
+        "#!/bin/sh\nset -eu\nprintf a > start-a.txt\n",
+    )
+    .expect("write start-a script");
+    fs::write(
+        worktree.join("scripts/start-b.sh"),
+        "#!/bin/sh\nset -eu\nprintf b > start-b.txt\n",
+    )
+    .expect("write start-b script");
+    for name in ["start-a.sh", "start-b.sh"] {
+        let script = worktree.join("scripts").join(name);
+        let mut perms = fs::metadata(&script)
+            .expect("script metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("chmod script");
+    }
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init table-start root");
+    let remote = temp_workspace("effigy-bootstrap-cli", "table-start-bare").join("remote.git");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    remote
+}
+
 fn create_plain_root_remote() -> PathBuf {
     let worktree = temp_workspace("effigy-bootstrap-cli", "plain-root-worktree");
     fs::write(worktree.join("README.md"), "# plain root\n").expect("write plain readme");
@@ -325,6 +367,42 @@ fn bootstrap_executes_root_child_and_start_via_binary() {
 fn bootstrap_runs_array_start_tasks_in_declaration_order() {
     let root_remote = create_root_remote_with_array_start();
     let cwd = temp_workspace("effigy-bootstrap-cli", "array-start-execution");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("bootstrap")
+        .arg(root_remote.display().to_string())
+        .arg("--start")
+        .env("NO_COLOR", "1")
+        .current_dir(&cwd)
+        .output()
+        .expect("run effigy bootstrap");
+
+    assert!(output.status.success(), "bootstrap failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["start"]["requested"], true);
+    assert_eq!(parsed["result"]["start"]["ran"], true);
+    assert_eq!(parsed["result"]["start"]["task"], "bootstrap:start-a");
+    assert_eq!(
+        parsed["result"]["start"]["tasks"],
+        serde_json::json!(["bootstrap:start-a", "bootstrap:start-b"])
+    );
+
+    let destination = cwd.join("remote");
+    assert_eq!(
+        fs::read_to_string(destination.join("start-a.txt")).expect("start-a marker"),
+        "a"
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join("start-b.txt")).expect("start-b marker"),
+        "b"
+    );
+}
+
+#[test]
+fn bootstrap_runs_table_form_start_entries() {
+    let root_remote = create_root_remote_with_table_start();
+    let cwd = temp_workspace("effigy-bootstrap-cli", "table-start-execution");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")

@@ -76,16 +76,25 @@ This means:
 - if `--start` was supplied, run `dev`
 
 `start` accepts either a single selector (shown above) or an array of
-selectors that run sequentially in declaration order; the first failure
-aborts the chain:
+entries that run sequentially in declaration order; the first failure
+aborts the chain. Each array entry is either a bare selector string or a
+table form (`{ task = "..." }`):
 
 ```toml
 [bootstrap]
 start = ["container:up", "dev"]
+
+# equivalent table form (mirrors `[bootstrap].run`):
+# start = [{ task = "container:up" }, { task = "dev" }]
+
+# mixed forms are allowed:
+# start = ["container:up", { task = "dev" }]
 ```
 
-The JSON envelope emits both `start.task` (first selector, for
-back-compat) and `start.tasks` (full array).
+Args travel inside the selector string itself
+(`{ task = "dev --foo bar" }` or `"dev --foo bar"`). The JSON envelope
+emits both `start.task` (first selector, for back-compat) and
+`start.tasks` (full array).
 
 ## Bootstrap Dependency Sync
 
