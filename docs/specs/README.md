@@ -26,12 +26,12 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- no active strict lane right now
+- [`001-production-deployment-model-and-export-contract-strict-lane.md`](./001-production-deployment-model-and-export-contract-strict-lane.md)
+- [`batch-cards/README.md`](./batch-cards/README.md)
 
 Queued next-lane specs:
 
-- none yet; `g03.001` is active at the roadmap level, but it has not been
-  promoted into a strict spec lane
+- none yet
 
 Paused but still useful:
 
@@ -51,12 +51,7 @@ Recently completed:
 
 ## Next Task
 
-No strict lane is active.
+`g03.001` is now the active strict lane.
 
-Use the roadmap front doors first:
-
-- [`docs/roadmaps/README.md`](../roadmaps/README.md)
-- [`docs/roadmaps/g03/README.md`](../roadmaps/g03/README.md)
-
-If `g03.001` needs tighter execution grammar, open a new strict lane from that
-roadmap instead of reviving old `g02` cards.
+Execute
+[`batch-cards/311-implement-deploy-model-json-foundation.md`](./batch-cards/311-implement-deploy-model-json-foundation.md).

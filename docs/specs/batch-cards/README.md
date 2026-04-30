@@ -13,6 +13,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`311-implement-deploy-model-json-foundation.md`](./311-implement-deploy-model-json-foundation.md)
+  is the active ready card. `g03.001` now owns the live strict lane, and the
+  first bounded move is an Underlay-only `deploy model --json` foundation
+  before any provider export work starts.
+
 - [`304-decide-post-release-closure-v0-3-prep-follow-up.md`](./304-decide-post-release-closure-v0-3-prep-follow-up.md)
   is complete. The next `g02.007` move is now explicit again: one bounded
   `v0.3.0` release-prep alignment slice before any human-approved release
@@ -184,9 +189,4 @@ Staged next-lane card:
 
 ## Next Task
 
-Execute `303` for the `g02.020` loopback-IP allocation and gateway-setup
-foundation. `g02.020` is the active strict lane.
-
-`g02.007` remains queued, still gated on explicit release intent. If release
-execution is requested, it resumes ahead of `g02.020` starting with the
-already-refreshed posture from `305`.
+Execute `311` for the `g03.001` deploy-model JSON foundation.
