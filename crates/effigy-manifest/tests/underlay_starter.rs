@@ -71,7 +71,13 @@ fn starter_composes_into_single_manifest() {
         bootstrap.run.is_some(),
         "starter declares bootstrap-local run"
     );
-    assert_eq!(bootstrap.start.as_deref(), Some("dev"));
+    assert_eq!(
+        bootstrap
+            .start
+            .as_ref()
+            .map(|start| start.to_owned_selectors()),
+        Some(vec!["dev".to_owned()])
+    );
 }
 
 #[test]

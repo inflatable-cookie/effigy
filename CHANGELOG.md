@@ -6,6 +6,15 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- `[bootstrap].start` now accepts an array of selectors in addition to the
+  original single-string form, so `effigy bootstrap --start` can run a
+  short chain (e.g. `start = ["container:up", "dev"]`) without needing a
+  dedicated aggregator task. Selectors run sequentially in declaration
+  order and the first failure aborts the chain. The `effigy.bootstrap.v1`
+  envelope now carries both `start.task` (first selector, for back-compat)
+  and `start.tasks` (full array).
+
 ## [0.3.1] - 2026-04-29
 
 ### Added
