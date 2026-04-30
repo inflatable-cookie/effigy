@@ -49,7 +49,7 @@ This lane does not yet own:
 
 ## Current Posture
 
-`active`
+`planning`
 
 The correct implementation order is:
 
@@ -69,7 +69,7 @@ The correct implementation order is:
 ## Continuation Chain
 
 1. `311` — implement `deploy model --json` foundation for Underlay
-2. later — decide post-model-foundation widening
+2. next — decide post-model-foundation widening
 3. later — open provider export batches
 
 ## Exit Condition
@@ -83,4 +83,10 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute `311` — implement the `deploy model --json` foundation for Underlay.
+Decide the next widening seam after the Underlay model foundation.
+
+Candidate directions:
+
+- open a bounded exporter-planning batch for one provider surface
+- strengthen the neutral model with release/build/static-output detail before
+  any provider adapter work starts

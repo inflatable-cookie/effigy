@@ -51,7 +51,7 @@ Recently completed:
 
 ## Next Task
 
-`g03.001` is now the active strict lane.
+`g03.001` remains the active strict lane, but `311` is complete and there is no
+new ready card yet.
 
-Execute
-[`batch-cards/311-implement-deploy-model-json-foundation.md`](./batch-cards/311-implement-deploy-model-json-foundation.md).
+Stop in planning and decide the next widening seam before opening a new batch.
