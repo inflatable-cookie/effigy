@@ -768,6 +768,9 @@ fn apply_default_repo_override(command: &mut effigy_cli::Command, repo_root: &Pa
         effigy_cli::Command::Docs(args) if args.repo_override.is_none() => {
             args.repo_override = Some(repo_root)
         }
+        effigy_cli::Command::Deploy(args) if args.repo_override.is_none() => {
+            args.repo_override = Some(repo_root)
+        }
         effigy_cli::Command::Contracts(args) if args.repo_override.is_none() => {
             args.repo_override = Some(repo_root)
         }

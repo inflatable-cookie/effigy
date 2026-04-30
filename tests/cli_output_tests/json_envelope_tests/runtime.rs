@@ -254,3 +254,64 @@ fn cli_json_mode_missing_task_wraps_runner_failure() {
     assert_eq!(parsed["command"]["name"], "does-not-exist");
     assert_eq!(parsed["error"]["kind"], "RunnerError");
 }
+
+#[test]
+fn cli_json_mode_deploy_model_wraps_deploy_payload() {
+    let root = temp_workspace("cli-json-deploy-model");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "acme"
+databases = ["acme", "acme_test"]
+
+[bundle.dirs]
+front = "acme-front"
+admin = "acme-admin"
+api = "acme-api"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("acme-front")).expect("mkdir front");
+    fs::create_dir_all(root.join("acme-admin")).expect("mkdir admin");
+    fs::create_dir_all(root.join("acme-api")).expect("mkdir api");
+    fs::write(
+        root.join("acme-front/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    )
+    .expect("write front manifest");
+    fs::write(
+        root.join("acme-admin/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    )
+    .expect("write admin manifest");
+    fs::write(
+        root.join("acme-api/effigy.toml"),
+        "[tasks.build]\nrun = \"cargo build --release\"\n[tasks.api]\nrun = \"cargo run -p acme-api\"\n[tasks.jobs]\nrun = \"cargo run -p acme-jobs {args}\"\n",
+    )
+    .expect("write api manifest");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("deploy")
+        .arg("model")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run deploy model");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["command"]["kind"], "deploy");
+    assert_eq!(parsed["command"]["name"], "deploy");
+    assert_eq!(parsed["result"]["schema"], "deploy.model.v1");
+    assert_eq!(parsed["result"]["app"]["bundle"], "underlay");
+    assert_eq!(parsed["result"]["backing_services"][0]["name"], "postgres");
+}

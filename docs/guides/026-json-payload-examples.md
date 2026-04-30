@@ -29,7 +29,7 @@ Start with the family that matches your job:
 - test automation:
   `Test Plan`, `Test Results`, `Watch`
 - bootstrap and setup:
-  `Bootstrap`, `Init`, `Migrate`, `Config`, `Unlock`
+  `Bootstrap`, `Deploy Model`, `Init`, `Migrate`, `Config`, `Unlock`
 - shell completion or editor integration:
   `Completion`, `Completion Candidates`
 
@@ -127,6 +127,103 @@ Companion references:
       "task:build"
     ]
   }
+}
+```
+
+### 3) Deploy Model (`deploy.model.v1`)
+
+```json
+{
+  "schema": "deploy.model.v1",
+  "schema_version": 1,
+  "app": {
+    "name": "underlay-reference",
+    "bundle": "underlay",
+    "project_name": "underlay-reference-dev",
+    "source_root": "."
+  },
+  "services": [
+    {
+      "name": "front",
+      "role": "static",
+      "runtime": "node",
+      "build": {
+        "command": "bun x vite build"
+      },
+      "domains": [
+        "acme.test"
+      ],
+      "env": {},
+      "secret_refs": [],
+      "volumes": [],
+      "warnings": []
+    },
+    {
+      "name": "api",
+      "role": "web",
+      "runtime": "rust",
+      "build": {
+        "command": "cargo build --release"
+      },
+      "start": {
+        "command": "cargo run -p acme-api"
+      },
+      "port": 41001,
+      "domains": [
+        "api.acme.test"
+      ],
+      "env": {},
+      "secret_refs": [
+        "DATABASE_URL"
+      ],
+      "volumes": [],
+      "warnings": [
+        {
+          "code": "missing-health-probe",
+          "scope": "service",
+          "target": "api",
+          "message": "No explicit production health endpoint is declared yet",
+          "severity": "warn"
+        }
+      ]
+    }
+  ],
+  "backing_services": [
+    {
+      "name": "postgres",
+      "kind": "postgres",
+      "mode": "managed",
+      "required": true,
+      "consumers": [
+        "api"
+      ],
+      "warnings": []
+    }
+  ],
+  "domains": [
+    {
+      "host": "acme.test",
+      "service": "front",
+      "tls": "provider_managed"
+    },
+    {
+      "host": "api.acme.test",
+      "service": "api",
+      "tls": "provider_managed"
+    }
+  ],
+  "secrets": [
+    {
+      "name": "DATABASE_URL",
+      "services": [
+        "api"
+      ],
+      "required": true,
+      "source": "operator",
+      "notes": "Managed Postgres connection string for primary database `acme`"
+    }
+  ],
+  "warnings": []
 }
 ```
 

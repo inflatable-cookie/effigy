@@ -60,7 +60,7 @@ The deployment model should carry:
 
 - `schema`
   - fixed schema id
-- `version`
+- `schema_version`
   - schema version number
 - `app`
   - repo or project identity
@@ -81,7 +81,7 @@ Recommended first envelope:
 ```json
 {
   "schema": "deploy.model.v1",
-  "version": 1,
+  "schema_version": 1,
   "app": {
     "name": "contact-patch",
     "bundle": "underlay",

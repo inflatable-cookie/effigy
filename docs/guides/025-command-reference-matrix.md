@@ -55,6 +55,8 @@ For narrative workflow guidance instead of lookup, start with:
   repo's declared system: use `effigy system` and `effigy workspace`.
 - Need to discover or inspect a shipped or local bundle before adopting it: use
   `effigy bundle`.
+- Need a provider-neutral production model derived from the effective manifest
+  and bundle: use `effigy deploy model --json`.
 - Need release workflows: use `effigy release`.
 - Need distribution validation, GLIBC checks, artifact validation, or
   first-publish evidence: use `effigy distribution`.
@@ -76,6 +78,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy system` | Operate the manifest's declared default system substrate (VM + compose + gateway) with lifecycle, log streaming, and recovery surfaces | `up`, `down`, `status`, `logs`, `repair`, `reset-runtime`, `--system`, `--repo`, `--follow`, `--json` | `effigy.system.recover.v1` | `064-system-workspace-and-dev-contract.md` |
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
 | `effigy bundle` | Discover, inspect, and export shipped top-level bundles referenced from `[bundle]` in `effigy.toml` | `list`, `inspect`, `export`, `--path`, `--json` | `effigy.bundle.list.v1`, `effigy.bundle.inspect.v1`, `effigy.bundle.export.v1` | `065-underlay-starter.md` |
+| `effigy deploy` | Derive a provider-neutral production deployment model from the effective manifest and bundle | `model`, `--repo`, `--json` | `deploy.model.v1` | `002-production-deployment-model.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, optionally start the declared dev task, and expose `bootstrap deps sync` for typed dependency hydration | `<git-url>`, `deps sync`, `--path`, `--branch`, `--start`, `--plan`, `--js-only`, `--rust-only`, `--json` | `effigy.bootstrap.v1`, `effigy.bootstrap.deps.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
@@ -158,6 +161,7 @@ effigy workspace [<WORKSPACE>] [--system <NAME>]
 
 ```sh
 effigy bundle <list|inspect|export> [ARGS...] [--json]
+effigy deploy model [--repo <PATH>] --json
 effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--start] [--plan] [--json]
 effigy bootstrap deps sync [<path>...] [--js-only|--rust-only] [--json]
 effigy demo <list|browser|inspect|history|run|stop|input|resize|rerun> [ARGS...] [--json]
@@ -213,6 +217,8 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   producer-declared isolation paths into workspace containers
 - `bundle export <BUNDLE> --path <DIR>` writes a local `base_path` bundle
   directory for repo-owned modifications
+- `deploy model` is intentionally JSON-only in the first batch and currently
+  supports the shipped `underlay` bundle only
 - `bootstrap` is stateless by default, runs `start` only with `--start`, and
   fails fast on dirty existing checkouts or remote mismatches
 - demo surfaces are intentionally bounded:

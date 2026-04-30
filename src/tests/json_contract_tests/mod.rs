@@ -1,5 +1,6 @@
 mod builtin_contract_tests;
 mod completion_contract_tests;
+mod deploy_contract_tests;
 mod doctor_contract_tests;
 mod prelude;
 mod scan_contract_tests;

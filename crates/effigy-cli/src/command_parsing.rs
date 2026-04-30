@@ -4,6 +4,8 @@ use std::path::PathBuf;
 mod container;
 #[path = "command_parsing_demo.rs"]
 mod demo;
+#[path = "command_parsing_deploy.rs"]
+mod deploy;
 #[path = "command_parsing_distribution.rs"]
 mod distribution;
 #[path = "command_parsing_docs.rs"]
@@ -20,6 +22,7 @@ use crate::{
 };
 use container::parse_container_command;
 use demo::parse_demo_command;
+use deploy::parse_deploy_command;
 use distribution::parse_distribution_command;
 use docs::parse_docs_command;
 
@@ -40,6 +43,7 @@ where
         "--help" | "-h" | "help" => Ok(Command::Help(HelpTopic::General)),
         "bundle" => parse_bundle_command(args),
         "changelog" => parse_changelog_command(args),
+        "deploy" => parse_deploy_command(args),
         "defer" => parse_defer_command(args),
         "exec" => parse_exec_command(args),
         "system" => parse_system_command(args),
@@ -427,6 +431,7 @@ fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
         "defer" => Some(HelpTopic::Defer),
         "exec" => Some(HelpTopic::Exec),
         "bundle" => Some(HelpTopic::Bundle),
+        "deploy" => Some(HelpTopic::Deploy),
         "system" => Some(HelpTopic::System),
         "workspace" => Some(HelpTopic::Workspace),
         "gateway" => Some(HelpTopic::Gateway),
