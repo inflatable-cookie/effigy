@@ -109,7 +109,14 @@ pub(in crate::runner) fn run_standard_task(
 
     let routed = if let Some(container_name) = routed_not_running_container(&routed.decision) {
         ensure_routed_container_up(&selection.catalog.catalog_root, container_name)?;
-        route_with_running_check(preflight, selection)?
+        let rerouted = route_with_running_check(preflight, selection)?;
+        if rerouted.decision.is_not_running() {
+            return Err(RunnerError::task_invocation(format!(
+                "task `{}` requires container `{}` but it is still not running after auto-up",
+                preflight.selector.task_name, container_name
+            )));
+        }
+        rerouted
     } else {
         routed
     };

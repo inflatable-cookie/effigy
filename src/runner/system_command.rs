@@ -144,11 +144,18 @@ pub(super) fn has_running_primary_service(
     project_name: &str,
     primary_service: &str,
 ) -> bool {
-    let repo_root = repo_root.to_string_lossy();
     rows.iter().any(|row| {
-        row.project_name.as_deref() == Some(project_name)
-            && row.working_dir.as_deref() == Some(repo_root.as_ref())
-            && row.service.as_deref() == Some(primary_service)
+        if row.project_name.as_deref() != Some(project_name)
+            || row.service.as_deref() != Some(primary_service)
+        {
+            return false;
+        }
+        match row.working_dir.as_deref() {
+            Some(working_dir) => {
+                effigy_runtime::read::working_dir_belongs_to_repo(working_dir, repo_root)
+            }
+            None => false,
+        }
     })
 }
 

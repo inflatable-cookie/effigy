@@ -18,15 +18,23 @@ During v0.x, MINOR bumps may include breaking changes.
   behaviour previously only available on the deferral path. This unblocks
   `[bootstrap]` shapes like `run = [..., { task = "seed" }] start = "dev"`
   where seed is declared `run_in = "container"`.
-- `effigy container status --all` and `effigy container stats --all` now
-  discover stacks whose Docker compose `working_dir` label points inside the
-  repo (e.g. `<repo>/.effigy/runtime/compose/` for generated compose) instead
-  of at the repo root. Discovery walks up from the labelled working dir
-  looking for `effigy.toml` (up to six levels) and groups containers by the
-  resolved repo. Previously, generated-compose stacks (decodelabs and any
-  other bundle that emits compose into `.effigy/runtime/compose/`) were
-  invisible to `status --all`, even though `effigy container down` from the
-  repo dir tore them down correctly.
+- Running-container discovery across the runner now walks up from the Docker
+  compose `working_dir` label to find the nearest `effigy.toml` (up to six
+  levels) instead of requiring the label to equal the repo root. This fixes
+  generated-compose stacks (decodelabs and any other bundle that emits
+  compose into `<repo>/.effigy/runtime/compose/`), which were previously
+  invisible to `effigy container status --all`, `effigy container stats
+  --all`, the routing decision that decides whether a container task can
+  execute in-container, the exec transport that picks which compose service
+  container to attach to, the runtime-mismatch filter, and the gateway
+  registration project filter. A shared `working_dir_belongs_to_repo`
+  helper in `effigy-runtime` is used everywhere these comparisons happen.
+  Previously, even though `effigy container down` from the repo dir tore
+  stacks down correctly, container tasks dispatched via the standard
+  pipeline (e.g. `[bootstrap].run = [{ task = "seed" }]` with `seed`
+  declared `run_in = "container"`) would be re-routed to the host shell
+  after auto-up, because the just-started compose stack failed the strict
+  working-dir equality check.
 - `effigy bootstrap` start tasks that open a workspace shell (decodelabs-style
   `[tasks.dev]` with no `run`, only a workspace binding) now use the cloned
   repo as the resolved root instead of re-resolving from the parent invocation

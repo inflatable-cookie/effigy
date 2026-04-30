@@ -62,10 +62,13 @@ fn running_container_runtime_mismatch(
     policy: &EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],
 ) -> Option<String> {
-    let repo_root = repo_root.to_string_lossy();
     let repo_rows = rows
         .iter()
-        .filter(|row| row.working_dir.as_deref() == Some(repo_root.as_ref()))
+        .filter(|row| {
+            row.working_dir.as_deref().is_some_and(|working_dir| {
+                effigy_runtime::read::working_dir_belongs_to_repo(working_dir, repo_root)
+            })
+        })
         .collect::<Vec<_>>();
     if repo_rows.is_empty() {
         return None;

@@ -274,7 +274,7 @@ pub(crate) struct DiscoveredRunningEnvironment {
 /// which Docker labels as the project working_dir (three levels deep).
 /// `MAX_REPO_ROOT_WALKUP` allows for that plus a small grace margin so
 /// future relocations of the compose payload still resolve.
-const MAX_REPO_ROOT_WALKUP: usize = 6;
+pub const MAX_REPO_ROOT_WALKUP: usize = 6;
 
 pub(crate) fn discover_running_environments(
 ) -> Result<Vec<DiscoveredRunningEnvironment>, EffigyRuntimeError> {
@@ -343,7 +343,7 @@ pub(crate) fn discover_running_environments(
 /// Returns the first ancestor directory (inclusive of `start`) that
 /// contains an `effigy.toml`, or `None` if no marker is found within
 /// `max_depth` ancestors.
-fn resolve_effigy_repo_root(start: &Path, max_depth: usize) -> Option<PathBuf> {
+pub fn resolve_effigy_repo_root(start: &Path, max_depth: usize) -> Option<PathBuf> {
     let mut current = start;
     for _ in 0..=max_depth {
         if current.join("effigy.toml").is_file() {
@@ -355,6 +355,21 @@ fn resolve_effigy_repo_root(start: &Path, max_depth: usize) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Whether a Docker compose `working_dir` label points into `repo_root`.
+///
+/// Generated compose stacks emit a label like
+/// `<repo>/.effigy/runtime/compose/`, which is not equal to the repo root
+/// itself. Walk up from the labelled directory looking for `effigy.toml`
+/// and compare the resolved owning repo against `repo_root`. Falls back to
+/// an exact match when no marker is found within the walk-up budget.
+pub fn working_dir_belongs_to_repo(working_dir: &str, repo_root: &Path) -> bool {
+    let working_dir_path = Path::new(working_dir);
+    match resolve_effigy_repo_root(working_dir_path, MAX_REPO_ROOT_WALKUP) {
+        Some(resolved) => resolved == repo_root,
+        None => working_dir_path == repo_root,
+    }
 }
 
 fn load_port_registry() -> Option<PortRegistry> {
