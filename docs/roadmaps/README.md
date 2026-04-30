@@ -18,8 +18,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Layout
 
-- `g02/` current roadmap generation
-- `g01/` previous implementation and consolidation generation
+- `g03/` current roadmap generation
+- `g02/` previous release and local-runtime expansion generation
+- `g01/` original implementation and consolidation generation
 - `generation-index.md` active generation and rollover history
 - `backlog/` deferred scope with promotion criteria
 
@@ -47,23 +48,23 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02/004-rust-native-scripting-surface-contract.md` is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
 - `g02/005-optional-distribution-surface-contract.md` is paused after one real consumer proof plus bounded widening made the optional distribution boundary trustworthy for metadata validation, artifact validation, and closeout evidence reuse.
 - `g02/006-colima-container-environment-contract.md` is now paused after the real-machine `colima nerdctl` live-stop and closeout path was hardened strongly enough to stop carrying a deferred warning.
-- `g02/020-multi-project-gateway-expansion-and-service-dns.md` is now the active strict lane as of 2026-04-22 (re-sequenced ahead of `g02.007` and `g02.019`; see `docs/logs/2026-04/22-190000-g02-020-re-sequencing-ahead-of-g02-007-and-g02-019.md`).
-- `g02/007-distribution-release-and-consumer-rollout.md` is queued behind `g02.020`, still gated on explicit release intent for the deliberate `v0.3` cut. It resumes ahead of `g02.020` whenever release execution is explicitly requested.
-- `g02/022-v0-3-pre-release-hardening-and-contract-cleanup.md` is complete; the bounded pre-cut hardening queue from the final `v0.3` audit has landed across gateway privilege flow, resolver validation, env execution reliability, discovery hygiene, and the last cheap first-contract cleanup worth taking before release.
+- `g02/020-multi-project-gateway-expansion-and-service-dns.md` is complete.
+- `g02/007-distribution-release-and-consumer-rollout.md` is paused; the `v0.3.x` release work is done and any broader rollout follow-up should be re-sequenced deliberately instead of pretending the old release lane is still active.
+- `g02/022-v0-3-pre-release-hardening-and-contract-cleanup.md` is complete; the bounded pre-cut hardening queue from the final `v0.3` audit landed before the `v0.3.0` cut.
 - `g02/010-effigy-modularization-and-crate-boundaries.md` is complete.
 - `g02/008-demo-and-manifest-import-rollout.md` remains planned, but stays outside the current `v0.3` release-prep queue.
 - `g02/009-vault-backed-varlock-rollout.md` remains planned, but stays outside the current `v0.3` release-prep queue.
 - `g02/017-remaining-shell-cleanup-and-crate-extraction-program.md` queues the substantial parallel cleanup jobs for the remaining heavy `/src` seams and any justified final crate splits.
+- `g03/001-production-deployment-model-and-export-contract.md` is the new active milestone; it defines the provider-neutral deployment model and export contract for managed production generation.
+- `g03/002-underlay-managed-deployment-export.md` is planned behind `g03.001`; Underlay is the first real target for provider export.
+- `g03/003-decodelabs-production-strategy-scope.md` is planned behind `g03.002`; it scopes the future Decodelabs managed-host story without forcing premature automation now.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
-- `g02.020` — execute batch card `303` (loopback-IP allocation and gateway
-  setup integration)
-- queued: `g02.007` (release-prep, still gated on explicit release intent;
-  resumes ahead of `g02.020` if release execution is requested)
-- queued: `g02.019` (v0.3 surface audit, after both `g02.020` and the release
-  cut settle)
+- none right now
+- `g03.001` is the active roadmap lane, but it has not been promoted into a
+  strict spec lane yet
 
 ## Research Program
 
@@ -99,8 +100,8 @@ Before rollover:
 
 ## Next Task
 
-Return to `115` for deliberate `v0.3` release prep and explicit human-approved
-release execution.
+Start `g03.001` from the new deployment-export architecture and define the
+provider-neutral deployment model before any provider-specific buildout.
 
 
 ## Historical language boundary
