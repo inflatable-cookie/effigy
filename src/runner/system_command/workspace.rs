@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use crate::runner::container_command::{run_container, runtime_error_from_runner};
+use crate::runner::container_runtime_prep::ensure_container_runtime_prepared;
 use crate::runner::exec_command::copy_file_into_service;
 use crate::runner::execute::api::{resolve_container_execution_binding, ContainerExecutionBinding};
 use crate::runner::gateway_command::gateway_up_for_managed_task;
@@ -186,7 +187,7 @@ fn run_workspace_container_session(
     let repo_override = effective_workspace_repo_override(repo_root, repo_override);
     let container_name = container_name.map(str::to_owned);
     let policy = load_workspace_session_policy(repo_root, container_name.as_deref())?;
-    let system_was_running = ensure_workspace_container_ready(
+    let system_was_running = ensure_container_runtime_prepared(
         repo_root,
         &policy,
         container_name.as_deref(),
@@ -239,29 +240,6 @@ fn effective_workspace_repo_override(
     repo_override: Option<PathBuf>,
 ) -> Option<PathBuf> {
     repo_override.or_else(|| Some(repo_root.to_path_buf()))
-}
-
-fn ensure_workspace_container_ready(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    container_name: Option<&str>,
-    repo_override: Option<PathBuf>,
-) -> Result<bool, RunnerError> {
-    let system_was_running = super::is_primary_service_running(repo_root, policy)?;
-    if system_was_running {
-        return Ok(true);
-    }
-
-    run_container(ContainerArgs {
-        subcommand: ContainerSubcommand::Up {
-            name: container_name.map(str::to_owned),
-            attach: false,
-            detach: true,
-        },
-        repo_override,
-        output_json: false,
-    })?;
-    Ok(false)
 }
 
 fn prepare_workspace_handoff(

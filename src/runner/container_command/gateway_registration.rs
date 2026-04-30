@@ -64,6 +64,24 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     Ok(routes)
 }
 
+pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+    let rows = list_running_compose_containers_for_profile(&policy.profile)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let mut project_alias_routes =
+        resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
+    let shared_alias_routes = resolve_gateway_shared_service_alias_routes(
+        repo_root,
+        policy,
+        true,
+        &project_alias_routes,
+    )?;
+    project_alias_routes.extend(shared_alias_routes);
+    Ok(project_alias_routes)
+}
+
 pub(in crate::runner) fn deregister_gateway_routes_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {

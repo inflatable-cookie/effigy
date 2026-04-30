@@ -10,12 +10,12 @@ use effigy_containers::{
 use effigy_env::secret::SecretString;
 use effigy_exec::detection::{build_capabilities_from_results, standard_probe_spec, ProbeResult};
 
+use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::error::RunnerError;
 
 #[path = "transport/colima.rs"]
 mod colima;
 
-const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF";
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 const CONTAINER_COLOR_ENV: [(&str, &str); 3] = [
     ("EFFIGY_COLOR", "always"),
@@ -38,7 +38,7 @@ pub(super) fn build_routed_task_exec_args(
     match strategy {
         effigy_exec::ExecStrategy::Handoff { args: handoff_args } => {
             args.push(OsString::from("-e"));
-            args.push(OsString::from(format!("{CONTAINER_HANDOFF_ENV}=1")));
+            args.push(OsString::from(CONTAINER_HANDOFF_ENV_ASSIGNMENT));
             args.push(OsString::from("-w"));
             args.push(OsString::from(mapped_cwd));
             args.push(OsString::from(service));

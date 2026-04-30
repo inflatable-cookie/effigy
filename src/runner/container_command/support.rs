@@ -15,7 +15,9 @@ use effigy_containers::{
 use effigy_core::shell::shell_quote;
 use serde_json::json;
 
-use super::gateway_registration::RegisteredGatewayRoute;
+use super::gateway_registration::{
+    resolve_gateway_tcp_alias_routes_for_container, RegisteredGatewayRoute,
+};
 use super::RunnerError;
 
 pub(super) fn wait_for_container_ready(
@@ -218,6 +220,14 @@ pub(super) fn install_primary_service_tcp_alias_hosts(
         .into_iter()
         .map(|(domain, host)| format!("{domain} -> {host}"))
         .collect())
+}
+
+pub(in crate::runner) fn reconcile_primary_service_tcp_alias_hosts(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<String>, RunnerError> {
+    let routes = resolve_gateway_tcp_alias_routes_for_container(repo_root, policy)?;
+    install_primary_service_tcp_alias_hosts(repo_root, policy, &routes)
 }
 
 fn tcp_alias_host_pairs(

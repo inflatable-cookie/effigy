@@ -15,6 +15,7 @@ use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 use super::policy::DEFER_DEPTH_ENV;
 use super::trace::render_deferral_trace;
 use crate::runner::container_command::support::validate_running_container_runtime_match;
+use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME;
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::append_color_exec_env;
 use crate::runner::exec_command::run_compose_exec;
@@ -25,8 +26,6 @@ use crate::runner::host_container_lease::{
 };
 use effigy_manifest::DeferredCommand;
 use effigy_tasks::TaskRuntimeArgs;
-
-const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF";
 
 enum DeferredExecutionPlan {
     HostCommand(String),
@@ -262,7 +261,7 @@ fn run_deferred_request_with_binding(
                     ))
                 })?;
             let command = build_deferred_command(task, runtime_args, deferral, &exec_working_dir)?;
-            if std::env::var_os(CONTAINER_HANDOFF_ENV).is_some() {
+            if std::env::var_os(CONTAINER_HANDOFF_ENV_NAME).is_some() {
                 let local_working_dir =
                     std::env::current_dir().unwrap_or_else(|_| deferral.working_dir.clone());
                 let output = run_deferred_request_locally(

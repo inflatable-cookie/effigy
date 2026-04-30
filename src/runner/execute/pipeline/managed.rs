@@ -7,13 +7,13 @@ use super::super::super::managed_shell::{
     render_inline_compose_command, render_inline_managed_lifecycle_command,
     render_inline_managed_shell_command, render_inline_managed_standard_exec_command,
 };
-use super::super::super::system_command::{
-    run_workspace_seeded_session, run_workspace_with_repo_root,
-};
+use super::super::super::system_command::run_workspace_with_repo_root;
 use super::super::api::{resolve_container_execution_binding, ContainerExecutionBinding};
 use super::super::planning::ExecutionPreflight;
 use crate::runner::error::RunnerError;
-use crate::runner::util::render_passthrough_args;
+use crate::runner::execute::workspace_seeded::{
+    inside_container_handoff, run_workspace_seeded_task_session,
+};
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
     managed_gateway_command, managed_lifecycle_command, managed_lifecycle_shutdown_command,
@@ -22,7 +22,6 @@ use effigy_containers::session::{
 use effigy_containers::{
     load_container_exec_working_dir, load_container_policy, EffectiveContainerPolicy,
 };
-use effigy_core::shell::shell_quote;
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
@@ -33,8 +32,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const MANAGED_LIFECYCLE_CLEANUP_TIMEOUT_SECS: u64 = 90;
-const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF";
-
 pub(super) fn run_managed_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
@@ -114,15 +111,12 @@ pub(super) fn run_managed_task(
             selection,
             plan.gateway_auto_start,
         )?;
-        let seed_command = render_workspace_seeded_task_command(
+        return run_workspace_seeded_task_session(
+            &selection.catalog.catalog_root,
+            &container_binding,
+            preflight.runtime_args_raw.repo_override.clone(),
             &preflight.selector.task_name,
             &preflight.runtime_args_exec.passthrough,
-        );
-        return run_workspace_seeded_session(
-            &selection.catalog.catalog_root,
-            container_binding.container_name(),
-            preflight.runtime_args_raw.repo_override.clone(),
-            &seed_command,
         )
         .map(Some);
     }
@@ -606,10 +600,6 @@ fn base_domain_from_dns_route(domain: &str) -> Option<&str> {
     Some(domain)
 }
 
-fn inside_container_handoff() -> bool {
-    std::env::var_os(CONTAINER_HANDOFF_ENV).is_some()
-}
-
 fn render_handoff_managed_standard_command(setup_command: Option<&str>, run: &str) -> String {
     let Some(setup_command) = setup_command
         .map(str::trim)
@@ -626,25 +616,15 @@ fn default_handoff_managed_shell_run() -> String {
     "if [ -n \"${SHELL:-}\" ] && [ -x \"${SHELL}\" ]; then exec \"${SHELL}\" -i; fi; if command -v bash >/dev/null 2>&1; then exec \"$(command -v bash)\" -i; fi; if command -v sh >/dev/null 2>&1; then exec \"$(command -v sh)\" -i; fi; exec /bin/sh -i".to_owned()
 }
 
-fn render_workspace_seeded_task_command(task_name: &str, args: &[String]) -> String {
-    let mut rendered = format!("effigy {}", shell_quote(task_name));
-    let rendered_args = render_passthrough_args(args);
-    if !rendered_args.is_empty() {
-        rendered.push(' ');
-        rendered.push_str(&rendered_args);
-    }
-    rendered
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         default_handoff_managed_shell_run, finish_managed_task, managed_dns_route_lines,
         render_handoff_managed_standard_command, render_managed_lifecycle_cleanup_notice,
-        render_workspace_seeded_task_command, should_open_workspace_shell_for_non_managed_task,
-        ContainerExecutionBinding,
+        should_open_workspace_shell_for_non_managed_task, ContainerExecutionBinding,
     };
     use crate::runner::error::RunnerError;
+    use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::managed_shell::{
         managed_readiness_probe_urls, render_inline_managed_standard_exec_command,
     };
