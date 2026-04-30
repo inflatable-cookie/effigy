@@ -7,12 +7,13 @@ use super::super::super::managed_shell::{
     render_inline_compose_command, render_inline_managed_lifecycle_command,
     render_inline_managed_shell_command, render_inline_managed_standard_exec_command,
 };
-use super::super::super::system_command::{run_workspace, run_workspace_seeded_session};
+use super::super::super::system_command::{
+    run_workspace_seeded_session, run_workspace_with_repo_root,
+};
 use super::super::api::{resolve_container_execution_binding, ContainerExecutionBinding};
 use super::super::planning::ExecutionPreflight;
 use crate::runner::error::RunnerError;
 use crate::runner::util::render_passthrough_args;
-use effigy_cli::WorkspaceArgs;
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
     managed_gateway_command, managed_lifecycle_command, managed_lifecycle_shutdown_command,
@@ -77,12 +78,13 @@ pub(super) fn run_managed_task(
             )];
             let _lock_guards = acquire_scopes(&preflight.resolved.resolved_root, &lock_scopes)?;
             let _ = name;
-            return run_workspace(WorkspaceArgs {
-                workspace: selection.task.workspace.clone(),
-                system: selection.task.system.clone(),
-                repo_override: preflight.runtime_args_raw.repo_override.clone(),
-                output_json: preflight.output_json,
-            })
+            return run_workspace_with_repo_root(
+                &preflight.resolved.resolved_root,
+                selection.task.system.as_deref(),
+                selection.task.workspace.as_deref(),
+                preflight.runtime_args_raw.repo_override.clone(),
+                preflight.output_json,
+            )
             .map(Some);
         }
         if matches!(container_binding, ContainerExecutionBinding::Inline { .. }) {
