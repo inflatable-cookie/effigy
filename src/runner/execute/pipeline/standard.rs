@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 use super::super::super::cache::ops::check_task_cache;
 use super::super::super::exec_command::{
@@ -7,9 +6,7 @@ use super::super::super::exec_command::{
     run_routed_task_container_exec, run_routed_task_container_exec_with_policy,
 };
 use super::super::super::locking::io::acquire_scopes;
-use super::super::super::system_command::{
-    is_primary_service_running, run_workspace_seeded_session,
-};
+use super::super::super::system_command::is_primary_service_running;
 use super::super::api::{resolve_container_execution_binding, ContainerExecutionBinding};
 use super::super::context::ExecutionTaskContext;
 use super::super::planning::ExecutionPreflight;
@@ -18,15 +15,19 @@ use super::super::routing::{
     RoutedTaskExecution,
 };
 use super::{super::process_run, command};
+use crate::runner::container_runtime_prep::{
+    ensure_container_runtime_prepared, prepare_container_exec_runtime,
+};
 use crate::runner::error::RunnerError;
 use crate::runner::execute::nested;
 use crate::runner::execute::render;
-use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
-use effigy_containers::compose::{compose_args, compose_up_args};
-use effigy_containers::exec::{ensure_colima_running, run_docker_capture};
-use effigy_containers::{
-    load_container_policy, validate_compose_backend_runtime, validate_container_policy,
+use crate::runner::execute::workspace_seeded::{
+    inside_container_handoff, run_workspace_seeded_task_session,
 };
+use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
+use effigy_containers::compose::compose_args;
+use effigy_containers::exec::run_docker_capture;
+use effigy_containers::load_container_policy;
 use effigy_env::resolver::ResolvedEnv;
 use effigy_env::schema_support::{
     resolve_catalog_env_schema as shared_resolve_env_schema, SchemaSupportConfig,
@@ -34,8 +35,6 @@ use effigy_env::schema_support::{
 };
 use effigy_env::secret::SecretString;
 use effigy_manifest::TaskSelection;
-
-const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF";
 
 pub(in crate::runner) fn run_standard_task(
     preflight: &ExecutionPreflight,
@@ -117,6 +116,12 @@ pub(in crate::runner) fn run_standard_task(
                 preflight.selector.task_name, container_name
             )));
         }
+        if let Some((rerouted_container, _)) = routed_container_target(&rerouted.decision) {
+            ensure_routed_container_exec_ready(
+                &selection.catalog.catalog_root,
+                rerouted_container,
+            )?;
+        }
         rerouted
     } else {
         // Container reported running, but persistent broken-namespace state
@@ -131,14 +136,12 @@ pub(in crate::runner) fn run_standard_task(
     };
 
     if should_stay_in_workspace_shell(preflight.output_json, selection.task, &container_binding) {
-        return run_workspace_seeded_session(
+        return run_workspace_seeded_task_session(
             &selection.catalog.catalog_root,
-            container_binding.container_name(),
+            &container_binding,
             preflight.runtime_args_raw.repo_override.clone(),
-            &render_workspace_seeded_task_command(
-                &preflight.selector.task_name,
-                &preflight.runtime_args_exec.passthrough,
-            ),
+            &preflight.selector.task_name,
+            &preflight.runtime_args_exec.passthrough,
         );
     }
 
@@ -231,34 +234,7 @@ fn route_with_running_check(
 fn ensure_routed_container_up(repo_root: &Path, container_name: &str) -> Result<(), RunnerError> {
     let policy = load_container_policy(repo_root, Some(container_name))
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    validate_container_policy(repo_root, &policy)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    validate_compose_backend_runtime(repo_root, &policy)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let _colima_started = ensure_colima_running(&policy, repo_root)?;
-    // nerdctl-compose (unlike docker-compose) does NOT auto-create host
-    // bind-mount directories. Catalog fragments declare bind mounts like
-    // `<repo>/.effigy/runtime/data/<service>/mysql:/var/lib/mysql`, so
-    // pre-create those host paths or the runtime fails with `failed to
-    // fulfil mount request: open <path>: no such file or directory`.
-    prepare_host_bind_mount_dirs(repo_root, &policy)?;
-    run_docker_capture(
-        repo_root,
-        &policy,
-        &compose_up_args(&policy),
-        "docker compose up",
-    )?;
-    // After `compose up --force-recreate`, nerdctl/runc reports the
-    // container as `running` while its mount namespace is still in a
-    // transitional state. The first `exec` may fail with "current working
-    // directory is outside of container mount namespace root" until the
-    // namespace settles. Probe `-w <working_dir>` (the same condition real
-    // exec uses); if it fails to settle, restart the container once and
-    // re-probe.
-    let working_dir =
-        effigy_containers::load_container_exec_working_dir(repo_root, Some(container_name))
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    ensure_primary_service_exec_ready_with_recovery(repo_root, &policy, &working_dir)?;
+    let _ = ensure_container_runtime_prepared(repo_root, &policy, Some(container_name), None)?;
     Ok(())
 }
 
@@ -268,162 +244,7 @@ fn ensure_routed_container_exec_ready(
 ) -> Result<(), RunnerError> {
     let policy = load_container_policy(repo_root, Some(container_name))
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let working_dir =
-        effigy_containers::load_container_exec_working_dir(repo_root, Some(container_name))
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    ensure_primary_service_exec_ready_with_recovery(repo_root, &policy, &working_dir)
-}
-
-/// Probe the primary service for `-w <working_dir>` exec readiness.
-/// If the container is in a broken mount-namespace state, restart it once
-/// and re-probe. This is the recovery path for "current working directory
-/// is outside of container mount namespace root" errors that nerdctl/runc
-/// surface after a transitional `compose up --force-recreate` cycle.
-fn ensure_primary_service_exec_ready_with_recovery(
-    repo_root: &Path,
-    policy: &effigy_containers::EffectiveContainerPolicy,
-    working_dir: &Path,
-) -> Result<(), RunnerError> {
-    if probe_primary_service_exec_ready(repo_root, policy, working_dir, Duration::from_secs(2)) {
-        return Ok(());
-    }
-    // Recovery: restart the primary service, then re-probe with a longer
-    // window to allow the mount namespace to settle.
-    if restart_primary_service(repo_root, policy).is_ok()
-        && probe_primary_service_exec_ready(repo_root, policy, working_dir, Duration::from_secs(15))
-    {
-        return Ok(());
-    }
-    Err(RunnerError::task_invocation(format!(
-        "container `{}` is not exec-ready: probe with `-w {}` failed even after restarting service `{}`. \
-         Try `colima nerdctl --profile {} -- restart <container>` manually, or `effigy container down {} && effigy container up {}`.",
-        policy.name,
-        working_dir.display(),
-        policy.primary_service,
-        policy.profile,
-        policy.name,
-        policy.name,
-    )))
-}
-
-fn probe_primary_service_exec_ready(
-    repo_root: &Path,
-    policy: &effigy_containers::EffectiveContainerPolicy,
-    working_dir: &Path,
-    timeout: Duration,
-) -> bool {
-    let working_dir_str = working_dir.to_string_lossy().into_owned();
-    let probe_args = compose_args(
-        policy,
-        [
-            "exec",
-            "-T",
-            "-w",
-            working_dir_str.as_str(),
-            policy.primary_service.as_str(),
-            "true",
-        ],
-    );
-    let started = Instant::now();
-    loop {
-        if let Ok(output) = run_docker_capture(
-            repo_root,
-            policy,
-            &probe_args,
-            "container exec readiness probe",
-        ) {
-            if output.status.success() {
-                return true;
-            }
-        }
-        if started.elapsed() >= timeout {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-}
-
-fn restart_primary_service(
-    repo_root: &Path,
-    policy: &effigy_containers::EffectiveContainerPolicy,
-) -> Result<(), RunnerError> {
-    let restart_args = compose_args(policy, ["restart", policy.primary_service.as_str()]);
-    run_docker_capture(repo_root, policy, &restart_args, "docker compose restart")?;
-    Ok(())
-}
-
-/// Pre-create host bind-mount directories declared in the generated compose.
-///
-/// `nerdctl-compose` does not auto-create missing host paths the way
-/// `docker-compose` does. When a service declares a bind mount such as
-/// `<repo>/.effigy/runtime/data/db/mysql:/var/lib/mysql`, the host directory
-/// must exist before `compose up`, or runc aborts with
-/// `failed to fulfil mount request: open <path>: no such file or directory`.
-///
-/// We only mkdir paths that resolve under `repo_root` (the project's own
-/// state). Anything outside is left to the user.
-fn prepare_host_bind_mount_dirs(
-    repo_root: &Path,
-    policy: &effigy_containers::EffectiveContainerPolicy,
-) -> Result<(), RunnerError> {
-    for compose_file in &policy.compose_files {
-        let raw = match std::fs::read_to_string(compose_file) {
-            Ok(text) => text,
-            Err(_) => continue,
-        };
-        let yaml: serde_yaml::Value = match serde_yaml::from_str(&raw) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let Some(services) = yaml.get("services").and_then(|s| s.as_mapping()) else {
-            continue;
-        };
-        for (_service_name, service_value) in services {
-            let Some(volumes) = service_value.get("volumes").and_then(|v| v.as_sequence()) else {
-                continue;
-            };
-            for volume in volumes {
-                let Some(spec) = volume.as_str() else {
-                    continue;
-                };
-                let Some(host_path) = parse_bind_mount_host_path(spec) else {
-                    continue;
-                };
-                let host_path = Path::new(host_path);
-                if !host_path.is_absolute() || !host_path.starts_with(repo_root) {
-                    continue;
-                }
-                // Only mkdir directory-style mounts. If the host path is a
-                // file (e.g. a config file mount), skip — the catalog writer
-                // produces those.
-                if let Some(extension) = host_path.extension() {
-                    let ext_str = extension.to_string_lossy();
-                    if matches!(
-                        ext_str.as_ref(),
-                        "conf" | "yml" | "yaml" | "toml" | "json" | "sql" | "ini" | "env"
-                    ) {
-                        continue;
-                    }
-                }
-                let _ = std::fs::create_dir_all(host_path);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Parse a docker compose short-form bind mount string, returning the host
-/// path component. Compose volume syntax: `<host>:<container>[:<options>]`.
-/// Returns `None` for named volumes (no leading `/` or `.`).
-fn parse_bind_mount_host_path(spec: &str) -> Option<&str> {
-    // Bind mounts have an absolute or relative host path; named volumes do
-    // not contain `/` or `.` in the host segment.
-    let host = spec.split(':').next()?;
-    if host.starts_with('/') || host.starts_with('.') || host.starts_with('~') {
-        Some(host)
-    } else {
-        None
-    }
+    prepare_container_exec_runtime(repo_root, &policy, Some(container_name))
 }
 
 fn should_stay_in_workspace_shell(
@@ -432,7 +253,7 @@ fn should_stay_in_workspace_shell(
     container_binding: &ContainerExecutionBinding,
 ) -> bool {
     if output_json
-        || std::env::var_os(CONTAINER_HANDOFF_ENV).is_some()
+        || inside_container_handoff()
         || !task.stay_in_shell.unwrap_or(false)
         || task.workspace.is_none()
         || task.run.is_none()
@@ -446,16 +267,6 @@ fn should_stay_in_workspace_shell(
     )
 }
 
-fn render_workspace_seeded_task_command(task_name: &str, args: &[String]) -> String {
-    let mut rendered = format!("effigy {}", effigy_core::shell::shell_quote(task_name));
-    let rendered_args = crate::runner::util::render_passthrough_args(args);
-    if !rendered_args.is_empty() {
-        rendered.push(' ');
-        rendered.push_str(&rendered_args);
-    }
-    rendered
-}
-
 fn run_inline_workspace_standard_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
@@ -467,21 +278,11 @@ fn run_inline_workspace_standard_task(
     let policy = container_binding
         .load_effective_policy(repo_root)?
         .ok_or_else(|| RunnerError::task_invocation("missing inline workspace container policy"))?;
-    validate_container_policy(repo_root, &policy)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    validate_compose_backend_runtime(repo_root, &policy)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let working_dir = container_binding
         .exec_working_dir(repo_root)?
         .ok_or_else(|| RunnerError::task_invocation("missing inline workspace exec working dir"))?;
-
-    let _colima_started = ensure_colima_running(&policy, repo_root)?;
-    run_docker_capture(
-        repo_root,
-        &policy,
-        &effigy_containers::compose::compose_up_args(&policy),
-        "docker compose up",
-    )?;
+    let _ =
+        ensure_container_runtime_prepared(repo_root, &policy, Some(policy.name.as_str()), None)?;
 
     let exec_result = if preflight.output_json {
         let output = capture_routed_task_container_exec_with_policy(
@@ -577,9 +378,9 @@ fn map_schema_support_error(error: SchemaSupportError) -> RunnerError {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        render_workspace_seeded_task_command, should_stay_in_workspace_shell,
-        ContainerExecutionBinding, CONTAINER_HANDOFF_ENV,
+    use super::{should_stay_in_workspace_shell, ContainerExecutionBinding};
+    use crate::runner::execute::workspace_seeded::{
+        render_workspace_seeded_task_command, CONTAINER_HANDOFF_ENV,
     };
     use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn};
     use std::env;

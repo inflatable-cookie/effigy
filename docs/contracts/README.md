@@ -15,6 +15,19 @@ This folder contains both:
 
 - [`001-working-rules.md`](./001-working-rules.md): strict execution rules for
   the active Effigy product lane.
+- [`002-production-deployment-model.md`](./002-production-deployment-model.md):
+  provider-neutral production deployment contract for the new export surface.
+- [`003-underlay-deployment-derivation.md`](./003-underlay-deployment-derivation.md):
+  first concrete mapping from the shipped `underlay` bundle into
+  `deploy.model.v1`.
+- [`004-underlay-reference-deploy-model-example.md`](./004-underlay-reference-deploy-model-example.md):
+  first concrete example model for the shipped `underlay-reference` repo.
+- [`005-container-runtime-contract.md`](./005-container-runtime-contract.md):
+  runtime guarantee contract for container-backed task execution, including
+  handoff semantics, alias scope, and backend-fallback ownership.
+- [`006-compose-backend-compatibility.md`](./006-compose-backend-compatibility.md):
+  compose-backend capability matrix for the supported local runtime paths,
+  including backend-required versus Effigy-repaired behavior.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -22,6 +35,8 @@ This folder contains both:
 
 | Artifact | Owner | Update triggers | Validation command |
 | --- | --- | --- | --- |
+| `005-container-runtime-contract.md` | Platform maintainers | Container-backed handoff semantics, runtime prep ordering, alias guarantee scope, backend fallback ownership | Targeted runtime compatibility tests on the supported local backend path |
+| `006-compose-backend-compatibility.md` | Platform maintainers | Supported backend set, backend-required versus repaired capability boundary, named compatibility cases | Targeted runtime compatibility tests on the supported local backend path |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -35,4 +50,11 @@ This folder contains both:
 ## Next Task
 
 Keep both the machine contracts and the active working-rules contract aligned
-to the real validation commands and live execution posture.
+to the real validation commands and live execution posture, and use
+`002-production-deployment-model.md` plus
+`003-underlay-deployment-derivation.md` and
+`004-underlay-reference-deploy-model-example.md` as the contract anchors for
+`g03.001`, and `005-container-runtime-contract.md` as the contract anchor for
+the `g03.004` to `g03.006` runtime-hardening lane, with
+`006-compose-backend-compatibility.md` defining the active backend capability
+matrix for `g03.006`.

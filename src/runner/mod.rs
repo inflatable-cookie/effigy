@@ -5,6 +5,8 @@ mod cache;
 mod changelog_command;
 mod command_context;
 mod container_command;
+mod container_runtime;
+mod container_runtime_prep;
 mod contracts_command;
 mod defer_command;
 mod deferral;

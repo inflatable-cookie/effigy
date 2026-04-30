@@ -151,6 +151,10 @@ Do not include yet:
 - one-click deploy
 - a fake claim that Decodelabs is production-export-ready
 
+The first contract anchor for that bounded surface lives in:
+
+- [`../contracts/002-production-deployment-model.md`](../contracts/002-production-deployment-model.md)
+
 ## Design pressure
 
 The export surface should be honest about what it knows and what it does not.

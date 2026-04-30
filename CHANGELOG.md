@@ -7,6 +7,14 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- Workspace-seeded container tasks now share one handoff implementation
+  across managed and standard execution, so `stay_in_shell` semantics no
+  longer drift based on whether a task ran under the TUI.
+- Standard container bring-up now repairs primary-service TCP alias host
+  entries before workspace handoff and routed exec. That restores
+  reliable in-container resolution for aliases such as
+  `mysql.<site>.legacy.test` during `effigy bootstrap` and other
+  non-managed flows that previously skipped the alias hydration path.
 - `CwdMapper::host_to_container` no longer emits a trailing path
   separator when the host CWD equals the repo root. `PathBuf::join("")`
   was producing `/var/www/html/`, which nerdctl/runc rejects as
@@ -36,7 +44,14 @@ During v0.x, MINOR bumps may include breaking changes.
   had been cleaned. We now walk the generated compose YAML, find bind
   mounts under `repo_root`, and `mkdir -p` the host side. File-typed
   mounts (`*.conf`, `*.sql`, `*.yml`, etc.) are left to the catalog writer
-  that produces them.
+  that produces them. The same pre-create + idempotent `compose up -d`
+  also runs on the routed-exec-ready path, so sibling services (e.g.
+  `db`) that were left in `Created` state by a previous failed `compose
+  up` are brought online before a routed task dispatches its exec —
+  fixing `effigy bootstrap` re-runs where the primary service is
+  reported running but a dependent service never started, surfacing as
+  `mysql -h db` returning `Unknown server host 'db' (-2)` from inside
+  the workspace container.
 - Tasks that route into a container via the standard pipeline (e.g.
   `[bootstrap].run` entries declared with `run_in = "container"`, or any
   manifest-resolved task whose binding lands in a container) now auto-up

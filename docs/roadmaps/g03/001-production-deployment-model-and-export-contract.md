@@ -54,3 +54,7 @@ Write the first architecture-backed contract batch for:
 - domain and port ownership
 - backing-service references
 - warnings and unresolved operator input
+
+Then lock the first concrete derivation target:
+
+- shipped `underlay` bundle -> `deploy.model.v1`

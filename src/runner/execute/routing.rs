@@ -5,6 +5,7 @@ use effigy_manifest::{
 };
 
 use super::api::{resolve_container_execution_binding, ContainerExecutionBinding};
+use crate::runner::container_runtime::inside_container_handoff;
 use crate::runner::error::RunnerError;
 
 #[derive(Debug)]
@@ -20,7 +21,7 @@ pub(in crate::runner) fn route_standard_task_execution(
     containers: Option<&ManifestContainersConfig>,
     is_container_running: impl Fn(&str) -> Result<bool, RunnerError>,
 ) -> Result<RoutedTaskExecution, RunnerError> {
-    if std::env::var_os("EFFIGY_INTERNAL_CONTAINER_HANDOFF").is_some() {
+    if inside_container_handoff() {
         return Ok(RoutedTaskExecution {
             decision: RoutingDecision::host("running inside an effigy container handoff"),
         });

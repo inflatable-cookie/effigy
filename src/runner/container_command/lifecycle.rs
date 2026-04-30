@@ -27,18 +27,17 @@ use super::runtime_error_from_runner;
 use super::support::{
     annotate_registered_gateway_routes, annotate_shared_service_notes,
     annotate_tcp_alias_host_notes, annotate_warning_lines, ensure_shared_services_running,
-    install_primary_service_tcp_alias_hosts, rewrite_manifest_for_ejected_compose,
+    reconcile_primary_service_tcp_alias_hosts, rewrite_manifest_for_ejected_compose,
     validate_running_container_runtime_match, wait_for_container_ready,
 };
 use super::{render_container_report, RunnerError};
+use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::exec_command::{
     append_color_exec_env, probe_container_capabilities, run_compose_exec,
 };
 use crate::runner::host_container_lease::clear_host_container_lease;
 use crate::runner::host_process::start_host_processes_for_container;
 use crate::runner::system_command::ensure_workspace_effigy_available_for_policy;
-
-const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1";
 
 pub(super) fn run_container_up(
     repo_root: &Path,
@@ -114,8 +113,7 @@ pub(super) fn run_container_up(
             return Err(finish_container_up_failure(error, cleanup_result));
         }
     };
-    let tcp_alias_host_notes =
-        install_primary_service_tcp_alias_hosts(repo_root, &policy, &gateway_routes)?;
+    let tcp_alias_host_notes = reconcile_primary_service_tcp_alias_hosts(repo_root, &policy)?;
 
     clear_host_container_lease(repo_root, &policy)?;
 
@@ -296,7 +294,7 @@ pub(in crate::runner) fn run_container_exec_capture(
     args.push(OsString::from(working_dir));
     append_color_exec_env(&mut args, false);
     args.push(OsString::from("-e"));
-    args.push(OsString::from(CONTAINER_HANDOFF_ENV));
+    args.push(OsString::from(CONTAINER_HANDOFF_ENV_ASSIGNMENT));
     args.push(OsString::from(service));
     args.extend(command.iter().map(OsString::from));
     run_compose_exec(repo_root, &policy, &args, true, "docker compose exec")

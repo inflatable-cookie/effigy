@@ -21,6 +21,8 @@ use surface::{
 use transport::build_routed_task_exec_args;
 
 #[cfg(test)]
+use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
+#[cfg(test)]
 use std::ffi::OsString;
 #[cfg(test)]
 use std::path::PathBuf;
@@ -668,7 +670,7 @@ working_dir = "{working_dir}"
                 OsString::from("-e"),
                 OsString::from("FORCE_COLOR=3"),
                 OsString::from("-e"),
-                OsString::from("EFFIGY_INTERNAL_CONTAINER_HANDOFF=1"),
+                OsString::from(CONTAINER_HANDOFF_ENV_ASSIGNMENT),
                 OsString::from("-w"),
                 OsString::from("/workspace-root/repo"),
                 OsString::from("workspace"),
