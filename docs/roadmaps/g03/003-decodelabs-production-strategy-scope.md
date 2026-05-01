@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Planned
+Status: Active
 Owner: Platform
 Created: 2026-04-30
 Depends on: 001, 002
@@ -20,19 +20,66 @@ future managed-host export strategy would actually need.
 
 ## Scope
 
-- document the current dedicated-server assumptions
-- identify which parts belong in the neutral deployment model
-- identify which parts stay manually owned for now
-- decide whether a later managed-host path should target the same provider
-  adapters as Underlay or a different export track
+- inventory the current dedicated-server operating shape without pretending the
+  existing local-dev bundle already equals production
+- define the short-term truth for Effigy:
+  - what `deploy model` / `deploy export` should and should not claim for
+    Decodelabs now
+  - which production concerns remain operator-owned and manual
+- identify the first reusable production abstractions that really do belong in
+  the neutral deployment model
+- decide whether a future Decodelabs export path should target:
+  - a dedicated-host export track
+  - the same managed-provider adapters as Underlay
+  - or a split strategy
+
+## Current Focus
+
+`g03.001` and `g03.002` are closed. Underlay export is now real enough that
+Decodelabs can be handled on its own terms instead of blocking the deployment
+lane.
+
+The immediate planning target is not provider automation. It is strategy truth:
+
+- what the current Decodelabs production story actually is
+- what Effigy should explicitly refuse to claim yet
+- what the first real reusable production contract would be
+
+## Current Findings
+
+The first inventory pass now says:
+
+- Decodelabs production is still dedicated-host-first
+- the local bundle is not a trustworthy production topology proxy
+- older Deploy/Effigy behavior is mainly:
+  - `git pull`
+  - `composer install --no-dev`
+  - optional app-owned build
+- parts of the broader legacy estate still use host-specific release flows,
+  including Windows/IIS notes
+- queue/background work exists in app code, but there is no shared repo-level
+  production supervisor shape to promote yet
+
+## Promoted Anchors
+
+- [`../../architecture/021-production-deployment-export-architecture.md`](../../architecture/021-production-deployment-export-architecture.md)
+- [`../../contracts/010-decodelabs-production-strategy.md`](../../contracts/010-decodelabs-production-strategy.md)
 
 ## Exit Condition
 
-This milestone is complete when Decodelabs has a scoped future strategy and
-the Underlay-first deployment work is not blocked by Decodelabs-specific
-deployment habits.
+This milestone is complete when:
+
+- Decodelabs has an explicit short-term production posture
+- Effigy’s deployment surface is honest about what it does not support yet for
+  Decodelabs
+- the future export direction is narrowed enough that later work is sequencing,
+  not rediscovery
 
 ## Next Task
 
-Leave this lane planned until the Underlay export path is real enough to reuse
-or deliberately reject for Decodelabs.
+Decide the post-inventory boundary:
+
+- what small neutral-model subset, if any, should be promoted next
+- whether Decodelabs wants a dedicated-host export track
+- or whether the honest short-term answer is to keep Decodelabs explicitly
+  operator-owned

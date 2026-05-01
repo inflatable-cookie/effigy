@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Paused
+Status: Complete
 Owner: Platform
 Created: 2026-04-15
 Depends on: 005, 027
@@ -96,13 +96,14 @@ Supported-boundary rule:
 
 ## Exit Condition
 
-This milestone is complete when the distribution surface is both released in
-Effigy and rolled out across the intended consumer cohort strongly enough that
-it is no longer only an Effigy-local product claim.
+This milestone is now complete on the `g02` boundary.
+
+The release work shipped through `v0.3.0` and `v0.3.1`. Any broader
+consumer-rollout question is no longer a `g02` release-lane concern.
 
 ## Next Task
 
-This roadmap is paused.
+Leave this roadmap closed.
 
-If broader consumer rollout work becomes real again, rehome it into the live
-generation instead of resuming the old `v0.3.0` release-prep lane.
+If broader consumer rollout becomes real again, rehome it into the live
+generation instead of resuming the old `v0.3` release lane.

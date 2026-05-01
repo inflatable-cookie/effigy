@@ -26,11 +26,8 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
+- [`026-decodelabs-production-strategy-scope-strict-lane.md`](./026-decodelabs-production-strategy-scope-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
-
-Queued next-lane specs:
-
-- none yet
 
 Paused but still useful:
 
@@ -55,6 +52,7 @@ Recently completed:
 
 ## Next Task
 
-No active strict lane.
+Execute `g03.003` through the active strict lane and ready card:
 
-Stop in planning and choose the next `g03` milestone deliberately.
+- [`026-decodelabs-production-strategy-scope-strict-lane.md`](./026-decodelabs-production-strategy-scope-strict-lane.md)
+- [`batch-cards/333-decide-post-decodelabs-inventory-boundary.md`](./batch-cards/333-decide-post-decodelabs-inventory-boundary.md)
