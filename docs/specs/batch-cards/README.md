@@ -40,8 +40,24 @@ Batch cards are the execution units for active Effigy strict-lane work.
   model-to-blueprint mapping for the shipped Underlay shape.
 
 - [`318-decide-post-render-export-foundation-boundary.md`](./318-decide-post-render-export-foundation-boundary.md)
-  is the active ready card. `g03.001` now needs one explicit widening
-  decision: continue Render or open Railway planning.
+  is complete. The post-Render boundary is now explicit: one real Underlay
+  proof comes before Railway planning.
+
+- [`319-prove-render-export-in-one-real-underlay-repo.md`](./319-prove-render-export-in-one-real-underlay-repo.md)
+  is complete. The first Render exporter now has one real Underlay proof in
+  `underlay-reference`, and that proof did not expose exporter drift.
+
+- [`320-decide-post-render-proof-provider-widening.md`](./320-decide-post-render-proof-provider-widening.md)
+  is complete. The next honest widening seam is now explicit: Railway planning
+  instead of more Render churn.
+
+- [`321-plan-first-railway-export-contract.md`](./321-plan-first-railway-export-contract.md)
+  is complete. The first bounded Railway adapter contract now exists, including
+  service-local config ownership and report-owned operator follow-up.
+
+- [`322-implement-railway-export-foundation.md`](./322-implement-railway-export-foundation.md)
+  is the active ready card. `g03.001` now needs the first bounded Railway
+  export implementation on top of that contract.
 
 - [`304-decide-post-release-closure-v0-3-prep-follow-up.md`](./304-decide-post-release-closure-v0-3-prep-follow-up.md)
   is complete. The next `g02.007` move is now explicit again: one bounded
@@ -214,4 +230,4 @@ Staged next-lane card:
 
 ## Next Task
 
-Execute `318` for the `g03.001` post-Render-export boundary decision.
+Execute `322` for the `g03.001` first Railway export foundation.

@@ -17,6 +17,12 @@ Current milestones:
 - [`004-container-runtime-contract-and-alias-surface.md`](./004-container-runtime-contract-and-alias-surface.md) (complete; the runtime contract now lives in `docs/contracts/005-container-runtime-contract.md` and defines alias, handoff, and fallback ownership)
 - [`005-execution-path-unification-and-runtime-prep.md`](./005-execution-path-unification-and-runtime-prep.md) (complete; shared runtime-prep ownership now lives in `src/runner/container_runtime_prep.rs` and is consumed by workspace handoff plus standard routed exec)
 - [`006-compose-backend-capability-boundaries-and-compatibility.md`](./006-compose-backend-capability-boundaries-and-compatibility.md) (complete; backend-required versus Effigy-repaired runtime behavior now has a contract plus targeted shared-prep coverage)
+- [`007-execution-surface-audit-and-convergence-contract.md`](./007-execution-surface-audit-and-convergence-contract.md) (planned; define the full execution-surface responsibility matrix and convergence contract for common-path semantics)
+- [`008-repo-targeting-and-embedded-dispatch-spine.md`](./008-repo-targeting-and-embedded-dispatch-spine.md) (planned; centralize repo targeting and nested Effigy command dispatch behind one shared spine)
+- [`009-execution-binding-and-runtime-activation-convergence.md`](./009-execution-binding-and-runtime-activation-convergence.md) (planned; move `exec` and other remaining container-backed surfaces onto one activation contract)
+- [`010-interactive-session-ownership-and-lifecycle-convergence.md`](./010-interactive-session-ownership-and-lifecycle-convergence.md) (planned; unify shell and attached-session ownership semantics across workspace, dev, and handoff paths)
+- [`011-embedded-command-script-and-bootstrap-convergence.md`](./011-embedded-command-script-and-bootstrap-convergence.md) (planned; collapse bootstrap, Rhai, and run-array Effigy re-entry onto one embedded-runner path)
+- [`012-regression-matrix-and-drift-guards.md`](./012-regression-matrix-and-drift-guards.md) (planned; add the parity matrix and drift guards that keep common-path regressions from reappearing)
 
 Architecture anchor:
 
@@ -32,5 +38,5 @@ Rules:
 
 ## Next Task
 
-Continue `g03.001` by deciding whether the next seam stays on Render or opens
-Railway planning.
+Continue `g03.001` by implementing the first Railway export foundation now
+that the contract is explicit.

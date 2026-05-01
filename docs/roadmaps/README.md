@@ -58,6 +58,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/001-production-deployment-model-and-export-contract.md` is the new active milestone; it defines the provider-neutral deployment model and export contract for managed production generation.
 - `g03/002-underlay-managed-deployment-export.md` is planned behind `g03.001`; Underlay is the first real target for provider export.
 - `g03/003-decodelabs-production-strategy-scope.md` is planned behind `g03.002`; it scopes the future Decodelabs managed-host story without forcing premature automation now.
+- `g03/007` through `g03/012` are now queued behind the current provider-export lane; they form the full common-path convergence program for execution-surface parity, repo targeting, runtime activation, interactive ownership, embedded re-entry, and drift guards without reopening `g02`.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
@@ -68,8 +69,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `315` is complete
 - `316` is complete
 - `317` is complete
-- `318` is the current ready batch: decide the post-Render-export widening
-  boundary
+- `318` is complete
+- `319` is complete
+- `320` is complete
+- `321` is complete
+- `322` is the current ready batch: implement the first Railway export
+  foundation now that Render has one real Underlay proof and Railway has a
+  bounded contract
 
 ## Research Program
 
@@ -105,7 +111,7 @@ Before rollover:
 
 ## Next Task
 
-Execute the next `g03.001` post-Render-export boundary decision.
+Execute the next `g03.001` Railway implementation batch.
 
 
 ## Historical language boundary
