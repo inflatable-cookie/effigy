@@ -4,26 +4,27 @@ use std::path::Path;
 use toml::Value;
 
 use super::export::{
-    infer_underlay_bundle_source, materialize_shipped_bundle_assets,
-    render_shipped_bundle_template, render_toml_string_array, underlay_bootstrap_sync_paths,
-    underlay_dir_or_default, underlay_isolated_dirs, underlay_optional_dir_step,
-    underlay_optional_docs_qa_steps, underlay_optional_docs_step,
+    infer_underlay_bundle_source, render_shipped_bundle_template_with_inputs,
+    render_toml_string_array, underlay_bootstrap_sync_paths, underlay_dir_or_default,
+    underlay_isolated_dirs, underlay_optional_dir_step, underlay_optional_docs_qa_steps,
+    underlay_optional_docs_step,
 };
 use super::{
     bundle_shared_root_path, bundle_source_path, bundle_spec_from_descriptor,
     derive_bundle_workspace_subdir, optional_bundle_integer, optional_bundle_string,
     parse_bundle_descriptor_source, render_toml_string_array_lines, render_toml_string_list,
-    required_bundle_string, underlay_route_domain, BundleSpec, ManifestError,
+    required_bundle_string, BundleSpec, ManifestError,
+    insert_bundle_input_value,
 };
 
 const DECODELABS_BUNDLE_DESCRIPTOR: &str = include_str!("../../bundles/decodelabs/bundle.toml");
-const DECODELABS_DEFAULTS_TEMPLATE: &str = include_str!("../../bundles/decodelabs/defaults.toml");
+const DECODELABS_TEMPLATE: &str = include_str!("../../bundles/decodelabs/export.toml");
 const DECODELABS_LIBRARY_BUNDLE_DESCRIPTOR: &str =
     include_str!("../../bundles/decodelabs-library/bundle.toml");
-const DECODELABS_LIBRARY_DEFAULTS_TEMPLATE: &str =
-    include_str!("../../bundles/decodelabs-library/defaults.toml");
+const DECODELABS_LIBRARY_TEMPLATE: &str =
+    include_str!("../../bundles/decodelabs-library/export.toml");
 const UNDERLAY_BUNDLE_DESCRIPTOR: &str = include_str!("../../bundles/underlay/bundle.toml");
-const UNDERLAY_DEFAULTS_TEMPLATE: &str = include_str!("../../bundles/underlay/defaults.toml");
+const UNDERLAY_TEMPLATE: &str = include_str!("../../bundles/underlay/export.toml");
 
 pub(super) fn decodelabs_spec() -> BundleSpec {
     let path = bundle_source_path("decodelabs");
@@ -83,58 +84,63 @@ pub(super) fn resolve_decodelabs_bundle(
     let zest_port = optional_bundle_integer(inputs, "zest_port");
     let zest_domain =
         optional_bundle_string(inputs, "zest_domain").unwrap_or_else(|| format!("zest.{host}"));
+    let mut render_inputs = inputs.clone();
+    render_inputs.insert("host".to_owned(), Value::String(host));
+    render_inputs.insert("project_name".to_owned(), Value::String(project_name));
+    render_inputs.insert("database".to_owned(), Value::String(database));
+    render_inputs.insert("system_name".to_owned(), Value::String(system_name));
+    render_inputs.insert("container_name".to_owned(), Value::String(container_name));
+    render_inputs.insert(
+        "workspace_service_name".to_owned(),
+        Value::String(workspace_service_name),
+    );
+    render_inputs.insert(
+        "default_workspace".to_owned(),
+        Value::String(default_workspace),
+    );
+    insert_bundle_input_value(
+        &mut render_inputs,
+        "routes.front",
+        Value::String(
+            optional_bundle_string(inputs, "routes.front").unwrap_or_default(),
+        ),
+    );
+    insert_bundle_input_value(
+        &mut render_inputs,
+        "routes.admin",
+        Value::String(
+            optional_bundle_string(inputs, "routes.admin")
+                .unwrap_or_else(|| "admin".to_owned()),
+        ),
+    );
+    insert_bundle_input_value(
+        &mut render_inputs,
+        "routes.api",
+        Value::String(
+            optional_bundle_string(inputs, "routes.api")
+                .unwrap_or_else(|| "api".to_owned()),
+        ),
+    );
+    if let Some(port) = zest_port {
+        let port = decodelabs_zest_port(port)?;
+        render_inputs.insert("zest_port".to_owned(), Value::Integer(i64::from(port)));
+    }
+    render_inputs.insert("zest_domain".to_owned(), Value::String(zest_domain));
 
-    let rendered = DECODELABS_DEFAULTS_TEMPLATE
-        .replace("__HOST__", &host)
-        .replace("__PROJECT_NAME__", &project_name)
-        .replace("__DATABASE__", &database)
-        .replace(
-            "__DATABASES__",
-            &render_toml_string_list(inputs, "databases"),
-        )
-        .replace("__SYSTEM_NAME__", &system_name)
-        .replace("__CONTAINER_NAME__", &container_name)
-        .replace("__WORKSPACE_SERVICE_NAME__", &workspace_service_name)
-        .replace(
+    let rendered = render_shipped_bundle_template_with_inputs(
+        manifest_path,
+        "decodelabs",
+        &DECODELABS_TEMPLATE.replace(
             "__PHP_EXTENSIONS__",
             &render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  "),
-        )
-        .replace(
-            "__ZEST_ROUTE__",
-            &decodelabs_zest_route_line(zest_port, &zest_domain, &workspace_service_name)?,
-        )
-        .replace(
-            "__ZEST_HOST_PORTS__",
-            &decodelabs_zest_host_ports_lines(zest_port)?,
-        )
-        .replace("__DEFAULT_WORKSPACE__", &default_workspace);
+        ),
+        &render_inputs,
+    )?;
 
     toml::from_str::<Value>(&rendered).map_err(|error| ManifestError::Parse {
         path: bundle_source_path("decodelabs"),
         error,
     })
-}
-
-fn decodelabs_zest_route_line(
-    port: Option<i64>,
-    domain: &str,
-    workspace_service_name: &str,
-) -> Result<String, ManifestError> {
-    let Some(port) = port else {
-        return Ok(String::new());
-    };
-    let port = decodelabs_zest_port(port)?;
-    Ok(format!(
-        "  {{ domain = \"{domain}\", tls = true, port = {port}, service = \"{workspace_service_name}\" }},"
-    ))
-}
-
-fn decodelabs_zest_host_ports_lines(port: Option<i64>) -> Result<String, ManifestError> {
-    let Some(port) = port else {
-        return Ok(String::new());
-    };
-    let port = decodelabs_zest_port(port)?;
-    Ok(format!("  \"{port}:{port}\""))
 }
 
 fn decodelabs_zest_port(port: i64) -> Result<u16, ManifestError> {
@@ -174,19 +180,36 @@ pub(super) fn resolve_decodelabs_library_bundle(
         .unwrap_or_else(|| "app".to_owned());
     let default_workspace =
         optional_bundle_string(inputs, "default_workspace").unwrap_or_else(|| "app".to_owned());
+    let mut render_inputs = inputs.clone();
+    render_inputs.insert(
+        "shared_root".to_owned(),
+        Value::String(shared_root_mount.display().to_string()),
+    );
+    render_inputs.insert(
+        "workspace_subdir".to_owned(),
+        Value::String(workspace_subdir),
+    );
+    render_inputs.insert("project_name".to_owned(), Value::String(project_name));
+    render_inputs.insert("system_name".to_owned(), Value::String(system_name));
+    render_inputs.insert("container_name".to_owned(), Value::String(container_name));
+    render_inputs.insert(
+        "workspace_service_name".to_owned(),
+        Value::String(workspace_service_name),
+    );
+    render_inputs.insert(
+        "default_workspace".to_owned(),
+        Value::String(default_workspace),
+    );
 
-    let rendered = DECODELABS_LIBRARY_DEFAULTS_TEMPLATE
-        .replace("__CONTAINER_NAME__", &container_name)
-        .replace("__PROJECT_NAME__", &project_name)
-        .replace("__SHARED_ROOT__", &shared_root_mount.display().to_string())
-        .replace("__SYSTEM_NAME__", &system_name)
-        .replace("__DEFAULT_WORKSPACE__", &default_workspace)
-        .replace("__WORKSPACE_SERVICE_NAME__", &workspace_service_name)
-        .replace("__WORKSPACE_SUBDIR__", &workspace_subdir)
-        .replace(
+    let rendered = render_shipped_bundle_template_with_inputs(
+        manifest_path,
+        "decodelabs-library",
+        &DECODELABS_LIBRARY_TEMPLATE.replace(
             "__PHP_EXTENSIONS__",
             &render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  "),
-        );
+        ),
+        &render_inputs,
+    )?;
 
     toml::from_str::<Value>(&rendered).map_err(|error| ManifestError::Parse {
         path: bundle_source_path("decodelabs-library"),
@@ -234,22 +257,6 @@ pub(super) fn resolve_underlay_bundle(
     let api_port = optional_bundle_integer(inputs, "api_port").unwrap_or(41001);
     let admin_port = optional_bundle_integer(inputs, "admin_port").unwrap_or(41002);
     let front_port = optional_bundle_integer(inputs, "front_port").unwrap_or(41003);
-    let front_route_domain = underlay_route_domain(
-        &host,
-        optional_bundle_string(inputs, "routes.front").as_deref(),
-    );
-    let admin_route_domain = underlay_route_domain(
-        &host,
-        optional_bundle_string(inputs, "routes.admin")
-            .as_deref()
-            .or(Some("admin")),
-    );
-    let api_route_domain = underlay_route_domain(
-        &host,
-        optional_bundle_string(inputs, "routes.api")
-            .as_deref()
-            .or(Some("api")),
-    );
     let system_name =
         optional_bundle_string(inputs, "system_name").unwrap_or_else(|| "dev".to_owned());
     let container_name =
@@ -272,33 +279,37 @@ pub(super) fn resolve_underlay_bundle(
         "poodle",
         "../poodle",
     );
-    let bundle_root = materialize_shipped_bundle_assets(manifest_path, "underlay")?;
     let bootstrap_sync_paths = underlay_bootstrap_sync_paths(inputs, &underlay_source);
     let bootstrap_sync_command = format!("bootstrap deps sync {}", bootstrap_sync_paths.join(" "));
-    let isolated_dirs = render_toml_string_array(&underlay_isolated_dirs(inputs));
-
-    let rendered = render_shipped_bundle_template(
+    let mut render_inputs = inputs.clone();
+    render_inputs.insert("host".to_owned(), Value::String(host));
+    render_inputs.insert("project_name".to_owned(), Value::String(project_name));
+    render_inputs.insert(
+        "workspace_subdir".to_owned(),
+        Value::String(workspace_subdir),
+    );
+    render_inputs.insert("database".to_owned(), Value::String(database));
+    render_inputs.insert("api_port".to_owned(), Value::Integer(api_port));
+    render_inputs.insert("admin_port".to_owned(), Value::Integer(admin_port));
+    render_inputs.insert("front_port".to_owned(), Value::Integer(front_port));
+    render_inputs.insert("system_name".to_owned(), Value::String(system_name));
+    render_inputs.insert("container_name".to_owned(), Value::String(container_name));
+    render_inputs.insert(
+        "workspace_service_name".to_owned(),
+        Value::String(workspace_service_name),
+    );
+    render_inputs.insert(
+        "default_workspace".to_owned(),
+        Value::String(default_workspace),
+    );
+    let rendered = render_shipped_bundle_template_with_inputs(
         manifest_path,
         "underlay",
-        &bundle_root,
-        &UNDERLAY_DEFAULTS_TEMPLATE
-            .replace("__HOST__", &host)
-            .replace("__PROJECT_NAME__", &project_name)
-            .replace("__WORKSPACE_SUBDIR__", &workspace_subdir)
-            .replace("__DATABASE__", &database)
-            .replace("__FRONT_ROUTE_DOMAIN__", &front_route_domain)
-            .replace("__ADMIN_ROUTE_DOMAIN__", &admin_route_domain)
-            .replace("__API_ROUTE_DOMAIN__", &api_route_domain)
+        &UNDERLAY_TEMPLATE
             .replace(
                 "__DATABASES__",
                 &render_toml_string_list(inputs, "databases"),
             )
-            .replace("__API_PORT__", &api_port.to_string())
-            .replace("__ADMIN_PORT__", &admin_port.to_string())
-            .replace("__FRONT_PORT__", &front_port.to_string())
-            .replace("__SYSTEM_NAME__", &system_name)
-            .replace("__CONTAINER_NAME__", &container_name)
-            .replace("__WORKSPACE_SERVICE_NAME__", &workspace_service_name)
             .replace("__UNDERLAY_SOURCE__", &underlay_source)
             .replace("__POODLE_SOURCE__", &poodle_source)
             .replace("__BOOTSTRAP_SYNC_COMMAND__", &bootstrap_sync_command)
@@ -335,8 +346,11 @@ pub(super) fn resolve_underlay_bundle(
                 "__FRONT_DIR__",
                 &underlay_dir_or_default(inputs, "dirs.front", "app-front"),
             )
-            .replace("__ISOLATED_DIRS__", &isolated_dirs)
-            .replace("__DEFAULT_WORKSPACE__", &default_workspace),
+            .replace(
+                "__ISOLATED_DIRS__",
+                &render_toml_string_array(&underlay_isolated_dirs(inputs)),
+            ),
+        &render_inputs,
     )?;
 
     toml::from_str::<Value>(&rendered).map_err(|error| ManifestError::Parse {

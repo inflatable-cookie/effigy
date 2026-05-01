@@ -75,6 +75,7 @@ pub(crate) fn apply_bundle_defaults(
     };
     if !bundle_name.is_empty() {
         normalize_database_bundle_inputs(manifest_path, bundle_name, &mut normalized_inputs)?;
+        normalize_bundle_specific_inputs(manifest_path, bundle_name, &mut normalized_inputs)?;
     }
     let (defaults, source_path) = match &selection {
         BundleSelection::Shipped { name } => (
@@ -360,7 +361,7 @@ fn resolve_local_bundle_defaults(
             path: defaults_path.clone(),
             error,
         })?;
-    let rendered = render_local_bundle_template(
+    let rendered = render_bundle_template_with_inputs(
         manifest_path,
         &descriptor.bundle.name,
         bundle_dir,
@@ -484,7 +485,9 @@ fn normalize_bundle_specific_inputs(
     inputs: &mut BTreeMap<String, Value>,
 ) -> Result<(), ManifestError> {
     if bundle_name == "underlay" {
-        for key in [
+        ensure_optional_bundle_string_inputs(
+            inputs,
+            &[
             "dirs.docs",
             "dirs.api",
             "dirs.client",
@@ -494,10 +497,26 @@ fn normalize_bundle_specific_inputs(
             "routes.front",
             "routes.admin",
             "routes.api",
+            "sources.underlay",
+            "sources.poodle",
+            ],
+        );
+        let host = required_bundle_string(manifest_path, bundle_name, inputs, "host")?;
+        for (output, input, default_label) in [
+            ("front_route_domain", "routes.front", None),
+            ("admin_route_domain", "routes.admin", Some("admin")),
+            ("api_route_domain", "routes.api", Some("api")),
         ] {
-            if bundle_input_value(inputs, key).is_none() {
-                insert_bundle_input_value(inputs, key, Value::String(String::new()));
-            }
+            insert_bundle_input_value(
+                inputs,
+                output,
+                Value::String(underlay_route_domain(
+                &host,
+                    optional_bundle_string(inputs, input)
+                        .as_deref()
+                        .or(default_label),
+                )),
+            );
         }
         return Ok(());
     }
@@ -598,10 +617,18 @@ fn normalize_database_value(
     }
 }
 
-fn render_local_bundle_template(
+fn ensure_optional_bundle_string_inputs(inputs: &mut BTreeMap<String, Value>, keys: &[&str]) {
+    for key in keys {
+        if bundle_input_value(inputs, key).is_none() {
+            insert_bundle_input_value(inputs, key, Value::String(String::new()));
+        }
+    }
+}
+
+pub(super) fn render_bundle_template_with_inputs(
     manifest_path: &Path,
     bundle_name: &str,
-    bundle_dir: &Path,
+    bundle_root: &Path,
     template: &str,
     inputs: &BTreeMap<String, Value>,
 ) -> Result<String, ManifestError> {
@@ -609,15 +636,15 @@ fn render_local_bundle_template(
     env.add_template("bundle", template)
         .map_err(|error| ManifestError::Render {
             path: manifest_path.to_path_buf(),
-            detail: format!("local bundle `{bundle_name}` template parse error: {error}"),
+            detail: format!("bundle `{bundle_name}` template parse error: {error}"),
         })?;
     let template = env
         .get_template("bundle")
         .map_err(|error| ManifestError::Render {
             path: manifest_path.to_path_buf(),
-            detail: format!("local bundle `{bundle_name}` template load error: {error}"),
+            detail: format!("bundle `{bundle_name}` template load error: {error}"),
         })?;
-    let bundle_root = bundle_dir.display().to_string();
+    let bundle_root = bundle_root.display().to_string();
     let context = LocalBundleTemplateContext {
         inputs,
         bundle: LocalBundleTemplateBundle {
@@ -629,7 +656,7 @@ fn render_local_bundle_template(
         .render(context)
         .map_err(|error| ManifestError::Render {
             path: manifest_path.to_path_buf(),
-            detail: format!("local bundle `{bundle_name}` template render error: {error}"),
+            detail: format!("bundle `{bundle_name}` template render error: {error}"),
         })
 }
 
@@ -835,7 +862,7 @@ fn collect_bundle_input_paths(prefix: &str, value: &Value, out: &mut Vec<String>
     }
 }
 
-fn insert_bundle_input_value(inputs: &mut BTreeMap<String, Value>, key: &str, value: Value) {
+pub(super) fn insert_bundle_input_value(inputs: &mut BTreeMap<String, Value>, key: &str, value: Value) {
     fn insert_nested_segments(
         table: &mut toml::map::Map<String, Value>,
         segments: &[&str],

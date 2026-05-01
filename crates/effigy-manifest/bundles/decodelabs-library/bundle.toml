@@ -1,7 +1,7 @@
 [bundle]
 name = "decodelabs-library"
 description = "DecodeLabs library workspace with a shared php-fpm dev container, explicit container-side Composer-global Effigy deferral, and no default web/db/gateway services."
-defaults = "defaults.toml"
+defaults = "export.toml"
 
 [[inputs]]
 name = "shared_root"

@@ -207,6 +207,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Changed
 - JSON command envelopes plus help/version payloads now expose shared binary
   metadata, including the active local build version when present.
+- Shipped DecodeLabs, DecodeLabs-library, and Underlay bundles now use a single
+  canonical `export.toml` template source for both bundled defaults and
+  exported local bundle generation.
 - PHP workspaces now share one Effigy-managed Composer-home volume by default
   instead of only sharing auth/config files, so Composer tokens and global
   state persist across repos unless the host Composer home is mounted

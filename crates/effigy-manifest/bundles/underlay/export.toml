@@ -61,9 +61,9 @@ catalog = "minio"
 
 [containers.{{ inputs.container_name }}.dns]
 routes = [
-  { domain = "{% if inputs.routes.front %}{{ inputs.routes.front }}.{{ inputs.host }}{% else %}{{ inputs.host }}{% endif %}", tls = true, port = {{ inputs.front_port }}, service = "{{ inputs.workspace_service_name }}" },
-  { domain = "{% if inputs.routes.admin %}{{ inputs.routes.admin }}.{{ inputs.host }}{% else %}{{ inputs.host }}{% endif %}", tls = true, port = {{ inputs.admin_port }}, service = "{{ inputs.workspace_service_name }}" },
-  { domain = "{% if inputs.routes.api %}{{ inputs.routes.api }}.{{ inputs.host }}{% else %}{{ inputs.host }}{% endif %}", tls = true, port = {{ inputs.api_port }}, service = "{{ inputs.workspace_service_name }}" },
+  { domain = "{{ inputs.front_route_domain }}", tls = true, port = {{ inputs.front_port }}, service = "{{ inputs.workspace_service_name }}" },
+  { domain = "{{ inputs.admin_route_domain }}", tls = true, port = {{ inputs.admin_port }}, service = "{{ inputs.workspace_service_name }}" },
+  { domain = "{{ inputs.api_route_domain }}", tls = true, port = {{ inputs.api_port }}, service = "{{ inputs.workspace_service_name }}" },
   { domain = "dbgate.{{ inputs.host }}", tls = true, port = 3000, service = "dbgate" },
   { domain = "mailpit.{{ inputs.host }}", port = 8025, service = "mailpit" },
   { domain = "minio.{{ inputs.host }}", port = 9001, service = "minio" },
