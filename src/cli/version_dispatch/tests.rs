@@ -7,9 +7,16 @@ fn build_version_payload_sets_schema_and_display() {
     assert_eq!(payload["schema_version"], 1);
     assert_eq!(payload["ok"], true);
     assert_eq!(payload["binary"], "effigy");
-    assert_eq!(payload["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        payload["version"],
+        effigy_core::build_info::package_version()
+    );
+    assert_eq!(
+        payload["active_version"],
+        effigy_core::build_info::active_version()
+    );
     assert_eq!(
         payload["display"],
-        format!("effigy v{}", env!("CARGO_PKG_VERSION"))
+        format!("effigy {}", effigy_core::build_info::display_version())
     );
 }

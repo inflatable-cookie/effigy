@@ -74,7 +74,7 @@ pub fn effigy_panel_block<'a>(
         );
     }
     if show_version {
-        let version = format!(" v{} ", env!("CARGO_PKG_VERSION"));
+        let version = format!(" {} ", effigy_core::build_info::display_version());
         block = block.title_bottom(
             Line::from(Span::styled(
                 version,

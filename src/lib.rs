@@ -39,10 +39,14 @@ use std::path::Path;
 /// Render the standard CLI header for the supplied repository root.
 ///
 /// Thin wrapper that forwards to [`effigy_cli::header::render_cli_header`]
-/// with the root crate's `CARGO_PKG_VERSION`, so the displayed version
-/// tracks the binary rather than the helper crate.
+/// with the active binary display version, so local bootstrap installs can
+/// surface a build suffix without changing release semver.
 pub fn render_cli_header<R: Renderer>(renderer: &mut R, root: &Path) -> UiResult<()> {
-    effigy_cli::header::render_cli_header(renderer, root, env!("CARGO_PKG_VERSION"))
+    effigy_cli::header::render_cli_header(
+        renderer,
+        root,
+        &effigy_core::build_info::display_version(),
+    )
 }
 
 #[cfg(test)]

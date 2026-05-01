@@ -11,8 +11,8 @@ use effigy_ui::theme::Theme;
 use effigy_ui::{Renderer, UiResult};
 
 /// Render the standard CLI header with the active repo root and the
-/// supplied version string (typically the calling crate's
-/// `CARGO_PKG_VERSION`).
+/// supplied display version string (for example `v0.3.1` or
+/// `v0.3.1+local.abc123`).
 ///
 /// The version is passed by the caller so the header shows the *root*
 /// crate's version rather than this crate's, regardless of where the
@@ -35,7 +35,7 @@ pub fn render_cli_header<R: Renderer>(
     let path_line = root.display().to_string();
     let path_line = fit_cli_header_path(&title_line, &path_line, pkg_version);
     let combined_line = format!("{title_line}  {path_line}");
-    let version = format!(" v{pkg_version} ");
+    let version = format!(" {pkg_version} ");
     let inner_width = combined_line.len();
     let top = format!("╭{}╮", "─".repeat(inner_width + 2));
     let middle = format!("│ {:<width$} │", combined_line, width = inner_width);
