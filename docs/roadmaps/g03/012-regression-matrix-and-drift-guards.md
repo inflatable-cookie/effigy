@@ -62,8 +62,9 @@ This milestone is complete when the convergence lane has executable proof that:
 
 ## Next Task
 
-Decide whether one more bounded drift-guard slice is needed after the first
-parity-matrix foundation.
+Execute one final bounded proof slice for:
 
-Once the first matrix and guards are real, decide whether one more bounded
-proof slice is needed before the convergence lane pauses.
+- bootstrap `start` / workspace-handoff parity
+- gateway and alias reconciliation parity
+- host-container lease refresh parity
+Then decide whether `g03.012` can pause cleanly.

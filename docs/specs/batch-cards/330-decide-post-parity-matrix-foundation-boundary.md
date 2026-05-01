@@ -1,6 +1,6 @@
 # 330 Decide Post-Parity-Matrix Foundation Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.012`
 Spec: `docs/specs/025-regression-matrix-and-drift-guards-strict-lane.md`
@@ -36,4 +36,4 @@ first parity-matrix foundation, or whether the lane can pause cleanly.
 
 ## Next Task
 
-Execute `330`.
+Execute `331`.

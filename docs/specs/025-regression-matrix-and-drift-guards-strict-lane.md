@@ -53,6 +53,7 @@ The correct implementation order is:
 1. codify the minimum parity scenarios from the convergence contract
 2. add one explicit audit guard around shared embedded repo targeting
 3. prove the intentional exception families so they stop drifting silently
+4. close the remaining runtime side-effect parity gaps before pausing the lane
 
 ## Integration Constraint
 
@@ -65,6 +66,7 @@ The correct implementation order is:
 
 1. `329` — implement the first convergence parity matrix foundation
 2. `330` — decide whether another bounded drift-guard slice is needed
+3. `331` — implement runtime side-effect parity closeout
 
 ## Exit Condition
 
@@ -77,5 +79,5 @@ that:
 
 ## Next Task
 
-Execute `330` — decide whether `g03.012` needs one more bounded drift-guard
-slice before pausing.
+Execute `331` — close the remaining runtime side-effect parity gaps before
+pausing `g03.012`.

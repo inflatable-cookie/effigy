@@ -22,7 +22,7 @@ Current milestones:
 - [`009-execution-binding-and-runtime-activation-convergence.md`](./009-execution-binding-and-runtime-activation-convergence.md) (complete; `effigy exec`, exec aliases, and named-container/default dev-container exec now share the bounded non-shell activation contract)
 - [`010-interactive-session-ownership-and-lifecycle-convergence.md`](./010-interactive-session-ownership-and-lifecycle-convergence.md) (complete; direct workspace and seeded task shells now share one ownership classifier, while attached `container up --attach` stays an explicit operator lifecycle exception)
 - [`011-embedded-command-script-and-bootstrap-convergence.md`](./011-embedded-command-script-and-bootstrap-convergence.md) (complete; Rhai command replay, run-array builtins, and bootstrap task dispatch now share the first embedded-runner spine, while bootstrap managed-run synthesis remains a separate synthetic managed-run path)
-- [`012-regression-matrix-and-drift-guards.md`](./012-regression-matrix-and-drift-guards.md) (active; the first parity matrix is now real, and the lane is deciding whether one more bounded drift-guard slice is needed before pausing)
+- [`012-regression-matrix-and-drift-guards.md`](./012-regression-matrix-and-drift-guards.md) (active; the first parity matrix is now real, and one final bounded runtime side-effect proof slice remains before the lane can pause cleanly)
 
 Architecture anchor:
 
@@ -38,4 +38,4 @@ Rules:
 
 ## Next Task
 
-Continue `g03.012` with the post-foundation boundary decision.
+Continue `g03.012` with the runtime side-effect parity closeout batch.
