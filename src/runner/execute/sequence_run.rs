@@ -19,6 +19,9 @@ use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
 use super::super::cache::ops::update_task_cache_entry;
 use super::context::ExecutionTaskContext;
 use super::preflight::ExecutionPreflight;
+use crate::runner::command_context::{
+    apply_repo_target_to_embedded_command, EmbeddedRepoOverrideMode,
+};
 use crate::runner::error::RunnerError;
 use crate::runner::script_command::execute_repo_rhai_script;
 
@@ -513,28 +516,11 @@ fn parse_builtin_step_command(
     argv.extend(args.iter().cloned());
     let command =
         parse_command(argv).map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    Ok(apply_builtin_repo_override(command, repo_root))
-}
-
-fn apply_builtin_repo_override(mut command: Command, repo_root: &Path) -> Command {
-    let repo_root = repo_root.to_path_buf();
-    match &mut command {
-        Command::Docs(args) => args.repo_override = Some(repo_root),
-        Command::Demo(args) => args.repo_override = Some(repo_root),
-        Command::Deploy(args) => args.repo_override = Some(repo_root),
-        Command::Contracts(args) => args.repo_override = Some(repo_root),
-        Command::Exec(args) => args.repo_override = Some(repo_root),
-        Command::Service(args) => args.repo_override = Some(repo_root),
-        Command::Distribution(args) => args.repo_override = Some(repo_root),
-        Command::Container(args) => args.repo_override = Some(repo_root),
-        Command::Release(args) => args.repo_override = Some(repo_root),
-        Command::Doctor(args) => args.repo_override = Some(repo_root),
-        Command::Tasks(args) => args.repo_override = Some(repo_root),
-        Command::System(args) => args.repo_override = Some(repo_root),
-        Command::Workspace(args) => args.repo_override = Some(repo_root),
-        _ => {}
-    }
-    command
+    Ok(apply_repo_target_to_embedded_command(
+        command,
+        repo_root,
+        EmbeddedRepoOverrideMode::Force,
+    ))
 }
 
 fn run_shell_step_with_retry(

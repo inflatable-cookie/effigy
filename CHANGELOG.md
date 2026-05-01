@@ -13,6 +13,15 @@ During v0.x, MINOR bumps may include breaking changes.
   and secret wiring explicit instead of guessed.
 
 ### Fixed
+- Nested Effigy command re-entry now uses one shared embedded repo-targeting
+  helper instead of separate per-surface allowlists. Run-array builtin
+  dispatch still force-pins nested builtins to the parent repo, while Rhai
+  `run_effigy_command(...)` now uses the same shared helper in
+  default-if-missing mode so explicit nested `--repo` still wins. This
+  also widens the default nested coverage to `system`, `workspace`, and
+  `defer`, removing another common-path split where embedded commands
+  behaved differently depending on whether they came from run-array or
+  Rhai.
 - Public workspace handoff now reconciles container gateway routes before
   entering the shell, and treats an adopted-but-route-incomplete stack as
   session-owned for shutdown. This fixes `effigy bootstrap` landing in a
