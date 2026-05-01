@@ -109,9 +109,9 @@ Current v1 helpers:
   - `stop_requested()`
   - `process_id()`
   - `sleep_ms(milliseconds)`
-  - `run_process(program, args_array)`
-  - `run_process_stream(program, args_array)`
-  - `run_process_tee(program, args_array)`
+  - `run_process(program, args_array)` / `run_process(program, args_array, options_map)`
+  - `run_process_stream(program, args_array)` / `run_process_stream(program, args_array, options_map)`
+  - `run_process_tee(program, args_array)` / `run_process_tee(program, args_array, options_map)`
   - `http_get(url)`
   - `http_post(url)` / `http_post(url, options_map)`
   - `http_request(method, url, options_map)`
@@ -183,6 +183,7 @@ Process helpers split cleanly by output behavior:
 - `run_process_stream(...)` streams output live and does not return captured text
 - `run_process_tee(...)` streams output live and also returns captured
   `stdout` / `stderr`
+- all three accept an optional options map with `cwd`, `env`, and `stdin_file`
 
 Prefer first-class host helpers over recursively invoking Effigy. For example,
 use `container_exec("stack", "postgres", ["psql", "-U", "postgres", "-d", "acme", "-c", sql])`
@@ -241,6 +242,32 @@ Structured process call with live progress plus captured output:
 
 ```rhai
 let result = run_process_tee("cargo", ["test", "-p", "effigy-rhai", "--lib"]);
+if !result["success"] {
+    throw result["stderr"];
+}
+```
+
+Structured process call with an overridden working directory and env:
+
+```rhai
+let result = run_process(
+    "sh",
+    ["-lc", "printf '%s|%s' \"$PWD\" \"$APP_ENV\""],
+    #{ cwd: "services/api", env: #{ APP_ENV: "local" } },
+);
+if result["stdout"] != cwd + "/services/api|local" {
+    throw result["stdout"];
+}
+```
+
+Structured process call with file-backed stdin:
+
+```rhai
+let result = run_process_tee(
+    "mysql",
+    ["--skip-ssl", "-h", "db", "-uroot", "cbs"],
+    #{ stdin_file: "/var/www/html/.effigy/local/db-seeds/latest.sql" },
+);
 if !result["success"] {
     throw result["stderr"];
 }

@@ -75,6 +75,7 @@ For subprocess helpers:
 - `run_process_stream(...)` streams output live and does not capture it
 - `run_process_tee(...)` streams output live and also returns captured
   `stdout` / `stderr`
+- all three accept an optional options map with `cwd`, `env`, and `stdin_file`
 
 Command/report helpers return the same JSON payload as their CLI `--json`
 counterpart, converted into a Rhai map/array value.
