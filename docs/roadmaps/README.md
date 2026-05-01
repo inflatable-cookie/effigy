@@ -55,27 +55,16 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02/008-demo-and-manifest-import-rollout.md` remains planned, but stays outside the current `v0.3` release-prep queue.
 - `g02/009-vault-backed-varlock-rollout.md` remains planned, but stays outside the current `v0.3` release-prep queue.
 - `g02/017-remaining-shell-cleanup-and-crate-extraction-program.md` queues the substantial parallel cleanup jobs for the remaining heavy `/src` seams and any justified final crate splits.
-- `g03/001-production-deployment-model-and-export-contract.md` is the new active milestone; it defines the provider-neutral deployment model and export contract for managed production generation.
-- `g03/002-underlay-managed-deployment-export.md` is planned behind `g03.001`; Underlay is the first real target for provider export.
+- `g03/001-production-deployment-model-and-export-contract.md` is complete; the neutral deployment model, `deploy model --json`, and the first provider foundations are now shipped.
+- `g03/002-underlay-managed-deployment-export.md` is complete; Underlay now exports bounded Render and Railway deployment bundles with real proof coverage.
 - `g03/003-decodelabs-production-strategy-scope.md` is planned behind `g03.002`; it scopes the future Decodelabs managed-host story without forcing premature automation now.
 - `g03/007` through `g03/012` are now queued behind the current provider-export lane; they form the full common-path convergence program for execution-surface parity, repo targeting, runtime activation, interactive ownership, embedded re-entry, and drift guards without reopening `g02`.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
-- `g03.001` is the active strict lane
-- `311` is complete
-- `313` is complete
-- `315` is complete
-- `316` is complete
-- `317` is complete
-- `318` is complete
-- `319` is complete
-- `320` is complete
-- `321` is complete
-- `322` is complete
-- `323` is the current ready batch: decide the next widening seam now that
-  Render and Railway both have first bounded exports
+- none right now
+- `g03.001` is complete
 
 ## Research Program
 
@@ -111,7 +100,8 @@ Before rollover:
 
 ## Next Task
 
-Execute the next `g03.001` post-Railway widening decision batch.
+No active strict lane. Stop in planning and choose the next `g03` milestone
+deliberately.
 
 
 ## Historical language boundary

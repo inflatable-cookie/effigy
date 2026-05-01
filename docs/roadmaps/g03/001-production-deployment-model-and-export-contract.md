@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-04-30
 Depends on: 011, 013, 016, 021
@@ -45,16 +45,17 @@ This milestone is complete when Effigy has a stable, inspectable deployment
 model and an export command contract strong enough that provider work can stay
 thin and testable.
 
+## Outcome
+
+Delivered:
+
+- `deploy.model.v1`
+- Underlay derivation
+- `deploy model --json`
+- Render export foundation plus real Underlay proof
+- Railway export foundation plus real Underlay proof
+
 ## Next Task
 
-Write the first architecture-backed contract batch for:
-
-- deployment service roles
-- build/start/release hooks
-- domain and port ownership
-- backing-service references
-- warnings and unresolved operator input
-
-Then lock the first concrete derivation target:
-
-- shipped `underlay` bundle -> `deploy.model.v1`
+`g03.001` is complete. Re-sequence the next milestone deliberately instead of
+keeping the old strict lane open by inertia.

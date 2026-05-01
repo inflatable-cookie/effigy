@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-04-30
 Depends on: 001
@@ -33,5 +33,6 @@ is clearly owned by the neutral model plus thin provider adapters.
 
 ## Next Task
 
-Wait for `g03.001` to land the neutral model, then implement the Underlay
-derivation path and first provider template set.
+Underlay now has bounded Render and Railway export foundations. Decide whether
+future Underlay work needs another milestone or whether the next `g03` priority
+should move elsewhere.

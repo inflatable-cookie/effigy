@@ -1,6 +1,6 @@
 # 001 Production Deployment Model And Export Contract Strict Lane
 
-Status: active
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.001`
 
@@ -49,15 +49,7 @@ This lane does not yet own:
 
 ## Current Posture
 
-`strict-ready`
-
-The correct implementation order is:
-
-1. land `deploy model --json` with one bounded Underlay-only derivation path
-2. strengthen the neutral model until provider adapters can stay thin
-3. define the first provider-export contract
-4. close any remaining provider-facing neutral-model gaps before adapter
-   implementation
+`strict-complete`
 
 ## Integration Constraint
 
@@ -97,5 +89,5 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute `323` — decide the next widening seam now that Railway export has a
-real first foundation.
+No active ready card. Return to roadmap-level planning before opening another
+strict lane.
