@@ -56,4 +56,4 @@ Recently completed:
 `g03.010` is the active strict lane.
 
 Execute
-[`batch-cards/325-implement-interactive-ownership-classification-foundation.md`](./batch-cards/325-implement-interactive-ownership-classification-foundation.md).
+[`batch-cards/326-decide-post-interactive-ownership-foundation-boundary.md`](./batch-cards/326-decide-post-interactive-ownership-foundation-boundary.md).

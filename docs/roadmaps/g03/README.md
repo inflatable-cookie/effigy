@@ -38,4 +38,4 @@ Rules:
 
 ## Next Task
 
-Continue `g03.010` with the first bounded interactive ownership convergence batch.
+Continue `g03.010` with the post-foundation widening decision.

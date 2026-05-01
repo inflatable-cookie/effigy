@@ -1,6 +1,6 @@
 # 325 Implement Interactive Ownership Classification Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.010`
 Spec: `docs/specs/023-interactive-session-ownership-and-lifecycle-convergence-strict-lane.md`
@@ -47,4 +47,4 @@ sessions and apply it to the main handoff paths.
 
 ## Next Task
 
-Execute `325`.
+Execute `326`.

@@ -13,9 +13,14 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`326-decide-post-interactive-ownership-foundation-boundary.md`](./326-decide-post-interactive-ownership-foundation-boundary.md)
+  is the active ready card. `g03.010` now needs the post-foundation boundary
+  decision before it widens into attached operator sessions or moves on.
+
 - [`325-implement-interactive-ownership-classification-foundation.md`](./325-implement-interactive-ownership-classification-foundation.md)
-  is the active ready card. `g03.010` now needs the first bounded shared
-  ownership and cleanup classification batch for interactive surfaces.
+  is complete. Direct `effigy workspace` entry and seeded task shells now
+  derive adopted-versus-session-owned cleanup from one shared ownership helper
+  instead of caller-local booleans.
 
 - [`324-implement-exec-activation-convergence-foundation.md`](./324-implement-exec-activation-convergence-foundation.md)
   is complete. `effigy exec`, exec aliases, and named-container/default
@@ -242,5 +247,4 @@ Staged next-lane card:
 
 ## Next Task
 
-Execute `325` for the `g03.010` interactive ownership and lifecycle
-convergence foundation.
+Execute `326` for the `g03.010` post-foundation widening decision.

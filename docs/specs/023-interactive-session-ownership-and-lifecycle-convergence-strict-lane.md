@@ -52,7 +52,7 @@ This lane does not yet own:
 
 ## Current Posture
 
-`strict-ready`
+`active`
 
 The correct implementation order is:
 
@@ -70,8 +70,9 @@ The correct implementation order is:
 
 ## Continuation Chain
 
-1. `325` — implement interactive ownership classification foundation
-2. later — decide post-foundation widening
+1. `325` — complete; shared ownership classification now covers direct
+   workspace entry and seeded task shells
+2. `326` — decide post-foundation widening
 
 ## Exit Condition
 
@@ -86,5 +87,5 @@ by:
 
 ## Next Task
 
-Execute `325` — implement the first bounded interactive ownership and cleanup
-convergence batch.
+Execute `326` — decide whether `g03.010` widens into attached operator
+sessions next or hands off to `g03.011`.
