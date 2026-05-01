@@ -54,4 +54,4 @@ Recently completed:
 `g03.001` remains the active strict lane.
 
 Execute
-[`batch-cards/322-implement-railway-export-foundation.md`](./batch-cards/322-implement-railway-export-foundation.md).
+[`batch-cards/323-decide-post-railway-export-foundation-boundary.md`](./batch-cards/323-decide-post-railway-export-foundation-boundary.md).

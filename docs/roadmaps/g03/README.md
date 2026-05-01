@@ -17,7 +17,7 @@ Current milestones:
 - [`004-container-runtime-contract-and-alias-surface.md`](./004-container-runtime-contract-and-alias-surface.md) (complete; the runtime contract now lives in `docs/contracts/005-container-runtime-contract.md` and defines alias, handoff, and fallback ownership)
 - [`005-execution-path-unification-and-runtime-prep.md`](./005-execution-path-unification-and-runtime-prep.md) (complete; shared runtime-prep ownership now lives in `src/runner/container_runtime_prep.rs` and is consumed by workspace handoff plus standard routed exec)
 - [`006-compose-backend-capability-boundaries-and-compatibility.md`](./006-compose-backend-capability-boundaries-and-compatibility.md) (complete; backend-required versus Effigy-repaired runtime behavior now has a contract plus targeted shared-prep coverage)
-- [`007-execution-surface-audit-and-convergence-contract.md`](./007-execution-surface-audit-and-convergence-contract.md) (planned; define the full execution-surface responsibility matrix and convergence contract for common-path semantics)
+- [`007-execution-surface-audit-and-convergence-contract.md`](./007-execution-surface-audit-and-convergence-contract.md) (complete; the full execution-surface responsibility matrix and convergence contract now live in `docs/contracts/009-execution-surface-convergence.md`)
 - [`008-repo-targeting-and-embedded-dispatch-spine.md`](./008-repo-targeting-and-embedded-dispatch-spine.md) (planned; centralize repo targeting and nested Effigy command dispatch behind one shared spine)
 - [`009-execution-binding-and-runtime-activation-convergence.md`](./009-execution-binding-and-runtime-activation-convergence.md) (planned; move `exec` and other remaining container-backed surfaces onto one activation contract)
 - [`010-interactive-session-ownership-and-lifecycle-convergence.md`](./010-interactive-session-ownership-and-lifecycle-convergence.md) (planned; unify shell and attached-session ownership semantics across workspace, dev, and handoff paths)
@@ -38,5 +38,5 @@ Rules:
 
 ## Next Task
 
-Continue `g03.001` by implementing the first Railway export foundation now
-that the contract is explicit.
+Continue `g03.001` by deciding the next widening seam now that Railway export
+also has a first foundation.

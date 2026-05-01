@@ -82,7 +82,8 @@ The correct implementation order is:
 10. `320` — decide post-Render-proof provider widening
 11. `321` — plan first Railway export contract
 12. `322` — implement Railway export foundation
-13. later — widen providers deliberately
+13. `323` — decide post-Railway-export foundation boundary
+14. later — widen providers deliberately
 
 ## Exit Condition
 
@@ -96,5 +97,5 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute `322` — implement the first Railway export foundation now that the
-Railway contract is explicit.
+Execute `323` — decide the next widening seam now that Railway export has a
+real first foundation.

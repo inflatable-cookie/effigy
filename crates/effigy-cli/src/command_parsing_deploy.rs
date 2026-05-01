@@ -60,6 +60,7 @@ where
 
     let provider = match provider.as_str() {
         "render" => DeployExportProvider::Render,
+        "railway" => DeployExportProvider::Railway,
         other => return Err(unknown_argument(other)),
     };
 

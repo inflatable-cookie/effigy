@@ -129,6 +129,7 @@ effigy --json config
 effigy --json config --schema --target test
 effigy --json deploy model --repo /path/to/workspace
 effigy --json deploy export render --repo /path/to/workspace --path infra/render --plan
+effigy --json deploy export railway --repo /path/to/workspace --path infra/railway --plan
 effigy --json test --plan
 effigy --json test
 effigy --json watch --owner effigy --once test

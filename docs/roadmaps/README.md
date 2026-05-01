@@ -73,9 +73,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `319` is complete
 - `320` is complete
 - `321` is complete
-- `322` is the current ready batch: implement the first Railway export
-  foundation now that Render has one real Underlay proof and Railway has a
-  bounded contract
+- `322` is complete
+- `323` is the current ready batch: decide the next widening seam now that
+  Render and Railway both have first bounded exports
 
 ## Research Program
 
@@ -111,7 +111,7 @@ Before rollover:
 
 ## Next Task
 
-Execute the next `g03.001` Railway implementation batch.
+Execute the next `g03.001` post-Railway widening decision batch.
 
 
 ## Historical language boundary

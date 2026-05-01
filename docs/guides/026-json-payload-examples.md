@@ -239,11 +239,14 @@ Companion references:
 {
   "schema": "effigy.deploy.export.v1",
   "schema_version": 1,
-  "provider": "render",
+  "provider": "railway",
   "plan": true,
-  "path": "/workspace/app/infra/render",
+  "path": "/workspace/app/infra/railway",
   "files": [
-    "render.yaml"
+    "services/front/railway.toml",
+    "services/admin/railway.toml",
+    "services/api/railway.toml",
+    "report.json"
   ],
   "warnings": []
 }

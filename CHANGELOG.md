@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- `effigy deploy export railway` now generates the first bounded Railway
+  deployment bundle for Underlay repos: service-local `railway.toml` files
+  plus a machine-facing `report.json` that leaves domains, Postgres creation,
+  and secret wiring explicit instead of guessed.
+
 ### Fixed
 - Public workspace handoff now reconciles container gateway routes before
   entering the shell, and treats an adopted-but-route-incomplete stack as

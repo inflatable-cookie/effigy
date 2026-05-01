@@ -157,6 +157,7 @@ fn render_deploy_help_shows_underlay_json_first_batch() {
     assert!(rendered.contains("deploy Help"));
     assert!(rendered.contains("effigy deploy model"));
     assert!(rendered.contains("effigy deploy export render"));
+    assert!(rendered.contains("effigy deploy export railway"));
     assert!(rendered.contains("--repo <PATH>"));
     assert!(rendered.contains("--path <DIR>"));
     assert!(rendered.contains("--plan"));
