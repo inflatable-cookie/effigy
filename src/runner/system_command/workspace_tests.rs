@@ -1,5 +1,8 @@
 use super::*;
 use crate::contract_test_support::EnvGuard;
+use crate::runner::interactive_session::{
+    classify_interactive_session_ownership, InteractiveSessionIntent,
+};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 fn temp_repo(manifest: &str) -> std::path::PathBuf {
@@ -118,6 +121,33 @@ primary_service = "workspace"
         .expect("resolve workspace container");
 
     assert_eq!(container.as_deref(), Some("app"));
+}
+
+#[test]
+fn resolve_public_workspace_container_rejects_inline_workspace_binding() {
+    let root = temp_repo(
+        r#"
+[catalog]
+alias = "probe"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = { image = "node:22", mount = "./:/workspace" }
+"#,
+    );
+
+    let error = resolve_public_workspace_container(&root, None, None, "workspace")
+        .expect_err("inline workspace container should be rejected");
+
+    assert_eq!(
+        error.to_string(),
+        "`effigy workspace` does not support inline workspace containers yet"
+    );
 }
 
 #[test]
@@ -582,19 +612,19 @@ fn persist_effigy_source_repo_root_writes_host_pointer_file() {
 #[test]
 fn plain_workspace_session_shuts_down_only_if_it_started_the_system() {
     assert!(should_shutdown_started_system(
-        false,
-        WorkspaceGatewayState {
-            routes_were_ready_before_handoff: true,
-        },
-        WorkspaceSessionOwnership::OwnStartedSystem,
+        classify_interactive_session_ownership(
+            InteractiveSessionIntent::PublicWorkspace,
+            false,
+            true,
+        ),
         true,
     ));
     assert!(!should_shutdown_started_system(
-        true,
-        WorkspaceGatewayState {
-            routes_were_ready_before_handoff: true,
-        },
-        WorkspaceSessionOwnership::OwnStartedSystem,
+        classify_interactive_session_ownership(
+            InteractiveSessionIntent::PublicWorkspace,
+            true,
+            true,
+        ),
         true,
     ));
 }
@@ -602,11 +632,7 @@ fn plain_workspace_session_shuts_down_only_if_it_started_the_system() {
 #[test]
 fn seeded_workspace_session_shuts_down_after_successful_handoff() {
     assert!(should_shutdown_started_system(
-        false,
-        WorkspaceGatewayState {
-            routes_were_ready_before_handoff: true,
-        },
-        WorkspaceSessionOwnership::LeaveSystemRunning,
+        classify_interactive_session_ownership(InteractiveSessionIntent::SeededTask, false, true,),
         true,
     ));
 }
@@ -614,19 +640,11 @@ fn seeded_workspace_session_shuts_down_after_successful_handoff() {
 #[test]
 fn seeded_workspace_session_leaves_started_system_running_after_failed_handoff() {
     assert!(!should_shutdown_started_system(
-        false,
-        WorkspaceGatewayState {
-            routes_were_ready_before_handoff: true,
-        },
-        WorkspaceSessionOwnership::LeaveSystemRunning,
+        classify_interactive_session_ownership(InteractiveSessionIntent::SeededTask, false, true,),
         false,
     ));
     assert!(!should_shutdown_started_system(
-        true,
-        WorkspaceGatewayState {
-            routes_were_ready_before_handoff: true,
-        },
-        WorkspaceSessionOwnership::LeaveSystemRunning,
+        classify_interactive_session_ownership(InteractiveSessionIntent::SeededTask, true, true,),
         true,
     ));
 }
@@ -634,11 +652,11 @@ fn seeded_workspace_session_leaves_started_system_running_after_failed_handoff()
 #[test]
 fn plain_workspace_session_shuts_down_adopted_stack_when_handoff_completed_gateway_readiness() {
     assert!(should_shutdown_started_system(
-        true,
-        WorkspaceGatewayState {
-            routes_were_ready_before_handoff: false,
-        },
-        WorkspaceSessionOwnership::OwnStartedSystem,
+        classify_interactive_session_ownership(
+            InteractiveSessionIntent::PublicWorkspace,
+            true,
+            false,
+        ),
         true,
     ));
 }

@@ -23,8 +23,15 @@ use crate::runner::container_runtime_prep::{
     container_policy_uses_gateway_surface, ensure_container_runtime_prepared,
 };
 use crate::runner::exec_command::copy_file_into_service;
-use crate::runner::execute::api::{resolve_container_execution_binding, ContainerExecutionBinding};
+use crate::runner::execute::api::{
+    ensure_inline_workspace_supported, resolve_container_execution_binding,
+    ContainerExecutionBinding, InlineWorkspaceCapabilitySurface,
+};
 use crate::runner::gateway_command::gateway_up_for_managed_task;
+use crate::runner::interactive_session::{
+    classify_interactive_session_ownership, should_cleanup_interactive_session,
+    InteractiveSessionIntent, InteractiveSessionOwnership,
+};
 use crate::runner::manifest::load_task_manifest;
 
 use super::RunnerError;
@@ -72,17 +79,6 @@ impl LinuxWorkspaceTarget {
     fn cache_relative_dir(self) -> PathBuf {
         PathBuf::from(".effigy/workspace-bin/linux").join(self.release_triple())
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WorkspaceSessionOwnership {
-    OwnStartedSystem,
-    LeaveSystemRunning,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WorkspaceGatewayState {
-    routes_were_ready_before_handoff: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,7 +130,7 @@ pub(in crate::runner) fn run_workspace_with_repo_root(
         container_name.as_deref(),
         repo_override,
         None,
-        WorkspaceSessionOwnership::OwnStartedSystem,
+        InteractiveSessionIntent::PublicWorkspace,
     )
 }
 
@@ -149,7 +145,7 @@ pub(in crate::runner) fn run_workspace_seeded_session(
         container_name,
         repo_override,
         Some(initial_command),
-        WorkspaceSessionOwnership::LeaveSystemRunning,
+        InteractiveSessionIntent::SeededTask,
     )
 }
 
@@ -173,12 +169,16 @@ pub(super) fn resolve_public_workspace_container(
         &task,
         &format!("`effigy {surface}`"),
     )?;
+    ensure_inline_workspace_supported(
+        &binding,
+        InlineWorkspaceCapabilitySurface::PublicWorkspaceCommand { surface },
+    )?;
 
     match binding {
         ContainerExecutionBinding::Container { name, .. } => Ok(name),
-        ContainerExecutionBinding::Inline { .. } => Err(RunnerError::task_invocation(format!(
-            "`effigy {surface}` does not support inline workspace containers yet"
-        ))),
+        ContainerExecutionBinding::Inline { .. } => {
+            unreachable!("inline workspace helper should always reject inline bindings")
+        }
         ContainerExecutionBinding::Host | ContainerExecutionBinding::None => {
             Err(RunnerError::task_invocation(format!(
                 "`effigy {surface}` requires a workspace-backed system binding"
@@ -192,7 +192,7 @@ fn run_workspace_container_session(
     container_name: Option<&str>,
     repo_override: Option<PathBuf>,
     initial_command: Option<&str>,
-    ownership: WorkspaceSessionOwnership,
+    session_intent: InteractiveSessionIntent,
 ) -> Result<String, RunnerError> {
     let repo_override = effective_workspace_repo_override(repo_root, repo_override);
     let container_name = container_name.map(str::to_owned);
@@ -203,18 +203,21 @@ fn run_workspace_container_session(
         container_name.as_deref(),
         repo_override.clone(),
     )?;
-    let gateway_state = prepare_workspace_handoff(
+    let routes_were_ready_before_handoff = prepare_workspace_handoff(
         repo_root,
         &policy,
         container_name.as_deref(),
         repo_override.clone(),
         initial_command,
     )?;
+    let ownership = classify_interactive_session_ownership(
+        session_intent,
+        system_was_running,
+        routes_were_ready_before_handoff,
+    );
     let shell_result =
         run_workspace_handoff_shell(repo_root, container_name.as_deref(), initial_command);
     let cleanup_result = cleanup_workspace_session(
-        system_was_running,
-        gateway_state,
         ownership,
         shell_result.is_ok(),
         container_name,
@@ -259,7 +262,7 @@ fn prepare_workspace_handoff(
     container_name: Option<&str>,
     repo_override: Option<PathBuf>,
     initial_command: Option<&str>,
-) -> Result<WorkspaceGatewayState, RunnerError> {
+) -> Result<bool, RunnerError> {
     let routes_were_ready_before_handoff = gateway_routes_ready_before_handoff(repo_root, policy)?;
     maybe_start_workspace_gateway(policy)?;
     if container_policy_uses_gateway_surface(policy) {
@@ -269,9 +272,7 @@ fn prepare_workspace_handoff(
     ensure_workspace_effigy_available_for_policy(repo_root, policy, repo_override.clone())?;
     ensure_workspace_permissions_ready(repo_root, policy, container_name, repo_override)?;
     render_workspace_handoff_transition(policy, initial_command)?;
-    Ok(WorkspaceGatewayState {
-        routes_were_ready_before_handoff,
-    })
+    Ok(routes_were_ready_before_handoff)
 }
 
 fn render_workspace_handoff_transition(
@@ -304,19 +305,12 @@ fn run_workspace_handoff_shell(
 }
 
 fn cleanup_workspace_session(
-    system_was_running: bool,
-    gateway_state: WorkspaceGatewayState,
-    ownership: WorkspaceSessionOwnership,
+    ownership: InteractiveSessionOwnership,
     session_succeeded: bool,
     container_name: Option<String>,
     repo_override: Option<PathBuf>,
 ) -> Result<(), RunnerError> {
-    if !should_shutdown_started_system(
-        system_was_running,
-        gateway_state,
-        ownership,
-        session_succeeded,
-    ) {
+    if !should_cleanup_interactive_session(ownership, session_succeeded) {
         return Ok(());
     }
 
@@ -366,19 +360,10 @@ fn run_workspace_shell_exec(
 }
 
 fn should_shutdown_started_system(
-    system_was_running: bool,
-    gateway_state: WorkspaceGatewayState,
-    ownership: WorkspaceSessionOwnership,
+    ownership: InteractiveSessionOwnership,
     session_succeeded: bool,
 ) -> bool {
-    if system_was_running {
-        return matches!(ownership, WorkspaceSessionOwnership::OwnStartedSystem)
-            && !gateway_state.routes_were_ready_before_handoff;
-    }
-    match ownership {
-        WorkspaceSessionOwnership::OwnStartedSystem => true,
-        WorkspaceSessionOwnership::LeaveSystemRunning => session_succeeded,
-    }
+    should_cleanup_interactive_session(ownership, session_succeeded)
 }
 
 fn gateway_routes_ready_before_handoff(

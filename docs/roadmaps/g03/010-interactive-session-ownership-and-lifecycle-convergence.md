@@ -59,7 +59,7 @@ by:
 
 ## Next Task
 
-Execute the first bounded shared ownership and cleanup classification batch.
+Execute the post-foundation widening decision.
 
 Once the shared interactive ownership model is real, decide whether to widen
 directly into attached operator sessions or move on to the embedded re-entry

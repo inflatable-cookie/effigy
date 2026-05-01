@@ -22,6 +22,7 @@ mod execute;
 mod gateway_command;
 mod host_container_lease;
 mod host_process;
+mod interactive_session;
 mod locking;
 mod managed_shell;
 mod manifest;

@@ -13,6 +13,16 @@ During v0.x, MINOR bumps may include breaking changes.
   and secret wiring explicit instead of guessed.
 
 ### Fixed
+- Interactive workspace shells and seeded task shells now share one ownership
+  classifier for adopted versus session-owned runtimes. Direct
+  `effigy workspace` entry and overlapping `stay_in_shell` / managed seeded
+  shell paths now derive cleanup from the same readiness and cleanup policy
+  model instead of separate local booleans.
+- Inline workspace container capability checks now go through one shared
+  binding-layer helper across standard task routing, managed attached
+  session fallback, and `effigy workspace` / `effigy system`. Unsupported
+  surfaces now fail through one explicit message family instead of keeping
+  separate caller-local rejection branches.
 - `effigy exec` and exec aliases now use the shared non-shell runtime
   activation contract. Stopped container runtimes now get the same startup,
   exec-readiness, gateway/route reconciliation, and temporary host-container

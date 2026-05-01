@@ -68,8 +68,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Active Strict Lane
 
 - `g03.010` is the active strict lane
-- `325` is the current ready batch: implement the first bounded interactive
-  ownership and cleanup convergence slice
+- `326` is the current ready batch: decide the post-foundation widening seam
 - `g03.009` is complete
 - `g03.001` is complete
 
@@ -107,7 +106,7 @@ Before rollover:
 
 ## Next Task
 
-Execute the next `g03.010` interactive ownership convergence batch.
+Execute the next `g03.010` post-foundation decision batch.
 
 
 ## Historical language boundary
