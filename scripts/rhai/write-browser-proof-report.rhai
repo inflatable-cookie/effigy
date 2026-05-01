@@ -9,7 +9,7 @@ let inspect_path = path_join(artifact_dir, "inspect-lifecycle-window.txt");
 let html_path = path_join(artifact_dir, "index.html");
 
 fn run_capture(label, capture_path, process_args) {
-    let result = run_process("cargo", process_args);
+    let result = run_process_tee("cargo", process_args);
     if !result["success"] {
         throw "[error] " + label + " failed"
             + "\nstdout:\n" + result["stdout"].to_string()

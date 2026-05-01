@@ -110,6 +110,8 @@ Current v1 helpers:
   - `process_id()`
   - `sleep_ms(milliseconds)`
   - `run_process(program, args_array)`
+  - `run_process_stream(program, args_array)`
+  - `run_process_tee(program, args_array)`
   - `http_get(url)`
   - `http_post(url)` / `http_post(url, options_map)`
   - `http_request(method, url, options_map)`
@@ -175,12 +177,19 @@ That means:
 - good: `run_process("cargo", ["test", "--workspace"])`
 - not v1: shell pipelines, shell quoting tricks, or arbitrary shell emulation
 
+Process helpers split cleanly by output behavior:
+
+- `run_process(...)` captures output and returns it after exit
+- `run_process_stream(...)` streams output live and does not return captured text
+- `run_process_tee(...)` streams output live and also returns captured
+  `stdout` / `stderr`
+
 Prefer first-class host helpers over recursively invoking Effigy. For example,
 use `container_exec("stack", "postgres", ["psql", "-U", "postgres", "-d", "acme", "-c", sql])`
 instead of `run_process("effigy", ["exec", ...])` or `run_effigy(["exec", ...])`.
-`run_process("effigy", ...)` and `run_process_stream("effigy", ...)` are
-rejected at runtime; hitting that seam means Effigy needs a new typed Rhai
-host helper.
+`run_process("effigy", ...)`, `run_process_stream("effigy", ...)`, and
+`run_process_tee("effigy", ...)` are rejected at runtime; hitting that seam
+means Effigy needs a new typed Rhai host helper.
 Use `config_effective()` or `config_get("systems.dev.container")` instead of
 re-reading `effigy.toml` when a script needs Effigy's composed/bundle-expanded
 manifest view.
@@ -226,6 +235,15 @@ Envfile-aware mutation when the script really means “set this key”:
 copy_if_missing("infra/dev/bootstrap/app.env", ".env");
 env_file_set(".env", "APP_HOST", "local.test");
 env_file_set(".env", "APP_NAME", "Cumberland Local");
+```
+
+Structured process call with live progress plus captured output:
+
+```rhai
+let result = run_process_tee("cargo", ["test", "-p", "effigy-rhai", "--lib"]);
+if !result["success"] {
+    throw result["stderr"];
+}
 ```
 
 Reading and pruning dotenv entries:

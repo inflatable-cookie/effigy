@@ -171,6 +171,25 @@ fn execute_rhai_script_can_stream_process_output() {
 }
 
 #[test]
+fn execute_rhai_script_can_tee_process_output_and_capture() {
+    let root = temp_root("tee-process");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            let teed = run_process_tee("sh", ["-lc", "printf tee-out; printf tee-err >&2"]);
+            if !teed["success"] { throw("tee"); }
+            if teed["stdout"] != "tee-out" { throw("tee stdout"); }
+            if teed["stderr"] != "tee-err" { throw("tee stderr"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
 fn execute_rhai_script_exposes_trim_string_helper() {
     let root = temp_root("trim-string");
     let context = ScriptContext {
