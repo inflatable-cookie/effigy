@@ -13,7 +13,15 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- no active ready card
+- [`333-decide-post-decodelabs-inventory-boundary.md`](./333-decide-post-decodelabs-inventory-boundary.md)
+  is the active ready card. `332` closed the first inventory pass, so the next
+  honest step is to name the Decodelabs boundary explicitly instead of leaving
+  the lane in vague “future strategy” territory.
+
+- [`332-inventory-decodelabs-production-deployment-shape.md`](./332-inventory-decodelabs-production-deployment-shape.md)
+  is complete. The first Decodelabs production inventory is now captured in
+  the contract and roadmap surfaces strongly enough to drive a real boundary
+  decision.
 
 - [`331-implement-runtime-side-effect-parity-closeout.md`](./331-implement-runtime-side-effect-parity-closeout.md)
   is complete. The remaining runtime side-effect parity gaps are now covered:
@@ -258,6 +266,14 @@ Staged next-lane card:
 - [`302-decide-post-route-model-foundation-follow-up.md`](./302-decide-post-route-model-foundation-follow-up.md)
   is complete. The next bounded `g02.020` move is now explicit: loopback-IP
   allocation comes before HTTP post-start port discovery.
+
+## Next Task
+
+Execute [`333-decide-post-decodelabs-inventory-boundary.md`](./333-decide-post-decodelabs-inventory-boundary.md).
+
+## Next Task
+
+Execute [`332-inventory-decodelabs-production-deployment-shape.md`](./332-inventory-decodelabs-production-deployment-shape.md).
 - [`303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md`](./303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md)
   is the active ready card. `g02.020` was re-sequenced ahead of `g02.007` and
   `g02.019` on 2026-04-22 because the multi-project port-collision gap is now

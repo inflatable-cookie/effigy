@@ -45,19 +45,19 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02/001-bootstrap-command-and-clone-contract.md` started the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now complete: released plus live-pilot validated on `loophole` and `songsprout`.
 - `g02/002-manifest-composition-and-override-contract.md` is complete; the general split-manifest model, override contract, and inspectability surface are now shipped.
 - `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; the lane shipped and released in `v0.2.13`, including registry loading, inspection, lifecycle control, one-demo history, attached and PTY-backed terminal runner semantics, browser demo tabs, browser terminal replay/input/resize consumption, concurrent-runner session plus interaction projection, browser-owned live attached terminal sessions for browser-launched run-backed interactive demos, bounded single-process concurrent-runner browser live-session parity, runner-owned concurrent-runtime projection-shape truth, projected-runtime process summary truth, and projected-output provenance truth.
-- `g02/004-rust-native-scripting-surface-contract.md` is paused after the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached a clean internal boundary.
-- `g02/005-optional-distribution-surface-contract.md` is paused after one real consumer proof plus bounded widening made the optional distribution boundary trustworthy for metadata validation, artifact validation, and closeout evidence reuse.
-- `g02/006-colima-container-environment-contract.md` is now paused after the real-machine `colima nerdctl` live-stop and closeout path was hardened strongly enough to stop carrying a deferred warning.
+- `g02/004-rust-native-scripting-surface-contract.md` is complete; the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached the intended boundary for `g02`.
+- `g02/005-optional-distribution-surface-contract.md` is complete; one real consumer proof plus bounded widening made the optional distribution boundary trustworthy for metadata validation, artifact validation, and closeout evidence reuse.
+- `g02/006-colima-container-environment-contract.md` is complete; the real-machine `colima nerdctl` live-stop and closeout path was hardened strongly enough to close the lane on its intended boundary.
 - `g02/020-multi-project-gateway-expansion-and-service-dns.md` is complete.
-- `g02/007-distribution-release-and-consumer-rollout.md` is paused; the `v0.3.x` release work is done and any broader rollout follow-up should be re-sequenced deliberately instead of pretending the old release lane is still active.
+- `g02/007-distribution-release-and-consumer-rollout.md` is complete; the `v0.3.x` release work shipped, and any broader rollout follow-up must now be re-sequenced deliberately into the live generation.
 - `g02/022-v0-3-pre-release-hardening-and-contract-cleanup.md` is complete; the bounded pre-cut hardening queue from the final `v0.3` audit landed before the `v0.3.0` cut.
 - `g02/010-effigy-modularization-and-crate-boundaries.md` is complete.
-- `g02/008-demo-and-manifest-import-rollout.md` remains planned, but stays outside the current `v0.3` release-prep queue.
-- `g02/009-vault-backed-varlock-rollout.md` remains planned, but stays outside the current `v0.3` release-prep queue.
-- `g02/017-remaining-shell-cleanup-and-crate-extraction-program.md` queues the substantial parallel cleanup jobs for the remaining heavy `/src` seams and any justified final crate splits.
+- `g02/008-demo-and-manifest-import-rollout.md` is complete on the `g02` boundary; the rollout itself was intentionally not run and any future adoption push must be rehomed into the live generation or backlog.
+- `g02/009-vault-backed-varlock-rollout.md` is complete on the `g02` boundary; the rollout itself was intentionally not run and any future vault-backed adoption push must be rehomed into the live generation or backlog.
+- `g02/017-remaining-shell-cleanup-and-crate-extraction-program.md` is complete; the worthwhile cleanup and extraction jobs landed, and the remaining root-crate untidiness is no longer roadmap-worthy.
 - `g03/001-production-deployment-model-and-export-contract.md` is complete; the neutral deployment model, `deploy model --json`, and the first provider foundations are now shipped.
 - `g03/002-underlay-managed-deployment-export.md` is complete; Underlay now exports bounded Render and Railway deployment bundles with real proof coverage.
-- `g03/003-decodelabs-production-strategy-scope.md` is planned behind `g03.002`; it scopes the future Decodelabs managed-host story without forcing premature automation now.
+- `g03/003-decodelabs-production-strategy-scope.md` is now active; Underlay export is shipped strongly enough to scope the Decodelabs production story on its own terms without faking provider readiness.
 - `g03/007` is complete; the execution-surface convergence contract now lives in `docs/contracts/009-execution-surface-convergence.md`.
 - `g03/008` is complete; shared embedded repo-targeting now lives in `src/runner/command_context/repo_override.rs` and is consumed by run-array builtin dispatch plus Rhai command re-entry.
 - `g03/009` is complete; `effigy exec` and exec aliases now share the bounded non-shell activation contract with container-backed task execution.
@@ -68,10 +68,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-- no active strict lane
+- `g03.003` is the active strict-planning lane
+- `333` is the active ready card
 - `g03.012` is complete
-- `g03.009` is complete
-- `g03.001` is complete
 
 ## Research Program
 
@@ -107,7 +106,8 @@ Before rollover:
 
 ## Next Task
 
-Stop in planning and choose the next `g03` milestone deliberately.
+Execute `g03.003` through `333` and name the post-inventory Decodelabs
+boundary before widening any deployment support.
 
 
 ## Historical language boundary

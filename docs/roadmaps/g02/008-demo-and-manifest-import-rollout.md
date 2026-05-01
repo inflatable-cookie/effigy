@@ -2,7 +2,7 @@
 
 Generation: `g02`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-04-15
 Depends on: 002, 003, 029
@@ -25,13 +25,23 @@ meaningful proof surface.
 - adopt demos where a repo has a real operator proof loop worth preserving
 - leave repos without a real demo need out of the rollout instead of faking it
 
+## Closeout
+
+This rollout did not become a live `g02` execution lane.
+
+The underlying product surfaces shipped, but the cross-repo adoption program
+was intentionally not run as part of `g02`. That is now a sequencing decision,
+not unfinished work inside the closed generation.
+
 ## Exit Condition
 
-This milestone is complete when the intended consumer cohort has a coherent
-manifest composition posture and demo adoption is explicit rather than
-inconsistent or folkloric.
+This milestone is complete on the `g02` boundary because the generation is
+closed and any future adoption push must be re-sequenced deliberately in the
+live queue.
 
 ## Next Task
 
-Execute this rollout after the higher-priority distribution release and the
-machine-blocking container framework are both out of the way.
+Leave this roadmap closed.
+
+If demo or manifest-import adoption becomes active again, rehome it into the
+live generation or backlog instead of pretending `g02` is still open.

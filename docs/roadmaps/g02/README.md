@@ -17,9 +17,9 @@ Current milestones:
 - [`004-rust-native-scripting-surface-contract.md`](./004-rust-native-scripting-surface-contract.md) (complete; the scripting policy split, Rhai v1 boundary, script-step foundation, long-running lifecycle support, release-wrapper convergence, and native distribution cutover are all shipped on the intended boundary)
 - [`005-optional-distribution-surface-contract.md`](./005-optional-distribution-surface-contract.md) (complete; the optional manifest-driven distribution surface is consumer-proven for metadata validation, artifact validation, and closeout evidence reuse, while the fuller published-consumer `first-publish` question is explicitly deferred)
 - [`006-colima-container-environment-contract.md`](./006-colima-container-environment-contract.md) (complete; the v1 container foundation, attached-session widening, repo-owned task composition, and real-machine live-stop hardening are all shipped on the intended boundary)
-- [`007-distribution-release-and-consumer-rollout.md`](./007-distribution-release-and-consumer-rollout.md) (paused; the `v0.3.x` release work is complete and any broader rollout follow-up should be re-sequenced deliberately)
-- [`008-demo-and-manifest-import-rollout.md`](./008-demo-and-manifest-import-rollout.md) (planned; consumer adoption work remains valid but stays out of the current `v0.3` release-prep queue)
-- [`009-vault-backed-varlock-rollout.md`](./009-vault-backed-varlock-rollout.md) (planned; consumer rollout for vault-backed varlock remains valid but stays out of the current `v0.3` release-prep queue)
+- [`007-distribution-release-and-consumer-rollout.md`](./007-distribution-release-and-consumer-rollout.md) (complete; the `v0.3.x` release work shipped, and any broader rollout follow-up must now be re-sequenced into the live generation)
+- [`008-demo-and-manifest-import-rollout.md`](./008-demo-and-manifest-import-rollout.md) (complete; the rollout itself was intentionally not run in `g02`, so any future adoption push must be rehomed into the live generation or backlog)
+- [`009-vault-backed-varlock-rollout.md`](./009-vault-backed-varlock-rollout.md) (complete; the rollout itself was intentionally not run in `g02`, so any future vault-backed adoption push must be rehomed into the live generation or backlog)
 - [`010-effigy-modularization-and-crate-boundaries.md`](./010-effigy-modularization-and-crate-boundaries.md) (complete; the backbone plus domain crates are real, the recent `/src` cleanup chain is fully landed, and the lane is closed on a trustworthy boundary)
 - [`011-service-catalog-and-compose-assembly.md`](./011-service-catalog-and-compose-assembly.md) (complete; the crate foundation, runner integration, operator-facing catalog/eject surface, and real-project proof are now all landed)
 - [`012-container-context-and-transparent-execution.md`](./012-container-context-and-transparent-execution.md) (complete; transparent task routing, explicit exec, alias fallback, CWD mapping, handoff strategy, and one real consumer proof are now all landed)
@@ -70,4 +70,5 @@ Rules:
 
 `g02` is closed as the live roadmap queue.
 
-Move to [`../g03/README.md`](../g03/README.md) and start `g03.001`.
+Move to [`../g03/README.md`](../g03/README.md) and continue the live `g03`
+queue instead of reopening `g02`.
