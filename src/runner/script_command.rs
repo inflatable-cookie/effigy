@@ -8,14 +8,15 @@ use effigy_rhai::{
 };
 
 use effigy_cli::{
-    apply_global_json_flag, parse_command, strip_global_json_flags, BundleArgs, BundleSubcommand,
-    ContainerArgs, ContainerDataSubcommand, ContainerSubcommand, DocsArgs, DocsBlockRequirement,
-    DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, InternalRhaiArgs, ServiceArgs,
-    ServiceSubcommand, TaskInvocation, TasksArgs,
+    BundleArgs, BundleSubcommand, ContainerArgs, ContainerDataSubcommand,
+    ContainerSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, GatewayArgs,
+    GatewaySubcommand, InternalRhaiArgs, ServiceArgs, ServiceSubcommand, TaskInvocation,
+    TasksArgs,
 };
 use serde_json::Value;
 
-use super::command_context::{apply_repo_target_to_embedded_command, EmbeddedRepoOverrideMode};
+use super::command_context::EmbeddedRepoOverrideMode;
+use super::embedded_runner::parse_embedded_command;
 use super::error::RunnerError;
 use super::execute::api::run_manifest_task_with_cwd;
 pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<String, RunnerError> {
@@ -746,15 +747,17 @@ fn run_effigy_command(
     args: &[String],
     force_json: bool,
 ) -> Result<String, RunnerError> {
-    let (stripped_args, requested_json) = strip_global_json_flags(args.to_vec());
-    let mut command = parse_command(stripped_args)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    command = apply_global_json_flag(command, force_json || requested_json);
-    crate::runner::run_command(apply_repo_target_to_embedded_command(
-        command,
+    crate::runner::embedded_runner::run_embedded_command(
+        repo_root,
+        parse_embedded_command(
+            repo_root,
+            args,
+            force_json,
+            EmbeddedRepoOverrideMode::DefaultIfMissing,
+        )?,
         repo_root,
         EmbeddedRepoOverrideMode::DefaultIfMissing,
-    ))
+    )
 }
 fn run_container_helper(
     repo_root: &Path,

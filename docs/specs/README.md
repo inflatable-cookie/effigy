@@ -57,4 +57,4 @@ Recently completed:
 `g03.011` is the active strict lane.
 
 Execute
-[`batch-cards/327-implement-shared-embedded-runner-foundation.md`](./batch-cards/327-implement-shared-embedded-runner-foundation.md).
+[`batch-cards/328-decide-post-embedded-runner-foundation-boundary.md`](./batch-cards/328-decide-post-embedded-runner-foundation-boundary.md).

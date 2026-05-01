@@ -6,7 +6,7 @@ use std::process::{Child, Command as ProcessCommand};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use effigy_cli::{parse_command, Command, TaskInvocation};
+use effigy_cli::{Command, TaskInvocation};
 use effigy_core::shell::with_local_node_bin_path;
 use effigy_env::resolver::ResolvedEnv;
 use effigy_env::secret::SecretString;
@@ -19,8 +19,9 @@ use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
 use super::super::cache::ops::update_task_cache_entry;
 use super::context::ExecutionTaskContext;
 use super::preflight::ExecutionPreflight;
-use crate::runner::command_context::{
-    apply_repo_target_to_embedded_command, EmbeddedRepoOverrideMode,
+use crate::runner::command_context::EmbeddedRepoOverrideMode;
+use crate::runner::embedded_runner::{
+    parse_embedded_command, run_embedded_command, run_embedded_task,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::script_command::execute_repo_rhai_script;
@@ -347,13 +348,18 @@ fn run_single_step(
         StepAction::Task { invocation, cwd } => {
             ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
             let _env_guard = ScopedEnvOverride::set(&step.env);
-            let output = super::entry::run_manifest_task_with_cwd(invocation, cwd.to_path_buf())?;
+            let output = run_embedded_task(invocation, cwd)?;
             render_nested_output(&output)
         }
         StepAction::Builtin { command, cwd } => {
             ensure_timeout_supported(&step.action, step.policy.timeout_ms)?;
             let _env_guard = ScopedEnvOverride::set(&step.env);
-            let output = crate::runner::entrypoints::run_command_with_cwd(command.clone(), cwd)?;
+            let output = run_embedded_command(
+                &selection.catalog.catalog_root,
+                command.clone(),
+                cwd,
+                EmbeddedRepoOverrideMode::Force,
+            )?;
             render_nested_output(&output)
         }
         StepAction::Rhai { path } => {
@@ -514,13 +520,7 @@ fn parse_builtin_step_command(
 ) -> Result<Command, RunnerError> {
     let mut argv = vec![task_name.to_owned()];
     argv.extend(args.iter().cloned());
-    let command =
-        parse_command(argv).map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    Ok(apply_repo_target_to_embedded_command(
-        command,
-        repo_root,
-        EmbeddedRepoOverrideMode::Force,
-    ))
+    parse_embedded_command(repo_root, &argv, false, EmbeddedRepoOverrideMode::Force)
 }
 
 fn run_shell_step_with_retry(

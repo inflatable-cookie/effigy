@@ -13,6 +13,10 @@ During v0.x, MINOR bumps may include breaking changes.
   and secret wiring explicit instead of guessed.
 
 ### Fixed
+- Bootstrap task dispatch, Rhai `run_effigy_command(...)`, and run-array
+  builtin replay now share one embedded-runner foundation for nested command
+  parsing, repo targeting, JSON propagation, and dispatch instead of keeping
+  separate local replay paths.
 - Interactive workspace shells and seeded task shells now share one ownership
   classifier for adopted versus session-owned runtimes. Direct
   `effigy workspace` entry and overlapping `stay_in_shell` / managed seeded

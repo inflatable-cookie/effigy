@@ -15,6 +15,7 @@ mod deploy_command;
 mod distribution_command;
 mod docs_command;
 mod doctor_ports;
+mod embedded_runner;
 mod entrypoints;
 mod error;
 mod exec_command;

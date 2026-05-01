@@ -52,7 +52,7 @@ This lane does not yet own:
 
 ## Current Posture
 
-`strict-ready`
+`active`
 
 The correct implementation order is:
 
@@ -71,8 +71,9 @@ The correct implementation order is:
 
 ## Continuation Chain
 
-1. `327` — implement shared embedded-runner foundation
-2. later — decide post-foundation widening
+1. `327` — complete; Rhai command replay, run-array builtins, and bootstrap
+   task dispatch now share the first embedded-runner spine
+2. `328` — decide post-foundation widening
 
 ## Exit Condition
 
@@ -82,4 +83,5 @@ exception still applies.
 
 ## Next Task
 
-Execute `327` — implement the first bounded shared embedded-runner batch.
+Execute `328` — decide whether `g03.011` widens once more or hands off to
+`g03.012`.
