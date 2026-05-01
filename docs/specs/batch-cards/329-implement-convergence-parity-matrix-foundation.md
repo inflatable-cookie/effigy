@@ -1,6 +1,6 @@
 # 329 Implement Convergence Parity Matrix Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.012`
 Spec: `docs/specs/025-regression-matrix-and-drift-guards-strict-lane.md`
@@ -44,4 +44,4 @@ execution surfaces.
 
 ## Next Task
 
-Execute `329`.
+Execute `330`.

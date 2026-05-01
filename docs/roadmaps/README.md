@@ -69,7 +69,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Active Strict Lane
 
 - `g03.012` is the active strict lane
-- `329` is the current ready batch: implement the convergence parity matrix foundation
+- `330` is the current ready batch: decide the post-parity-matrix boundary
 - `g03.009` is complete
 - `g03.001` is complete
 
@@ -107,7 +107,7 @@ Before rollover:
 
 ## Next Task
 
-Execute the next `g03.012` parity-matrix batch.
+Execute the next `g03.012` drift-guard boundary batch.
 
 
 ## Historical language boundary

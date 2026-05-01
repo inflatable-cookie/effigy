@@ -7,7 +7,9 @@ use super::super::super::exec_command::{
 };
 use super::super::super::locking::io::acquire_scopes;
 use super::super::super::system_command::is_primary_service_running;
-use super::super::api::{resolve_container_execution_binding, ContainerExecutionBinding};
+use super::super::api::{
+    resolve_execution_binding_resolution, ContainerExecutionBinding, ExecutionBindingResolution,
+};
 use super::super::context::ExecutionTaskContext;
 use super::super::planning::ExecutionPreflight;
 use super::super::routing::{
@@ -83,7 +85,7 @@ pub(in crate::runner) fn run_standard_task(
         env_schema_resolved.as_ref().map(|r| r.secret_env());
     let secret_ref = secret_pairs.as_deref();
 
-    let container_binding = resolve_container_execution_binding(
+    let binding_resolution = resolve_execution_binding_resolution(
         selection
             .catalog
             .manifest
@@ -96,13 +98,14 @@ pub(in crate::runner) fn run_standard_task(
         selection.task,
         "standard task execution",
     )?;
-    if let ContainerExecutionBinding::Inline { .. } = &container_binding {
+    let container_binding = binding_resolution.binding();
+    if let ContainerExecutionBinding::Inline { .. } = container_binding {
         return run_inline_workspace_standard_task(
             preflight,
             selection,
             &context,
             secret_ref,
-            &container_binding,
+            &binding_resolution,
         );
     }
 
@@ -132,10 +135,10 @@ pub(in crate::runner) fn run_standard_task(
         routed
     };
 
-    if should_stay_in_workspace_shell(preflight.output_json, selection.task, &container_binding) {
+    if should_stay_in_workspace_shell(preflight.output_json, selection.task, container_binding) {
         return run_workspace_seeded_task_session(
             &selection.catalog.catalog_root,
-            &container_binding,
+            container_binding,
             preflight.runtime_args_raw.repo_override.clone(),
             &preflight.selector.task_name,
             &preflight.runtime_args_exec.passthrough,
@@ -307,13 +310,13 @@ fn run_inline_workspace_standard_task(
     selection: &TaskSelection<'_>,
     context: &ExecutionTaskContext<'_>,
     secret_ref: Option<&[(&str, &SecretString)]>,
-    container_binding: &ContainerExecutionBinding,
+    binding_resolution: &ExecutionBindingResolution,
 ) -> Result<String, RunnerError> {
     let repo_root = &selection.catalog.catalog_root;
-    let policy = container_binding
-        .load_effective_policy(repo_root)?
+    let policy = binding_resolution
+        .effective_policy(repo_root)?
         .ok_or_else(|| RunnerError::task_invocation("missing inline workspace container policy"))?;
-    let working_dir = container_binding
+    let working_dir = binding_resolution
         .exec_working_dir(repo_root)?
         .ok_or_else(|| RunnerError::task_invocation("missing inline workspace exec working dir"))?;
     let _ = activate_inline_workspace_container_runtime(repo_root, &policy)?;

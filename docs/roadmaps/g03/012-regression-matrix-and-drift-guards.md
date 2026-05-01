@@ -62,7 +62,8 @@ This milestone is complete when the convergence lane has executable proof that:
 
 ## Next Task
 
-Execute the first bounded convergence parity matrix batch.
+Decide whether one more bounded drift-guard slice is needed after the first
+parity-matrix foundation.
 
 Once the first matrix and guards are real, decide whether one more bounded
 proof slice is needed before the convergence lane pauses.

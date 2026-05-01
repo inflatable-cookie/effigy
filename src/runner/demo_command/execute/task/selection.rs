@@ -1,12 +1,13 @@
 use super::*;
-use crate::runner::execute::api::{resolve_container_execution_binding, ContainerExecutionBinding};
+use crate::runner::execute::api::{
+    resolve_execution_binding_resolution, ContainerExecutionBinding,
+};
 use crate::runner::managed_shell::{
     managed_readiness_probe_urls, render_inline_compose_command,
     render_inline_managed_lifecycle_command, render_inline_managed_shell_command,
     render_inline_managed_standard_exec_command,
 };
 use effigy_containers::compose::compose_args;
-use effigy_containers::load_container_exec_working_dir;
 use effigy_containers::session::{
     managed_lifecycle_command, managed_shell_command, managed_standard_exec_command,
     resolve_effigy_invocation_prefix,
@@ -149,7 +150,7 @@ fn materialize_demo_special_managed_processes(
     task_name: &str,
 ) -> Result<(), RunnerError> {
     let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
-    let container_binding = resolve_container_execution_binding(
+    let binding_resolution = resolve_execution_binding_resolution(
         None,
         systems,
         containers,
@@ -157,24 +158,13 @@ fn materialize_demo_special_managed_processes(
         task,
         "demo concurrent-runner task materialization",
     )?;
-    let inline_policy = match &container_binding {
-        ContainerExecutionBinding::Inline { .. } => {
-            container_binding.load_effective_policy(repo_root)?
-        }
-        _ => None,
+    let container_binding = binding_resolution.binding();
+    let inline_policy = if binding_resolution.is_inline_container() {
+        binding_resolution.effective_policy(repo_root)?
+    } else {
+        None
     };
-    let container_repo_root = match &container_binding {
-        ContainerExecutionBinding::Inline { .. } => {
-            container_binding.exec_working_dir(repo_root)?
-        }
-        _ => container_binding
-            .requested_container_name()
-            .and_then(|requested_name| {
-                load_container_exec_working_dir(repo_root, requested_name)
-                    .map_err(|error| RunnerError::task_invocation(error.to_string()))
-                    .ok()
-            }),
-    };
+    let container_repo_root = binding_resolution.exec_working_dir(repo_root)?;
     let lifecycle_setup_commands = build_demo_managed_lifecycle_setup_commands(
         plan,
         repo_root,

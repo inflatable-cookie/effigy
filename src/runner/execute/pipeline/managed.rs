@@ -8,7 +8,11 @@ use super::super::super::managed_shell::{
     render_inline_managed_shell_command, render_inline_managed_standard_exec_command,
 };
 use super::super::super::system_command::run_workspace_with_repo_root;
-use super::super::api::{resolve_container_execution_binding, ContainerExecutionBinding};
+use super::super::api::{
+    ensure_inline_workspace_supported, resolve_container_execution_binding,
+    resolve_execution_binding_resolution, ContainerExecutionBinding,
+    InlineWorkspaceCapabilitySurface,
+};
 use super::super::planning::ExecutionPreflight;
 use crate::runner::error::RunnerError;
 use crate::runner::execute::workspace_seeded::{
@@ -19,9 +23,7 @@ use effigy_containers::session::{
     managed_gateway_command, managed_lifecycle_command, managed_lifecycle_shutdown_command,
     managed_shell_command, managed_standard_exec_command, resolve_effigy_invocation_prefix,
 };
-use effigy_containers::{
-    load_container_exec_working_dir, load_container_policy, EffectiveContainerPolicy,
-};
+use effigy_containers::{load_container_policy, EffectiveContainerPolicy};
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
@@ -84,12 +86,12 @@ pub(super) fn run_managed_task(
             )
             .map(Some);
         }
-        if matches!(container_binding, ContainerExecutionBinding::Inline { .. }) {
-            return Err(RunnerError::task_invocation(format!(
-                "task `{}` uses an inline workspace container, but non-managed attached container sessions do not support inline workspace containers yet",
-                preflight.selector.task_name
-            )));
-        }
+        ensure_inline_workspace_supported(
+            &container_binding,
+            InlineWorkspaceCapabilitySurface::ManagedAttachedSession {
+                task_name: &preflight.selector.task_name,
+            },
+        )?;
         return Ok(None);
     };
     if !container_handoff
@@ -192,7 +194,7 @@ fn build_managed_gateway_command(
     task_name: &str,
     selection: &TaskSelection<'_>,
 ) -> Result<String, RunnerError> {
-    let container_binding = resolve_container_execution_binding(
+    let binding_resolution = resolve_execution_binding_resolution(
         selection
             .catalog
             .manifest
@@ -205,14 +207,22 @@ fn build_managed_gateway_command(
         selection.task,
         "managed gateway startup",
     )?;
-    let requested_container_name =
-        container_binding
-            .requested_container_name()
-            .ok_or_else(|| {
-                RunnerError::task_invocation(
-                    "`gateway = true` requires a workspace-backed container binding on the task",
-                )
-            })?;
+    let requested_container_name = match binding_resolution.kind() {
+        super::super::api::ExecutionBindingKind::NamedContainer => {
+            binding_resolution.requested_container_name()
+        }
+        super::super::api::ExecutionBindingKind::InlineContainer => {
+            return Err(RunnerError::task_invocation(
+                "`gateway = true` requires a workspace-backed container binding on the task",
+            ));
+        }
+        super::super::api::ExecutionBindingKind::Host
+        | super::super::api::ExecutionBindingKind::None => {
+            return Err(RunnerError::task_invocation(
+                "`gateway = true` requires a workspace-backed container binding on the task",
+            ));
+        }
+    };
     let policy = effigy_containers::load_container_policy(repo_root, requested_container_name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     if policy.dns_routes.is_empty() {
@@ -350,7 +360,7 @@ fn materialize_special_managed_processes(
 
     let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
     let repo_root = selection.catalog.catalog_root.as_path();
-    let container_binding = resolve_container_execution_binding(
+    let binding_resolution = resolve_execution_binding_resolution(
         selection
             .catalog
             .manifest
@@ -363,16 +373,16 @@ fn materialize_special_managed_processes(
         selection.task,
         "managed process materialization",
     )?;
-    let inline_policy = match &container_binding {
-        ContainerExecutionBinding::Inline { .. } => {
-            container_binding.load_effective_policy(repo_root)?
-        }
-        _ => None,
-    };
-    let named_policy = if inline_policy.is_none() {
-        container_binding.load_effective_policy(repo_root)?
+    let container_binding = binding_resolution.binding();
+    let inline_policy = if binding_resolution.is_inline_container() {
+        binding_resolution.effective_policy(repo_root)?
     } else {
         None
+    };
+    let named_policy = if binding_resolution.is_inline_container() {
+        None
+    } else {
+        binding_resolution.effective_policy(repo_root)?
     };
     if !container_handoff {
         if let Some(policy) = inline_policy.as_ref() {
@@ -388,18 +398,7 @@ fn materialize_special_managed_processes(
     let dns_route_lines = managed_dns_route_lines(inline_policy.as_ref().or(named_policy.as_ref()));
     let readiness_probe_urls =
         managed_readiness_probe_urls(inline_policy.as_ref().or(named_policy.as_ref()));
-    let container_repo_root = match &container_binding {
-        ContainerExecutionBinding::Inline { .. } => {
-            container_binding.exec_working_dir(repo_root)?
-        }
-        _ => container_binding
-            .requested_container_name()
-            .and_then(|requested_name| {
-                load_container_exec_working_dir(repo_root, requested_name)
-                    .map_err(|error| RunnerError::task_invocation(error.to_string()))
-                    .ok()
-            }),
-    };
+    let container_repo_root = binding_resolution.exec_working_dir(repo_root)?;
     for process in &mut plan.processes {
         match process.role {
             ManagedProcessRole::Lifecycle => {

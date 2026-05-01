@@ -8,10 +8,9 @@ use effigy_rhai::{
 };
 
 use effigy_cli::{
-    BundleArgs, BundleSubcommand, ContainerArgs, ContainerDataSubcommand,
-    ContainerSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, GatewayArgs,
-    GatewaySubcommand, InternalRhaiArgs, ServiceArgs, ServiceSubcommand, TaskInvocation,
-    TasksArgs,
+    BundleArgs, BundleSubcommand, ContainerArgs, ContainerDataSubcommand, ContainerSubcommand,
+    DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand,
+    InternalRhaiArgs, ServiceArgs, ServiceSubcommand, TaskInvocation, TasksArgs,
 };
 use serde_json::Value;
 
@@ -749,16 +748,25 @@ fn run_effigy_command(
 ) -> Result<String, RunnerError> {
     crate::runner::embedded_runner::run_embedded_command(
         repo_root,
-        parse_embedded_command(
-            repo_root,
-            args,
-            force_json,
-            EmbeddedRepoOverrideMode::DefaultIfMissing,
-        )?,
+        parse_rhai_embedded_command(repo_root, args, force_json)?,
         repo_root,
         EmbeddedRepoOverrideMode::DefaultIfMissing,
     )
 }
+
+fn parse_rhai_embedded_command(
+    repo_root: &Path,
+    args: &[String],
+    force_json: bool,
+) -> Result<effigy_cli::Command, RunnerError> {
+    parse_embedded_command(
+        repo_root,
+        args,
+        force_json,
+        EmbeddedRepoOverrideMode::DefaultIfMissing,
+    )
+}
+
 fn run_container_helper(
     repo_root: &Path,
     subcommand: ContainerSubcommand,
@@ -772,4 +780,54 @@ fn run_container_helper(
 
 fn map_rhai_error(error: impl std::fmt::Display) -> RunnerError {
     RunnerError::task_invocation(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_rhai_embedded_command;
+    use effigy_cli::{Command, DocsArgs, DocsSubcommand};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn parse_rhai_embedded_command_defaults_repo_override_when_missing() {
+        let command = parse_rhai_embedded_command(
+            Path::new("/tmp/repo"),
+            &["docs".to_owned(), "check-links".to_owned()],
+            false,
+        )
+        .expect("parse rhai embedded command");
+
+        assert!(matches!(
+            command,
+            Command::Docs(DocsArgs {
+                subcommand: DocsSubcommand::CheckLinks { .. },
+                repo_override: Some(path),
+                output_json: false,
+            }) if path == PathBuf::from("/tmp/repo")
+        ));
+    }
+
+    #[test]
+    fn parse_rhai_embedded_command_preserves_explicit_repo_override() {
+        let command = parse_rhai_embedded_command(
+            Path::new("/tmp/repo"),
+            &[
+                "docs".to_owned(),
+                "check-links".to_owned(),
+                "--repo".to_owned(),
+                "/tmp/other".to_owned(),
+            ],
+            false,
+        )
+        .expect("parse rhai embedded command");
+
+        assert!(matches!(
+            command,
+            Command::Docs(DocsArgs {
+                subcommand: DocsSubcommand::CheckLinks { .. },
+                repo_override: Some(path),
+                output_json: false,
+            }) if path == PathBuf::from("/tmp/other")
+        ));
+    }
 }

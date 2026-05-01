@@ -4,7 +4,10 @@ use effigy_manifest::{
     ManifestTaskRunIn,
 };
 
-use super::api::{resolve_container_execution_binding, ContainerExecutionBinding};
+use super::api::{
+    ensure_inline_workspace_supported, resolve_execution_binding_resolution, ExecutionBindingKind,
+    InlineWorkspaceCapabilitySurface,
+};
 use crate::runner::container_runtime::inside_container_handoff;
 use crate::runner::error::RunnerError;
 
@@ -27,7 +30,7 @@ pub(in crate::runner) fn route_standard_task_execution(
         });
     }
 
-    let binding = resolve_container_execution_binding(
+    let binding_resolution = resolve_execution_binding_resolution(
         default_run_in,
         systems,
         containers,
@@ -35,20 +38,23 @@ pub(in crate::runner) fn route_standard_task_execution(
         task,
         "standard task routing",
     )?;
-    if matches!(binding, ContainerExecutionBinding::Inline { .. }) {
-        return Err(RunnerError::task_invocation(format!(
-            "task `{command_name}` standard task routing does not support inline workspace containers"
-        )));
-    }
+    let binding = binding_resolution.binding();
+    ensure_inline_workspace_supported(
+        binding,
+        InlineWorkspaceCapabilitySurface::StandardTaskRouting {
+            task_name: command_name,
+        },
+    )?;
 
     let task_run_in = task.effective_run_in(default_run_in);
-    let binding_is_host = matches!(binding, ContainerExecutionBinding::Host);
-    let explicit_container = match binding {
-        ContainerExecutionBinding::Container { name, .. } => {
-            name.or_else(|| containers.and_then(|config| config.default.clone()))
-        }
-        ContainerExecutionBinding::Inline { .. } => None,
-        ContainerExecutionBinding::Host | ContainerExecutionBinding::None => None,
+    let binding_is_host = binding_resolution.kind() == ExecutionBindingKind::Host;
+    let explicit_container = if binding_resolution.kind() == ExecutionBindingKind::NamedContainer {
+        binding_resolution
+            .requested_container_name()
+            .map(str::to_owned)
+            .or_else(|| containers.and_then(|config| config.default.clone()))
+    } else {
+        None
     };
 
     let (dev_container, target_container, target_primary_service) =
@@ -618,6 +624,6 @@ container = { image = "node:22", mount = "./:/workspace" }
             .expect_err("inline workspace container should not route through legacy path");
         assert!(error
             .to_string()
-            .contains("standard task routing does not support inline workspace containers"));
+            .contains("standard task routing does not support inline workspace containers yet"));
     }
 }

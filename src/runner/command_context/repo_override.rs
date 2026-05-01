@@ -100,6 +100,7 @@ mod tests {
         Command, ContainerArgs, ContainerSubcommand, DeferArgs, DocsArgs, DocsSubcommand,
         TaskInvocation, WorkspaceArgs,
     };
+    use std::fs;
     use std::path::PathBuf;
 
     #[test]
@@ -191,5 +192,48 @@ mod tests {
             Command::Container(args)
                 if args.repo_override == Some(PathBuf::from("/tmp/embedded"))
         ));
+    }
+
+    #[test]
+    fn embedded_repo_target_assignment_has_one_owner() {
+        let runner_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runner");
+        let sentinels = [
+            "Command::Deploy(args) => assign_repo_override",
+            "Command::Container(args) => assign_repo_override",
+            "Command::Tasks(args) => assign_repo_override",
+        ];
+        let mut hits = Vec::new();
+
+        fn walk(dir: &std::path::Path, files: &mut Vec<PathBuf>) {
+            for entry in fs::read_dir(dir).expect("read runner dir") {
+                let entry = entry.expect("dir entry");
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, files);
+                } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                    files.push(path);
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        walk(&runner_root, &mut files);
+        files.sort();
+
+        for path in files {
+            let text = fs::read_to_string(&path).expect("read runner source");
+            if sentinels.iter().all(|sentinel| text.contains(sentinel)) {
+                hits.push(
+                    path.strip_prefix(&runner_root)
+                        .expect("runner-relative path")
+                        .to_path_buf(),
+                );
+            }
+        }
+
+        assert_eq!(
+            hits,
+            vec![PathBuf::from("command_context/repo_override.rs")]
+        );
     }
 }
