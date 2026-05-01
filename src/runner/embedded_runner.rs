@@ -47,7 +47,7 @@ mod tests {
     use super::parse_embedded_command;
     use crate::runner::command_context::EmbeddedRepoOverrideMode;
     use effigy_cli::{Command, DocsArgs, DocsSubcommand};
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     #[test]
     fn parse_embedded_command_defaults_repo_override_when_missing() {
@@ -65,7 +65,7 @@ mod tests {
                 subcommand: DocsSubcommand::CheckLinks { .. },
                 repo_override: Some(path),
                 output_json: false,
-            }) if path == PathBuf::from("/tmp/repo")
+            }) if path == Path::new("/tmp/repo")
         ));
     }
 

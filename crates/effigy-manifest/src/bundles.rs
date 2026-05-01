@@ -488,17 +488,17 @@ fn normalize_bundle_specific_inputs(
         ensure_optional_bundle_string_inputs(
             inputs,
             &[
-            "dirs.docs",
-            "dirs.api",
-            "dirs.client",
-            "dirs.ui",
-            "dirs.front",
-            "dirs.admin",
-            "routes.front",
-            "routes.admin",
-            "routes.api",
-            "sources.underlay",
-            "sources.poodle",
+                "dirs.docs",
+                "dirs.api",
+                "dirs.client",
+                "dirs.ui",
+                "dirs.front",
+                "dirs.admin",
+                "routes.front",
+                "routes.admin",
+                "routes.api",
+                "sources.underlay",
+                "sources.poodle",
             ],
         );
         let host = required_bundle_string(manifest_path, bundle_name, inputs, "host")?;
@@ -511,7 +511,7 @@ fn normalize_bundle_specific_inputs(
                 inputs,
                 output,
                 Value::String(underlay_route_domain(
-                &host,
+                    &host,
                     optional_bundle_string(inputs, input)
                         .as_deref()
                         .or(default_label),
@@ -862,7 +862,11 @@ fn collect_bundle_input_paths(prefix: &str, value: &Value, out: &mut Vec<String>
     }
 }
 
-pub(super) fn insert_bundle_input_value(inputs: &mut BTreeMap<String, Value>, key: &str, value: Value) {
+pub(super) fn insert_bundle_input_value(
+    inputs: &mut BTreeMap<String, Value>,
+    key: &str,
+    value: Value,
+) {
     fn insert_nested_segments(
         table: &mut toml::map::Map<String, Value>,
         segments: &[&str],

@@ -42,16 +42,10 @@ fn read_active_version_file_for(executable: &Path) -> Option<String> {
 fn infer_repo_local_version(executable: &Path) -> Option<String> {
     let repo_root = discover_repo_root_from_executable(executable)?;
     let hash = git_stdout(&repo_root, &["rev-parse", "--short=7", "HEAD"])?;
-    let dirty = git_stdout(
-        &repo_root,
-        &["status", "--porcelain", "--untracked-files=normal"],
-    )
-    .is_some_and(|status| !status.is_empty());
-    let mut rendered = format!("{}+local.{hash}", display_version_prefix(package_version()));
-    if dirty {
-        rendered.push_str(".dirty");
-    }
-    Some(rendered)
+    Some(format!(
+        "{}+local.{hash}",
+        display_version_prefix(package_version())
+    ))
 }
 
 fn discover_repo_root_from_executable(executable: &Path) -> Option<PathBuf> {
@@ -114,13 +108,13 @@ mod tests {
         std::fs::write(&executable, "").expect("write exe");
         std::fs::write(
             active_version_file_for(&executable),
-            " v0.3.1+local.abc123.dirty \n",
+            " v0.3.1+local.abc123 \n",
         )
         .expect("write active version");
 
         assert_eq!(
             read_active_version_file_for(&executable).as_deref(),
-            Some("v0.3.1+local.abc123.dirty")
+            Some("v0.3.1+local.abc123")
         );
 
         std::fs::write(active_version_file_for(&executable), "   \n").expect("write empty");

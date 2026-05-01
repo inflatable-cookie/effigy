@@ -67,9 +67,9 @@ effigy --version
 ```
 
 For local self-built installs, `effigy version` may show a stamped active build
-string such as `v0.3.1+local.abc123` or `.dirty`. Treat `binary.version` /
-release semver as the pinning source of truth; the local suffix is there to
-distinguish working builds while iterating.
+string such as `v0.3.1+local.abc123`. Treat `binary.version` / release semver
+as the pinning source of truth; the local suffix is there to distinguish
+working builds while iterating.
 
 Policy:
 - Pin `EFFIGY_VERSION` in CI variables.

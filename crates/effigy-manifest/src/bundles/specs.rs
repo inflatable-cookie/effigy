@@ -11,10 +11,9 @@ use super::export::{
 };
 use super::{
     bundle_shared_root_path, bundle_source_path, bundle_spec_from_descriptor,
-    derive_bundle_workspace_subdir, optional_bundle_integer, optional_bundle_string,
-    parse_bundle_descriptor_source, render_toml_string_array_lines, render_toml_string_list,
-    required_bundle_string, BundleSpec, ManifestError,
-    insert_bundle_input_value,
+    derive_bundle_workspace_subdir, insert_bundle_input_value, optional_bundle_integer,
+    optional_bundle_string, parse_bundle_descriptor_source, render_toml_string_array_lines,
+    render_toml_string_list, required_bundle_string, BundleSpec, ManifestError,
 };
 
 const DECODELABS_BUNDLE_DESCRIPTOR: &str = include_str!("../../bundles/decodelabs/bundle.toml");
@@ -101,24 +100,20 @@ pub(super) fn resolve_decodelabs_bundle(
     insert_bundle_input_value(
         &mut render_inputs,
         "routes.front",
-        Value::String(
-            optional_bundle_string(inputs, "routes.front").unwrap_or_default(),
-        ),
+        Value::String(optional_bundle_string(inputs, "routes.front").unwrap_or_default()),
     );
     insert_bundle_input_value(
         &mut render_inputs,
         "routes.admin",
         Value::String(
-            optional_bundle_string(inputs, "routes.admin")
-                .unwrap_or_else(|| "admin".to_owned()),
+            optional_bundle_string(inputs, "routes.admin").unwrap_or_else(|| "admin".to_owned()),
         ),
     );
     insert_bundle_input_value(
         &mut render_inputs,
         "routes.api",
         Value::String(
-            optional_bundle_string(inputs, "routes.api")
-                .unwrap_or_else(|| "api".to_owned()),
+            optional_bundle_string(inputs, "routes.api").unwrap_or_else(|| "api".to_owned()),
         ),
     );
     if let Some(port) = zest_port {

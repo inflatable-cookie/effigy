@@ -83,7 +83,7 @@ Companion references:
 
 `binary.version` is the stable release semver. `binary.active_version` and
 `binary.display_version` can include local build identity such as
-`+local.<hash>` or `.dirty`.
+`+local.<hash>`.
 
 ### 2) Tasks (`effigy.tasks.v1`)
 
