@@ -1,6 +1,6 @@
 # 328 Decide Post-Embedded-Runner Foundation Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.011`
 Spec: `docs/specs/024-embedded-command-script-and-bootstrap-convergence-strict-lane.md`
@@ -33,8 +33,8 @@ foundation.
 ## Acceptance Criteria
 
 - the post-`327` gap is explicit
-- the next `g03.011` batch boundary is named clearly enough to execute without
-  reopening the shared embedded-runner contract
+- the lane outcome is explicit enough to either widen cleanly or hand off
+  without reopening the shared embedded-runner contract
 
 ## Validation
 
@@ -42,4 +42,4 @@ foundation.
 
 ## Next Task
 
-Execute `328`.
+Promote `g03.012`.

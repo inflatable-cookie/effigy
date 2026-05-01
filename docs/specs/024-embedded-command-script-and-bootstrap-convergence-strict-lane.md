@@ -1,6 +1,6 @@
 # 024 Embedded Command, Script, And Bootstrap Convergence Strict Lane
 
-Status: active
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.011`
 
@@ -52,7 +52,7 @@ This lane does not yet own:
 
 ## Current Posture
 
-`active`
+`complete`
 
 The correct implementation order is:
 
@@ -73,7 +73,8 @@ The correct implementation order is:
 
 1. `327` — complete; Rhai command replay, run-array builtins, and bootstrap
    task dispatch now share the first embedded-runner spine
-2. `328` — decide post-foundation widening
+2. `328` — complete; bootstrap managed-run synthesis is not a normal embedded
+   replay surface, so the lane hands off to drift guards instead of widening
 
 ## Exit Condition
 
@@ -83,5 +84,4 @@ exception still applies.
 
 ## Next Task
 
-Execute `328` — decide whether `g03.011` widens once more or hands off to
-`g03.012`.
+Promote `g03.012`.

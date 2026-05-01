@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Planned
+Status: Active
 Owner: Platform
 Created: 2026-05-01
 Depends on: 007, 008, 009, 010, 011
@@ -62,5 +62,7 @@ This milestone is complete when the convergence lane has executable proof that:
 
 ## Next Task
 
-Pause the convergence lane on a trustworthy boundary and return focus to the
-active deployment-export queue unless a new parity break reopens it sooner.
+Execute the first bounded convergence parity matrix batch.
+
+Once the first matrix and guards are real, decide whether one more bounded
+proof slice is needed before the convergence lane pauses.
