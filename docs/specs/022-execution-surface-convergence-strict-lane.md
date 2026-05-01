@@ -1,6 +1,6 @@
 # 022 Execution Surface Convergence Strict Lane
 
-Status: active
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.009`
 
@@ -45,7 +45,7 @@ This lane does not yet own:
 
 ## Current Posture
 
-`strict-ready`
+`complete`
 
 The correct implementation order is:
 
@@ -63,8 +63,8 @@ The correct implementation order is:
 
 ## Continuation Chain
 
-1. `324` — implement exec activation convergence foundation
-2. later — decide post-exec-activation widening
+1. `324` — complete; exec activation convergence foundation landed
+2. next planning move — promote `g03.010`
 
 ## Exit Condition
 
@@ -79,4 +79,7 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute `324` — implement the first bounded exec activation convergence batch.
+Promote `g03.010`.
+
+Once non-shell activation is shared, the next honest seam is interactive
+session ownership and lifecycle convergence.

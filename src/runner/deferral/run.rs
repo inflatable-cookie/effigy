@@ -12,7 +12,9 @@ use super::policy::DEFER_DEPTH_ENV;
 use super::trace::render_deferral_trace;
 use crate::runner::container_command::support::validate_running_container_runtime_match;
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME;
-use crate::runner::container_runtime_prep::activate_container_runtime_for_task;
+use crate::runner::container_runtime_prep::{
+    activate_container_runtime_for_task, ActivationRequest, ExecutionSurfaceKind,
+};
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::append_color_exec_env;
 use crate::runner::exec_command::run_compose_exec;
@@ -249,8 +251,12 @@ fn run_deferred_request_with_binding(
             let activation = activate_container_runtime_for_task(
                 &deferral.working_dir,
                 &policy,
-                Some(policy.name.as_str()),
-                Some(deferral.working_dir.clone()),
+                ActivationRequest {
+                    surface: ExecutionSurfaceKind::DeferredTask,
+                    container_name: Some(policy.name.as_str()),
+                    repo_override: Some(deferral.working_dir.clone()),
+                    refresh_host_container_lease: true,
+                },
             )?;
             crate::runner::system_command::ensure_workspace_permissions_ready(
                 &deferral.working_dir,

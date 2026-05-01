@@ -24,6 +24,21 @@ pub(in crate::runner) struct ContainerTaskActivation {
     pub(in crate::runner) refreshed_host_container_lease: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) enum ExecutionSurfaceKind {
+    StandardTask,
+    DeferredTask,
+    ExplicitExec,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) struct ActivationRequest<'a> {
+    pub(in crate::runner) surface: ExecutionSurfaceKind,
+    pub(in crate::runner) container_name: Option<&'a str>,
+    pub(in crate::runner) repo_override: Option<PathBuf>,
+    pub(in crate::runner) refresh_host_container_lease: bool,
+}
+
 pub(in crate::runner) fn ensure_container_runtime_prepared(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -55,14 +70,20 @@ pub(in crate::runner) fn ensure_container_runtime_prepared(
 pub(in crate::runner) fn activate_container_runtime_for_task(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    container_name: Option<&str>,
-    repo_override: Option<PathBuf>,
+    request: ActivationRequest<'_>,
 ) -> Result<ContainerTaskActivation, RunnerError> {
-    let system_was_running =
-        ensure_container_runtime_prepared(repo_root, policy, container_name, repo_override)?;
+    let system_was_running = ensure_container_runtime_prepared(
+        repo_root,
+        policy,
+        request.container_name,
+        request.repo_override,
+    )?;
     ensure_task_container_gateway_ready(repo_root, policy)?;
-    let refreshed_host_container_lease =
-        refresh_host_container_lease_for_task_activation(repo_root, policy, system_was_running)?;
+    let refreshed_host_container_lease = if request.refresh_host_container_lease {
+        refresh_host_container_lease_for_task_activation(repo_root, policy, system_was_running)?
+    } else {
+        false
+    };
     Ok(ContainerTaskActivation {
         system_was_running,
         refreshed_host_container_lease,

@@ -26,8 +26,7 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`022-execution-surface-convergence-strict-lane.md`](./022-execution-surface-convergence-strict-lane.md)
-- [`batch-cards/README.md`](./batch-cards/README.md)
+- none right now
 
 Queued next-lane specs:
 
@@ -39,6 +38,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`022-execution-surface-convergence-strict-lane.md`](./022-execution-surface-convergence-strict-lane.md)
 - [`001-production-deployment-model-and-export-contract-strict-lane.md`](./001-production-deployment-model-and-export-contract-strict-lane.md)
 - [`021-unified-init-and-starter-emission-strict-lane.md`](./021-unified-init-and-starter-emission-strict-lane.md)
 - [`013-dev-front-door-and-managed-lifecycle-strict-lane.md`](./013-dev-front-door-and-managed-lifecycle-strict-lane.md)
@@ -52,7 +52,7 @@ Recently completed:
 
 ## Next Task
 
-`g03.009` is the active strict lane.
+No strict lane is active right now.
 
-Execute
-[`batch-cards/324-implement-exec-activation-convergence-foundation.md`](./batch-cards/324-implement-exec-activation-convergence-foundation.md).
+Promote `g03.010` if the next real move is interactive session ownership and
+lifecycle convergence.

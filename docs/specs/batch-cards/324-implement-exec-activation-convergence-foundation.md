@@ -1,6 +1,6 @@
 # 324 Implement Exec Activation Convergence Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.009`
 Spec: `docs/specs/022-execution-surface-convergence-strict-lane.md`
@@ -41,4 +41,4 @@ activation contract.
 
 ## Next Task
 
-Execute `324`.
+Promote `g03.010`.

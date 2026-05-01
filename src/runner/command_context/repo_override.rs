@@ -50,21 +50,15 @@ pub(in crate::runner) fn apply_repo_target_to_embedded_command(
         Command::Defer(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Exec(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::System(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
-        Command::Workspace(args) => {
-            assign_repo_override(&mut args.repo_override, &repo_root, mode)
-        }
+        Command::Workspace(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Service(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Demo(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Docs(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
-        Command::Contracts(args) => {
-            assign_repo_override(&mut args.repo_override, &repo_root, mode)
-        }
+        Command::Contracts(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Distribution(args) => {
             assign_repo_override(&mut args.repo_override, &repo_root, mode)
         }
-        Command::Container(args) => {
-            assign_repo_override(&mut args.repo_override, &repo_root, mode)
-        }
+        Command::Container(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Release(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Doctor(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Tasks(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
@@ -104,8 +98,7 @@ mod tests {
     use super::{apply_repo_target_to_embedded_command, EmbeddedRepoOverrideMode};
     use effigy_cli::{
         Command, ContainerArgs, ContainerSubcommand, DeferArgs, DocsArgs, DocsSubcommand,
-        TaskInvocation,
-        WorkspaceArgs,
+        TaskInvocation, WorkspaceArgs,
     };
     use std::path::PathBuf;
 

@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-05-01
 Depends on: 007, 008
