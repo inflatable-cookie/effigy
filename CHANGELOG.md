@@ -11,6 +11,8 @@ During v0.x, MINOR bumps may include breaking changes.
   deployment bundle for Underlay repos: service-local `railway.toml` files
   plus a machine-facing `report.json` that leaves domains, Postgres creation,
   and secret wiring explicit instead of guessed.
+- Rhai scripts now have `run_process_tee(...)` for commands that should stream
+  live output and still return captured `stdout` / `stderr` to the script.
 
 ### Fixed
 - Local `bootstrap:local` installs now write a sibling active-version stamp

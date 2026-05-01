@@ -261,23 +261,25 @@ fn style_prefix(prefix: &str, color_enabled: bool, style: Style) -> String {
 }
 
 fn process_result_map(output: std::process::Output) -> Map {
+    process_status_and_streams_map(
+        output.status.code().unwrap_or(-1).into(),
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    )
+}
+
+fn process_status_and_streams_map(
+    status: i64,
+    success: bool,
+    stdout: String,
+    stderr: String,
+) -> Map {
     let mut map = Map::new();
-    map.insert(
-        "status".into(),
-        Dynamic::from_int(output.status.code().unwrap_or(-1).into()),
-    );
-    map.insert(
-        "success".into(),
-        Dynamic::from_bool(output.status.success()),
-    );
-    map.insert(
-        "stdout".into(),
-        String::from_utf8_lossy(&output.stdout).to_string().into(),
-    );
-    map.insert(
-        "stderr".into(),
-        String::from_utf8_lossy(&output.stderr).to_string().into(),
-    );
+    map.insert("status".into(), Dynamic::from_int(status));
+    map.insert("success".into(), Dynamic::from_bool(success));
+    map.insert("stdout".into(), stdout.into());
+    map.insert("stderr".into(), stderr.into());
     map
 }
 
@@ -875,15 +877,87 @@ fn run_process_streaming_with_pty(
         .map_err(|_| rhai_runtime_error("pty reader thread panicked"))?
         .map_err(|error| rhai_runtime_error(error.to_string()))?;
 
-    let mut map = Map::new();
-    map.insert(
-        "status".into(),
-        Dynamic::from_int(status.exit_code().into()),
-    );
-    map.insert("success".into(), Dynamic::from_bool(status.success()));
-    map.insert("stdout".into(), String::new().into());
-    map.insert("stderr".into(), String::new().into());
-    Ok(map)
+    Ok(process_status_and_streams_map(
+        status.exit_code().into(),
+        status.success(),
+        String::new(),
+        String::new(),
+    ))
+}
+
+fn run_process_teeing(program: &str, args: &[String], cwd: &Path) -> Result<Map, Box<EvalAltResult>> {
+    use std::io::{Read, Write};
+
+    let mut process = ProcessCommand::new(program);
+    process.args(args);
+    process.current_dir(cwd);
+    process.stdin(Stdio::null());
+    process.stdout(Stdio::piped());
+    process.stderr(Stdio::piped());
+    with_local_node_bin_path(&mut process, cwd);
+
+    let mut child = process
+        .spawn()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+
+    let mut stdout_reader = child
+        .stdout
+        .take()
+        .ok_or_else(|| rhai_runtime_error("failed to capture stdout pipe"))?;
+    let stdout_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut stdout = std::io::stdout().lock();
+        let mut captured = Vec::new();
+        let mut buffer = [0_u8; 8192];
+        loop {
+            let read = stdout_reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            stdout.write_all(&buffer[..read])?;
+            stdout.flush()?;
+            captured.extend_from_slice(&buffer[..read]);
+        }
+        Ok(captured)
+    });
+
+    let mut stderr_reader = child
+        .stderr
+        .take()
+        .ok_or_else(|| rhai_runtime_error("failed to capture stderr pipe"))?;
+    let stderr_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut stderr = std::io::stderr().lock();
+        let mut captured = Vec::new();
+        let mut buffer = [0_u8; 8192];
+        loop {
+            let read = stderr_reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            stderr.write_all(&buffer[..read])?;
+            stderr.flush()?;
+            captured.extend_from_slice(&buffer[..read]);
+        }
+        Ok(captured)
+    });
+
+    let status = child
+        .wait()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let stdout = stdout_thread
+        .join()
+        .map_err(|_| rhai_runtime_error("stdout tee thread panicked"))?
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let stderr = stderr_thread
+        .join()
+        .map_err(|_| rhai_runtime_error("stderr tee thread panicked"))?
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+
+    Ok(process_status_and_streams_map(
+        status.code().unwrap_or(-1).into(),
+        status.success(),
+        String::from_utf8_lossy(&stdout).to_string(),
+        String::from_utf8_lossy(&stderr).to_string(),
+    ))
 }
 
 fn rhai_runtime_error(message: impl Into<String>) -> Box<EvalAltResult> {

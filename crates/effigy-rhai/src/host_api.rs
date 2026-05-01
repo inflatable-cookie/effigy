@@ -19,6 +19,7 @@ use super::{
     register_feature_options, register_feature_string, register_feature_string_options,
     register_feature_three_strings, register_feature_two_strings, reject_recursive_effigy_process,
     resolve_runtime_path, rhai_runtime_error, run_http_request, run_process_streaming,
+    run_process_teeing,
     search_files, with_local_node_bin_path, HostCallbacks, ScriptContext,
 };
 
@@ -501,6 +502,15 @@ pub(super) fn register_host_api(
             reject_recursive_effigy_process(program.as_str())?;
             let args = dynamic_array_to_strings(&args)?;
             run_process_streaming(program.as_str(), &args, &process_context.cwd)
+        },
+    );
+    let process_context = context.clone();
+    engine.register_fn(
+        "run_process_tee",
+        move |program: ImmutableString, args: Array| -> Result<Map, Box<EvalAltResult>> {
+            reject_recursive_effigy_process(program.as_str())?;
+            let args = dynamic_array_to_strings(&args)?;
+            run_process_teeing(program.as_str(), &args, &process_context.cwd)
         },
     );
     engine.register_fn(

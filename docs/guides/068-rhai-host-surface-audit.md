@@ -7,10 +7,12 @@ Policy:
 
 - Prefer typed helpers such as `container_exec(...)` and `bundle_export(...)`.
 - Do not use `run_process("effigy", ...)` in first-party Rhai scripts.
-- `run_process("effigy", ...)` and `run_process_stream("effigy", ...)` are
-  rejected at runtime; add a typed host helper instead.
-- First-party `run_process(...)` and `run_process_stream(...)` use is covered
-  by a static allowlist test. New entries should be rare and justified.
+- `run_process("effigy", ...)`, `run_process_stream("effigy", ...)`, and
+  `run_process_tee("effigy", ...)` are rejected at runtime; add a typed host
+  helper instead.
+- First-party `run_process(...)`, `run_process_stream(...)`, and
+  `run_process_tee(...)` use is covered by a static allowlist test. New
+  entries should be rare and justified.
 - Treat `run_effigy(...)` and `run_effigy_json(...)` as escape hatches only.
 - Keep long-running interactive flows CLI-first unless they gain a script-safe mode.
 
@@ -24,7 +26,7 @@ Policy:
 | Path and string utilities | `path_join`, `path_file_name`, `trim_string`, `string_contains`, `string_starts_with`, `string_ends_with`, `replace_string`, `split_lines`, `shell_quote_string` | Exposed |
 | File and directory operations | `make_temp_dir`, `read_file`, `read_lines`, `write_file`, `append_file`, `write_lines`, `copy_file`, `copy_if_missing`, `env_file_entries`, `env_file_get`, `env_file_remove`, `env_file_set`, `move_path`, `replace_in_file`, `path_exists`, `is_dir`, `is_file`, `is_symlink`, `list_dir`, `create_dir`, `remove_path`, `create_symlink`, `search_files` | Exposed |
 | Structured data | `json_parse`, `json_stringify`, `toml_parse`, `toml_stringify` | Exposed |
-| Host subprocess execution | `run_process`, `run_process_stream` | Exposed |
+| Host subprocess execution | `run_process`, `run_process_stream`, `run_process_tee` | Exposed |
 | Basic HTTP | `http_get`, `http_post`, `http_request`, `http_download` | Exposed |
 
 | Surface | Rhai helpers | Status |
@@ -66,6 +68,13 @@ Process-like helpers return:
   stderr: "...",
 }
 ```
+
+For subprocess helpers:
+
+- `run_process(...)` captures output and returns it after exit
+- `run_process_stream(...)` streams output live and does not capture it
+- `run_process_tee(...)` streams output live and also returns captured
+  `stdout` / `stderr`
 
 Command/report helpers return the same JSON payload as their CLI `--json`
 counterpart, converted into a Rhai map/array value.

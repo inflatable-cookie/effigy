@@ -70,7 +70,7 @@ let reset_sql = "DROP DATABASE IF EXISTS `" + database + "`; CREATE DATABASE `" 
 
 log("[check] resetting database " + database);
 
-let reset_result = run_process("sh", [
+let reset_result = run_process_tee("sh", [
     "-lc",
     mysql_prefix + " -e " + shell_quote_string(reset_sql),
 ]);
@@ -88,7 +88,7 @@ if trim_string(reset_output) != "" {
 
 log("[check] importing latest SQL dump " + dump_name);
 
-let import_result = run_process("sh", [
+let import_result = run_process_tee("sh", [
     "-lc",
     mysql_prefix + " " + shell_quote_string(database) + " < " + shell_quote_string(dump_container_path),
 ]);
