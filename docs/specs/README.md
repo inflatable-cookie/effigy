@@ -26,7 +26,8 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- none right now
+- [`022-execution-surface-convergence-strict-lane.md`](./022-execution-surface-convergence-strict-lane.md)
+- [`batch-cards/README.md`](./batch-cards/README.md)
 
 Queued next-lane specs:
 
@@ -51,4 +52,7 @@ Recently completed:
 
 ## Next Task
 
-No active strict lane. Stop in planning until the next milestone needs one.
+`g03.009` is the active strict lane.
+
+Execute
+[`batch-cards/324-implement-exec-activation-convergence-foundation.md`](./batch-cards/324-implement-exec-activation-convergence-foundation.md).
