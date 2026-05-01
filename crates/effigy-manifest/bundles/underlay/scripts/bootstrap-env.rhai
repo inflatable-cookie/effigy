@@ -81,17 +81,6 @@ fn secondary_database_name() {
     return "";
 }
 
-fn command_stdout(program, args, label) {
-    let result = run_process(program, args);
-    if result["status"] != 0 {
-        throw label
-            + " failed"
-            + "\nstdout:\n" + result["stdout"].to_string()
-            + "\nstderr:\n" + result["stderr"].to_string();
-    }
-    return trim_string(result["stdout"]);
-}
-
 fn generated_jwt_env(_api_dir) {
     let jwt = generate_jwt_env_keys();
     let private_key = trim_string(jwt["private_key"]);
@@ -107,11 +96,7 @@ fn ensure_env_file(path, lines, label) {
         log("[info] preserving existing " + label + " at " + path);
         return;
     }
-    let contents = "";
-    for line in lines {
-        contents += line + "\n";
-    }
-    write_file(path, contents);
+    write_lines(path, lines);
     log("[ok] created " + label + " at " + path);
 }
 

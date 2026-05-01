@@ -190,6 +190,83 @@ fn execute_rhai_script_exposes_trim_string_helper() {
 }
 
 #[test]
+fn execute_rhai_script_exposes_low_level_string_and_file_helpers() {
+    let root = temp_root("low-level-helpers");
+    fs::write(root.join("source.txt"), "alpha\nbeta\n").expect("source");
+    fs::write(root.join("replace.txt"), "host=example.test\nmode=dev\n").expect("replace");
+    fs::write(
+        root.join("app.env"),
+        "# comment\nHOST=example.test\nexport MODE=dev\n",
+    )
+    .expect("env file");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            if !string_contains("alpha beta", "beta") { throw("contains"); }
+            if !string_starts_with("alpha beta", "alpha") { throw("starts"); }
+            if !string_ends_with("alpha beta", "beta") { throw("ends"); }
+            if replace_string("alpha beta", "beta", "gamma") != "alpha gamma" { throw("replace"); }
+
+            let inline = split_lines("one\ntwo\n");
+            if inline.len() != 2 || inline[0] != "one" || inline[1] != "two" { throw("split"); }
+
+            let copied = copy_file("source.txt", "nested/copied.txt");
+            if copied <= 0 { throw("copy size"); }
+            if !is_dir("nested") { throw("nested dir"); }
+
+            let lines = read_lines("nested/copied.txt");
+            if lines.len() != 2 || lines[0] != "alpha" || lines[1] != "beta" { throw("read lines"); }
+
+            move_path("nested/copied.txt", "nested/moved.txt");
+            if path_exists("nested/copied.txt") { throw("copy still exists"); }
+            if !is_file("nested/moved.txt") { throw("move target"); }
+
+            if !copy_if_missing("source.txt", "nested/missing.txt") { throw("copy missing"); }
+            if copy_if_missing("source.txt", "nested/missing.txt") { throw("copy existing"); }
+
+            if !replace_in_file("replace.txt", "example.test", "local.test") { throw("replace in file"); }
+            if replace_in_file("replace.txt", "missing", "value") { throw("replace absent"); }
+
+            if env_file_get("app.env", "HOST") != "example.test" { throw("env get host"); }
+            if env_file_get("app.env", "MISSING") != "" { throw("env get missing"); }
+            let before = env_file_entries("app.env");
+            if before["HOST"] != "example.test" || before["MODE"] != "dev" { throw("env entries before"); }
+            if !env_file_set("app.env", "HOST", "local.test") { throw("env set host"); }
+            if !env_file_set("app.env", "APP_NAME", "Cumberland Local") { throw("env append"); }
+            if env_file_set("app.env", "APP_NAME", "Cumberland Local") { throw("env unchanged"); }
+            if env_file_get("app.env", "HOST") != "local.test" { throw("env get updated"); }
+            if env_file_get("app.env", "APP_NAME") != "Cumberland Local" { throw("env get appended"); }
+            if !env_file_remove("app.env", "MODE") { throw("env remove"); }
+            if env_file_remove("app.env", "MODE") { throw("env remove missing"); }
+            let after = env_file_entries("app.env");
+            if after.contains("MODE") { throw("env entries removed"); }
+            if after["HOST"] != "local.test" || after["APP_NAME"] != "Cumberland Local" { throw("env entries after"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+    assert_eq!(
+        fs::read_to_string(context.cwd.join("nested/moved.txt")).expect("read moved"),
+        "alpha\nbeta\n"
+    );
+    assert_eq!(
+        fs::read_to_string(context.cwd.join("nested/missing.txt")).expect("read missing copy"),
+        "alpha\nbeta\n"
+    );
+    assert_eq!(
+        fs::read_to_string(context.cwd.join("replace.txt")).expect("read replace"),
+        "host=local.test\nmode=dev\n"
+    );
+    assert_eq!(
+        fs::read_to_string(context.cwd.join("app.env")).expect("read env file"),
+        "# comment\nHOST=local.test\nAPP_NAME=\"Cumberland Local\"\n"
+    );
+}
+
+#[test]
 fn execute_rhai_script_exposes_shell_quote_string_helper() {
     let root = temp_root("shell-quote-string");
     let context = ScriptContext {
@@ -336,6 +413,45 @@ fn execute_rhai_script_can_make_http_requests() {
     );
 
     execute_rhai_script(&context, &script, &[], &callbacks()).expect("execute");
+    server.join().expect("server");
+}
+
+#[test]
+fn execute_rhai_script_can_download_http_responses_to_a_file() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buffer = [0; 1024];
+        let _ = stream.read(&mut buffer).expect("read request");
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\nseed-env",
+            )
+            .expect("write response");
+    });
+    let root = temp_root("http-download");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = format!(
+        r#"
+            let response = http_download("http://{addr}/file", "downloads/template.env");
+            if response["status"] != 200 {{ throw("status"); }}
+            if response["success"] != true {{ throw("success"); }}
+            if response["size"] != 8 {{ throw("size"); }}
+            if path_file_name(response["path"].to_string()) != "template.env" {{ throw("path"); }}
+        "#
+    );
+
+    execute_rhai_script(&context, &script, &[], &callbacks()).expect("execute");
+    assert_eq!(
+        fs::read_to_string(context.cwd.join("downloads/template.env")).expect("downloaded file"),
+        "seed-env"
+    );
     server.join().expect("server");
 }
 
@@ -526,15 +642,18 @@ fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
         "scripts/rhai/rehearse-linux-release-container.rhai" => {
             contents.contains("run_process(\n    \"colima\",")
         }
-        "crates/effigy-catalog/starters/underlay/scripts/dev/ui-setup.rhai" => {
+        "crates/effigy-catalog/starters/underlay/scripts/dev/ui-setup.rhai"
+        | "crates/effigy-manifest/bundles/underlay/scripts/dev/ui-setup.rhai" => {
             contents.contains("run_process_stream(\"sh\", [\"-lc\", shell])")
         }
-        "crates/effigy-catalog/starters/underlay/scripts/bootstrap-env.rhai" => {
+        "crates/effigy-catalog/starters/underlay/scripts/bootstrap-env.rhai"
+        | "crates/effigy-manifest/bundles/underlay/scripts/bootstrap-env.rhai" => {
             contents.contains("run_process(program, args)")
                 || contents.contains("run_process(\n        \"cargo\",")
                 || contents.contains("run_process(\"openssl\",")
         }
-        "crates/effigy-catalog/starters/decodelabs/scripts/seed-latest-db-dump.rhai" => {
+        "crates/effigy-catalog/starters/decodelabs/scripts/seed-latest-db-dump.rhai"
+        | "crates/effigy-manifest/bundles/decodelabs/scripts/seed-latest-db-dump.rhai" => {
             contents.contains("run_process(\"sh\", [")
         }
         "scripts/rhai/build-local-bin.rhai" => {

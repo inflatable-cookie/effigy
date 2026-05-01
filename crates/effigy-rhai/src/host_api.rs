@@ -8,7 +8,9 @@ use std::time::Duration;
 use chrono::Utc;
 use effigy_core::path_error_text::{failed_to_read_path, failed_to_write_path};
 use effigy_core::shell::shell_quote;
+use effigy_env::dotenv::parse_dotenv_entries;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map};
+use serde_json::Value;
 
 use super::{
     allocate_temp_dir, dynamic_array_to_strings, effigy_result_map, emit_host_log,
@@ -70,6 +72,45 @@ pub(super) fn register_host_api(
             value.to_string().trim().to_owned()
         }
     });
+    engine.register_fn(
+        "string_contains",
+        |value: Dynamic, needle: ImmutableString| -> bool {
+            (!value.is_unit()) && value.to_string().contains(needle.as_str())
+        },
+    );
+    engine.register_fn(
+        "string_starts_with",
+        |value: Dynamic, prefix: ImmutableString| -> bool {
+            (!value.is_unit()) && value.to_string().starts_with(prefix.as_str())
+        },
+    );
+    engine.register_fn(
+        "string_ends_with",
+        |value: Dynamic, suffix: ImmutableString| -> bool {
+            (!value.is_unit()) && value.to_string().ends_with(suffix.as_str())
+        },
+    );
+    engine.register_fn(
+        "replace_string",
+        |value: Dynamic, from: ImmutableString, to: ImmutableString| -> String {
+            if value.is_unit() {
+                String::new()
+            } else {
+                value.to_string().replace(from.as_str(), to.as_str())
+            }
+        },
+    );
+    engine.register_fn("split_lines", |value: Dynamic| -> Array {
+        if value.is_unit() {
+            Array::new()
+        } else {
+            value
+                .to_string()
+                .lines()
+                .map(|line| line.to_owned().into())
+                .collect()
+        }
+    });
     engine.register_fn("shell_quote_string", |value: Dynamic| -> String {
         if value.is_unit() {
             shell_quote("")
@@ -103,6 +144,19 @@ pub(super) fn register_host_api(
             let path = resolve_runtime_path(&file_context.cwd, path.as_str());
             std::fs::read_to_string(&path)
                 .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))
+        },
+    );
+    let file_context = context.clone();
+    engine.register_fn(
+        "read_lines",
+        move |path: ImmutableString| -> Result<Array, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            let contents = std::fs::read_to_string(&path)
+                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
+            Ok(contents
+                .lines()
+                .map(|line| line.to_owned().into())
+                .collect())
         },
     );
     let file_context = context.clone();
@@ -159,8 +213,50 @@ pub(super) fn register_host_api(
         },
     );
     let file_context = context.clone();
+    engine.register_fn(
+        "copy_file",
+        move |source: ImmutableString,
+              destination: ImmutableString|
+              -> Result<i64, Box<EvalAltResult>> {
+            let source = resolve_runtime_path(&file_context.cwd, source.as_str());
+            let destination = resolve_runtime_path(&file_context.cwd, destination.as_str());
+            if let Some(parent) = destination.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| rhai_runtime_error(failed_to_write_path(parent, error)))?;
+            }
+            let copied = std::fs::copy(&source, &destination)
+                .map_err(|error| rhai_runtime_error(failed_to_write_path(&destination, error)))?;
+            i64::try_from(copied)
+                .map_err(|_| rhai_runtime_error("copied file size exceeded Rhai integer range"))
+        },
+    );
+    let file_context = context.clone();
+    engine.register_fn(
+        "copy_if_missing",
+        move |source: ImmutableString,
+              destination: ImmutableString|
+              -> Result<bool, Box<EvalAltResult>> {
+            let source = resolve_runtime_path(&file_context.cwd, source.as_str());
+            let destination = resolve_runtime_path(&file_context.cwd, destination.as_str());
+            if destination.exists() {
+                return Ok(false);
+            }
+            if let Some(parent) = destination.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| rhai_runtime_error(failed_to_write_path(parent, error)))?;
+            }
+            std::fs::copy(&source, &destination)
+                .map_err(|error| rhai_runtime_error(failed_to_write_path(&destination, error)))?;
+            Ok(true)
+        },
+    );
+    let file_context = context.clone();
     engine.register_fn("path_exists", move |path: ImmutableString| -> bool {
         resolve_runtime_path(&file_context.cwd, path.as_str()).exists()
+    });
+    let file_context = context.clone();
+    engine.register_fn("is_dir", move |path: ImmutableString| -> bool {
+        resolve_runtime_path(&file_context.cwd, path.as_str()).is_dir()
     });
     let file_context = context.clone();
     engine.register_fn(
@@ -260,6 +356,94 @@ pub(super) fn register_host_api(
             }
         },
     );
+    let file_context = context.clone();
+    engine.register_fn(
+        "move_path",
+        move |source: ImmutableString,
+              destination: ImmutableString|
+              -> Result<(), Box<EvalAltResult>> {
+            let source = resolve_runtime_path(&file_context.cwd, source.as_str());
+            let destination = resolve_runtime_path(&file_context.cwd, destination.as_str());
+            if let Some(parent) = destination.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| rhai_runtime_error(failed_to_write_path(parent, error)))?;
+            }
+            std::fs::rename(&source, &destination)
+                .map_err(|error| rhai_runtime_error(failed_to_write_path(&destination, error)))
+        },
+    );
+    let file_context = context.clone();
+    engine.register_fn(
+        "replace_in_file",
+        move |path: ImmutableString,
+              from: ImmutableString,
+              to: ImmutableString|
+              -> Result<bool, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            let contents = std::fs::read_to_string(&path)
+                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
+            let replaced = contents.replace(from.as_str(), to.as_str());
+            if replaced == contents {
+                return Ok(false);
+            }
+            std::fs::write(&path, replaced)
+                .map_err(|error| rhai_runtime_error(failed_to_write_path(&path, error)))?;
+            Ok(true)
+        },
+    );
+    let file_context = context.clone();
+    engine.register_fn(
+        "env_file_get",
+        move |path: ImmutableString, key: ImmutableString| -> Result<String, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            if !path.exists() {
+                return Ok(String::new());
+            }
+            let contents = std::fs::read_to_string(&path)
+                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
+            Ok(parse_dotenv_entries(&contents)
+                .get(key.as_str())
+                .cloned()
+                .unwrap_or_default())
+        },
+    );
+    let file_context = context.clone();
+    engine.register_fn(
+        "env_file_entries",
+        move |path: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            if !path.exists() {
+                return Ok(Map::new());
+            }
+            let contents = std::fs::read_to_string(&path)
+                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
+            let mut map = Map::new();
+            for (key, value) in parse_dotenv_entries(&contents) {
+                map.insert(key.into(), value.into());
+            }
+            Ok(map)
+        },
+    );
+    let file_context = context.clone();
+    engine.register_fn(
+        "env_file_set",
+        move |path: ImmutableString,
+              key: ImmutableString,
+              value: ImmutableString|
+              -> Result<bool, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            let changed = update_env_file_entry(&path, key.as_str(), value.as_str())?;
+            Ok(changed)
+        },
+    );
+    let file_context = context.clone();
+    engine.register_fn(
+        "env_file_remove",
+        move |path: ImmutableString, key: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            remove_env_file_entry(&path, key.as_str())
+        },
+    );
 
     engine.register_fn(
         "json_parse",
@@ -344,6 +528,28 @@ pub(super) fn register_host_api(
         "http_post",
         move |url: ImmutableString, options: Map| -> Result<Map, Box<EvalAltResult>> {
             run_http_request("POST", url.as_str(), options)
+        },
+    );
+    let download_context = context.clone();
+    engine.register_fn(
+        "http_download",
+        move |url: ImmutableString, path: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+            download_http_to_path(
+                &download_context.cwd,
+                url.as_str(),
+                path.as_str(),
+                Map::new(),
+            )
+        },
+    );
+    let download_context = context.clone();
+    engine.register_fn(
+        "http_download",
+        move |url: ImmutableString,
+              path: ImmutableString,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
+            download_http_to_path(&download_context.cwd, url.as_str(), path.as_str(), options)
         },
     );
 
@@ -869,4 +1075,228 @@ pub(super) fn register_host_api(
             .map_err(rhai_runtime_error)
         },
     );
+}
+
+fn download_http_to_path(
+    cwd: &Path,
+    url: &str,
+    path: &str,
+    options: Map,
+) -> Result<Map, Box<EvalAltResult>> {
+    let options = rhai_map_to_json_object(options)?;
+    let timeout_ms = json_object_usize_option(&options, "timeout_ms")?.unwrap_or(30_000);
+    let mut builder =
+        reqwest::blocking::Client::builder().timeout(Duration::from_millis(timeout_ms as u64));
+    if json_object_bool_option(&options, "danger_accept_invalid_certs")?.unwrap_or(false) {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+    let client = builder
+        .build()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let mut request = client.get(url);
+    if let Some(headers) = options.get("headers") {
+        let headers = headers.as_object().ok_or_else(|| {
+            rhai_runtime_error("`headers` must be a map of string names to string values")
+        })?;
+        for (name, value) in headers {
+            let value = value
+                .as_str()
+                .ok_or_else(|| rhai_runtime_error("`headers` values must be strings"))?;
+            request = request.header(name, value);
+        }
+    }
+    let response = request
+        .send()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let status = response.status();
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_owned(),
+                Value::String(value.to_str().unwrap_or_default().to_owned()),
+            )
+        })
+        .collect::<serde_json::Map<String, Value>>();
+    let bytes = response
+        .bytes()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let path = resolve_runtime_path(cwd, path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| rhai_runtime_error(failed_to_write_path(parent, error)))?;
+    }
+    std::fs::write(&path, &bytes)
+        .map_err(|error| rhai_runtime_error(failed_to_write_path(&path, error)))?;
+
+    let mut map = Map::new();
+    map.insert(
+        "status".into(),
+        Dynamic::from_int(i64::from(status.as_u16())),
+    );
+    map.insert("success".into(), Dynamic::from_bool(status.is_success()));
+    map.insert("path".into(), path.display().to_string().into());
+    map.insert(
+        "size".into(),
+        Dynamic::from_int(
+            i64::try_from(bytes.len())
+                .map_err(|_| rhai_runtime_error("download size exceeded Rhai integer range"))?,
+        ),
+    );
+    map.insert(
+        "headers".into(),
+        rhai::serde::to_dynamic(Value::Object(headers))
+            .map_err(|error| rhai_runtime_error(error.to_string()))?,
+    );
+    Ok(map)
+}
+
+fn rhai_map_to_json_object(
+    options: Map,
+) -> Result<serde_json::Map<String, Value>, Box<EvalAltResult>> {
+    let value: Value = rhai::serde::from_dynamic(&Dynamic::from_map(options))
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| rhai_runtime_error("expected options map"))
+}
+
+fn json_object_bool_option(
+    options: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<bool>, Box<EvalAltResult>> {
+    match options.get(key) {
+        Some(value) => value
+            .as_bool()
+            .map(Some)
+            .ok_or_else(|| rhai_runtime_error(format!("`{key}` must be a boolean"))),
+        None => Ok(None),
+    }
+}
+
+fn json_object_usize_option(
+    options: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<usize>, Box<EvalAltResult>> {
+    match options.get(key) {
+        Some(value) => value
+            .as_u64()
+            .map(|value| value as usize)
+            .map(Some)
+            .ok_or_else(|| rhai_runtime_error(format!("`{key}` must be an unsigned integer"))),
+        None => Ok(None),
+    }
+}
+
+fn update_env_file_entry(path: &Path, key: &str, value: &str) -> Result<bool, Box<EvalAltResult>> {
+    let rendered_entry = format!("{key}={}", render_dotenv_value(value));
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| rhai_runtime_error(failed_to_write_path(parent, error)))?;
+        }
+        std::fs::write(path, format!("{rendered_entry}\n"))
+            .map_err(|error| rhai_runtime_error(failed_to_write_path(path, error)))?;
+        return Ok(true);
+    }
+
+    let contents = std::fs::read_to_string(path)
+        .map_err(|error| rhai_runtime_error(failed_to_read_path(path, error)))?;
+    let mut found = false;
+    let mut changed = false;
+    let mut rendered_lines = Vec::new();
+
+    for raw_line in contents.lines() {
+        if let Some(existing_key) = parse_dotenv_key(raw_line) {
+            if existing_key == key {
+                found = true;
+                if raw_line != rendered_entry {
+                    rendered_lines.push(rendered_entry.clone());
+                    changed = true;
+                } else {
+                    rendered_lines.push(raw_line.to_owned());
+                }
+                continue;
+            }
+        }
+        rendered_lines.push(raw_line.to_owned());
+    }
+
+    if !found {
+        rendered_lines.push(rendered_entry);
+        changed = true;
+    }
+
+    if !changed {
+        return Ok(false);
+    }
+
+    let mut output = rendered_lines.join("\n");
+    output.push('\n');
+    std::fs::write(path, output)
+        .map_err(|error| rhai_runtime_error(failed_to_write_path(path, error)))?;
+    Ok(true)
+}
+
+fn remove_env_file_entry(path: &Path, key: &str) -> Result<bool, Box<EvalAltResult>> {
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let contents = std::fs::read_to_string(path)
+        .map_err(|error| rhai_runtime_error(failed_to_read_path(path, error)))?;
+    let mut changed = false;
+    let mut rendered_lines = Vec::new();
+
+    for raw_line in contents.lines() {
+        if parse_dotenv_key(raw_line).is_some_and(|existing_key| existing_key == key) {
+            changed = true;
+            continue;
+        }
+        rendered_lines.push(raw_line.to_owned());
+    }
+
+    if !changed {
+        return Ok(false);
+    }
+
+    let mut output = rendered_lines.join("\n");
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    std::fs::write(path, output)
+        .map_err(|error| rhai_runtime_error(failed_to_write_path(path, error)))?;
+    Ok(true)
+}
+
+fn parse_dotenv_key(line: &str) -> Option<&str> {
+    let mut trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    if let Some(exported) = trimmed.strip_prefix("export ") {
+        trimmed = exported.trim_start();
+    }
+    let (key, _) = trimmed.split_once('=')?;
+    let key = key.trim();
+    (!key.is_empty()).then_some(key)
+}
+
+fn render_dotenv_value(value: &str) -> String {
+    if value.is_empty() {
+        return "\"\"".to_owned();
+    }
+    if value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':' | '@'))
+    {
+        return value.to_owned();
+    }
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    format!("\"{escaped}\"")
 }

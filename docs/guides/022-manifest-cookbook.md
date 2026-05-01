@@ -355,6 +355,16 @@ write_file("tmp/proof.json", json_stringify(payload));
 log("wrote tmp/proof.json");
 ```
 
+Bootstrap-style env seeding:
+
+```rhai
+if copy_if_missing("infra/dev/bootstrap/app.env", ".env") {
+    log("[ok] wrote .env from bootstrap template");
+}
+env_file_set(".env", "APP_HOST", "local.test");
+env_file_set(".env", "APP_NAME", "Acme Local");
+```
+
 Another file-backed example:
 
 ```toml

@@ -16,10 +16,19 @@ Policy:
 
 ## Exposed Helpers
 
+### Low-Level Runtime Helpers
+
 | Surface | Rhai helpers | Status |
 | --- | --- | --- |
-| HTTP probes | `http_get`, `http_post`, `http_request` | Exposed |
-| File audits | `search_files` | Exposed |
+| Logging and context | `log`, `log_warn`, `env`, `stop_requested`, `now_utc`, `process_id`, `sleep_ms` | Exposed |
+| Path and string utilities | `path_join`, `path_file_name`, `trim_string`, `string_contains`, `string_starts_with`, `string_ends_with`, `replace_string`, `split_lines`, `shell_quote_string` | Exposed |
+| File and directory operations | `make_temp_dir`, `read_file`, `read_lines`, `write_file`, `append_file`, `write_lines`, `copy_file`, `copy_if_missing`, `env_file_entries`, `env_file_get`, `env_file_remove`, `env_file_set`, `move_path`, `replace_in_file`, `path_exists`, `is_dir`, `is_file`, `is_symlink`, `list_dir`, `create_dir`, `remove_path`, `create_symlink`, `search_files` | Exposed |
+| Structured data | `json_parse`, `json_stringify`, `toml_parse`, `toml_stringify` | Exposed |
+| Host subprocess execution | `run_process`, `run_process_stream` | Exposed |
+| Basic HTTP | `http_get`, `http_post`, `http_request`, `http_download` | Exposed |
+
+| Surface | Rhai helpers | Status |
+| --- | --- | --- |
 | Config | `config_raw`, `config_effective`, `config_get` | Exposed |
 | Tasks | `run_task`, `tasks_list`, `task_resolve`, `task_info`, `catalog_tasks` | Exposed |
 | Container lifecycle | `container_up`, `container_down`, `container_shell`, `container_exec` | Exposed |
@@ -77,6 +86,18 @@ HTTP helpers return:
   success: true,
   headers: #{},
   body: "...",
+}
+```
+
+`http_download(...)` returns:
+
+```rhai
+#{
+  status: 200,
+  success: true,
+  path: "/repo/tmp/download.bin",
+  size: 1234,
+  headers: #{},
 }
 ```
 

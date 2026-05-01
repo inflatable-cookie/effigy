@@ -66,19 +66,35 @@ Current v1 helpers:
   - `now_utc()`
   - `path_join(base, child)`
   - `path_file_name(path)`
+  - `trim_string(value)`
+  - `string_contains(value, needle)`
+  - `string_starts_with(value, prefix)`
+  - `string_ends_with(value, suffix)`
+  - `replace_string(value, from, to)`
+  - `split_lines(value)`
 - file helpers:
   - `make_temp_dir(prefix)`
   - `append_file(path, contents)`
   - `read_file(path)`
+  - `read_lines(path)`
   - `write_file(path, contents)`
   - `write_lines(path, lines_array)`
+  - `copy_file(source, destination)`
+  - `copy_if_missing(source, destination)`
+  - `env_file_entries(path)`
+  - `env_file_get(path, key)`
+  - `env_file_remove(path, key)`
+  - `env_file_set(path, key, value)`
   - `path_exists(path)`
+  - `is_dir(path)`
   - `list_dir(path)`
   - `is_file(path)`
   - `is_symlink(path)`
   - `search_files(root, pattern, options_map)`
   - `create_dir(path)`
   - `remove_path(path)`
+  - `move_path(source, destination)`
+  - `replace_in_file(path, from, to)`
   - `create_symlink(target, link)`
 - structured data helpers:
   - `json_parse(raw)`
@@ -97,6 +113,7 @@ Current v1 helpers:
   - `http_get(url)`
   - `http_post(url)` / `http_post(url, options_map)`
   - `http_request(method, url, options_map)`
+  - `http_download(url, path)` / `http_download(url, path, options_map)`
   - `run_task(task, args_array)`
   - `tasks_list()` / `tasks_list(options_map)`
   - `task_resolve(selector)`
@@ -183,11 +200,41 @@ Helpers that mirror CLI reports return the same JSON payload as the CLI
 
 ## 4) Practical Patterns
 
-Structured file write:
+Structured file copy without loading the whole template through script memory:
 
 ```toml
 [tasks.report:write]
-run = [{ rhai = "scripts/rhai/write-report.rhai" }]
+run = [{ rhai = "scripts/rhai/copy-template.rhai" }]
+```
+
+```rhai
+if copy_if_missing("infra/dev/bootstrap/template.env", ".env") {
+    log("[ok] wrote .env from template");
+}
+```
+
+Small in-place mutation after copy:
+
+```rhai
+copy_if_missing("infra/dev/bootstrap/app.env", ".env");
+replace_in_file(".env", "APP_HOST=example.test", "APP_HOST=local.test");
+```
+
+Envfile-aware mutation when the script really means “set this key”:
+
+```rhai
+copy_if_missing("infra/dev/bootstrap/app.env", ".env");
+env_file_set(".env", "APP_HOST", "local.test");
+env_file_set(".env", "APP_NAME", "Cumberland Local");
+```
+
+Reading and pruning dotenv entries:
+
+```rhai
+let env = env_file_entries(".env");
+if env["APP_HOST"] == "example.test" {
+    env_file_remove(".env", "LEGACY_FLAG");
+}
 ```
 
 Structured process call:
@@ -241,7 +288,7 @@ Rhai v1 intentionally does not provide:
 
 - arbitrary shell emulation
 - shell pipelines and shell quoting semantics
-- network APIs
+- broad socket-level or streaming network APIs
 - a frontend/build-tool replacement layer
 - a promise that every historical shell or Python script should disappear in
   one pass

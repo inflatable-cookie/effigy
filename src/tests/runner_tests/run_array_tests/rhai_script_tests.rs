@@ -17,7 +17,7 @@ fn run_manifest_task_run_array_supports_file_backed_rhai_steps() {
 let process = run_process("sh", ["-lc", "printf process-ok"]);
 run_task("capture", []);
 write_file("process.txt", process["stdout"]);
-write_file("nested.txt", read_file("nested-source.txt"));
+copy_file("nested-source.txt", "nested.txt");
 "#,
     )
     .expect("write rhai script");
