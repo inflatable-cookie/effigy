@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::api::ContainerExecutionBinding;
-pub(super) use crate::runner::container_runtime::{
-    inside_container_handoff, CONTAINER_HANDOFF_ENV_NAME as CONTAINER_HANDOFF_ENV,
-};
+pub(super) use crate::runner::container_runtime::inside_container_handoff;
 use crate::runner::error::RunnerError;
 use crate::runner::system_command::run_workspace_seeded_session;
 use crate::runner::util::render_passthrough_args;

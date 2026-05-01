@@ -14,14 +14,16 @@ pub fn run_version_command(context: &CliExecutionContext<'_>) {
 }
 
 pub fn build_version_payload() -> serde_json::Value {
-    let version = env!("CARGO_PKG_VERSION");
-    let display = format!("effigy v{version}");
+    let version = effigy_core::build_info::package_version();
+    let active_version = effigy_core::build_info::active_version();
+    let display = format!("effigy {}", effigy_core::build_info::display_version());
     json!({
         "schema": "effigy.version.v1",
         "schema_version": 1,
         "ok": true,
         "binary": "effigy",
         "version": version,
+        "active_version": active_version,
         "display": display,
     })
 }

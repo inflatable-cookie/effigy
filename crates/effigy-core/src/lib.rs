@@ -1,3 +1,4 @@
+pub mod build_info;
 pub mod builtin_tasks;
 pub mod data_loading;
 pub mod effigy_invocation;

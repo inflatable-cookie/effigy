@@ -121,10 +121,6 @@ impl ExecutionBindingResolution {
         self.kind == ExecutionBindingKind::InlineContainer
     }
 
-    pub(in crate::runner) fn container_name(&self) -> Option<&str> {
-        self.binding.container_name()
-    }
-
     pub(in crate::runner) fn requested_container_name(&self) -> Option<&str> {
         self.requested_container_name.as_deref()
     }
@@ -367,7 +363,6 @@ container = { image = "node:22", mount = "./:/workspace" }
 
         assert_eq!(resolution.kind(), ExecutionBindingKind::InlineContainer);
         assert!(resolution.is_inline_container());
-        assert!(resolution.container_name().is_none());
         assert!(resolution.requested_container_name().is_none());
         assert_eq!(
             resolution

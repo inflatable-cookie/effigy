@@ -456,10 +456,9 @@ mod tests {
         activate_inline_workspace_container_runtime_with, activate_routed_container_runtime_with,
         should_stay_in_workspace_shell, ContainerExecutionBinding,
     };
+    use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME as CONTAINER_HANDOFF_ENV;
     use crate::runner::container_runtime_prep::{ContainerTaskActivation, ExecutionSurfaceKind};
-    use crate::runner::execute::workspace_seeded::{
-        render_workspace_seeded_task_command, CONTAINER_HANDOFF_ENV,
-    };
+    use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn};
     use std::env;
