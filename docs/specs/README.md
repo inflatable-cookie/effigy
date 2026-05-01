@@ -26,8 +26,7 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`001-production-deployment-model-and-export-contract-strict-lane.md`](./001-production-deployment-model-and-export-contract-strict-lane.md)
-- [`batch-cards/README.md`](./batch-cards/README.md)
+- none right now
 
 Queued next-lane specs:
 
@@ -39,6 +38,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`001-production-deployment-model-and-export-contract-strict-lane.md`](./001-production-deployment-model-and-export-contract-strict-lane.md)
 - [`021-unified-init-and-starter-emission-strict-lane.md`](./021-unified-init-and-starter-emission-strict-lane.md)
 - [`013-dev-front-door-and-managed-lifecycle-strict-lane.md`](./013-dev-front-door-and-managed-lifecycle-strict-lane.md)
 - [`015-persistent-data-and-volume-lifecycle-strict-lane.md`](./015-persistent-data-and-volume-lifecycle-strict-lane.md)
@@ -51,7 +51,4 @@ Recently completed:
 
 ## Next Task
 
-`g03.001` remains the active strict lane.
-
-Execute
-[`batch-cards/323-decide-post-railway-export-foundation-boundary.md`](./batch-cards/323-decide-post-railway-export-foundation-boundary.md).
+No active strict lane. Stop in planning until the next milestone needs one.
