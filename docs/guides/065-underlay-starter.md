@@ -351,7 +351,7 @@ own `scripts/` directory and point the task at the local path instead of
 - default container: `web` (configurable via `[bundle].container_name`)
 - primary service: `app` (configurable via `[bundle].workspace_service_name`)
 - default workspace: `app` (configurable via `[bundle].default_workspace`)
-- working directory: `/var/www/html`
+- working directory: `/var/www/<host-first-label>` (for example `/var/www/cbs`)
 - startup mode: detached
 - lifecycle: `on_task_exit = "stop"`, graceful shutdown
 

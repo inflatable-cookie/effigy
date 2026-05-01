@@ -1,6 +1,7 @@
 let source = path_join(repo_root, "target/bootstrap-local/debug/effigy");
 let install_dir = path_join(repo_root, ".local-install/bin");
 let target = path_join(install_dir, "effigy");
+let staged_target = path_join(install_dir, "effigy.new");
 let active_version_file = path_join(install_dir, "effigy.active-version");
 
 fn run_check(label, program, process_args) {
@@ -94,8 +95,13 @@ if !path_exists(source) || !is_file(source) {
 }
 
 create_dir(install_dir);
-run_check("install local effigy binary", "cp", [source, target]);
-run_check("mark local effigy binary executable", "chmod", ["0755", target]);
+run_check("stage local effigy binary", "cp", [source, staged_target]);
+run_check(
+    "mark staged local effigy binary executable",
+    "chmod",
+    ["0755", staged_target],
+);
+run_check("activate local effigy binary", "mv", [staged_target, target]);
 write_file(active_version_file, local_active_version() + "\n");
 
 log("[ok] built local effigy binary");
