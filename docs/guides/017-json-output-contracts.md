@@ -217,7 +217,7 @@ Rule of thumb:
 - `schema_version` is the top-level envelope version.
 - `binary.version` is the shipped semver; `binary.active_version` and
   `binary.display_version` can include local build identity such as
-  `+local.<hash>` or `.dirty`.
+  `+local.<hash>`.
 - New optional fields may be added in `v1` without removing existing keys.
 - Breaking envelope changes require a new top-level schema/version.
 

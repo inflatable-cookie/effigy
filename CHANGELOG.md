@@ -17,7 +17,7 @@ During v0.x, MINOR bumps may include breaking changes.
   for the installed binary, and the CLI header, `effigy version`, and TUI
   version surfaces now prefer that stamp when present. Local installs can
   now show distinct build identities such as
-  `v0.3.1+local.abc123.dirty` instead of always rendering the last
+  `v0.3.1+local.abc123` instead of always rendering the last
   released semver with no visible distinction between builds.
 - Bootstrap task dispatch, Rhai `run_effigy_command(...)`, and run-array
   builtin replay now share one embedded-runner foundation for nested command

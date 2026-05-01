@@ -17,7 +17,10 @@ pub fn build_version_payload() -> serde_json::Value {
     let binary = build_binary_metadata();
     let version = binary["version"].as_str().unwrap_or_default();
     let active_version = binary["active_version"].as_str().unwrap_or_default();
-    let display = format!("effigy {}", binary["display_version"].as_str().unwrap_or_default());
+    let display = format!(
+        "effigy {}",
+        binary["display_version"].as_str().unwrap_or_default()
+    );
     json!({
         "schema": "effigy.version.v1",
         "schema_version": 1,

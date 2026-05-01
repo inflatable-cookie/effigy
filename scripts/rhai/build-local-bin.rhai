@@ -16,6 +16,16 @@ fn run_check(label, program, process_args) {
         + "\nstdout:\n" + stdout + "\nstderr:\n" + stderr;
 }
 
+fn run_check_stream(label, program, process_args) {
+    let result = run_process_stream(program, process_args);
+    if result["success"] {
+        return;
+    }
+
+    let status = result["status"].to_string();
+    throw "[error] " + label + " failed with status " + status;
+}
+
 fn capture_process(program, process_args) {
     let result = run_process(program, process_args);
     if !result["success"] {
@@ -59,18 +69,10 @@ fn local_active_version() {
         return "v" + base + "+local.unknown";
     }
 
-    let dirty_state = capture_process(
-        "git",
-        ["status", "--porcelain", "--untracked-files=normal"],
-    );
-    let dirty = dirty_state != () && dirty_state != "";
-    if dirty {
-        return "v" + base + "+local." + hash + ".dirty";
-    }
     "v" + base + "+local." + hash
 }
 
-run_check(
+run_check_stream(
     "cargo build --bin effigy",
     "sh",
     ["-lc", "CARGO_TARGET_DIR=target/bootstrap-local cargo build --bin effigy"],
