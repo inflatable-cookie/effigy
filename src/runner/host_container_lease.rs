@@ -7,6 +7,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use effigy_cli::InternalContainerLeaseReaperArgs;
 use effigy_containers::exec::shutdown_container;
 use effigy_containers::EffectiveContainerPolicy;
+use effigy_ui::style_text;
+use effigy_ui::theme::{resolve_color_enabled, Theme};
+use effigy_ui::OutputMode;
+use std::io::IsTerminal;
 
 use super::error::RunnerError;
 use super::system_command::is_primary_service_running;
@@ -37,6 +41,19 @@ pub(super) fn has_active_host_container_lease(
         return Ok(false);
     };
     Ok(lease.expires_at_epoch_ms > now_epoch_ms())
+}
+
+pub(in crate::runner) fn refresh_host_container_lease_for_task_activation(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    system_was_running: bool,
+) -> Result<bool, RunnerError> {
+    let had_active_lease = has_active_host_container_lease(repo_root, policy)?;
+    if had_active_lease || !system_was_running {
+        refresh_host_container_lease(repo_root, policy)?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 pub(super) fn refresh_host_container_lease(
@@ -72,6 +89,16 @@ pub(super) fn refresh_host_container_lease(
 
 pub(super) fn host_container_lease_timeout_duration() -> Duration {
     host_container_lease_timeout()
+}
+
+pub(in crate::runner) fn emit_host_container_lease_notice(container_name: &str) {
+    let timeout = format_duration_short(host_container_lease_timeout_duration());
+    let color_enabled =
+        resolve_color_enabled(OutputMode::from_env(), std::io::stderr().is_terminal());
+    eprintln!(
+        "{} temporary container lease active for `{container_name}`; idle shutdown in {timeout} unless reused or kept up explicitly",
+        style_text(color_enabled, Theme::default().label, "[info]")
+    );
 }
 
 pub(super) fn clear_host_container_lease(
@@ -205,6 +232,21 @@ fn host_container_lease_timeout() -> Duration {
     Duration::from_secs(seconds)
 }
 
+fn format_duration_short(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    if secs.is_multiple_of(60) && secs >= 60 {
+        let mins = secs / 60;
+        if mins == 1 {
+            return "1 minute".to_owned();
+        }
+        return format!("{mins} minutes");
+    }
+    if secs == 1 {
+        return "1 second".to_owned();
+    }
+    format!("{secs} seconds")
+}
+
 fn now_epoch_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -264,4 +306,107 @@ pub(crate) fn read_host_container_lease_token_for_tests(
     let policy = effigy_containers::load_container_policy(repo_root, Some(container_name))
         .map_err(RunnerError::from)?;
     Ok(load_host_container_lease(repo_root, &policy)?.map(|lease| lease.token))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refresh_host_container_lease_for_task_activation;
+    use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
+    use effigy_manifest::{
+        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
+        ManifestContainerStartup,
+    };
+    use std::path::PathBuf;
+
+    fn test_policy() -> EffectiveContainerPolicy {
+        EffectiveContainerPolicy {
+            name: "web".to_owned(),
+            driver: ManifestContainerDriver::Colima,
+            startup: ManifestContainerStartup::Detached,
+            profile: "effigy".to_owned(),
+            compose_source: EffectiveComposeSource::Direct,
+            compose_files: vec![PathBuf::from("/tmp/docker-compose.yml")],
+            compose_file_display: "docker-compose.yml".to_owned(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: "demo-web-dev".to_owned(),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            service_aliases: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            workspace_user: None,
+            workspace_home: None,
+            on_task_exit: ManifestContainerOnTaskExit::Stop,
+            shutdown: ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+            host_processes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn task_activation_refreshes_lease_when_runtime_was_started() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-host-lease-started-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+        let lease_home = repo_root.join("lease-home");
+        std::fs::create_dir_all(&lease_home).expect("mkdir lease home");
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[
+            (
+                "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+                Some(lease_home.display().to_string()),
+            ),
+            (
+                "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
+                Some("1".to_owned()),
+            ),
+        ]);
+
+        let refreshed =
+            refresh_host_container_lease_for_task_activation(&repo_root, &test_policy(), false)
+                .expect("refresh lease");
+        assert!(refreshed);
+    }
+
+    #[test]
+    fn task_activation_skips_lease_refresh_for_already_running_unleased_runtime() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-host-lease-existing-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+        let lease_home = repo_root.join("lease-home");
+        std::fs::create_dir_all(&lease_home).expect("mkdir lease home");
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[
+            (
+                "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+                Some(lease_home.display().to_string()),
+            ),
+            (
+                "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
+                Some("1".to_owned()),
+            ),
+        ]);
+
+        let refreshed =
+            refresh_host_container_lease_for_task_activation(&repo_root, &test_policy(), true)
+                .expect("refresh lease");
+        assert!(!refreshed);
+    }
 }

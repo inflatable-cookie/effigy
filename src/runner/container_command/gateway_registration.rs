@@ -64,6 +64,39 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     Ok(routes)
 }
 
+pub(in crate::runner) fn gateway_routes_registered_for_container(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<bool, RunnerError> {
+    let rows = list_running_compose_containers_for_profile(&policy.profile)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?;
+    let project_alias_routes =
+        resolve_gateway_service_alias_routes(repo_root, policy, false, Some(&rows))?;
+    if project_alias_routes.len() != expected_project_alias_route_count(policy) {
+        return Ok(false);
+    }
+    let shared_alias_routes = resolve_gateway_shared_service_alias_routes(
+        repo_root,
+        policy,
+        false,
+        &project_alias_routes,
+    )?;
+    if shared_alias_routes.len()
+        != expected_shared_service_alias_route_count(policy, &project_alias_routes)
+    {
+        return Ok(false);
+    }
+    routes.extend(project_alias_routes);
+    routes.extend(shared_alias_routes);
+    registered_gateway_routes_match_project(
+        &RouteTable::load(&gateway_route_table_path()?)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
+        repo_root,
+        &routes,
+    )
+}
+
 pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -167,6 +200,25 @@ fn prune_stale_container_routes_for_project(
     table
         .save(route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
+}
+
+fn registered_gateway_routes_match_project(
+    route_table: &RouteTable,
+    repo_root: &Path,
+    desired_routes: &[RegisteredGatewayRoute],
+) -> Result<bool, RunnerError> {
+    let project_path = repo_root.display().to_string();
+    Ok(desired_routes.iter().all(|route| {
+        route_table.lookup(&route.domain).is_some_and(|registered| {
+            registered.project == project_path
+                && registered.source == RouteSource::Container
+                && registered.target == route.target
+                && registered.dns_ip == route.dns_ip
+                && registered.tcp_port == route.tcp_port
+                && registered.tcp_target == route.tcp_target
+                && registered.tls == route.tls
+        })
+    }))
 }
 
 fn resolve_gateway_routes(
@@ -688,6 +740,43 @@ fn occupied_service_alias_domains<'a>(
         occupied.insert(route.domain.as_str());
     }
     occupied
+}
+
+fn expected_project_alias_route_count(policy: &EffectiveContainerPolicy) -> usize {
+    let explicit_domains = policy
+        .dns_routes
+        .iter()
+        .map(|route| route.domain.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let Some(base_domain) = project_base_domain(policy) else {
+        return 0;
+    };
+    policy
+        .service_aliases
+        .iter()
+        .filter(|alias| {
+            let domain = format!("{}.{}", alias.domain_label, base_domain);
+            !explicit_domains.contains(domain.as_str())
+        })
+        .count()
+}
+
+fn expected_shared_service_alias_route_count(
+    policy: &EffectiveContainerPolicy,
+    project_alias_routes: &[RegisteredGatewayRoute],
+) -> usize {
+    let Some(base_domain) = project_base_domain(policy) else {
+        return 0;
+    };
+    let occupied_domains = occupied_service_alias_domains(policy, project_alias_routes);
+    policy
+        .shared_services
+        .iter()
+        .filter(|shared| {
+            let domain = format!("{}.{}", shared.domain_label, base_domain);
+            !occupied_domains.contains(domain.as_str())
+        })
+        .count()
 }
 
 fn row_matches_policy_project(

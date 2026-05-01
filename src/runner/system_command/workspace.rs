@@ -15,8 +15,13 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::runner::command_context::{current_working_dir, resolve_repo_root};
-use crate::runner::container_command::{run_container, runtime_error_from_runner};
-use crate::runner::container_runtime_prep::ensure_container_runtime_prepared;
+use crate::runner::container_command::{
+    gateway_routes_registered_for_container, register_gateway_routes_for_container, run_container,
+    runtime_error_from_runner,
+};
+use crate::runner::container_runtime_prep::{
+    container_policy_uses_gateway_surface, ensure_container_runtime_prepared,
+};
 use crate::runner::exec_command::copy_file_into_service;
 use crate::runner::execute::api::{resolve_container_execution_binding, ContainerExecutionBinding};
 use crate::runner::gateway_command::gateway_up_for_managed_task;
@@ -73,6 +78,11 @@ impl LinuxWorkspaceTarget {
 enum WorkspaceSessionOwnership {
     OwnStartedSystem,
     LeaveSystemRunning,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WorkspaceGatewayState {
+    routes_were_ready_before_handoff: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,7 +203,7 @@ fn run_workspace_container_session(
         container_name.as_deref(),
         repo_override.clone(),
     )?;
-    prepare_workspace_handoff(
+    let gateway_state = prepare_workspace_handoff(
         repo_root,
         &policy,
         container_name.as_deref(),
@@ -204,6 +214,7 @@ fn run_workspace_container_session(
         run_workspace_handoff_shell(repo_root, container_name.as_deref(), initial_command);
     let cleanup_result = cleanup_workspace_session(
         system_was_running,
+        gateway_state,
         ownership,
         shell_result.is_ok(),
         container_name,
@@ -248,12 +259,19 @@ fn prepare_workspace_handoff(
     container_name: Option<&str>,
     repo_override: Option<PathBuf>,
     initial_command: Option<&str>,
-) -> Result<(), RunnerError> {
+) -> Result<WorkspaceGatewayState, RunnerError> {
+    let routes_were_ready_before_handoff = gateway_routes_ready_before_handoff(repo_root, policy)?;
     maybe_start_workspace_gateway(policy)?;
+    if container_policy_uses_gateway_surface(policy) {
+        register_gateway_routes_for_container(repo_root, policy)?;
+    }
     let _ = container_name;
     ensure_workspace_effigy_available_for_policy(repo_root, policy, repo_override.clone())?;
     ensure_workspace_permissions_ready(repo_root, policy, container_name, repo_override)?;
-    render_workspace_handoff_transition(policy, initial_command)
+    render_workspace_handoff_transition(policy, initial_command)?;
+    Ok(WorkspaceGatewayState {
+        routes_were_ready_before_handoff,
+    })
 }
 
 fn render_workspace_handoff_transition(
@@ -287,12 +305,18 @@ fn run_workspace_handoff_shell(
 
 fn cleanup_workspace_session(
     system_was_running: bool,
+    gateway_state: WorkspaceGatewayState,
     ownership: WorkspaceSessionOwnership,
     session_succeeded: bool,
     container_name: Option<String>,
     repo_override: Option<PathBuf>,
 ) -> Result<(), RunnerError> {
-    if !should_shutdown_started_system(system_was_running, ownership, session_succeeded) {
+    if !should_shutdown_started_system(
+        system_was_running,
+        gateway_state,
+        ownership,
+        session_succeeded,
+    ) {
         return Ok(());
     }
 
@@ -343,16 +367,28 @@ fn run_workspace_shell_exec(
 
 fn should_shutdown_started_system(
     system_was_running: bool,
+    gateway_state: WorkspaceGatewayState,
     ownership: WorkspaceSessionOwnership,
     session_succeeded: bool,
 ) -> bool {
     if system_was_running {
-        return false;
+        return matches!(ownership, WorkspaceSessionOwnership::OwnStartedSystem)
+            && !gateway_state.routes_were_ready_before_handoff;
     }
     match ownership {
         WorkspaceSessionOwnership::OwnStartedSystem => true,
         WorkspaceSessionOwnership::LeaveSystemRunning => session_succeeded,
     }
+}
+
+fn gateway_routes_ready_before_handoff(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<bool, RunnerError> {
+    if !container_policy_uses_gateway_surface(policy) {
+        return Ok(true);
+    }
+    gateway_routes_registered_for_container(repo_root, policy)
 }
 
 fn maybe_start_workspace_gateway(policy: &EffectiveContainerPolicy) -> Result<(), RunnerError> {

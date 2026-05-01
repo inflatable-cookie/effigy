@@ -16,7 +16,7 @@ use super::super::routing::{
 };
 use super::{super::process_run, command};
 use crate::runner::container_runtime_prep::{
-    ensure_container_runtime_prepared, prepare_container_exec_runtime,
+    activate_container_runtime_for_task, ensure_container_runtime_prepared,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::execute::nested;
@@ -24,6 +24,7 @@ use crate::runner::execute::render;
 use crate::runner::execute::workspace_seeded::{
     inside_container_handoff, run_workspace_seeded_task_session,
 };
+use crate::runner::host_container_lease::emit_host_container_lease_notice;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
 use effigy_containers::compose::compose_args;
 use effigy_containers::exec::run_docker_capture;
@@ -107,8 +108,12 @@ pub(in crate::runner) fn run_standard_task(
 
     let routed = route_with_running_check(preflight, selection)?;
 
+    let mut task_activation = None;
     let routed = if let Some(container_name) = routed_not_running_container(&routed.decision) {
-        ensure_routed_container_up(&selection.catalog.catalog_root, container_name)?;
+        task_activation = Some(activate_routed_container_runtime(
+            &selection.catalog.catalog_root,
+            container_name,
+        )?);
         let rerouted = route_with_running_check(preflight, selection)?;
         if rerouted.decision.is_not_running() {
             return Err(RunnerError::task_invocation(format!(
@@ -116,21 +121,13 @@ pub(in crate::runner) fn run_standard_task(
                 preflight.selector.task_name, container_name
             )));
         }
-        if let Some((rerouted_container, _)) = routed_container_target(&rerouted.decision) {
-            ensure_routed_container_exec_ready(
-                &selection.catalog.catalog_root,
-                rerouted_container,
-            )?;
-        }
         rerouted
     } else {
-        // Container reported running, but persistent broken-namespace state
-        // can survive across runs (a previous `compose up --force-recreate`
-        // can leave the container in a transitional state where `-w` exec
-        // fails with "current working directory is outside of container
-        // mount namespace root"). Probe + restart-recover before dispatching.
         if let Some((container_name, _)) = routed_container_target(&routed.decision) {
-            ensure_routed_container_exec_ready(&selection.catalog.catalog_root, container_name)?;
+            task_activation = Some(activate_routed_container_runtime(
+                &selection.catalog.catalog_root,
+                container_name,
+            )?);
         }
         routed
     };
@@ -169,6 +166,11 @@ pub(in crate::runner) fn run_standard_task(
                 &stderr,
             )?;
             if output.status.success() {
+                if task_activation
+                    .is_some_and(|activation| activation.refreshed_host_container_lease)
+                {
+                    emit_host_container_lease_notice(container);
+                }
                 return Ok(rendered);
             }
             return Err(RunnerError::CommandJsonFailure { rendered });
@@ -184,6 +186,9 @@ pub(in crate::runner) fn run_standard_task(
             context.command(),
             secret_ref,
         )?;
+        if task_activation.is_some_and(|activation| activation.refreshed_host_container_lease) {
+            emit_host_container_lease_notice(container);
+        }
         if preflight.runtime_args_raw.verbose_root {
             return Ok(context.render_resolution_trace());
         }
@@ -231,20 +236,47 @@ fn route_with_running_check(
     )
 }
 
-fn ensure_routed_container_up(repo_root: &Path, container_name: &str) -> Result<(), RunnerError> {
-    let policy = load_container_policy(repo_root, Some(container_name))
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let _ = ensure_container_runtime_prepared(repo_root, &policy, Some(container_name), None)?;
-    Ok(())
-}
-
-fn ensure_routed_container_exec_ready(
+fn activate_routed_container_runtime(
     repo_root: &Path,
     container_name: &str,
-) -> Result<(), RunnerError> {
-    let policy = load_container_policy(repo_root, Some(container_name))
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    prepare_container_exec_runtime(repo_root, &policy, Some(container_name))
+) -> Result<crate::runner::container_runtime_prep::ContainerTaskActivation, RunnerError> {
+    activate_routed_container_runtime_with(
+        repo_root,
+        container_name,
+        |repo_root, container_name| {
+            load_container_policy(repo_root, Some(container_name))
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))
+        },
+        |repo_root, policy, container_name, repo_override| {
+            activate_container_runtime_for_task(repo_root, policy, container_name, repo_override)
+        },
+    )
+}
+
+fn activate_routed_container_runtime_with(
+    repo_root: &Path,
+    container_name: &str,
+    load_policy: impl FnOnce(
+        &Path,
+        &str,
+    ) -> Result<effigy_containers::EffectiveContainerPolicy, RunnerError>,
+    activate: impl FnOnce(
+        &Path,
+        &effigy_containers::EffectiveContainerPolicy,
+        Option<&str>,
+        Option<std::path::PathBuf>,
+    ) -> Result<
+        crate::runner::container_runtime_prep::ContainerTaskActivation,
+        RunnerError,
+    >,
+) -> Result<crate::runner::container_runtime_prep::ContainerTaskActivation, RunnerError> {
+    let policy = load_policy(repo_root, container_name)?;
+    activate(
+        repo_root,
+        &policy,
+        Some(container_name),
+        Some(repo_root.to_path_buf()),
+    )
 }
 
 fn should_stay_in_workspace_shell(
@@ -378,12 +410,18 @@ fn map_schema_support_error(error: SchemaSupportError) -> RunnerError {
 
 #[cfg(test)]
 mod tests {
-    use super::{should_stay_in_workspace_shell, ContainerExecutionBinding};
+    use super::{
+        activate_routed_container_runtime_with, should_stay_in_workspace_shell,
+        ContainerExecutionBinding,
+    };
+    use crate::runner::container_runtime_prep::ContainerTaskActivation;
     use crate::runner::execute::workspace_seeded::{
         render_workspace_seeded_task_command, CONTAINER_HANDOFF_ENV,
     };
+    use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn};
     use std::env;
+    use std::path::{Path, PathBuf};
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
     /// Serializes tests that read or mutate `CONTAINER_HANDOFF_ENV`.
@@ -480,6 +518,72 @@ mod tests {
                 workspace: None,
             },
         ));
+    }
+
+    #[test]
+    fn routed_container_activation_uses_target_repo_root_as_repo_override() {
+        let repo_root = Path::new("/tmp/demo-repo");
+        let mut activation_call = None;
+
+        let activation = activate_routed_container_runtime_with(
+            repo_root,
+            "web",
+            |_repo_root, _container_name| {
+                Ok(EffectiveContainerPolicy {
+                    name: "web".to_owned(),
+                    driver: effigy_manifest::ManifestContainerDriver::Colima,
+                    startup: effigy_manifest::ManifestContainerStartup::Detached,
+                    profile: "effigy".to_owned(),
+                    compose_source: EffectiveComposeSource::Direct,
+                    compose_files: vec![PathBuf::from("/tmp/docker-compose.yml")],
+                    compose_file_display: "docker-compose.yml".to_owned(),
+                    managed_volumes: vec![],
+                    shared_services: vec![],
+                    project_name: "demo-web".to_owned(),
+                    primary_service: "app".to_owned(),
+                    dns_domain: None,
+                    dns_tls: false,
+                    dns_port: None,
+                    dns_routes: vec![],
+                    service_aliases: vec![],
+                    declared_ports: vec![],
+                    ports_declared_explicitly: false,
+                    declared_mounts: vec![],
+                    declared_media_mounts: vec![],
+                    pull_production_hook: None,
+                    health_check: None,
+                    health_timeout_secs: 60,
+                    workspace_user: None,
+                    workspace_home: None,
+                    on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
+                    shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
+                    detach_timeout_secs: 10,
+                    host_processes: Vec::new(),
+                })
+            },
+            |repo_root, _policy, container_name, repo_override| {
+                activation_call = Some((
+                    repo_root.to_path_buf(),
+                    container_name.map(str::to_owned),
+                    repo_override,
+                ));
+                Ok(ContainerTaskActivation {
+                    system_was_running: false,
+                    refreshed_host_container_lease: true,
+                })
+            },
+        )
+        .expect("activate routed runtime");
+
+        assert_eq!(
+            activation_call,
+            Some((
+                repo_root.to_path_buf(),
+                Some("web".to_owned()),
+                Some(repo_root.to_path_buf()),
+            ))
+        );
+        assert!(activation.refreshed_host_container_lease);
     }
 
     struct EnvRestore {

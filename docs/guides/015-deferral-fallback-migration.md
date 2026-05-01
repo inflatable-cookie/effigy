@@ -49,6 +49,20 @@ Runtime behavior:
 - `run_in = "container"` reuses the normal container/runtime path,
 - `run_in = "either"` prefers container binding when a default target exists and
   otherwise falls back to host execution.
+- deferred container requests now share the same non-shell activation contract
+  as explicit `run_in = "container"` tasks:
+  - runtime auto-start when needed
+  - sibling-service and exec-readiness prep before dispatch
+  - temporary host-container lease refresh for auto-started or already-leased
+    runtimes
+  - public gateway/route reconciliation for containers that declare a gateway
+    surface
+
+Lease behavior:
+- default timeout is 5 minutes
+- reuse refreshes the lease
+- the reaper shuts the runtime down after the lease expires unless another
+  owned session or explicit `effigy container up` keeps it alive
 
 Optional built-in bypass:
 - `builtins = ["release", ...]` tells Effigy to skip its own parser-level built-in for those command families and treat them like deferred legacy requests instead
