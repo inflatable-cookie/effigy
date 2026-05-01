@@ -78,7 +78,11 @@ The correct implementation order is:
 6. `316` — strengthen static fallback ownership for Render export
 7. `317` — implement Render export foundation
 8. `318` — decide post-Render-export boundary
-9. later — widen providers or proofs deliberately
+9. `319` — prove Render export in one real Underlay repo
+10. `320` — decide post-Render-proof provider widening
+11. `321` — plan first Railway export contract
+12. `322` — implement Railway export foundation
+13. later — widen providers deliberately
 
 ## Exit Condition
 
@@ -86,9 +90,11 @@ This strict lane is complete when:
 
 - `effigy deploy model --json` exists
 - Underlay repos derive into `deploy.model.v1`
-- `underlay-reference` proves the shape
-- the warning boundary is trustworthy enough that provider export can stay thin
+- one provider export is proven in a real Underlay repo
+- the model and warning boundary are trustworthy enough that a second provider
+  can be widened without reworking the neutral contract first
 
 ## Next Task
 
-Execute `318` — decide whether Render follow-up or Railway planning comes next.
+Execute `322` — implement the first Railway export foundation now that the
+Railway contract is explicit.

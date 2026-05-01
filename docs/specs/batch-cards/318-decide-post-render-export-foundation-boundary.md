@@ -1,6 +1,6 @@
 # 318 Decide Post-Render-Export Foundation Boundary
 
-Status: ready
+Status: landed
 Updated: 2026-05-01
 Roadmap: `g03.001`
 Spec: `docs/specs/001-production-deployment-model-and-export-contract-strict-lane.md`
@@ -20,12 +20,23 @@ Decide the next honest widening seam after the first Render export foundation.
 - implementing the next provider batch in the same card
 - Decodelabs production export work
 
-## Acceptance Criteria
+## Decision
 
-- the post-`317` boundary is explicit
-- the next `g03.001` ready card is set clearly
-- the lane does not advertise both Render follow-up and Railway planning at
-  once
+Do one real Underlay proof batch for Render before opening Railway planning.
+
+## Why
+
+- the Render adapter now exists and the bounded product tests are green
+- but `g03.002` still promises one real consumer proof, not just fixture-level
+  coverage
+- opening Railway now would widen providers before the first provider had a
+  real-repo proof boundary
+
+## Result
+
+The next ready card is:
+
+- [`319-prove-render-export-in-one-real-underlay-repo.md`](./319-prove-render-export-in-one-real-underlay-repo.md)
 
 ## Validation
 
@@ -33,4 +44,4 @@ Decide the next honest widening seam after the first Render export foundation.
 
 ## Next Task
 
-Execute `318`.
+Execute `319`.
