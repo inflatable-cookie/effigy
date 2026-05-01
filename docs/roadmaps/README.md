@@ -57,7 +57,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g02/017-remaining-shell-cleanup-and-crate-extraction-program.md` is complete; the worthwhile cleanup and extraction jobs landed, and the remaining root-crate untidiness is no longer roadmap-worthy.
 - `g03/001-production-deployment-model-and-export-contract.md` is complete; the neutral deployment model, `deploy model --json`, and the first provider foundations are now shipped.
 - `g03/002-underlay-managed-deployment-export.md` is complete; Underlay now exports bounded Render and Railway deployment bundles with real proof coverage.
-- `g03/003-decodelabs-production-strategy-scope.md` is now active; Underlay export is shipped strongly enough to scope the Decodelabs production story on its own terms without faking provider readiness.
+- `g03/003-decodelabs-production-strategy-scope.md` is complete; Decodelabs now has an explicit no-fake-automation production boundary, and the honest short-term answer is to keep production operator-owned until a real topology or promotion trigger emerges.
 - `g03/007` is complete; the execution-surface convergence contract now lives in `docs/contracts/009-execution-surface-convergence.md`.
 - `g03/008` is complete; shared embedded repo-targeting now lives in `src/runner/command_context/repo_override.rs` and is consumed by run-array builtin dispatch plus Rhai command re-entry.
 - `g03/009` is complete; `effigy exec` and exec aliases now share the bounded non-shell activation contract with container-backed task execution.
@@ -68,8 +68,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-- `g03.003` is the active strict-planning lane
-- `333` is the active ready card
+- no active strict lane
+- `g03.003` is complete
 - `g03.012` is complete
 
 ## Research Program
@@ -106,8 +106,7 @@ Before rollover:
 
 ## Next Task
 
-Execute `g03.003` through `333` and name the post-inventory Decodelabs
-boundary before widening any deployment support.
+Stop in planning and choose the next live roadmap deliberately.
 
 
 ## Historical language boundary

@@ -13,7 +13,7 @@ Current milestones:
 
 - [`001-production-deployment-model-and-export-contract.md`](./001-production-deployment-model-and-export-contract.md) (complete; the neutral model, command contract, and first provider foundations are now shipped)
 - [`002-underlay-managed-deployment-export.md`](./002-underlay-managed-deployment-export.md) (complete; Underlay now exports bounded Render and Railway deployment bundles)
-- [`003-decodelabs-production-strategy-scope.md`](./003-decodelabs-production-strategy-scope.md) (active; Underlay export is now shipped strongly enough to scope Decodelabs on its own terms without faking provider readiness)
+- [`003-decodelabs-production-strategy-scope.md`](./003-decodelabs-production-strategy-scope.md) (complete; Decodelabs now has an explicit no-fake-automation production boundary, and the honest short-term answer is to keep production operator-owned)
 - [`004-container-runtime-contract-and-alias-surface.md`](./004-container-runtime-contract-and-alias-surface.md) (complete; the runtime contract now lives in `docs/contracts/005-container-runtime-contract.md` and defines alias, handoff, and fallback ownership)
 - [`005-execution-path-unification-and-runtime-prep.md`](./005-execution-path-unification-and-runtime-prep.md) (complete; shared runtime-prep ownership now lives in `src/runner/container_runtime_prep.rs` and is consumed by workspace handoff plus standard routed exec)
 - [`006-compose-backend-capability-boundaries-and-compatibility.md`](./006-compose-backend-capability-boundaries-and-compatibility.md) (complete; backend-required versus Effigy-repaired runtime behavior now has a contract plus targeted shared-prep coverage)
@@ -38,9 +38,4 @@ Rules:
 
 ## Next Task
 
-Execute `333`:
-
-- decide whether any part of the current Decodelabs story belongs in the
-  neutral deployment model now
-- decide whether the future target is dedicated-host, managed-provider, or an
-  explicit operator-owned stop
+Stop in planning and choose the next `g03` milestone deliberately.

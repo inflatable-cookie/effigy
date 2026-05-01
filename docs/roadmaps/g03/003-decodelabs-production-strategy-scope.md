@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-04-30
 Depends on: 001, 002
@@ -60,6 +60,17 @@ The first inventory pass now says:
 - queue/background work exists in app code, but there is no shared repo-level
   production supervisor shape to promote yet
 
+## Decision
+
+`333` closes this lane on an explicit short-term answer:
+
+- keep Decodelabs production operator-owned for now
+- do not widen into provider export
+- do not widen into dedicated-host export yet
+
+The inventory was useful, but it did not expose one clean production topology
+that Effigy can honestly emit.
+
 ## Promoted Anchors
 
 - [`../../architecture/021-production-deployment-export-architecture.md`](../../architecture/021-production-deployment-export-architecture.md)
@@ -67,19 +78,18 @@ The first inventory pass now says:
 
 ## Exit Condition
 
-This milestone is complete when:
+This milestone is now complete.
 
-- Decodelabs has an explicit short-term production posture
-- Effigy’s deployment surface is honest about what it does not support yet for
-  Decodelabs
-- the future export direction is narrowed enough that later work is sequencing,
-  not rediscovery
+Decodelabs has an explicit short-term production posture:
+
+- Effigy owns local-dev support strongly
+- Effigy does not yet own Decodelabs production export
+- any later widening must be triggered by a real converged topology or a real
+  cross-bundle deployment need
 
 ## Next Task
 
-Decide the post-inventory boundary:
+Leave this roadmap closed.
 
-- what small neutral-model subset, if any, should be promoted next
-- whether Decodelabs wants a dedicated-host export track
-- or whether the honest short-term answer is to keep Decodelabs explicitly
-  operator-owned
+If Decodelabs production work becomes real again, reopen it from a concrete
+topology or promotion trigger instead of generic “future strategy” language.

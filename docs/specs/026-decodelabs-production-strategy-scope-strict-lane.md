@@ -1,6 +1,6 @@
 # 026 Decodelabs Production Strategy Scope Strict Lane
 
-Status: active
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.003`
 
@@ -73,4 +73,4 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute `333` to decide the post-inventory Decodelabs strategy boundary.
+No active next task. `g03.003` is complete.

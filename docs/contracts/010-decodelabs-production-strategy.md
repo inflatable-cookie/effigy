@@ -145,6 +145,23 @@ Until the next strategy decision lands:
 - any future Decodelabs deployment surface must begin from the split above,
   not from the local-dev bundle topology
 
+## Strategy Decision
+
+The post-inventory decision is:
+
+- keep Decodelabs explicitly operator-owned for now
+- do not open a provider-adapter lane
+- do not open a dedicated-host export lane yet
+
+Reason:
+
+- the current production shape is too estate-specific to claim one neutral
+  topology
+- the useful common pieces are still small and generic enough that they should
+  only be promoted when another lane genuinely needs them
+- a premature Decodelabs deploy surface would mostly emit guessed host-policy
+  and create false confidence
+
 ## Non-Goals
 
 This lane does not currently promise:
@@ -165,10 +182,15 @@ The next widening step must answer:
 - which emitted artifacts are trustworthy
 - what explicit operator follow-up remains after generation
 
+That widening trigger has not been met yet.
+
 ## Next Task
 
-Use the inventory split to decide the next honest boundary:
+No active next task inside this contract.
 
-- promote a small neutral-model subset
-- define a dedicated-host export track
-- or stop with Decodelabs explicitly operator-owned for now
+Reopen Decodelabs deployment work only when one of these becomes true:
+
+- the estate converges on one real dedicated-host topology worth exporting
+- a provider-ready managed-host shape becomes real in production
+- a cross-bundle deployment need forces promotion of one of the generic
+  Decodelabs-worthy concerns into the neutral model
