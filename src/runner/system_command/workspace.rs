@@ -266,15 +266,54 @@ fn prepare_workspace_handoff(
     repo_override: Option<PathBuf>,
     initial_command: Option<&str>,
 ) -> Result<bool, RunnerError> {
-    let routes_were_ready_before_handoff = gateway_routes_ready_before_handoff(repo_root, policy)?;
-    maybe_start_workspace_gateway(policy)?;
+    prepare_workspace_handoff_using(
+        repo_root,
+        policy,
+        container_name,
+        repo_override,
+        initial_command,
+        gateway_routes_ready_before_handoff,
+        maybe_start_workspace_gateway,
+        |repo_root, policy| register_gateway_routes_for_container(repo_root, policy).map(|_| ()),
+        ensure_workspace_effigy_available_for_policy,
+        ensure_workspace_permissions_ready,
+        render_workspace_handoff_transition,
+    )
+}
+
+fn prepare_workspace_handoff_using(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_name: Option<&str>,
+    repo_override: Option<PathBuf>,
+    initial_command: Option<&str>,
+    gateway_ready_before_handoff: impl FnOnce(
+        &Path,
+        &EffectiveContainerPolicy,
+    ) -> Result<bool, RunnerError>,
+    start_gateway: impl FnOnce(&EffectiveContainerPolicy) -> Result<(), RunnerError>,
+    register_routes: impl FnOnce(&Path, &EffectiveContainerPolicy) -> Result<(), RunnerError>,
+    ensure_effigy_available: impl FnOnce(
+        &Path,
+        &EffectiveContainerPolicy,
+        Option<PathBuf>,
+    ) -> Result<(), RunnerError>,
+    ensure_permissions_ready: impl FnOnce(
+        &Path,
+        &EffectiveContainerPolicy,
+        Option<&str>,
+        Option<PathBuf>,
+    ) -> Result<(), RunnerError>,
+    render_transition: impl FnOnce(&EffectiveContainerPolicy, Option<&str>) -> Result<(), RunnerError>,
+) -> Result<bool, RunnerError> {
+    let routes_were_ready_before_handoff = gateway_ready_before_handoff(repo_root, policy)?;
+    start_gateway(policy)?;
     if container_policy_uses_gateway_surface(policy) {
-        register_gateway_routes_for_container(repo_root, policy)?;
+        register_routes(repo_root, policy)?;
     }
-    let _ = container_name;
-    ensure_workspace_effigy_available_for_policy(repo_root, policy, repo_override.clone())?;
-    ensure_workspace_permissions_ready(repo_root, policy, container_name, repo_override)?;
-    render_workspace_handoff_transition(policy, initial_command)?;
+    ensure_effigy_available(repo_root, policy, repo_override.clone())?;
+    ensure_permissions_ready(repo_root, policy, container_name, repo_override)?;
+    render_transition(policy, initial_command)?;
     Ok(routes_were_ready_before_handoff)
 }
 
@@ -362,6 +401,7 @@ fn run_workspace_shell_exec(
         .map_err(runtime_error_from_runner)
 }
 
+#[cfg(test)]
 fn should_shutdown_started_system(
     ownership: InteractiveSessionOwnership,
     session_succeeded: bool,
