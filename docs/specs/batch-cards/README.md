@@ -13,6 +13,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`324-implement-exec-activation-convergence-foundation.md`](./324-implement-exec-activation-convergence-foundation.md)
+  is the active ready card. `g03.009` now needs the first bounded activation
+  convergence batch for `effigy exec` and exec aliases.
+
 - [`312-decide-post-deploy-model-foundation-widening.md`](./312-decide-post-deploy-model-foundation-widening.md)
   is complete. The next `g03.001` move is now explicit: one more
   neutral-model strengthening batch before any provider adapter work starts.
@@ -234,4 +238,4 @@ Staged next-lane card:
 
 ## Next Task
 
-No active ready card. Stop in planning until the next strict lane opens.
+Execute `324` for the `g03.009` exec activation convergence foundation.

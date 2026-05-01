@@ -65,7 +65,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-- none right now
+- `g03.009` is the active strict lane
+- `324` is the current ready batch: implement the first bounded exec
+  activation convergence slice
 - `g03.001` is complete
 
 ## Research Program
@@ -102,8 +104,7 @@ Before rollover:
 
 ## Next Task
 
-No active strict lane. Stop in planning and choose the next `g03` milestone
-deliberately.
+Execute the next `g03.009` activation convergence batch.
 
 
 ## Historical language boundary

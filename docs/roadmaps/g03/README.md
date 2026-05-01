@@ -38,4 +38,4 @@ Rules:
 
 ## Next Task
 
-No active strict lane. Re-sequence the next `g03` milestone deliberately.
+Continue `g03.009` with the first bounded exec activation convergence batch.
