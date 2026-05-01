@@ -64,8 +64,11 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 - `g03.001` is the active strict lane
 - `311` is complete
-- `313` is the current ready batch: strengthen the neutral deployment model
-  before provider adapter work opens
+- `313` is complete
+- `315` is complete
+- `316` is complete
+- `317` is the current ready batch: implement the first bounded Render export
+  surface
 
 ## Research Program
 
@@ -101,8 +104,7 @@ Before rollover:
 
 ## Next Task
 
-Execute the next `g03.001` strengthening batch before opening provider export
-work.
+Execute the next `g03.001` Render export implementation batch.
 
 
 ## Historical language boundary

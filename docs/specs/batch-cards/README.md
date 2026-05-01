@@ -18,8 +18,25 @@ Batch cards are the execution units for active Effigy strict-lane work.
   neutral-model strengthening batch before any provider adapter work starts.
 
 - [`313-strengthen-deploy-model-production-metadata-foundation.md`](./313-strengthen-deploy-model-production-metadata-foundation.md)
-  is the active ready card. `g03.001` now owns a bounded production-metadata
-  strengthening slice before Render or Railway export work opens.
+  is complete. `deploy.model.v1` now carries the first honest production
+  metadata seams provider adapters need: static output ownership, shared API
+  health promotion, and `db:migrate` release-hook promotion when present.
+
+- [`314-decide-post-production-metadata-widening.md`](./314-decide-post-production-metadata-widening.md)
+  is complete. The next widening seam is now explicit: provider-export
+  planning before adapter implementation, with Render first.
+
+- [`315-plan-first-render-export-contract.md`](./315-plan-first-render-export-contract.md)
+  is complete. The first Render adapter boundary is now explicit, and it also
+  exposed the remaining neutral-model gap around static fallback ownership.
+
+- [`316-strengthen-static-fallback-ownership-for-render-export.md`](./316-strengthen-static-fallback-ownership-for-render-export.md)
+  is complete. The neutral model now carries static fallback ownership, so the
+  Render contract no longer has to block on SPA rewrite ambiguity.
+
+- [`317-implement-render-export-foundation.md`](./317-implement-render-export-foundation.md)
+  is the active ready card. `g03.001` can now open the first real provider
+  export implementation batch.
 
 - [`304-decide-post-release-closure-v0-3-prep-follow-up.md`](./304-decide-post-release-closure-v0-3-prep-follow-up.md)
   is complete. The next `g02.007` move is now explicit again: one bounded
@@ -192,4 +209,4 @@ Staged next-lane card:
 
 ## Next Task
 
-Execute `313` for the `g03.001` deploy-model production-metadata foundation.
+Execute `317` for the `g03.001` Render export foundation.

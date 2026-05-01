@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
 
 use effigy_cli::{DeployArgs, DeploySubcommand};
 use effigy_manifest::task_runtime::{ManifestManagedRun, ManifestTask};
+use regex::Regex;
 use serde::Serialize;
 
 use super::command_context::resolve_repo_root;
@@ -77,7 +79,10 @@ fn derive_underlay_model(
     let admin_build = required_task_command(&admin_manifest, "build", &admin_dir)?;
     let api_build = required_task_command(&api_manifest, "build", &api_dir)?;
     let api_start = required_task_command(&api_manifest, "api", &api_dir)?;
+    let api_release = optional_task_command(&api_manifest, "db:migrate");
     let jobs_start = optional_task_command(&api_manifest, "jobs");
+    let front_fallback = detect_static_fallback(repo_root, &front_dir);
+    let admin_fallback = detect_static_fallback(repo_root, &admin_dir);
 
     let repo_name = repo_root
         .file_name()
@@ -96,12 +101,17 @@ fn derive_underlay_model(
             start: None,
             release: None,
             health: None,
+            output: Some(DeployOutput {
+                kind: "directory".to_owned(),
+                path: "build".to_owned(),
+                fallback: front_fallback.clone(),
+            }),
             port: None,
             domains: vec![front_domain.clone()],
             env: BTreeMap::new(),
             secret_refs: Vec::new(),
             volumes: Vec::new(),
-            warnings: Vec::new(),
+            warnings: missing_static_fallback_warning("front", front_fallback.is_none()),
         },
         DeployService {
             name: "admin".to_owned(),
@@ -113,12 +123,17 @@ fn derive_underlay_model(
             start: None,
             release: None,
             health: None,
+            output: Some(DeployOutput {
+                kind: "directory".to_owned(),
+                path: "build".to_owned(),
+                fallback: admin_fallback.clone(),
+            }),
             port: None,
             domains: vec![admin_domain.clone()],
             env: BTreeMap::new(),
             secret_refs: Vec::new(),
             volumes: Vec::new(),
-            warnings: Vec::new(),
+            warnings: missing_static_fallback_warning("admin", admin_fallback.is_none()),
         },
         DeployService {
             name: "api".to_owned(),
@@ -128,31 +143,30 @@ fn derive_underlay_model(
                 command: api_build.clone(),
             }),
             start: Some(DeployCommandStep { command: api_start }),
-            release: None,
-            health: None,
+            release: api_release.as_ref().map(|command| DeployCommandStep {
+                command: command.clone(),
+            }),
+            health: Some(DeployHealth {
+                kind: "http".to_owned(),
+                path: "/v1/health".to_owned(),
+            }),
+            output: None,
             port: Some(api_port),
             domains: vec![api_domain.clone()],
             env: BTreeMap::new(),
             secret_refs: vec!["DATABASE_URL".to_owned()],
             volumes: Vec::new(),
-            warnings: vec![
-                DeployWarning {
-                    code: "missing-health-probe".to_owned(),
-                    scope: "service".to_owned(),
-                    target: Some("api".to_owned()),
-                    message: "No explicit production health endpoint is declared yet".to_owned(),
-                    severity: "warn".to_owned(),
-                },
-                DeployWarning {
+            warnings: api_release
+                .is_none()
+                .then_some(DeployWarning {
                     code: "missing-release-hook".to_owned(),
                     scope: "service".to_owned(),
                     target: Some("api".to_owned()),
-                    message:
-                        "No explicit release or migration command is promoted into the deployment model yet"
-                            .to_owned(),
+                    message: "No explicit `db:migrate` release or migration command is promoted into the deployment model yet".to_owned(),
                     severity: "warn".to_owned(),
-                },
-            ],
+                })
+                .into_iter()
+                .collect(),
         },
     ];
 
@@ -169,6 +183,7 @@ fn derive_underlay_model(
             }),
             release: None,
             health: None,
+            output: None,
             port: None,
             domains: Vec::new(),
             env: BTreeMap::new(),
@@ -429,6 +444,8 @@ struct DeployService {
     #[serde(skip_serializing_if = "Option::is_none")]
     health: Option<DeployHealth>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    output: Option<DeployOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     port: Option<u16>,
     domains: Vec<String>,
     env: BTreeMap<String, String>,
@@ -446,6 +463,54 @@ struct DeployCommandStep {
 struct DeployHealth {
     kind: String,
     path: String,
+}
+
+#[derive(Serialize)]
+struct DeployOutput {
+    kind: String,
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fallback: Option<String>,
+}
+
+fn detect_static_fallback(repo_root: &Path, dir: &str) -> Option<String> {
+    let service_root = repo_root.join(dir);
+    let config_names = [
+        "svelte.config.js",
+        "svelte.config.ts",
+        "svelte.config.mjs",
+        "svelte.config.cjs",
+    ];
+    let fallback_regex = Regex::new(r#"fallback\s*:\s*["']([^"']+)["']"#).ok()?;
+
+    for config_name in config_names {
+        let path = service_root.join(config_name);
+        let Ok(contents) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Some(captures) = fallback_regex.captures(&contents) {
+            if let Some(value) = captures.get(1) {
+                return Some(value.as_str().to_owned());
+            }
+        }
+    }
+
+    None
+}
+
+fn missing_static_fallback_warning(target: &str, missing: bool) -> Vec<DeployWarning> {
+    if !missing {
+        return Vec::new();
+    }
+
+    vec![DeployWarning {
+        code: "missing-static-fallback".to_owned(),
+        scope: "service".to_owned(),
+        target: Some(target.to_owned()),
+        message: "No static fallback file is declared yet for provider rewrite generation"
+            .to_owned(),
+        severity: "warn".to_owned(),
+    }]
 }
 
 #[derive(Serialize)]

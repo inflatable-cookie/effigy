@@ -159,6 +159,8 @@ Each application service should carry at least:
   - optional pre-start or release command
 - `health`
   - optional health path or command
+- `output`
+  - required for `static` services
 - `port`
   - internal listen port when relevant
 - `domains`
@@ -224,6 +226,9 @@ Recommended first shape:
   - optional one-shot command for migrations or release prep
 - `health`
   - optional, but preferred for `web` services
+- `output`
+  - required for `static`
+  - omitted for `web`, `worker`, and `cron`
 - `port`
   - required for `web`, omitted for pure worker or cron services
 - `domains`
@@ -236,6 +241,30 @@ Recommended first shape:
   - explicit storage claims, not local-dev bind mounts
 - `warnings`
   - service-local warnings only
+
+### Static output contract
+
+Static services need an explicit deployable artifact claim so provider adapters
+do not have to guess what a build step produced.
+
+First shape:
+
+- `kind`
+  - `directory`
+- `path`
+  - repo-relative output directory
+- `fallback`
+  - optional SPA fallback file such as `index.html` or `200.html`
+
+Recommended first shape:
+
+```json
+{
+  "kind": "directory",
+  "path": "build",
+  "fallback": "200.html"
+}
+```
 
 ## Backing-service contract
 

@@ -27,6 +27,16 @@ api = "acme-api"
     fs::create_dir_all(root.join("acme-front")).expect("mkdir front");
     fs::create_dir_all(root.join("acme-admin")).expect("mkdir admin");
     fs::create_dir_all(root.join("acme-api")).expect("mkdir api");
+    fs::write(
+        root.join("acme-front/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write front svelte config");
+    fs::write(
+        root.join("acme-admin/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: 'index.html' }) } };\n",
+    )
+    .expect("write admin svelte config");
     write_manifest(
         &root.join("acme-front/effigy.toml"),
         r#"
@@ -49,6 +59,9 @@ run = "cargo build --release"
 
 [tasks.api]
 run = "cargo run -p acme-api"
+
+[tasks."db:migrate"]
+run = "cargo run -p acme-db --bin migrate_dev_db"
 
 [tasks.jobs]
 run = "cargo run -p acme-jobs {args}"
@@ -79,9 +92,16 @@ run = "cargo run -p acme-jobs {args}"
         .expect("front service");
     assert_eq!(front["role"].as_str(), Some("static"));
     assert_eq!(front["runtime"].as_str(), Some("node"));
+    assert_eq!(front["output"]["kind"].as_str(), Some("directory"));
+    assert_eq!(front["output"]["path"].as_str(), Some("build"));
+    assert_eq!(front["output"]["fallback"].as_str(), Some("200.html"));
     assert_eq!(
         front["domains"].as_array().expect("front domains")[0].as_str(),
         Some("acme.test")
+    );
+    assert_eq!(
+        front["warnings"].as_array().expect("front warnings").len(),
+        0
     );
 
     let admin = services
@@ -89,9 +109,16 @@ run = "cargo run -p acme-jobs {args}"
         .find(|service| service["name"].as_str() == Some("admin"))
         .expect("admin service");
     assert_eq!(admin["role"].as_str(), Some("static"));
+    assert_eq!(admin["output"]["kind"].as_str(), Some("directory"));
+    assert_eq!(admin["output"]["path"].as_str(), Some("build"));
+    assert_eq!(admin["output"]["fallback"].as_str(), Some("index.html"));
     assert_eq!(
         admin["domains"].as_array().expect("admin domains")[0].as_str(),
         Some("admin.acme.test")
+    );
+    assert_eq!(
+        admin["warnings"].as_array().expect("admin warnings").len(),
+        0
     );
 
     let api = services
@@ -100,6 +127,12 @@ run = "cargo run -p acme-jobs {args}"
         .expect("api service");
     assert_eq!(api["role"].as_str(), Some("web"));
     assert_eq!(api["runtime"].as_str(), Some("rust"));
+    assert_eq!(api["health"]["kind"].as_str(), Some("http"));
+    assert_eq!(api["health"]["path"].as_str(), Some("/v1/health"));
+    assert_eq!(
+        api["release"]["command"].as_str(),
+        Some("cargo run -p acme-db --bin migrate_dev_db")
+    );
     assert_eq!(api["port"].as_u64(), Some(41001));
     assert_eq!(
         api["domains"].as_array().expect("api domains")[0].as_str(),
@@ -109,6 +142,7 @@ run = "cargo run -p acme-jobs {args}"
         api["secret_refs"].as_array().expect("api secrets")[0].as_str(),
         Some("DATABASE_URL")
     );
+    assert_eq!(api["warnings"].as_array().expect("api warnings").len(), 0);
 
     let jobs = services
         .iter()
@@ -176,5 +210,108 @@ databases = ["acme"]
     assert!(
         message.contains("`deploy model` currently requires `--json`"),
         "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn run_deploy_model_warns_when_release_hook_is_missing() {
+    let root = temp_workspace("deploy-model-underlay-no-release-hook");
+    write_root_manifest(
+        &root,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "acme"
+databases = ["acme"]
+"#,
+    );
+    fs::create_dir_all(root.join("app-front")).expect("mkdir front");
+    fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
+    fs::create_dir_all(root.join("app-api")).expect("mkdir api");
+    write_manifest(
+        &root.join("app-front/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-admin/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-api/effigy.toml"),
+        "[tasks.build]\nrun = \"cargo build --release\"\n[tasks.api]\nrun = \"cargo run -p app-api\"\n",
+    );
+
+    let out = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Model,
+        repo_override: Some(root),
+        output_json: true,
+    }))
+    .expect("run deploy model");
+
+    let parsed = parse_json_output_with_schema_version(&out, "deploy.model.v1", 1);
+    let services = parsed["services"].as_array().expect("services array");
+    let api = services
+        .iter()
+        .find(|service| service["name"].as_str() == Some("api"))
+        .expect("api service");
+
+    assert!(api.get("release").is_none(), "release should be omitted");
+    let warnings = api["warnings"].as_array().expect("api warnings");
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0]["code"].as_str(), Some("missing-release-hook"));
+}
+
+#[test]
+fn run_deploy_model_warns_when_static_fallback_is_missing() {
+    let root = temp_workspace("deploy-model-underlay-no-static-fallback");
+    write_root_manifest(
+        &root,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "acme"
+databases = ["acme"]
+"#,
+    );
+    fs::create_dir_all(root.join("app-front")).expect("mkdir front");
+    fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
+    fs::create_dir_all(root.join("app-api")).expect("mkdir api");
+    write_manifest(
+        &root.join("app-front/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-admin/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-api/effigy.toml"),
+        "[tasks.build]\nrun = \"cargo build --release\"\n[tasks.api]\nrun = \"cargo run -p app-api\"\n",
+    );
+
+    let out = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Model,
+        repo_override: Some(root),
+        output_json: true,
+    }))
+    .expect("run deploy model");
+
+    let parsed = parse_json_output_with_schema_version(&out, "deploy.model.v1", 1);
+    let services = parsed["services"].as_array().expect("services array");
+    let front = services
+        .iter()
+        .find(|service| service["name"].as_str() == Some("front"))
+        .expect("front service");
+
+    assert!(front["output"].get("fallback").is_none());
+    let warnings = front["warnings"].as_array().expect("front warnings");
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(
+        warnings[0]["code"].as_str(),
+        Some("missing-static-fallback")
     );
 }
