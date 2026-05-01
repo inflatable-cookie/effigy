@@ -58,7 +58,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/001-production-deployment-model-and-export-contract.md` is complete; the neutral deployment model, `deploy model --json`, and the first provider foundations are now shipped.
 - `g03/002-underlay-managed-deployment-export.md` is complete; Underlay now exports bounded Render and Railway deployment bundles with real proof coverage.
 - `g03/003-decodelabs-production-strategy-scope.md` is planned behind `g03.002`; it scopes the future Decodelabs managed-host story without forcing premature automation now.
-- `g03/007` through `g03/012` are now queued behind the current provider-export lane; they form the full common-path convergence program for execution-surface parity, repo targeting, runtime activation, interactive ownership, embedded re-entry, and drift guards without reopening `g02`.
+- `g03/007` is complete; the execution-surface convergence contract now lives in `docs/contracts/009-execution-surface-convergence.md`.
+- `g03/008` is complete; shared embedded repo-targeting now lives in `src/runner/command_context/repo_override.rs` and is consumed by run-array builtin dispatch plus Rhai command re-entry.
+- `g03/009` through `g03/012` remain planned; they carry the remaining convergence program for runtime activation, interactive ownership, embedded re-entry cleanup, and drift guards without reopening `g02`.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane

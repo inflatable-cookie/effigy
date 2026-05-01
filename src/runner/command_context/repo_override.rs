@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use effigy_cli::Command;
 
@@ -30,5 +30,173 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
         Command::InternalHostProcessStop(_) => None,
         Command::Task(_) => super::task_repo_override(cmd),
         Command::Help(_) => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::runner) enum EmbeddedRepoOverrideMode {
+    Force,
+    DefaultIfMissing,
+}
+
+pub(in crate::runner) fn apply_repo_target_to_embedded_command(
+    mut command: Command,
+    repo_root: &Path,
+    mode: EmbeddedRepoOverrideMode,
+) -> Command {
+    let repo_root = repo_root.to_path_buf();
+    match &mut command {
+        Command::Deploy(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Defer(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Exec(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::System(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Workspace(args) => {
+            assign_repo_override(&mut args.repo_override, &repo_root, mode)
+        }
+        Command::Service(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Demo(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Docs(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Contracts(args) => {
+            assign_repo_override(&mut args.repo_override, &repo_root, mode)
+        }
+        Command::Distribution(args) => {
+            assign_repo_override(&mut args.repo_override, &repo_root, mode)
+        }
+        Command::Container(args) => {
+            assign_repo_override(&mut args.repo_override, &repo_root, mode)
+        }
+        Command::Release(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Doctor(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Tasks(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Version
+        | Command::Bundle(_)
+        | Command::Changelog(_)
+        | Command::Gateway(_)
+        | Command::Bootstrap(_)
+        | Command::InternalGateway(_)
+        | Command::InternalRhai(_)
+        | Command::InternalContainerLeaseReaper(_)
+        | Command::InternalHostProcessSupervise(_)
+        | Command::InternalHostProcessStop(_)
+        | Command::Task(_)
+        | Command::Help(_) => {}
+    }
+    command
+}
+
+fn assign_repo_override(
+    slot: &mut Option<PathBuf>,
+    repo_root: &Path,
+    mode: EmbeddedRepoOverrideMode,
+) {
+    match mode {
+        EmbeddedRepoOverrideMode::Force => *slot = Some(repo_root.to_path_buf()),
+        EmbeddedRepoOverrideMode::DefaultIfMissing => {
+            if slot.is_none() {
+                *slot = Some(repo_root.to_path_buf());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_repo_target_to_embedded_command, EmbeddedRepoOverrideMode};
+    use effigy_cli::{
+        Command, ContainerArgs, ContainerSubcommand, DeferArgs, DocsArgs, DocsSubcommand,
+        TaskInvocation,
+        WorkspaceArgs,
+    };
+    use std::path::PathBuf;
+
+    #[test]
+    fn embedded_force_overrides_existing_repo_target() {
+        let command = Command::Docs(DocsArgs {
+            subcommand: DocsSubcommand::CheckLinks { paths: Vec::new() },
+            repo_override: Some(PathBuf::from("/tmp/original")),
+            output_json: false,
+        });
+
+        let command = apply_repo_target_to_embedded_command(
+            command,
+            PathBuf::from("/tmp/embedded").as_path(),
+            EmbeddedRepoOverrideMode::Force,
+        );
+
+        assert!(matches!(
+            command,
+            Command::Docs(args)
+                if args.repo_override == Some(PathBuf::from("/tmp/embedded"))
+        ));
+    }
+
+    #[test]
+    fn embedded_default_preserves_existing_repo_target() {
+        let command = Command::Defer(DeferArgs {
+            task: TaskInvocation {
+                name: "seed".to_owned(),
+                args: Vec::new(),
+            },
+            repo_override: Some(PathBuf::from("/tmp/original")),
+            output_json: false,
+        });
+
+        let command = apply_repo_target_to_embedded_command(
+            command,
+            PathBuf::from("/tmp/embedded").as_path(),
+            EmbeddedRepoOverrideMode::DefaultIfMissing,
+        );
+
+        assert!(matches!(
+            command,
+            Command::Defer(args)
+                if args.repo_override == Some(PathBuf::from("/tmp/original"))
+        ));
+    }
+
+    #[test]
+    fn embedded_default_fills_missing_repo_target_for_workspace_commands() {
+        let command = Command::Workspace(WorkspaceArgs {
+            workspace: None,
+            system: None,
+            repo_override: None,
+            output_json: false,
+        });
+
+        let command = apply_repo_target_to_embedded_command(
+            command,
+            PathBuf::from("/tmp/embedded").as_path(),
+            EmbeddedRepoOverrideMode::DefaultIfMissing,
+        );
+
+        assert!(matches!(
+            command,
+            Command::Workspace(args)
+                if args.repo_override == Some(PathBuf::from("/tmp/embedded"))
+        ));
+    }
+
+    #[test]
+    fn embedded_default_fills_missing_repo_target_for_container_commands() {
+        let command = Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Status {
+                name: None,
+                all: true,
+            },
+            repo_override: None,
+            output_json: false,
+        });
+
+        let command = apply_repo_target_to_embedded_command(
+            command,
+            PathBuf::from("/tmp/embedded").as_path(),
+            EmbeddedRepoOverrideMode::DefaultIfMissing,
+        );
+
+        assert!(matches!(
+            command,
+            Command::Container(args)
+                if args.repo_override == Some(PathBuf::from("/tmp/embedded"))
+        ));
     }
 }

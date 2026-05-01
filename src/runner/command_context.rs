@@ -12,7 +12,9 @@ use effigy_cli::Command;
 use super::util::parse_task_runtime_args;
 
 pub(in crate::runner) use cwd::{canonicalize_or_original, current_working_dir};
-pub(super) use repo_override::command_repo_override;
+pub(super) use repo_override::{
+    apply_repo_target_to_embedded_command, command_repo_override, EmbeddedRepoOverrideMode,
+};
 pub(super) use root::{resolve_command_root, resolve_repo_root};
 pub(super) use tasks::task_selection_precedence_notes;
 

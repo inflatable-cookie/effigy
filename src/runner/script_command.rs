@@ -15,6 +15,9 @@ use effigy_cli::{
 };
 use serde_json::Value;
 
+use super::command_context::{
+    apply_repo_target_to_embedded_command, EmbeddedRepoOverrideMode,
+};
 use super::error::RunnerError;
 use super::execute::api::run_manifest_task_with_cwd;
 pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<String, RunnerError> {
@@ -749,48 +752,11 @@ fn run_effigy_command(
     let mut command = parse_command(stripped_args)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     command = apply_global_json_flag(command, force_json || requested_json);
-    apply_default_repo_override(&mut command, repo_root);
-    crate::runner::run_command(command)
-}
-
-fn apply_default_repo_override(command: &mut effigy_cli::Command, repo_root: &Path) {
-    let repo_root = repo_root.to_path_buf();
-    match command {
-        effigy_cli::Command::Exec(args) if args.repo_override.is_none() => {
-            args.repo_override = Some(repo_root)
-        }
-        effigy_cli::Command::Demo(args) if args.repo_override.is_none() => {
-            args.repo_override = Some(repo_root)
-        }
-        effigy_cli::Command::Service(args) if args.repo_override.is_none() => {
-            args.repo_override = Some(repo_root)
-        }
-        effigy_cli::Command::Docs(args) if args.repo_override.is_none() => {
-            args.repo_override = Some(repo_root)
-        }
-        effigy_cli::Command::Deploy(args) if args.repo_override.is_none() => {
-            args.repo_override = Some(repo_root)
-        }
-        effigy_cli::Command::Contracts(args) if args.repo_override.is_none() => {
-            args.repo_override = Some(repo_root)
-        }
-        effigy_cli::Command::Distribution(args) if args.repo_override.is_none() => {
-            args.repo_override = Some(repo_root)
-        }
-        effigy_cli::Command::Container(args) if args.repo_override.is_none() => {
-            args.repo_override = Some(repo_root)
-        }
-        effigy_cli::Command::Release(args) if args.repo_override.is_none() => {
-            args.repo_override = Some(repo_root)
-        }
-        effigy_cli::Command::Doctor(args) if args.repo_override.is_none() => {
-            args.repo_override = Some(repo_root)
-        }
-        effigy_cli::Command::Tasks(args) if args.repo_override.is_none() => {
-            args.repo_override = Some(repo_root)
-        }
-        _ => {}
-    }
+    crate::runner::run_command(apply_repo_target_to_embedded_command(
+        command,
+        repo_root,
+        EmbeddedRepoOverrideMode::DefaultIfMissing,
+    ))
 }
 fn run_container_helper(
     repo_root: &Path,
