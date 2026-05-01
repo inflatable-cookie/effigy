@@ -190,6 +190,44 @@ fn execute_rhai_script_can_tee_process_output_and_capture() {
 }
 
 #[test]
+fn execute_rhai_script_process_helpers_accept_cwd_and_env_options() {
+    let root = temp_root("process-options");
+    fs::create_dir_all(root.join("nested")).expect("nested dir");
+    fs::write(root.join("input.txt"), "streamed-input").expect("input");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            let buffered = run_process(
+                "cat",
+                [],
+                #{ stdin_file: "input.txt" },
+            );
+            if buffered["stdout"] != "streamed-input" { throw("buffered stdin"); }
+
+            let streamed = run_process_stream(
+                "sh",
+                ["-lc", "test \"$(cat)\" = streamed-input && pwd | grep '/nested$' >/dev/null && test \"$EFFIGY_RHAI_TEST\" = streamed"],
+                #{ cwd: "nested", env: #{ EFFIGY_RHAI_TEST: "streamed" }, stdin_file: "input.txt" },
+            );
+            if !streamed["success"] { throw("streamed options"); }
+
+            let teed = run_process_tee(
+                "sh",
+                ["-lc", "printf '%s|%s|%s' \"$(cat)\" \"$PWD\" \"$EFFIGY_RHAI_TEST\""],
+                #{ cwd: "nested", env: #{ EFFIGY_RHAI_TEST: "teed" }, stdin_file: "input.txt" },
+            );
+            if !string_starts_with(teed["stdout"], "streamed-input|") { throw("teed stdin"); }
+            if !string_ends_with(teed["stdout"], "/nested|teed") { throw("teed options"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
 fn execute_rhai_script_exposes_trim_string_helper() {
     let root = temp_root("trim-string");
     let context = ScriptContext {
@@ -370,6 +408,15 @@ fn execute_rhai_script_rejects_recursive_effigy_process_calls() {
         &callbacks(),
     )
     .expect_err("recursive effigy stream process should fail");
+    assert!(error.to_string().contains("typed host helper"));
+
+    let error = execute_rhai_script(
+        &context,
+        r#"run_process_tee("effigy", ["tasks"]);"#,
+        &[],
+        &callbacks(),
+    )
+    .expect_err("recursive effigy tee process should fail");
     assert!(error.to_string().contains("typed host helper"));
 }
 

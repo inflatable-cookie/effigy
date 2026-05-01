@@ -26,6 +26,16 @@ fn run_check_stream(label, program, process_args) {
     throw "[error] " + label + " failed with status " + status;
 }
 
+fn run_check_stream(label, program, process_args, options) {
+    let result = run_process_stream(program, process_args, options);
+    if result["success"] {
+        return;
+    }
+
+    let status = result["status"].to_string();
+    throw "[error] " + label + " failed with status " + status;
+}
+
 fn capture_process(program, process_args) {
     let result = run_process(program, process_args);
     if !result["success"] {
@@ -74,8 +84,9 @@ fn local_active_version() {
 
 run_check_stream(
     "cargo build --bin effigy",
-    "sh",
-    ["-lc", "CARGO_TARGET_DIR=target/bootstrap-local cargo build --bin effigy"],
+    "cargo",
+    ["build", "--bin", "effigy"],
+    #{ env: #{ CARGO_TARGET_DIR: "target/bootstrap-local" } },
 );
 
 if !path_exists(source) || !is_file(source) {

@@ -13,6 +13,14 @@ During v0.x, MINOR bumps may include breaking changes.
   and secret wiring explicit instead of guessed.
 - Rhai scripts now have `run_process_tee(...)` for commands that should stream
   live output and still return captured `stdout` / `stderr` to the script.
+- Rhai subprocess helpers now share optional `cwd` and `env` overrides across
+  `run_process(...)`, `run_process_stream(...)`, and `run_process_tee(...)`,
+  so scripts can change working directory or inject scoped environment without
+  dropping to shell wrappers.
+- Rhai subprocess helpers now also accept `stdin_file`, so scripts can feed
+  file-backed stdin to buffered, streaming, or teeing commands without
+  shell redirection. The shipped DecodeLabs seed helper now uses that path
+  instead of `sh -lc 'mysql ... < dump.sql'`.
 
 ### Fixed
 - Local `bootstrap:local` installs now write a sibling active-version stamp

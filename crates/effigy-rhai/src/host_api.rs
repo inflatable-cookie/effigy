@@ -19,8 +19,7 @@ use super::{
     register_feature_options, register_feature_string, register_feature_string_options,
     register_feature_three_strings, register_feature_two_strings, reject_recursive_effigy_process,
     resolve_runtime_path, rhai_runtime_error, run_http_request, run_process_streaming,
-    run_process_teeing,
-    search_files, with_local_node_bin_path, HostCallbacks, ScriptContext,
+    run_process_teeing, search_files, with_local_node_bin_path, HostCallbacks, ScriptContext,
 };
 
 pub(super) fn register_host_api(
@@ -497,6 +496,28 @@ pub(super) fn register_host_api(
     );
     let process_context = context.clone();
     engine.register_fn(
+        "run_process",
+        move |program: ImmutableString,
+              args: Array,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
+            reject_recursive_effigy_process(program.as_str())?;
+            let mut process = ProcessCommand::new(program.as_str());
+            process.args(dynamic_array_to_strings(&args)?);
+            let resolved_cwd = super::configure_process_command(
+                &mut process,
+                &process_context.cwd,
+                Some(options),
+            )?;
+            with_local_node_bin_path(&mut process, &resolved_cwd);
+            let output = process
+                .output()
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            Ok(process_result_map(output))
+        },
+    );
+    let process_context = context.clone();
+    engine.register_fn(
         "run_process_stream",
         move |program: ImmutableString, args: Array| -> Result<Map, Box<EvalAltResult>> {
             reject_recursive_effigy_process(program.as_str())?;
@@ -506,11 +527,45 @@ pub(super) fn register_host_api(
     );
     let process_context = context.clone();
     engine.register_fn(
+        "run_process_stream",
+        move |program: ImmutableString,
+              args: Array,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
+            reject_recursive_effigy_process(program.as_str())?;
+            let args = dynamic_array_to_strings(&args)?;
+            super::run_process_streaming_with_options(
+                program.as_str(),
+                &args,
+                &process_context.cwd,
+                Some(options),
+            )
+        },
+    );
+    let process_context = context.clone();
+    engine.register_fn(
         "run_process_tee",
         move |program: ImmutableString, args: Array| -> Result<Map, Box<EvalAltResult>> {
             reject_recursive_effigy_process(program.as_str())?;
             let args = dynamic_array_to_strings(&args)?;
             run_process_teeing(program.as_str(), &args, &process_context.cwd)
+        },
+    );
+    let process_context = context.clone();
+    engine.register_fn(
+        "run_process_tee",
+        move |program: ImmutableString,
+              args: Array,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
+            reject_recursive_effigy_process(program.as_str())?;
+            let args = dynamic_array_to_strings(&args)?;
+            super::run_process_teeing_with_options(
+                program.as_str(),
+                &args,
+                &process_context.cwd,
+                Some(options),
+            )
         },
     );
     engine.register_fn(

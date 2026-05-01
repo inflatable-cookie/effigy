@@ -94,6 +94,12 @@ pub struct HostCommandOutput {
     pub stderr: String,
 }
 
+struct ProcessExecutionOptions {
+    cwd: PathBuf,
+    env: Vec<(String, String)>,
+    stdin_file: Option<PathBuf>,
+}
+
 pub fn load_script(path: &Path, cwd: &Path) -> Result<String, RhaiHostError> {
     let resolved = resolve_script_path(cwd, path);
     std::fs::read_to_string(&resolved)
@@ -290,6 +296,75 @@ fn reject_recursive_effigy_process(program: &str) -> Result<(), Box<EvalAltResul
         ));
     }
     Ok(())
+}
+
+fn resolve_process_execution_options(
+    base_cwd: &Path,
+    options: Map,
+) -> Result<ProcessExecutionOptions, Box<EvalAltResult>> {
+    let options = map_to_json_object(options)?;
+    let cwd = options
+        .get("cwd")
+        .map(|value| match value {
+            Value::String(value) => Ok(resolve_runtime_path(base_cwd, value)),
+            _ => Err(rhai_runtime_error("`cwd` must be a string")),
+        })
+        .transpose()?
+        .unwrap_or_else(|| base_cwd.to_path_buf());
+    let env = options
+        .get("env")
+        .map(|value| match value {
+            Value::Object(map) => map
+                .iter()
+                .map(|(key, value)| match value {
+                    Value::String(value) => Ok((key.clone(), value.clone())),
+                    _ => Err(rhai_runtime_error("`env` values must be strings")),
+                })
+                .collect::<Result<Vec<_>, _>>(),
+            _ => Err(rhai_runtime_error("`env` must be a map of string values")),
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let stdin_file = options
+        .get("stdin_file")
+        .map(|value| match value {
+            Value::String(value) => Ok(Some(resolve_runtime_path(base_cwd, value))),
+            Value::Null => Ok(None),
+            _ => Err(rhai_runtime_error("`stdin_file` must be a string")),
+        })
+        .transpose()?
+        .flatten();
+    Ok(ProcessExecutionOptions {
+        cwd,
+        env,
+        stdin_file,
+    })
+}
+
+fn configure_process_command(
+    process: &mut ProcessCommand,
+    base_cwd: &Path,
+    options: Option<Map>,
+) -> Result<PathBuf, Box<EvalAltResult>> {
+    let resolved = if let Some(options) = options {
+        resolve_process_execution_options(base_cwd, options)?
+    } else {
+        ProcessExecutionOptions {
+            cwd: base_cwd.to_path_buf(),
+            env: Vec::new(),
+            stdin_file: None,
+        }
+    };
+    process.current_dir(&resolved.cwd);
+    for (key, value) in &resolved.env {
+        process.env(key, value);
+    }
+    if let Some(stdin_file) = &resolved.stdin_file {
+        let file = std::fs::File::open(stdin_file)
+            .map_err(|error| rhai_runtime_error(failed_to_read_path(stdin_file, error)))?;
+        process.stdin(Stdio::from(file));
+    }
+    Ok(resolved.cwd)
 }
 
 fn search_files(root: &Path, pattern: &str, options: Map) -> Result<Map, Box<EvalAltResult>> {
@@ -803,23 +878,54 @@ fn run_process_streaming(
     args: &[String],
     cwd: &Path,
 ) -> Result<Map, Box<EvalAltResult>> {
-    match run_process_streaming_with_pty(program, args, cwd) {
-        Ok(result) => return Ok(result),
-        Err(error) => {
-            debug_assert!(
-                !error.to_string().is_empty(),
-                "pty streaming fallback should preserve the underlying error"
-            );
+    run_process_streaming_with_options(program, args, cwd, None)
+}
+
+fn run_process_streaming_with_options(
+    program: &str,
+    args: &[String],
+    base_cwd: &Path,
+    options: Option<Map>,
+) -> Result<Map, Box<EvalAltResult>> {
+    let resolved = if let Some(options) = options {
+        resolve_process_execution_options(base_cwd, options)?
+    } else {
+        ProcessExecutionOptions {
+            cwd: base_cwd.to_path_buf(),
+            env: Vec::new(),
+            stdin_file: None,
+        }
+    };
+
+    if resolved.stdin_file.is_none() {
+        match run_process_streaming_with_pty(program, args, &resolved) {
+            Ok(result) => return Ok(result),
+            Err(error) => {
+                debug_assert!(
+                    !error.to_string().is_empty(),
+                    "pty streaming fallback should preserve the underlying error"
+                );
+            }
         }
     }
 
     let mut process = ProcessCommand::new(program);
     process.args(args);
-    process.current_dir(cwd);
-    process.stdin(Stdio::null());
+    if resolved.stdin_file.is_none() {
+        process.stdin(Stdio::null());
+    }
+    process.current_dir(&resolved.cwd);
+    if let Some(stdin_file) = &resolved.stdin_file {
+        let file = std::fs::File::open(stdin_file)
+            .map_err(|error| rhai_runtime_error(failed_to_read_path(stdin_file, error)))?;
+        process.stdin(Stdio::from(file));
+    }
     process.stdout(Stdio::inherit());
     process.stderr(Stdio::inherit());
-    with_local_node_bin_path(&mut process, cwd);
+    for (key, value) in &resolved.env {
+        process.env(key, value);
+    }
+    with_local_node_bin_path(&mut process, &resolved.cwd);
     let status = process
         .status()
         .map_err(|error| rhai_runtime_error(error.to_string()))?;
@@ -829,7 +935,7 @@ fn run_process_streaming(
 fn run_process_streaming_with_pty(
     program: &str,
     args: &[String],
-    cwd: &Path,
+    options: &ProcessExecutionOptions,
 ) -> Result<Map, Box<EvalAltResult>> {
     use std::io::{self, Read, Write};
 
@@ -840,8 +946,11 @@ fn run_process_streaming_with_pty(
 
     let mut command = CommandBuilder::new(program);
     command.args(args);
-    command.cwd(cwd);
-    if let Some(path) = local_node_bin_path_env(cwd) {
+    command.cwd(&options.cwd);
+    for (key, value) in &options.env {
+        command.env(key, value);
+    }
+    if let Some(path) = local_node_bin_path_env(&options.cwd) {
         command.env("PATH", path);
     }
 
@@ -885,16 +994,31 @@ fn run_process_streaming_with_pty(
     ))
 }
 
-fn run_process_teeing(program: &str, args: &[String], cwd: &Path) -> Result<Map, Box<EvalAltResult>> {
+fn run_process_teeing(
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+) -> Result<Map, Box<EvalAltResult>> {
+    run_process_teeing_with_options(program, args, cwd, None)
+}
+
+fn run_process_teeing_with_options(
+    program: &str,
+    args: &[String],
+    base_cwd: &Path,
+    options: Option<Map>,
+) -> Result<Map, Box<EvalAltResult>> {
     use std::io::{Read, Write};
 
     let mut process = ProcessCommand::new(program);
     process.args(args);
-    process.current_dir(cwd);
-    process.stdin(Stdio::null());
+    if options.is_none() {
+        process.stdin(Stdio::null());
+    }
+    let resolved_cwd = configure_process_command(&mut process, base_cwd, options)?;
     process.stdout(Stdio::piped());
     process.stderr(Stdio::piped());
-    with_local_node_bin_path(&mut process, cwd);
+    with_local_node_bin_path(&mut process, &resolved_cwd);
 
     let mut child = process
         .spawn()

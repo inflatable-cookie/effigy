@@ -61,19 +61,16 @@ if latest_host_path == "" {
 
 let dump_name = path_file_name(latest_host_path);
 let dump_container_path = path_join("/var/www/html/.effigy/local/db-seeds", dump_name);
-let mysql_prefix = if db_password == "" {
-    "mysql --skip-ssl -h db -uroot"
-} else {
-    "mysql --skip-ssl -h db -uroot --password=" + shell_quote_string(db_password)
-};
+let mysql_args = ["--skip-ssl", "-h", "db", "-uroot"];
+if db_password != "" {
+    mysql_args.push("--password=" + db_password);
+}
 let reset_sql = "DROP DATABASE IF EXISTS `" + database + "`; CREATE DATABASE `" + database + "`;";
 
 log("[check] resetting database " + database);
 
-let reset_result = run_process_tee("sh", [
-    "-lc",
-    mysql_prefix + " -e " + shell_quote_string(reset_sql),
-]);
+let reset_args = mysql_args + ["-e", reset_sql];
+let reset_result = run_process_tee("mysql", reset_args);
 
 if reset_result["status"] != 0 {
     throw "[error] database reset failed"
@@ -88,10 +85,8 @@ if trim_string(reset_output) != "" {
 
 log("[check] importing latest SQL dump " + dump_name);
 
-let import_result = run_process_tee("sh", [
-    "-lc",
-    mysql_prefix + " " + shell_quote_string(database) + " < " + shell_quote_string(dump_container_path),
-]);
+let import_args = mysql_args + [database];
+let import_result = run_process_tee("mysql", import_args, #{ stdin_file: dump_container_path });
 
 if import_result["status"] != 0 {
     throw "[error] SQL import failed"
