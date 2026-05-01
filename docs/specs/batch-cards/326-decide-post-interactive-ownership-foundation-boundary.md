@@ -1,6 +1,6 @@
 # 326 Decide Post-Interactive-Ownership Foundation Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.010`
 Spec: `docs/specs/023-interactive-session-ownership-and-lifecycle-convergence-strict-lane.md`
@@ -33,8 +33,8 @@ ownership foundation.
 ## Acceptance Criteria
 
 - the post-`325` gap is explicit
-- the next `g03.010` batch boundary is named clearly enough to execute without
-  reopening ownership policy debate
+- the lane outcome is explicit enough to either widen cleanly or hand off
+  without reopening ownership policy debate
 
 ## Validation
 
@@ -42,4 +42,4 @@ ownership foundation.
 
 ## Next Task
 
-Execute `326`.
+Promote `g03.011`.

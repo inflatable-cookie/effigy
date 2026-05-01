@@ -1,6 +1,6 @@
 # 023 Interactive Session Ownership And Lifecycle Convergence Strict Lane
 
-Status: active
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.010`
 
@@ -52,7 +52,7 @@ This lane does not yet own:
 
 ## Current Posture
 
-`active`
+`complete`
 
 The correct implementation order is:
 
@@ -72,7 +72,8 @@ The correct implementation order is:
 
 1. `325` — complete; shared ownership classification now covers direct
    workspace entry and seeded task shells
-2. `326` — decide post-foundation widening
+2. `326` — complete; attached `container up --attach` remains an explicit
+   operator lifecycle surface rather than the next widening seam here
 
 ## Exit Condition
 
@@ -87,5 +88,4 @@ by:
 
 ## Next Task
 
-Execute `326` — decide whether `g03.010` widens into attached operator
-sessions next or hands off to `g03.011`.
+Promote `g03.011`.

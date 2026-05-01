@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Planned
+Status: Active
 Owner: Platform
 Created: 2026-05-01
 Depends on: 008, 009, 010
@@ -54,7 +54,7 @@ still applies.
 
 ## Next Task
 
-Promote `g03.012`.
+Execute the first bounded shared embedded-runner batch.
 
-Once the shared path is real, add the regression matrix and drift guards that
-keep future split-path regressions from slipping back in.
+Once the shared path is real, decide whether one more widening slice is needed
+before the regression-matrix lane in `g03.012`.
