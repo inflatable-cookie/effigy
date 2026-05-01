@@ -26,7 +26,6 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`026-decodelabs-production-strategy-scope-strict-lane.md`](./026-decodelabs-production-strategy-scope-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -35,6 +34,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`026-decodelabs-production-strategy-scope-strict-lane.md`](./026-decodelabs-production-strategy-scope-strict-lane.md)
 - [`025-regression-matrix-and-drift-guards-strict-lane.md`](./025-regression-matrix-and-drift-guards-strict-lane.md)
 - [`024-embedded-command-script-and-bootstrap-convergence-strict-lane.md`](./024-embedded-command-script-and-bootstrap-convergence-strict-lane.md)
 - [`023-interactive-session-ownership-and-lifecycle-convergence-strict-lane.md`](./023-interactive-session-ownership-and-lifecycle-convergence-strict-lane.md)
@@ -52,7 +52,6 @@ Recently completed:
 
 ## Next Task
 
-Execute `g03.003` through the active strict lane and ready card:
+No active strict lane.
 
-- [`026-decodelabs-production-strategy-scope-strict-lane.md`](./026-decodelabs-production-strategy-scope-strict-lane.md)
-- [`batch-cards/333-decide-post-decodelabs-inventory-boundary.md`](./batch-cards/333-decide-post-decodelabs-inventory-boundary.md)
+Stop in planning and choose the next live roadmap deliberately.

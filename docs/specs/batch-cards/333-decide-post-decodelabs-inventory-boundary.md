@@ -1,6 +1,6 @@
 # 333 Decide Post-Inventory Decodelabs Strategy Boundary
 
-Status: ready
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.003`
 Spec: `docs/specs/026-decodelabs-production-strategy-scope-strict-lane.md`
@@ -37,10 +37,12 @@ decision instead of letting the lane drift.
 
 - `./target/debug/effigy docs check-paths docs/contracts/010-decodelabs-production-strategy.md docs/specs/026-decodelabs-production-strategy-scope-strict-lane.md docs/specs/batch-cards/332-inventory-decodelabs-production-deployment-shape.md docs/specs/batch-cards/333-decide-post-decodelabs-inventory-boundary.md docs/specs/README.md docs/specs/batch-cards/README.md docs/roadmaps/README.md docs/roadmaps/g03/README.md docs/roadmaps/g03/003-decodelabs-production-strategy-scope.md docs/contracts/README.md`
 
+## Decision
+
+Close the lane with Decodelabs explicitly operator-owned for now.
+
+No provider-adapter or dedicated-host export lane opens from this batch.
+
 ## Next Task
 
-After `333`, either:
-
-- open a bounded Decodelabs neutral-model promotion batch
-- open a dedicated-host export planning batch
-- or close the lane with Decodelabs explicitly operator-owned for now
+No active next task inside this card. The boundary decision is complete.

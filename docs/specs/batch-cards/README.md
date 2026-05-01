@@ -13,10 +13,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- no active ready card
+
 - [`333-decide-post-decodelabs-inventory-boundary.md`](./333-decide-post-decodelabs-inventory-boundary.md)
-  is the active ready card. `332` closed the first inventory pass, so the next
-  honest step is to name the Decodelabs boundary explicitly instead of leaving
-  the lane in vague “future strategy” territory.
+  is complete. `g03.003` now closes on an explicit short-term answer:
+  Decodelabs production remains operator-owned until a real converged topology
+  or promotion trigger exists.
 
 - [`332-inventory-decodelabs-production-deployment-shape.md`](./332-inventory-decodelabs-production-deployment-shape.md)
   is complete. The first Decodelabs production inventory is now captured in
@@ -269,7 +271,9 @@ Staged next-lane card:
 
 ## Next Task
 
-Execute [`333-decide-post-decodelabs-inventory-boundary.md`](./333-decide-post-decodelabs-inventory-boundary.md).
+No active ready card.
+
+Stop in planning and choose the next live roadmap deliberately.
 
 ## Next Task
 
