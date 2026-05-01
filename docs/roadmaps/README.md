@@ -62,14 +62,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/008` is complete; shared embedded repo-targeting now lives in `src/runner/command_context/repo_override.rs` and is consumed by run-array builtin dispatch plus Rhai command re-entry.
 - `g03/009` is complete; `effigy exec` and exec aliases now share the bounded non-shell activation contract with container-backed task execution.
 - `g03/010` is complete enough for this pass; direct workspace and seeded task shells now share one ownership model, while attached `container up --attach` remains an explicit operator lifecycle exception instead of the next widening seam.
-- `g03/011` is now the active strict lane; the first shared embedded-runner spine is landed, and the next move is deciding whether that lane needs one more widening slice before closeout.
-- `g03/012` remains planned; it carries the parity-matrix and drift-guard closeout without reopening `g02`.
+- `g03/011` is complete enough for this pass; the shared embedded-runner spine now covers Rhai command replay, run-array builtins, and bootstrap task dispatch, while bootstrap managed-run synthesis remains a separate synthetic managed-run path rather than a normal embedded replay seam.
+- `g03/012` is now the active strict lane; it carries the parity-matrix and drift-guard closeout without reopening `g02`.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
-- `g03.011` is the active strict lane
-- `328` is the current ready batch: decide the post-foundation widening seam
+- `g03.012` is the active strict lane
+- `329` is the current ready batch: implement the convergence parity matrix foundation
 - `g03.009` is complete
 - `g03.001` is complete
 
@@ -107,7 +107,7 @@ Before rollover:
 
 ## Next Task
 
-Execute the next `g03.011` post-foundation decision batch.
+Execute the next `g03.012` parity-matrix batch.
 
 
 ## Historical language boundary

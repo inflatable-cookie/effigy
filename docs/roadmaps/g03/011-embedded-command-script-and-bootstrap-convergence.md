@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-01
 Depends on: 008, 009, 010
@@ -54,7 +54,9 @@ still applies.
 
 ## Next Task
 
-Execute the post-foundation widening decision.
+Promote `g03.012`.
 
-Once the shared path is real, decide whether one more widening slice is needed
-before the regression-matrix lane in `g03.012`.
+The first embedded-runner foundation closed the main caller-path drift.
+Bootstrap managed-run synthesis remains a separate synthetic managed-run path
+rather than a normal embedded replay surface, so this roadmap does not widen
+again before handing off to drift guards.

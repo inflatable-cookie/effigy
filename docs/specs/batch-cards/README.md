@@ -13,9 +13,14 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`329-implement-convergence-parity-matrix-foundation.md`](./329-implement-convergence-parity-matrix-foundation.md)
+  is the active ready card. `g03.012` now needs the first bounded parity
+  matrix and drift-guard batch.
+
 - [`328-decide-post-embedded-runner-foundation-boundary.md`](./328-decide-post-embedded-runner-foundation-boundary.md)
-  is the active ready card. `g03.011` now needs the post-foundation boundary
-  decision before it widens further or hands off to the drift-guard lane.
+  is complete. Bootstrap managed-run synthesis is not a normal embedded
+  replay surface, so `g03.011` does not widen again before handing off to
+  the drift-guard lane.
 
 - [`327-implement-shared-embedded-runner-foundation.md`](./327-implement-shared-embedded-runner-foundation.md)
   is complete. Rhai command replay, run-array builtins, and bootstrap task
@@ -256,4 +261,4 @@ Staged next-lane card:
 
 ## Next Task
 
-Execute `328` for the `g03.011` post-foundation widening decision.
+Execute `329` for the `g03.012` convergence parity matrix foundation.
