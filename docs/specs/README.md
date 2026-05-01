@@ -54,4 +54,4 @@ Recently completed:
 `g03.001` remains the active strict lane.
 
 Execute
-[`batch-cards/313-strengthen-deploy-model-production-metadata-foundation.md`](./batch-cards/313-strengthen-deploy-model-production-metadata-foundation.md).
+[`batch-cards/317-implement-render-export-foundation.md`](./batch-cards/317-implement-render-export-foundation.md).

@@ -86,6 +86,8 @@ optional one:
   - `node`
 - `build.command`
   - from `<front-dir>/build`
+- `output`
+  - `{ kind = "directory", path = "build", fallback = "<from svelte config>" }`
 - `start`
   - omitted in the first shape
 - `domains`
@@ -112,12 +114,21 @@ process.
   - `node`
 - `build.command`
   - from `<admin-dir>/build`
+- `output`
+  - `{ kind = "directory", path = "build", fallback = "<from svelte config>" }`
 - `start`
   - omitted in the first shape
 - `domains`
   - route derived from `routes.admin` plus `host`
 
 This matches the same static-site reasoning as `front`.
+
+For Underlay, static fallback ownership should derive from the package-local
+Svelte adapter config:
+
+- read `svelte.config.js` / `svelte.config.ts` when present
+- promote the adapter-static `fallback` value into `service.output.fallback`
+- warn if the service is still static but no fallback can be derived
 
 ### API derivation
 
@@ -134,7 +145,9 @@ This matches the same static-site reasoning as `front`.
 - `start.command`
   - from `<api-dir>/api`
 - `release.command`
-  - omitted by default in the first shape
+  - from `<api-dir>/db:migrate` when the task exists
+- `health`
+  - `{ kind = "http", path = "/v1/health" }`
 - `port`
   - from `[bundle].api_port`
 - `domains`
@@ -142,6 +155,11 @@ This matches the same static-site reasoning as `front`.
 
 The API service should also receive the database-related secret references that
 fall out of the backing-service derivation.
+
+Reason:
+
+- shipped Underlay APIs expose the shared `/v1/health` route shape
+- the common `db:migrate` task is the first honest release-hook promotion seam
 
 ### Jobs derivation
 
@@ -225,8 +243,8 @@ Underlay derivation should emit warnings when:
 
 - a required package task is missing
   - for example, no `<front-dir>/build`
-- the API service has no clear health probe
-- the API package exposes no clear release/migration hook
+- the API package exposes no clear `db:migrate` release/migration hook
+- a static service has no clear fallback file for provider rewrite generation
 - the repo shape suggests extra production concerns Effigy cannot model yet
 
 Do not emit warnings merely because local-only helpers were intentionally

@@ -23,6 +23,16 @@ api = "acme-api"
     std::fs::create_dir_all(root.join("acme-front")).expect("mkdir front");
     std::fs::create_dir_all(root.join("acme-admin")).expect("mkdir admin");
     std::fs::create_dir_all(root.join("acme-api")).expect("mkdir api");
+    std::fs::write(
+        root.join("acme-front/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write front svelte config");
+    std::fs::write(
+        root.join("acme-admin/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: 'index.html' }) } };\n",
+    )
+    .expect("write admin svelte config");
     write_manifest(
         &root.join("acme-front/effigy.toml"),
         r#"
@@ -46,6 +56,9 @@ run = "cargo build --release"
 [tasks.api]
 run = "cargo run -p acme-api"
 
+[tasks."db:migrate"]
+run = "cargo run -p acme-db --bin migrate_dev_db"
+
 [tasks.jobs]
 run = "cargo run -p acme-jobs {args}"
 "#,
@@ -67,6 +80,13 @@ run = "cargo run -p acme-jobs {args}"
     assert!(parsed["secrets"].is_array());
     assert!(parsed["warnings"].is_array());
     assert_eq!(parsed["backing_services"][0]["name"], "postgres");
+    assert_eq!(parsed["services"][0]["output"]["kind"], "directory");
+    assert_eq!(parsed["services"][0]["output"]["fallback"], "200.html");
+    assert_eq!(parsed["services"][2]["health"]["kind"], "http");
+    assert_eq!(
+        parsed["services"][2]["release"]["command"],
+        "cargo run -p acme-db --bin migrate_dev_db"
+    );
 }
 
 #[test]

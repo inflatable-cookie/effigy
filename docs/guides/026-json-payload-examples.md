@@ -150,6 +150,11 @@ Companion references:
       "build": {
         "command": "bun x vite build"
       },
+      "output": {
+        "kind": "directory",
+        "path": "build",
+        "fallback": "200.html"
+      },
       "domains": [
         "acme.test"
       ],
@@ -168,6 +173,13 @@ Companion references:
       "start": {
         "command": "cargo run -p acme-api"
       },
+      "release": {
+        "command": "cargo run -p acme-db --bin migrate_dev_db"
+      },
+      "health": {
+        "kind": "http",
+        "path": "/v1/health"
+      },
       "port": 41001,
       "domains": [
         "api.acme.test"
@@ -177,15 +189,7 @@ Companion references:
         "DATABASE_URL"
       ],
       "volumes": [],
-      "warnings": [
-        {
-          "code": "missing-health-probe",
-          "scope": "service",
-          "target": "api",
-          "message": "No explicit production health endpoint is declared yet",
-          "severity": "warn"
-        }
-      ]
+      "warnings": []
     }
   ],
   "backing_services": [

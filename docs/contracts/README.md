@@ -28,6 +28,10 @@ This folder contains both:
 - [`006-compose-backend-compatibility.md`](./006-compose-backend-compatibility.md):
   compose-backend capability matrix for the supported local runtime paths,
   including backend-required versus Effigy-repaired behavior.
+- [`007-render-export-contract.md`](./007-render-export-contract.md):
+  first provider-export contract for the managed deployment lane, defining the
+  bounded `render.yaml` mapping and the current static-fallback gap that still
+  blocks honest adapter implementation.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -54,7 +58,8 @@ to the real validation commands and live execution posture, and use
 `002-production-deployment-model.md` plus
 `003-underlay-deployment-derivation.md` and
 `004-underlay-reference-deploy-model-example.md` as the contract anchors for
-`g03.001`, and `005-container-runtime-contract.md` as the contract anchor for
+`g03.001`, plus `007-render-export-contract.md` as the first provider-adapter
+contract anchor for the same lane, and `005-container-runtime-contract.md` as the contract anchor for
 the `g03.004` to `g03.006` runtime-hardening lane, with
 `006-compose-backend-compatibility.md` defining the active backend capability
 matrix for `g03.006`.

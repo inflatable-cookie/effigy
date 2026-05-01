@@ -1,7 +1,7 @@
 # 313 Strengthen Deploy-Model Production Metadata Foundation
 
-Status: ready
-Updated: 2026-04-30
+Status: landed
+Updated: 2026-05-01
 Roadmap: `g03.001`
 Spec: `docs/specs/001-production-deployment-model-and-export-contract-strict-lane.md`
 
@@ -46,7 +46,6 @@ Strengthen `deploy.model.v1` enough that provider adapters can stay thin.
 
 ## Next Task
 
-After `313`, decide whether the next widening seam is:
+After `313`, the widening decision moves to:
 
-- a provider-export planning/contract batch
-- or the first concrete provider adapter implementation batch
+- [`314-decide-post-production-metadata-widening.md`](./314-decide-post-production-metadata-widening.md)

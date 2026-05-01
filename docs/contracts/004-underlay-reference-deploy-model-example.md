@@ -27,7 +27,7 @@ Relevant bundle inputs:
 ```json
 {
   "schema": "deploy.model.v1",
-  "version": 1,
+  "schema_version": 1,
   "app": {
     "name": "underlay-reference",
     "bundle": "underlay",
@@ -41,6 +41,11 @@ Relevant bundle inputs:
       "runtime": "node",
       "build": {
         "command": "bun x vite build"
+      },
+      "output": {
+        "kind": "directory",
+        "path": "build",
+        "fallback": "200.html"
       },
       "domains": [
         "acme.test"
@@ -56,6 +61,11 @@ Relevant bundle inputs:
       "runtime": "node",
       "build": {
         "command": "bun x vite build"
+      },
+      "output": {
+        "kind": "directory",
+        "path": "build",
+        "fallback": "index.html"
       },
       "domains": [
         "admin.acme.test"
@@ -75,6 +85,13 @@ Relevant bundle inputs:
       "start": {
         "command": "cargo run -p acme-api"
       },
+      "release": {
+        "command": "cargo run -p acme-db --bin migrate_dev_db"
+      },
+      "health": {
+        "kind": "http",
+        "path": "/v1/health"
+      },
       "port": 41001,
       "domains": [
         "api.acme.test"
@@ -84,22 +101,7 @@ Relevant bundle inputs:
         "DATABASE_URL"
       ],
       "volumes": [],
-      "warnings": [
-        {
-          "code": "missing-health-probe",
-          "scope": "service",
-          "target": "api",
-          "message": "No explicit production health endpoint is declared yet",
-          "severity": "warn"
-        },
-        {
-          "code": "missing-release-hook",
-          "scope": "service",
-          "target": "api",
-          "message": "No explicit release or migration command is promoted into the deployment model yet",
-          "severity": "warn"
-        }
-      ]
+      "warnings": []
     },
     {
       "name": "jobs",
@@ -171,7 +173,11 @@ This example locks a few important decisions down:
 
 - `front` and `admin` export as static services, not fake long-running web
   processes
+- static services carry their deployable output path directly in the model
+- static services also carry their SPA fallback file directly in the model
 - `api` is the only default public web process
+- the shared Underlay API health probe promotes as `/v1/health`
+- `db:migrate` is the first promoted release-hook seam
 - `jobs` is optional but real when the API package exposes a `jobs` task
 - local-only helper services do not leak into the production model
 - the first export lane can stay honest with warning entries instead of
@@ -181,9 +187,6 @@ This example locks a few important decisions down:
 
 This example does not yet settle:
 
-- how release hooks should be promoted from repo-owned tasks
-- how health probes should be declared in manifests
-- whether static services need explicit output-path fields in `deploy.model.v1`
 - whether provider adapters should attach default runtime env for Bun or Rust
 
 Those are the next design questions the implementation lane should answer.

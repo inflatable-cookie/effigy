@@ -1,7 +1,7 @@
 # 001 Production Deployment Model And Export Contract Strict Lane
 
 Status: active
-Updated: 2026-04-30
+Updated: 2026-05-01
 Roadmap: `g03.001`
 
 ## Context
@@ -54,8 +54,10 @@ This lane does not yet own:
 The correct implementation order is:
 
 1. land `deploy model --json` with one bounded Underlay-only derivation path
-2. prove the emitted payload against the `underlay-reference` example
-3. decide the next widening seam before opening Render or Railway export work
+2. strengthen the neutral model until provider adapters can stay thin
+3. define the first provider-export contract
+4. close any remaining provider-facing neutral-model gaps before adapter
+   implementation
 
 ## Integration Constraint
 
@@ -71,7 +73,11 @@ The correct implementation order is:
 1. `311` — implement `deploy model --json` foundation for Underlay
 2. `312` — decide post-model-foundation widening
 3. `313` — strengthen deploy-model production metadata foundation
-4. later — open provider export batches
+4. `314` — decide post-production-metadata widening
+5. `315` — plan first Render export contract
+6. `316` — strengthen static fallback ownership for Render export
+7. `317` — implement Render export foundation
+8. later — widen providers or proofs deliberately
 
 ## Exit Condition
 
@@ -84,5 +90,4 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute `313` — strengthen `deploy.model.v1` with the missing production
-metadata seams before provider adapter work begins.
+Execute `317` — implement the first bounded Render export surface.

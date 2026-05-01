@@ -7,6 +7,20 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Fixed
+- Public workspace handoff now reconciles container gateway routes before
+  entering the shell, and treats an adopted-but-route-incomplete stack as
+  session-owned for shutdown. This fixes `effigy bootstrap` landing in a
+  shell with a running DecodeLabs stack but missing `*.legacy.test` route
+  registration, and restores the expected "stop on shell exit" behavior
+  for that path without changing healthy already-running `effigy dev`
+  sessions.
+- Non-shell container task activation now uses one shared runtime-prep
+  contract across explicit `run_in = "container"` tasks and deferred
+  container requests. Auto-started runtimes now get the same temporary
+  host-container lease and gateway/route reconciliation either way,
+  instead of keeping deferred DecodeLabs/DecodeLabs-library tasks warm
+  for five minutes while explicit container tasks used a separate
+  one-shot startup path.
 - Workspace-seeded container tasks now share one handoff implementation
   across managed and standard execution, so `stay_in_shell` semantics no
   longer drift based on whether a task ran under the TUI.
@@ -109,6 +123,11 @@ During v0.x, MINOR bumps may include breaking changes.
   manifest, deriving `front`, `admin`, `api`, optional `jobs`, primary
   Postgres, routed domains, secret references, and promotion warnings without
   depending on runtime state or provider-specific export logic yet.
+- The first Underlay deploy-model derivation now promotes three more pieces of
+  production metadata directly into `deploy.model.v1`: static-service output
+  directories, static fallback files for SPA rewrites, the shared API health
+  probe (`/v1/health`), and `db:migrate` as the release hook when the API
+  package exposes it.
 - The Rhai host API now exposes a fuller low-level automation layer for
   file-oriented scripts: direct `copy_file`, `move_path`, `read_lines`,
   `is_dir`, string predicates/transforms such as `string_contains` and

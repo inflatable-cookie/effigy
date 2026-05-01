@@ -32,5 +32,4 @@ Rules:
 
 ## Next Task
 
-Continue `g03.001` with one more neutral-model strengthening batch before any
-provider-specific export work starts.
+Continue `g03.001` with the first bounded Render export implementation batch.
