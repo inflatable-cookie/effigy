@@ -256,6 +256,10 @@ shell_targets += "esac\n";
 
 let shell = shell_header + shell_functions + shell_layout_helpers + shell_targets;
 
+// This stays as a shell program on purpose. The helper needs shell-native
+// locking, traps, grouped subshells, and package-manager probes across a small
+// directory matrix; a typed Rhai host surface would be more complex than the
+// script it replaces.
 let result = run_process_stream("sh", ["-lc", shell]);
 if !result["success"] {
     throw result["stderr"].to_string();

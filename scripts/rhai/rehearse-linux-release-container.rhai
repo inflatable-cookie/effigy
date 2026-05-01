@@ -50,6 +50,10 @@ let build_script =
 
 let shell_error = "";
 try {
+    // This stays as a container-owned shell script on purpose. The rehearsal is
+    // a stateful in-container build flow with exports, command substitution,
+    // redirection, and artifact writes inside `/workspace`; flattening it into
+    // one-off Rhai host helpers would not simplify the behavior.
     let output = container_shell(container_name, build_script);
     if output.trim() != "" {
         log(output);

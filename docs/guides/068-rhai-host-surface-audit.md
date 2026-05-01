@@ -14,6 +14,8 @@ Policy:
   `run_process_tee(...)` use is covered by a static allowlist test. New
   entries should be rare and justified.
 - Treat `run_effigy(...)` and `run_effigy_json(...)` as escape hatches only.
+- First-party shipped Rhai scripts currently use neither `run_effigy(...)` nor
+  `run_effigy_json(...)`; a regression test keeps that true.
 - Keep long-running interactive flows CLI-first unless they gain a script-safe mode.
 
 ## Exposed Helpers
