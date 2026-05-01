@@ -13,9 +13,14 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`327-implement-shared-embedded-runner-foundation.md`](./327-implement-shared-embedded-runner-foundation.md)
+  is the active ready card. `g03.011` now needs the first bounded shared
+  embedded-runner batch for bootstrap, Rhai, and run-array command replay.
+
 - [`326-decide-post-interactive-ownership-foundation-boundary.md`](./326-decide-post-interactive-ownership-foundation-boundary.md)
-  is the active ready card. `g03.010` now needs the post-foundation boundary
-  decision before it widens into attached operator sessions or moves on.
+  is complete. The next honest widening seam after `325` is not attached
+  operator sessions; that surface remains an explicit operator lifecycle
+  exception, so the convergence program hands off to `g03.011`.
 
 - [`325-implement-interactive-ownership-classification-foundation.md`](./325-implement-interactive-ownership-classification-foundation.md)
   is complete. Direct `effigy workspace` entry and seeded task shells now
@@ -247,4 +252,4 @@ Staged next-lane card:
 
 ## Next Task
 
-Execute `326` for the `g03.010` post-foundation widening decision.
+Execute `327` for the `g03.011` shared embedded-runner foundation.

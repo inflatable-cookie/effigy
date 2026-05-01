@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-01
 Depends on: 007, 009
@@ -59,8 +59,9 @@ by:
 
 ## Next Task
 
-Execute the post-foundation widening decision.
+Promote `g03.011`.
 
-Once the shared interactive ownership model is real, decide whether to widen
-directly into attached operator sessions or move on to the embedded re-entry
-lane in `g03.011`.
+The first ownership foundation closed the overlapping direct workspace and
+seeded-task shell paths. Attached `container up --attach` remains a deliberate
+operator lifecycle surface, so it is not the next widening seam for this
+roadmap.

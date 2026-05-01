@@ -61,14 +61,15 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/007` is complete; the execution-surface convergence contract now lives in `docs/contracts/009-execution-surface-convergence.md`.
 - `g03/008` is complete; shared embedded repo-targeting now lives in `src/runner/command_context/repo_override.rs` and is consumed by run-array builtin dispatch plus Rhai command re-entry.
 - `g03/009` is complete; `effigy exec` and exec aliases now share the bounded non-shell activation contract with container-backed task execution.
-- `g03/010` is now the active strict lane; it carries the shared ownership and cleanup convergence for interactive workspace, handoff, and overlapping session-backed task paths.
-- `g03/011` and `g03/012` remain planned; they carry the remaining convergence program for embedded re-entry cleanup and drift guards without reopening `g02`.
+- `g03/010` is complete enough for this pass; direct workspace and seeded task shells now share one ownership model, while attached `container up --attach` remains an explicit operator lifecycle exception instead of the next widening seam.
+- `g03/011` is now the active strict lane; it carries the shared embedded-runner convergence for bootstrap, Rhai, and run-array command replay.
+- `g03/012` remains planned; it carries the parity-matrix and drift-guard closeout without reopening `g02`.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
-- `g03.010` is the active strict lane
-- `326` is the current ready batch: decide the post-foundation widening seam
+- `g03.011` is the active strict lane
+- `327` is the current ready batch: implement the shared embedded-runner foundation
 - `g03.009` is complete
 - `g03.001` is complete
 
@@ -106,7 +107,7 @@ Before rollover:
 
 ## Next Task
 
-Execute the next `g03.010` post-foundation decision batch.
+Execute the next `g03.011` embedded-runner convergence batch.
 
 
 ## Historical language boundary
