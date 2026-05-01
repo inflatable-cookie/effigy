@@ -23,6 +23,10 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of `sh -lc 'mysql ... < dump.sql'`.
 
 ### Fixed
+- `effigy bootstrap:local` no longer kills the running installed binary when
+  invoked through the local wrapper. The local build script now stages the new
+  binary into `effigy.new` and atomically renames it into place instead of
+  copying over `.local-install/bin/effigy` in place.
 - Local `bootstrap:local` installs now write a sibling active-version stamp
   for the installed binary, and the CLI header, `effigy version`, and TUI
   version surfaces now prefer that stamp when present. Local installs can
@@ -215,6 +219,11 @@ During v0.x, MINOR bumps may include breaking changes.
   local gateway instead of leaving it stranded on an internal container port.
 
 ### Changed
+- The shipped `decodelabs` bundle now derives its container working directory
+  from the first label of `[bundle].host`, so DecodeLabs repos mount at paths
+  like `/var/www/cbs` or `/var/www/contact-patch` instead of the generic
+  `/var/www/html`. The bundled seed helper now follows the repo-root-relative
+  dump path instead of hardcoding the old container root.
 - JSON command envelopes plus help/version payloads now expose shared binary
   metadata, including the active local build version when present.
 - Shipped DecodeLabs, DecodeLabs-library, and Underlay bundles now use a single

@@ -60,7 +60,7 @@ if latest_host_path == "" {
 }
 
 let dump_name = path_file_name(latest_host_path);
-let dump_container_path = path_join("/var/www/html/.effigy/local/db-seeds", dump_name);
+let dump_container_path = path_join(dumps_dir, dump_name);
 let mysql_args = ["--skip-ssl", "-h", "db", "-uroot"];
 if db_password != "" {
     mysql_args.push("--password=" + db_password);

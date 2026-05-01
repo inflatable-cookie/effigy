@@ -70,6 +70,7 @@ pub(super) fn resolve_decodelabs_bundle(
     inputs: &BTreeMap<String, Value>,
 ) -> Result<Value, ManifestError> {
     let host = required_bundle_string(manifest_path, "decodelabs", inputs, "host")?;
+    let host_dir_name = decodelabs_host_dir_name(manifest_path, &host)?;
     let project_name = required_bundle_string(manifest_path, "decodelabs", inputs, "project_name")?;
     let database = required_bundle_string(manifest_path, "decodelabs", inputs, "database")?;
     let system_name =
@@ -85,6 +86,7 @@ pub(super) fn resolve_decodelabs_bundle(
         optional_bundle_string(inputs, "zest_domain").unwrap_or_else(|| format!("zest.{host}"));
     let mut render_inputs = inputs.clone();
     render_inputs.insert("host".to_owned(), Value::String(host));
+    render_inputs.insert("host_dir_name".to_owned(), Value::String(host_dir_name));
     render_inputs.insert("project_name".to_owned(), Value::String(project_name));
     render_inputs.insert("database".to_owned(), Value::String(database));
     render_inputs.insert("system_name".to_owned(), Value::String(system_name));
@@ -136,6 +138,26 @@ pub(super) fn resolve_decodelabs_bundle(
         path: bundle_source_path("decodelabs"),
         error,
     })
+}
+
+fn decodelabs_host_dir_name(manifest_path: &Path, host: &str) -> Result<String, ManifestError> {
+    let trimmed = host.trim().trim_end_matches('.');
+    let Some(first_label) = trimmed.split('.').next() else {
+        return Err(ManifestError::Render {
+            path: manifest_path.to_path_buf(),
+            detail: "bundle `decodelabs` could not derive a working directory from empty `host`"
+                .to_owned(),
+        });
+    };
+    if first_label.is_empty() {
+        return Err(ManifestError::Render {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+                "bundle `decodelabs` could not derive a working directory from `host = {host}`"
+            ),
+        });
+    }
+    Ok(first_label.to_owned())
 }
 
 fn decodelabs_zest_port(port: i64) -> Result<u16, ManifestError> {

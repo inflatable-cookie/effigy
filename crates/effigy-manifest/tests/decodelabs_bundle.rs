@@ -40,7 +40,7 @@ version = "11.0"
     assert_eq!(containers.default.as_deref(), Some("web"));
     let web = containers.environments.get("web").expect("web container");
     assert_eq!(web.project_name.as_deref(), Some("contactpatch-dev"));
-    assert_eq!(web.working_dir.as_deref(), Some("/var/www/html"));
+    assert_eq!(web.working_dir.as_deref(), Some("/var/www/contact-patch"));
 
     let app = web.services.get("app").expect("app service");
     assert_eq!(app.catalog, "php-fpm");
@@ -222,6 +222,33 @@ default_workspace = "frontend"
 
     let dev_task = manifest.tasks.get("dev").expect("dev task");
     assert_eq!(dev_task.workspace.as_deref(), Some("frontend"));
+}
+
+#[test]
+fn decodelabs_bundle_derives_working_dir_from_host_label() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "decodelabs"
+host = "cbs.legacy.test"
+project_name = "cbs-dev"
+databases = ["cbs"]
+"#,
+    )
+    .expect("write manifest");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let web = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("web"))
+        .expect("web container");
+
+    assert_eq!(web.working_dir.as_deref(), Some("/var/www/cbs"));
 }
 
 #[test]
