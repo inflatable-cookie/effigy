@@ -13,9 +13,14 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`331-implement-runtime-side-effect-parity-closeout.md`](./331-implement-runtime-side-effect-parity-closeout.md)
+  is the active ready card. `g03.012` now needs one final bounded proof slice
+  for bootstrap handoff, gateway/alias reconciliation, and lease-refresh
+  parity.
+
 - [`330-decide-post-parity-matrix-foundation-boundary.md`](./330-decide-post-parity-matrix-foundation-boundary.md)
-  is the active ready card. `g03.012` now needs the post-foundation decision:
-  one more bounded drift-guard slice, or a clean pause.
+  is complete. The honest next move after `329` is not lane closeout yet; one
+  more bounded runtime side-effect parity slice is still warranted.
 
 - [`329-implement-convergence-parity-matrix-foundation.md`](./329-implement-convergence-parity-matrix-foundation.md)
   is complete. The first bounded parity matrix now exists across shared

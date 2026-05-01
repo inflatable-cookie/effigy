@@ -58,4 +58,4 @@ Recently completed:
 `g03.012` is the active strict lane.
 
 Execute
-[`batch-cards/330-decide-post-parity-matrix-foundation-boundary.md`](./batch-cards/330-decide-post-parity-matrix-foundation-boundary.md).
+[`batch-cards/331-implement-runtime-side-effect-parity-closeout.md`](./batch-cards/331-implement-runtime-side-effect-parity-closeout.md).
