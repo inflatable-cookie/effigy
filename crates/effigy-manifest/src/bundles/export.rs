@@ -7,45 +7,23 @@ use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 
 use super::specs::DECODELABS_PHP_EXTENSIONS;
 use super::{
-    bundle_source_path, get_bundle, optional_bundle_string, render_toml_string_array_lines,
-    BundleInputType, BundleSpec, LocalBundleTemplateBundle, ManifestError,
+    bundle_source_path, get_bundle, optional_bundle_string, render_bundle_template_with_inputs,
+    render_toml_string_array_lines, BundleInputType, BundleSpec, ManifestError,
 };
 
-pub(super) fn render_shipped_bundle_template(
+pub(super) fn render_shipped_bundle_template_with_inputs(
     manifest_path: &Path,
     bundle_name: &str,
-    bundle_root: &Path,
     template: &str,
+    inputs: &BTreeMap<String, Value>,
 ) -> Result<String, ManifestError> {
-    let mut env = minijinja::Environment::new();
-    env.add_template("bundle", template)
-        .map_err(|error| ManifestError::Render {
-            path: manifest_path.to_path_buf(),
-            detail: format!("bundle `{bundle_name}` template parse error: {error}"),
-        })?;
-    let template = env
-        .get_template("bundle")
-        .map_err(|error| ManifestError::Render {
-            path: manifest_path.to_path_buf(),
-            detail: format!("bundle `{bundle_name}` template load error: {error}"),
-        })?;
-    let bundle_root = bundle_root.display().to_string();
-    template
-        .render(ShippedBundleTemplateContext {
-            bundle: LocalBundleTemplateBundle {
-                name: bundle_name,
-                root: &bundle_root,
-            },
-        })
-        .map_err(|error| ManifestError::Render {
-            path: manifest_path.to_path_buf(),
-            detail: format!("bundle `{bundle_name}` template render error: {error}"),
-        })
-}
-
-#[derive(serde::Serialize)]
-struct ShippedBundleTemplateContext<'a> {
-    bundle: LocalBundleTemplateBundle<'a>,
+    render_bundle_template_with_inputs(
+        manifest_path,
+        bundle_name,
+        Path::new("{{ bundle.root }}"),
+        template,
+        inputs,
+    )
 }
 
 #[derive(Clone, Copy)]

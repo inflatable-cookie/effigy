@@ -48,15 +48,16 @@ __PHP_EXTENSIONS__
 catalog = "nginx"
 variant = "decodelabs"
 document_root = "."
-service = "{{ inputs.workspace_service_name }}"
 
 [containers.{{ inputs.container_name }}.services.db]
 catalog = "mariadb"
+version = "10.11"
 database = "{{ inputs.databases|first }}"
 databases = [{% for database in inputs.databases %}"{{ database }}"{% if not loop.last %}, {% endif %}{% endfor %}]
 
 [containers.{{ inputs.container_name }}.services.pma]
 catalog = "phpmyadmin"
+version = "latest"
 database_host = "db"
 
 [containers.{{ inputs.container_name }}.services.memcache]
@@ -65,19 +66,19 @@ memory = 128
 
 [containers.{{ inputs.container_name }}.services.redis]
 catalog = "redis"
+version = "7"
 
 [systems]
 default = "{{ inputs.system_name }}"
 
 [systems.{{ inputs.system_name }}]
 default_workspace = "{{ inputs.default_workspace }}"
-container = "{{ inputs.container_name }}"
 
 [systems.{{ inputs.system_name }}.workspaces.{{ inputs.default_workspace }}]
+container = "{{ inputs.container_name }}"
 
 [tasks.dev]
 workspace = "{{ inputs.default_workspace }}"
-
 [tasks.seed]
 workspace = "{{ inputs.default_workspace }}"
 stay_in_shell = true

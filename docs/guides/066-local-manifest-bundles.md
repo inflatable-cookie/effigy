@@ -30,6 +30,11 @@ The export writes a local-bundle directory containing `bundle.toml`,
 `effigy.toml`, any bundle-owned assets, and a short README. It refuses to
 overwrite existing files.
 
+For shipped bundles, the exported `effigy.toml` is not a second hand-maintained
+"local copy" format. It is the canonical shipped bundle template materialized
+for repo ownership. Shipped bundle defaults and `bundle export` now come from
+the same template source, so a bundle change only needs to land in one file.
+
 Switch the consuming manifest from `base` to `base_path`:
 
 ```toml
@@ -57,6 +62,10 @@ bundles/acme/
 
 The defaults file name is `effigy.toml` by default. Override it with
 `[bundle].defaults` inside `bundle.toml` when needed.
+
+For shipped bundles compiled into Effigy, the canonical template source is the
+bundle's `export.toml`. `effigy bundle export` writes that canonical template
+out as `effigy.toml` for local `base_path` ownership.
 
 Paths in `base_path` are resolved relative to the consuming
 `effigy.toml`, unless absolute.
@@ -107,6 +116,10 @@ manifest loading.
 
 The bundle's `effigy.toml` is a Minijinja template. Resolved inputs are
 available under `inputs`.
+
+When authoring a shipped bundle inside Effigy itself, keep one canonical
+template file. Do not keep parallel `defaults.toml` and `export.toml` files
+with the same shape.
 
 The bundle directory is available as `bundle.root`. Use it for
 bundle-owned Rhai scripts, compose files, Dockerfiles, or other assets.

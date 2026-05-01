@@ -27,6 +27,10 @@ switch the manifest to `base_path`:
 effigy bundle export underlay --path bundles/underlay
 ```
 
+The exported local bundle is not a lossy translation of the shipped one. Effigy
+now uses the same canonical template source for shipped bundle defaults and for
+`bundle export`, so local ownership starts from the exact same manifest shape.
+
 ## Underlay starter
 
 Reusable Effigy manifest shape for Underlay-style consumer repos. The

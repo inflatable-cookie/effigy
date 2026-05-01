@@ -20,8 +20,9 @@ composer = { service = "{{ inputs.workspace_service_name }}", command = "compose
 catalog = "php-fpm"
 version = "8.4"
 document_root = "."
-working_dir = "/workspace-root"
+working_dir = "/workspace-root/{{ inputs.workspace_subdir }}"
 mount_source = "{{ inputs.shared_root }}"
+isolated_dirs = ["vendor"]
 node_version = "20"
 node_global_packages = ["eclint"]
 composer_global_packages = ["decodelabs/effigy"]

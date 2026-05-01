@@ -1,7 +1,7 @@
 [bundle]
 name = "decodelabs"
 description = "DecodeLabs legacy PHP stack with nginx, php-fpm, MariaDB, phpMyAdmin, Redis, Memcached, a dev workspace, and local gateway routes."
-defaults = "defaults.toml"
+defaults = "export.toml"
 
 [[inputs]]
 name = "host"

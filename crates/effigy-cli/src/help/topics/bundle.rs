@@ -8,6 +8,7 @@ pub(crate) fn render_bundle_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
         &[
             "Inspect the shipped top-level bundle catalog used by `[bundle]` in `effigy.toml`.",
             "Bundle inspection shows both the accepted input schema and the manifest paths the bundle injects by default.",
+            "Bundle export writes the same canonical template shape that shipped bundle defaults use, but as a repo-owned local bundle directory.",
         ],
         &[
             "effigy bundle list [--json]",
