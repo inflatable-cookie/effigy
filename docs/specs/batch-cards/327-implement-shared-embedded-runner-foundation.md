@@ -1,6 +1,6 @@
 # 327 Implement Shared Embedded-Runner Foundation
 
-Status: ready
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.011`
 Spec: `docs/specs/024-embedded-command-script-and-bootstrap-convergence-strict-lane.md`
@@ -45,4 +45,4 @@ and move the main nested callers onto it.
 
 ## Next Task
 
-Execute `327`.
+Execute `328`.

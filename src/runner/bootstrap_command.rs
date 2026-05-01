@@ -17,7 +17,8 @@ use effigy_ui::{style_text, OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 use serde::Serialize;
 use serde_json::json;
 
-use crate::runner::execute::api::{run_managed_run_with_cwd, run_manifest_task_with_cwd};
+use crate::runner::embedded_runner::run_embedded_task;
+use crate::runner::execute::api::run_managed_run_with_cwd;
 use crate::runner::manifest::{load_task_manifest, load_task_manifest_with_inspection};
 
 use super::error::RunnerError;
@@ -279,12 +280,12 @@ fn run_bootstrap_run(
 }
 
 fn run_bootstrap_task(repo_root: &Path, selector: &str, phase: &str) -> Result<(), RunnerError> {
-    run_manifest_task_with_cwd(
+    run_embedded_task(
         &TaskInvocation {
             name: selector.to_owned(),
             args: Vec::new(),
         },
-        repo_root.to_path_buf(),
+        repo_root,
     )
     .map(|_| ())
     .map_err(|err| RunnerError::task_invocation(format!("{phase} task `{selector}` failed: {err}")))

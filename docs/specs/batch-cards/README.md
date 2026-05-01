@@ -13,9 +13,13 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`328-decide-post-embedded-runner-foundation-boundary.md`](./328-decide-post-embedded-runner-foundation-boundary.md)
+  is the active ready card. `g03.011` now needs the post-foundation boundary
+  decision before it widens further or hands off to the drift-guard lane.
+
 - [`327-implement-shared-embedded-runner-foundation.md`](./327-implement-shared-embedded-runner-foundation.md)
-  is the active ready card. `g03.011` now needs the first bounded shared
-  embedded-runner batch for bootstrap, Rhai, and run-array command replay.
+  is complete. Rhai command replay, run-array builtins, and bootstrap task
+  dispatch now share the first embedded-runner spine.
 
 - [`326-decide-post-interactive-ownership-foundation-boundary.md`](./326-decide-post-interactive-ownership-foundation-boundary.md)
   is complete. The next honest widening seam after `325` is not attached
@@ -252,4 +256,4 @@ Staged next-lane card:
 
 ## Next Task
 
-Execute `327` for the `g03.011` shared embedded-runner foundation.
+Execute `328` for the `g03.011` post-foundation widening decision.

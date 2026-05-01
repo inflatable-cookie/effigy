@@ -38,4 +38,4 @@ Rules:
 
 ## Next Task
 
-Continue `g03.011` with the first bounded shared embedded-runner batch.
+Continue `g03.011` with the post-foundation widening decision.

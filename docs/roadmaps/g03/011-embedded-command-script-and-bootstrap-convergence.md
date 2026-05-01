@@ -54,7 +54,7 @@ still applies.
 
 ## Next Task
 
-Execute the first bounded shared embedded-runner batch.
+Execute the post-foundation widening decision.
 
 Once the shared path is real, decide whether one more widening slice is needed
 before the regression-matrix lane in `g03.012`.
