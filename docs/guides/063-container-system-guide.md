@@ -216,6 +216,55 @@ Cross-project views:
 - `effigy container status --all`
 - `effigy container stats --all`
 
+## Task Activation
+
+Container-backed tasks now use two distinct lifecycle models.
+
+### Public Shell Sessions
+
+Interactive public shell/session surfaces include:
+
+- `effigy dev`
+- `effigy workspace`
+- tasks that end in `stay_in_shell = true`
+
+These are session-owned lifecycles:
+
+- Effigy prepares the runtime for an interactive shell or handoff
+- public gateway routes are reconciled before the shell opens
+- the session decides shutdown behavior on exit
+- `on_task_exit` and shell ownership matter here
+
+This is the right model when the user is being dropped into a live workspace.
+
+### Non-Shell Container Tasks
+
+Non-interactive container-backed tasks include:
+
+- explicit tasks with `run_in = "container"`
+- deferred requests with `[defer].run_in = "container"`
+- bootstrap `run` steps that route into a container but do not open a shell
+
+These use shared task activation instead of session ownership:
+
+- Effigy auto-starts the runtime when needed
+- sibling-service bring-up and exec-readiness recovery run before dispatch
+- public gateway/runtime route registration is reconciled when the container
+  declares a gateway surface
+- if the task had to start the runtime, or the runtime was already under an
+  active task lease, Effigy refreshes a temporary host-container lease
+
+Default lease behavior:
+
+- lease duration defaults to 5 minutes
+- the lease is refreshed on reuse
+- the runtime shuts down after the lease expires unless the user explicitly
+  keeps it up through `effigy container up`, `effigy dev`, or another owned
+  session
+
+The goal is one warm-runtime contract for non-shell tasks instead of separate
+behavior for deferred versus explicit container routing.
+
 ## Data Lifecycle
 
 Generated-compose environments support:

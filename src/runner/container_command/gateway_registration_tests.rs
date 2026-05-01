@@ -237,6 +237,57 @@ fn register_and_deregister_gateway_route_roundtrip() {
 }
 
 #[test]
+fn registered_gateway_routes_match_project_requires_exact_project_owned_routes() {
+    let dir = std::env::temp_dir().join(format!(
+        "effigy-gateway-registration-match-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir tempdir");
+    let repo_root = dir.join("repo");
+    let other_repo_root = dir.join("other-repo");
+    std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+    std::fs::create_dir_all(&other_repo_root).expect("mkdir other repo");
+    let desired_routes = resolve_gateway_routes(&test_policy()).expect("routes");
+    let desired = desired_routes.first().expect("some route").clone();
+
+    let mut table = RouteTable::new();
+    table.upsert(effigy_gateway::routes::Route {
+        domain: desired.domain.clone(),
+        target: desired.target.clone(),
+        dns_ip: desired.dns_ip,
+        tcp_port: desired.tcp_port,
+        tcp_target: desired.tcp_target.clone(),
+        source: RouteSource::Container,
+        project: repo_root.display().to_string(),
+        tls: desired.tls,
+        registered: chrono::Utc::now(),
+    });
+    assert!(registered_gateway_routes_match_project(
+        &table,
+        &repo_root,
+        std::slice::from_ref(&desired)
+    )
+    .expect("registered routes should match"));
+
+    table.upsert(effigy_gateway::routes::Route {
+        project: other_repo_root.display().to_string(),
+        ..table
+            .lookup(&desired.domain)
+            .expect("existing route")
+            .clone()
+    });
+    assert!(!registered_gateway_routes_match_project(
+        &table,
+        &repo_root,
+        std::slice::from_ref(&desired)
+    )
+    .expect("mismatched project should fail"));
+}
+
+#[test]
 fn prune_stale_container_routes_removes_old_domains_for_same_project() {
     let dir = std::env::temp_dir().join(format!(
         "effigy-gateway-prune-{}",
@@ -496,6 +547,37 @@ fn resolves_dns_only_service_alias_routes_on_project_loopback_ip() {
             Some(std::net::Ipv4Addr::new(127, 1, 0, 1))
         );
     });
+}
+
+#[test]
+fn expected_alias_route_counts_drop_domains_shadowed_by_explicit_dns_routes() {
+    let mut policy = test_policy();
+    policy.shared_services = vec![shared_service(
+        "postgres",
+        "postgres",
+        "shared-postgres-dev",
+        5432,
+        5432,
+    )];
+    policy
+        .dns_routes
+        .push(effigy_containers::EffectiveDnsRoute {
+            domain: "postgres.clientname.test".to_owned(),
+            tls: false,
+            port: Some(9001),
+            service: Some("dbadmin".to_owned()),
+            target_host: None,
+        });
+
+    let project_routes =
+        resolve_gateway_service_alias_routes(Path::new("/tmp/repo"), &policy, true, None)
+            .expect("project routes");
+
+    assert_eq!(expected_project_alias_route_count(&policy), 0);
+    assert_eq!(
+        expected_shared_service_alias_route_count(&policy, &project_routes),
+        0
+    );
 }
 
 #[test]

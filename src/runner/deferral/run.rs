@@ -7,61 +7,23 @@ use effigy_cli::TaskInvocation;
 
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
 use effigy_manifest::{load_task_manifest, ManifestTask, ManifestTaskRunIn};
-use effigy_ui::style_text;
-use effigy_ui::theme::is_ci_environment;
-use effigy_ui::theme::{resolve_color_enabled, Theme};
-use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 
 use super::policy::DEFER_DEPTH_ENV;
 use super::trace::render_deferral_trace;
 use crate::runner::container_command::support::validate_running_container_runtime_match;
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME;
+use crate::runner::container_runtime_prep::activate_container_runtime_for_task;
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::append_color_exec_env;
 use crate::runner::exec_command::run_compose_exec;
 use crate::runner::execute::api::{resolve_container_execution_binding, ContainerExecutionBinding};
-use crate::runner::host_container_lease::{
-    has_active_host_container_lease, host_container_lease_timeout_duration,
-    refresh_host_container_lease,
-};
+use crate::runner::host_container_lease::emit_host_container_lease_notice;
 use effigy_manifest::DeferredCommand;
 use effigy_tasks::TaskRuntimeArgs;
 
 enum DeferredExecutionPlan {
     HostCommand(String),
     Completed(String),
-}
-
-struct DeferredStartupProgress {
-    spinner: Option<Box<dyn SpinnerHandle>>,
-}
-
-impl DeferredStartupProgress {
-    fn start(label: &str) -> Self {
-        let enabled = std::io::stderr().is_terminal() && !is_ci_environment();
-        if !enabled {
-            eprintln!("{label}");
-            return Self { spinner: None };
-        }
-
-        let mut renderer = PlainRenderer::stderr(OutputMode::from_env());
-        let spinner = renderer.spinner(label).ok();
-        Self { spinner }
-    }
-
-    fn finish_success(mut self) {
-        if let Some(spinner) = self.spinner.take() {
-            spinner.finish_clear();
-        }
-    }
-
-    fn finish_error(mut self, message: &str) {
-        if let Some(spinner) = self.spinner.take() {
-            spinner.finish_error(message);
-        } else {
-            eprintln!("{message}");
-        }
-    }
 }
 
 pub(in crate::runner) fn run_deferred_request(
@@ -283,40 +245,13 @@ fn run_deferred_request_with_binding(
                         deferral.source
                     ))
                 })?;
-            let had_active_lease = has_active_host_container_lease(&deferral.working_dir, &policy)?;
-            effigy_containers::validate_container_policy(&deferral.working_dir, &policy)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            effigy_containers::validate_compose_backend_runtime(&deferral.working_dir, &policy)
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            let was_running = crate::runner::system_command::is_primary_service_running(
+            validate_running_container_runtime_match(&deferral.working_dir, &policy)?;
+            let activation = activate_container_runtime_for_task(
                 &deferral.working_dir,
                 &policy,
+                Some(policy.name.as_str()),
+                Some(deferral.working_dir.clone()),
             )?;
-            let _colima_started =
-                effigy_containers::exec::ensure_colima_running(&policy, &deferral.working_dir)?;
-            validate_running_container_runtime_match(&deferral.working_dir, &policy)?;
-            if !was_running {
-                let progress = DeferredStartupProgress::start(&format!(
-                    "Starting container environment `{}` for deferred task",
-                    policy.name
-                ));
-                let startup_result = effigy_containers::exec::run_docker_capture(
-                    &deferral.working_dir,
-                    &policy,
-                    &effigy_containers::compose::compose_up_args(&policy),
-                    "docker compose up",
-                );
-                match startup_result {
-                    Ok(_) => progress.finish_success(),
-                    Err(error) => {
-                        progress.finish_error("container environment startup failed");
-                        return Err(error.into());
-                    }
-                }
-            }
-            if had_active_lease || !was_running {
-                refresh_host_container_lease(&deferral.working_dir, &policy)?;
-            }
             crate::runner::system_command::ensure_workspace_permissions_ready(
                 &deferral.working_dir,
                 &policy,
@@ -339,8 +274,8 @@ fn run_deferred_request_with_binding(
                 "docker compose exec",
             )?;
             if output.status.success() {
-                if had_active_lease || !was_running {
-                    emit_deferred_lease_notice(&policy.name);
+                if activation.refreshed_host_container_lease {
+                    emit_host_container_lease_notice(&policy.name);
                 }
                 if runtime_args.verbose_root {
                     return Ok(DeferredExecutionPlan::Completed(render_deferral_trace(
@@ -399,31 +334,6 @@ fn render_container_deferral_command(command: &str) -> String {
         "unset NO_COLOR; export EFFIGY_COLOR=always CLICOLOR_FORCE=1 FORCE_COLOR=3 PATH={}:$PATH; {command}",
         shell_quote("/usr/local/bin")
     )
-}
-
-fn emit_deferred_lease_notice(container_name: &str) {
-    let timeout = format_duration_short(host_container_lease_timeout_duration());
-    let color_enabled =
-        resolve_color_enabled(OutputMode::from_env(), std::io::stderr().is_terminal());
-    eprintln!(
-        "{} temporary container lease active for `{container_name}`; idle shutdown in {timeout} unless reused or kept up explicitly",
-        style_text(color_enabled, Theme::default().label, "[info]")
-    );
-}
-
-fn format_duration_short(duration: std::time::Duration) -> String {
-    let secs = duration.as_secs();
-    if secs.is_multiple_of(60) && secs >= 60 {
-        let mins = secs / 60;
-        if mins == 1 {
-            return "1 minute".to_owned();
-        }
-        return format!("{mins} minutes");
-    }
-    if secs == 1 {
-        return "1 second".to_owned();
-    }
-    format!("{secs} seconds")
 }
 
 fn build_deferred_command(

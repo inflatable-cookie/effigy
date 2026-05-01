@@ -583,11 +583,17 @@ fn persist_effigy_source_repo_root_writes_host_pointer_file() {
 fn plain_workspace_session_shuts_down_only_if_it_started_the_system() {
     assert!(should_shutdown_started_system(
         false,
+        WorkspaceGatewayState {
+            routes_were_ready_before_handoff: true,
+        },
         WorkspaceSessionOwnership::OwnStartedSystem,
         true,
     ));
     assert!(!should_shutdown_started_system(
         true,
+        WorkspaceGatewayState {
+            routes_were_ready_before_handoff: true,
+        },
         WorkspaceSessionOwnership::OwnStartedSystem,
         true,
     ));
@@ -597,6 +603,9 @@ fn plain_workspace_session_shuts_down_only_if_it_started_the_system() {
 fn seeded_workspace_session_shuts_down_after_successful_handoff() {
     assert!(should_shutdown_started_system(
         false,
+        WorkspaceGatewayState {
+            routes_were_ready_before_handoff: true,
+        },
         WorkspaceSessionOwnership::LeaveSystemRunning,
         true,
     ));
@@ -606,12 +615,30 @@ fn seeded_workspace_session_shuts_down_after_successful_handoff() {
 fn seeded_workspace_session_leaves_started_system_running_after_failed_handoff() {
     assert!(!should_shutdown_started_system(
         false,
+        WorkspaceGatewayState {
+            routes_were_ready_before_handoff: true,
+        },
         WorkspaceSessionOwnership::LeaveSystemRunning,
         false,
     ));
     assert!(!should_shutdown_started_system(
         true,
+        WorkspaceGatewayState {
+            routes_were_ready_before_handoff: true,
+        },
         WorkspaceSessionOwnership::LeaveSystemRunning,
+        true,
+    ));
+}
+
+#[test]
+fn plain_workspace_session_shuts_down_adopted_stack_when_handoff_completed_gateway_readiness() {
+    assert!(should_shutdown_started_system(
+        true,
+        WorkspaceGatewayState {
+            routes_were_ready_before_handoff: false,
+        },
+        WorkspaceSessionOwnership::OwnStartedSystem,
         true,
     ));
 }

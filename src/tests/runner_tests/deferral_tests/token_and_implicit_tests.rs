@@ -21,10 +21,9 @@ fn setup_fake_docker_deferral_runtime(
     write_executable(
         &bin_dir.join("docker"),
         &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = ps ]; then\n  if [ -f '{}' ]; then\n    printf 'legacy-dev-app-1\\tUp 2 minutes\\t\\tlegacy-dev\\t{}\\tapp\\n'\n  fi\n  exit 0\nfi\nif [ \"$1\" = compose ]; then\n  for arg in \"$@\"; do\n    case \"$arg\" in\n      up)\n        printf 'running\\n' > '{}'\n        exit 0\n        ;;\n      down)\n        rm -f '{}'\n        exit 0\n        ;;\n    esac\n  done\nfi\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = ps ]; then\n  if [ -f '{}' ]; then\n    printf 'legacy-dev-app-1\\tUp 2 minutes\\t0.0.0.0:20000-30000->20000-30000/tcp\\tlegacy-dev\\t\\tapp\\n'\n    printf 'legacy-dev-web-1\\tUp 2 minutes\\t0.0.0.0:20000-30000->20000-30000/tcp\\tlegacy-dev\\t\\tweb\\n'\n    printf 'legacy-dev-pma-1\\tUp 2 minutes\\t0.0.0.0:20000-30000->20000-30000/tcp\\tlegacy-dev\\t\\tpma\\n'\n    printf 'legacy-dev-db-1\\tUp 2 minutes\\t0.0.0.0:20000-30000->20000-30000/tcp\\tlegacy-dev\\t\\tdb\\n'\n    printf 'legacy-dev-redis-1\\tUp 2 minutes\\t0.0.0.0:20000-30000->20000-30000/tcp\\tlegacy-dev\\t\\tredis\\n'\n    printf 'legacy-dev-memcache-1\\tUp 2 minutes\\t0.0.0.0:20000-30000->20000-30000/tcp\\tlegacy-dev\\t\\tmemcache\\n'\n  fi\n  exit 0\nfi\nif [ \"$1\" = compose ]; then\n  for arg in \"$@\"; do\n    case \"$arg\" in\n      up)\n        printf 'running\\n' > '{}'\n        exit 0\n        ;;\n      down)\n        rm -f '{}'\n        exit 0\n        ;;\n    esac\n  done\nfi\nexit 0\n",
             docker_log.display(),
             runtime_state.display(),
-            root.display(),
             runtime_state.display(),
             runtime_state.display(),
         ),

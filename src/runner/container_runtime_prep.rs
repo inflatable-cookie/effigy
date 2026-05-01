@@ -5,15 +5,24 @@ use std::time::{Duration, Instant};
 use effigy_cli::{ContainerArgs, ContainerSubcommand};
 use effigy_containers::compose::compose_args;
 use effigy_containers::exec::{ensure_colima_running, run_docker_capture};
+use effigy_containers::session::{managed_gateway_command, resolve_effigy_invocation_prefix};
 use effigy_containers::{
     load_container_exec_working_dir, validate_compose_backend_runtime, validate_container_policy,
     EffectiveContainerPolicy,
 };
 
-use crate::runner::container_command::run_container;
 use crate::runner::container_command::support::reconcile_primary_service_tcp_alias_hosts;
+use crate::runner::container_command::{register_gateway_routes_for_container, run_container};
 use crate::runner::error::RunnerError;
+use crate::runner::gateway_command::gateway_up_for_managed_task;
+use crate::runner::host_container_lease::refresh_host_container_lease_for_task_activation;
 use crate::runner::system_command::is_primary_service_running;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) struct ContainerTaskActivation {
+    pub(in crate::runner) system_was_running: bool,
+    pub(in crate::runner) refreshed_host_container_lease: bool,
+}
 
 pub(in crate::runner) fn ensure_container_runtime_prepared(
     repo_root: &Path,
@@ -43,6 +52,23 @@ pub(in crate::runner) fn ensure_container_runtime_prepared(
     Ok(system_was_running)
 }
 
+pub(in crate::runner) fn activate_container_runtime_for_task(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_name: Option<&str>,
+    repo_override: Option<PathBuf>,
+) -> Result<ContainerTaskActivation, RunnerError> {
+    let system_was_running =
+        ensure_container_runtime_prepared(repo_root, policy, container_name, repo_override)?;
+    ensure_task_container_gateway_ready(repo_root, policy)?;
+    let refreshed_host_container_lease =
+        refresh_host_container_lease_for_task_activation(repo_root, policy, system_was_running)?;
+    Ok(ContainerTaskActivation {
+        system_was_running,
+        refreshed_host_container_lease,
+    })
+}
+
 pub(in crate::runner) fn prepare_container_exec_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -65,6 +91,14 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
         || ensure_primary_service_exec_ready_with_recovery(repo_root, policy, &working_dir),
         || reconcile_primary_service_tcp_alias_hosts(repo_root, policy).map(|_| ()),
     )
+}
+
+pub(in crate::runner) fn container_policy_uses_gateway_surface(
+    policy: &EffectiveContainerPolicy,
+) -> bool {
+    !(policy.dns_routes.is_empty()
+        && policy.service_aliases.is_empty()
+        && policy.shared_services.is_empty())
 }
 
 fn validate_policy_runtime(
@@ -127,6 +161,20 @@ fn run_runtime_prep_steps(
     compose_up();
     ensure_exec_ready()?;
     reconcile_aliases()?;
+    Ok(())
+}
+
+fn ensure_task_container_gateway_ready(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    if !container_policy_uses_gateway_surface(policy) {
+        return Ok(());
+    }
+    let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
+    let command = managed_gateway_command(&executable);
+    gateway_up_for_managed_task(&command)?;
+    let _ = register_gateway_routes_for_container(repo_root, policy)?;
     Ok(())
 }
 

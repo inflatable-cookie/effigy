@@ -73,6 +73,8 @@ The runtime-prep phase owns:
   directory and command style
 - reconciling runtime guarantees that the compose backend failed to materialize
   directly
+- reconciling gateway/runtime exposure needed by the selected execution target
+- refreshing non-shell task leases when Effigy owns warm-runtime reuse
 
 Surface-specific presentation may differ. The prep contract must not.
 
@@ -99,6 +101,51 @@ Meaning:
   consistently across managed and standard surfaces
 
 The marker name and meaning are product contract, not incidental plumbing.
+
+## Activation ownership
+
+Effigy has two valid ownership models for container-backed local work:
+
+- public shell/session ownership
+- non-shell task activation ownership
+
+These must not drift by caller path.
+
+### Public shell/session ownership
+
+This covers:
+
+- `effigy dev`
+- `effigy workspace`
+- `stay_in_shell` handoff flows
+
+Contract:
+
+- Effigy prepares the runtime for interactive access
+- gateway/public route exposure must be reconciled before the shell opens
+- session shutdown ownership depends on whether Effigy completed runtime
+  readiness for that shell
+
+This is not lease-managed task activation.
+
+### Non-shell task activation ownership
+
+This covers:
+
+- standard routed tasks with `run_in = "container"`
+- deferred requests with `[defer].run_in = "container"`
+- bootstrap `run` steps that dispatch into a container without opening a shell
+
+Contract:
+
+- the runtime-prep phase runs before user command dispatch
+- if Effigy auto-started the runtime, or the runtime was already under an
+  active task lease, Effigy refreshes the host-container lease
+- default lease timeout is 5 minutes unless configured otherwise
+- lease reuse must not depend on whether the request came from deferral or
+  explicit task routing
+
+This is the required shared contract for warm non-shell container reuse.
 
 ## Alias contract
 
@@ -179,6 +226,13 @@ The current expected fallback class is:
 Fallback ownership must stay explicit in code and docs. It is not acceptable
 for one surface to rely on backend luck while another surface performs the
 repair.
+
+The same rule applies to task activation:
+
+- one non-shell caller path must not refresh leases while another caller path
+  tears the runtime down immediately
+- one caller path must not reconcile gateway/public routes while another
+  caller path silently skips them for the same container policy
 
 ## Failure semantics
 
