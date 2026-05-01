@@ -16,7 +16,7 @@ use super::super::routing::{
 };
 use super::{super::process_run, command};
 use crate::runner::container_runtime_prep::{
-    activate_container_runtime_for_task, ensure_container_runtime_prepared,
+    activate_container_runtime_for_task, ActivationRequest, ExecutionSurfaceKind,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::execute::nested;
@@ -247,8 +247,8 @@ fn activate_routed_container_runtime(
             load_container_policy(repo_root, Some(container_name))
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))
         },
-        |repo_root, policy, container_name, repo_override| {
-            activate_container_runtime_for_task(repo_root, policy, container_name, repo_override)
+        |repo_root, policy, request| {
+            activate_container_runtime_for_task(repo_root, policy, request)
         },
     )
 }
@@ -263,8 +263,7 @@ fn activate_routed_container_runtime_with(
     activate: impl FnOnce(
         &Path,
         &effigy_containers::EffectiveContainerPolicy,
-        Option<&str>,
-        Option<std::path::PathBuf>,
+        ActivationRequest<'_>,
     ) -> Result<
         crate::runner::container_runtime_prep::ContainerTaskActivation,
         RunnerError,
@@ -274,8 +273,12 @@ fn activate_routed_container_runtime_with(
     activate(
         repo_root,
         &policy,
-        Some(container_name),
-        Some(repo_root.to_path_buf()),
+        ActivationRequest {
+            surface: ExecutionSurfaceKind::StandardTask,
+            container_name: Some(container_name),
+            repo_override: Some(repo_root.to_path_buf()),
+            refresh_host_container_lease: true,
+        },
     )
 }
 
@@ -313,8 +316,7 @@ fn run_inline_workspace_standard_task(
     let working_dir = container_binding
         .exec_working_dir(repo_root)?
         .ok_or_else(|| RunnerError::task_invocation("missing inline workspace exec working dir"))?;
-    let _ =
-        ensure_container_runtime_prepared(repo_root, &policy, Some(policy.name.as_str()), None)?;
+    let _ = activate_inline_workspace_container_runtime(repo_root, &policy)?;
 
     let exec_result = if preflight.output_json {
         let output = capture_routed_task_container_exec_with_policy(
@@ -381,6 +383,43 @@ fn run_inline_workspace_standard_task(
     exec_result
 }
 
+fn activate_inline_workspace_container_runtime(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) -> Result<crate::runner::container_runtime_prep::ContainerTaskActivation, RunnerError> {
+    activate_inline_workspace_container_runtime_with(
+        repo_root,
+        policy,
+        |repo_root, policy, request| {
+            activate_container_runtime_for_task(repo_root, policy, request)
+        },
+    )
+}
+
+fn activate_inline_workspace_container_runtime_with(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    activate: impl FnOnce(
+        &Path,
+        &effigy_containers::EffectiveContainerPolicy,
+        ActivationRequest<'_>,
+    ) -> Result<
+        crate::runner::container_runtime_prep::ContainerTaskActivation,
+        RunnerError,
+    >,
+) -> Result<crate::runner::container_runtime_prep::ContainerTaskActivation, RunnerError> {
+    activate(
+        repo_root,
+        policy,
+        ActivationRequest {
+            surface: ExecutionSurfaceKind::StandardTask,
+            container_name: Some(policy.name.as_str()),
+            repo_override: Some(repo_root.to_path_buf()),
+            refresh_host_container_lease: false,
+        },
+    )
+}
+
 fn resolve_env_schema_if_present(
     catalog_root: &Path,
     runtime_override: Option<&Path>,
@@ -411,10 +450,10 @@ fn map_schema_support_error(error: SchemaSupportError) -> RunnerError {
 #[cfg(test)]
 mod tests {
     use super::{
-        activate_routed_container_runtime_with, should_stay_in_workspace_shell,
-        ContainerExecutionBinding,
+        activate_inline_workspace_container_runtime_with, activate_routed_container_runtime_with,
+        should_stay_in_workspace_shell, ContainerExecutionBinding,
     };
-    use crate::runner::container_runtime_prep::ContainerTaskActivation;
+    use crate::runner::container_runtime_prep::{ContainerTaskActivation, ExecutionSurfaceKind};
     use crate::runner::execute::workspace_seeded::{
         render_workspace_seeded_task_command, CONTAINER_HANDOFF_ENV,
     };
@@ -561,11 +600,13 @@ mod tests {
                     host_processes: Vec::new(),
                 })
             },
-            |repo_root, _policy, container_name, repo_override| {
+            |repo_root, _policy, request| {
                 activation_call = Some((
                     repo_root.to_path_buf(),
-                    container_name.map(str::to_owned),
-                    repo_override,
+                    request.surface,
+                    request.container_name.map(str::to_owned),
+                    request.repo_override,
+                    request.refresh_host_container_lease,
                 ));
                 Ok(ContainerTaskActivation {
                     system_was_running: false,
@@ -579,11 +620,83 @@ mod tests {
             activation_call,
             Some((
                 repo_root.to_path_buf(),
+                ExecutionSurfaceKind::StandardTask,
                 Some("web".to_owned()),
                 Some(repo_root.to_path_buf()),
+                true,
             ))
         );
         assert!(activation.refreshed_host_container_lease);
+    }
+
+    #[test]
+    fn inline_workspace_activation_skips_host_container_lease_refresh() {
+        let repo_root = Path::new("/tmp/demo-repo");
+        let policy = EffectiveContainerPolicy {
+            name: "dev__app".to_owned(),
+            driver: effigy_manifest::ManifestContainerDriver::Colima,
+            startup: effigy_manifest::ManifestContainerStartup::Detached,
+            profile: "effigy".to_owned(),
+            compose_source: EffectiveComposeSource::Direct,
+            compose_files: vec![PathBuf::from("/tmp/docker-compose.yml")],
+            compose_file_display: "docker-compose.yml".to_owned(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: "demo-web".to_owned(),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            service_aliases: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            workspace_user: None,
+            workspace_home: None,
+            on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
+            shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+            host_processes: Vec::new(),
+        };
+        let mut activation_call = None;
+
+        let activation = activate_inline_workspace_container_runtime_with(
+            repo_root,
+            &policy,
+            |repo_root, policy, request| {
+                activation_call = Some((
+                    repo_root.to_path_buf(),
+                    policy.name.clone(),
+                    request.surface,
+                    request.container_name.map(str::to_owned),
+                    request.repo_override,
+                    request.refresh_host_container_lease,
+                ));
+                Ok(ContainerTaskActivation {
+                    system_was_running: false,
+                    refreshed_host_container_lease: false,
+                })
+            },
+        )
+        .expect("activate inline workspace runtime");
+
+        assert_eq!(
+            activation_call,
+            Some((
+                repo_root.to_path_buf(),
+                "dev__app".to_owned(),
+                ExecutionSurfaceKind::StandardTask,
+                Some("dev__app".to_owned()),
+                Some(repo_root.to_path_buf()),
+                false,
+            ))
+        );
+        assert!(!activation.refreshed_host_container_lease);
     }
 
     struct EnvRestore {

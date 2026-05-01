@@ -13,6 +13,11 @@ During v0.x, MINOR bumps may include breaking changes.
   and secret wiring explicit instead of guessed.
 
 ### Fixed
+- `effigy exec` and exec aliases now use the shared non-shell runtime
+  activation contract. Stopped container runtimes now get the same startup,
+  exec-readiness, gateway/route reconciliation, and temporary host-container
+  lease behavior as container-backed task execution instead of acting like a
+  separate already-running-only path.
 - Nested Effigy command re-entry now uses one shared embedded repo-targeting
   helper instead of separate per-surface allowlists. Run-array builtin
   dispatch still force-pins nested builtins to the parent repo, while Rhai

@@ -60,14 +60,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/003-decodelabs-production-strategy-scope.md` is planned behind `g03.002`; it scopes the future Decodelabs managed-host story without forcing premature automation now.
 - `g03/007` is complete; the execution-surface convergence contract now lives in `docs/contracts/009-execution-surface-convergence.md`.
 - `g03/008` is complete; shared embedded repo-targeting now lives in `src/runner/command_context/repo_override.rs` and is consumed by run-array builtin dispatch plus Rhai command re-entry.
-- `g03/009` through `g03/012` remain planned; they carry the remaining convergence program for runtime activation, interactive ownership, embedded re-entry cleanup, and drift guards without reopening `g02`.
+- `g03/009` is complete; `effigy exec` and exec aliases now share the bounded non-shell activation contract with container-backed task execution.
+- `g03/010` through `g03/012` remain planned; they carry the remaining convergence program for interactive ownership, embedded re-entry cleanup, and drift guards without reopening `g02`.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
-- `g03.009` is the active strict lane
-- `324` is the current ready batch: implement the first bounded exec
-  activation convergence slice
+- no strict lane is active right now
+- `g03.009` is complete
 - `g03.001` is complete
 
 ## Research Program
@@ -104,7 +104,8 @@ Before rollover:
 
 ## Next Task
 
-Execute the next `g03.009` activation convergence batch.
+Promote `g03.010` if the next real seam is interactive session ownership and
+lifecycle convergence.
 
 
 ## Historical language boundary

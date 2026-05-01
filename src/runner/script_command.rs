@@ -15,9 +15,7 @@ use effigy_cli::{
 };
 use serde_json::Value;
 
-use super::command_context::{
-    apply_repo_target_to_embedded_command, EmbeddedRepoOverrideMode,
-};
+use super::command_context::{apply_repo_target_to_embedded_command, EmbeddedRepoOverrideMode};
 use super::error::RunnerError;
 use super::execute::api::run_manifest_task_with_cwd;
 pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<String, RunnerError> {

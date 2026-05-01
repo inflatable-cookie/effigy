@@ -2,21 +2,24 @@ use std::path::Path;
 use std::process::Output;
 
 use effigy_cli::ExecArgs;
-use effigy_containers::{
-    load_container_policy, validate_compose_backend_runtime, validate_container_policy,
-    EffectiveContainerPolicy,
-};
+use effigy_containers::EffectiveContainerPolicy;
 use effigy_env::secret::SecretString;
 use effigy_exec::detection::determine_strategy;
 use effigy_manifest::ManifestContainerConfig;
 use effigy_tasks::{render_task_selector, TaskSelector};
 
 use super::command_context::{current_working_dir, resolve_repo_root};
+use super::container_runtime_prep::{
+    activate_container_runtime_for_task, ActivationRequest, ContainerTaskActivation,
+    ExecutionSurfaceKind,
+};
 use super::error::RunnerError;
+use super::host_container_lease::emit_host_container_lease_notice;
 use super::system_command::ensure_workspace_effigy_available_for_policy;
 use surface::{
     build_alias_table, build_raw_exec_args, ensure_container_running, exec_alias_surface_absent,
-    load_named_container_config, resolve_dev_exec_surface, resolve_exec_working_dir,
+    resolve_dev_exec_surface, resolve_exec_working_dir, resolve_running_named_exec_surface,
+    ResolvedExecSurface,
 };
 use transport::build_routed_task_exec_args;
 
@@ -68,8 +71,9 @@ pub(in crate::runner) fn try_run_exec_alias(
         Err(effigy_exec::ExecError::AliasNotFound { .. }) => return Ok(None),
         Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
     };
+    let activation = activate_exec_surface(repo_root, &surface)?;
 
-    run_raw_exec(
+    let output = run_raw_exec(
         repo_root,
         invocation_cwd,
         &surface.container_name,
@@ -79,8 +83,9 @@ pub(in crate::runner) fn try_run_exec_alias(
         &alias.command,
         output_json,
         Some(alias_name),
-    )
-    .map(Some)
+    )?;
+    maybe_emit_exec_activation_notice(&surface, activation);
+    Ok(Some(output))
 }
 
 pub(in crate::runner) fn run_routed_task_container_exec(
@@ -207,8 +212,9 @@ fn run_explicit_exec(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let surface = resolve_dev_exec_surface(repo_root)?;
+    let activation = activate_exec_surface(repo_root, &surface)?;
     let service = service_override.unwrap_or(surface.policy.primary_service.as_str());
-    run_raw_exec(
+    let output = run_raw_exec(
         repo_root,
         invocation_cwd,
         &surface.container_name,
@@ -218,7 +224,44 @@ fn run_explicit_exec(
         command,
         output_json,
         None,
-    )
+    )?;
+    maybe_emit_exec_activation_notice(&surface, activation);
+    Ok(output)
+}
+
+fn activate_exec_surface(
+    repo_root: &Path,
+    surface: &ResolvedExecSurface,
+) -> Result<ContainerTaskActivation, RunnerError> {
+    activate_exec_surface_with(repo_root, surface, |repo_root, surface| {
+        activate_container_runtime_for_task(
+            repo_root,
+            &surface.policy,
+            ActivationRequest {
+                surface: ExecutionSurfaceKind::ExplicitExec,
+                container_name: Some(surface.container_name.as_str()),
+                repo_override: Some(repo_root.to_path_buf()),
+                refresh_host_container_lease: true,
+            },
+        )
+    })
+}
+
+fn activate_exec_surface_with(
+    repo_root: &Path,
+    surface: &ResolvedExecSurface,
+    activate: impl FnOnce(&Path, &ResolvedExecSurface) -> Result<ContainerTaskActivation, RunnerError>,
+) -> Result<ContainerTaskActivation, RunnerError> {
+    activate(repo_root, surface)
+}
+
+fn maybe_emit_exec_activation_notice(
+    surface: &ResolvedExecSurface,
+    activation: ContainerTaskActivation,
+) {
+    if activation.refreshed_host_container_lease {
+        emit_host_container_lease_notice(&surface.container_name);
+    }
 }
 
 fn run_raw_exec(
@@ -263,18 +306,19 @@ fn run_routed_task_exec_internal(
     secret_env: Option<&[(&str, &SecretString)]>,
     capture: bool,
 ) -> Result<Output, RunnerError> {
-    let config = load_named_container_config(repo_root, container_name)?;
-    let policy = load_container_policy(repo_root, Some(container_name))?;
-    validate_container_policy(repo_root, &policy)?;
-    validate_compose_backend_runtime(repo_root, &policy)?;
-    ensure_container_running(repo_root, &policy, container_name)?;
+    let surface = resolve_running_named_exec_surface(repo_root, container_name)?;
 
-    let mapped_cwd = map_host_cwd(repo_root, invocation_cwd, container_name, &config)?;
+    let mapped_cwd = map_host_cwd(
+        repo_root,
+        invocation_cwd,
+        &surface.container_name,
+        &surface.config,
+    )?;
     run_routed_task_exec_internal_with_mapped_cwd(
         repo_root,
         selector,
         task_args,
-        &policy,
+        &surface.policy,
         &mapped_cwd,
         service,
         command,
@@ -399,9 +443,15 @@ fn render_exec_result(
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::{Arc, Mutex};
 
     fn temp_repo(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
+        let base = std::env::current_dir()
+            .expect("cwd")
+            .join("target")
+            .join("test-tmp");
+        fs::create_dir_all(&base).expect("mkdir test base");
+        let root = base.join(format!(
             "effigy-exec-command-{name}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -413,6 +463,9 @@ mod tests {
     }
 
     fn write_container_manifest(root: &Path, working_dir: &str) {
+        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n")
+            .expect("write compose");
         fs::write(
             root.join("effigy.toml"),
             format!(
@@ -763,5 +816,41 @@ working_dir = "{working_dir}"
                 "contactpatch".to_owned()
             ]
         );
+    }
+
+    #[test]
+    fn activate_exec_surface_uses_repo_root_as_repo_override() {
+        let repo_root = PathBuf::from("/tmp/repo");
+        let root = temp_repo("activate-surface");
+        write_container_manifest(&root, "/workspace");
+        let surface = resolve_dev_exec_surface(&root).expect("surface");
+        let captured = Arc::new(Mutex::new(None));
+        let captured_clone = Arc::clone(&captured);
+
+        let activation =
+            activate_exec_surface_with(&repo_root, &surface, move |repo_root, surface| {
+                *captured_clone.lock().expect("capture lock") = Some((
+                    repo_root.to_path_buf(),
+                    surface.container_name.clone(),
+                    surface.policy.name.clone(),
+                    ExecutionSurfaceKind::ExplicitExec,
+                ));
+                Ok(ContainerTaskActivation {
+                    system_was_running: false,
+                    refreshed_host_container_lease: true,
+                })
+            })
+            .expect("activation");
+
+        assert_eq!(
+            *captured.lock().expect("capture lock"),
+            Some((
+                PathBuf::from("/tmp/repo"),
+                "web".to_owned(),
+                "web".to_owned(),
+                ExecutionSurfaceKind::ExplicitExec,
+            ))
+        );
+        assert!(activation.refreshed_host_container_lease);
     }
 }

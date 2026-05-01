@@ -40,16 +40,8 @@ pub(super) fn resolve_dev_exec_surface(
     let containers = manifest.containers.ok_or_else(|| {
         RunnerError::task_invocation("manifest does not define a `[containers]` registry")
     })?;
-    let (container_name, config) = resolve_dev_container_config(&containers)?;
-    let policy = load_container_policy(repo_root, Some(&container_name))?;
-    validate_container_policy(repo_root, &policy)?;
-    validate_compose_backend_runtime(repo_root, &policy)?;
-    ensure_container_running(repo_root, &policy, &container_name)?;
-    Ok(ResolvedExecSurface {
-        container_name,
-        config,
-        policy,
-    })
+    let container_name = resolve_dev_container_name(&containers)?;
+    resolve_named_exec_surface(repo_root, &container_name)
 }
 
 pub(super) fn load_named_container_config(
@@ -69,6 +61,30 @@ pub(super) fn load_named_container_config(
                 "container `{container_name}` is not defined in `[containers]`"
             ))
         })
+}
+
+pub(super) fn resolve_named_exec_surface(
+    repo_root: &Path,
+    container_name: &str,
+) -> Result<ResolvedExecSurface, RunnerError> {
+    let config = load_named_container_config(repo_root, container_name)?;
+    let policy = load_container_policy(repo_root, Some(container_name))?;
+    validate_container_policy(repo_root, &policy)?;
+    validate_compose_backend_runtime(repo_root, &policy)?;
+    Ok(ResolvedExecSurface {
+        container_name: container_name.to_owned(),
+        config,
+        policy,
+    })
+}
+
+pub(super) fn resolve_running_named_exec_surface(
+    repo_root: &Path,
+    container_name: &str,
+) -> Result<ResolvedExecSurface, RunnerError> {
+    let surface = resolve_named_exec_surface(repo_root, container_name)?;
+    ensure_container_running(repo_root, &surface.policy, &surface.container_name)?;
+    Ok(surface)
 }
 
 pub(super) fn build_alias_table(
@@ -135,20 +151,21 @@ pub(super) fn ensure_container_running(
     )))
 }
 
+#[derive(Debug, Clone)]
 pub(super) struct ResolvedExecSurface {
     pub(super) container_name: String,
     pub(super) config: ManifestContainerConfig,
     pub(super) policy: EffectiveContainerPolicy,
 }
 
-fn resolve_dev_container_config(
+fn resolve_dev_container_name(
     containers: &ManifestContainersConfig,
-) -> Result<(String, ManifestContainerConfig), RunnerError> {
+) -> Result<String, RunnerError> {
     let mut matches = containers
         .environments
         .iter()
         .filter(|(_, config)| config.context.as_deref() == Some("dev"))
-        .map(|(name, config)| (name.clone(), config.clone()))
+        .map(|(name, _)| name.clone())
         .collect::<Vec<_>>();
 
     match matches.len() {
@@ -160,7 +177,7 @@ fn resolve_dev_container_config(
             "multiple containers claim context = \"dev\": {}",
             matches
                 .iter()
-                .map(|(name, _)| format!("`{name}`"))
+                .map(|name| format!("`{name}`"))
                 .collect::<Vec<_>>()
                 .join(", ")
         ))),
