@@ -3,6 +3,11 @@ use crate::contract_test_support::EnvGuard;
 use crate::runner::interactive_session::{
     classify_interactive_session_ownership, InteractiveSessionIntent,
 };
+use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
+use effigy_manifest::{
+    ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
+    ManifestContainerStartup,
+};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 fn temp_repo(manifest: &str) -> std::path::PathBuf {
@@ -83,6 +88,40 @@ fn workspace_handoff_notice_mentions_container() {
 
     assert!(rendered.contains("[next]"));
     assert!(rendered.contains("switching into workspace container `stack`"));
+}
+
+fn test_policy() -> EffectiveContainerPolicy {
+    EffectiveContainerPolicy {
+        name: "stack".to_owned(),
+        driver: ManifestContainerDriver::Colima,
+        startup: ManifestContainerStartup::Detached,
+        profile: "effigy".to_owned(),
+        compose_source: EffectiveComposeSource::Direct,
+        compose_files: vec![std::path::PathBuf::from("docker-compose.yml")],
+        compose_file_display: "docker-compose.yml".to_owned(),
+        managed_volumes: vec![],
+        shared_services: vec![],
+        project_name: "demo-stack".to_owned(),
+        primary_service: "workspace".to_owned(),
+        dns_domain: None,
+        dns_tls: false,
+        dns_port: None,
+        dns_routes: vec![],
+        service_aliases: vec![],
+        declared_ports: vec![],
+        ports_declared_explicitly: false,
+        declared_mounts: vec![],
+        declared_media_mounts: vec![],
+        pull_production_hook: None,
+        health_check: None,
+        health_timeout_secs: 60,
+        workspace_user: None,
+        workspace_home: None,
+        on_task_exit: ManifestContainerOnTaskExit::Stop,
+        shutdown: ManifestContainerShutdownMode::Graceful,
+        detach_timeout_secs: 10,
+        host_processes: Vec::new(),
+    }
 }
 
 #[test]
@@ -671,6 +710,182 @@ fn effective_workspace_repo_override_falls_back_to_repo_root() {
     assert_eq!(
         effective_workspace_repo_override(repo_root, Some(PathBuf::from("/tmp/explicit"))),
         Some(PathBuf::from("/tmp/explicit"))
+    );
+}
+
+#[test]
+fn workspace_handoff_preparation_runs_gateway_and_permissions_in_shared_order() {
+    let repo_root = Path::new("/tmp/demo-repo");
+    let policy = test_policy();
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+
+    let routes_were_ready_before_handoff = prepare_workspace_handoff_using(
+        repo_root,
+        &policy,
+        Some("web"),
+        Some(PathBuf::from("/tmp/demo-repo")),
+        Some("effigy dev"),
+        {
+            let events = std::sync::Arc::clone(&events);
+            move |repo_root, policy| {
+                events.lock().expect("events lock").push(format!(
+                    "routes-ready:{}:{}",
+                    repo_root.display(),
+                    policy.name
+                ));
+                Ok(false)
+            }
+        },
+        {
+            let events = std::sync::Arc::clone(&events);
+            move |policy| {
+                events
+                    .lock()
+                    .expect("events lock")
+                    .push(format!("start-gateway:{}", policy.name));
+                Ok(())
+            }
+        },
+        {
+            let events = std::sync::Arc::clone(&events);
+            move |repo_root, policy| {
+                events.lock().expect("events lock").push(format!(
+                    "register-routes:{}:{}",
+                    repo_root.display(),
+                    policy.name
+                ));
+                Ok(())
+            }
+        },
+        {
+            let events = std::sync::Arc::clone(&events);
+            move |repo_root, policy, repo_override| {
+                events.lock().expect("events lock").push(format!(
+                    "ensure-effigy:{}:{}:{repo_override:?}",
+                    repo_root.display(),
+                    policy.name
+                ));
+                Ok(())
+            }
+        },
+        {
+            let events = std::sync::Arc::clone(&events);
+            move |repo_root, policy, container_name, repo_override| {
+                events.lock().expect("events lock").push(format!(
+                    "ensure-permissions:{}:{}:{container_name:?}:{repo_override:?}",
+                    repo_root.display(),
+                    policy.name
+                ));
+                Ok(())
+            }
+        },
+        {
+            let events = std::sync::Arc::clone(&events);
+            move |policy, initial_command| {
+                events.lock().expect("events lock").push(format!(
+                    "render-transition:{}:{initial_command:?}",
+                    policy.name
+                ));
+                Ok(())
+            }
+        },
+    )
+    .expect("prepare workspace handoff");
+
+    assert!(!routes_were_ready_before_handoff);
+    assert_eq!(
+        *events.lock().expect("events lock"),
+        vec![
+            "routes-ready:/tmp/demo-repo:stack".to_owned(),
+            "start-gateway:stack".to_owned(),
+            "ensure-effigy:/tmp/demo-repo:stack:Some(\"/tmp/demo-repo\")".to_owned(),
+            "ensure-permissions:/tmp/demo-repo:stack:Some(\"web\"):Some(\"/tmp/demo-repo\")"
+                .to_owned(),
+            "render-transition:stack:Some(\"effigy dev\")".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn workspace_handoff_preparation_registers_routes_when_gateway_surface_is_active() {
+    let repo_root = Path::new("/tmp/demo-repo");
+    let mut policy = test_policy();
+    policy.dns_routes = vec![effigy_containers::EffectiveDnsRoute {
+        domain: "clientname.test".to_owned(),
+        tls: false,
+        port: None,
+        service: None,
+        target_host: None,
+    }];
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
+
+    prepare_workspace_handoff_using(
+        repo_root,
+        &policy,
+        Some("web"),
+        Some(PathBuf::from("/tmp/demo-repo")),
+        None,
+        {
+            let events = std::sync::Arc::clone(&events);
+            move |_, _| {
+                events.lock().expect("events lock").push("routes-ready");
+                Ok(true)
+            }
+        },
+        {
+            let events = std::sync::Arc::clone(&events);
+            move |_| {
+                events.lock().expect("events lock").push("start-gateway");
+                Ok(())
+            }
+        },
+        {
+            let events = std::sync::Arc::clone(&events);
+            move |_, _| {
+                events.lock().expect("events lock").push("register-routes");
+                Ok(())
+            }
+        },
+        {
+            let events = std::sync::Arc::clone(&events);
+            move |_, _, _| {
+                events.lock().expect("events lock").push("ensure-effigy");
+                Ok(())
+            }
+        },
+        {
+            let events = std::sync::Arc::clone(&events);
+            move |_, _, _, _| {
+                events
+                    .lock()
+                    .expect("events lock")
+                    .push("ensure-permissions");
+                Ok(())
+            }
+        },
+        {
+            let events = std::sync::Arc::clone(&events);
+            move |_, _| {
+                events
+                    .lock()
+                    .expect("events lock")
+                    .push("render-transition");
+                Ok(())
+            }
+        },
+    )
+    .expect("prepare workspace handoff");
+
+    assert_eq!(
+        *events.lock().expect("events lock"),
+        vec![
+            "routes-ready",
+            "start-gateway",
+            "register-routes",
+            "ensure-effigy",
+            "ensure-permissions",
+            "render-transition",
+        ]
     );
 }
 

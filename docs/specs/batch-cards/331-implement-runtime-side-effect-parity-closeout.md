@@ -1,6 +1,6 @@
 # 331 Implement Runtime Side-Effect Parity Closeout
 
-Status: ready
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.012`
 Spec: `docs/specs/025-regression-matrix-and-drift-guards-strict-lane.md`
@@ -38,4 +38,4 @@ effects rather than command parsing or ownership classification.
 
 ## Next Task
 
-Execute `331`.
+No active next task. This closeout slice is complete.

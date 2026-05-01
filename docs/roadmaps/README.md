@@ -63,13 +63,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/009` is complete; `effigy exec` and exec aliases now share the bounded non-shell activation contract with container-backed task execution.
 - `g03/010` is complete enough for this pass; direct workspace and seeded task shells now share one ownership model, while attached `container up --attach` remains an explicit operator lifecycle exception instead of the next widening seam.
 - `g03/011` is complete enough for this pass; the shared embedded-runner spine now covers Rhai command replay, run-array builtins, and bootstrap task dispatch, while bootstrap managed-run synthesis remains a separate synthetic managed-run path rather than a normal embedded replay seam.
-- `g03/012` is now the active strict lane; it carries the parity-matrix and drift-guard closeout without reopening `g02`.
+- `g03/012` is complete; the convergence lane now has bounded parity and drift-guard proof instead of relying on docs alone.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
-- `g03.012` is the active strict lane
-- `331` is the current ready batch: close the remaining runtime side-effect parity gaps
+- no active strict lane
+- `g03.012` is complete
 - `g03.009` is complete
 - `g03.001` is complete
 
@@ -107,7 +107,7 @@ Before rollover:
 
 ## Next Task
 
-Execute the next `g03.012` runtime-side-effect parity batch.
+Stop in planning and choose the next `g03` milestone deliberately.
 
 
 ## Historical language boundary

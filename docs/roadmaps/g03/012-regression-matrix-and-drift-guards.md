@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-01
 Depends on: 007, 008, 009, 010, 011
@@ -62,9 +62,4 @@ This milestone is complete when the convergence lane has executable proof that:
 
 ## Next Task
 
-Execute one final bounded proof slice for:
-
-- bootstrap `start` / workspace-handoff parity
-- gateway and alias reconciliation parity
-- host-container lease refresh parity
-Then decide whether `g03.012` can pause cleanly.
+No active next task. `g03.012` is complete.

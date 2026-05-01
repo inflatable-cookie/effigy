@@ -26,7 +26,6 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`025-regression-matrix-and-drift-guards-strict-lane.md`](./025-regression-matrix-and-drift-guards-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Queued next-lane specs:
@@ -39,6 +38,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`025-regression-matrix-and-drift-guards-strict-lane.md`](./025-regression-matrix-and-drift-guards-strict-lane.md)
 - [`024-embedded-command-script-and-bootstrap-convergence-strict-lane.md`](./024-embedded-command-script-and-bootstrap-convergence-strict-lane.md)
 - [`023-interactive-session-ownership-and-lifecycle-convergence-strict-lane.md`](./023-interactive-session-ownership-and-lifecycle-convergence-strict-lane.md)
 - [`022-execution-surface-convergence-strict-lane.md`](./022-execution-surface-convergence-strict-lane.md)
@@ -55,7 +55,6 @@ Recently completed:
 
 ## Next Task
 
-`g03.012` is the active strict lane.
+No active strict lane.
 
-Execute
-[`batch-cards/331-implement-runtime-side-effect-parity-closeout.md`](./batch-cards/331-implement-runtime-side-effect-parity-closeout.md).
+Stop in planning and choose the next `g03` milestone deliberately.

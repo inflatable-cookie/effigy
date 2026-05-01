@@ -1,6 +1,6 @@
 # 025 Regression Matrix And Drift Guards Strict Lane
 
-Status: active
+Status: complete
 Updated: 2026-05-01
 Roadmap: `g03.012`
 
@@ -46,7 +46,7 @@ This lane does not own:
 
 ## Current Posture
 
-`active`
+`complete`
 
 The correct implementation order is:
 
@@ -79,5 +79,4 @@ that:
 
 ## Next Task
 
-Execute `331` — close the remaining runtime side-effect parity gaps before
-pausing `g03.012`.
+No active next task. `g03.012` is complete.

@@ -72,15 +72,42 @@ pub(in crate::runner) fn activate_container_runtime_for_task(
     policy: &EffectiveContainerPolicy,
     request: ActivationRequest<'_>,
 ) -> Result<ContainerTaskActivation, RunnerError> {
-    let system_was_running = ensure_container_runtime_prepared(
+    activate_container_runtime_for_task_using(
+        repo_root,
+        policy,
+        request,
+        ensure_container_runtime_prepared,
+        ensure_task_container_gateway_ready,
+        refresh_host_container_lease_for_task_activation,
+    )
+}
+
+fn activate_container_runtime_for_task_using(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    request: ActivationRequest<'_>,
+    ensure_runtime_prepared: impl FnOnce(
+        &Path,
+        &EffectiveContainerPolicy,
+        Option<&str>,
+        Option<PathBuf>,
+    ) -> Result<bool, RunnerError>,
+    ensure_gateway_ready: impl FnOnce(&Path, &EffectiveContainerPolicy) -> Result<(), RunnerError>,
+    refresh_host_container_lease: impl FnOnce(
+        &Path,
+        &EffectiveContainerPolicy,
+        bool,
+    ) -> Result<bool, RunnerError>,
+) -> Result<ContainerTaskActivation, RunnerError> {
+    let system_was_running = ensure_runtime_prepared(
         repo_root,
         policy,
         request.container_name,
         request.repo_override,
     )?;
-    ensure_task_container_gateway_ready(repo_root, policy)?;
+    ensure_gateway_ready(repo_root, policy)?;
     let refreshed_host_container_lease = if request.refresh_host_container_lease {
-        refresh_host_container_lease_for_task_activation(repo_root, policy, system_was_running)?
+        refresh_host_container_lease(repo_root, policy, system_was_running)?
     } else {
         false
     };
@@ -304,8 +331,10 @@ fn parse_bind_mount_host_path(spec: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
+        activate_container_runtime_for_task_using,
         ensure_primary_service_exec_ready_with_recovery_using, parse_bind_mount_host_path,
-        prepare_host_bind_mount_dirs, run_runtime_prep_steps,
+        prepare_host_bind_mount_dirs, run_runtime_prep_steps, ActivationRequest,
+        ContainerTaskActivation, ExecutionSurfaceKind,
     };
     use crate::runner::error::RunnerError;
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
@@ -638,5 +667,144 @@ services:
             "expected task invocation error, got {error}"
         );
         assert_eq!(*restarted.lock().expect("restart lock"), 1);
+    }
+
+    #[test]
+    fn task_activation_side_effects_run_in_shared_order_for_all_non_shell_surfaces() {
+        for surface in [
+            ExecutionSurfaceKind::StandardTask,
+            ExecutionSurfaceKind::DeferredTask,
+            ExecutionSurfaceKind::ExplicitExec,
+        ] {
+            let repo_root = Path::new("/tmp/demo-repo");
+            let policy = test_policy(PathBuf::from("docker-compose.yml"));
+            let events = Arc::new(Mutex::new(Vec::<String>::new()));
+
+            let activation = activate_container_runtime_for_task_using(
+                repo_root,
+                &policy,
+                ActivationRequest {
+                    surface,
+                    container_name: Some("web"),
+                    repo_override: Some(repo_root.to_path_buf()),
+                    refresh_host_container_lease: true,
+                },
+                {
+                    let events = Arc::clone(&events);
+                    move |repo_root, policy, container_name, repo_override| {
+                        events.lock().expect("events lock").push(format!(
+                            "prepare:{surface:?}:{container_name:?}:{repo_override:?}:{}:{}",
+                            repo_root.display(),
+                            policy.name
+                        ));
+                        Ok(false)
+                    }
+                },
+                {
+                    let events = Arc::clone(&events);
+                    move |repo_root, policy| {
+                        events.lock().expect("events lock").push(format!(
+                            "gateway:{surface:?}:{}:{}",
+                            repo_root.display(),
+                            policy.name
+                        ));
+                        Ok(())
+                    }
+                },
+                {
+                    let events = Arc::clone(&events);
+                    move |repo_root, policy, system_was_running| {
+                        events.lock().expect("events lock").push(format!(
+                            "lease:{surface:?}:{}:{}:{system_was_running}",
+                            repo_root.display(),
+                            policy.name
+                        ));
+                        Ok(true)
+                    }
+                },
+            )
+            .expect("activate container runtime");
+
+            assert_eq!(
+                *events.lock().expect("events lock"),
+                vec![
+                    format!(
+                        "prepare:{surface:?}:Some(\"web\"):Some(\"{}\"):{}:{}",
+                        repo_root.display(),
+                        repo_root.display(),
+                        policy.name
+                    ),
+                    format!(
+                        "gateway:{surface:?}:{}:{}",
+                        repo_root.display(),
+                        policy.name
+                    ),
+                    format!(
+                        "lease:{surface:?}:{}:{}:false",
+                        repo_root.display(),
+                        policy.name
+                    ),
+                ]
+            );
+            assert_eq!(
+                activation,
+                ContainerTaskActivation {
+                    system_was_running: false,
+                    refreshed_host_container_lease: true,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn task_activation_can_skip_lease_refresh_without_skipping_gateway_readiness() {
+        let repo_root = Path::new("/tmp/demo-repo");
+        let policy = test_policy(PathBuf::from("docker-compose.yml"));
+        let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+
+        let activation = activate_container_runtime_for_task_using(
+            repo_root,
+            &policy,
+            ActivationRequest {
+                surface: ExecutionSurfaceKind::StandardTask,
+                container_name: Some("web"),
+                repo_override: Some(repo_root.to_path_buf()),
+                refresh_host_container_lease: false,
+            },
+            {
+                let events = Arc::clone(&events);
+                move |_, _, _, _| {
+                    events.lock().expect("events lock").push("prepare");
+                    Ok(true)
+                }
+            },
+            {
+                let events = Arc::clone(&events);
+                move |_, _| {
+                    events.lock().expect("events lock").push("gateway");
+                    Ok(())
+                }
+            },
+            {
+                let events = Arc::clone(&events);
+                move |_, _, _| {
+                    events.lock().expect("events lock").push("lease");
+                    Ok(true)
+                }
+            },
+        )
+        .expect("activate container runtime");
+
+        assert_eq!(
+            *events.lock().expect("events lock"),
+            vec!["prepare", "gateway"]
+        );
+        assert_eq!(
+            activation,
+            ContainerTaskActivation {
+                system_was_running: true,
+                refreshed_host_container_lease: false,
+            }
+        );
     }
 }
