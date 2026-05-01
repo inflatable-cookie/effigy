@@ -457,3 +457,149 @@ databases = ["acme"]
     assert!(rendered.contains("planned render export"));
     assert!(!export_dir.join("render.yaml").exists());
 }
+
+#[test]
+fn run_deploy_export_railway_writes_service_files_and_report() {
+    let root = temp_workspace("deploy-export-railway");
+    write_root_manifest(
+        &root,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "acme"
+databases = ["acme"]
+
+[bundle.dirs]
+front = "acme-front"
+admin = "acme-admin"
+api = "acme-api"
+"#,
+    );
+    fs::create_dir_all(root.join("acme-front")).expect("mkdir front");
+    fs::create_dir_all(root.join("acme-admin")).expect("mkdir admin");
+    fs::create_dir_all(root.join("acme-api")).expect("mkdir api");
+    fs::write(
+        root.join("acme-front/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write front svelte config");
+    fs::write(
+        root.join("acme-admin/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: 'index.html' }) } };\n",
+    )
+    .expect("write admin svelte config");
+    write_manifest(
+        &root.join("acme-front/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("acme-admin/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("acme-api/effigy.toml"),
+        r#"
+[tasks.build]
+run = "cargo build --release"
+
+[tasks.api]
+run = "cargo run -p acme-api"
+
+[tasks.jobs]
+run = "cargo run -p acme-jobs {args}"
+"#,
+    );
+
+    let export_dir = root.join("infra/railway");
+    let rendered = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Export {
+            provider: DeployExportProvider::Railway,
+            path: export_dir.clone(),
+            plan: false,
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("run railway export");
+
+    assert!(rendered.contains("services/front/railway.toml"));
+    assert!(rendered.contains("services/admin/railway.toml"));
+    assert!(rendered.contains("services/api/railway.toml"));
+    assert!(rendered.contains("services/jobs/railway.toml"));
+    assert!(rendered.contains("report.json"));
+
+    let front = fs::read_to_string(export_dir.join("services/front/railway.toml"))
+        .expect("read front railway.toml");
+    assert!(front.contains("builder = \"RAILPACK\""));
+    assert!(front.contains("buildCommand = \"bun x vite build\""));
+
+    let api =
+        fs::read_to_string(export_dir.join("services/api/railway.toml")).expect("read api toml");
+    assert!(api.contains("startCommand = \"cargo run -p acme-api\""));
+    assert!(api.contains("healthcheckPath = \"/v1/health\""));
+
+    let report =
+        fs::read_to_string(export_dir.join("report.json")).expect("read railway report.json");
+    assert!(report.contains("\"schema\": \"effigy.deploy.export.railway.report.v1\""));
+    assert!(report.contains("\"name\": \"DATABASE_URL\""));
+    assert!(report.contains("\"action\": \"attach_public_domains_in_railway\""));
+}
+
+#[test]
+fn run_deploy_export_railway_plan_does_not_write_files() {
+    let root = temp_workspace("deploy-export-railway-plan");
+    write_root_manifest(
+        &root,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "acme"
+databases = ["acme"]
+"#,
+    );
+    fs::create_dir_all(root.join("app-front")).expect("mkdir front");
+    fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
+    fs::create_dir_all(root.join("app-api")).expect("mkdir api");
+    fs::write(
+        root.join("app-front/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write front svelte config");
+    fs::write(
+        root.join("app-admin/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: 'index.html' }) } };\n",
+    )
+    .expect("write admin svelte config");
+    write_manifest(
+        &root.join("app-front/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-admin/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-api/effigy.toml"),
+        "[tasks.build]\nrun = \"cargo build --release\"\n[tasks.api]\nrun = \"cargo run -p app-api\"\n",
+    );
+
+    let export_dir = root.join("infra/railway");
+    let rendered = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Export {
+            provider: DeployExportProvider::Railway,
+            path: export_dir.clone(),
+            plan: true,
+        },
+        repo_override: Some(root),
+        output_json: false,
+    }))
+    .expect("run railway export plan");
+
+    assert!(rendered.contains("planned railway export"));
+    assert!(!export_dir.join("services/front/railway.toml").exists());
+    assert!(!export_dir.join("report.json").exists());
+}

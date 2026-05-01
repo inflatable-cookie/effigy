@@ -151,3 +151,31 @@ fn parse_deploy_export_render_with_path_plan_and_json() {
         })
     );
 }
+
+#[test]
+fn parse_deploy_export_railway_with_path_plan_and_json() {
+    let cmd = parse_command(vec![
+        "deploy".to_owned(),
+        "export".to_owned(),
+        "railway".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--path".to_owned(),
+        "infra/railway".to_owned(),
+        "--plan".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::Export {
+                provider: DeployExportProvider::Railway,
+                path: PathBuf::from("infra/railway"),
+                plan: true,
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}

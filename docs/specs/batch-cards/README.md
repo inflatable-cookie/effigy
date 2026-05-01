@@ -56,8 +56,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
   service-local config ownership and report-owned operator follow-up.
 
 - [`322-implement-railway-export-foundation.md`](./322-implement-railway-export-foundation.md)
-  is the active ready card. `g03.001` now needs the first bounded Railway
-  export implementation on top of that contract.
+  is complete. The first bounded Railway export path now exists, including
+  service-local config generation plus report-owned operator follow-up.
+
+- [`323-decide-post-railway-export-foundation-boundary.md`](./323-decide-post-railway-export-foundation-boundary.md)
+  is the active ready card. `g03.001` now needs the next honest widening
+  decision after both Render and Railway foundations exist.
 
 - [`304-decide-post-release-closure-v0-3-prep-follow-up.md`](./304-decide-post-release-closure-v0-3-prep-follow-up.md)
   is complete. The next `g02.007` move is now explicit again: one bounded
@@ -230,4 +234,4 @@ Staged next-lane card:
 
 ## Next Task
 
-Execute `322` for the `g03.001` first Railway export foundation.
+Execute `323` for the `g03.001` post-Railway widening decision.

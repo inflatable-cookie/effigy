@@ -34,6 +34,10 @@ This folder contains both:
 - [`008-railway-export-contract.md`](./008-railway-export-contract.md):
   second provider-export contract for the managed deployment lane, defining the
   first bounded service-local `railway.toml` plus `report.json` export shape.
+- [`009-execution-surface-convergence.md`](./009-execution-surface-convergence.md):
+  common-path convergence contract for repo targeting, binding resolution,
+  runtime activation, session ownership, and embedded command re-entry across
+  Effigy's execution surfaces.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -43,6 +47,7 @@ This folder contains both:
 | --- | --- | --- | --- |
 | `005-container-runtime-contract.md` | Platform maintainers | Container-backed handoff semantics, runtime prep ordering, alias guarantee scope, backend fallback ownership | Targeted runtime compatibility tests on the supported local backend path |
 | `006-compose-backend-compatibility.md` | Platform maintainers | Supported backend set, backend-required versus repaired capability boundary, named compatibility cases | Targeted runtime compatibility tests on the supported local backend path |
+| `009-execution-surface-convergence.md` | Platform maintainers | Execution-surface parity rules, repo-targeting propagation, activation/session ownership, embedded command re-entry semantics | Targeted parity tests across explicit tasks, deferred execution, exec, bootstrap, workspace, and embedded command surfaces |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -66,4 +71,5 @@ contract anchor for the same lane, plus
 anchor for the same lane, and `005-container-runtime-contract.md` as the
 contract anchor for the `g03.004` to `g03.006` runtime-hardening lane, with
 `006-compose-backend-compatibility.md` defining the active backend capability
-matrix for `g03.006`.
+matrix for `g03.006`, and `009-execution-surface-convergence.md` as the
+contract anchor for the queued `g03.007` convergence lane.

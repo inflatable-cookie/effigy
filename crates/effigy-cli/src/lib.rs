@@ -135,6 +135,7 @@ pub enum DeploySubcommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeployExportProvider {
     Render,
+    Railway,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
