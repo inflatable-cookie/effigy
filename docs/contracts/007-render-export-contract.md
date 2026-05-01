@@ -64,11 +64,11 @@ Map a `deploy.model.v1` static service to a Render static site:
 - `type: web`
 - `runtime: static`
 - `rootDir`
-  - from `app.source_root` plus any service-local package root
+  - from `service.source_root`
 - `buildCommand`
   - from `service.build.command`
 - `staticPublishPath`
-  - from `service.output.path`
+  - from `service.source_root` plus `service.output.path`
 - `routes`
   - from `service.output.fallback` when SPA fallback behavior is required
 - `domains`
@@ -86,7 +86,7 @@ Map a `deploy.model.v1` web service to a Render web service:
 - `runtime`
   - from `service.runtime`
 - `rootDir`
-  - from `app.source_root` plus any service-local package root
+  - from `service.source_root`
 - `buildCommand`
   - from `service.build.command`
 - `startCommand`
@@ -106,7 +106,7 @@ Map a `deploy.model.v1` worker service to a Render background worker:
 - `runtime`
   - from `service.runtime`
 - `rootDir`
-  - from `app.source_root` plus any service-local package root
+  - from `service.source_root`
 - `buildCommand`
   - from `service.build.command`
 - `startCommand`

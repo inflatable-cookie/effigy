@@ -39,6 +39,7 @@ Relevant bundle inputs:
       "name": "front",
       "role": "static",
       "runtime": "node",
+      "source_root": "acme-front",
       "build": {
         "command": "bun x vite build"
       },
@@ -59,6 +60,7 @@ Relevant bundle inputs:
       "name": "admin",
       "role": "static",
       "runtime": "node",
+      "source_root": "acme-admin",
       "build": {
         "command": "bun x vite build"
       },
@@ -79,6 +81,7 @@ Relevant bundle inputs:
       "name": "api",
       "role": "web",
       "runtime": "rust",
+      "source_root": "acme-api",
       "build": {
         "command": "cargo build"
       },
@@ -107,6 +110,7 @@ Relevant bundle inputs:
       "name": "jobs",
       "role": "worker",
       "runtime": "rust",
+      "source_root": "acme-api",
       "build": {
         "command": "cargo build"
       },

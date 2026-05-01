@@ -123,6 +123,11 @@ During v0.x, MINOR bumps may include breaking changes.
   manifest, deriving `front`, `admin`, `api`, optional `jobs`, primary
   Postgres, routed domains, secret references, and promotion warnings without
   depending on runtime state or provider-specific export logic yet.
+- `effigy deploy export render` now exists as the first provider adapter
+  foundation. It consumes the Underlay-derived deployment model, writes a
+  first `render.yaml`, supports `--plan`, and maps static sites, Rust web and
+  worker services, managed Postgres, and operator-owned secrets onto the
+  bounded Render Blueprint surface.
 - The first Underlay deploy-model derivation now promotes three more pieces of
   production metadata directly into `deploy.model.v1`: static-service output
   directories, static fallback files for SPA rewrites, the shared API health

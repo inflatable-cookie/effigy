@@ -2,7 +2,7 @@ use crate::runner::entrypoints::run_command;
 use crate::runner::tests::prelude::{
     parse_json_output_with_schema_version, temp_workspace, write_manifest, write_root_manifest,
 };
-use effigy_cli::{Command, DeployArgs, DeploySubcommand};
+use effigy_cli::{Command, DeployArgs, DeployExportProvider, DeploySubcommand};
 use std::fs;
 
 #[test]
@@ -92,6 +92,7 @@ run = "cargo run -p acme-jobs {args}"
         .expect("front service");
     assert_eq!(front["role"].as_str(), Some("static"));
     assert_eq!(front["runtime"].as_str(), Some("node"));
+    assert_eq!(front["source_root"].as_str(), Some("acme-front"));
     assert_eq!(front["output"]["kind"].as_str(), Some("directory"));
     assert_eq!(front["output"]["path"].as_str(), Some("build"));
     assert_eq!(front["output"]["fallback"].as_str(), Some("200.html"));
@@ -109,6 +110,7 @@ run = "cargo run -p acme-jobs {args}"
         .find(|service| service["name"].as_str() == Some("admin"))
         .expect("admin service");
     assert_eq!(admin["role"].as_str(), Some("static"));
+    assert_eq!(admin["source_root"].as_str(), Some("acme-admin"));
     assert_eq!(admin["output"]["kind"].as_str(), Some("directory"));
     assert_eq!(admin["output"]["path"].as_str(), Some("build"));
     assert_eq!(admin["output"]["fallback"].as_str(), Some("index.html"));
@@ -127,6 +129,7 @@ run = "cargo run -p acme-jobs {args}"
         .expect("api service");
     assert_eq!(api["role"].as_str(), Some("web"));
     assert_eq!(api["runtime"].as_str(), Some("rust"));
+    assert_eq!(api["source_root"].as_str(), Some("acme-api"));
     assert_eq!(api["health"]["kind"].as_str(), Some("http"));
     assert_eq!(api["health"]["path"].as_str(), Some("/v1/health"));
     assert_eq!(
@@ -150,6 +153,7 @@ run = "cargo run -p acme-jobs {args}"
         .expect("jobs service");
     assert_eq!(jobs["role"].as_str(), Some("worker"));
     assert_eq!(jobs["runtime"].as_str(), Some("rust"));
+    assert_eq!(jobs["source_root"].as_str(), Some("acme-api"));
     assert_eq!(jobs["domains"].as_array().expect("jobs domains").len(), 0);
 
     let backing = parsed["backing_services"]
@@ -314,4 +318,142 @@ databases = ["acme"]
         warnings[0]["code"].as_str(),
         Some("missing-static-fallback")
     );
+}
+
+#[test]
+fn run_deploy_export_render_writes_render_yaml() {
+    let root = temp_workspace("deploy-export-render");
+    write_root_manifest(
+        &root,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "acme"
+databases = ["acme"]
+
+[bundle.dirs]
+front = "acme-front"
+admin = "acme-admin"
+api = "acme-api"
+"#,
+    );
+    fs::create_dir_all(root.join("acme-front")).expect("mkdir front");
+    fs::create_dir_all(root.join("acme-admin")).expect("mkdir admin");
+    fs::create_dir_all(root.join("acme-api")).expect("mkdir api");
+    fs::write(
+        root.join("acme-front/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write front svelte config");
+    fs::write(
+        root.join("acme-admin/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: 'index.html' }) } };\n",
+    )
+    .expect("write admin svelte config");
+    write_manifest(
+        &root.join("acme-front/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("acme-admin/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("acme-api/effigy.toml"),
+        r#"
+[tasks.build]
+run = "cargo build --release"
+
+[tasks.api]
+run = "cargo run -p acme-api"
+
+[tasks."db:migrate"]
+run = "cargo run -p acme-db --bin migrate_dev_db"
+
+[tasks.jobs]
+run = "cargo run -p acme-jobs {args}"
+"#,
+    );
+
+    let export_dir = root.join("infra/render");
+    let rendered = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Export {
+            provider: DeployExportProvider::Render,
+            path: export_dir.clone(),
+            plan: false,
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("run render export");
+
+    assert!(rendered.contains("render.yaml"));
+    let written = fs::read_to_string(export_dir.join("render.yaml")).expect("read render yaml");
+    assert!(written.contains("name: front"));
+    assert!(written.contains("runtime: static"));
+    assert!(written.contains("rootDir: acme-front"));
+    assert!(written.contains("staticPublishPath: acme-front/build"));
+    assert!(written.contains("destination: /200.html"));
+    assert!(written.contains("healthCheckPath: /v1/health"));
+    assert!(written.contains("preDeployCommand: cargo run -p acme-db --bin migrate_dev_db"));
+    assert!(written.contains("fromDatabase:"));
+    assert!(written.contains("property: connectionString"));
+}
+
+#[test]
+fn run_deploy_export_render_plan_does_not_write_files() {
+    let root = temp_workspace("deploy-export-render-plan");
+    write_root_manifest(
+        &root,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "acme"
+databases = ["acme"]
+"#,
+    );
+    fs::create_dir_all(root.join("app-front")).expect("mkdir front");
+    fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
+    fs::create_dir_all(root.join("app-api")).expect("mkdir api");
+    fs::write(
+        root.join("app-front/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write front svelte config");
+    fs::write(
+        root.join("app-admin/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: 'index.html' }) } };\n",
+    )
+    .expect("write admin svelte config");
+    write_manifest(
+        &root.join("app-front/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-admin/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-api/effigy.toml"),
+        "[tasks.build]\nrun = \"cargo build --release\"\n[tasks.api]\nrun = \"cargo run -p app-api\"\n",
+    );
+
+    let export_dir = root.join("infra/render");
+    let rendered = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Export {
+            provider: DeployExportProvider::Render,
+            path: export_dir.clone(),
+            plan: true,
+        },
+        repo_override: Some(root),
+        output_json: false,
+    }))
+    .expect("run render export plan");
+
+    assert!(rendered.contains("planned render export"));
+    assert!(!export_dir.join("render.yaml").exists());
 }

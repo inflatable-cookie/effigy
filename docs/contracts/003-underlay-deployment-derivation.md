@@ -84,6 +84,8 @@ optional one:
   - `static`
 - `runtime`
   - `node`
+- `source_root`
+  - `<front-dir>`
 - `build.command`
   - from `<front-dir>/build`
 - `output`
@@ -112,6 +114,8 @@ process.
   - `static`
 - `runtime`
   - `node`
+- `source_root`
+  - `<admin-dir>`
 - `build.command`
   - from `<admin-dir>/build`
 - `output`
@@ -140,6 +144,8 @@ Svelte adapter config:
   - `web`
 - `runtime`
   - `rust`
+- `source_root`
+  - `<api-dir>`
 - `build.command`
   - from `<api-dir>/build`
 - `start.command`
@@ -171,6 +177,8 @@ If `<api-dir>/jobs` exists, derive one additional application service:
   - `worker`
 - `runtime`
   - `rust`
+- `source_root`
+  - `<api-dir>`
 - `build.command`
   - same build owner as `api`
 - `start.command`

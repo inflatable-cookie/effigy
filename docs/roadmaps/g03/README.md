@@ -32,4 +32,5 @@ Rules:
 
 ## Next Task
 
-Continue `g03.001` with the first bounded Render export implementation batch.
+Continue `g03.001` by deciding whether the next seam stays on Render or opens
+Railway planning.

@@ -315,3 +315,66 @@ api = "acme-api"
     assert_eq!(parsed["result"]["app"]["bundle"], "underlay");
     assert_eq!(parsed["result"]["backing_services"][0]["name"], "postgres");
 }
+
+#[test]
+fn cli_json_mode_deploy_export_render_wraps_export_payload() {
+    let root = temp_workspace("cli-json-deploy-export-render");
+    fs::write(
+        root.join("effigy.toml"),
+        "[bundle]\nbase = \"underlay\"\nhost = \"acme.test\"\nproject_name = \"acme-dev\"\nworkspace_subdir = \"acme\"\ndatabases = [\"acme\"]\n",
+    )
+    .expect("write root manifest");
+    fs::create_dir_all(root.join("app-front")).expect("mkdir front");
+    fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
+    fs::create_dir_all(root.join("app-api")).expect("mkdir api");
+    fs::write(
+        root.join("app-front/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write front svelte config");
+    fs::write(
+        root.join("app-admin/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: 'index.html' }) } };\n",
+    )
+    .expect("write admin svelte config");
+    fs::write(
+        root.join("app-front/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    )
+    .expect("write front manifest");
+    fs::write(
+        root.join("app-admin/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    )
+    .expect("write admin manifest");
+    fs::write(
+        root.join("app-api/effigy.toml"),
+        "[tasks.build]\nrun = \"cargo build --release\"\n[tasks.api]\nrun = \"cargo run -p app-api\"\n",
+    )
+    .expect("write api manifest");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("deploy")
+        .arg("export")
+        .arg("render")
+        .arg("--path")
+        .arg(root.join("infra/render"))
+        .arg("--plan")
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run deploy export render");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let parsed: Value = serde_json::from_str(&stdout).expect("json parse");
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["command"]["kind"], "deploy");
+    assert_eq!(parsed["command"]["name"], "deploy");
+    assert_eq!(parsed["result"]["schema"], "effigy.deploy.export.v1");
+    assert_eq!(parsed["result"]["provider"], "render");
+    assert_eq!(parsed["result"]["plan"], true);
+}

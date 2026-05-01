@@ -77,7 +77,8 @@ The correct implementation order is:
 5. `315` — plan first Render export contract
 6. `316` — strengthen static fallback ownership for Render export
 7. `317` — implement Render export foundation
-8. later — widen providers or proofs deliberately
+8. `318` — decide post-Render-export boundary
+9. later — widen providers or proofs deliberately
 
 ## Exit Condition
 
@@ -90,4 +91,4 @@ This strict lane is complete when:
 
 ## Next Task
 
-Execute `317` — implement the first bounded Render export surface.
+Execute `318` — decide whether Render follow-up or Railway planning comes next.
