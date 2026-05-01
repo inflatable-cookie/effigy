@@ -7,6 +7,11 @@ fn build_json_envelope_success_sets_contract_shape() {
     assert_eq!(payload["schema"], "effigy.command.v1");
     assert_eq!(payload["schema_version"], 1);
     assert_eq!(payload["ok"], true);
+    assert_eq!(payload["binary"]["name"], "effigy");
+    assert_eq!(
+        payload["binary"]["version"],
+        effigy_core::build_info::package_version()
+    );
     assert_eq!(payload["command"]["kind"], "task");
     assert_eq!(payload["command"]["name"], "build");
     assert_eq!(payload["result"]["done"], true);
@@ -25,6 +30,10 @@ fn build_json_envelope_error_sets_contract_shape() {
     assert_eq!(payload["schema"], "effigy.command.v1");
     assert_eq!(payload["schema_version"], 1);
     assert_eq!(payload["ok"], false);
+    assert_eq!(
+        payload["binary"]["display_version"],
+        effigy_core::build_info::display_version()
+    );
     assert_eq!(payload["command"]["kind"], "doctor");
     assert_eq!(payload["command"]["name"], "doctor");
     assert_eq!(payload["result"], serde_json::Value::Null);

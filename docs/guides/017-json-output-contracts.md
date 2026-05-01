@@ -47,6 +47,12 @@ effigy --json test --plan
   "schema": "effigy.command.v1",
   "schema_version": 1,
   "ok": true,
+  "binary": {
+    "name": "effigy",
+    "version": "0.3.1",
+    "active_version": "v0.3.1+local.abc123",
+    "display_version": "v0.3.1+local.abc123"
+  },
   "command": {
     "kind": "task",
     "name": "build"
@@ -63,6 +69,12 @@ Failure envelope shape:
   "schema": "effigy.command.v1",
   "schema_version": 1,
   "ok": false,
+  "binary": {
+    "name": "effigy",
+    "version": "0.3.1",
+    "active_version": "v0.3.1+local.abc123",
+    "display_version": "v0.3.1+local.abc123"
+  },
   "command": {
     "kind": "task",
     "name": "missing-task"
@@ -203,6 +215,9 @@ Rule of thumb:
 ## Compatibility Notes
 
 - `schema_version` is the top-level envelope version.
+- `binary.version` is the shipped semver; `binary.active_version` and
+  `binary.display_version` can include local build identity such as
+  `+local.<hash>` or `.dirty`.
 - New optional fields may be added in `v1` without removing existing keys.
 - Breaking envelope changes require a new top-level schema/version.
 

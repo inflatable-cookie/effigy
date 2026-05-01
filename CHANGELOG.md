@@ -205,6 +205,8 @@ During v0.x, MINOR bumps may include breaking changes.
   local gateway instead of leaving it stranded on an internal container port.
 
 ### Changed
+- JSON command envelopes plus help/version payloads now expose shared binary
+  metadata, including the active local build version when present.
 - PHP workspaces now share one Effigy-managed Composer-home volume by default
   instead of only sharing auth/config files, so Composer tokens and global
   state persist across repos unless the host Composer home is mounted

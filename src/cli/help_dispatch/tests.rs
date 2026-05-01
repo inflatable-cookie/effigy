@@ -21,6 +21,11 @@ fn build_help_payload_sets_schema_and_topic() {
     assert_eq!(payload["schema"], "effigy.help.v1");
     assert_eq!(payload["schema_version"], 1);
     assert_eq!(payload["ok"], true);
+    assert_eq!(payload["binary"]["name"], "effigy");
+    assert_eq!(
+        payload["binary"]["active_version"],
+        effigy_core::build_info::active_version()
+    );
     assert_eq!(payload["topic"], "doctor");
     assert!(payload["text"]
         .as_str()

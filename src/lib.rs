@@ -28,8 +28,9 @@ pub use cli::entrypoint::run_cli;
 pub use cli::execution_context::CliExecutionContext;
 pub use cli::help_dispatch::{build_help_payload, run_help_command};
 pub use cli::output::{
-    command_kind_and_name, emit_json_envelope_error, emit_json_envelope_success,
-    emit_json_envelope_success_value, help_topic_label, parse_json_or_string,
+    build_binary_metadata, command_kind_and_name, emit_json_envelope_error,
+    emit_json_envelope_success, emit_json_envelope_success_value, help_topic_label,
+    parse_json_or_string,
 };
 pub use cli::parse_error::{parse_error_json_details, render_parse_error, PARSE_ERROR_HINT};
 pub use cli::version_dispatch::{build_version_payload, run_version_command};

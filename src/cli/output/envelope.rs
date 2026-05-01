@@ -1,5 +1,7 @@
 use serde_json::json;
 
+use super::build_binary_metadata;
+
 pub fn parse_json_or_string(raw: &str) -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(raw).unwrap_or_else(|_| json!({ "text": raw }))
 }
@@ -36,6 +38,7 @@ pub fn build_json_envelope_success(
         "schema": "effigy.command.v1",
         "schema_version": 1,
         "ok": true,
+        "binary": build_binary_metadata(),
         "command": {
             "kind": kind,
             "name": name,
@@ -56,6 +59,7 @@ pub fn build_json_envelope_error(
         "schema": "effigy.command.v1",
         "schema_version": 1,
         "ok": false,
+        "binary": build_binary_metadata(),
         "command": {
             "kind": kind,
             "name": name,
