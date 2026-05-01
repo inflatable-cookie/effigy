@@ -35,8 +35,13 @@ Batch cards are the execution units for active Effigy strict-lane work.
   Render contract no longer has to block on SPA rewrite ambiguity.
 
 - [`317-implement-render-export-foundation.md`](./317-implement-render-export-foundation.md)
-  is the active ready card. `g03.001` can now open the first real provider
-  export implementation batch.
+  is complete. The first bounded Render export path now exists through
+  `deploy export render`, including `render.yaml` generation, plan mode, and
+  model-to-blueprint mapping for the shipped Underlay shape.
+
+- [`318-decide-post-render-export-foundation-boundary.md`](./318-decide-post-render-export-foundation-boundary.md)
+  is the active ready card. `g03.001` now needs one explicit widening
+  decision: continue Render or open Railway planning.
 
 - [`304-decide-post-release-closure-v0-3-prep-follow-up.md`](./304-decide-post-release-closure-v0-3-prep-follow-up.md)
   is complete. The next `g02.007` move is now explicit again: one bounded
@@ -209,4 +214,4 @@ Staged next-lane card:
 
 ## Next Task
 
-Execute `317` for the `g03.001` Render export foundation.
+Execute `318` for the `g03.001` post-Render-export boundary decision.

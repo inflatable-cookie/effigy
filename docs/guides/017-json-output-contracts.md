@@ -101,6 +101,7 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.test.results.v1`
 - `effigy.watch.v1`
 - `deploy.model.v1`
+- `effigy.deploy.export.v1`
 - `effigy.init.v1`
 - `effigy.init.list.v1`
 - `effigy.migrate.v1`
@@ -127,6 +128,7 @@ effigy --json scan stale-suppressions
 effigy --json config
 effigy --json config --schema --target test
 effigy --json deploy model --repo /path/to/workspace
+effigy --json deploy export render --repo /path/to/workspace --path infra/render --plan
 effigy --json test --plan
 effigy --json test
 effigy --json watch --owner effigy --once test

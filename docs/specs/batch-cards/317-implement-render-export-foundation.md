@@ -1,6 +1,6 @@
 # 317 Implement Render Export Foundation
 
-Status: ready
+Status: landed
 Updated: 2026-05-01
 Roadmap: `g03.001`
 Spec: `docs/specs/001-production-deployment-model-and-export-contract-strict-lane.md`
@@ -43,5 +43,6 @@ Implement the first bounded Render export surface on top of
 
 ## Next Task
 
-After `317`, decide whether Railway planning should reopen next or whether
-Render needs one more widening/proof batch first.
+After `317`, execute:
+
+- [`318-decide-post-render-export-foundation-boundary.md`](./318-decide-post-render-export-foundation-boundary.md)

@@ -1,5 +1,5 @@
 use crate::runner::json_contract_tests::prelude::{execution::*, harness::*, json::*};
-use effigy_cli::{Command, DeployArgs, DeploySubcommand};
+use effigy_cli::{Command, DeployArgs, DeployExportProvider, DeploySubcommand};
 
 #[test]
 fn deploy_model_json_contract_has_versioned_shape() {
@@ -80,6 +80,7 @@ run = "cargo run -p acme-jobs {args}"
     assert!(parsed["secrets"].is_array());
     assert!(parsed["warnings"].is_array());
     assert_eq!(parsed["backing_services"][0]["name"], "postgres");
+    assert_eq!(parsed["services"][0]["source_root"], "acme-front");
     assert_eq!(parsed["services"][0]["output"]["kind"], "directory");
     assert_eq!(parsed["services"][0]["output"]["fallback"], "200.html");
     assert_eq!(parsed["services"][2]["health"]["kind"], "http");
@@ -87,6 +88,65 @@ run = "cargo run -p acme-jobs {args}"
         parsed["services"][2]["release"]["command"],
         "cargo run -p acme-db --bin migrate_dev_db"
     );
+}
+
+#[test]
+fn deploy_export_render_json_contract_has_versioned_shape() {
+    let root = temp_workspace("deploy-export-render-json-contract");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "acme"
+databases = ["acme"]
+"#,
+    );
+    std::fs::create_dir_all(root.join("app-front")).expect("mkdir front");
+    std::fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
+    std::fs::create_dir_all(root.join("app-api")).expect("mkdir api");
+    std::fs::write(
+        root.join("app-front/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write front svelte config");
+    std::fs::write(
+        root.join("app-admin/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: 'index.html' }) } };\n",
+    )
+    .expect("write admin svelte config");
+    write_manifest(
+        &root.join("app-front/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-admin/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-api/effigy.toml"),
+        "[tasks.build]\nrun = \"cargo build --release\"\n[tasks.api]\nrun = \"cargo run -p app-api\"\n",
+    );
+
+    let parsed = parse_json(
+        &run_command(Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::Export {
+                provider: DeployExportProvider::Render,
+                path: root.join("infra/render"),
+                plan: true,
+            },
+            repo_override: Some(root),
+            output_json: true,
+        }))
+        .expect("run deploy export render"),
+    );
+    assert_schema_v1(&parsed, "effigy.deploy.export.v1");
+    assert_eq!(parsed["provider"], "render");
+    assert_eq!(parsed["plan"], true);
+    assert_eq!(parsed["files"][0], "render.yaml");
+    assert!(parsed["warnings"].is_array());
 }
 
 #[test]

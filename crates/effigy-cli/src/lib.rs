@@ -125,6 +125,16 @@ pub struct DeployArgs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeploySubcommand {
     Model,
+    Export {
+        provider: DeployExportProvider,
+        path: PathBuf,
+        plan: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeployExportProvider {
+    Render,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -156,7 +156,10 @@ fn render_deploy_help_shows_underlay_json_first_batch() {
     let rendered = render_help_text(HelpTopic::Deploy);
     assert!(rendered.contains("deploy Help"));
     assert!(rendered.contains("effigy deploy model"));
+    assert!(rendered.contains("effigy deploy export render"));
     assert!(rendered.contains("--repo <PATH>"));
+    assert!(rendered.contains("--path <DIR>"));
+    assert!(rendered.contains("--plan"));
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("Underlay"));
     assert!(rendered.contains("provider-neutral"));

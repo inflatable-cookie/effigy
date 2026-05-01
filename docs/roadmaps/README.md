@@ -67,8 +67,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `313` is complete
 - `315` is complete
 - `316` is complete
-- `317` is the current ready batch: implement the first bounded Render export
-  surface
+- `317` is complete
+- `318` is the current ready batch: decide the post-Render-export widening
+  boundary
 
 ## Research Program
 
@@ -104,7 +105,7 @@ Before rollover:
 
 ## Next Task
 
-Execute the next `g03.001` Render export implementation batch.
+Execute the next `g03.001` post-Render-export boundary decision.
 
 
 ## Historical language boundary

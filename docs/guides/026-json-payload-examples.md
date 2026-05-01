@@ -147,6 +147,7 @@ Companion references:
       "name": "front",
       "role": "static",
       "runtime": "node",
+      "source_root": "acme-front",
       "build": {
         "command": "bun x vite build"
       },
@@ -167,6 +168,7 @@ Companion references:
       "name": "api",
       "role": "web",
       "runtime": "rust",
+      "source_root": "acme-api",
       "build": {
         "command": "cargo build --release"
       },
@@ -231,9 +233,25 @@ Companion references:
 }
 ```
 
+### 4) Deploy Export (`effigy.deploy.export.v1`)
+
+```json
+{
+  "schema": "effigy.deploy.export.v1",
+  "schema_version": 1,
+  "provider": "render",
+  "plan": true,
+  "path": "/workspace/app/infra/render",
+  "files": [
+    "render.yaml"
+  ],
+  "warnings": []
+}
+```
+
 ## Health and Diagnostics
 
-### 3) Doctor (`effigy.doctor.v1`)
+### 5) Doctor (`effigy.doctor.v1`)
 
 ```json
 {

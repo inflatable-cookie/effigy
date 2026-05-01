@@ -151,6 +151,8 @@ Each application service should carry at least:
   - `node`
   - `rust`
   - or future supported runtime family
+- `source_root`
+  - repo-relative package or service root
 - `build`
   - build command
 - `start`
@@ -181,6 +183,7 @@ Recommended first shape:
   "name": "api",
   "role": "web",
   "runtime": "rust",
+  "source_root": "nursery",
   "build": {
     "command": "cargo build --release -p nursery-api"
   },
@@ -218,6 +221,8 @@ Recommended first shape:
   - one of the defined runtime roles
 - `runtime`
   - runtime family, not image name
+- `source_root`
+  - repo-relative service root
 - `build`
   - omitted only when there is no build step
 - `start`

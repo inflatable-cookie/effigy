@@ -7,19 +7,23 @@ pub(crate) fn render_deploy_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
         "deploy",
         &[
             "Inspect the provider-neutral production deployment model derived from the effective manifest and bundle state.",
-            "The first shipped surface is JSON-only and currently supports Underlay repos only.",
+            "The first shipped surfaces stay Underlay-first: the neutral model is JSON-only, and the first provider export target is Render.",
         ],
         &[
             "effigy deploy model [--repo <PATH>] --json",
+            "effigy deploy export render [--repo <PATH>] --path <DIR> [--plan] [--json]",
             "effigy --json deploy model [--repo <PATH>]",
         ],
         &[
             ("--repo <PATH>", "Override target repository path"),
-            ("--json", "Render the deployment model payload"),
+            ("--path <DIR>", "Write export files under this directory"),
+            ("--plan", "Preview the export without writing files"),
+            ("--json", "Render machine-facing model or export payloads"),
             ("-h, --help", "Print command help"),
         ],
         &[
             "effigy deploy model --json",
+            "effigy deploy export render --path infra/render --plan",
             "effigy --json deploy model --repo /path/to/repo",
         ],
     )
