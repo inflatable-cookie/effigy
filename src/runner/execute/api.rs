@@ -12,6 +12,10 @@ use super::planning::{
 use crate::runner::error::RunnerError;
 
 pub(in crate::runner) use super::binding::ContainerExecutionBinding;
+pub(in crate::runner) use super::binding::{
+    ensure_inline_workspace_supported, resolve_execution_binding_resolution, ExecutionBindingKind,
+    ExecutionBindingResolution, InlineWorkspaceCapabilitySurface,
+};
 
 pub(in crate::runner) fn resolve_container_execution_binding(
     default_run_in: Option<effigy_manifest::ManifestTaskRunIn>,

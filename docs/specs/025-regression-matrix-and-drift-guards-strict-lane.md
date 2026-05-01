@@ -46,7 +46,7 @@ This lane does not own:
 
 ## Current Posture
 
-`strict-ready`
+`active`
 
 The correct implementation order is:
 
@@ -64,7 +64,7 @@ The correct implementation order is:
 ## Continuation Chain
 
 1. `329` — implement the first convergence parity matrix foundation
-2. later — decide whether another bounded drift-guard slice is needed
+2. `330` — decide whether another bounded drift-guard slice is needed
 
 ## Exit Condition
 
@@ -77,4 +77,5 @@ that:
 
 ## Next Task
 
-Execute `329` — implement the first bounded convergence parity matrix batch.
+Execute `330` — decide whether `g03.012` needs one more bounded drift-guard
+slice before pausing.

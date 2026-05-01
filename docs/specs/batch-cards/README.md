@@ -13,9 +13,15 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`330-decide-post-parity-matrix-foundation-boundary.md`](./330-decide-post-parity-matrix-foundation-boundary.md)
+  is the active ready card. `g03.012` now needs the post-foundation decision:
+  one more bounded drift-guard slice, or a clean pause.
+
 - [`329-implement-convergence-parity-matrix-foundation.md`](./329-implement-convergence-parity-matrix-foundation.md)
-  is the active ready card. `g03.012` now needs the first bounded parity
-  matrix and drift-guard batch.
+  is complete. The first bounded parity matrix now exists across shared
+  embedded repo targeting, Rhai/default repo targeting, explicit exec
+  activation, deferred container activation, direct versus seeded interactive
+  ownership, and the intentional inline-workspace unsupported-surface family.
 
 - [`328-decide-post-embedded-runner-foundation-boundary.md`](./328-decide-post-embedded-runner-foundation-boundary.md)
   is complete. Bootstrap managed-run synthesis is not a normal embedded

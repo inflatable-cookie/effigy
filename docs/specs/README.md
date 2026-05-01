@@ -58,4 +58,4 @@ Recently completed:
 `g03.012` is the active strict lane.
 
 Execute
-[`batch-cards/329-implement-convergence-parity-matrix-foundation.md`](./batch-cards/329-implement-convergence-parity-matrix-foundation.md).
+[`batch-cards/330-decide-post-parity-matrix-foundation-boundary.md`](./batch-cards/330-decide-post-parity-matrix-foundation-boundary.md).

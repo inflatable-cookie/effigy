@@ -18,7 +18,9 @@ use crate::runner::container_runtime_prep::{
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::append_color_exec_env;
 use crate::runner::exec_command::run_compose_exec;
-use crate::runner::execute::api::{resolve_container_execution_binding, ContainerExecutionBinding};
+use crate::runner::execute::api::{
+    resolve_execution_binding_resolution, ContainerExecutionBinding,
+};
 use crate::runner::host_container_lease::emit_host_container_lease_notice;
 use effigy_manifest::DeferredCommand;
 use effigy_tasks::TaskRuntimeArgs;
@@ -190,7 +192,7 @@ fn run_deferred_request_with_binding(
         run_in: Some(deferral.run_in),
         ..Default::default()
     };
-    let binding = resolve_container_execution_binding(
+    let binding_resolution = resolve_execution_binding_resolution(
         None,
         manifest.systems.as_ref(),
         manifest.containers.as_ref(),
@@ -198,6 +200,7 @@ fn run_deferred_request_with_binding(
         &binding_task,
         "deferral",
     )?;
+    let binding = binding_resolution.binding();
 
     match binding {
         ContainerExecutionBinding::None | ContainerExecutionBinding::Host => {
@@ -216,7 +219,7 @@ fn run_deferred_request_with_binding(
             )))
         }
         ContainerExecutionBinding::Container { .. } | ContainerExecutionBinding::Inline { .. } => {
-            let exec_working_dir = binding
+            let exec_working_dir = binding_resolution
                 .exec_working_dir(&deferral.working_dir)?
                 .ok_or_else(|| {
                     RunnerError::task_invocation(format!(
@@ -239,8 +242,8 @@ fn run_deferred_request_with_binding(
                 )?;
                 return Ok(DeferredExecutionPlan::Completed(output));
             }
-            let policy = binding
-                .load_effective_policy(&deferral.working_dir)?
+            let policy = binding_resolution
+                .effective_policy(&deferral.working_dir)?
                 .ok_or_else(|| {
                     RunnerError::task_invocation(format!(
                         "deferred command from {} resolved a container binding, but no effective container policy was available",

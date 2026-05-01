@@ -176,4 +176,69 @@ mod tests {
         assert_eq!(ownership.cleanup_policy, CleanupPolicy::PreserveRuntime);
         assert!(!should_cleanup_interactive_session(ownership, true));
     }
+
+    #[test]
+    fn interactive_ownership_matrix_stays_stable_for_workspace_and_seeded_shells() {
+        let cases = [
+            (
+                InteractiveSessionIntent::PublicWorkspace,
+                false,
+                true,
+                RuntimeOwnership::SessionOwned,
+                SessionReadinessState::CompletedBySession,
+                CleanupPolicy::StopRuntimeOnExit,
+            ),
+            (
+                InteractiveSessionIntent::PublicWorkspace,
+                true,
+                true,
+                RuntimeOwnership::Adopted,
+                SessionReadinessState::AlreadyReady,
+                CleanupPolicy::PreserveRuntime,
+            ),
+            (
+                InteractiveSessionIntent::PublicWorkspace,
+                true,
+                false,
+                RuntimeOwnership::Adopted,
+                SessionReadinessState::CompletedBySession,
+                CleanupPolicy::StopRuntimeOnExit,
+            ),
+            (
+                InteractiveSessionIntent::SeededTask,
+                false,
+                true,
+                RuntimeOwnership::SessionOwned,
+                SessionReadinessState::CompletedBySession,
+                CleanupPolicy::StopRuntimeOnSuccessfulExit,
+            ),
+            (
+                InteractiveSessionIntent::SeededTask,
+                true,
+                false,
+                RuntimeOwnership::Adopted,
+                SessionReadinessState::CompletedBySession,
+                CleanupPolicy::PreserveRuntime,
+            ),
+        ];
+
+        for (
+            intent,
+            system_was_running,
+            routes_were_ready_before_entry,
+            runtime_ownership,
+            readiness_state,
+            cleanup_policy,
+        ) in cases
+        {
+            let ownership = classify_interactive_session_ownership(
+                intent,
+                system_was_running,
+                routes_were_ready_before_entry,
+            );
+            assert_eq!(ownership.runtime_ownership, runtime_ownership);
+            assert_eq!(ownership.readiness_state, readiness_state);
+            assert_eq!(ownership.cleanup_policy, cleanup_policy);
+        }
+    }
 }

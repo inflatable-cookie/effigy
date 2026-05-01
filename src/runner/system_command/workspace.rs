@@ -24,8 +24,8 @@ use crate::runner::container_runtime_prep::{
 };
 use crate::runner::exec_command::copy_file_into_service;
 use crate::runner::execute::api::{
-    ensure_inline_workspace_supported, resolve_container_execution_binding,
-    ContainerExecutionBinding, InlineWorkspaceCapabilitySurface,
+    ensure_inline_workspace_supported, resolve_execution_binding_resolution, ExecutionBindingKind,
+    InlineWorkspaceCapabilitySurface,
 };
 use crate::runner::gateway_command::gateway_up_for_managed_task;
 use crate::runner::interactive_session::{
@@ -161,7 +161,7 @@ pub(super) fn resolve_public_workspace_container(
         workspace: workspace.map(str::to_owned),
         ..Default::default()
     };
-    let binding = resolve_container_execution_binding(
+    let binding_resolution = resolve_execution_binding_resolution(
         None,
         manifest.systems.as_ref(),
         manifest.containers.as_ref(),
@@ -169,17 +169,20 @@ pub(super) fn resolve_public_workspace_container(
         &task,
         &format!("`effigy {surface}`"),
     )?;
+    let binding = binding_resolution.binding();
     ensure_inline_workspace_supported(
-        &binding,
+        binding,
         InlineWorkspaceCapabilitySurface::PublicWorkspaceCommand { surface },
     )?;
 
-    match binding {
-        ContainerExecutionBinding::Container { name, .. } => Ok(name),
-        ContainerExecutionBinding::Inline { .. } => {
+    match binding_resolution.kind() {
+        ExecutionBindingKind::NamedContainer => Ok(binding_resolution
+            .requested_container_name()
+            .map(str::to_owned)),
+        ExecutionBindingKind::InlineContainer => {
             unreachable!("inline workspace helper should always reject inline bindings")
         }
-        ContainerExecutionBinding::Host | ContainerExecutionBinding::None => {
+        ExecutionBindingKind::Host | ExecutionBindingKind::None => {
             Err(RunnerError::task_invocation(format!(
                 "`effigy {surface}` requires a workspace-backed system binding"
             )))
