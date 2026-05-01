@@ -1,4 +1,4 @@
-use crate::{emit_json_envelope_success_value, CliExecutionContext};
+use crate::{build_binary_metadata, emit_json_envelope_success_value, CliExecutionContext};
 use effigy_ui::{PlainRenderer, Renderer};
 use serde_json::json;
 
@@ -14,14 +14,15 @@ pub fn run_version_command(context: &CliExecutionContext<'_>) {
 }
 
 pub fn build_version_payload() -> serde_json::Value {
-    let version = effigy_core::build_info::package_version();
-    let active_version = effigy_core::build_info::active_version();
-    let display = format!("effigy {}", effigy_core::build_info::display_version());
+    let binary = build_binary_metadata();
+    let version = binary["version"].as_str().unwrap_or_default();
+    let active_version = binary["active_version"].as_str().unwrap_or_default();
+    let display = format!("effigy {}", binary["display_version"].as_str().unwrap_or_default());
     json!({
         "schema": "effigy.version.v1",
         "schema_version": 1,
         "ok": true,
-        "binary": "effigy",
+        "binary": binary,
         "version": version,
         "active_version": active_version,
         "display": display,

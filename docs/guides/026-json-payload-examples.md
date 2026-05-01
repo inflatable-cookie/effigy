@@ -11,7 +11,10 @@ All examples assume canonical JSON mode:
 effigy --json <command>
 ```
 
-At runtime, these payloads are returned inside the top-level `effigy.command.v1` envelope in `result` (or in `error.details` for certain failures).
+At runtime, these payloads are returned inside the top-level `effigy.command.v1`
+envelope in `result` (or in `error.details` for certain failures). That
+envelope also carries shared `binary` metadata so tooling can distinguish the
+shipped semver from a stamped local build.
 
 ## Start Here
 
@@ -56,6 +59,12 @@ Companion references:
   "schema": "effigy.command.v1",
   "schema_version": 1,
   "ok": true,
+  "binary": {
+    "name": "effigy",
+    "version": "0.3.1",
+    "active_version": "v0.3.1+local.abc123",
+    "display_version": "v0.3.1+local.abc123"
+  },
   "command": {
     "kind": "tasks",
     "name": "tasks"
@@ -71,6 +80,10 @@ Companion references:
   "error": null
 }
 ```
+
+`binary.version` is the stable release semver. `binary.active_version` and
+`binary.display_version` can include local build identity such as
+`+local.<hash>` or `.dirty`.
 
 ### 2) Tasks (`effigy.tasks.v1`)
 

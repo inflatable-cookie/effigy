@@ -1,5 +1,6 @@
 use crate::{
-    emit_json_envelope_success_value, help_topic_label, render_cli_header, CliExecutionContext,
+    build_binary_metadata, emit_json_envelope_success_value, help_topic_label, render_cli_header,
+    CliExecutionContext,
 };
 use effigy_cli::help::ui::render_help_with_deferred_builtins;
 use effigy_cli::HelpTopic;
@@ -45,6 +46,7 @@ pub fn build_help_payload_for_root(topic: HelpTopic, root: &std::path::Path) -> 
         "schema": "effigy.help.v1",
         "schema_version": 1,
         "ok": true,
+        "binary": build_binary_metadata(),
         "topic": topic_label,
         "text": rendered,
     })
