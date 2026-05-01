@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Planned
+Status: Active
 Owner: Platform
 Created: 2026-05-01
 Depends on: 007, 009
@@ -59,7 +59,8 @@ by:
 
 ## Next Task
 
-Promote `g03.011`.
+Execute the first bounded shared ownership and cleanup classification batch.
 
-Use the shared targeting, activation, and session contracts to collapse the
-remaining internal Effigy re-entry paths.
+Once the shared interactive ownership model is real, decide whether to widen
+directly into attached operator sessions or move on to the embedded re-entry
+lane in `g03.011`.

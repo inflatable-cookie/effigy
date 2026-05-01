@@ -26,7 +26,8 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- none right now
+- [`023-interactive-session-ownership-and-lifecycle-convergence-strict-lane.md`](./023-interactive-session-ownership-and-lifecycle-convergence-strict-lane.md)
+- [`batch-cards/README.md`](./batch-cards/README.md)
 
 Queued next-lane specs:
 
@@ -52,7 +53,7 @@ Recently completed:
 
 ## Next Task
 
-No strict lane is active right now.
+`g03.010` is the active strict lane.
 
-Promote `g03.010` if the next real move is interactive session ownership and
-lifecycle convergence.
+Execute
+[`batch-cards/325-implement-interactive-ownership-classification-foundation.md`](./batch-cards/325-implement-interactive-ownership-classification-foundation.md).

@@ -20,7 +20,7 @@ Current milestones:
 - [`007-execution-surface-audit-and-convergence-contract.md`](./007-execution-surface-audit-and-convergence-contract.md) (complete; the full execution-surface responsibility matrix and convergence contract now live in `docs/contracts/009-execution-surface-convergence.md`)
 - [`008-repo-targeting-and-embedded-dispatch-spine.md`](./008-repo-targeting-and-embedded-dispatch-spine.md) (complete; shared embedded repo-targeting now lives in `src/runner/command_context/repo_override.rs` and is consumed by run-array builtin dispatch plus Rhai command re-entry)
 - [`009-execution-binding-and-runtime-activation-convergence.md`](./009-execution-binding-and-runtime-activation-convergence.md) (complete; `effigy exec`, exec aliases, and named-container/default dev-container exec now share the bounded non-shell activation contract)
-- [`010-interactive-session-ownership-and-lifecycle-convergence.md`](./010-interactive-session-ownership-and-lifecycle-convergence.md) (planned; unify shell and attached-session ownership semantics across workspace, dev, and handoff paths)
+- [`010-interactive-session-ownership-and-lifecycle-convergence.md`](./010-interactive-session-ownership-and-lifecycle-convergence.md) (active; unify shell and attached-session ownership semantics across workspace, dev, and handoff paths)
 - [`011-embedded-command-script-and-bootstrap-convergence.md`](./011-embedded-command-script-and-bootstrap-convergence.md) (planned; collapse bootstrap, Rhai, and run-array Effigy re-entry onto one embedded-runner path)
 - [`012-regression-matrix-and-drift-guards.md`](./012-regression-matrix-and-drift-guards.md) (planned; add the parity matrix and drift guards that keep common-path regressions from reappearing)
 
@@ -38,4 +38,4 @@ Rules:
 
 ## Next Task
 
-Promote `g03.010`.
+Continue `g03.010` with the first bounded interactive ownership convergence batch.
