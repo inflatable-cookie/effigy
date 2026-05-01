@@ -201,7 +201,8 @@ Use `search_files(root, pattern, #{ glob: "*.rs" })` instead of
 
 `run_effigy(...)` and `run_effigy_json(...)` are escape hatches for surfaces
 that do not yet have a typed helper. First-party scripts should use the typed
-helper when one exists. The maintained coverage matrix is in
+helper when one exists. First-party shipped Rhai scripts currently use neither
+escape hatch; a regression test keeps that true. The maintained coverage matrix is in
 [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md).
 
 Helpers that mirror CLI reports return the same JSON payload as the CLI

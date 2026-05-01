@@ -648,6 +648,7 @@ fn first_party_rhai_scripts_do_not_recursively_invoke_effigy() {
         if contents.contains("run_process(\"effigy\"")
             || contents.contains("run_process(`effigy`")
             || contents.contains("run_effigy(")
+            || contents.contains("run_effigy_json(")
         {
             violations.push(
                 script
@@ -661,7 +662,7 @@ fn first_party_rhai_scripts_do_not_recursively_invoke_effigy() {
 
     assert!(
         violations.is_empty(),
-        "first-party Rhai scripts must use typed host helpers instead of recursive Effigy calls: {}",
+        "first-party Rhai scripts must use typed host helpers instead of recursive Effigy escape hatches: {}",
         violations.join(", ")
     );
 }
@@ -720,10 +721,13 @@ fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
         }
         "crates/effigy-catalog/starters/decodelabs/scripts/seed-latest-db-dump.rhai"
         | "crates/effigy-manifest/bundles/decodelabs/scripts/seed-latest-db-dump.rhai" => {
-            contents.contains("run_process(\"sh\", [")
+            contents.contains("run_process_tee(\"mysql\", reset_args)")
+                && contents.contains(
+                    "run_process_tee(\"mysql\", import_args, #{ stdin_file: dump_container_path })",
+                )
         }
         "scripts/rhai/build-local-bin.rhai" => {
-            contents.contains("run_process(program, process_args)")
+            contents.contains("run_process_stream(program, process_args, options)")
         }
         "scripts/rhai/install-local-bin-links.rhai" => contents.contains("run_process("),
         _ => false,
