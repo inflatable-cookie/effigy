@@ -13,11 +13,13 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- no active ready card
-- `g03.001` is back in planning after the Underlay-only
-  `deploy model --json` foundation landed in `311`
-- the next move is to decide the widening seam before opening another execution
-  batch
+- [`312-decide-post-deploy-model-foundation-widening.md`](./312-decide-post-deploy-model-foundation-widening.md)
+  is complete. The next `g03.001` move is now explicit: one more
+  neutral-model strengthening batch before any provider adapter work starts.
+
+- [`313-strengthen-deploy-model-production-metadata-foundation.md`](./313-strengthen-deploy-model-production-metadata-foundation.md)
+  is the active ready card. `g03.001` now owns a bounded production-metadata
+  strengthening slice before Render or Railway export work opens.
 
 - [`304-decide-post-release-closure-v0-3-prep-follow-up.md`](./304-decide-post-release-closure-v0-3-prep-follow-up.md)
   is complete. The next `g02.007` move is now explicit again: one bounded
@@ -190,5 +192,4 @@ Staged next-lane card:
 
 ## Next Task
 
-Stop in planning and decide the next `g03.001` batch before resuming
-execution.
+Execute `313` for the `g03.001` deploy-model production-metadata foundation.

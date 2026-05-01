@@ -104,6 +104,27 @@ During v0.x, MINOR bumps may include breaking changes.
   and `start.tasks` (full array). Array entries can be bare selector
   strings or table form (`{ task = "..." }`) — mixed arrays allowed,
   mirroring the shape of `[bootstrap].run`.
+- `effigy deploy model --json` now has a first Underlay-only foundation.
+  It emits the new `deploy.model.v1` envelope from the effective bundle-backed
+  manifest, deriving `front`, `admin`, `api`, optional `jobs`, primary
+  Postgres, routed domains, secret references, and promotion warnings without
+  depending on runtime state or provider-specific export logic yet.
+- The Rhai host API now exposes a fuller low-level automation layer for
+  file-oriented scripts: direct `copy_file`, `move_path`, `read_lines`,
+  `is_dir`, string predicates/transforms such as `string_contains` and
+  `replace_string`, plus `http_download` for writing HTTP responses
+  straight to disk without round-tripping large files through script
+  memory.
+- Rhai file-oriented bootstrap helpers now also include `copy_if_missing`
+  and `replace_in_file`, so common template-copy plus local-substitution
+  flows no longer need manual `path_exists` guards or full read/modify/write
+  plumbing in script code.
+- Rhai now exposes envfile-aware helpers `env_file_get` and `env_file_set`
+  for common `.env` mutation flows, so bootstrap scripts that mean “set this
+  key” no longer have to treat dotenv files as unstructured text.
+- The envfile Rhai surface now also includes `env_file_entries` and
+  `env_file_remove`, rounding it out for simple inspect/set/remove flows
+  without forcing scripts back into raw text handling.
 
 ## [0.3.1] - 2026-04-29
 

@@ -29,7 +29,7 @@ fn latest_dump_path(dumps_dir) {
         if entry_name == "" {
             continue;
         }
-        if !entry_name.ends_with(".sql") {
+        if !string_ends_with(entry_name, ".sql") {
             continue;
         }
         if latest_name == "" || entry_name > latest_name {

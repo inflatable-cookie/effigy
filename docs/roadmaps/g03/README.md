@@ -32,5 +32,5 @@ Rules:
 
 ## Next Task
 
-Start `g03.001` and define the neutral deployment model plus the first export
-command contract before opening any provider-specific implementation batch.
+Continue `g03.001` with one more neutral-model strengthening batch before any
+provider-specific export work starts.

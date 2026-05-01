@@ -151,6 +151,11 @@ Repo-owned run steps may also reference the active bundle root with
 run = [{ rhai = "{{ bundle.root }}/scripts/setup.rhai" }]
 ```
 
+When a repo forks a bundled Rhai helper locally, keep the script
+declarative. For `.env` bootstrapping, prefer `copy_if_missing(...)`
+plus `env_file_set(...)` over reading the template into memory and
+writing it back out unchanged.
+
 ## Merge Precedence
 
 Bundle defaults are lowest precedence.

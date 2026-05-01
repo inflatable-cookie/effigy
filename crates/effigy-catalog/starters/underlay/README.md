@@ -38,7 +38,10 @@ The bundle-owned bootstrap run also uses the bundled
 `{{ bundle.root }}/scripts/bootstrap-env.rhai` helper before container
 startup. It creates app-local `.env` files only when they are missing,
 deriving local URLs from `[bundle]` / `[bundle.routes]` and generating
-local-only API secrets.
+local-only API secrets. Repos that intentionally fork that helper should
+prefer Rhai's envfile-aware helpers such as `copy_if_missing(...)` and
+`env_file_set(...)` for "seed then patch a few keys" flows instead of
+reading and rewriting the entire file as raw text.
 
 ## Adoption
 

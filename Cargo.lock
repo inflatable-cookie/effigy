@@ -906,6 +906,7 @@ dependencies = [
  "base64",
  "chrono",
  "effigy-core",
+ "effigy-env",
  "effigy-ui",
  "portable-pty",
  "regex",

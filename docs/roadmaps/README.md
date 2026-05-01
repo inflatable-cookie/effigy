@@ -62,9 +62,10 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-- none right now
-- `g03.001` is the active roadmap lane, but it has not been promoted into a
-  strict spec lane yet
+- `g03.001` is the active strict lane
+- `311` is complete
+- `313` is the current ready batch: strengthen the neutral deployment model
+  before provider adapter work opens
 
 ## Research Program
 
@@ -100,8 +101,8 @@ Before rollover:
 
 ## Next Task
 
-Start `g03.001` from the new deployment-export architecture and define the
-provider-neutral deployment model before any provider-specific buildout.
+Execute the next `g03.001` strengthening batch before opening provider export
+work.
 
 
 ## Historical language boundary

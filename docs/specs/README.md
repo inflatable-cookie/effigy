@@ -51,7 +51,7 @@ Recently completed:
 
 ## Next Task
 
-`g03.001` remains the active strict lane, but `311` is complete and there is no
-new ready card yet.
+`g03.001` remains the active strict lane.
 
-Stop in planning and decide the next widening seam before opening a new batch.
+Execute
+[`batch-cards/313-strengthen-deploy-model-production-metadata-foundation.md`](./batch-cards/313-strengthen-deploy-model-production-metadata-foundation.md).
