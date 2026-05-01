@@ -19,8 +19,13 @@ If `effigy` is not yet available on `PATH`, bootstrap first:
 
 ```sh
 cargo run --bin effigy -- bootstrap:local
+effigy version
 type -a effigy effigy-dev
 ```
+
+`bootstrap:local` installs a local binary and stamps an active build identity.
+Expect `effigy version` to show the stable semver plus a local suffix such as
+`v0.3.1+local.abc123` when you are using a self-built checkout.
 
 ## Prerequisites
 
@@ -45,6 +50,7 @@ effigy --help
 
 Expected outcome:
 - the active command path is clear
+- the active build identity is clear when using a local stamped install
 - help output renders with the expected built-ins (`tasks`, `doctor`, `test`,
   `watch`, and others)
 
