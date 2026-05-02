@@ -230,6 +230,10 @@ databases = ["legacy", "legacy_test"]
         "phpmyadmin"
     );
     assert_eq!(
+        web.services.get("mail").expect("mail service").catalog,
+        "mailpit"
+    );
+    assert_eq!(
         web.services.get("db").expect("db service").catalog,
         "mariadb"
     );
@@ -251,6 +255,7 @@ databases = ["legacy", "legacy_test"]
         .map(|route| route.domain.as_str())
         .collect::<Vec<_>>();
     assert!(domains.contains(&"pma.legacy.test"), "got {domains:?}");
+    assert!(domains.contains(&"mailpit.legacy.test"), "got {domains:?}");
     assert!(bundle_dir.join("scripts/seed-latest-db-dump.rhai").exists());
     let seed_task = loaded.manifest.tasks.get("seed").expect("seed task");
     assert_eq!(

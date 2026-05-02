@@ -23,6 +23,9 @@ use crate::runner::manifest::{load_task_manifest, load_task_manifest_with_inspec
 
 use super::error::RunnerError;
 
+const DISABLE_HOST_CONTAINER_LEASE_ENV: &str = "EFFIGY_DISABLE_HOST_CONTAINER_LEASE";
+const FORCE_BOOTSTRAP_WORKSPACE_STOP_ON_EXIT_ENV: &str = "EFFIGY_BOOTSTRAP_WORKSPACE_STOP_ON_EXIT";
+
 pub(in crate::runner) fn run_bootstrap_with_cwd(
     args: BootstrapArgs,
     cwd: PathBuf,
@@ -274,12 +277,16 @@ fn run_bootstrap_run(
     run: &ManifestManagedRun,
     phase: &str,
 ) -> Result<(), RunnerError> {
+    let _lease = ScopedEnvVar::set(DISABLE_HOST_CONTAINER_LEASE_ENV, "1");
     run_managed_run_with_cwd(run, repo_root.to_path_buf(), "bootstrap")
         .map(|_| ())
         .map_err(|err| RunnerError::task_invocation(format!("{phase} failed: {err}")))
 }
 
 fn run_bootstrap_task(repo_root: &Path, selector: &str, phase: &str) -> Result<(), RunnerError> {
+    let _lease = ScopedEnvVar::set(DISABLE_HOST_CONTAINER_LEASE_ENV, "1");
+    let _workspace_stop = (phase == "bootstrap start")
+        .then(|| ScopedEnvVar::set(FORCE_BOOTSTRAP_WORKSPACE_STOP_ON_EXIT_ENV, "1"));
     run_embedded_task(
         &TaskInvocation {
             name: selector.to_owned(),
@@ -289,6 +296,34 @@ fn run_bootstrap_task(repo_root: &Path, selector: &str, phase: &str) -> Result<(
     )
     .map(|_| ())
     .map_err(|err| RunnerError::task_invocation(format!("{phase} task `{selector}` failed: {err}")))
+}
+
+struct ScopedEnvVar {
+    key: &'static str,
+    prior: Option<std::ffi::OsString>,
+}
+
+impl ScopedEnvVar {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prior = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, prior }
+    }
+}
+
+impl Drop for ScopedEnvVar {
+    fn drop(&mut self) {
+        match &self.prior {
+            Some(value) => unsafe {
+                std::env::set_var(self.key, value);
+            },
+            None => unsafe {
+                std::env::remove_var(self.key);
+            },
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

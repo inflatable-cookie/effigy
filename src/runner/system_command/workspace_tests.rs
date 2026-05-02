@@ -701,6 +701,19 @@ fn plain_workspace_session_shuts_down_adopted_stack_when_handoff_completed_gatew
 }
 
 #[test]
+fn bootstrap_started_workspace_session_forces_stop_on_exit_even_for_ready_adopted_runtime() {
+    let _env = EnvGuard::set_many(&[(
+        "EFFIGY_BOOTSTRAP_WORKSPACE_STOP_ON_EXIT",
+        Some("1".to_owned()),
+    )]);
+
+    assert!(should_shutdown_started_system(
+        classify_workspace_session_ownership(InteractiveSessionIntent::PublicWorkspace, true, true,),
+        true,
+    ));
+}
+
+#[test]
 fn effective_workspace_repo_override_falls_back_to_repo_root() {
     let repo_root = Path::new("/tmp/demo-repo");
     assert_eq!(

@@ -19,6 +19,7 @@ const HOST_CONTAINER_LEASE_HOME_DIR: &str = ".effigy/runtime/host-container-leas
 const HOST_CONTAINER_LEASE_FALLBACK_DIR: &str = ".effigy/runtime/host-container-leases";
 const HOST_CONTAINER_LEASE_SCHEMA: &str = "effigy.host-container-lease.v1";
 const DEFAULT_HOST_CONTAINER_LEASE_TIMEOUT_SECS: u64 = 300;
+const DISABLE_HOST_CONTAINER_LEASE_ENV: &str = "EFFIGY_DISABLE_HOST_CONTAINER_LEASE";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct HostContainerLease {
@@ -48,6 +49,9 @@ pub(in crate::runner) fn refresh_host_container_lease_for_task_activation(
     policy: &EffectiveContainerPolicy,
     system_was_running: bool,
 ) -> Result<bool, RunnerError> {
+    if host_container_lease_disabled() {
+        return Ok(false);
+    }
     let had_active_lease = has_active_host_container_lease(repo_root, policy)?;
     if had_active_lease || !system_was_running {
         refresh_host_container_lease(repo_root, policy)?;
@@ -232,6 +236,12 @@ fn host_container_lease_timeout() -> Duration {
     Duration::from_secs(seconds)
 }
 
+fn host_container_lease_disabled() -> bool {
+    std::env::var(DISABLE_HOST_CONTAINER_LEASE_ENV)
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"))
+}
+
 fn format_duration_short(duration: Duration) -> String {
     let secs = duration.as_secs();
     if secs.is_multiple_of(60) && secs >= 60 {
@@ -406,6 +416,39 @@ mod tests {
 
         let refreshed =
             refresh_host_container_lease_for_task_activation(&repo_root, &test_policy(), true)
+                .expect("refresh lease");
+        assert!(!refreshed);
+    }
+
+    #[test]
+    fn task_activation_skips_lease_refresh_when_disabled_by_env() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "effigy-host-lease-disabled-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+        let lease_home = repo_root.join("lease-home");
+        std::fs::create_dir_all(&lease_home).expect("mkdir lease home");
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[
+            (
+                "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+                Some(lease_home.display().to_string()),
+            ),
+            (
+                "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
+                Some("1".to_owned()),
+            ),
+            (
+                super::DISABLE_HOST_CONTAINER_LEASE_ENV,
+                Some("1".to_owned()),
+            ),
+        ]);
+
+        let refreshed =
+            refresh_host_container_lease_for_task_activation(&repo_root, &test_policy(), false)
                 .expect("refresh lease");
         assert!(!refreshed);
     }
