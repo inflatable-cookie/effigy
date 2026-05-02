@@ -11,6 +11,9 @@ During v0.x, MINOR bumps may include breaking changes.
   deployment bundle for Underlay repos: service-local `railway.toml` files
   plus a machine-facing `report.json` that leaves domains, Postgres creation,
   and secret wiring explicit instead of guessed.
+- The `decodelabs` bundle now includes Mailpit as a first-class service and
+  default route. DecodeLabs stacks now publish `mailpit.<host>` out of the box,
+  and apps inside the stack can send local SMTP traffic to `mail:1025`.
 - Rhai scripts now have `run_process_tee(...)` for commands that should stream
   live output and still return captured `stdout` / `stderr` to the script.
 - Rhai subprocess helpers now share optional `cwd` and `env` overrides across
@@ -23,6 +26,14 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of `sh -lc 'mysql ... < dump.sql'`.
 
 ### Fixed
+- `effigy bootstrap` root-run and task phases no longer create temporary
+  host-container leases for container-backed setup work. Bootstrap can now
+  hand off into a DecodeLabs `dev` shell without an earlier five-minute
+  lease reaper killing the interactive session underneath it.
+- `effigy bootstrap --start` now treats the final public workspace handoff as
+  session-owned even when earlier bootstrap setup already started and readied
+  the container. Exiting the handed-off DecodeLabs `dev` shell once again
+  stops the stack instead of preserving it as an adopted runtime.
 - `effigy bootstrap:local` no longer kills the running installed binary when
   invoked through the local wrapper. The local build script now stages the new
   binary into `effigy.new` and atomically renames it into place instead of

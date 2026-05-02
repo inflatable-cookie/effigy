@@ -120,6 +120,9 @@ version = "11.0"
     assert_eq!(web_service.catalog, "nginx");
     assert_eq!(web_service.variant.as_deref(), Some("decodelabs"));
 
+    let mail = web.services.get("mail").expect("mail service");
+    assert_eq!(mail.catalog, "mailpit");
+
     let dns = web.dns.as_ref().expect("dns");
     let domains = dns
         .routes
@@ -128,6 +131,7 @@ version = "11.0"
         .collect::<Vec<_>>();
     assert!(domains.contains(&"contact-patch.legacy.test"));
     assert!(domains.contains(&"pma.contact-patch.legacy.test"));
+    assert!(domains.contains(&"mailpit.contact-patch.legacy.test"));
 
     let systems = manifest.systems.expect("systems");
     assert_eq!(systems.default.as_deref(), Some("dev"));
@@ -376,6 +380,12 @@ zest_port = 8938
             ("gideon.legacy.test", Some("web"), None, Some(true)),
             ("pma.gideon.legacy.test", Some("pma"), None, Some(true)),
             (
+                "mailpit.gideon.legacy.test",
+                Some("mail"),
+                Some(8025),
+                Some(true)
+            ),
+            (
                 "zest.gideon.legacy.test",
                 Some("app"),
                 Some(8938),
@@ -428,6 +438,7 @@ routes = [
         vec![
             ("cbs.legacy.test", Some("web"), Some(true)),
             ("pma.cbs.legacy.test", Some("pma"), Some(true)),
+            ("mailpit.cbs.legacy.test", Some("mail"), Some(true)),
             ("borderway.legacy.test", Some("web"), Some(true)),
         ]
     );
@@ -486,6 +497,7 @@ routes = [
         vec![
             ("cbs.legacy.test", Some("web"), Some(true)),
             ("pma.cbs.legacy.test", Some("pma"), Some(true)),
+            ("mailpit.cbs.legacy.test", Some("mail"), Some(true)),
             ("borderway.legacy.test", Some("web"), Some(true)),
         ]
     );
@@ -546,6 +558,7 @@ routes = [
         vec![
             ("cbs.legacy.test", Some("web"), Some(true)),
             ("pma.cbs.legacy.test", Some("pma"), Some(true)),
+            ("mailpit.cbs.legacy.test", Some("mail"), Some(true)),
             ("borderway.legacy.test", Some("web"), Some(true)),
         ]
     );

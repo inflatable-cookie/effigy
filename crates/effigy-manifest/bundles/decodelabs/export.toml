@@ -16,6 +16,7 @@ shutdown = "graceful"
 routes = [
   { domain = "{{ inputs.host }}", tls = true, service = "web" },
   { domain = "pma.{{ inputs.host }}", tls = true, service = "pma" },
+  { domain = "mailpit.{{ inputs.host }}", tls = true, port = 8025, service = "mail" },
 {% if inputs.zest_port %}
   { domain = "{{ inputs.zest_domain or "zest." ~ inputs.host }}", tls = true, port = {{ inputs.zest_port }}, service = "{{ inputs.workspace_service_name }}" },
 {% endif %}
@@ -59,6 +60,10 @@ databases = [{% for database in inputs.databases %}"{{ database }}"{% if not loo
 catalog = "phpmyadmin"
 version = "latest"
 database_host = "db"
+
+[containers.{{ inputs.container_name }}.services.mail]
+catalog = "mailpit"
+version = "latest"
 
 [containers.{{ inputs.container_name }}.services.memcache]
 catalog = "memcached"

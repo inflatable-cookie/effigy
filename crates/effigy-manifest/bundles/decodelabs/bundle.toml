@@ -1,13 +1,13 @@
 [bundle]
 name = "decodelabs"
-description = "DecodeLabs legacy PHP stack with nginx, php-fpm, MariaDB, phpMyAdmin, Redis, Memcached, a dev workspace, and local gateway routes."
+description = "DecodeLabs legacy PHP stack with nginx, php-fpm, MariaDB, phpMyAdmin, Mailpit, Redis, Memcached, a dev workspace, and local gateway routes."
 defaults = "export.toml"
 
 [[inputs]]
 name = "host"
 type = "string"
 required = true
-description = "Primary local hostname for the app route; phpMyAdmin is published at `pma.<host>`."
+description = "Primary local hostname for the app route; phpMyAdmin is published at `pma.<host>` and Mailpit at `mailpit.<host>`."
 example = "contact-patch.legacy.test"
 
 [[inputs]]

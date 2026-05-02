@@ -293,7 +293,7 @@ databases = ["my_database"]
 
 | Input                    | Default     | Purpose                                                                      |
 |--------------------------|-------------|------------------------------------------------------------------------------|
-| `host`                   | _required_  | Primary local hostname. Gateway registers the `web` service on `<host>` and `pma.<host>`. |
+| `host`                   | _required_  | Primary local hostname. Gateway registers the `web` service on `<host>`, phpMyAdmin on `pma.<host>`, and Mailpit on `mailpit.<host>`. |
 | `project_name`           | _required_  | Docker Compose project name for the generated stack.                          |
 | `databases`              | _required_  | MariaDB databases to create for the stack. Use `["app"]` for the normal single-db case; the first entry is also wired into the `mysql` workspace alias. |
 | `zest_port`              | optional    | Publish and gateway-route a temporary Zest/Vite dev server running inside the `app` workspace service. Use the same fixed port as the site's `vite.config.ts`. |
@@ -311,6 +311,7 @@ databases = ["my_database"]
 | `web`      | `nginx`               | Nginx in front of `app` using the bundled `decodelabs` config variant. Document root `.`, rewrites every request to `/vendor/genesis.php`, and hands off to php-fpm. No `try_files`, asset caching, or security locations — DecodeLabs apps handle routing, asset serving, and error pages in PHP. See guide 067 for the variant reference. |
 | `db`       | `mariadb:10.11`       | MariaDB with the configured `database` created on first start.                              |
 | `pma`      | `phpmyadmin:latest`   | phpMyAdmin connected to `db`.                                                               |
+| `mail`     | `mailpit:latest`      | SMTP catch-all and inbox UI for local development. Apps inside the stack should send mail to `mail:1025`. |
 | `memcache` | `memcached`           | In-memory cache sized at 128 MB by default.                                                 |
 | `redis`    | `redis:7`             | Key-value store.                                                                            |
 
@@ -318,6 +319,7 @@ databases = ["my_database"]
 
 - `https://<host>` -> `web`
 - `https://pma.<host>` -> `pma`
+- `https://mailpit.<host>` -> `mail:8025`
 - `https://zest.<host>` -> `app:<zest_port>` when `zest_port` is set
 
 TLS is enabled by default through `effigy gateway setup-tls`.

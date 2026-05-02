@@ -41,6 +41,7 @@ const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 const EFFIGY_RELEASE_REPO_BASE_URL: &str = "https://github.com/inflatable-cookie/effigy";
 const EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV: &str = "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE";
 static WORKSPACE_EFFIGY_STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
+const FORCE_BOOTSTRAP_WORKSPACE_STOP_ON_EXIT_ENV: &str = "EFFIGY_BOOTSTRAP_WORKSPACE_STOP_ON_EXIT";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LinuxWorkspaceTarget {
@@ -213,7 +214,7 @@ fn run_workspace_container_session(
         repo_override.clone(),
         initial_command,
     )?;
-    let ownership = classify_interactive_session_ownership(
+    let ownership = classify_workspace_session_ownership(
         session_intent,
         system_was_running,
         routes_were_ready_before_handoff,
@@ -257,6 +258,35 @@ fn effective_workspace_repo_override(
     repo_override: Option<PathBuf>,
 ) -> Option<PathBuf> {
     repo_override.or_else(|| Some(repo_root.to_path_buf()))
+}
+
+fn classify_workspace_session_ownership(
+    session_intent: InteractiveSessionIntent,
+    system_was_running: bool,
+    routes_were_ready_before_handoff: bool,
+) -> InteractiveSessionOwnership {
+    if matches!(session_intent, InteractiveSessionIntent::PublicWorkspace)
+        && force_bootstrap_workspace_stop_on_exit()
+    {
+        return InteractiveSessionOwnership {
+            runtime_ownership: crate::runner::interactive_session::RuntimeOwnership::SessionOwned,
+            readiness_state:
+                crate::runner::interactive_session::SessionReadinessState::CompletedBySession,
+            cleanup_policy: crate::runner::interactive_session::CleanupPolicy::StopRuntimeOnExit,
+        };
+    }
+
+    classify_interactive_session_ownership(
+        session_intent,
+        system_was_running,
+        routes_were_ready_before_handoff,
+    )
+}
+
+fn force_bootstrap_workspace_stop_on_exit() -> bool {
+    std::env::var(FORCE_BOOTSTRAP_WORKSPACE_STOP_ON_EXIT_ENV)
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"))
 }
 
 fn prepare_workspace_handoff(
