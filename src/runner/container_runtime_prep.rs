@@ -16,6 +16,7 @@ use crate::runner::container_command::{register_gateway_routes_for_container, ru
 use crate::runner::error::RunnerError;
 use crate::runner::gateway_command::gateway_up_for_managed_task;
 use crate::runner::host_container_lease::refresh_host_container_lease_for_task_activation;
+use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
 use crate::runner::system_command::is_primary_service_running;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +37,7 @@ pub(in crate::runner) struct ActivationRequest<'a> {
     pub(in crate::runner) surface: ExecutionSurfaceKind,
     pub(in crate::runner) container_name: Option<&'a str>,
     pub(in crate::runner) repo_override: Option<PathBuf>,
-    pub(in crate::runner) refresh_host_container_lease: bool,
+    pub(in crate::runner) session_context: RuntimeSessionContext,
 }
 
 pub(in crate::runner) fn ensure_container_runtime_prepared(
@@ -106,7 +107,10 @@ fn activate_container_runtime_for_task_using(
         request.repo_override,
     )?;
     ensure_gateway_ready(repo_root, policy)?;
-    let refreshed_host_container_lease = if request.refresh_host_container_lease {
+    let refreshed_host_container_lease = if matches!(
+        request.session_context.lease_refresh_policy,
+        LeaseRefreshPolicy::RefreshOnActivation
+    ) {
         refresh_host_container_lease(repo_root, policy, system_was_running)?
     } else {
         false
@@ -153,10 +157,12 @@ fn validate_policy_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
-    validate_container_policy(repo_root, policy)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    validate_compose_backend_runtime(repo_root, policy)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    validate_container_policy(repo_root, policy).map_err(|error| {
+        RunnerError::container_runtime_policy("policy validation", error.to_string())
+    })?;
+    validate_compose_backend_runtime(repo_root, policy).map_err(|error| {
+        RunnerError::container_runtime_policy("backend validation", error.to_string())
+    })?;
     Ok(())
 }
 
@@ -185,16 +191,10 @@ fn ensure_primary_service_exec_ready_with_recovery_using(
     if restart().is_ok() && probe(Duration::from_secs(15)) {
         return Ok(());
     }
-    Err(RunnerError::task_invocation(format!(
-        "container `{}` is not exec-ready: probe with `-w {}` failed even after restarting service `{}`. \
-         Try `colima nerdctl --profile {} -- restart <container>` manually, or `effigy container down {} && effigy container up {}`.",
-        policy.name,
-        working_dir.display(),
-        policy.primary_service,
-        policy.profile,
-        policy.name,
-        policy.name,
-    )))
+    Err(RunnerError::container_runtime_exec_not_ready(
+        policy,
+        working_dir,
+    ))
 }
 
 fn run_runtime_prep_steps(
@@ -333,10 +333,11 @@ mod tests {
     use super::{
         activate_container_runtime_for_task_using,
         ensure_primary_service_exec_ready_with_recovery_using, parse_bind_mount_host_path,
-        prepare_host_bind_mount_dirs, run_runtime_prep_steps, ActivationRequest,
-        ContainerTaskActivation, ExecutionSurfaceKind,
+        prepare_host_bind_mount_dirs, run_runtime_prep_steps, validate_policy_runtime,
+        ActivationRequest, ContainerTaskActivation, ExecutionSurfaceKind,
     };
     use crate::runner::error::RunnerError;
+    use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use std::fs;
     use std::path::Path;
@@ -663,10 +664,30 @@ services:
         .expect_err("recovery should fail when probe never succeeds");
 
         assert!(
-            matches!(error, RunnerError::TaskInvocation { .. }),
-            "expected task invocation error, got {error}"
+            matches!(error, RunnerError::ContainerRuntimeExecNotReady { .. }),
+            "expected typed exec-ready error, got {error}"
         );
         assert_eq!(*restarted.lock().expect("restart lock"), 1);
+    }
+
+    #[test]
+    fn validate_policy_runtime_uses_typed_policy_error_family() {
+        let repo_root = temp_test_dir("runtime-policy-error");
+        let policy = test_policy(repo_root.join("missing-compose.yml"));
+
+        let error = validate_policy_runtime(&repo_root, &policy)
+            .expect_err("policy validation should fail");
+
+        match error {
+            RunnerError::ContainerRuntimePolicy { phase, detail } => {
+                assert_eq!(phase, "policy validation");
+                assert!(
+                    detail.contains("missing-compose.yml"),
+                    "detail should preserve original policy error: {detail}"
+                );
+            }
+            other => panic!("expected typed runtime policy error, got {other}"),
+        }
     }
 
     #[test]
@@ -687,7 +708,7 @@ services:
                     surface,
                     container_name: Some("web"),
                     repo_override: Some(repo_root.to_path_buf()),
-                    refresh_host_container_lease: true,
+                    session_context: RuntimeSessionContext::default(),
                 },
                 {
                     let events = Arc::clone(&events);
@@ -769,7 +790,10 @@ services:
                 surface: ExecutionSurfaceKind::StandardTask,
                 container_name: Some("web"),
                 repo_override: Some(repo_root.to_path_buf()),
-                refresh_host_container_lease: false,
+                session_context: RuntimeSessionContext {
+                    lease_refresh_policy: LeaseRefreshPolicy::SkipRefresh,
+                    ..RuntimeSessionContext::default()
+                },
             },
             {
                 let events = Arc::clone(&events);
@@ -806,5 +830,100 @@ services:
                 refreshed_host_container_lease: false,
             }
         );
+    }
+
+    #[test]
+    fn reused_runtime_activation_matrix_keeps_gateway_parity_across_surfaces_and_lease_modes() {
+        for (surface, lease_refresh_policy, expected_events, expected_refreshed_lease) in [
+            (
+                ExecutionSurfaceKind::StandardTask,
+                LeaseRefreshPolicy::RefreshOnActivation,
+                vec!["prepare", "gateway", "lease"],
+                true,
+            ),
+            (
+                ExecutionSurfaceKind::DeferredTask,
+                LeaseRefreshPolicy::RefreshOnActivation,
+                vec!["prepare", "gateway", "lease"],
+                true,
+            ),
+            (
+                ExecutionSurfaceKind::ExplicitExec,
+                LeaseRefreshPolicy::RefreshOnActivation,
+                vec!["prepare", "gateway", "lease"],
+                true,
+            ),
+            (
+                ExecutionSurfaceKind::StandardTask,
+                LeaseRefreshPolicy::SkipRefresh,
+                vec!["prepare", "gateway"],
+                false,
+            ),
+            (
+                ExecutionSurfaceKind::DeferredTask,
+                LeaseRefreshPolicy::SkipRefresh,
+                vec!["prepare", "gateway"],
+                false,
+            ),
+            (
+                ExecutionSurfaceKind::ExplicitExec,
+                LeaseRefreshPolicy::SkipRefresh,
+                vec!["prepare", "gateway"],
+                false,
+            ),
+        ] {
+            let repo_root = Path::new("/tmp/demo-repo");
+            let policy = test_policy(PathBuf::from("docker-compose.yml"));
+            let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+
+            let activation = activate_container_runtime_for_task_using(
+                repo_root,
+                &policy,
+                ActivationRequest {
+                    surface,
+                    container_name: Some("web"),
+                    repo_override: Some(repo_root.to_path_buf()),
+                    session_context: RuntimeSessionContext {
+                        lease_refresh_policy,
+                        ..RuntimeSessionContext::default()
+                    },
+                },
+                {
+                    let events = Arc::clone(&events);
+                    move |_, _, _, _| {
+                        events.lock().expect("events lock").push("prepare");
+                        Ok(true)
+                    }
+                },
+                {
+                    let events = Arc::clone(&events);
+                    move |_, _| {
+                        events.lock().expect("events lock").push("gateway");
+                        Ok(())
+                    }
+                },
+                {
+                    let events = Arc::clone(&events);
+                    move |_, _, _| {
+                        events.lock().expect("events lock").push("lease");
+                        Ok(true)
+                    }
+                },
+            )
+            .expect("activate container runtime");
+
+            assert_eq!(
+                *events.lock().expect("events lock"),
+                expected_events,
+                "unexpected reused-runtime side-effect order for {surface:?} with {lease_refresh_policy:?}"
+            );
+            assert_eq!(
+                activation,
+                ContainerTaskActivation {
+                    system_was_running: true,
+                    refreshed_host_container_lease: expected_refreshed_lease,
+                }
+            );
+        }
     }
 }

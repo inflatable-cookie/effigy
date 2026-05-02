@@ -64,13 +64,20 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/010` is complete enough for this pass; direct workspace and seeded task shells now share one ownership model, while attached `container up --attach` remains an explicit operator lifecycle exception instead of the next widening seam.
 - `g03/011` is complete enough for this pass; the shared embedded-runner spine now covers Rhai command replay, run-array builtins, and bootstrap task dispatch, while bootstrap managed-run synthesis remains a separate synthetic managed-run path rather than a normal embedded replay seam.
 - `g03/012` is complete; the convergence lane now has bounded parity and drift-guard proof instead of relying on docs alone.
+- `g03/013-runtime-session-context-and-runtime-ownership-hardening.md` is complete; bootstrap/workspace/exec runtime ownership and lease policy now use a typed runtime/session context instead of bootstrap-only env-driven control.
+- `g03/014-container-assembly-model-and-single-pass-compose-emission.md` is complete; the main generated-compose policy seams now sit on typed ownership instead of repeated YAML reparsing.
+- `g03/015-workspace-runtime-orchestrator-split-and-handoff-simplification.md` is complete; public workspace/session lifecycle plus provisioning/prep now sit under narrower owners instead of one mixed hotspot.
+- `g03/016-container-and-runtime-error-taxonomy-and-diagnostics.md` is complete; the runtime/container core now has typed failure families across runtime prep, exec-surface selection, workspace handoff, lease policy, and gateway reconciliation instead of relying on string-first translation as the dominant shape.
+- `g03/017-architecture-map-and-authority-surface-repair.md` is complete; the live package and authority surfaces now match the post-hardening runtime/container seams closely enough to guide the final proof lane.
+- `g03/018-v1-runtime-hardening-proof-and-stress-matrix.md` is complete; the runtime/container core now has a bounded executable proof matrix for the historical brittle seams that blocked `v1.0` confidence.
+- `g03/019-v1-release-contract-and-compatibility-boundary.md` is planned; the next `v1.0` program is to define the stable release and compatibility promise Effigy is actually ready to make.
+- `g03/020-distribution-channel-proof-and-first-publish-closeout.md` is planned; once the stable release contract exists, the next release/distribution lane should close on direct first-publish and upgrade evidence.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
-- no active strict lane
-- `g03.003` is complete
-- `g03.012` is complete
+- no strict lane is active right now
+- the next honest move is planning, with `g03.019` as the next planned seam
 
 ## Research Program
 
@@ -106,7 +113,7 @@ Before rollover:
 
 ## Next Task
 
-Stop in planning and choose the next live roadmap deliberately.
+Stop in planning.
 
 
 ## Historical language boundary

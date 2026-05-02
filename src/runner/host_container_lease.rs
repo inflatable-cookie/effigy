@@ -81,9 +81,8 @@ pub(super) fn refresh_host_container_lease(
         project_name: policy.project_name.clone(),
         expires_at_epoch_ms: now_epoch_ms() + host_container_lease_timeout().as_millis(),
     };
-    let encoded = serde_json::to_string_pretty(&lease).map_err(|error| {
-        RunnerError::task_invocation(format!("failed to encode container lease: {error}"))
-    })?;
+    let encoded = serde_json::to_string_pretty(&lease)
+        .map_err(|error| RunnerError::host_container_lease_encode(error.to_string()))?;
     let lease_path = host_container_lease_path(repo_root, policy);
     fs::write(&lease_path, encoded)
         .map_err(|error| RunnerError::task_invocation_failed_write(&lease_path, error))?;
@@ -139,7 +138,7 @@ fn spawn_host_container_lease_reaper(
         return Ok(());
     }
     let executable = std::env::current_exe().map_err(|error| {
-        RunnerError::task_invocation(format!(
+        RunnerError::host_container_lease_reaper_bootstrap(format!(
             "failed to resolve current executable for host container lease reaper: {error}"
         ))
     })?;

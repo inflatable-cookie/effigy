@@ -3,6 +3,18 @@ use crate::contract_test_support::EnvGuard;
 use crate::runner::interactive_session::{
     classify_interactive_session_ownership, InteractiveSessionIntent,
 };
+use crate::runner::runtime_session_context::{
+    with_runtime_session_context, PublicWorkspaceCleanupOverride, RuntimeSessionContext,
+};
+use crate::runner::system_command::workspace_provisioning::{
+    configured_effigy_repo_root, configured_linux_workspace_artifact_source,
+    discover_effigy_repo_root, ensure_linux_workspace_effigy_artifact,
+    linux_workspace_effigy_artifact_needs_refresh, linux_workspace_effigy_cache_path,
+    linux_workspace_effigy_release_url, render_workspace_effigy_install_command,
+    render_workspace_effigy_staging_path, resolve_local_effigy_repo_root_from_paths,
+    resolve_local_workspace_effigy_freshness_anchor, sibling_effigy_repo_root,
+    LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+};
 use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
 use effigy_manifest::{
     ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
@@ -702,15 +714,99 @@ fn plain_workspace_session_shuts_down_adopted_stack_when_handoff_completed_gatew
 
 #[test]
 fn bootstrap_started_workspace_session_forces_stop_on_exit_even_for_ready_adopted_runtime() {
-    let _env = EnvGuard::set_many(&[(
-        "EFFIGY_BOOTSTRAP_WORKSPACE_STOP_ON_EXIT",
-        Some("1".to_owned()),
-    )]);
+    with_runtime_session_context(
+        RuntimeSessionContext {
+            public_workspace_cleanup: PublicWorkspaceCleanupOverride::ForceStopOnExit,
+            ..RuntimeSessionContext::default()
+        },
+        || {
+            assert!(should_shutdown_started_system(
+                classify_workspace_session_ownership(
+                    InteractiveSessionIntent::PublicWorkspace,
+                    true,
+                    true,
+                ),
+                true,
+            ));
+        },
+    );
+}
 
-    assert!(should_shutdown_started_system(
-        classify_workspace_session_ownership(InteractiveSessionIntent::PublicWorkspace, true, true,),
-        true,
-    ));
+#[test]
+fn workspace_session_cleanup_matrix_stays_stable_for_direct_seeded_and_bootstrap_handoff_cases() {
+    let standard_cases = [
+        (
+            "public-started",
+            classify_interactive_session_ownership(
+                InteractiveSessionIntent::PublicWorkspace,
+                false,
+                true,
+            ),
+            true,
+        ),
+        (
+            "public-ready-adopted",
+            classify_interactive_session_ownership(
+                InteractiveSessionIntent::PublicWorkspace,
+                true,
+                true,
+            ),
+            false,
+        ),
+        (
+            "public-routes-completed-here",
+            classify_interactive_session_ownership(
+                InteractiveSessionIntent::PublicWorkspace,
+                true,
+                false,
+            ),
+            true,
+        ),
+        (
+            "seeded-started",
+            classify_interactive_session_ownership(
+                InteractiveSessionIntent::SeededTask,
+                false,
+                true,
+            ),
+            true,
+        ),
+        (
+            "seeded-adopted",
+            classify_interactive_session_ownership(
+                InteractiveSessionIntent::SeededTask,
+                true,
+                false,
+            ),
+            false,
+        ),
+    ];
+
+    for (label, ownership, expected_cleanup) in standard_cases {
+        assert_eq!(
+            should_shutdown_started_system(ownership, true),
+            expected_cleanup,
+            "unexpected cleanup policy for {label}"
+        );
+    }
+
+    with_runtime_session_context(
+        RuntimeSessionContext {
+            public_workspace_cleanup: PublicWorkspaceCleanupOverride::ForceStopOnExit,
+            ..RuntimeSessionContext::default()
+        },
+        || {
+            let ownership = classify_workspace_session_ownership(
+                InteractiveSessionIntent::PublicWorkspace,
+                true,
+                true,
+            );
+            assert!(
+                should_shutdown_started_system(ownership, true),
+                "bootstrap handoff should force stop-on-exit even for a ready adopted runtime"
+            );
+        },
+    );
 }
 
 #[test]
@@ -772,20 +868,9 @@ fn workspace_handoff_preparation_runs_gateway_and_permissions_in_shared_order() 
         },
         {
             let events = std::sync::Arc::clone(&events);
-            move |repo_root, policy, repo_override| {
-                events.lock().expect("events lock").push(format!(
-                    "ensure-effigy:{}:{}:{repo_override:?}",
-                    repo_root.display(),
-                    policy.name
-                ));
-                Ok(())
-            }
-        },
-        {
-            let events = std::sync::Arc::clone(&events);
             move |repo_root, policy, container_name, repo_override| {
                 events.lock().expect("events lock").push(format!(
-                    "ensure-permissions:{}:{}:{container_name:?}:{repo_override:?}",
+                    "ensure-provisioning:{}:{}:{container_name:?}:{repo_override:?}",
                     repo_root.display(),
                     policy.name
                 ));
@@ -811,8 +896,7 @@ fn workspace_handoff_preparation_runs_gateway_and_permissions_in_shared_order() 
         vec![
             "routes-ready:/tmp/demo-repo:stack".to_owned(),
             "start-gateway:stack".to_owned(),
-            "ensure-effigy:/tmp/demo-repo:stack:Some(\"/tmp/demo-repo\")".to_owned(),
-            "ensure-permissions:/tmp/demo-repo:stack:Some(\"web\"):Some(\"/tmp/demo-repo\")"
+            "ensure-provisioning:/tmp/demo-repo:stack:Some(\"web\"):Some(\"/tmp/demo-repo\")"
                 .to_owned(),
             "render-transition:stack:Some(\"effigy dev\")".to_owned(),
         ]
@@ -861,18 +945,11 @@ fn workspace_handoff_preparation_registers_routes_when_gateway_surface_is_active
         },
         {
             let events = std::sync::Arc::clone(&events);
-            move |_, _, _| {
-                events.lock().expect("events lock").push("ensure-effigy");
-                Ok(())
-            }
-        },
-        {
-            let events = std::sync::Arc::clone(&events);
             move |_, _, _, _| {
                 events
                     .lock()
                     .expect("events lock")
-                    .push("ensure-permissions");
+                    .push("ensure-provisioning");
                 Ok(())
             }
         },
@@ -895,8 +972,7 @@ fn workspace_handoff_preparation_registers_routes_when_gateway_surface_is_active
             "routes-ready",
             "start-gateway",
             "register-routes",
-            "ensure-effigy",
-            "ensure-permissions",
+            "ensure-provisioning",
             "render-transition",
         ]
     );

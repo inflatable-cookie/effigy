@@ -30,7 +30,10 @@ fn cli_version_prints_single_line_version() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    assert_eq!(stdout, format!("effigy v{}\n", env!("CARGO_PKG_VERSION")));
+    assert_eq!(
+        stdout,
+        format!("effigy {}\n", effigy_core::build_info::display_version())
+    );
 }
 
 #[test]
@@ -51,10 +54,26 @@ fn cli_version_json_mode_emits_machine_readable_payload() {
     assert_eq!(parsed["command"]["name"], "version");
     assert_eq!(parsed["result"]["schema"], "effigy.version.v1");
     assert_eq!(parsed["result"]["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(parsed["result"]["binary"], "effigy");
+    assert_eq!(
+        parsed["result"]["active_version"],
+        effigy_core::build_info::active_version()
+    );
+    assert_eq!(parsed["result"]["binary"]["name"], "effigy");
+    assert_eq!(
+        parsed["result"]["binary"]["version"],
+        effigy_core::build_info::package_version()
+    );
+    assert_eq!(
+        parsed["result"]["binary"]["active_version"],
+        effigy_core::build_info::active_version()
+    );
+    assert_eq!(
+        parsed["result"]["binary"]["display_version"],
+        effigy_core::build_info::display_version()
+    );
     assert_eq!(
         parsed["result"]["display"],
-        format!("effigy v{}", env!("CARGO_PKG_VERSION"))
+        format!("effigy {}", effigy_core::build_info::display_version())
     );
 }
 

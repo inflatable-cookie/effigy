@@ -15,11 +15,12 @@ use super::container_runtime_prep::{
 };
 use super::error::RunnerError;
 use super::host_container_lease::emit_host_container_lease_notice;
+use super::runtime_session_context::current_runtime_session_context;
 use super::system_command::ensure_workspace_effigy_available_for_policy;
 use surface::{
     build_alias_table, build_raw_exec_args, ensure_container_running, exec_alias_surface_absent,
-    resolve_dev_exec_surface, resolve_exec_working_dir, resolve_running_named_exec_surface,
-    ResolvedExecSurface,
+    resolve_dev_exec_surface, resolve_exec_working_dir, resolve_named_exec_surface,
+    resolve_running_named_exec_surface, ResolvedExecSurface,
 };
 use transport::build_routed_task_exec_args;
 
@@ -241,7 +242,7 @@ fn activate_exec_surface(
                 surface: ExecutionSurfaceKind::ExplicitExec,
                 container_name: Some(surface.container_name.as_str()),
                 repo_override: Some(repo_root.to_path_buf()),
-                refresh_host_container_lease: true,
+                session_context: current_runtime_session_context(),
             },
         )
     })
@@ -816,6 +817,122 @@ working_dir = "{working_dir}"
                 "contactpatch".to_owned()
             ]
         );
+    }
+
+    #[test]
+    fn resolve_dev_exec_surface_reports_missing_container_registry_with_typed_error() {
+        let root = temp_repo("missing-container-registry");
+        fs::write(root.join("effigy.toml"), "").expect("write manifest");
+
+        let error = resolve_dev_exec_surface(&root).expect_err("missing registry should fail");
+        assert!(matches!(
+            error,
+            RunnerError::ContainerSurfaceRegistryMissing
+        ));
+    }
+
+    #[test]
+    fn resolve_dev_exec_surface_reports_missing_dev_context_with_typed_error() {
+        let root = temp_repo("missing-dev-context");
+        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n")
+            .expect("write compose");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+working_dir = "/var/www/html"
+"#,
+        )
+        .expect("write manifest");
+
+        let error = resolve_dev_exec_surface(&root).expect_err("missing dev context should fail");
+        assert!(matches!(
+            error,
+            RunnerError::ContainerSurfaceDevContextMissing
+        ));
+    }
+
+    #[test]
+    fn resolve_dev_exec_surface_reports_ambiguous_dev_context_with_typed_error() {
+        let root = temp_repo("ambiguous-dev-context");
+        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n")
+            .expect("write compose");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"[containers.web]
+context = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+working_dir = "/var/www/html"
+
+[containers.admin]
+context = "dev"
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+working_dir = "/var/www/admin"
+"#,
+        )
+        .expect("write manifest");
+
+        let error = resolve_dev_exec_surface(&root).expect_err("ambiguous dev context should fail");
+        match error {
+            RunnerError::ContainerSurfaceDevContextAmbiguous { mut containers } => {
+                containers.sort();
+                assert_eq!(containers, vec!["admin".to_owned(), "web".to_owned()]);
+            }
+            other => panic!("unexpected error variant: {other}"),
+        }
+    }
+
+    #[test]
+    fn resolve_named_exec_surface_reports_missing_named_container_with_typed_error() {
+        let root = temp_repo("missing-named-container");
+        write_container_manifest(&root, "/var/www/html");
+
+        let error =
+            resolve_named_exec_surface(&root, "cache").expect_err("missing named container");
+        match error {
+            RunnerError::ContainerSurfaceNotDefined { container } => {
+                assert_eq!(container, "cache");
+            }
+            other => panic!("unexpected error variant: {other}"),
+        }
+    }
+
+    #[test]
+    fn resolve_named_exec_surface_reports_policy_translation_with_typed_error() {
+        let root = temp_repo("policy-translation");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"[containers.web]
+context = "dev"
+compose_file = "infra/dev/missing.yml"
+primary_service = "app"
+working_dir = "/var/www/html"
+"#,
+        )
+        .expect("write manifest");
+
+        let error = resolve_named_exec_surface(&root, "web")
+            .expect_err("missing compose policy should fail");
+        match error {
+            RunnerError::ContainerSurfacePolicy {
+                phase,
+                container,
+                detail,
+            } => {
+                assert_eq!(phase, "policy load");
+                assert_eq!(container, "web");
+                assert!(
+                    detail.contains("missing.yml") || detail.contains("compose"),
+                    "got: {detail}"
+                );
+            }
+            other => panic!("unexpected error variant: {other}"),
+        }
     }
 
     #[test]

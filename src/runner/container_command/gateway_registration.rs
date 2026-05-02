@@ -16,6 +16,18 @@ use crate::runner::gateway_command::{
     ensure_gateway_tls_cert, gateway_dir, remove_gateway_tls_cert,
 };
 
+fn gateway_runtime_target_error(detail: impl Into<String>) -> RunnerError {
+    RunnerError::gateway_runtime_target("validation", detail)
+}
+
+fn gateway_loopback_error(phase: &'static str, detail: impl Into<String>) -> RunnerError {
+    RunnerError::gateway_loopback(phase, detail)
+}
+
+fn gateway_runtime_rows_error(detail: impl Into<String>) -> RunnerError {
+    RunnerError::gateway_runtime_target("runtime rows", detail)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct RegisteredGatewayRoute {
     pub(in crate::runner) domain: String,
@@ -38,7 +50,7 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     let rows = list_running_compose_containers_for_profile(&policy.profile)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
     let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?;
     let project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
@@ -69,7 +81,7 @@ pub(in crate::runner) fn gateway_routes_registered_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<bool, RunnerError> {
     let rows = list_running_compose_containers_for_profile(&policy.profile)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
     let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?;
     let project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, false, Some(&rows))?;
@@ -90,8 +102,7 @@ pub(in crate::runner) fn gateway_routes_registered_for_container(
     routes.extend(project_alias_routes);
     routes.extend(shared_alias_routes);
     registered_gateway_routes_match_project(
-        &RouteTable::load(&gateway_route_table_path()?)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
+        &load_gateway_route_table(&gateway_route_table_path()?)?,
         repo_root,
         &routes,
     )
@@ -102,7 +113,7 @@ pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
     let rows = list_running_compose_containers_for_profile(&policy.profile)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
     let mut project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
     let shared_alias_routes = resolve_gateway_shared_service_alias_routes(
@@ -142,6 +153,21 @@ pub(in crate::runner) fn deregister_gateway_routes_for_container(
     Ok(routes.into_iter().map(|route| route.domain).collect())
 }
 
+fn load_gateway_route_table(route_table_path: &Path) -> Result<RouteTable, RunnerError> {
+    RouteTable::load(route_table_path).map_err(|error| {
+        RunnerError::gateway_route_table("load", route_table_path, error.to_string())
+    })
+}
+
+fn save_gateway_route_table(
+    route_table: &RouteTable,
+    route_table_path: &Path,
+) -> Result<(), RunnerError> {
+    route_table.save(route_table_path).map_err(|error| {
+        RunnerError::gateway_route_table("save", route_table_path, error.to_string())
+    })
+}
+
 fn register_gateway_route_at(
     route_table_path: &Path,
     repo_root: &Path,
@@ -160,12 +186,15 @@ fn register_gateway_route_at(
             source: effigy_gateway::routes::RouteSource::Container,
         },
     )
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))
+    .map_err(|error| {
+        RunnerError::gateway_route_registration("register", &route.domain, error.to_string())
+    })
 }
 
 fn deregister_gateway_route_at(route_table_path: &Path, domain: &str) -> Result<(), RunnerError> {
-    deregister_route(route_table_path, domain)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+    deregister_route(route_table_path, domain).map_err(|error| {
+        RunnerError::gateway_route_registration("deregister", domain, error.to_string())
+    })
 }
 
 fn prune_stale_container_routes_for_project(
@@ -173,8 +202,7 @@ fn prune_stale_container_routes_for_project(
     repo_root: &Path,
     desired_routes: &[RegisteredGatewayRoute],
 ) -> Result<(), RunnerError> {
-    let mut table = RouteTable::load(route_table_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let mut table = load_gateway_route_table(route_table_path)?;
     let project_path = repo_root.display().to_string();
     let desired_domains = desired_routes
         .iter()
@@ -197,9 +225,7 @@ fn prune_stale_container_routes_for_project(
         }
         let _ = table.deregister(&route.domain);
     }
-    table
-        .save(route_table_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+    save_gateway_route_table(&table, route_table_path)
 }
 
 fn registered_gateway_routes_match_project(
@@ -376,7 +402,7 @@ fn validate_gateway_routes_against_runtime(
         return Ok(());
     }
     let rows = list_running_compose_containers_for_profile(&policy.profile)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        .map_err(|error| RunnerError::gateway_runtime_target("runtime rows", error.to_string()))?;
     validate_gateway_routes_against_rows(repo_root, policy, routes, &rows)?;
     validate_gateway_routes_against_host_listeners(policy, routes)
 }
@@ -430,7 +456,7 @@ fn runtime_host_port_for_service_alias(
         .find(|alias| alias.service == service)
         .map(|alias| alias.container_port)
         .ok_or_else(|| {
-            RunnerError::task_invocation(format!(
+            gateway_runtime_target_error(format!(
                 "container `{}` has no declared service alias for service `{service}`",
                 policy.name
             ))
@@ -532,7 +558,7 @@ fn validate_gateway_routes_against_rows(
         {
             continue;
         }
-        return Err(RunnerError::task_invocation(format!(
+        return Err(gateway_runtime_target_error(format!(
             "container `{}` selected gateway target `{}` for domain `{}` but no running container in project `{}`{} publishes host port {}; gateway registration refuses to target an unrelated runtime binding",
             policy.name,
             route.target.as_deref().unwrap_or("<dns-only>"),
@@ -571,7 +597,7 @@ fn validate_gateway_routes_against_host_listeners(
         let Some(listener_command) = non_runtime_listener_for_port(target_port)? else {
             continue;
         };
-        return Err(RunnerError::task_invocation(format!(
+        return Err(gateway_runtime_target_error(format!(
             "container `{}` selected gateway target `{}` for domain `{}` but host port {} is already held by `{}`; gateway registration refuses to target an unrelated host listener",
             policy.name,
             route.target.as_deref().unwrap_or("<dns-only>"),
@@ -591,7 +617,7 @@ fn parse_target_host_port(target: &str) -> Result<u16, RunnerError> {
         .trim()
         .parse::<u16>()
         .map_err(|error| {
-            RunnerError::task_invocation(format!(
+            gateway_route_shape_error(format!(
                 "gateway route target `{target}` does not end in a valid host port: {error}"
             ))
         })?;
@@ -641,11 +667,11 @@ fn load_or_allocate_loopback_ip(
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
     let path = gateway_dir()?.join("loopback-ips.json");
     let mut registry = LoopbackRegistry::load(&path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        .map_err(|error| gateway_loopback_error("registry load", error.to_string()))?;
     if prune_stale_loopback_assignments(&mut registry)? {
         registry
             .save(&path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
     }
     if let Some(existing) = registry.get(identity) {
         return Ok(Some(existing.ip));
@@ -655,11 +681,11 @@ fn load_or_allocate_loopback_ip(
     }
     let assignment = registry
         .allocate(identity, source)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        .map_err(|error| gateway_loopback_error("allocation", error.to_string()))?
         .ip;
     registry
         .save(&path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        .map_err(|error| gateway_loopback_error("registry save", error.to_string()))?;
     Ok(Some(assignment))
 }
 
@@ -667,8 +693,7 @@ fn prune_stale_loopback_assignments(registry: &mut LoopbackRegistry) -> Result<b
     if registry.is_empty() {
         return Ok(false);
     }
-    let route_table = RouteTable::load(&gateway_route_table_path()?)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let route_table = load_gateway_route_table(&gateway_route_table_path()?)?;
     // Pruning is best-effort: if no container runtime is reachable
     // (e.g. colima/docker not installed in CI sandboxes, or the
     // daemon is transiently down), skip this round rather than
@@ -808,25 +833,29 @@ fn row_matches_route_service(
         .is_none_or(|service| row.service.as_deref() == Some(service))
 }
 
+fn gateway_route_shape_error(detail: impl Into<String>) -> RunnerError {
+    RunnerError::gateway_route_shape("validation", detail)
+}
+
 fn parse_published_host_port_range(raw: &str) -> Result<(u16, u16), RunnerError> {
     parse_runtime_port_binding_range(raw).map(|(host, _container)| host)
 }
 
 fn parse_runtime_port_binding_range(raw: &str) -> Result<((u16, u16), (u16, u16)), RunnerError> {
     let Some((published, container)) = raw.split_once("->") else {
-        return Err(RunnerError::task_invocation(format!(
+        return Err(gateway_route_shape_error(format!(
             "runtime port mapping `{raw}` is missing a published-port segment"
         )));
     };
     let host_candidate = published.rsplit(':').next().unwrap_or_default().trim();
     let container_candidate = container.split('/').next().unwrap_or_default().trim();
     let host = parse_port_range(host_candidate).map_err(|error| {
-        RunnerError::task_invocation(format!(
+        gateway_route_shape_error(format!(
             "runtime port mapping `{raw}` does not expose a valid published host port: {error}"
         ))
     })?;
     let container = parse_port_range(container_candidate).map_err(|error| {
-        RunnerError::task_invocation(format!(
+        gateway_route_shape_error(format!(
             "runtime port mapping `{raw}` does not expose a valid container port: {error}"
         ))
     })?;
@@ -944,14 +973,14 @@ fn selected_host_port_for_route(
         return first_effective_http_host_port(policy);
     }
     let Some(raw) = policy.declared_ports.first() else {
-        return Err(RunnerError::task_invocation(format!(
+        return Err(gateway_route_shape_error(format!(
             "container `{}` declares gateway DNS routes but no `host.ports`; declare an explicit host HTTP port before enabling gateway registration",
             policy.name
         )));
     };
     let host = raw.split(':').next().unwrap_or_default().trim();
     host.parse::<u16>().map_err(|error| {
-        RunnerError::task_invocation(format!(
+        gateway_route_shape_error(format!(
             "container `{}` has invalid host port mapping `{raw}` for gateway registration: {error}",
             policy.name
         ))
@@ -969,7 +998,7 @@ fn selected_declared_host_port(
     {
         return Ok(selected_port);
     }
-    Err(RunnerError::task_invocation(format!(
+    Err(gateway_route_shape_error(format!(
             "container `{}` declares a gateway DNS route on host port {selected_port} but `host.ports` does not expose that host port",
             policy.name
         )))
@@ -985,7 +1014,7 @@ fn selected_effective_container_port(
             return Ok(binding.0);
         }
     }
-    Err(RunnerError::task_invocation(format!(
+    Err(gateway_runtime_target_error(format!(
             "container `{}` declares a gateway DNS route for container port {selected_port} but the generated compose does not expose that container port",
             policy.name
         )))
@@ -1003,7 +1032,7 @@ fn first_effective_http_host_port(policy: &EffectiveContainerPolicy) -> Result<u
         }
     }
     first_binding.ok_or_else(|| {
-        RunnerError::task_invocation(format!(
+        gateway_runtime_target_error(format!(
             "container `{}` declares gateway DNS routes but no effective published ports are available for gateway registration",
             policy.name
         ))
@@ -1024,7 +1053,7 @@ fn selected_effective_container_port_for_service(
             return Ok(host);
         }
     }
-    Err(RunnerError::task_invocation(format!(
+    Err(gateway_runtime_target_error(format!(
         "container `{}` declares a gateway DNS route for service `{service}` on container port {selected_port} but the generated compose does not expose that port for the selected service",
         policy.name
     )))
@@ -1048,7 +1077,7 @@ fn first_effective_http_host_port_for_service(
         }
     }
     first_binding.ok_or_else(|| {
-        RunnerError::task_invocation(format!(
+        gateway_runtime_target_error(format!(
             "container `{}` declares a gateway DNS route for service `{service}` but no effective published ports are available for that service",
             policy.name
         ))
@@ -1112,26 +1141,26 @@ fn parse_port_binding(
         [host, container] => (*host, *container),
         [_ip, host, container] => (*host, *container),
         _ => {
-            return Err(RunnerError::task_invocation(format!(
+            return Err(gateway_route_shape_error(format!(
                 "container `{}` has invalid host port mapping `{raw}` for gateway registration",
                 policy.name
             )))
         }
     };
     if host.is_empty() || container.is_empty() {
-        return Err(RunnerError::task_invocation(format!(
+        return Err(gateway_route_shape_error(format!(
             "container `{}` has invalid host port mapping `{raw}` for gateway registration",
             policy.name
         )));
     }
     let host_port = host.parse::<u16>().map_err(|error| {
-        RunnerError::task_invocation(format!(
+        gateway_route_shape_error(format!(
             "container `{}` has invalid host port mapping `{raw}` for gateway registration: {error}",
             policy.name
         ))
     })?;
     let container_port = container.parse::<u16>().map_err(|error| {
-        RunnerError::task_invocation(format!(
+        gateway_route_shape_error(format!(
             "container `{}` has invalid container port mapping `{raw}` for gateway registration: {error}",
             policy.name
         ))

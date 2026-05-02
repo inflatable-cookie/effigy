@@ -1,13 +1,19 @@
 # Distribution Channels (Backlog)
 
-Status: Backlog
+Status: Promoted
 Owner: Platform
 Created: 2026-02-27
 Depends on: initial feature freeze + release contract
 
+Superseded by:
+- `g03.020-distribution-channel-proof-and-first-publish-closeout`
+
 ## 1) Context
 
 Effigy is still evolving, so distribution planning should be staged and reversible. This backlog item defines release channels and operational requirements, without locking release dates yet.
+
+The active execution target for this topic now lives in `g03`, so this file
+should be treated as historical backlog evidence rather than the live queue.
 
 ## 2) Goals
 

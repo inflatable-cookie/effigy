@@ -1,5 +1,8 @@
 # Effigy Architecture Overview
 
+Status: active
+Updated: 2026-05-02
+
 Effigy is a Rust CLI task runner with two responsibility layers:
 
 1. Runner infrastructure:
@@ -26,3 +29,19 @@ Effigy is a Rust CLI task runner with two responsibility layers:
 - Root detection uses nearest marker semantics across `package.json`, `composer.json`, `Cargo.toml`, and `.git`.
 - Unprefixed task resolution is deterministic and fails loudly on ambiguity.
 - Task command payloads remain shell commands for incremental adoption.
+
+## Current Authority Surfaces
+
+Use these docs intentionally:
+
+- [010-package-map.md](./010-package-map.md) is the live crate and module
+  ownership map
+- [020-container-infrastructure-design.md](./020-container-infrastructure-design.md)
+  is longer-form container design background, not the live runtime ownership map
+- [021-production-deployment-export-architecture.md](./021-production-deployment-export-architecture.md)
+  is the deploy/export architecture anchor
+
+For runtime/container behavior rules, prefer the active contracts:
+
+- `docs/contracts/005-container-runtime-contract.md`
+- `docs/contracts/009-execution-surface-convergence.md`

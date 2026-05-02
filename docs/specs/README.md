@@ -34,6 +34,12 @@ Paused but still useful:
 
 Recently completed:
 
+- [`032-v1-runtime-hardening-proof-and-stress-matrix-strict-lane.md`](./032-v1-runtime-hardening-proof-and-stress-matrix-strict-lane.md)
+- [`031-architecture-map-and-authority-surface-repair-strict-lane.md`](./031-architecture-map-and-authority-surface-repair-strict-lane.md)
+- [`030-container-and-runtime-error-taxonomy-and-diagnostics-strict-lane.md`](./030-container-and-runtime-error-taxonomy-and-diagnostics-strict-lane.md)
+- [`029-workspace-runtime-orchestrator-split-and-handoff-simplification-strict-lane.md`](./029-workspace-runtime-orchestrator-split-and-handoff-simplification-strict-lane.md)
+- [`028-container-assembly-model-and-single-pass-compose-emission-strict-lane.md`](./028-container-assembly-model-and-single-pass-compose-emission-strict-lane.md)
+- [`027-runtime-session-context-and-runtime-ownership-hardening-strict-lane.md`](./027-runtime-session-context-and-runtime-ownership-hardening-strict-lane.md)
 - [`026-decodelabs-production-strategy-scope-strict-lane.md`](./026-decodelabs-production-strategy-scope-strict-lane.md)
 - [`025-regression-matrix-and-drift-guards-strict-lane.md`](./025-regression-matrix-and-drift-guards-strict-lane.md)
 - [`024-embedded-command-script-and-bootstrap-convergence-strict-lane.md`](./024-embedded-command-script-and-bootstrap-convergence-strict-lane.md)
@@ -52,6 +58,4 @@ Recently completed:
 
 ## Next Task
 
-No active strict lane.
-
-Stop in planning and choose the next live roadmap deliberately.
+Stop in planning.

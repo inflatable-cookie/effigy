@@ -5,8 +5,13 @@ Use this folder for planning threads that are important but not yet scheduled in
 
 ## Current Backlog Items
 
-- [Distribution Channels](./distribution-channels.md)
-- [Release Contract (v0.x)](./release-contract-v0.md)
+None right now.
+
+The earlier release/distribution backlog items were promoted into the active
+generation as:
+
+- `g03.019` stable release contract and compatibility boundary
+- `g03.020` distribution channel proof and first-publish closeout
 
 ## Promotion Rule
 

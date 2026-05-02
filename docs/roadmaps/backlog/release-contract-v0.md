@@ -1,15 +1,21 @@
 # Release Contract (v0.x)
 
-Status: Draft
+Status: Promoted
 Owner: Platform
 Created: 2026-02-27
 Related: [Distribution Channels](./distribution-channels.md)
+
+Superseded by:
+- `g03.019-v1-release-contract-and-compatibility-boundary`
 
 ## 1) Purpose
 
 Define the minimum release contract required before promoting Effigy to stable distribution channels (crates + Homebrew).
 
 This contract is intentionally scoped to `v0.x` while feature shape is still converging.
+
+That convergence is now far enough along that this draft should be treated as
+historical planning evidence, not the live contract target.
 
 ## 2) Versioning Policy (v0.x)
 

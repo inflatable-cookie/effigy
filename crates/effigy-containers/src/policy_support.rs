@@ -9,6 +9,7 @@ use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::ports::PortRegistry;
 use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
+use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 
 use crate::{
@@ -22,6 +23,145 @@ thread_local! {
     static TEST_EFFIGY_HOME: std::cell::RefCell<Option<PathBuf>> = const {
         std::cell::RefCell::new(None)
     };
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GeneratedComposeDocument {
+    #[serde(default)]
+    services: std::collections::BTreeMap<String, GeneratedComposeService>,
+    #[serde(flatten)]
+    extra: std::collections::BTreeMap<String, YamlValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GeneratedComposeService {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    environment: Option<GeneratedComposeEnvironment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ports: Option<Vec<GeneratedComposePort>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    volumes: Option<Vec<GeneratedComposeVolume>>,
+    #[serde(flatten)]
+    extra: std::collections::BTreeMap<String, YamlValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum GeneratedComposeEnvironment {
+    Mapping(std::collections::BTreeMap<String, YamlValue>),
+    Sequence(Vec<String>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum GeneratedComposePort {
+    String(String),
+    Other(YamlValue),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum GeneratedComposeVolume {
+    String(String),
+    Other(YamlValue),
+}
+
+impl GeneratedComposeDocument {
+    fn parse(project_name: &str, phase: &str, raw: &str) -> Result<Self, ContainerPolicyError> {
+        let parsed = serde_yaml::from_str::<Self>(raw).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "generated compose for `{project_name}` is invalid YAML before {phase}: {error}"
+            ))
+        })?;
+        if parsed.services.is_empty() {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "generated compose for `{project_name}` is missing a `services` mapping"
+            )));
+        }
+        Ok(parsed)
+    }
+
+    fn write_back(
+        &self,
+        project_name: &str,
+        phase: &str,
+        assembly: &mut effigy_catalog::assembly::AssemblyResult,
+    ) -> Result<(), ContainerPolicyError> {
+        assembly.compose_yaml = serde_yaml::to_string(self).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "failed to serialize generated compose for `{project_name}` after {phase}: {error}"
+            ))
+        })?;
+        Ok(())
+    }
+
+    fn sorted_service_names(&self) -> Vec<String> {
+        self.services.keys().cloned().collect()
+    }
+}
+
+impl GeneratedComposeService {
+    fn environment_mapping_mut(
+        &mut self,
+    ) -> Result<&mut std::collections::BTreeMap<String, YamlValue>, ContainerPolicyError> {
+        match self.environment.take() {
+            Some(GeneratedComposeEnvironment::Mapping(mapping)) => {
+                self.environment = Some(GeneratedComposeEnvironment::Mapping(mapping));
+            }
+            Some(GeneratedComposeEnvironment::Sequence(sequence)) => {
+                let mut mapping = std::collections::BTreeMap::new();
+                for raw in sequence {
+                    let Some((name, value)) = raw.split_once('=') else {
+                        return Err(ContainerPolicyError::TaskInvocation(format!(
+                            "shared-service env injection expected `KEY=VALUE` environment entry, got `{raw}`"
+                        )));
+                    };
+                    mapping.insert(
+                        name.trim().to_owned(),
+                        YamlValue::String(value.trim().to_owned()),
+                    );
+                }
+                self.environment = Some(GeneratedComposeEnvironment::Mapping(mapping));
+            }
+            None => {
+                self.environment = Some(GeneratedComposeEnvironment::Mapping(
+                    std::collections::BTreeMap::new(),
+                ));
+            }
+        }
+
+        let Some(GeneratedComposeEnvironment::Mapping(mapping)) = self.environment.as_mut() else {
+            return Err(ContainerPolicyError::TaskInvocation(
+                "shared-service env injection only supports mapping or string-list `environment` entries".to_owned(),
+            ));
+        };
+        Ok(mapping)
+    }
+
+    fn has_repo_root_mount(&self, repo_root: &str) -> bool {
+        self.volumes.as_ref().is_some_and(|volumes| {
+            volumes.iter().any(|entry| {
+                let GeneratedComposeVolume::String(raw) = entry else {
+                    return false;
+                };
+                raw.split_once(':')
+                    .is_some_and(|(source, _target)| source.trim() == repo_root)
+            })
+        })
+    }
+
+    fn append_mounts(&mut self, mounts: &[String]) {
+        let volumes = self.volumes.get_or_insert_with(Vec::new);
+        for mount in mounts {
+            if volumes
+                .iter()
+                .any(|entry| matches!(entry, GeneratedComposeVolume::String(existing) if existing == mount))
+            {
+                continue;
+            }
+            volumes.push(GeneratedComposeVolume::String(mount.clone()));
+        }
+    }
 }
 
 pub(crate) fn resolve_compose_source(
@@ -118,20 +258,23 @@ pub(crate) fn resolve_compose_source(
         host_uid,
         host_gid,
     )?;
-    apply_shared_service_env_policy(project_name, &shared_services, &mut assembly)?;
+    let mut compose_document = GeneratedComposeDocument::parse(
+        project_name,
+        "typed assembly policy application",
+        &assembly.compose_yaml,
+    )?;
+    apply_shared_service_env_policy(&shared_services, &mut compose_document)?;
     apply_generated_compose_media_policy(
         repo_root,
         container_name,
-        project_name,
         &configured_media_mounts(config),
-        &mut assembly,
+        &mut compose_document,
     )?;
     apply_generated_compose_host_mount_policy(
         repo_root,
         container_name,
-        project_name,
         config,
-        &mut assembly,
+        &mut compose_document,
     )?;
     let configured_bindings = configured_host_ports(config)
         .iter()
@@ -157,6 +300,11 @@ pub(crate) fn resolve_compose_source(
         project_name,
         &configured_bindings,
         &project_loopback_port_rules(repo_root, project_name, config)?,
+        &mut compose_document,
+    )?;
+    compose_document.write_back(
+        project_name,
+        "typed assembly policy application",
         &mut assembly,
     )?;
     let output = ComposeOutput::new(repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR));
@@ -289,6 +437,11 @@ fn resolve_shared_service_bindings(
             host_uid,
             host_gid,
         )?;
+        let mut compose_document = GeneratedComposeDocument::parse(
+            &shared_project_name,
+            "shared-service typed port policy application",
+            &assembly.compose_yaml,
+        )?;
         let effective_ports = apply_generated_compose_port_policy(
             &output_dir,
             &shared_project_name,
@@ -299,6 +452,11 @@ fn resolve_shared_service_bindings(
                 service_name,
                 service,
             )?,
+            &mut compose_document,
+        )?;
+        compose_document.write_back(
+            &shared_project_name,
+            "shared-service typed port policy application",
             &mut assembly,
         )?;
         if effective_ports.is_empty() {
@@ -385,99 +543,33 @@ fn shared_service_output_dir(project_name: &str) -> Result<PathBuf, ContainerPol
 }
 
 fn apply_shared_service_env_policy(
-    project_name: &str,
     shared_services: &[SharedServiceBinding],
-    assembly: &mut effigy_catalog::assembly::AssemblyResult,
+    compose_document: &mut GeneratedComposeDocument,
 ) -> Result<(), ContainerPolicyError> {
     if shared_services.is_empty() {
         return Ok(());
     }
-
-    let mut parsed: YamlValue =
-        serde_yaml::from_str(&assembly.compose_yaml).map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "generated compose for `{project_name}` is invalid YAML before shared-service rewrite: {error}"
-            ))
-        })?;
-    let Some(services) = parsed
-        .get_mut("services")
-        .and_then(YamlValue::as_mapping_mut)
-    else {
-        return Err(ContainerPolicyError::TaskInvocation(format!(
-            "generated compose for `{project_name}` is missing a `services` mapping"
-        )));
-    };
 
     let env_vars = shared_services
         .iter()
         .flat_map(SharedServiceBinding::standard_env_vars)
         .collect::<Vec<_>>();
 
-    for service in services.values_mut() {
-        let Some(service) = service.as_mapping_mut() else {
-            continue;
-        };
+    for service in compose_document.services.values_mut() {
         inject_service_env_vars(service, &env_vars)?;
     }
-
-    assembly.compose_yaml = serde_yaml::to_string(&parsed).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "failed to serialize generated compose for `{project_name}` after shared-service rewrite: {error}"
-        ))
-    })?;
     Ok(())
 }
 
 fn inject_service_env_vars(
-    service: &mut serde_yaml::Mapping,
+    service: &mut GeneratedComposeService,
     env_vars: &[(String, String)],
 ) -> Result<(), ContainerPolicyError> {
-    let key = YamlValue::String("environment".to_owned());
-    let environment = match service.get_mut(&key) {
-        Some(value) => value,
-        None => {
-            service.insert(key.clone(), YamlValue::Mapping(serde_yaml::Mapping::new()));
-            service
-                .get_mut(&key)
-                .expect("environment mapping should exist after insertion")
-        }
-    };
-
-    let environment = match environment {
-        YamlValue::Mapping(mapping) => mapping,
-        YamlValue::Sequence(sequence) => {
-            let mut mapping = serde_yaml::Mapping::new();
-            for entry in sequence.iter() {
-                let Some(raw) = entry.as_str() else {
-                    return Err(ContainerPolicyError::TaskInvocation(
-                        "shared-service env injection only supports string list `environment` entries".to_owned(),
-                    ));
-                };
-                let Some((name, value)) = raw.split_once('=') else {
-                    return Err(ContainerPolicyError::TaskInvocation(format!(
-                        "shared-service env injection expected `KEY=VALUE` environment entry, got `{raw}`"
-                    )));
-                };
-                mapping.insert(
-                    YamlValue::String(name.trim().to_owned()),
-                    YamlValue::String(value.trim().to_owned()),
-                );
-            }
-            *environment = YamlValue::Mapping(mapping);
-            environment
-                .as_mapping_mut()
-                .expect("environment mapping should exist after conversion")
-        }
-        _ => {
-            return Err(ContainerPolicyError::TaskInvocation(
-                "shared-service env injection only supports mapping or string-list `environment` entries".to_owned(),
-            ))
-        }
-    };
+    let environment = service.environment_mapping_mut()?;
 
     for (name, value) in env_vars {
         environment
-            .entry(YamlValue::String(name.clone()))
+            .entry(name.clone())
             .or_insert_with(|| YamlValue::String(value.clone()));
     }
     Ok(())
@@ -488,23 +580,8 @@ fn apply_generated_compose_port_policy(
     project_name: &str,
     explicit_bindings: &[PortBinding],
     loopback_rules: &[LoopbackPortRule],
-    assembly: &mut effigy_catalog::assembly::AssemblyResult,
+    compose_document: &mut GeneratedComposeDocument,
 ) -> Result<Vec<String>, ContainerPolicyError> {
-    let mut parsed: YamlValue =
-        serde_yaml::from_str(&assembly.compose_yaml).map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "generated compose for `{project_name}` is invalid YAML before port policy rewrite: {error}"
-            ))
-        })?;
-    let Some(services) = parsed
-        .get_mut("services")
-        .and_then(YamlValue::as_mapping_mut)
-    else {
-        return Err(ContainerPolicyError::TaskInvocation(format!(
-            "generated compose for `{project_name}` is missing a `services` mapping"
-        )));
-    };
-
     let mut used_explicit_ports = std::collections::BTreeSet::<u16>::new();
     let mut effective_ports = Vec::new();
 
@@ -514,30 +591,17 @@ fn apply_generated_compose_port_policy(
         None
     };
 
-    let mut service_names = services
-        .keys()
-        .filter_map(YamlValue::as_str)
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    service_names.sort();
-
-    for service_name in service_names {
-        let Some(service) = services
-            .get_mut(YamlValue::String(service_name.clone()))
-            .and_then(YamlValue::as_mapping_mut)
-        else {
+    for service_name in compose_document.sorted_service_names() {
+        let Some(service) = compose_document.services.get_mut(&service_name) else {
             continue;
         };
-        let Some(ports) = service
-            .get_mut(YamlValue::String("ports".to_owned()))
-            .and_then(YamlValue::as_sequence_mut)
-        else {
+        let Some(ports) = service.ports.as_mut() else {
             continue;
         };
 
         let mut rewritten_ports = Vec::new();
         for port in ports.iter_mut() {
-            let Some(raw) = port.as_str() else {
+            let GeneratedComposePort::String(raw) = port else {
                 rewritten_ports.push(port.clone());
                 continue;
             };
@@ -568,7 +632,7 @@ fn apply_generated_compose_port_policy(
                     )
                     .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
             };
-            rewritten_ports.push(YamlValue::String(format!(
+            rewritten_ports.push(GeneratedComposePort::String(format!(
                 "{host_port}:{}",
                 binding.container
             )));
@@ -595,11 +659,6 @@ fn apply_generated_compose_port_policy(
         }
     }
 
-    assembly.compose_yaml = serde_yaml::to_string(&parsed).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "failed to serialize generated compose for `{project_name}` after port policy rewrite: {error}"
-        ))
-    })?;
     Ok(effective_ports)
 }
 
@@ -956,9 +1015,8 @@ pub(crate) fn validate_media_mounts(
 fn apply_generated_compose_media_policy(
     repo_root: &Path,
     container_name: &str,
-    project_name: &str,
     media_mounts: &[String],
-    assembly: &mut effigy_catalog::assembly::AssemblyResult,
+    compose_document: &mut GeneratedComposeDocument,
 ) -> Result<(), ContainerPolicyError> {
     if media_mounts.is_empty() {
         return Ok(());
@@ -969,31 +1027,17 @@ fn apply_generated_compose_media_policy(
         .map(|mount| parse_media_mount(repo_root, container_name, mount))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut parsed: YamlValue =
-        serde_yaml::from_str(&assembly.compose_yaml).map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "generated compose for `{project_name}` is invalid YAML before media policy rewrite: {error}"
-            ))
-        })?;
-    let Some(services) = parsed
-        .get_mut("services")
-        .and_then(YamlValue::as_mapping_mut)
-    else {
-        return Err(ContainerPolicyError::TaskInvocation(format!(
-            "generated compose for `{project_name}` is missing a `services` mapping"
-        )));
-    };
-
     let repo_root_display = repo_root.display().to_string();
+    let mount_specs = parsed_mounts
+        .iter()
+        .map(|(source, target)| format!("{}:{target}", source.display()))
+        .collect::<Vec<_>>();
     let mut attached_services = 0usize;
-    for service in services.values_mut() {
-        let Some(service) = service.as_mapping_mut() else {
-            continue;
-        };
-        if !service_has_repo_root_mount(service, &repo_root_display) {
+    for service in compose_document.services.values_mut() {
+        if !service.has_repo_root_mount(&repo_root_display) {
             continue;
         }
-        append_media_mounts(service, &parsed_mounts)?;
+        service.append_mounts(&mount_specs);
         attached_services += 1;
     }
 
@@ -1002,52 +1046,27 @@ fn apply_generated_compose_media_policy(
             "container `{container_name}` declares `[containers.{container_name}.data].media`, but no generated service has a repo-root bind mount to attach it to"
         )));
     }
-
-    assembly.compose_yaml = serde_yaml::to_string(&parsed).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "failed to serialize generated compose for `{project_name}` after media policy rewrite: {error}"
-        ))
-    })?;
     Ok(())
 }
 
 fn apply_generated_compose_host_mount_policy(
     repo_root: &Path,
     container_name: &str,
-    project_name: &str,
     config: &ManifestContainerConfig,
-    assembly: &mut effigy_catalog::assembly::AssemblyResult,
+    compose_document: &mut GeneratedComposeDocument,
 ) -> Result<(), ContainerPolicyError> {
     let host_mounts = configured_host_mounts(repo_root, container_name, config)?;
     if host_mounts.is_empty() {
         return Ok(());
     }
 
-    let mut parsed: YamlValue =
-        serde_yaml::from_str(&assembly.compose_yaml).map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "generated compose for `{project_name}` is invalid YAML before host mount rewrite: {error}"
-            ))
-        })?;
-    let Some(services) = parsed
-        .get_mut("services")
-        .and_then(YamlValue::as_mapping_mut)
-    else {
-        return Err(ContainerPolicyError::TaskInvocation(format!(
-            "generated compose for `{project_name}` is missing a `services` mapping"
-        )));
-    };
-
     let repo_root_display = repo_root.display().to_string();
     let mut attached_services = 0usize;
-    for service in services.values_mut() {
-        let Some(service) = service.as_mapping_mut() else {
-            continue;
-        };
-        if !service_has_repo_root_mount(service, &repo_root_display) {
+    for service in compose_document.services.values_mut() {
+        if !service.has_repo_root_mount(&repo_root_display) {
             continue;
         }
-        append_bind_mounts(service, &host_mounts, "host mount")?;
+        service.append_mounts(&host_mounts);
         attached_services += 1;
     }
 
@@ -1056,81 +1075,6 @@ fn apply_generated_compose_host_mount_policy(
             "container `{container_name}` declares `[containers.{container_name}.host].mounts`, but no generated service has a repo-root bind mount to attach them to"
         )));
     }
-
-    assembly.compose_yaml = serde_yaml::to_string(&parsed).map_err(|error| {
-        ContainerPolicyError::TaskInvocation(format!(
-            "failed to serialize generated compose for `{project_name}` after host mount rewrite: {error}"
-        ))
-    })?;
-    Ok(())
-}
-
-fn service_has_repo_root_mount(service: &serde_yaml::Mapping, repo_root: &str) -> bool {
-    service
-        .get(YamlValue::String("volumes".to_owned()))
-        .and_then(YamlValue::as_sequence)
-        .is_some_and(|volumes| {
-            volumes.iter().any(|entry| {
-                entry
-                    .as_str()
-                    .and_then(|raw| raw.split_once(':'))
-                    .is_some_and(|(source, _target)| source.trim() == repo_root)
-            })
-        })
-}
-
-fn volumes_sequence_mut<'a>(
-    service: &'a mut serde_yaml::Mapping,
-    policy_name: &str,
-) -> Result<&'a mut Vec<YamlValue>, ContainerPolicyError> {
-    let key = YamlValue::String("volumes".to_owned());
-    if !service.contains_key(&key) {
-        service.insert(key.clone(), YamlValue::Sequence(Vec::new()));
-    }
-    match service.get_mut(&key) {
-        Some(YamlValue::Sequence(sequence)) => Ok(sequence),
-        Some(_) => Err(ContainerPolicyError::TaskInvocation(format!(
-            "generated compose {policy_name} only supports sequence `volumes` entries"
-        ))),
-        None => unreachable!("volumes key should exist after insertion"),
-    }
-}
-
-fn append_bind_mounts(
-    service: &mut serde_yaml::Mapping,
-    mounts: &[String],
-    policy_name: &str,
-) -> Result<(), ContainerPolicyError> {
-    let volumes = volumes_sequence_mut(service, policy_name)?;
-    for mount in mounts {
-        if volumes
-            .iter()
-            .any(|entry| entry.as_str().is_some_and(|existing| existing == mount))
-        {
-            continue;
-        }
-        volumes.push(YamlValue::String(mount.clone()));
-    }
-    Ok(())
-}
-
-fn append_media_mounts(
-    service: &mut serde_yaml::Mapping,
-    mounts: &[(PathBuf, String)],
-) -> Result<(), ContainerPolicyError> {
-    let volumes = volumes_sequence_mut(service, "media policy")?;
-
-    for (source, target) in mounts {
-        let mount = format!("{}:{target}", source.display());
-        if volumes
-            .iter()
-            .any(|entry| entry.as_str().is_some_and(|existing| existing == mount))
-        {
-            continue;
-        }
-        volumes.push(YamlValue::String(mount));
-    }
-
     Ok(())
 }
 
@@ -1213,4 +1157,150 @@ pub(crate) fn path_relative_to_repo(repo_root: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .display()
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_generated_compose_env_policy_converts_sequence_entries() {
+        let mut compose_document = GeneratedComposeDocument::parse(
+            "acme",
+            "test parse",
+            r#"
+services:
+  app:
+    image: php:8.4-fpm
+    environment:
+      - APP_ENV=local
+"#,
+        )
+        .expect("parse generated compose");
+
+        apply_shared_service_env_policy(
+            &[SharedServiceBinding {
+                service_name: "db".to_owned(),
+                catalog: "mariadb".to_owned(),
+                domain_label: "db".to_owned(),
+                project_name: "effigy-shared-mariadb-12345678".to_owned(),
+                compose_file: PathBuf::from("/tmp/shared.yml"),
+                host: SHARED_SERVICE_HOST.to_owned(),
+                host_port: 3306,
+                container_port: 3306,
+                host_env_vars: vec!["DB_HOST".to_owned()],
+                port_env_vars: vec!["DB_PORT".to_owned()],
+            }],
+            &mut compose_document,
+        )
+        .expect("apply shared env policy");
+
+        let Some(GeneratedComposeEnvironment::Mapping(environment)) = compose_document
+            .services
+            .get("app")
+            .and_then(|service| service.environment.clone())
+        else {
+            panic!("expected mapping environment");
+        };
+
+        assert_eq!(
+            environment.get("APP_ENV"),
+            Some(&YamlValue::String("local".to_owned()))
+        );
+        assert_eq!(
+            environment.get("DB_HOST"),
+            Some(&YamlValue::String(SHARED_SERVICE_HOST.to_owned()))
+        );
+        assert_eq!(
+            environment.get("DB_PORT"),
+            Some(&YamlValue::String("3306".to_owned()))
+        );
+    }
+
+    #[test]
+    fn typed_generated_compose_port_policy_rewrites_string_ports() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        with_test_effigy_home(tempdir.path(), || {
+            let mut compose_document = GeneratedComposeDocument::parse(
+                "acme",
+                "test parse",
+                r#"
+services:
+  app:
+    image: php:8.4-fpm
+    ports:
+      - "8080:80"
+      - target: 9000
+        published: "9000"
+"#,
+            )
+            .expect("parse generated compose");
+
+            let effective_ports = apply_generated_compose_port_policy(
+                Path::new("/tmp/acme"),
+                "acme",
+                &[PortBinding {
+                    host: 18080,
+                    container: 80,
+                }],
+                &[],
+                &mut compose_document,
+            )
+            .expect("apply port policy");
+
+            assert_eq!(effective_ports, vec!["18080:80".to_owned()]);
+
+            let ports = compose_document
+                .services
+                .get("app")
+                .and_then(|service| service.ports.clone())
+                .expect("service ports");
+            assert_eq!(ports.len(), 2);
+            assert!(matches!(
+                &ports[0],
+                GeneratedComposePort::String(raw) if raw == "18080:80"
+            ));
+            assert!(matches!(&ports[1], GeneratedComposePort::Other(_)));
+        });
+    }
+
+    #[test]
+    fn typed_generated_compose_mount_policy_detects_repo_root_and_preserves_non_string_volumes() {
+        let repo_root = "/tmp/acme";
+        let mut compose_document = GeneratedComposeDocument::parse(
+            "acme",
+            "test parse",
+            r#"
+services:
+  app:
+    image: php:8.4-fpm
+    volumes:
+      - "/tmp/acme:/var/www/html"
+      - type: volume
+        source: cache
+        target: /cache
+"#,
+        )
+        .expect("parse generated compose");
+
+        let service = compose_document
+            .services
+            .get_mut("app")
+            .expect("app service");
+        assert!(service.has_repo_root_mount(repo_root));
+
+        service.append_mounts(&["/tmp/shared:/var/www/shared".to_owned()]);
+
+        let volumes = service.volumes.clone().expect("service volumes");
+        assert_eq!(volumes.len(), 3);
+        assert!(matches!(
+            &volumes[0],
+            GeneratedComposeVolume::String(raw) if raw == "/tmp/acme:/var/www/html"
+        ));
+        assert!(matches!(&volumes[1], GeneratedComposeVolume::Other(_)));
+        assert!(matches!(
+            &volumes[2],
+            GeneratedComposeVolume::String(raw) if raw == "/tmp/shared:/var/www/shared"
+        ));
+    }
 }

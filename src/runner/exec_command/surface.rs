@@ -25,10 +25,8 @@ pub(super) fn exec_alias_surface_absent(error: &RunnerError) -> bool {
                 && error.kind() == std::io::ErrorKind::NotFound
     ) || matches!(
         error,
-        RunnerError::TaskInvocation(message)
-            if message == "manifest does not define a `[containers]` registry"
-                || message
-                    == "no container declares `context = \"dev\"`; `effigy exec` requires one dev-context container"
+        RunnerError::ContainerSurfaceRegistryMissing
+            | RunnerError::ContainerSurfaceDevContextMissing
     )
 }
 
@@ -37,9 +35,9 @@ pub(super) fn resolve_dev_exec_surface(
 ) -> Result<ResolvedExecSurface, RunnerError> {
     let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let manifest = load_task_manifest(&manifest_path)?;
-    let containers = manifest.containers.ok_or_else(|| {
-        RunnerError::task_invocation("manifest does not define a `[containers]` registry")
-    })?;
+    let containers = manifest
+        .containers
+        .ok_or(RunnerError::ContainerSurfaceRegistryMissing)?;
     let container_name = resolve_dev_container_name(&containers)?;
     resolve_named_exec_surface(repo_root, &container_name)
 }
@@ -49,18 +47,14 @@ pub(super) fn load_named_container_config(
     container_name: &str,
 ) -> Result<ManifestContainerConfig, RunnerError> {
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
-    let containers = manifest.containers.ok_or_else(|| {
-        RunnerError::task_invocation("manifest does not define a `[containers]` registry")
-    })?;
+    let containers = manifest
+        .containers
+        .ok_or(RunnerError::ContainerSurfaceRegistryMissing)?;
     containers
         .environments
         .get(container_name)
         .cloned()
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "container `{container_name}` is not defined in `[containers]`"
-            ))
-        })
+        .ok_or_else(|| RunnerError::container_surface_not_defined(container_name))
 }
 
 pub(super) fn resolve_named_exec_surface(
@@ -68,9 +62,23 @@ pub(super) fn resolve_named_exec_surface(
     container_name: &str,
 ) -> Result<ResolvedExecSurface, RunnerError> {
     let config = load_named_container_config(repo_root, container_name)?;
-    let policy = load_container_policy(repo_root, Some(container_name))?;
-    validate_container_policy(repo_root, &policy)?;
-    validate_compose_backend_runtime(repo_root, &policy)?;
+    let policy = load_container_policy(repo_root, Some(container_name)).map_err(|error| {
+        RunnerError::container_surface_policy("policy load", container_name, error.to_string())
+    })?;
+    validate_container_policy(repo_root, &policy).map_err(|error| {
+        RunnerError::container_surface_policy(
+            "policy validation",
+            container_name,
+            error.to_string(),
+        )
+    })?;
+    validate_compose_backend_runtime(repo_root, &policy).map_err(|error| {
+        RunnerError::container_surface_policy(
+            "backend validation",
+            container_name,
+            error.to_string(),
+        )
+    })?;
     Ok(ResolvedExecSurface {
         container_name: container_name.to_owned(),
         config,
@@ -146,9 +154,7 @@ pub(super) fn ensure_container_running(
         validate_running_container_runtime_match(repo_root, policy)?;
         return Ok(());
     }
-    Err(RunnerError::task_invocation(format!(
-        "container `{container_name}` is not running — start it with `effigy container up {container_name}`"
-    )))
+    Err(RunnerError::container_surface_not_running(container_name))
 }
 
 #[derive(Debug, Clone)]
@@ -169,18 +175,11 @@ fn resolve_dev_container_name(
         .collect::<Vec<_>>();
 
     match matches.len() {
-        0 => Err(RunnerError::task_invocation(
-            "no container declares `context = \"dev\"`; `effigy exec` requires one dev-context container",
-        )),
+        0 => Err(RunnerError::ContainerSurfaceDevContextMissing),
         1 => Ok(matches.remove(0)),
-        _ => Err(RunnerError::task_invocation(format!(
-            "multiple containers claim context = \"dev\": {}",
-            matches
-                .iter()
-                .map(|name| format!("`{name}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))),
+        _ => Err(RunnerError::ContainerSurfaceDevContextAmbiguous {
+            containers: matches,
+        }),
     }
 }
 

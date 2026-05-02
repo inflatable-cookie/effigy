@@ -28,6 +28,7 @@ mod locking;
 mod managed_shell;
 mod manifest;
 mod release_command;
+mod runtime_session_context;
 mod script_command;
 mod service_command;
 mod system_command;

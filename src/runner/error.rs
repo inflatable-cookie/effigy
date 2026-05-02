@@ -25,6 +25,64 @@ pub enum RunnerError {
     Task(TaskError),
     Ui(String),
     TaskInvocation(String),
+    ContainerSurfaceRegistryMissing,
+    ContainerSurfaceDevContextMissing,
+    ContainerSurfaceDevContextAmbiguous {
+        containers: Vec<String>,
+    },
+    ContainerSurfaceNotDefined {
+        container: String,
+    },
+    ContainerSurfaceNotRunning {
+        container: String,
+    },
+    ContainerSurfacePolicy {
+        phase: &'static str,
+        container: String,
+        detail: String,
+    },
+    WorkspaceSessionCleanup {
+        shell_error: String,
+        cleanup_error: String,
+    },
+    HostContainerLeaseEncode {
+        detail: String,
+    },
+    HostContainerLeaseReaperBootstrap {
+        detail: String,
+    },
+    GatewayRouteTable {
+        phase: &'static str,
+        path: PathBuf,
+        detail: String,
+    },
+    GatewayRouteRegistration {
+        phase: &'static str,
+        domain: String,
+        detail: String,
+    },
+    GatewayRouteShape {
+        phase: &'static str,
+        detail: String,
+    },
+    GatewayLoopback {
+        phase: &'static str,
+        detail: String,
+    },
+    GatewayRuntimeTarget {
+        phase: &'static str,
+        detail: String,
+    },
+    ContainerRuntimePolicy {
+        phase: &'static str,
+        detail: String,
+    },
+    ContainerRuntimeExecNotReady {
+        container: String,
+        service: String,
+        profile: String,
+        working_dir: PathBuf,
+    },
     TaskCatalogsMissing {
         root: PathBuf,
     },
@@ -169,6 +227,130 @@ impl RunnerError {
 
     pub(in crate::runner) fn task_invocation(message: impl Into<String>) -> Self {
         Self::TaskInvocation(message.into())
+    }
+
+    pub(in crate::runner) fn container_runtime_policy(
+        phase: &'static str,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::ContainerRuntimePolicy {
+            phase,
+            detail: detail.into(),
+        }
+    }
+
+    pub(in crate::runner) fn container_runtime_exec_not_ready(
+        policy: &effigy_containers::EffectiveContainerPolicy,
+        working_dir: &std::path::Path,
+    ) -> Self {
+        Self::ContainerRuntimeExecNotReady {
+            container: policy.name.clone(),
+            service: policy.primary_service.clone(),
+            profile: policy.profile.clone(),
+            working_dir: working_dir.to_path_buf(),
+        }
+    }
+
+    pub(in crate::runner) fn container_surface_not_defined(container: impl Into<String>) -> Self {
+        Self::ContainerSurfaceNotDefined {
+            container: container.into(),
+        }
+    }
+
+    pub(in crate::runner) fn container_surface_not_running(container: impl Into<String>) -> Self {
+        Self::ContainerSurfaceNotRunning {
+            container: container.into(),
+        }
+    }
+
+    pub(in crate::runner) fn container_surface_policy(
+        phase: &'static str,
+        container: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::ContainerSurfacePolicy {
+            phase,
+            container: container.into(),
+            detail: detail.into(),
+        }
+    }
+
+    pub(in crate::runner) fn workspace_session_cleanup(
+        shell_error: impl Into<String>,
+        cleanup_error: impl Into<String>,
+    ) -> Self {
+        Self::WorkspaceSessionCleanup {
+            shell_error: shell_error.into(),
+            cleanup_error: cleanup_error.into(),
+        }
+    }
+
+    pub(in crate::runner) fn host_container_lease_encode(detail: impl Into<String>) -> Self {
+        Self::HostContainerLeaseEncode {
+            detail: detail.into(),
+        }
+    }
+
+    pub(in crate::runner) fn host_container_lease_reaper_bootstrap(
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::HostContainerLeaseReaperBootstrap {
+            detail: detail.into(),
+        }
+    }
+
+    pub(in crate::runner) fn gateway_route_table(
+        phase: &'static str,
+        path: impl Into<PathBuf>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::GatewayRouteTable {
+            phase,
+            path: path.into(),
+            detail: detail.into(),
+        }
+    }
+
+    pub(in crate::runner) fn gateway_route_registration(
+        phase: &'static str,
+        domain: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::GatewayRouteRegistration {
+            phase,
+            domain: domain.into(),
+            detail: detail.into(),
+        }
+    }
+
+    pub(in crate::runner) fn gateway_route_shape(
+        phase: &'static str,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::GatewayRouteShape {
+            phase,
+            detail: detail.into(),
+        }
+    }
+
+    pub(in crate::runner) fn gateway_loopback(
+        phase: &'static str,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::GatewayLoopback {
+            phase,
+            detail: detail.into(),
+        }
+    }
+
+    pub(in crate::runner) fn gateway_runtime_target(
+        phase: &'static str,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self::GatewayRuntimeTarget {
+            phase,
+            detail: detail.into(),
+        }
     }
 
     pub(in crate::runner) fn task_invocation_failed_read(

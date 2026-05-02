@@ -33,6 +33,93 @@ pub(super) fn fmt_runner_error(
         RunnerError::Task(err) => write!(f, "{err}"),
         RunnerError::Ui(msg) => write!(f, "ui render failed: {msg}"),
         RunnerError::TaskInvocation(msg) => write!(f, "{msg}"),
+        RunnerError::ContainerSurfaceRegistryMissing => {
+            write!(f, "manifest does not define a `[containers]` registry")
+        }
+        RunnerError::ContainerSurfaceDevContextMissing => write!(
+            f,
+            "no container declares `context = \"dev\"`; `effigy exec` requires one dev-context container"
+        ),
+        RunnerError::ContainerSurfaceDevContextAmbiguous { containers } => write!(
+            f,
+            "multiple containers claim context = \"dev\": {}",
+            containers
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        RunnerError::ContainerSurfaceNotDefined { container } => write!(
+            f,
+            "container `{container}` is not defined in `[containers]`"
+        ),
+        RunnerError::ContainerSurfaceNotRunning { container } => write!(
+            f,
+            "container `{container}` is not running — start it with `effigy container up {container}`"
+        ),
+        RunnerError::ContainerSurfacePolicy {
+            phase,
+            container,
+            detail,
+        } => write!(
+            f,
+            "container surface {phase} failed for `{container}`: {detail}"
+        ),
+        RunnerError::WorkspaceSessionCleanup {
+            shell_error,
+            cleanup_error,
+        } => write!(
+            f,
+            "{shell_error}\nworkspace cleanup also failed: {cleanup_error}"
+        ),
+        RunnerError::HostContainerLeaseEncode { detail } => {
+            write!(f, "failed to encode container lease: {detail}")
+        }
+        RunnerError::HostContainerLeaseReaperBootstrap { detail } => {
+            write!(
+                f,
+                "failed to bootstrap host container lease reaper: {detail}"
+            )
+        }
+        RunnerError::GatewayRouteTable {
+            phase,
+            path,
+            detail,
+        } => write!(
+            f,
+            "gateway route table {phase} failed at {}: {detail}",
+            path.display()
+        ),
+        RunnerError::GatewayRouteRegistration {
+            phase,
+            domain,
+            detail,
+        } => write!(
+            f,
+            "gateway route {phase} failed for `{domain}`: {detail}"
+        ),
+        RunnerError::GatewayRouteShape { phase, detail } => {
+            write!(f, "gateway route {phase} failed: {detail}")
+        }
+        RunnerError::GatewayLoopback { phase, detail } => {
+            write!(f, "gateway loopback {phase} failed: {detail}")
+        }
+        RunnerError::GatewayRuntimeTarget { phase, detail } => {
+            write!(f, "gateway runtime target {phase} failed: {detail}")
+        }
+        RunnerError::ContainerRuntimePolicy { phase, detail } => {
+            write!(f, "container runtime {phase} failed: {detail}")
+        }
+        RunnerError::ContainerRuntimeExecNotReady {
+            container,
+            service,
+            profile,
+            working_dir,
+        } => write!(
+            f,
+            "container `{container}` is not exec-ready: probe with `-w {}` failed even after restarting service `{service}`. Try `colima nerdctl --profile {profile} -- restart <container>` manually, or `effigy container down {container} && effigy container up {container}`.",
+            working_dir.display(),
+        ),
         RunnerError::TaskCatalogsMissing { root } => write_catalogs_missing(f, root),
         RunnerError::TaskCatalogReadDir { path, error } => {
             write!(f, "failed to read directory {}: {error}", path.display())

@@ -13,7 +13,151 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- no active ready card
+- no ready card is active right now
+- `g03.018` is complete
+- the next honest move is planning
+
+- [`361-decide-post-host-integration-proof-boundary.md`](./361-decide-post-host-integration-proof-boundary.md)
+  is complete. `g03.018` now closes cleanly because the remaining
+  host-integration and shared-service seams are proven strongly enough to stop
+  treating the runtime/container core as under-hardened for `v1.0`.
+
+- [`360-implement-host-integration-and-shared-service-proof-slice.md`](./360-implement-host-integration-and-shared-service-proof-slice.md)
+  is complete. The runtime/container proof lane now includes one integrated
+  stack proof for host Composer home, explicit SSH-home mounting, external
+  mounts, and shared-service env projection.
+
+- [`359-decide-post-proof-matrix-foundation-boundary.md`](./359-decide-post-proof-matrix-foundation-boundary.md)
+  is complete. The lane stays open because `358` proved the bootstrap/lease/
+  workspace ownership seams, but not the remaining host-integration and
+  shared-service seams.
+
+- [`358-implement-runtime-container-proof-matrix-foundation.md`](./358-implement-runtime-container-proof-matrix-foundation.md)
+  is complete. The first bounded runtime/container proof matrix now exists
+  across bootstrap runtime-session posture, reused-runtime lease parity, and
+  direct-versus-seeded workspace cleanup behavior.
+
+- [`357-decide-post-architecture-authority-foundation-boundary.md`](./357-decide-post-architecture-authority-foundation-boundary.md)
+  is complete. `g03.017` now closes cleanly because the runtime/container
+  authority problem was the stale package/ownership surface, not a need for
+  endless architecture churn.
+
+- [`356-inventory-and-repair-runtime-container-authority-surfaces.md`](./356-inventory-and-repair-runtime-container-authority-surfaces.md)
+  is complete. The live package map now reflects the post-hardening code
+  seams, the architecture overview points at the right authority surfaces,
+  and the old container design doc is explicitly background reference rather
+  than live ownership truth.
+
+- [`355-decide-post-gateway-final-error-boundary.md`](./355-decide-post-gateway-final-error-boundary.md)
+  is complete. `g03.016` now closes cleanly because the runtime/container core
+  no longer relies on string-first translation as the dominant failure shape.
+
+- [`354-implement-typed-gateway-runtime-row-and-port-binding-translation-errors.md`](./354-implement-typed-gateway-runtime-row-and-port-binding-translation-errors.md)
+  is complete. Gateway reconciliation now also covers typed runtime-row
+  discovery, service-alias lookup, and raw port-binding translation.
+
+- [`353-decide-post-gateway-closeout-error-boundary.md`](./353-decide-post-gateway-closeout-error-boundary.md)
+  is complete. `g03.016` stays open because `352` landed the loopback and
+  runtime-target slice, but top-level runtime-row discovery plus raw
+  port-binding/service-alias translation are still string-first.
+
+- [`352-implement-typed-gateway-loopback-and-runtime-target-translation-errors.md`](./352-implement-typed-gateway-loopback-and-runtime-target-translation-errors.md)
+  is complete. Gateway reconciliation now uses typed `RunnerError` families
+  for loopback registry load/save/allocation, runtime-target validation, and
+  remaining route-target selection seams instead of flattening those failures
+  into generic invocation strings.
+
+- [`351-decide-post-gateway-reconciliation-error-boundary.md`](./351-decide-post-gateway-reconciliation-error-boundary.md)
+  is complete. `g03.016` stays open because `350` proved the gateway taxonomy
+  path is real, but `gateway_registration.rs` still has too many generic
+  invocation translations for loopback allocation and runtime-target checks to
+  call the lane done.
+
+- [`350-implement-typed-gateway-reconciliation-and-route-translation-errors.md`](./350-implement-typed-gateway-reconciliation-and-route-translation-errors.md)
+  is complete. Gateway reconciliation now uses typed `RunnerError` families
+  for route-table load/save, route register/deregister, and the first
+  route-shape validation seams instead of flattening those failures into
+  generic invocation strings.
+
+- [`349-decide-post-workspace-handoff-and-lease-error-boundary.md`](./349-decide-post-workspace-handoff-and-lease-error-boundary.md)
+  is complete. `g03.016` stays open because `348` fixed the workspace-session
+  and lease seam, but gateway and route reconciliation still keep generic
+  invocation strings as the dominant shape in the remaining runtime/container
+  path.
+
+- [`348-implement-typed-workspace-handoff-and-lease-error-translation.md`](./348-implement-typed-workspace-handoff-and-lease-error-translation.md)
+  is complete. Public workspace shell handoff plus host-container lease encode
+  and reaper bootstrap errors now use typed `RunnerError` families instead of
+  flattening those session and lease failures into generic invocation strings.
+
+- [`347-decide-post-typed-container-surface-and-policy-boundary.md`](./347-decide-post-typed-container-surface-and-policy-boundary.md)
+  is complete. `g03.016` stays open because `346` fixed the exec-surface path,
+  but workspace handoff and lease translation still keep generic invocation
+  strings as the dominant shape in the remaining runtime/session failure seam.
+
+- [`346-implement-typed-container-surface-and-policy-translation-errors.md`](./346-implement-typed-container-surface-and-policy-translation-errors.md)
+  is complete. `effigy exec` container-surface resolution and one
+  policy-translation seam now use typed `RunnerError` families instead of
+  flattening those failures into generic invocation strings.
+
+- [`345-decide-post-typed-runtime-container-error-foundation-boundary.md`](./345-decide-post-typed-runtime-container-error-foundation-boundary.md)
+  is complete. The lane stays open because `344` proved the error-taxonomy path
+  is real, but did not yet stop generic invocation strings from dominating the
+  container surface and policy-translation seams.
+
+- [`344-implement-typed-runtime-container-error-foundation.md`](./344-implement-typed-runtime-container-error-foundation.md)
+  is complete. Container runtime prep now uses typed error families for
+  policy-validation and exec-readiness failures instead of flattening those
+  seams into generic invocation strings.
+
+- [`343-decide-post-workspace-provisioning-split-boundary.md`](./343-decide-post-workspace-provisioning-split-boundary.md)
+  is complete. `g03.015` now closes cleanly because `workspace.rs` is no longer
+  carrying the same mixed ownership risk after the session and provisioning
+  splits.
+
+- [`342-implement-workspace-provisioning-split-foundation.md`](./342-implement-workspace-provisioning-split-foundation.md)
+  is complete. Workspace artifact/binary provisioning plus permission prep now
+  sit under one dedicated `workspace_provisioning` owner instead of caller-local
+  sequencing in `workspace.rs`.
+
+- [`340-implement-workspace-session-orchestrator-foundation.md`](./340-implement-workspace-session-orchestrator-foundation.md)
+  is complete. Public workspace entry and bootstrap start handoff now share
+  one explicit workspace-session owner instead of keeping the whole lifecycle
+  inline in `workspace.rs`.
+
+- [`341-decide-post-workspace-session-orchestrator-foundation-boundary.md`](./341-decide-post-workspace-session-orchestrator-foundation-boundary.md)
+  is complete. `g03.015` stays open because workspace provisioning plus
+  permission/env preparation still sit in the same hotspot.
+
+- [`336-implement-typed-container-assembly-foundation.md`](./336-implement-typed-container-assembly-foundation.md)
+  is complete. `effigy-containers` now has a first typed generated-compose
+  document, and shared-service env injection plus generated port publication
+  no longer each reparse compose YAML as their working data model.
+
+- [`337-decide-post-typed-container-assembly-foundation-boundary.md`](./337-decide-post-typed-container-assembly-foundation-boundary.md)
+  is complete. `g03.014` stays open because generated media and host mount
+  attachment still reparse YAML and rediscover repo-root-attached services
+  ad hoc inside `policy_support.rs`.
+
+- [`338-implement-typed-mount-attachment-assembly-slice.md`](./338-implement-typed-mount-attachment-assembly-slice.md)
+  is complete. Generated media and host mount attachment now sit on the typed
+  generated-compose model, and repo-root-attached service detection no longer
+  rediscovers that seam from raw YAML.
+
+- [`339-decide-post-typed-mount-attachment-boundary.md`](./339-decide-post-typed-mount-attachment-boundary.md)
+  is complete. `g03.014` now closes cleanly, and the remaining rewrite-heavy
+  work moves to the workspace/runtime orchestrator split lane.
+
+- [`334-implement-typed-activation-and-session-context-foundation.md`](./334-implement-typed-activation-and-session-context-foundation.md)
+  is complete. Bootstrap setup work, workspace handoff, seeded shells, routed
+  activation, deferred container activation, and `effigy exec` now share one
+  typed runtime/session context for lease policy and bootstrap stop-on-exit
+  ownership instead of ambient bootstrap-only env flags.
+
+- [`335-decide-post-typed-activation-and-session-context-foundation-boundary.md`](./335-decide-post-typed-activation-and-session-context-foundation-boundary.md)
+  is complete. `g03.013` now closes cleanly, and the next honest hardening
+  seam is the YAML-rewrite-heavy container assembly core rather than another
+  ownership follow-up slice.
 
 - [`333-decide-post-decodelabs-inventory-boundary.md`](./333-decide-post-decodelabs-inventory-boundary.md)
   is complete. `g03.003` now closes on an explicit short-term answer:

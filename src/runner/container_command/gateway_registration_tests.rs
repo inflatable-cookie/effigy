@@ -335,6 +335,32 @@ fn prune_stale_container_routes_removes_old_domains_for_same_project() {
 }
 
 #[test]
+fn prune_stale_container_routes_uses_typed_route_table_error_when_table_is_invalid() {
+    let dir = std::env::temp_dir().join(format!(
+        "effigy-gateway-prune-invalid-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir tempdir");
+    let route_table_path = dir.join("routes.json");
+    std::fs::write(&route_table_path, "{not-json").expect("write invalid route table");
+    let repo_root = dir.join("repo");
+    std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+
+    let error = prune_stale_container_routes_for_project(&route_table_path, &repo_root, &[])
+        .expect_err("invalid route table should fail");
+    match error {
+        RunnerError::GatewayRouteTable { phase, path, .. } => {
+            assert_eq!(phase, "load");
+            assert_eq!(path, route_table_path);
+        }
+        other => panic!("unexpected error variant: {other}"),
+    }
+}
+
+#[test]
 fn resolves_multiple_gateway_routes_for_one_container() {
     let mut policy = test_policy();
     policy
@@ -438,12 +464,14 @@ fn rejects_gateway_route_when_runtime_does_not_publish_selected_port() {
 
     let error = validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
         .expect_err("mismatched published port should fail");
-    assert!(
-        error
-            .to_string()
-            .contains("gateway registration refuses to target an unrelated runtime binding"),
-        "got: {error}"
-    );
+    match error {
+        RunnerError::GatewayRuntimeTarget { phase, detail } => {
+            assert_eq!(phase, "validation");
+            assert!(detail
+                .contains("gateway registration refuses to target an unrelated runtime binding"));
+        }
+        other => panic!("unexpected error variant: {other}"),
+    }
 }
 
 #[test]
@@ -529,6 +557,102 @@ fn parse_runtime_port_binding_range_tracks_host_and_container_ports() {
         parse_runtime_port_binding_range("0.0.0.0:41001-41003->80-82/tcp").expect("binding range"),
         ((41001, 41003), (80, 82))
     );
+}
+
+#[test]
+fn parse_runtime_port_binding_range_uses_typed_route_shape_error() {
+    let error = parse_runtime_port_binding_range("invalid-binding")
+        .expect_err("invalid binding should fail");
+    match error {
+        RunnerError::GatewayRouteShape { phase, detail } => {
+            assert_eq!(phase, "validation");
+            assert!(detail.contains("missing a published-port segment"));
+        }
+        other => panic!("unexpected error variant: {other}"),
+    }
+}
+
+#[test]
+fn parse_target_host_port_uses_typed_route_shape_error() {
+    let error = parse_target_host_port("127.0.0.1:not-a-port")
+        .expect_err("invalid target host port should fail");
+    match error {
+        RunnerError::GatewayRouteShape { phase, detail } => {
+            assert_eq!(phase, "validation");
+            assert!(detail.contains("does not end in a valid host port"));
+        }
+        other => panic!("unexpected error variant: {other}"),
+    }
+}
+
+#[test]
+fn selected_effective_container_port_uses_typed_runtime_target_error() {
+    let mut policy = test_policy();
+    policy.declared_ports = vec!["8125:8025".to_owned()];
+
+    let error = selected_effective_container_port(&policy, 9001)
+        .expect_err("missing effective container port should fail");
+    match error {
+        RunnerError::GatewayRuntimeTarget { phase, detail } => {
+            assert_eq!(phase, "validation");
+            assert!(detail.contains("does not expose that container port"));
+        }
+        other => panic!("unexpected error variant: {other}"),
+    }
+}
+
+#[test]
+fn load_or_allocate_loopback_ip_uses_typed_loopback_error_when_registry_is_invalid() {
+    with_test_home("loopback-invalid-registry", || {
+        let loopback_path = gateway_dir()
+            .expect("gateway dir")
+            .join("loopback-ips.json");
+        std::fs::create_dir_all(loopback_path.parent().expect("loopback parent"))
+            .expect("mkdir loopback parent");
+        std::fs::write(&loopback_path, "{not-json").expect("write invalid loopback registry");
+
+        let error = load_or_allocate_loopback_ip("demo-web-dev", "/tmp/demo", true)
+            .expect_err("invalid loopback registry should fail");
+        match error {
+            RunnerError::GatewayLoopback { phase, detail } => {
+                assert_eq!(phase, "registry load");
+                assert!(!detail.is_empty());
+            }
+            other => panic!("unexpected error variant: {other}"),
+        }
+    });
+}
+
+#[test]
+fn runtime_host_port_for_service_alias_uses_typed_runtime_target_error_for_missing_alias() {
+    let policy = test_policy();
+    let repo_root = PathBuf::from("/tmp/repo");
+    let rows = Vec::new();
+
+    let error = runtime_host_port_for_service_alias(&repo_root, &policy, &rows, "cache")
+        .expect_err("missing service alias should fail");
+    match error {
+        RunnerError::GatewayRuntimeTarget { phase, detail } => {
+            assert_eq!(phase, "validation");
+            assert!(detail.contains("has no declared service alias for service `cache`"));
+        }
+        other => panic!("unexpected error variant: {other}"),
+    }
+}
+
+#[test]
+fn parse_port_binding_uses_typed_route_shape_error() {
+    let policy = test_policy();
+
+    let error =
+        parse_port_binding(&policy, "bad-binding").expect_err("invalid port binding should fail");
+    match error {
+        RunnerError::GatewayRouteShape { phase, detail } => {
+            assert_eq!(phase, "validation");
+            assert!(detail.contains("invalid host port mapping"));
+        }
+        other => panic!("unexpected error variant: {other}"),
+    }
 }
 
 #[test]

@@ -28,6 +28,9 @@ use crate::runner::execute::workspace_seeded::{
 };
 use crate::runner::host_container_lease::emit_host_container_lease_notice;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
+use crate::runner::runtime_session_context::{
+    current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
+};
 use effigy_containers::compose::compose_args;
 use effigy_containers::exec::run_docker_capture;
 use effigy_containers::load_container_policy;
@@ -280,7 +283,7 @@ fn activate_routed_container_runtime_with(
             surface: ExecutionSurfaceKind::StandardTask,
             container_name: Some(container_name),
             repo_override: Some(repo_root.to_path_buf()),
-            refresh_host_container_lease: true,
+            session_context: current_runtime_session_context(),
         },
     )
 }
@@ -418,7 +421,10 @@ fn activate_inline_workspace_container_runtime_with(
             surface: ExecutionSurfaceKind::StandardTask,
             container_name: Some(policy.name.as_str()),
             repo_override: Some(repo_root.to_path_buf()),
-            refresh_host_container_lease: false,
+            session_context: RuntimeSessionContext {
+                lease_refresh_policy: LeaseRefreshPolicy::SkipRefresh,
+                ..current_runtime_session_context()
+            },
         },
     )
 }
@@ -459,6 +465,7 @@ mod tests {
     use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME as CONTAINER_HANDOFF_ENV;
     use crate::runner::container_runtime_prep::{ContainerTaskActivation, ExecutionSurfaceKind};
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
+    use crate::runner::runtime_session_context::LeaseRefreshPolicy;
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn};
     use std::env;
@@ -608,7 +615,7 @@ mod tests {
                     request.surface,
                     request.container_name.map(str::to_owned),
                     request.repo_override,
-                    request.refresh_host_container_lease,
+                    request.session_context.lease_refresh_policy,
                 ));
                 Ok(ContainerTaskActivation {
                     system_was_running: false,
@@ -625,7 +632,7 @@ mod tests {
                 ExecutionSurfaceKind::StandardTask,
                 Some("web".to_owned()),
                 Some(repo_root.to_path_buf()),
-                true,
+                LeaseRefreshPolicy::RefreshOnActivation,
             ))
         );
         assert!(activation.refreshed_host_container_lease);
@@ -677,7 +684,7 @@ mod tests {
                     request.surface,
                     request.container_name.map(str::to_owned),
                     request.repo_override,
-                    request.refresh_host_container_lease,
+                    request.session_context.lease_refresh_policy,
                 ));
                 Ok(ContainerTaskActivation {
                     system_was_running: false,
@@ -695,7 +702,7 @@ mod tests {
                 ExecutionSurfaceKind::StandardTask,
                 Some("dev__app".to_owned()),
                 Some(repo_root.to_path_buf()),
-                false,
+                LeaseRefreshPolicy::SkipRefresh,
             ))
         );
         assert!(!activation.refreshed_host_container_lease);
