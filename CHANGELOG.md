@@ -25,7 +25,85 @@ During v0.x, MINOR bumps may include breaking changes.
   shell redirection. The shipped DecodeLabs seed helper now uses that path
   instead of `sh -lc 'mysql ... < dump.sql'`.
 
+### Added
+- `[bootstrap].start` now accepts an array of selectors in addition to the
+  original single-string form, so `effigy bootstrap --start` can run a
+  short chain (e.g. `start = ["container:up", "dev"]`) without needing a
+  dedicated aggregator task. Selectors run sequentially in declaration
+  order and the first failure aborts the chain. The `effigy.bootstrap.v1`
+  envelope now carries both `start.task` (first selector, for back-compat)
+  and `start.tasks` (full array). Array entries can be bare selector
+  strings or table form (`{ task = "..." }`) — mixed arrays allowed,
+  mirroring the shape of `[bootstrap].run`.
+- `effigy deploy model --json` now has a first Underlay-only foundation.
+  It emits the new `deploy.model.v1` envelope from the effective bundle-backed
+  manifest, deriving `front`, `admin`, `api`, optional `jobs`, primary
+  Postgres, routed domains, secret references, and promotion warnings without
+  depending on runtime state or provider-specific export logic yet.
+- `effigy deploy export render` now exists as the first provider adapter
+  foundation. It consumes the Underlay-derived deployment model, writes a
+  first `render.yaml`, supports `--plan`, and maps static sites, Rust web and
+  worker services, managed Postgres, and operator-owned secrets onto the
+  bounded Render Blueprint surface.
+- The first Underlay deploy-model derivation now promotes three more pieces of
+  production metadata directly into `deploy.model.v1`: static-service output
+  directories, static fallback files for SPA rewrites, the shared API health
+  probe (`/v1/health`), and `db:migrate` as the release hook when the API
+  package exposes it.
+- The Rhai host API now exposes a fuller low-level automation layer for
+  file-oriented scripts: direct `copy_file`, `move_path`, `read_lines`,
+  `is_dir`, string predicates/transforms such as `string_contains` and
+  `replace_string`, plus `http_download` for writing HTTP responses
+  straight to disk without round-tripping large files through script
+  memory.
+- Rhai file-oriented bootstrap helpers now also include `copy_if_missing`
+  and `replace_in_file`, so common template-copy plus local-substitution
+  flows no longer need manual `path_exists` guards or full read/modify/write
+  plumbing in script code.
+- Rhai now exposes envfile-aware helpers `env_file_get` and `env_file_set`
+  for common `.env` mutation flows, so bootstrap scripts that mean “set this
+  key” no longer have to treat dotenv files as unstructured text.
+- The envfile Rhai surface now also includes `env_file_entries` and
+  `env_file_remove`, rounding it out for simple inspect/set/remove flows
+  without forcing scripts back into raw text handling.
+
 ### Fixed
+- `effigy exec` container-surface resolution now uses typed `RunnerError`
+  families for missing `[containers]`, missing or ambiguous `context = "dev"`
+  selection, missing named containers, not-running container operators, and
+  one container-policy translation seam. Those failures no longer flatten into
+  generic `task_invocation` strings before they reach the runner surface.
+- Public workspace shell handoff and host-container lease translation now use
+  typed `RunnerError` families for combined shell-plus-cleanup failure
+  reporting and lease encode/reaper bootstrap failures instead of flattening
+  those session and lease seams into generic `task_invocation` strings.
+- Gateway reconciliation now uses typed `RunnerError` families for route-table
+  load/save, route register/deregister, and the first route-shape validation
+  seams in `gateway_registration.rs` instead of flattening those failures into
+  generic `task_invocation` strings.
+- Gateway reconciliation closeout now covers loopback registry load/save/allocation,
+  runtime-row discovery, service-alias lookup, raw port-binding translation,
+  and remaining route-target validation in `gateway_registration.rs`. The
+  runtime/container gateway path no longer relies on generic
+  `task_invocation` strings as its dominant failure shape.
+- Container runtime prep now uses typed `RunnerError` families for
+  policy-validation and exec-readiness failures instead of collapsing those
+  high-signal seams into generic `task_invocation` strings. The runtime core
+  now preserves failure category while keeping the operator-facing messages
+  intact.
+- Public workspace entry and bootstrap start handoff now delegate through a
+  shared workspace-session orchestrator instead of keeping the full session
+  lifecycle inline in `system_command/workspace.rs`. The public shell
+  ownership and cleanup boundary now has one explicit owner.
+- Generated compose assembly now has a first typed internal policy layer in
+  `effigy-containers` for shared-service env injection and generated port
+  publication. Those main generated-compose seams no longer each reparse the
+  compose YAML string as their working data model before writeout.
+- Bootstrap setup work, public workspace handoff, seeded shells, routed
+  container activation, deferred container activation, and `effigy exec` now
+  share a typed runtime/session context for lease refresh and bootstrap
+  stop-on-exit behavior. The runtime core no longer depends on bootstrap-only
+  ambient env flags as the primary control path for those ownership seams.
 - `effigy bootstrap` root-run and task phases no longer create temporary
   host-container leases for container-backed setup work. Bootstrap can now
   hand off into a DecodeLabs `dev` shell without an earlier five-minute
@@ -172,48 +250,6 @@ During v0.x, MINOR bumps may include breaking changes.
   cwd. Previously, running `effigy bootstrap <repo>` from a parent directory
   could fail with `could not resolve a project root from cwd <parent>` even
   though the clone destination was a valid project root.
-
-### Added
-- `[bootstrap].start` now accepts an array of selectors in addition to the
-  original single-string form, so `effigy bootstrap --start` can run a
-  short chain (e.g. `start = ["container:up", "dev"]`) without needing a
-  dedicated aggregator task. Selectors run sequentially in declaration
-  order and the first failure aborts the chain. The `effigy.bootstrap.v1`
-  envelope now carries both `start.task` (first selector, for back-compat)
-  and `start.tasks` (full array). Array entries can be bare selector
-  strings or table form (`{ task = "..." }`) — mixed arrays allowed,
-  mirroring the shape of `[bootstrap].run`.
-- `effigy deploy model --json` now has a first Underlay-only foundation.
-  It emits the new `deploy.model.v1` envelope from the effective bundle-backed
-  manifest, deriving `front`, `admin`, `api`, optional `jobs`, primary
-  Postgres, routed domains, secret references, and promotion warnings without
-  depending on runtime state or provider-specific export logic yet.
-- `effigy deploy export render` now exists as the first provider adapter
-  foundation. It consumes the Underlay-derived deployment model, writes a
-  first `render.yaml`, supports `--plan`, and maps static sites, Rust web and
-  worker services, managed Postgres, and operator-owned secrets onto the
-  bounded Render Blueprint surface.
-- The first Underlay deploy-model derivation now promotes three more pieces of
-  production metadata directly into `deploy.model.v1`: static-service output
-  directories, static fallback files for SPA rewrites, the shared API health
-  probe (`/v1/health`), and `db:migrate` as the release hook when the API
-  package exposes it.
-- The Rhai host API now exposes a fuller low-level automation layer for
-  file-oriented scripts: direct `copy_file`, `move_path`, `read_lines`,
-  `is_dir`, string predicates/transforms such as `string_contains` and
-  `replace_string`, plus `http_download` for writing HTTP responses
-  straight to disk without round-tripping large files through script
-  memory.
-- Rhai file-oriented bootstrap helpers now also include `copy_if_missing`
-  and `replace_in_file`, so common template-copy plus local-substitution
-  flows no longer need manual `path_exists` guards or full read/modify/write
-  plumbing in script code.
-- Rhai now exposes envfile-aware helpers `env_file_get` and `env_file_set`
-  for common `.env` mutation flows, so bootstrap scripts that mean “set this
-  key” no longer have to treat dotenv files as unstructured text.
-- The envfile Rhai surface now also includes `env_file_entries` and
-  `env_file_remove`, rounding it out for simple inspect/set/remove flows
-  without forcing scripts back into raw text handling.
 
 ## [0.3.1] - 2026-04-29
 

@@ -1,57 +1,176 @@
 # Package Map
 
-## Vision Alignment
+Status: active
+Updated: 2026-05-02
 
-- Primary tags: `MAINT`, `ROUTE`, `CONTRACT`
-- Target envelope: module boundaries and command surface ownership stay explicit enough to reduce refactor risk.
-- Vision target delta: package and module inventory is now tied to explicit vision tags for maintainability and contract clarity.
+## Purpose
 
-## Rust crate
+This is the live code-ownership map for Effigy's runtime/container core.
 
-| Package | Purpose |
-|---|---|
-| `effigy` | CLI binary + library implementing command parsing, resolution, catalog execution, and built-in tasks |
+Use it when you need current module truth:
 
-## Core source modules
+- which crate owns a subsystem
+- which runner module owns a runtime seam
+- which docs are current authority versus background design history
+
+Do not use older design docs as the primary ownership source when this file
+ says otherwise.
+
+## Authority Boundary
+
+Current authority surfaces:
+
+- [000-overview.md](./000-overview.md) for the short architecture frame
+- this file for current crate and module ownership
+- [020-container-infrastructure-design.md](./020-container-infrastructure-design.md)
+  for longer-form container design background, not the live runtime ownership
+  map
+- [021-production-deployment-export-architecture.md](./021-production-deployment-export-architecture.md)
+  for deploy/export architecture
+- `docs/contracts/005-container-runtime-contract.md` for local runtime guarantees
+- `docs/contracts/009-execution-surface-convergence.md` for cross-surface
+  execution responsibility rules
+
+## Workspace Crates
+
+### Surface and presentation
+
+| Crate | Responsibility |
+| --- | --- |
+| `effigy` | top-level binary/library crate; wires CLI entry, runner orchestration, and TUI export surfaces |
+| `effigy-cli` | CLI argument models, parse helpers, header/help/version presentation pieces |
+| `effigy-ui` | renderer abstraction, theme, plain/JSON output helpers |
+| `effigy-tui` | reusable TUI runtime and multiprocess terminal UI building blocks |
+
+### Task, manifest, and routing model
+
+| Crate | Responsibility |
+| --- | --- |
+| `effigy-manifest` | manifest model, bundles, local-bundle parsing, deploy-model derivation inputs |
+| `effigy-routing` | catalog discovery, selector routing, task lookup order |
+| `effigy-tasks` | shared task model and task-shape helpers |
+| `effigy-builtin` | builtin task inventory and builtin-facing task helpers |
+| `effigy-exec` | execution-binding model and routing helpers shared below the runner |
+| `effigy-managed` | managed-run/task-plan support |
+| `effigy-rhai` | Rhai integration and scripting support |
+
+### Container and local runtime
+
+| Crate | Responsibility |
+| --- | --- |
+| `effigy-containers` | effective container policy, compose assembly, workspace mount rewrite, container backend/runtime helpers |
+| `effigy-catalog` | shipped and user/project service catalogs, compose assembly inputs, catalog schema |
+| `effigy-gateway` | local gateway loopback and host-port registry primitives |
+| `effigy-runtime` | runtime metadata and working-dir ownership helpers |
+| `effigy-process` | host process/runtime process primitives used by runner surfaces |
+
+### Operator and policy domains
+
+| Crate | Responsibility |
+| --- | --- |
+| `effigy-bootstrap` | bootstrap repo bring-up model and helpers |
+| `effigy-distribution` | binary distribution and install/update helpers |
+| `effigy-release` | release orchestration helpers |
+| `effigy-changelog` | changelog parsing, extraction, and release-note support |
+| `effigy-contracts` | contract file loading and contract-surface helpers |
+| `effigy-docs-policy` | docs checks and policy validation helpers |
+| `effigy-doctor` | doctor findings and diagnostics model |
+| `effigy-env` | env-schema integration and env contract helpers |
+| `effigy-demo` | demo model and execution helpers |
+| `effigy-scan` | repository scans used by doctor/policy surfaces |
+| `effigy-core` | shared low-level primitives: build info, shell helpers, runtime-dir helpers |
+
+## Top-Level Binary Surface
 
 | Module | Responsibility |
-|---|---|
-| `src/lib.rs` | CLI command model, parse/usage contract |
-| `src/resolver.rs` | Root resolution and workspace promotion |
-| `src/runner/mod.rs` | Runner orchestration and command execution entrypoints |
-| `src/runner/manifest.rs` | Manifest schema + serde parsing/normalization |
-| `src/runner/model.rs` | Shared runner domain types/constants |
-| `src/runner/catalog.rs` | Catalog discovery and selection strategy |
-| `src/runner/execute.rs` | Manifest task execution helpers and task run rendering snippets |
-| `src/runner/builtin/mod.rs` | Built-in task dispatch |
-| `src/runner/builtin/help.rs` | Built-in `help` rendering |
-| `src/runner/builtin/doctor.rs` | Built-in `doctor` dispatch |
-| `src/runner/builtin/tasks.rs` | Built-in `tasks` dispatch + argument parsing |
-| `src/runner/builtin/test.rs` | Built-in `test` detection/planning/fanout execution |
-| `src/runner/doctor.rs` | Doctor health checks, remediation findings, and report rendering |
-| `src/runner/managed.rs` | Managed process plan resolution + execution |
-| `src/runner/deferral.rs` | Deferral selection/execution pipeline |
-| `src/runner/render.rs` | Runner-specific rendering and trace formatting |
-| `src/runner/util.rs` | Shared runner utility helpers (parse/select/shell/path) |
-| `src/tui/mod.rs` | Reusable TUI namespace exports |
-| `src/tui/core.rs` | Shared TUI primitives (input/log state models and key-navigation helpers) |
-| `src/tui/multiprocess/mod.rs` | Multi-process TUI orchestration |
-| `src/tui/multiprocess/config.rs` | Multiprocess runtime tuning constants (buffers, tick cadence, vt dimensions) |
-| `src/tui/multiprocess/state.rs` | Shared multi-process TUI runtime state and domain enums |
-| `src/tui/multiprocess/events.rs` | Process stream ingestion + keyboard interaction handling |
-| `src/tui/multiprocess/lifecycle.rs` | Terminal setup/teardown and post-run summary rendering |
-| `src/tui/multiprocess/view_model.rs` | Active-tab render data derivation (scroll/cursor/meta) |
-| `src/tui/multiprocess/render.rs` | TUI render orchestration and layout routing |
-| `src/tui/multiprocess/render/header.rs` | Header/tab chrome rendering |
-| `src/tui/multiprocess/render/panes.rs` | Output/input pane rendering + shell caret/scrollbar behavior |
-| `src/tui/multiprocess/render/footer.rs` | Footer/status row rendering |
-| `src/tui/multiprocess/render/help_overlay.rs` | Help + options overlay rendering and options metadata |
-| `src/tui/multiprocess/terminal_text.rs` | ANSI/vt100 parsing + terminal text shaping |
-| `src/tasks/mod.rs` | Shared task types (currently root-resolution mode enums) |
-| `src/bin/effigy.rs` | Binary entrypoint |
+| --- | --- |
+| [`src/lib.rs`](../../src/lib.rs) | library exports for CLI entry, JSON envelope helpers, and rendered version/header surfaces |
+| [`src/cli/`](../../src/cli) | CLI entrypoint, execution context, help/version dispatch, JSON envelope emission, parse-error rendering |
+| [`src/runner/mod.rs`](../../src/runner/mod.rs) | runner entry module and command-surface registration |
+| [`src/tui/`](../../src/tui) | binary-local TUI export shim over `effigy-tui` |
 
-## Runtime artifacts
+## Runner Ownership Map
 
-| Artifact | Description |
-|---|---|
-| `effigy.toml` | Canonical task catalog manifest |
+### Command entry and target resolution
+
+| Module | Responsibility |
+| --- | --- |
+| [`src/runner/entrypoints.rs`](../../src/runner/entrypoints.rs) | top-level command dispatch into runner surfaces |
+| [`src/runner/command_context/*`](../../src/runner/command_context.rs) | cwd, repo targeting, resolved-root semantics, embedded repo override handling |
+| [`src/runner/embedded_runner.rs`](../../src/runner/embedded_runner.rs) | shared embedded command replay for Rhai, bootstrap, and builtin nested dispatch |
+
+### Runtime/container activation
+
+| Module | Responsibility |
+| --- | --- |
+| [`src/runner/runtime_session_context.rs`](../../src/runner/runtime_session_context.rs) | typed runtime/session context for lease refresh and public-workspace cleanup policy |
+| [`src/runner/container_runtime.rs`](../../src/runner/container_runtime.rs) | handoff marker and in-container recursion guard surface |
+| [`src/runner/container_runtime_prep.rs`](../../src/runner/container_runtime_prep.rs) | shared container runtime activation, exec readiness, alias reconciliation, gateway-ready prep |
+| [`src/runner/host_container_lease.rs`](../../src/runner/host_container_lease.rs) | non-shell host-container lease refresh, persistence, and reaper bootstrap |
+
+### Execution surfaces
+
+| Module | Responsibility |
+| --- | --- |
+| [`src/runner/execute/*`](../../src/runner/execute.rs) | routed task execution, managed/deferred activation handoff, execution binding consumption |
+| [`src/runner/exec_command.rs`](../../src/runner/exec_command.rs) | `effigy exec` command surface and raw container exec dispatch |
+| [`src/runner/exec_command/surface.rs`](../../src/runner/exec_command/surface.rs) | dev-container and named-container selection for exec surfaces |
+| [`src/runner/deferral/*`](../../src/runner/deferral.rs) | deferral selection, tracing, and delegated runtime activation |
+| [`src/runner/script_command.rs`](../../src/runner/script_command.rs) | Rhai-owned runner entry surface |
+
+### Workspace/session ownership
+
+| Module | Responsibility |
+| --- | --- |
+| [`src/runner/system_command/workspace_session.rs`](../../src/runner/system_command/workspace_session.rs) | public workspace session lifecycle, ownership classification, shell-plus-cleanup combination |
+| [`src/runner/system_command/workspace_provisioning.rs`](../../src/runner/system_command/workspace_provisioning.rs) | workspace artifact install, permission prep, linux workspace binary provisioning |
+| [`src/runner/system_command/workspace.rs`](../../src/runner/system_command/workspace.rs) | command-surface glue, workspace handoff shell, residual session helpers, shutdown/render helpers |
+| [`src/runner/interactive_session.rs`](../../src/runner/interactive_session.rs) | shared interactive ownership classification model |
+
+### Gateway/runtime exposure
+
+| Module | Responsibility |
+| --- | --- |
+| [`src/runner/container_command/gateway_registration.rs`](../../src/runner/container_command/gateway_registration.rs) | gateway route reconciliation, runtime target translation, route-table mutation |
+| [`src/runner/container_command/support.rs`](../../src/runner/container_command/support.rs) | gateway/runtime support helpers shared by lifecycle and runtime prep |
+| [`src/runner/gateway_command/*`](../../src/runner/gateway_command.rs) | operator gateway command surfaces and daemon management |
+
+### Failure model
+
+| Module | Responsibility |
+| --- | --- |
+| [`src/runner/error.rs`](../../src/runner/error.rs) | typed runner/runtime/container error families |
+| [`src/runner/error/display.rs`](../../src/runner/error/display.rs) | operator-facing rendering for runner errors |
+| [`src/runner/error/rendered_output.rs`](../../src/runner/error/rendered_output.rs) | rendered error payload helpers |
+
+## Container Runtime Ownership Map
+
+These are the current `effigy-containers` ownership seams that matter most to
+ the runtime/container core.
+
+| Module | Responsibility |
+| --- | --- |
+| [`crates/effigy-containers/src/lib.rs`](../../crates/effigy-containers/src/lib.rs) | effective container policy model, shared-service binding model, top-level policy entrypoints |
+| [`crates/effigy-containers/src/policy_support.rs`](../../crates/effigy-containers/src/policy_support.rs) | typed generated-compose document, policy application over compose assembly, generated mount and env attachment |
+| [`crates/effigy-containers/src/workspace.rs`](../../crates/effigy-containers/src/workspace.rs) | workspace mount rewrite, workspace host integration materialization, container-home mount ownership |
+| [`crates/effigy-containers/src/compose.rs`](../../crates/effigy-containers/src/compose.rs) | compose backend resolution and compose invocation argument building |
+| [`crates/effigy-containers/src/exec.rs`](../../crates/effigy-containers/src/exec.rs) | container exec/process invocation and runtime probing |
+| [`crates/effigy-containers/src/session.rs`](../../crates/effigy-containers/src/session.rs) | container-local Effigy invocation prefix and session-related shell helpers |
+| [`crates/effigy-containers/src/report.rs`](../../crates/effigy-containers/src/report.rs) | container command report rendering models |
+
+## Runtime/Container Hardening Deltas
+
+The current runtime/container architecture is not the same shape described by
+ older modularization-era docs.
+
+The important live hardening seams are now:
+
+- typed runtime/session context instead of bootstrap-only env steering
+- typed generated-compose ownership instead of repeated YAML reparsing for the
+  main generated policy seams
+- explicit workspace session and provisioning owners instead of one mixed
+  hotspot
+- typed runtime/container error families instead of string-first translation as
+  the dominant failure shape
+
+Any architecture update that ignores those seams is stale on arrival.

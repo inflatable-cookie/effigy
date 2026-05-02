@@ -1,6 +1,6 @@
 # Container Infrastructure Design
 
-Status: active
+Status: background design reference
 Updated: 2026-04-16
 
 ## Purpose
@@ -8,6 +8,15 @@ Updated: 2026-04-16
 This document captures the full architectural design for effigy's container
 infrastructure layer — the system that turns the v1 container surface into a
 complete local development environment platform.
+
+Current ownership truth for the live runtime/container core no longer lives
+ here. Use these as the current authority surfaces instead:
+
+- [010-package-map.md](./010-package-map.md) for current crate and module
+  ownership
+- `docs/contracts/005-container-runtime-contract.md` for local runtime guarantees
+- `docs/contracts/009-execution-surface-convergence.md` for cross-surface
+  execution responsibilities
 
 The v1 container surface (`g02.006`) shipped a narrow, trustworthy foundation:
 named container environments, Colima + Docker Compose lifecycle, attached

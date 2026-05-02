@@ -1,5 +1,9 @@
 #[path = "system_command/workspace.rs"]
 mod workspace;
+#[path = "system_command/workspace_provisioning.rs"]
+mod workspace_provisioning;
+#[path = "system_command/workspace_session.rs"]
+mod workspace_session;
 
 use effigy_cli::{ContainerArgs, ContainerSubcommand, SystemArgs, SystemSubcommand, WorkspaceArgs};
 use effigy_containers::{
@@ -92,7 +96,11 @@ pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy(
     policy: &EffectiveContainerPolicy,
     repo_override: Option<std::path::PathBuf>,
 ) -> Result<(), RunnerError> {
-    workspace::ensure_workspace_effigy_available_for_policy(repo_root, policy, repo_override)
+    workspace_provisioning::ensure_workspace_effigy_available_for_policy(
+        repo_root,
+        policy,
+        repo_override,
+    )
 }
 
 pub(in crate::runner) fn ensure_workspace_permissions_ready(
@@ -101,7 +109,12 @@ pub(in crate::runner) fn ensure_workspace_permissions_ready(
     container_name: Option<&str>,
     repo_override: Option<std::path::PathBuf>,
 ) -> Result<(), RunnerError> {
-    workspace::ensure_workspace_permissions_ready(repo_root, policy, container_name, repo_override)
+    workspace_provisioning::ensure_workspace_permissions_ready(
+        repo_root,
+        policy,
+        container_name,
+        repo_override,
+    )
 }
 
 fn load_resolved_container_policy(

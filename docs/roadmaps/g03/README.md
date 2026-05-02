@@ -8,6 +8,10 @@ Generation theme:
   surface
 - start with Underlay, where the app shape is already strong and regular
 - keep provider export honest by deriving from a neutral deployment model first
+- use the post-export runway to harden the runtime/container core toward
+  `v1.0`
+- follow that hardening work by defining the real `v1.0` release contract and
+  proving the stable distribution story directly
 
 Current milestones:
 
@@ -23,6 +27,14 @@ Current milestones:
 - [`010-interactive-session-ownership-and-lifecycle-convergence.md`](./010-interactive-session-ownership-and-lifecycle-convergence.md) (complete; direct workspace and seeded task shells now share one ownership classifier, while attached `container up --attach` stays an explicit operator lifecycle exception)
 - [`011-embedded-command-script-and-bootstrap-convergence.md`](./011-embedded-command-script-and-bootstrap-convergence.md) (complete; Rhai command replay, run-array builtins, and bootstrap task dispatch now share the first embedded-runner spine, while bootstrap managed-run synthesis remains a separate synthetic managed-run path)
 - [`012-regression-matrix-and-drift-guards.md`](./012-regression-matrix-and-drift-guards.md) (complete; the convergence lane now has executable proof for embedded repo targeting, unsupported inline-surface parity, shared runtime-side effects, workspace/seeded interactive ownership, and bounded bootstrap/runtime handoff seams)
+- [`013-runtime-session-context-and-runtime-ownership-hardening.md`](./013-runtime-session-context-and-runtime-ownership-hardening.md) (complete; runtime ownership, lease refresh, and bootstrap public-workspace stop-on-exit now use a typed runtime/session context instead of bootstrap-only env-driven control)
+- [`014-container-assembly-model-and-single-pass-compose-emission.md`](./014-container-assembly-model-and-single-pass-compose-emission.md) (complete; the main generated-compose policy seams now sit on typed ownership inside `effigy-containers`)
+- [`015-workspace-runtime-orchestrator-split-and-handoff-simplification.md`](./015-workspace-runtime-orchestrator-split-and-handoff-simplification.md) (complete; public workspace/session lifecycle plus provisioning/prep now sit under narrower owners instead of one mixed hotspot)
+- [`016-container-and-runtime-error-taxonomy-and-diagnostics.md`](./016-container-and-runtime-error-taxonomy-and-diagnostics.md) (complete; the runtime/container core now has typed failure families across runtime prep, exec-surface selection, workspace handoff, lease policy, and gateway reconciliation)
+- [`017-architecture-map-and-authority-surface-repair.md`](./017-architecture-map-and-authority-surface-repair.md) (complete; the live package and authority surfaces now match the post-hardening runtime/container seams closely enough to guide the final proof lane)
+- [`018-v1-runtime-hardening-proof-and-stress-matrix.md`](./018-v1-runtime-hardening-proof-and-stress-matrix.md) (complete; the runtime/container hardening program now closes on bounded executable proof instead of refactor optimism)
+- [`019-v1-release-contract-and-compatibility-boundary.md`](./019-v1-release-contract-and-compatibility-boundary.md) (planned; the next `v1.0` program is to replace the old `v0.x` release contract with an explicit stable compatibility boundary)
+- [`020-distribution-channel-proof-and-first-publish-closeout.md`](./020-distribution-channel-proof-and-first-publish-closeout.md) (planned; after the stable release contract is explicit, Effigy should close the channel story on first-publish and upgrade evidence instead of backlog theory)
 
 Architecture anchor:
 
@@ -35,7 +47,9 @@ Rules:
   generation
 - new deployment-export work starts in `g03`, not by reopening old release
   lanes
+- no strict lane is active right now
+- the next planned seam is `g03.019`, not another runtime/container refactor
 
 ## Next Task
 
-Stop in planning and choose the next `g03` milestone deliberately.
+Stay in planning until the next release/distribution lane is promoted.

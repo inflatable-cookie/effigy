@@ -5,7 +5,10 @@
 //! `run_manifest_task_with_cwd`). Crate-domain behavior is covered by
 //! integration tests in `crates/effigy-bootstrap/tests/integration.rs`.
 
-use super::{render_bootstrap_progress_message, run_bootstrap_with_cwd};
+use super::{
+    bootstrap_runtime_session_context, render_bootstrap_progress_message, run_bootstrap_with_cwd,
+};
+use crate::runner::runtime_session_context::{LeaseRefreshPolicy, PublicWorkspaceCleanupOverride};
 use effigy_cli::{BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand};
 #[allow(dead_code)]
 #[path = "../../../crates/effigy-bootstrap/tests/support.rs"]
@@ -41,6 +44,32 @@ impl Drop for PathPrepend {
             std::env::set_var("PATH", &self.original);
         }
     }
+}
+
+#[test]
+fn bootstrap_run_context_skips_lease_refresh_without_forcing_workspace_cleanup() {
+    let context = bootstrap_runtime_session_context("bootstrap run");
+    assert_eq!(
+        context.lease_refresh_policy,
+        LeaseRefreshPolicy::SkipRefresh
+    );
+    assert_eq!(
+        context.public_workspace_cleanup,
+        PublicWorkspaceCleanupOverride::Default
+    );
+}
+
+#[test]
+fn bootstrap_start_context_skips_lease_refresh_and_forces_stop_on_exit() {
+    let context = bootstrap_runtime_session_context("bootstrap start");
+    assert_eq!(
+        context.lease_refresh_policy,
+        LeaseRefreshPolicy::SkipRefresh
+    );
+    assert_eq!(
+        context.public_workspace_cleanup,
+        PublicWorkspaceCleanupOverride::ForceStopOnExit
+    );
 }
 
 #[test]

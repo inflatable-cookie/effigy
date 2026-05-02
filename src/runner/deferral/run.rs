@@ -22,6 +22,7 @@ use crate::runner::execute::api::{
     resolve_execution_binding_resolution, ContainerExecutionBinding,
 };
 use crate::runner::host_container_lease::emit_host_container_lease_notice;
+use crate::runner::runtime_session_context::current_runtime_session_context;
 use effigy_manifest::DeferredCommand;
 use effigy_tasks::TaskRuntimeArgs;
 
@@ -258,7 +259,7 @@ fn run_deferred_request_with_binding(
                     surface: ExecutionSurfaceKind::DeferredTask,
                     container_name: Some(policy.name.as_str()),
                     repo_override: Some(deferral.working_dir.clone()),
-                    refresh_host_container_lease: true,
+                    session_context: current_runtime_session_context(),
                 },
             )?;
             crate::runner::system_command::ensure_workspace_permissions_ready(

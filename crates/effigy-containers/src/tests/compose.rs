@@ -563,6 +563,108 @@ working_dir = "/var/www/html"
 }
 
 #[test]
+fn generated_php_workspace_host_integration_and_shared_service_stack_proof_stays_stable() {
+    with_temp_effigy_home("catalog-php-host-integration-proof", |_| {
+        let root = temp_repo("catalog-php-host-integration-proof");
+        let host_composer_home = root.join("host-composer-home");
+        let ssh_dir = root.join("ssh-home");
+        let sibling = tempfile::tempdir().expect("external sibling tempdir");
+        fs::create_dir_all(&host_composer_home).expect("mkdir host composer home");
+        fs::create_dir_all(&ssh_dir).expect("mkdir ssh dir");
+        fs::create_dir_all(sibling.path().join("public")).expect("mkdir sibling public");
+        fs::write(ssh_dir.join("config"), "Host gideonreeling.co.uk\n").expect("write ssh config");
+        fs::write(
+            root.join("effigy.toml"),
+            format!(
+                r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.host]
+mounts = [
+  {{ host = "{}",
+     container = "/var/www/mortcalc",
+     external = true }},
+]
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+mount_host_composer_home = true
+ssh_dir_path = "{}"
+
+[containers.web.services.db]
+catalog = "mariadb"
+shared = true
+version = "10.11"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/var/www/html"
+"#,
+                sibling.path().display(),
+                ssh_dir.display()
+            ),
+        )
+        .expect("write manifest");
+
+        let policy = with_test_host_composer_home(Some(&host_composer_home), || {
+            load_container_policy(&root, Some("web")).expect("policy")
+        });
+        let rewritten = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+
+        assert!(
+            rewritten.contains(&format!(
+                "{}:/home/dev/.config/composer",
+                host_composer_home.display()
+            )),
+            "rewritten compose should mount the host composer home: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains("effigy-shared-composer-home:/home/dev/.config/composer"),
+            "workspace proof should not fall back to the shared composer-home volume when host composer home is enabled: {rewritten}"
+        );
+        assert!(
+            rewritten.contains(&format!("{}:/home/dev/.ssh:ro", ssh_dir.display())),
+            "rewritten compose should mount the explicit host ssh dir read-only: {rewritten}"
+        );
+        assert!(
+            rewritten.contains(&format!(
+                "{}:/var/www/mortcalc",
+                sibling.path().canonicalize().unwrap().display()
+            )),
+            "rewritten compose should preserve the external host mount: {rewritten}"
+        );
+
+        assert_eq!(policy.shared_services.len(), 1);
+        let shared = &policy.shared_services[0];
+        assert_eq!(
+            shared.standard_env_vars(),
+            vec![
+                ("DB_HOST".to_owned(), "host.docker.internal".to_owned()),
+                ("MYSQL_HOST".to_owned(), "host.docker.internal".to_owned()),
+                ("DB_PORT".to_owned(), shared.host_port.to_string()),
+                ("MYSQL_PORT".to_owned(), shared.host_port.to_string()),
+            ]
+        );
+        assert!(rewritten.contains("DB_HOST: host.docker.internal"));
+        assert!(rewritten.contains("MYSQL_HOST: host.docker.internal"));
+        assert!(rewritten.contains(&format!("DB_PORT: '{}'", shared.host_port)));
+        assert!(rewritten.contains(&format!("MYSQL_PORT: '{}'", shared.host_port)));
+    });
+}
+
+#[test]
 fn generated_compose_rewrites_shared_backing_services() {
     with_temp_effigy_home("catalog-shared-db", |home| {
         let root = temp_repo("catalog-shared-db");
