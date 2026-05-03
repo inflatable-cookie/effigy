@@ -833,6 +833,7 @@ name = "effigy-gateway"
 version = "0.3.1"
 dependencies = [
  "chrono",
+ "effigy-core",
  "hickory-proto",
  "hickory-server",
  "http-body-util",

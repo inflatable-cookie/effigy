@@ -140,7 +140,7 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                 "docker compose up (idempotent)",
             );
         },
-        || ensure_primary_service_exec_ready_with_recovery(repo_root, policy, &working_dir),
+        || ensure_primary_service_exec_ready_for_runtime(repo_root, policy, &working_dir),
         || reconcile_primary_service_tcp_alias_hosts(repo_root, policy).map(|_| ()),
     )
 }
@@ -166,7 +166,7 @@ fn validate_policy_runtime(
     Ok(())
 }
 
-fn ensure_primary_service_exec_ready_with_recovery(
+pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     working_dir: &Path,

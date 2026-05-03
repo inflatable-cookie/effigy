@@ -39,6 +39,8 @@ fn bootstrap_and_workspace_proof_matrix_keeps_public_cleanup_contract_visible() 
     );
     let seeded_started =
         classify_interactive_session_ownership(InteractiveSessionIntent::SeededTask, false, true);
+    let seeded_ready_adopted =
+        classify_interactive_session_ownership(InteractiveSessionIntent::SeededTask, true, true);
 
     assert!(should_cleanup_interactive_session(public_started, true));
     assert!(!should_cleanup_interactive_session(
@@ -46,5 +48,9 @@ fn bootstrap_and_workspace_proof_matrix_keeps_public_cleanup_contract_visible() 
         true
     ));
     assert!(should_cleanup_interactive_session(seeded_started, true));
+    assert!(!should_cleanup_interactive_session(
+        seeded_ready_adopted,
+        true
+    ));
     assert!(!should_cleanup_interactive_session(seeded_started, false));
 }

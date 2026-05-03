@@ -121,6 +121,9 @@ pub struct GatewayStatus {
 
     /// All registered routes.
     pub routes: Vec<crate::routes::Route>,
+
+    /// Build identity of the running gateway daemon, if recorded.
+    pub binary_version: Option<String>,
 }
 
 /// Write a PID file for lifecycle management.
@@ -130,6 +133,27 @@ pub fn write_pid_file(path: &Path) -> Result<(), GatewayError> {
     }
     std::fs::write(path, std::process::id().to_string())?;
     Ok(())
+}
+
+fn gateway_version_file_for(pid_file_path: &Path) -> PathBuf {
+    pid_file_path.with_extension("version")
+}
+
+fn write_gateway_version_file(path: &Path) -> Result<(), GatewayError> {
+    std::fs::write(path, effigy_core::build_info::active_version())?;
+    Ok(())
+}
+
+fn read_gateway_version_file(path: &Path) -> Result<Option<String>, GatewayError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(path)?;
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(value.to_owned()))
 }
 
 /// Read the PID from a PID file.
@@ -147,6 +171,7 @@ pub fn read_pid_file(path: &Path) -> Result<u32, GatewayError> {
 /// Remove the PID file.
 pub fn remove_pid_file(path: &Path) {
     let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(gateway_version_file_for(path));
 }
 
 /// Check whether a process with the given PID is running.
@@ -184,6 +209,9 @@ pub fn get_status(config: &GatewayConfig) -> Result<GatewayStatus, GatewayError>
         proxy_addr: config.proxy.bind_addr,
         route_count: table.len(),
         routes: table.all_routes().into_iter().cloned().collect(),
+        binary_version: read_gateway_version_file(&gateway_version_file_for(
+            &config.pid_file_path,
+        ))?,
     })
 }
 
@@ -204,6 +232,7 @@ pub async fn run_gateway(config: GatewayConfig) -> Result<(), GatewayError> {
 
     // Write PID file.
     write_pid_file(&config.pid_file_path)?;
+    write_gateway_version_file(&gateway_version_file_for(&config.pid_file_path))?;
 
     // Load the route table.
     let live_table = LiveRouteTable::new(config.route_table_path.clone())?;

@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use effigy_containers::{
     exec::{
         capture_compose_ps, capture_running_container_stats_for_profile, colima_is_running,
-        colima_profile_warnings, list_running_compose_containers, RunningComposeContainer,
+        colima_profile_warnings, infer_host_working_dir_for_container,
+        list_running_compose_containers_profiled, RunningComposeContainer,
     },
     health::probe_health_status,
     load_all_container_policies, load_container_policy, logs_report, status_report,
@@ -278,14 +279,19 @@ pub const MAX_REPO_ROOT_WALKUP: usize = 6;
 
 pub(crate) fn discover_running_environments(
 ) -> Result<Vec<DiscoveredRunningEnvironment>, EffigyRuntimeError> {
-    let rows = list_running_compose_containers()
+    let rows = list_running_compose_containers_profiled()
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let mut grouped: BTreeMap<(String, String), Vec<_>> = BTreeMap::new();
-    for row in rows {
+    for profiled in rows {
+        let row = profiled.row;
         let Some(project_name) = row.project_name.clone() else {
             continue;
         };
-        let Some(working_dir) = row.working_dir.clone() else {
+        let Some(working_dir) = row.working_dir.clone().or_else(|| {
+            infer_host_working_dir_for_container(&profiled.profile, &row.container_name)
+                .ok()
+                .flatten()
+        }) else {
             continue;
         };
         let Some(repo_path) =

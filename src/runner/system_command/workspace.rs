@@ -24,6 +24,7 @@ use crate::runner::interactive_session::{
     should_cleanup_interactive_session, InteractiveSessionIntent, InteractiveSessionOwnership,
 };
 use crate::runner::manifest::load_task_manifest;
+use crate::runner::runtime_session_context::PublicWorkspaceCleanupOverride;
 
 use super::RunnerError;
 
@@ -59,6 +60,24 @@ pub(in crate::runner) fn run_workspace_with_repo_root(
     repo_override: Option<PathBuf>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    run_workspace_with_repo_root_and_cleanup_override(
+        repo_root,
+        system,
+        workspace,
+        repo_override,
+        output_json,
+        None,
+    )
+}
+
+pub(in crate::runner) fn run_workspace_with_repo_root_and_cleanup_override(
+    repo_root: &Path,
+    system: Option<&str>,
+    workspace: Option<&str>,
+    repo_override: Option<PathBuf>,
+    output_json: bool,
+    cleanup_override: Option<PublicWorkspaceCleanupOverride>,
+) -> Result<String, RunnerError> {
     if output_json {
         return Err(RunnerError::task_invocation(
             "`effigy workspace` does not support `--json` because it opens an interactive shell",
@@ -72,6 +91,7 @@ pub(in crate::runner) fn run_workspace_with_repo_root(
         repo_override,
         None,
         InteractiveSessionIntent::PublicWorkspace,
+        cleanup_override,
     )
 }
 
@@ -80,6 +100,7 @@ pub(in crate::runner) fn run_workspace_seeded_session(
     container_name: Option<&str>,
     repo_override: Option<PathBuf>,
     initial_command: &str,
+    cleanup_override: Option<PublicWorkspaceCleanupOverride>,
 ) -> Result<String, RunnerError> {
     run_workspace_container_session(
         repo_root,
@@ -87,6 +108,7 @@ pub(in crate::runner) fn run_workspace_seeded_session(
         repo_override,
         Some(initial_command),
         InteractiveSessionIntent::SeededTask,
+        cleanup_override,
     )
 }
 
@@ -137,6 +159,7 @@ fn run_workspace_container_session(
     repo_override: Option<PathBuf>,
     initial_command: Option<&str>,
     session_intent: InteractiveSessionIntent,
+    cleanup_override: Option<PublicWorkspaceCleanupOverride>,
 ) -> Result<String, RunnerError> {
     super::workspace_session::run_workspace_container_session(
         repo_root,
@@ -144,6 +167,7 @@ fn run_workspace_container_session(
         repo_override,
         initial_command,
         session_intent,
+        cleanup_override,
     )
 }
 
@@ -167,18 +191,6 @@ pub(super) fn effective_workspace_repo_override(
     repo_override: Option<PathBuf>,
 ) -> Option<PathBuf> {
     repo_override.or_else(|| Some(repo_root.to_path_buf()))
-}
-
-fn classify_workspace_session_ownership(
-    session_intent: InteractiveSessionIntent,
-    system_was_running: bool,
-    routes_were_ready_before_handoff: bool,
-) -> InteractiveSessionOwnership {
-    super::workspace_session::classify_workspace_session_ownership(
-        session_intent,
-        system_was_running,
-        routes_were_ready_before_handoff,
-    )
 }
 
 pub(super) fn prepare_workspace_handoff(
@@ -344,10 +356,6 @@ fn maybe_start_workspace_gateway(policy: &EffectiveContainerPolicy) -> Result<()
     gateway_up_for_managed_task(&command)
 }
 
-fn render_workspace_permission_command(user: &str, targets: &[String]) -> String {
-    super::workspace_provisioning::render_workspace_permission_command(user, targets)
-}
-
 fn render_workspace_handoff_notice(policy: &EffectiveContainerPolicy) -> String {
     let color_enabled = effigy_ui::theme::resolve_color_enabled(
         OutputMode::from_env(),
@@ -358,10 +366,6 @@ fn render_workspace_handoff_notice(policy: &EffectiveContainerPolicy) -> String 
         style_text(color_enabled, Theme::default().warning, "[next]"),
         policy.name
     )
-}
-
-fn persist_effigy_source_repo_root(repo_root: &Path) -> Result<(), RunnerError> {
-    super::workspace_provisioning::persist_effigy_source_repo_root(repo_root)
 }
 
 pub(super) fn emit_workspace_info(message: &str, suppress: bool) {

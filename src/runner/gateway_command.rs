@@ -46,8 +46,13 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
 }
 
 pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<(), RunnerError> {
-    if effigy_core::executable_override::current().is_none() && gateway_is_running()? {
-        return Ok(());
+    if effigy_core::executable_override::current().is_none() {
+        let config = gateway_config()?;
+        if let Ok(status) = server::get_status(&config) {
+            if gateway_status_matches_current_binary(&status) {
+                return Ok(());
+            }
+        }
     }
     emit_gateway_startup_notice();
     let output = ProcessCommand::new("sh")
@@ -74,11 +79,6 @@ pub(in crate::runner) fn gateway_up_for_managed_task(command: &str) -> Result<()
     }
 }
 
-pub(in crate::runner) fn gateway_is_running() -> Result<bool, RunnerError> {
-    let config = gateway_config()?;
-    Ok(server::get_status(&config).is_ok())
-}
-
 pub(super) fn run_internal_gateway(_args: InternalGatewayArgs) -> Result<String, RunnerError> {
     let config = gateway_config()?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -94,16 +94,26 @@ pub(super) fn run_internal_gateway(_args: InternalGatewayArgs) -> Result<String,
 fn run_gateway_up(output_json: bool) -> Result<String, RunnerError> {
     let config = gateway_config()?;
     if let Ok(status) = server::get_status(&config) {
-        let route_table = RouteTable::load(&config.route_table_path)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        let tls = gateway_tls_summary(&config, &route_table);
-        return render_gateway_up_result(
-            &config,
-            GatewayUpState::AlreadyRunning(status),
-            &tls,
-            &[],
-            output_json,
-        );
+        if gateway_status_matches_current_binary(&status) {
+            let route_table = RouteTable::load(&config.route_table_path)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            let tls = gateway_tls_summary(&config, &route_table);
+            return render_gateway_up_result(
+                &config,
+                GatewayUpState::AlreadyRunning(status),
+                &tls,
+                &[],
+                output_json,
+            );
+        }
+        if !gateway_invocation_is_escalated()
+            && gateway_down_requires_elevation(&config, Some(&status))
+        {
+            prepare_gateway_state_for_elevated_run(&config)?;
+            return run_gateway_elevated(GatewaySubcommand::Up, output_json);
+        }
+        stop_gateway_process(status.pid)?;
+        server::remove_pid_file(&config.pid_file_path);
     }
     if !gateway_invocation_is_escalated() && gateway_up_requires_elevation(&config) {
         prepare_gateway_state_for_elevated_run(&config)?;
@@ -206,6 +216,8 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
             "ok": true,
             "running": status.is_some(),
             "pid": status.as_ref().map(|value| value.pid),
+            "binary_version": status.as_ref().and_then(|value| value.binary_version.clone()),
+            "current_binary_version": effigy_core::build_info::active_version(),
             "dns_addr": status.as_ref().map(|value| value.dns_addr.to_string()).unwrap_or_else(|| config.dns.bind_addr.to_string()),
             "proxy_addr": status.as_ref().map(|value| value.proxy_addr.to_string()).unwrap_or_else(|| config.proxy.bind_addr.to_string()),
             "https_addr": tls.https_addr.map(|value| value.to_string()),
@@ -252,6 +264,9 @@ fn run_gateway_status(output_json: bool) -> Result<String, RunnerError> {
     ];
     if let Some(ref running) = status {
         lines.push(format!("pid: {}", running.pid));
+        if let Some(version) = running.binary_version.as_deref() {
+            lines.push(format!("binary_version: {version}"));
+        }
         lines.push(format!("live_routes: {}", running.route_count));
     }
     lines.extend(routes.iter().map(render_route_line));
@@ -371,6 +386,7 @@ fn render_gateway_up_result(
             "result": action,
             "running": true,
             "pid": status.pid,
+            "binary_version": status.binary_version,
             "dns_addr": status.dns_addr.to_string(),
             "proxy_addr": status.proxy_addr.to_string(),
             "https_addr": tls.https_addr.map(|value| value.to_string()),
@@ -383,7 +399,7 @@ fn render_gateway_up_result(
     }
 
     Ok(format!(
-        "{}[ok] gateway {}\npid: {}\ndns: {}\nproxy: {}\nhttps: {}\ntls: {}\nroutes: {}\nstate: {}",
+        "{}[ok] gateway {}\npid: {}{}\ndns: {}\nproxy: {}\nhttps: {}\ntls: {}\nroutes: {}\nstate: {}",
         render_warning_lines(warnings),
         if action == "started" {
             "started"
@@ -391,6 +407,11 @@ fn render_gateway_up_result(
             "already running"
         },
         status.pid,
+        status
+            .binary_version
+            .as_deref()
+            .map(|version| format!("\nbinary_version: {version}"))
+            .unwrap_or_default(),
         status.dns_addr,
         status.proxy_addr,
         tls.https_addr
@@ -400,6 +421,10 @@ fn render_gateway_up_result(
         status.route_count,
         config_dir_display(config),
     ))
+}
+
+fn gateway_status_matches_current_binary(status: &GatewayStatus) -> bool {
+    status.binary_version.as_deref() == Some(effigy_core::build_info::active_version().as_str())
 }
 
 fn render_warning_lines(warnings: &[String]) -> String {
@@ -701,6 +726,7 @@ mod tests {
             proxy_addr: "127.0.0.1:80".parse().expect("proxy"),
             route_count: 0,
             routes: Vec::new(),
+            binary_version: Some("v0.3.2+local.test".to_owned()),
         };
         let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
 
@@ -715,6 +741,31 @@ mod tests {
         assert!(rendered.contains("gateway started"));
         assert!(rendered.contains("/tmp/effigy/gateway"));
         assert!(rendered.contains("https: 127.0.0.1:443"));
+        assert!(rendered.contains("binary_version: v0.3.2+local.test"));
+    }
+
+    #[test]
+    fn gateway_status_match_requires_current_binary_identity() {
+        let current = effigy_core::build_info::active_version();
+        let matching = GatewayStatus {
+            pid: 1234,
+            dns_addr: "127.0.0.1:15353".parse().expect("dns"),
+            proxy_addr: "127.0.0.1:80".parse().expect("proxy"),
+            route_count: 0,
+            routes: Vec::new(),
+            binary_version: Some(current),
+        };
+        let missing = GatewayStatus {
+            pid: 1234,
+            dns_addr: "127.0.0.1:15353".parse().expect("dns"),
+            proxy_addr: "127.0.0.1:80".parse().expect("proxy"),
+            route_count: 0,
+            routes: Vec::new(),
+            binary_version: None,
+        };
+
+        assert!(gateway_status_matches_current_binary(&matching));
+        assert!(!gateway_status_matches_current_binary(&missing));
     }
 
     #[test]
@@ -747,6 +798,7 @@ mod tests {
             proxy_addr: "127.0.0.1:8080".parse().expect("proxy"),
             route_count: 0,
             routes: Vec::new(),
+            binary_version: None,
         };
         let config = GatewayConfig::standard(PathBuf::from("/tmp/effigy/gateway"));
 

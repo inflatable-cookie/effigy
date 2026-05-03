@@ -19,8 +19,8 @@ use super::runtime_session_context::current_runtime_session_context;
 use super::system_command::ensure_workspace_effigy_available_for_policy;
 use surface::{
     build_alias_table, build_raw_exec_args, ensure_container_running, exec_alias_surface_absent,
-    resolve_dev_exec_surface, resolve_exec_working_dir, resolve_named_exec_surface,
-    resolve_running_named_exec_surface, ResolvedExecSurface,
+    resolve_dev_exec_surface, resolve_exec_working_dir, resolve_running_named_exec_surface,
+    ResolvedExecSurface,
 };
 use transport::build_routed_task_exec_args;
 
@@ -30,6 +30,8 @@ use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use std::ffi::OsString;
 #[cfg(test)]
 use std::path::PathBuf;
+#[cfg(test)]
+use surface::resolve_named_exec_surface;
 #[cfg(test)]
 use transport::parse_compose_exec_args;
 

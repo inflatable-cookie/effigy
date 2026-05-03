@@ -112,6 +112,14 @@ During v0.x, MINOR bumps may include breaking changes.
   session-owned even when earlier bootstrap setup already started and readied
   the container. Exiting the handed-off DecodeLabs `dev` shell once again
   stops the stack instead of preserving it as an adopted runtime.
+- Bootstrap-start cleanup overrides now flow explicitly through both the
+  public workspace handoff and the interactive seeded-task shell paths. That
+  closes the split where DecodeLabs bootstrap shells stopped the runtime on
+  exit but Underlay/TUI bootstrap shells still preserved it.
+- `effigy gateway up` and managed gateway auto-start now compare the running
+  daemon's recorded build identity against the current Effigy binary. Rebuilt
+  local binaries now restart stale gateway daemons instead of silently
+  reusing an older process after upgrade.
 - `effigy bootstrap:local` no longer kills the running installed binary when
   invoked through the local wrapper. The local build script now stages the new
   binary into `effigy.new` and atomically renames it into place instead of

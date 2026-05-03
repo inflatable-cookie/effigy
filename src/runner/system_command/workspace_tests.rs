@@ -6,15 +6,19 @@ use crate::runner::interactive_session::{
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, PublicWorkspaceCleanupOverride, RuntimeSessionContext,
 };
+use crate::runner::system_command::workspace_provisioning::persist_effigy_source_repo_root;
+use crate::runner::system_command::workspace_provisioning::render_workspace_permission_command;
 use crate::runner::system_command::workspace_provisioning::{
     configured_effigy_repo_root, configured_linux_workspace_artifact_source,
     discover_effigy_repo_root, ensure_linux_workspace_effigy_artifact,
     linux_workspace_effigy_artifact_needs_refresh, linux_workspace_effigy_cache_path,
     linux_workspace_effigy_release_url, render_workspace_effigy_install_command,
     render_workspace_effigy_staging_path, resolve_local_effigy_repo_root_from_paths,
-    resolve_local_workspace_effigy_freshness_anchor, sibling_effigy_repo_root,
-    LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+    resolve_local_workspace_effigy_freshness_anchor, run_linux_workspace_effigy_rehearsal,
+    sibling_effigy_repo_root, LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
+    EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
+use crate::runner::system_command::workspace_session::classify_workspace_session_ownership;
 use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
 use effigy_manifest::{
     ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
@@ -317,6 +321,47 @@ fn linux_workspace_release_url_matches_published_artifact_shape() {
             env!("CARGO_PKG_VERSION")
         )
     );
+}
+
+#[test]
+fn linux_workspace_rehearsal_runs_built_in_task_with_target_env() {
+    let root = std::env::temp_dir().join(format!(
+        "effigy-linux-rehearsal-dispatch-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("mkdir root");
+
+    let args_path = root.join("args.txt");
+    let env_path = root.join("env.txt");
+    let host = root.join("effigy-host");
+    std::fs::write(
+        &host,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s\\n' \"$EFFIGY_LINUX_RELEASE_TRIPLE\" > '{}'\n",
+            args_path.display(),
+            env_path.display()
+        ),
+    )
+    .expect("write host");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&host).expect("stat host").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&host, perms).expect("chmod host");
+    }
+
+    run_linux_workspace_effigy_rehearsal(&host, &root, LinuxWorkspaceTarget::X86_64Gnu)
+        .expect("run rehearsal");
+
+    let args = std::fs::read_to_string(args_path).expect("read args");
+    let env = std::fs::read_to_string(env_path).expect("read env");
+
+    assert_eq!(args.trim(), "release:linux:rehearse");
+    assert_eq!(env.trim(), "x86_64-unknown-linux-gnu");
 }
 
 #[test]
@@ -725,6 +770,7 @@ fn bootstrap_started_workspace_session_forces_stop_on_exit_even_for_ready_adopte
                     InteractiveSessionIntent::PublicWorkspace,
                     true,
                     true,
+                    None,
                 ),
                 true,
             ));
@@ -800,12 +846,43 @@ fn workspace_session_cleanup_matrix_stays_stable_for_direct_seeded_and_bootstrap
                 InteractiveSessionIntent::PublicWorkspace,
                 true,
                 true,
+                None,
             );
             assert!(
                 should_shutdown_started_system(ownership, true),
                 "bootstrap handoff should force stop-on-exit even for a ready adopted runtime"
             );
         },
+    );
+}
+
+#[test]
+fn explicit_workspace_cleanup_override_forces_stop_on_exit_without_thread_local_context() {
+    let ownership = classify_workspace_session_ownership(
+        InteractiveSessionIntent::PublicWorkspace,
+        true,
+        true,
+        Some(PublicWorkspaceCleanupOverride::ForceStopOnExit),
+    );
+
+    assert!(
+        should_shutdown_started_system(ownership, true),
+        "explicit bootstrap handoff override should force stop-on-exit"
+    );
+}
+
+#[test]
+fn explicit_seeded_cleanup_override_forces_stop_on_exit_without_thread_local_context() {
+    let ownership = classify_workspace_session_ownership(
+        InteractiveSessionIntent::SeededTask,
+        true,
+        true,
+        Some(PublicWorkspaceCleanupOverride::ForceStopOnExit),
+    );
+
+    assert!(
+        should_shutdown_started_system(ownership, true),
+        "explicit bootstrap seeded override should force stop-on-exit"
     );
 }
 

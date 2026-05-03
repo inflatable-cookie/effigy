@@ -632,10 +632,8 @@ pub(super) fn run_linux_workspace_effigy_rehearsal(
     target: LinuxWorkspaceTarget,
 ) -> Result<(), RunnerError> {
     let status = std::process::Command::new(host_binary)
-        .arg("distribution")
-        .arg("rehearse")
-        .arg("--target")
-        .arg(target.release_triple())
+        .arg("release:linux:rehearse")
+        .env("EFFIGY_LINUX_RELEASE_TRIPLE", target.release_triple())
         .current_dir(effigy_repo_root)
         .status()
         .map_err(|error| {
