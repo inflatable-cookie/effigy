@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Planned
+Status: In Progress
 Owner: Platform
 Created: 2026-05-03
 Depends on: —

@@ -39,7 +39,7 @@ Current milestones:
 - [`022-binary-entrypoint-hardening.md`](./022-binary-entrypoint-hardening.md) (complete; `effigy-qa` no longer panics on missing `cargo`, exits gracefully with code 1)
 - [`023-documentation-drift-repair.md`](./023-documentation-drift-repair.md) (complete; fixed stale `v0.3.0`/`v0.3.1` references in README and 5 guide files)
 - [`024-git-history-cleanup.md`](./024-git-history-cleanup.md) (complete; purged `.cache/cargo/` blobs using `git filter-repo`, repo size 42 MB → 21 MB)
-- [`025-test-module-extraction-and-reorganization.md`](./025-test-module-extraction-and-reorganization.md) (in progress; moved `workspace_tests.rs` and `gateway_registration_tests.rs` to standard directory modules, eliminated `#[path]` from `system_command.rs`)
+- [`025-test-module-extraction-and-reorganization.md`](./025-test-module-extraction-and-reorganization.md) (complete; moved `workspace_tests.rs` and `gateway_registration_tests.rs` to standard directory modules, eliminated `#[path]` from `system_command.rs`)
 - [`026-runner-module-decomposition.md`](./026-runner-module-decomposition.md) (planned; split oversized runner modules into focused submodules without changing behavior)
 
 Architecture anchor:
