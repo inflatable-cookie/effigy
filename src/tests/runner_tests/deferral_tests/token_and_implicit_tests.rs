@@ -12,8 +12,10 @@ fn setup_fake_docker_deferral_runtime(
     fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
     let docker_log = root.join("fake-docker.log");
     let composer_log = root.join("fake-composer.log");
+    let nested_effigy_log = root.join("fake-effigy.log");
     fs::write(&docker_log, "").expect("seed fake docker log");
     fs::write(&composer_log, "").expect("seed fake composer log");
+    fs::write(&nested_effigy_log, "").expect("seed fake effigy log");
     let runtime_state = root.join("fake-docker-running");
     if service_running {
         fs::write(&runtime_state, "running\n").expect("seed fake runtime state");
@@ -39,11 +41,23 @@ fn setup_fake_docker_deferral_runtime(
             composer_log.display(),
         ),
     );
+    let fake_effigy = bin_dir.join("effigy");
+    write_executable(
+        &fake_effigy,
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+            nested_effigy_log.display(),
+        ),
+    );
     let old_path = std::env::var("PATH").ok().unwrap_or_default();
     let lease_home = root.join("lease-home");
     fs::create_dir_all(&lease_home).expect("mkdir lease home");
     let env = EnvGuard::set_many(&[
         ("PATH", Some(format!("{}:{old_path}", bin_dir.display()))),
+        (
+            "EFFIGY_EXECUTABLE",
+            Some(fake_effigy.display().to_string()),
+        ),
         ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
         (
             "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
