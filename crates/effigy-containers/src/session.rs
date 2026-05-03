@@ -417,7 +417,7 @@ pub fn managed_gateway_command(executable: &str) -> String {
 
 pub fn resolve_effigy_invocation_prefix() -> Result<String, std::io::Error> {
     effigy_core::effigy_invocation::resolve_effigy_invocation_prefix(&format!(
-        "{}/Cargo.toml",
+        "{}/../../Cargo.toml",
         env!("CARGO_MANIFEST_DIR")
     ))
 }
