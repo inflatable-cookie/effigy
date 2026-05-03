@@ -50,6 +50,12 @@ pub struct RunningComposeContainer {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningComposeContainerProfiled {
+    pub profile: String,
+    pub row: RunningComposeContainer,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunningContainerStats {
     pub container_name: String,
     pub cpu_percent: Option<String>,
@@ -283,6 +289,71 @@ pub fn list_running_compose_containers_for_profile(
     };
 
     parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))
+}
+
+pub fn list_running_compose_containers_profiled(
+) -> Result<Vec<RunningComposeContainerProfiled>, ContainerExecError> {
+    match resolve_compose_backend() {
+        ComposeBackend::Docker => Ok(list_running_compose_containers_for_profile(
+            DEFAULT_COLIMA_PROFILE,
+        )?
+        .into_iter()
+        .map(|row| RunningComposeContainerProfiled {
+            profile: DEFAULT_COLIMA_PROFILE.to_owned(),
+            row,
+        })
+        .collect()),
+        ComposeBackend::ColimaNerdctl => {
+            let mut rows = Vec::new();
+            for profile in running_colima_profiles(Path::new("."))? {
+                rows.extend(
+                    list_running_compose_containers_for_profile(&profile)?
+                        .into_iter()
+                        .map(|row| RunningComposeContainerProfiled {
+                            profile: profile.clone(),
+                            row,
+                        }),
+                );
+            }
+            Ok(rows)
+        }
+    }
+}
+
+pub fn infer_host_working_dir_for_container(
+    profile: &str,
+    container_name: &str,
+) -> Result<Option<String>, ContainerExecError> {
+    let output = match resolve_compose_backend() {
+        ComposeBackend::Docker => run_command_capture(
+            Path::new("."),
+            "docker",
+            &["inspect", container_name],
+            "docker inspect",
+        )?,
+        ComposeBackend::ColimaNerdctl => run_command_capture(
+            Path::new("."),
+            "colima",
+            &[
+                "nerdctl",
+                "--profile",
+                profile,
+                "--",
+                "inspect",
+                container_name,
+            ],
+            "colima nerdctl inspect",
+        )?,
+    };
+
+    infer_host_working_dir_from_inspect(&String::from_utf8_lossy(&output.stdout)).map_err(|error| {
+        ContainerExecError::Failure {
+            command: "docker inspect".to_owned(),
+            code: None,
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: error,
+        }
+    })
 }
 
 pub fn capture_running_container_stats(container_names: &[String]) -> RunningContainerStatsCapture {
@@ -1187,6 +1258,77 @@ fn parse_running_container_stats(
     Ok(rows)
 }
 
+#[derive(serde::Deserialize)]
+struct InspectContainerRecord {
+    #[serde(rename = "Config")]
+    config: Option<InspectContainerConfig>,
+    #[serde(rename = "Mounts", default)]
+    mounts: Vec<InspectMount>,
+}
+
+#[derive(serde::Deserialize)]
+struct InspectContainerConfig {
+    #[serde(rename = "WorkingDir")]
+    working_dir: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct InspectMount {
+    #[serde(rename = "Type")]
+    mount_type: Option<String>,
+    #[serde(rename = "Source")]
+    source: Option<String>,
+    #[serde(rename = "Destination")]
+    destination: Option<String>,
+}
+
+fn infer_host_working_dir_from_inspect(stdout: &str) -> Result<Option<String>, String> {
+    let records: Vec<InspectContainerRecord> = serde_json::from_str(stdout)
+        .map_err(|error| format!("failed to parse inspect json: {error}"))?;
+    let Some(record) = records.first() else {
+        return Ok(None);
+    };
+    let container_working_dir = record
+        .config
+        .as_ref()
+        .and_then(|config| config.working_dir.as_deref())
+        .filter(|value| !value.is_empty());
+
+    if let Some(container_working_dir) = container_working_dir {
+        let best = record
+            .mounts
+            .iter()
+            .filter(|mount| mount.mount_type.as_deref() == Some("bind"))
+            .filter_map(|mount| {
+                let source = mount.source.as_deref()?;
+                let destination = mount.destination.as_deref()?;
+                if container_working_dir == destination {
+                    return Some((destination.len(), source.to_owned()));
+                }
+                let prefix = format!("{destination}/");
+                container_working_dir.strip_prefix(&prefix).map(|suffix| {
+                    (
+                        destination.len(),
+                        Path::new(source).join(suffix).display().to_string(),
+                    )
+                })
+            })
+            .max_by_key(|(len, _)| *len)
+            .map(|(_, host_path)| host_path);
+        if best.is_some() {
+            return Ok(best);
+        }
+    }
+
+    Ok(record
+        .mounts
+        .iter()
+        .filter(|mount| mount.mount_type.as_deref() == Some("bind"))
+        .filter_map(|mount| mount.source.as_deref())
+        .find(|source| Path::new(source).join("effigy.toml").is_file())
+        .map(str::to_owned))
+}
+
 fn json_string_field(object: &serde_json::Map<String, JsonValue>, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| {
         object
@@ -1232,6 +1374,63 @@ mod tests {
         assert_eq!(parsed[0].project_name, None);
         assert_eq!(parsed[0].working_dir, None);
         assert_eq!(parsed[0].service, None);
+    }
+
+    #[test]
+    fn infer_host_working_dir_from_inspect_maps_container_working_dir_through_bind_mount() {
+        let inferred = infer_host_working_dir_from_inspect(
+            r#"[{
+              "Config": { "WorkingDir": "/workspace-root/underlay-reference" },
+              "Mounts": [
+                { "Type": "bind", "Source": "/Users/tom/Dev/projects/underlay-reference", "Destination": "/workspace-root/underlay-reference" },
+                { "Type": "bind", "Source": "/Users/tom/Dev/projects/underlay", "Destination": "/workspace-root/underlay" }
+              ]
+            }]"#,
+        )
+        .expect("inspect parse");
+
+        assert_eq!(
+            inferred.as_deref(),
+            Some("/Users/tom/Dev/projects/underlay-reference")
+        );
+    }
+
+    #[test]
+    fn infer_host_working_dir_from_inspect_prefers_longest_matching_bind_mount() {
+        let inferred = infer_host_working_dir_from_inspect(
+            r#"[{
+              "Config": { "WorkingDir": "/var/www/cbs/subdir" },
+              "Mounts": [
+                { "Type": "bind", "Source": "/Users/tom/Dev/test", "Destination": "/var/www" },
+                { "Type": "bind", "Source": "/Users/tom/Dev/test/cbs", "Destination": "/var/www/cbs" }
+              ]
+            }]"#,
+        )
+        .expect("inspect parse");
+
+        assert_eq!(inferred.as_deref(), Some("/Users/tom/Dev/test/cbs/subdir"));
+    }
+
+    #[test]
+    fn infer_host_working_dir_from_inspect_falls_back_to_repo_root_bind_mount() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo = temp.path().join("demo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        std::fs::write(repo.join("effigy.toml"), "[manifest]\n").expect("write manifest");
+
+        let inferred = infer_host_working_dir_from_inspect(&format!(
+            r#"[{{
+              "Config": {{ "WorkingDir": null }},
+              "Mounts": [
+                {{ "Type": "bind", "Source": "{}", "Destination": "/workspace-root/demo" }},
+                {{ "Type": "bind", "Source": "/Users/tom/.gitconfig", "Destination": "/home/dev/.gitconfig" }}
+              ]
+            }}]"#,
+            repo.display()
+        ))
+        .expect("inspect parse");
+
+        assert_eq!(inferred.as_deref(), Some(repo.to_string_lossy().as_ref()));
     }
 
     #[test]

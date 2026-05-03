@@ -145,6 +145,7 @@ pub(in crate::runner) fn run_standard_task(
             preflight.runtime_args_raw.repo_override.clone(),
             &preflight.selector.task_name,
             &preflight.runtime_args_exec.passthrough,
+            Some(current_runtime_session_context().public_workspace_cleanup),
         );
     }
 

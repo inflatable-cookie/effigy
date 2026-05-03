@@ -43,13 +43,17 @@ fn config_with_custom_addrs() {
 fn pid_file_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let pid_path = dir.path().join("test.pid");
+    let version_path = pid_path.with_extension("version");
 
     write_pid_file(&pid_path).unwrap();
+    write_gateway_version_file(&version_path).unwrap();
     let pid = read_pid_file(&pid_path).unwrap();
     assert_eq!(pid, std::process::id());
+    assert!(read_gateway_version_file(&version_path).unwrap().is_some());
 
     remove_pid_file(&pid_path);
     assert!(!pid_path.exists());
+    assert!(!version_path.exists());
 }
 
 #[test]

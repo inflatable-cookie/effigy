@@ -7,7 +7,8 @@ use super::super::super::managed_shell::{
     render_inline_compose_command, render_inline_managed_lifecycle_command,
     render_inline_managed_shell_command, render_inline_managed_standard_exec_command,
 };
-use super::super::super::system_command::run_workspace_with_repo_root;
+use super::super::super::runtime_session_context::current_runtime_session_context;
+use super::super::super::system_command::run_workspace_with_repo_root_and_cleanup_override;
 use super::super::api::{
     ensure_inline_workspace_supported, resolve_container_execution_binding,
     resolve_execution_binding_resolution, ContainerExecutionBinding,
@@ -77,12 +78,13 @@ pub(super) fn run_managed_task(
             )];
             let _lock_guards = acquire_scopes(&preflight.resolved.resolved_root, &lock_scopes)?;
             let _ = name;
-            return run_workspace_with_repo_root(
+            return run_workspace_with_repo_root_and_cleanup_override(
                 &preflight.resolved.resolved_root,
                 selection.task.system.as_deref(),
                 selection.task.workspace.as_deref(),
                 preflight.runtime_args_raw.repo_override.clone(),
                 preflight.output_json,
+                Some(current_runtime_session_context().public_workspace_cleanup),
             )
             .map(Some);
         }
@@ -119,6 +121,7 @@ pub(super) fn run_managed_task(
             preflight.runtime_args_raw.repo_override.clone(),
             &preflight.selector.task_name,
             &preflight.runtime_args_exec.passthrough,
+            Some(current_runtime_session_context().public_workspace_cleanup),
         )
         .map(Some);
     }

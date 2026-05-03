@@ -36,6 +36,7 @@ libc = "0.2"
 thiserror = "2"
 tracing = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+effigy-core = { path = "../effigy-core" }
 
 [dev-dependencies]
 tempfile = "3"

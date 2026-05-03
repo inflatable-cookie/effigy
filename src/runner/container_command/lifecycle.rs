@@ -32,6 +32,7 @@ use super::support::{
 };
 use super::{render_container_report, RunnerError};
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
+use crate::runner::container_runtime_prep::ensure_primary_service_exec_ready_for_runtime;
 use crate::runner::exec_command::{
     append_color_exec_env, probe_container_capabilities, run_compose_exec,
 };
@@ -106,6 +107,14 @@ pub(super) fn run_container_up(
     if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
         return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
     }
+    let working_dir = load_container_exec_working_dir(repo_root, Some(policy.name.as_str()))
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if let Err(error) =
+        ensure_primary_service_exec_ready_for_runtime(repo_root, &policy, &working_dir)
+    {
+        let cleanup_result = cleanup_failed_container_up(repo_root, &policy);
+        return Err(finish_container_up_failure(error, cleanup_result));
+    }
     let gateway_routes = match register_gateway_routes_for_container(repo_root, &policy) {
         Ok(routes) => routes,
         Err(error) => {
@@ -113,7 +122,13 @@ pub(super) fn run_container_up(
             return Err(finish_container_up_failure(error, cleanup_result));
         }
     };
-    let tcp_alias_host_notes = reconcile_primary_service_tcp_alias_hosts(repo_root, &policy)?;
+    let tcp_alias_host_notes = match reconcile_primary_service_tcp_alias_hosts(repo_root, &policy) {
+        Ok(notes) => notes,
+        Err(error) => {
+            let cleanup_result = cleanup_failed_container_up(repo_root, &policy);
+            return Err(finish_container_up_failure(error, cleanup_result));
+        }
+    };
 
     clear_host_container_lease(repo_root, &policy)?;
 

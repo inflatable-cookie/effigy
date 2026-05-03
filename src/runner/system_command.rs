@@ -5,6 +5,7 @@ mod workspace_provisioning;
 #[path = "system_command/workspace_session.rs"]
 mod workspace_session;
 
+use crate::runner::runtime_session_context::PublicWorkspaceCleanupOverride;
 use effigy_cli::{ContainerArgs, ContainerSubcommand, SystemArgs, SystemSubcommand, WorkspaceArgs};
 use effigy_containers::{
     exec::{
@@ -61,19 +62,21 @@ pub(in crate::runner) fn run_workspace(args: WorkspaceArgs) -> Result<String, Ru
     workspace::run_workspace(args)
 }
 
-pub(in crate::runner) fn run_workspace_with_repo_root(
+pub(in crate::runner) fn run_workspace_with_repo_root_and_cleanup_override(
     repo_root: &Path,
     system: Option<&str>,
     workspace_name: Option<&str>,
     repo_override: Option<std::path::PathBuf>,
     output_json: bool,
+    cleanup_override: Option<PublicWorkspaceCleanupOverride>,
 ) -> Result<String, RunnerError> {
-    workspace::run_workspace_with_repo_root(
+    workspace::run_workspace_with_repo_root_and_cleanup_override(
         repo_root,
         system,
         workspace_name,
         repo_override,
         output_json,
+        cleanup_override,
     )
 }
 
@@ -82,12 +85,14 @@ pub(in crate::runner) fn run_workspace_seeded_session(
     container_name: Option<&str>,
     repo_override: Option<std::path::PathBuf>,
     initial_command: &str,
+    cleanup_override: Option<PublicWorkspaceCleanupOverride>,
 ) -> Result<String, RunnerError> {
     workspace::run_workspace_seeded_session(
         repo_root,
         container_name,
         repo_override,
         initial_command,
+        cleanup_override,
     )
 }
 

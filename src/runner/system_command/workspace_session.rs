@@ -15,6 +15,7 @@ pub(super) fn run_workspace_container_session(
     repo_override: Option<PathBuf>,
     initial_command: Option<&str>,
     session_intent: InteractiveSessionIntent,
+    cleanup_override: Option<PublicWorkspaceCleanupOverride>,
 ) -> Result<String, RunnerError> {
     let repo_override = workspace::effective_workspace_repo_override(repo_root, repo_override);
     let container_name = container_name.map(str::to_owned);
@@ -37,6 +38,7 @@ pub(super) fn run_workspace_container_session(
         session_intent,
         system_was_running,
         routes_were_ready_before_handoff,
+        cleanup_override,
     );
     let shell_result = workspace::run_workspace_handoff_shell(
         repo_root,
@@ -57,13 +59,14 @@ pub(super) fn classify_workspace_session_ownership(
     session_intent: InteractiveSessionIntent,
     system_was_running: bool,
     routes_were_ready_before_handoff: bool,
+    cleanup_override: Option<PublicWorkspaceCleanupOverride>,
 ) -> InteractiveSessionOwnership {
-    if matches!(session_intent, InteractiveSessionIntent::PublicWorkspace)
-        && matches!(
-            current_runtime_session_context().public_workspace_cleanup,
-            PublicWorkspaceCleanupOverride::ForceStopOnExit
-        )
-    {
+    let cleanup_override =
+        cleanup_override.unwrap_or(current_runtime_session_context().public_workspace_cleanup);
+    if matches!(
+        cleanup_override,
+        PublicWorkspaceCleanupOverride::ForceStopOnExit
+    ) {
         return InteractiveSessionOwnership {
             runtime_ownership: crate::runner::interactive_session::RuntimeOwnership::SessionOwned,
             readiness_state:
