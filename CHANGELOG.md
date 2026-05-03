@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-05-03
+
+### Fixed
+- DecodeLabs deferral CI fixtures now use realistic published-port metadata
+  and fully sandbox gateway/TLS state. The macOS and Linux release gates no
+  longer fail on fake runtime rows, ambient `HOME` gateway state, or trusted
+  host `mkcert` discovery leaking into the test harness.
+
 ## [0.3.2] - 2026-05-03
 
 ### Added
