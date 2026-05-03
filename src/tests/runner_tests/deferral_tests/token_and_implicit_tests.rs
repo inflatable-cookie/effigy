@@ -13,9 +13,12 @@ fn setup_fake_docker_deferral_runtime(
     let docker_log = root.join("fake-docker.log");
     let composer_log = root.join("fake-composer.log");
     let nested_effigy_log = root.join("fake-effigy.log");
+    let mkcert_caroot = root.join("fake-mkcert-caroot");
     fs::write(&docker_log, "").expect("seed fake docker log");
     fs::write(&composer_log, "").expect("seed fake composer log");
     fs::write(&nested_effigy_log, "").expect("seed fake effigy log");
+    fs::create_dir_all(&mkcert_caroot).expect("mkdir fake mkcert caroot");
+    fs::write(mkcert_caroot.join("rootCA.pem"), "fake-root-ca\n").expect("write fake root ca");
     let runtime_state = root.join("fake-docker-running");
     if service_running {
         fs::write(&runtime_state, "running\n").expect("seed fake runtime state");
@@ -47,6 +50,13 @@ fn setup_fake_docker_deferral_runtime(
         &format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
             nested_effigy_log.display(),
+        ),
+    );
+    write_executable(
+        &bin_dir.join("mkcert"),
+        &format!(
+            "#!/bin/sh\nset -eu\ncase \"${{1:-}}\" in\n  -help)\n    exit 0\n    ;;\n  -check|-install)\n    exit 0\n    ;;\n  -CAROOT)\n    printf '%s\\n' '{}'\n    exit 0\n    ;;\n  -cert-file)\n    cert=\"$2\"\n    key=\"$4\"\n    mkdir -p \"$(dirname \"$cert\")\" \"$(dirname \"$key\")\"\n    printf 'fake-cert\\n' > \"$cert\"\n    printf 'fake-key\\n' > \"$key\"\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+            mkcert_caroot.display()
         ),
     );
     let old_path = std::env::var("PATH").ok().unwrap_or_default();
