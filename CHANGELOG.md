@@ -28,6 +28,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Fixed
 - `src/bin/effigy-qa.rs` no longer panics with `.expect()` when `cargo` is not on
   `PATH`; it now prints a readable error and exits with code 1.
+- Removed `.cache/cargo/` blobs from git history using `git filter-repo`.
+  Repository clone size reduced from ~42 MB to ~21 MB (object store: 30 MB →
+  8.7 MB). A backup branch `backup-before-filter-repo-20250503` preserves the
+  pre-rewrite state.
 - Fixed stale version references in user-facing documentation:
   `README.md`, `docs/guides/017-json-output-contracts.md`,
   `docs/guides/026-json-payload-examples.md`,
