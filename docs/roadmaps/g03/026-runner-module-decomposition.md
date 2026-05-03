@@ -54,7 +54,16 @@ This milestone is complete when:
 - all tests pass
 - the public command API is unchanged
 
+## Progress
+
+Partially started:
+- `gateway_registration.rs` already converted to directory module during g03.025
+- Identified clear split points for remaining files:
+  - `deploy_command.rs`: model (lines 62-443), render export (444-603), railway export (604-1020), types (1021-1340)
+  - `bootstrap_command.rs`: deps sync (lines 607-851) is an isolated subsystem
+  - `exec_command.rs`: surface selection vs transport dispatch
+
 ## Next Task
 
-If this lane is promoted, start with `deploy_command.rs` because it is the
-largest and has the clearest internal seams (model, export, Railway bundle).
+Start with `deploy_command.rs` because it is the largest and has the clearest
+internal seams (model derivation, render export, railway export, shared helpers).
