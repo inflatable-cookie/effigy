@@ -7,6 +7,23 @@ Owner: Platform
 Created: 2026-05-03
 Depends on: —
 
+## Progress
+
+- `deploy_command.rs` (1,340 lines) → split into 5 modules:
+  - `mod.rs` (154 lines) — entry point and export dispatch
+  - `derive.rs` (389 lines) — model derivation from bundle config
+  - `model.rs` (329 lines) — all struct/enum definitions
+  - `render.rs` (223 lines) — Render export logic
+  - `railway.rs` (254 lines) — Railway export logic
+
+## Remaining Work
+
+- `exec_command.rs` (975 lines) — split into surface selection and transport dispatch
+- `container_runtime_prep.rs` (929 lines) — evaluate for splitting
+- `gateway_command.rs` (850 lines) — evaluate for splitting
+- `script_command.rs` (833 lines) — evaluate for splitting
+- `bootstrap_command.rs` (866 lines) — deps sync is already isolated, evaluate rest
+
 ## Problem
 
 Several files in `src/runner/` have grown large enough to hinder navigation and
