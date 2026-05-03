@@ -35,11 +35,11 @@ Current milestones:
 - [`018-v1-runtime-hardening-proof-and-stress-matrix.md`](./018-v1-runtime-hardening-proof-and-stress-matrix.md) (complete; the runtime/container hardening program now closes on bounded executable proof instead of refactor optimism)
 - [`019-v1-release-contract-and-compatibility-boundary.md`](./019-v1-release-contract-and-compatibility-boundary.md) (planned; the next `v1.0` program is to replace the old `v0.x` release contract with an explicit stable compatibility boundary)
 - [`020-distribution-channel-proof-and-first-publish-closeout.md`](./020-distribution-channel-proof-and-first-publish-closeout.md) (planned; after the stable release contract is explicit, Effigy should close the channel story on first-publish and upgrade evidence instead of backlog theory)
-- [`021-root-manifest-dependency-pruning.md`](./021-root-manifest-dependency-pruning.md) (planned; remove unused direct dependencies from the root `Cargo.toml` to reduce lock-file pressure and compile times)
-- [`022-binary-entrypoint-hardening.md`](./022-binary-entrypoint-hardening.md) (planned; propagate exit codes from `effigy` and replace the panic in `effigy-qa` with graceful error handling)
-- [`023-documentation-drift-repair.md`](./023-documentation-drift-repair.md) (planned; fix stale version references in `README.md` and `docs/guides/` so install instructions match the current release)
-- [`024-git-history-cleanup.md`](./024-git-history-cleanup.md) (planned; purge `.cache/cargo/` blobs and evaluate checkpoint commit noise to reduce clone size)
-- [`025-test-module-extraction-and-reorganization.md`](./025-test-module-extraction-and-reorganization.md) (planned; move large test suites out of `src/runner/` and eliminate fragile `#[path]` attributes)
+- [`021-root-manifest-dependency-pruning.md`](./021-root-manifest-dependency-pruning.md) (complete; removed 7 unused direct dependencies from root `Cargo.toml`, workspace compiles and tests pass)
+- [`022-binary-entrypoint-hardening.md`](./022-binary-entrypoint-hardening.md) (complete; `effigy-qa` no longer panics on missing `cargo`, exits gracefully with code 1)
+- [`023-documentation-drift-repair.md`](./023-documentation-drift-repair.md) (complete; fixed stale `v0.3.0`/`v0.3.1` references in README and 5 guide files)
+- [`024-git-history-cleanup.md`](./024-git-history-cleanup.md) (complete; purged `.cache/cargo/` blobs using `git filter-repo`, repo size 42 MB → 21 MB)
+- [`025-test-module-extraction-and-reorganization.md`](./025-test-module-extraction-and-reorganization.md) (in progress; moved `workspace_tests.rs` and `gateway_registration_tests.rs` to standard directory modules, eliminated `#[path]` from `system_command.rs`)
 - [`026-runner-module-decomposition.md`](./026-runner-module-decomposition.md) (planned; split oversized runner modules into focused submodules without changing behavior)
 
 Architecture anchor:

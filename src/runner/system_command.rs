@@ -1,8 +1,5 @@
-#[path = "system_command/workspace.rs"]
 mod workspace;
-#[path = "system_command/workspace_provisioning.rs"]
 mod workspace_provisioning;
-#[path = "system_command/workspace_session.rs"]
 mod workspace_session;
 
 use crate::runner::runtime_session_context::PublicWorkspaceCleanupOverride;

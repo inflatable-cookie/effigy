@@ -1173,5 +1173,4 @@ fn gateway_route_table_path() -> Result<PathBuf, RunnerError> {
 }
 
 #[cfg(test)]
-#[path = "gateway_registration_tests.rs"]
 mod tests;

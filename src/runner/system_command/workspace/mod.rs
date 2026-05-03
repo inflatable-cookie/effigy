@@ -475,5 +475,4 @@ impl WorkspaceTransientProgressReporter {
 }
 
 #[cfg(test)]
-#[path = "workspace_tests.rs"]
 mod tests;
