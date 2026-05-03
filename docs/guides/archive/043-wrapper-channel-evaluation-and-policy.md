@@ -61,9 +61,9 @@ If wrapper channel is later removed:
 
 ## Related Guides
 
-- [`041-distribution-ci-pinning-and-wrapper-migration.md`](./041-distribution-ci-pinning-and-wrapper-migration.md)
-- [`042-homebrew-tap-and-release-automation.md`](./042-homebrew-tap-and-release-automation.md)
-- [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+- [`041-distribution-ci-pinning-and-wrapper-migration.md`](../041-distribution-ci-pinning-and-wrapper-migration.md)
+- [`042-homebrew-tap-and-release-automation.md`](../042-homebrew-tap-and-release-automation.md)
+- [`024-ci-and-automation-recipes.md`](../024-ci-and-automation-recipes.md)
 
 ## Next Step
 

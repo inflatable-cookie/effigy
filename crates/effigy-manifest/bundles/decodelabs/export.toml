@@ -82,11 +82,19 @@ default_workspace = "{{ inputs.default_workspace }}"
 [systems.{{ inputs.system_name }}.workspaces.{{ inputs.default_workspace }}]
 container = "{{ inputs.container_name }}"
 
+[bootstrap]
+start = "dev"
+
 [tasks.dev]
 workspace = "{{ inputs.default_workspace }}"
 [tasks.seed]
 workspace = "{{ inputs.default_workspace }}"
 stay_in_shell = true
+run_in = "container"
+run = [{ rhai = "{{ bundle.root }}/scripts/seed-latest-db-dump.rhai" }]
+
+[tasks."bootstrap:db-seed"]
+workspace = "{{ inputs.default_workspace }}"
 run_in = "container"
 run = [{ rhai = "{{ bundle.root }}/scripts/seed-latest-db-dump.rhai" }]
 

@@ -44,17 +44,52 @@ effigy bootstrap <git-url> --start
 ## Command Shape
 
 ```sh
-effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--start] [--plan] [--json]
+effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>]... [--start] [--plan] [--json]
 ```
 
 What each flag means:
 
 - `--path <DIR>`: clone or update into a specific destination instead of
-  `./<repo-name>`
+  the default clone directory
 - `--branch <NAME>`: target a specific branch during clone or update
+- `--db-seed <FILE>`: stage one or more SQL dumps into the cloned repo before
+  bootstrap-owned setup runs
 - `--start`: run the repo's configured bootstrap start task after setup
 - `--plan`: preview destination, branch, and intent without mutating anything
 - `--json`: return `effigy.bootstrap.v1` inside the normal command envelope
+
+## Bootstrap DB Seeds
+
+When a repo supports one-command database bring-up, pass one or more SQL dumps
+directly to `effigy bootstrap`:
+
+```bash
+effigy bootstrap <git-url> --db-seed ./backups/latest.sql --start
+```
+
+Effigy stages each supplied file into `.effigy/local/db-seeds/` before root
+bootstrap setup runs, and exports these env vars during bootstrap-owned setup:
+
+- `EFFIGY_BOOTSTRAP_DB_SEEDS_DIR`
+- `EFFIGY_BOOTSTRAP_DB_SEED_FILE` when exactly one file was supplied
+- `EFFIGY_BOOTSTRAP_DB_SEED_FILES` as newline-delimited staged paths
+- `EFFIGY_BOOTSTRAP_DB_SEED_COUNT`
+
+Those env paths are repo-root-relative, so the same contract works for
+bootstrap-owned host setup and container-backed seed tasks.
+
+If database seed input was supplied, Effigy also looks for a standard task
+named `bootstrap:db-seed` and runs it after root bootstrap setup, before
+`[bootstrap].start`.
+
+That gives repos one clean adoption path:
+
+- accept staged SQL dumps from the CLI
+- implement database import behind `bootstrap:db-seed`
+- keep `seed` available as the explicit post-bootstrap task if desired
+
+When `--db-seed` is supplied but `bootstrap:db-seed` is missing, bootstrap
+fails instead of silently skipping the seed request.
 
 ## Minimal Manifest Contract
 
@@ -177,7 +212,9 @@ Bootstrap is intentionally conservative.
 
 It will:
 
-- clone into `./<repo-name>` by default
+- clone into `./<repo-name>` by default, then prefer `[catalog].alias` as the
+  final directory name when the cloned repo defines one and no explicit
+  `--path` was supplied
 - update an existing checkout only when the destination is already a git repo
   for the same remote
 - fail if the destination exists but is not a repo

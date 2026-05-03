@@ -11,10 +11,14 @@ need the full command and flag surface.
 Start with the CLI itself:
 
 ```sh
+effigy --version
 effigy --help
 effigy init
 effigy tasks
 ```
+
+`--version` shows the installed version (for example `v0.3.3`). Use it to confirm
+you have a recent binary or when reporting issues.
 
 If `effigy.toml` already exists, skip `init` and ask the repo what it knows
 about:
@@ -31,21 +35,8 @@ effigy test
 effigy doctor --verbose
 ```
 
-If routing or task ownership is not obvious yet, stop and use
-`effigy tasks --resolve <selector>` before guessing.
-
-If the repo is web- or service-heavy, the first useful local-dev path is now:
-
-```sh
-effigy service list
-effigy container up
-effigy gateway status
-effigy exec <command>
-effigy dev
-```
-
-Use those in order when the repo has bundled service fragments, a managed
-container environment, local domains, and one repo-owned `dev` front door.
+If you are not sure which task will run, stop and use
+`effigy tasks --resolve <task-name>` before guessing.
 
 ## 2) Minimal `effigy.toml`
 
@@ -68,6 +59,16 @@ effigy app/db:reset
 effigy test --plan
 ```
 
+**Core Concepts (30 seconds)**
+
+- **Catalog** — a directory with an `effigy.toml`. The `alias` lets you prefix
+tasks. `app/db:reset` means "run the `db:reset` task in the `app` catalog."
+- **Task** — a named command defined in `effigy.toml`. Run it with `effigy <task>`.
+- **Built-in** — commands like `test`, `watch`, and `init` that Effigy provides
+automatically, even if they are not in your manifest.
+- **Selector** — what you type after `effigy`: a task name, a catalog prefix
+(`app/build`), or a built-in command.
+
 Baseline mental model:
 
 - define tasks in `effigy.toml`
@@ -83,9 +84,45 @@ containers, demos, and manifest composition, continue to:
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
 
-## 3) Commands You Will Reach For First
+## 3) Global Flags That Work Everywhere
 
-### Discover and route work
+Three flags apply to almost every Effigy command:
+
+```sh
+# Machine-readable JSON output (great for CI and scripts)
+effigy --json tasks
+effigy --json doctor
+effigy --json test --plan
+
+# Target a different repo without cd-ing into it
+effigy --repo /path/to/other-project tasks
+effigy --repo /path/to/other-project test
+
+# Ask for help on any command
+effigy --help
+effigy test --help
+effigy release --help
+```
+
+Use `--json` when another tool needs to parse the output.  
+Use `--repo` when you want to run Effigy against a repo that is not your current directory.  
+Use `--help` (or `-h`) when you need the exact flags for a specific command.
+
+## 4) Optional: Local Dev Stacks With Containers
+
+If the repo includes databases, caches, or language workspaces, use containers
+to keep them off your host machine:
+
+```sh
+effigy container up      # Start the local environment
+effigy dev               # Run the repo's dev task inside it
+```
+
+Read more: [`063-container-system-guide.md`](./063-container-system-guide.md)
+
+## 5) Commands You Will Reach For First
+
+### Discover what the repo can do
 
 ```sh
 effigy tasks
@@ -93,7 +130,7 @@ effigy tasks --resolve test
 effigy tasks --resolve app/build
 ```
 
-Use these before running unfamiliar selectors.
+Use these before running unfamiliar tasks.
 
 ### Check health and explain what Effigy sees
 
@@ -102,7 +139,7 @@ effigy doctor --verbose
 effigy doctor --repo /path/to/workspace app/build -- --watch
 ```
 
-Use the second form when you want explain-mode output for a specific selector
+Use the second form when you want explain-mode output for a specific task
 and its passthrough args.
 
 ### Standardize tests and watch mode
@@ -146,7 +183,7 @@ effigy --json test --plan
 
 Use JSON mode when CI, scripts, or agents are consuming Effigy output.
 
-## 4) Choose the Next Detail Page
+## 6) Choose the Next Detail Page
 
 - Day-to-day workflows:
   [`055-everyday-workflows.md`](./055-everyday-workflows.md)

@@ -188,6 +188,38 @@ fn create_plain_root_remote() -> PathBuf {
     remote
 }
 
+fn create_catalog_alias_root_remote() -> PathBuf {
+    let worktree = temp_dir("root-catalog-alias-worktree");
+    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        worktree.join("effigy.toml"),
+        r#"[catalog]
+alias = "contact-patch"
+
+[bootstrap]
+run = "sh ./scripts/root-setup.sh"
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        worktree.join("scripts/root-setup.sh"),
+        "#!/bin/sh\nset -eu\nprintf aliased > root-setup.txt\n",
+    )
+    .expect("write root setup");
+    let script = worktree.join("scripts/root-setup.sh");
+    let mut perms = fs::metadata(&script)
+        .expect("script metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&script, perms).expect("chmod script");
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init alias root");
+    let remote = bare_remote_path("root-catalog-alias-bare");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    remote
+}
+
 /// Parse the manifest at `path` and surface its `[bootstrap]` section.
 fn load_bootstrap_from_manifest(
     path: &Path,
@@ -278,9 +310,15 @@ fn execute_bootstrap_request_clones_root_and_runs_setup_and_children() {
     let child_remote = create_child_remote("child-app");
     let root_remote = create_root_remote_with_bootstrap(&child_remote);
     let cwd = temp_dir("bootstrap-execution");
-    let request =
-        resolve_bootstrap_request(&cwd, &root_remote.display().to_string(), None, None, false)
-            .expect("resolve request");
+    let request = resolve_bootstrap_request(
+        &cwd,
+        &root_remote.display().to_string(),
+        None,
+        None,
+        &[],
+        false,
+    )
+    .expect("resolve request");
 
     let result = execute_bootstrap_request(
         &request,
@@ -322,6 +360,7 @@ fn execute_bootstrap_request_fails_for_existing_remote_mismatch() {
         destination,
         destination_source: "explicit-path",
         branch: None,
+        db_seed_paths: Vec::new(),
         start_requested: false,
     };
 
@@ -348,6 +387,7 @@ fn execute_bootstrap_request_fails_for_existing_dirty_checkout() {
         destination,
         destination_source: "explicit-path",
         branch: None,
+        db_seed_paths: Vec::new(),
         start_requested: false,
     };
 
@@ -366,9 +406,15 @@ fn execute_bootstrap_request_fails_for_existing_dirty_checkout() {
 fn execute_bootstrap_request_warns_for_optional_child_failures() {
     let root_remote = create_root_remote_with_optional_missing_child();
     let cwd = temp_dir("bootstrap-optional-child");
-    let request =
-        resolve_bootstrap_request(&cwd, &root_remote.display().to_string(), None, None, false)
-            .expect("resolve request");
+    let request = resolve_bootstrap_request(
+        &cwd,
+        &root_remote.display().to_string(),
+        None,
+        None,
+        &[],
+        false,
+    )
+    .expect("resolve request");
 
     let result = execute_bootstrap_request(
         &request,
@@ -394,9 +440,15 @@ fn execute_bootstrap_request_allows_sibling_child_paths_under_root_parent() {
     let child_remote = create_child_remote("child-app-sibling");
     let root_remote = create_root_remote_with_sibling_child(&child_remote);
     let cwd = temp_dir("bootstrap-sibling-child");
-    let request =
-        resolve_bootstrap_request(&cwd, &root_remote.display().to_string(), None, None, false)
-            .expect("resolve request");
+    let request = resolve_bootstrap_request(
+        &cwd,
+        &root_remote.display().to_string(),
+        None,
+        None,
+        &[],
+        false,
+    )
+    .expect("resolve request");
 
     let result = execute_bootstrap_request(
         &request,
@@ -418,9 +470,15 @@ fn execute_bootstrap_request_allows_sibling_child_paths_under_root_parent() {
 fn execute_bootstrap_request_reports_missing_bootstrap_contract_cleanly() {
     let root_remote = create_plain_root_remote();
     let cwd = temp_dir("bootstrap-no-manifest");
-    let request =
-        resolve_bootstrap_request(&cwd, &root_remote.display().to_string(), None, None, false)
-            .expect("resolve request");
+    let request = resolve_bootstrap_request(
+        &cwd,
+        &root_remote.display().to_string(),
+        None,
+        None,
+        &[],
+        false,
+    )
+    .expect("resolve request");
 
     let result = execute_bootstrap_request(
         &request,
@@ -440,4 +498,30 @@ fn execute_bootstrap_request_reports_missing_bootstrap_contract_cleanly() {
     assert_eq!(parsed["manifest"]["file_found"], false);
     assert_eq!(parsed["manifest"]["bootstrap_contract_found"], false);
     assert_eq!(parsed["children"], serde_json::json!([]));
+}
+
+#[test]
+fn execute_bootstrap_request_uses_catalog_alias_for_default_destination() {
+    let remote = create_catalog_alias_root_remote();
+    let cwd = temp_dir("bootstrap-catalog-alias");
+    let request =
+        resolve_bootstrap_request(&cwd, &remote.display().to_string(), None, None, &[], false)
+            .expect("resolve request");
+
+    let result = execute_bootstrap_request(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+    )
+    .expect("execute bootstrap");
+
+    let destination = cwd.join("contact-patch");
+    assert_eq!(result.request.destination, destination);
+    assert!(destination.is_dir());
+    assert!(!cwd.join("remote").exists());
+    assert_eq!(
+        fs::read_to_string(destination.join("root-setup.txt")).expect("root setup marker"),
+        "aliased"
+    );
 }

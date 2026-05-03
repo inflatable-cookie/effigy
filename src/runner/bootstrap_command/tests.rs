@@ -256,6 +256,106 @@ required = false
     remote
 }
 
+fn create_root_remote_with_bootstrap_db_seed_task() -> PathBuf {
+    let worktree = temp_dir("root-db-seed-worktree");
+    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        worktree.join("effigy.toml"),
+        r#"[bootstrap]
+start = "bootstrap:start"
+
+[tasks."bootstrap:db-seed"]
+run = "sh ./scripts/db-seed.sh"
+
+[tasks."bootstrap:start"]
+run = "sh ./scripts/start.sh"
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        worktree.join("scripts/db-seed.sh"),
+        r#"#!/bin/sh
+set -eu
+test -n "${EFFIGY_BOOTSTRAP_DB_SEEDS_DIR:-}"
+test -n "${EFFIGY_BOOTSTRAP_DB_SEED_FILE:-}"
+test "${EFFIGY_BOOTSTRAP_DB_SEED_COUNT:-}" = "1"
+test -f "$EFFIGY_BOOTSTRAP_DB_SEED_FILE"
+test -f ".effigy/local/db-seeds/latest.sql"
+cmp "$EFFIGY_BOOTSTRAP_DB_SEED_FILE" ".effigy/local/db-seeds/latest.sql"
+printf seeded > db-seed.txt
+"#,
+    )
+    .expect("write db seed task");
+    fs::write(
+        worktree.join("scripts/start.sh"),
+        r#"#!/bin/sh
+set -eu
+test -f db-seed.txt
+printf started > start.txt
+"#,
+    )
+    .expect("write start");
+    for name in ["db-seed.sh", "start.sh"] {
+        let script = worktree.join("scripts").join(name);
+        let mut perms = fs::metadata(&script)
+            .expect("script metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("chmod script");
+    }
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init root db seed");
+    let remote = bare_remote_path("root-db-seed-bare");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    remote
+}
+
+fn create_root_remote_with_bootstrap_run_db_seed_visibility() -> PathBuf {
+    let worktree = temp_dir("root-db-seed-run-worktree");
+    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        worktree.join("effigy.toml"),
+        r#"[bootstrap]
+run = "sh ./scripts/root-setup.sh"
+
+[tasks."bootstrap:db-seed"]
+run = "sh ./scripts/db-seed.sh"
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        worktree.join("scripts/root-setup.sh"),
+        r#"#!/bin/sh
+set -eu
+test -n "${EFFIGY_BOOTSTRAP_DB_SEEDS_DIR:-}"
+test -f ".effigy/local/db-seeds/latest.sql"
+cmp "${EFFIGY_BOOTSTRAP_DB_SEED_FILE}" ".effigy/local/db-seeds/latest.sql"
+printf visible > root-seed-check.txt
+"#,
+    )
+    .expect("write root setup");
+    fs::write(
+        worktree.join("scripts/db-seed.sh"),
+        "#!/bin/sh\nset -eu\nprintf seeded > db-seed.txt\n",
+    )
+    .expect("write db seed task");
+    for name in ["root-setup.sh", "db-seed.sh"] {
+        let script = worktree.join("scripts").join(name);
+        let mut perms = fs::metadata(&script)
+            .expect("script metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("chmod script");
+    }
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init root db seed visibility");
+    let remote = bare_remote_path("root-db-seed-run-bare");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    remote
+}
+
 #[test]
 fn run_bootstrap_with_cwd_starts_when_requested() {
     let child_remote = create_child_remote("child-app-start");
@@ -267,6 +367,7 @@ fn run_bootstrap_with_cwd_starts_when_requested() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
+                db_seed_paths: Vec::new(),
                 start: true,
                 plan: false,
             },
@@ -284,6 +385,108 @@ fn run_bootstrap_with_cwd_starts_when_requested() {
 }
 
 #[test]
+fn run_bootstrap_with_cwd_stages_db_seed_before_root_run() {
+    let root_remote = create_root_remote_with_bootstrap_run_db_seed_visibility();
+    let cwd = temp_dir("bootstrap-db-seed-root-run");
+    let dump = cwd.join("latest.sql");
+    fs::write(&dump, "create table ok;\n").expect("write dump");
+
+    let out = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: None,
+                branch: None,
+                db_seed_paths: vec![dump.clone()],
+                start: false,
+                plan: false,
+            },
+            output_json: false,
+        },
+        cwd.clone(),
+    )
+    .expect("run bootstrap");
+
+    assert!(out.contains("[ok] bootstrap completed"));
+    let destination = cwd.join("remote");
+    assert_eq!(
+        fs::read_to_string(destination.join("root-seed-check.txt")).expect("seed marker"),
+        "visible"
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join(".effigy/local/db-seeds/latest.sql"))
+            .expect("staged dump"),
+        "create table ok;\n"
+    );
+}
+
+#[test]
+fn run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start() {
+    let root_remote = create_root_remote_with_bootstrap_db_seed_task();
+    let cwd = temp_dir("bootstrap-db-seed-task");
+    let dump = cwd.join("latest.sql");
+    fs::write(&dump, "seed payload;\n").expect("write dump");
+
+    let out = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: None,
+                branch: None,
+                db_seed_paths: vec![dump],
+                start: true,
+                plan: false,
+            },
+            output_json: false,
+        },
+        cwd.clone(),
+    )
+    .expect("run bootstrap");
+
+    assert!(out.contains("[ok] bootstrap completed"));
+    let destination = cwd.join("remote");
+    assert_eq!(
+        fs::read_to_string(destination.join("db-seed.txt")).expect("seed marker"),
+        "seeded"
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join("start.txt")).expect("start marker"),
+        "started"
+    );
+}
+
+#[test]
+fn run_bootstrap_with_cwd_rejects_db_seed_when_standard_task_is_missing() {
+    let child_remote = create_child_remote("child-app-db-seed-missing");
+    let root_remote = create_root_remote_with_bootstrap(&child_remote);
+    let cwd = temp_dir("bootstrap-db-seed-missing-task");
+    let dump = cwd.join("latest.sql");
+    fs::write(&dump, "seed payload;\n").expect("write dump");
+
+    let err = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: None,
+                branch: None,
+                db_seed_paths: vec![dump],
+                start: false,
+                plan: false,
+            },
+            output_json: false,
+        },
+        cwd,
+    )
+    .expect_err("bootstrap should reject missing standard db seed task");
+
+    assert!(
+        err.to_string()
+            .contains("does not define task `bootstrap:db-seed`"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn run_bootstrap_with_cwd_reports_optional_child_warning_in_text_output() {
     let root_remote = create_root_remote_with_optional_missing_child();
     let cwd = temp_dir("bootstrap-optional-child-text");
@@ -293,6 +496,7 @@ fn run_bootstrap_with_cwd_reports_optional_child_warning_in_text_output() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
+                db_seed_paths: Vec::new(),
                 start: false,
                 plan: false,
             },
@@ -392,6 +596,7 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
                 repo_url: root_remote.display().to_string(),
                 path: Some(PathBuf::from("underlay-reference")),
                 branch: None,
+                db_seed_paths: Vec::new(),
                 start: false,
                 plan: false,
             },

@@ -138,12 +138,38 @@ version = "11.0"
     let dev = systems.systems.get("dev").expect("systems.dev");
     assert_eq!(dev.default_workspace.as_deref(), Some("app"));
 
+    let bootstrap = manifest.bootstrap.expect("bootstrap");
+    let start = bootstrap.start.expect("bootstrap start");
+    assert_eq!(start.to_owned_selectors(), vec!["dev".to_owned()]);
+
     let task = manifest.tasks.get("seed").expect("seed task");
     assert_eq!(task.workspace.as_deref(), Some("app"));
     assert_eq!(task.run_in, Some(ManifestTaskRunIn::Container));
     assert_eq!(task.stay_in_shell, Some(true));
     assert!(matches!(
         task.run.as_ref().expect("seed run"),
+        ManifestManagedRun::Sequence(steps)
+            if matches!(
+                steps.as_slice(),
+                [ManifestManagedRunStep::Step(step)]
+                    if step
+                        .rhai
+                        .as_deref()
+                        .is_some_and(|path| path.ends_with("/scripts/seed-latest-db-dump.rhai"))
+            )
+    ));
+
+    let bootstrap_seed_task = manifest
+        .tasks
+        .get("bootstrap:db-seed")
+        .expect("bootstrap db seed task");
+    assert_eq!(bootstrap_seed_task.workspace.as_deref(), Some("app"));
+    assert_eq!(
+        bootstrap_seed_task.run_in,
+        Some(ManifestTaskRunIn::Container)
+    );
+    assert!(matches!(
+        bootstrap_seed_task.run.as_ref().expect("bootstrap db seed run"),
         ManifestManagedRun::Sequence(steps)
             if matches!(
                 steps.as_slice(),

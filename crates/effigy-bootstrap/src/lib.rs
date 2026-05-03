@@ -2,7 +2,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use effigy_manifest::{
-    ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy, ManifestManagedRun,
+    load_task_manifest, ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy,
+    ManifestManagedRun,
 };
 use serde_json::json;
 
@@ -15,6 +16,7 @@ pub struct BootstrapResolution {
     pub destination: PathBuf,
     pub destination_source: &'static str,
     pub branch: Option<String>,
+    pub db_seed_paths: Vec<PathBuf>,
     pub start_requested: bool,
 }
 
@@ -29,6 +31,8 @@ pub struct BootstrapExecutionResult {
     pub submodules_applied: bool,
     pub root_run: Option<String>,
     pub child_results: Vec<BootstrapChildResult>,
+    pub staged_db_seed_files: Vec<PathBuf>,
+    pub db_seed_task: Option<String>,
     pub start_tasks: Vec<String>,
     pub start_ran: bool,
     pub warnings: Vec<String>,
@@ -144,6 +148,7 @@ pub fn resolve_bootstrap_request(
     repo_url: &str,
     path: Option<&Path>,
     branch: Option<&str>,
+    db_seed_paths: &[PathBuf],
     start_requested: bool,
 ) -> Result<BootstrapResolution, BootstrapError> {
     let repo_name = derive_repo_name(repo_url).ok_or_else(|| {
@@ -161,6 +166,16 @@ pub fn resolve_bootstrap_request(
         destination,
         destination_source,
         branch: branch.map(str::to_owned),
+        db_seed_paths: db_seed_paths
+            .iter()
+            .map(|path| {
+                if path.is_absolute() {
+                    path.clone()
+                } else {
+                    cwd.join(path)
+                }
+            })
+            .collect(),
         start_requested,
     })
 }
@@ -203,21 +218,47 @@ where
     RunTask: FnMut(&Path, &str, &str) -> Result<(), BootstrapError>,
     ReportProgress: FnMut(BootstrapProgressEvent),
 {
+    let mut effective_destination = request.destination.clone();
     report_progress(BootstrapProgressEvent::RootCheckoutStarted {
         repo_url: request.repo_url.clone(),
-        destination: request.destination.clone(),
+        destination: effective_destination.clone(),
     });
     let root_repo_state = sync_repo_checkout(
         &request.repo_url,
-        &request.destination,
+        &effective_destination,
         request.branch.as_deref(),
     )?;
     report_progress(BootstrapProgressEvent::RootCheckoutFinished {
         repo_state: root_repo_state,
-        destination: request.destination.clone(),
+        destination: effective_destination.clone(),
     });
-    let manifest_path = request.destination.join(TASK_MANIFEST_FILE);
+    let mut manifest_path = effective_destination.join(TASK_MANIFEST_FILE);
     let manifest_found = manifest_path.is_file();
+    if manifest_found && request.destination_source == "cwd-default" {
+        if let Some(preferred_name) = preferred_bootstrap_destination_name(&manifest_path)? {
+            let current_name = effective_destination
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            if preferred_name != current_name {
+                let renamed_destination = effective_destination.with_file_name(&preferred_name);
+                if renamed_destination.exists() {
+                    return Err(BootstrapError::task_invocation(format!(
+                        "bootstrap catalog alias `{preferred_name}` wants destination {}, but that path already exists",
+                        renamed_destination.display()
+                    )));
+                }
+                std::fs::rename(&effective_destination, &renamed_destination).map_err(|error| {
+                    BootstrapError::Write {
+                        path: renamed_destination.clone(),
+                        error,
+                    }
+                })?;
+                effective_destination = renamed_destination;
+                manifest_path = effective_destination.join(TASK_MANIFEST_FILE);
+            }
+        }
+    }
     let bootstrap = if manifest_found {
         load_bootstrap(&manifest_path)?
     } else {
@@ -229,12 +270,12 @@ where
         .submodules
         .unwrap_or(ManifestBootstrapSubmodulesPolicy::None);
     report_progress(BootstrapProgressEvent::SubmodulesStarted {
-        destination: request.destination.clone(),
+        destination: effective_destination.clone(),
         policy: submodules_policy,
     });
-    let submodules_applied = apply_submodule_policy(&request.destination, submodules_policy)?;
+    let submodules_applied = apply_submodule_policy(&effective_destination, submodules_policy)?;
     report_progress(BootstrapProgressEvent::SubmodulesFinished {
-        destination: request.destination.clone(),
+        destination: effective_destination.clone(),
         policy: submodules_policy,
         applied: submodules_applied,
     });
@@ -242,7 +283,7 @@ where
     let mut warnings = Vec::new();
     let mut child_results = Vec::new();
     for child in &bootstrap.children {
-        let child_destination = resolve_child_destination(&request.destination, &child.path)?;
+        let child_destination = resolve_child_destination(&effective_destination, &child.path)?;
         report_progress(BootstrapProgressEvent::ChildCheckoutStarted {
             path: child.path.clone(),
             repo: child.repo.clone(),
@@ -315,18 +356,18 @@ where
 
     if bootstrap.run.is_some() {
         report_progress(BootstrapProgressEvent::RootRunStarted {
-            destination: request.destination.clone(),
+            destination: effective_destination.clone(),
         });
     }
     let root_run = run_bootstrap_run_if_present(
         &mut run_bootstrap_run,
-        &request.destination,
+        &effective_destination,
         bootstrap.run.as_ref(),
         "bootstrap root run",
     )?;
     if let Some(run) = root_run.as_ref() {
         report_progress(BootstrapProgressEvent::RootRunFinished {
-            destination: request.destination.clone(),
+            destination: effective_destination.clone(),
             run: run.clone(),
         });
     }
@@ -345,20 +386,29 @@ where
         }
         for selector in &start_tasks {
             report_progress(BootstrapProgressEvent::StartTaskStarted {
-                destination: request.destination.clone(),
+                destination: effective_destination.clone(),
                 selector: selector.clone(),
             });
-            run_task(&request.destination, selector, "bootstrap start")?;
+            run_task(&effective_destination, selector, "bootstrap start")?;
             report_progress(BootstrapProgressEvent::StartTaskFinished {
-                destination: request.destination.clone(),
+                destination: effective_destination.clone(),
                 selector: selector.clone(),
             });
         }
         start_ran = true;
     }
 
+    let mut effective_request = request.clone();
+    effective_request.destination = effective_destination.clone();
+    if let Some(name) = effective_destination
+        .file_name()
+        .and_then(|name| name.to_str())
+    {
+        effective_request.repo_name = name.to_owned();
+    }
+
     Ok(BootstrapExecutionResult {
-        request: request.clone(),
+        request: effective_request,
         root_repo_state,
         manifest_path,
         manifest_found,
@@ -367,10 +417,34 @@ where
         submodules_applied,
         root_run,
         child_results,
+        staged_db_seed_files: Vec::new(),
+        db_seed_task: None,
         start_tasks,
         start_ran,
         warnings,
     })
+}
+
+fn preferred_bootstrap_destination_name(
+    manifest_path: &Path,
+) -> Result<Option<String>, BootstrapError> {
+    let manifest = load_task_manifest(manifest_path).map_err(|error| BootstrapError::Read {
+        path: manifest_path.to_path_buf(),
+        error: std::io::Error::other(error.to_string()),
+    })?;
+    let Some(alias) = manifest.catalog.and_then(|catalog| catalog.alias) else {
+        return Ok(None);
+    };
+    let alias = alias.trim();
+    if alias.is_empty() {
+        return Ok(None);
+    }
+    if alias == "." || alias == ".." || alias.contains('/') || alias.contains('\\') {
+        return Err(BootstrapError::task_invocation(format!(
+            "bootstrap catalog alias `{alias}` is not a valid destination name"
+        )));
+    }
+    Ok(Some(alias.to_owned()))
 }
 
 pub fn derive_repo_name(repo_url: &str) -> Option<String> {
@@ -436,6 +510,11 @@ pub fn render_bootstrap_plan(request: &BootstrapResolution, output_json: bool) -
         "destination": request.destination.display().to_string(),
         "destination_source": request.destination_source,
         "branch": request.branch,
+        "db_seed_files": request
+            .db_seed_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>(),
         "start_requested": request.start_requested,
         "display": format!(
             "bootstrap {} -> {}",
@@ -452,11 +531,22 @@ pub fn render_bootstrap_plan(request: &BootstrapResolution, output_json: bool) -
         .as_deref()
         .map_or("default remote HEAD".to_owned(), |branch| branch.to_owned());
     let start_line = if request.start_requested { "yes" } else { "no" };
+    let db_seed_line = if request.db_seed_paths.is_empty() {
+        "none".to_owned()
+    } else {
+        request
+            .db_seed_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     format!(
-        "[planned] bootstrap request resolved\nrepo: {}\ndestination: {}\nbranch: {}\nstart after bootstrap run: {}",
+        "[planned] bootstrap request resolved\nrepo: {}\ndestination: {}\nbranch: {}\ndb seed files: {}\nstart after bootstrap run: {}",
         request.repo_url,
         request.destination.display(),
         branch_line,
+        db_seed_line,
         start_line,
     )
 }
@@ -472,6 +562,21 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
         "destination": result.request.destination.display().to_string(),
         "destination_source": result.request.destination_source,
         "branch": result.request.branch,
+        "db_seeds": {
+            "requested": result
+                .request
+                .db_seed_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+            "staged": result
+                .staged_db_seed_files
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+            "task": result.db_seed_task,
+            "ran": result.db_seed_task.is_some(),
+        },
         "root": {
             "repo": result.request.repo_url,
             "repo_name": result.request.repo_name,
@@ -556,6 +661,29 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
         ));
     } else {
         lines.push("manifest: no effigy.toml bootstrap contract found".to_owned());
+    }
+    if !result.request.db_seed_paths.is_empty() {
+        let requested = result
+            .request
+            .db_seed_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut line = format!("db seed files: {requested}");
+        if !result.staged_db_seed_files.is_empty() {
+            let staged = result
+                .staged_db_seed_files
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            line.push_str(&format!("; staged {staged}"));
+        }
+        if let Some(task) = result.db_seed_task.as_deref() {
+            line.push_str(&format!("; task {task}"));
+        }
+        lines.push(line);
     }
     if !result.child_results.is_empty() {
         for child in &result.child_results {

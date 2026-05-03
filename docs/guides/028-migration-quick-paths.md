@@ -191,7 +191,16 @@ Exit criteria:
 - `effigy doctor` no longer flags the legacy flag
 - task routing matches the previous behavior on smoke runs
 
-## 6) Risk Controls During Migration
+## 6) Removed Built-ins
+
+Two commands that existed in earlier versions have been removed:
+
+- `repo-pulse` — replaced by `effigy doctor`
+- `health` — replaced by `effigy doctor`
+
+If CI or scripts still reference them, migrate to `effigy doctor` or `effigy doctor --verbose`.
+
+## 7) Risk Controls During Migration
 
 - prefer `--plan` and `--dry-run` modes first (`test --plan`, `init --dry-run`, `migrate` preview)
 - make one migration class at a time (manifest shape, then task routing, then CI JSON)

@@ -48,7 +48,10 @@ if database == "" {
 let container_name = optional_config_string("bundle.container_name", "web");
 let db_password_path = "containers." + container_name + ".services.db.params.password";
 let db_password = optional_config_string(db_password_path, "secret");
-let dumps_dir = path_join(repo_root, ".effigy/local/db-seeds");
+let dumps_dir = optional_config_string(
+    "env.EFFIGY_BOOTSTRAP_DB_SEEDS_DIR",
+    path_join(repo_root, ".effigy/local/db-seeds"),
+);
 
 create_dir(dumps_dir);
 
@@ -60,7 +63,7 @@ if latest_host_path == "" {
 }
 
 let dump_name = path_file_name(latest_host_path);
-let dump_container_path = path_join(dumps_dir, dump_name);
+let dump_repo_path = path_join(".effigy/local/db-seeds", dump_name);
 let mysql_args = ["--skip-ssl", "-h", "db", "-uroot"];
 if db_password != "" {
     mysql_args.push("--password=" + db_password);
@@ -70,7 +73,7 @@ let reset_sql = "DROP DATABASE IF EXISTS `" + database + "`; CREATE DATABASE `" 
 log("[check] resetting database " + database);
 
 let reset_args = mysql_args + ["-e", reset_sql];
-let reset_result = run_process_tee("mysql", reset_args);
+let reset_result = container_exec(container_name, ["mysql"] + reset_args);
 
 if reset_result["status"] != 0 {
     throw "[error] database reset failed"
@@ -86,7 +89,15 @@ if trim_string(reset_output) != "" {
 log("[check] importing latest SQL dump " + dump_name);
 
 let import_args = mysql_args + [database];
-let import_result = run_process_tee("mysql", import_args, #{ stdin_file: dump_container_path });
+let import_shell = "";
+for arg in ["mysql"] + import_args {
+    if import_shell != "" {
+        import_shell += " ";
+    }
+    import_shell += shell_quote_string(arg);
+}
+import_shell += " < " + shell_quote_string(dump_repo_path);
+let import_result = container_exec(container_name, ["sh", "-lc", import_shell]);
 
 if import_result["status"] != 0 {
     throw "[error] SQL import failed"

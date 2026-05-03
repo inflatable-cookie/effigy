@@ -207,8 +207,8 @@ default path should be native:
 ```sh
 effigy release status --check-gates
 effigy release prepare --plan
-effigy distribution preflight --tag v0.3.0
-effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.3.0
+effigy distribution preflight --tag v0.3.3
+effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.3.3
 ```
 
 Use `release` for release readiness and mutation flow. Use
@@ -220,7 +220,37 @@ Deep dive:
 - [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 
-## 9) When Effigy Still Feels Hard
+## 9) Bridge Legacy Commands With Deferral
+
+When a repo still has legacy commands that are not yet migrated to `effigy.toml`
+tasks, use deferral as a migration bridge instead of maintaining two separate
+runners:
+
+```sh
+effigy defer prep
+effigy defer release -- --dry-run
+```
+
+Configure the fallback in `effigy.toml`:
+
+```toml
+[defer]
+run = "composer global exec effigy -- {request} {args}"
+builtins = ["release"]
+```
+
+Use deferral when:
+- the project does not yet have full `effigy.toml` task coverage
+- you want unresolved selectors to hand off to a legacy runner automatically
+- you need to bypass a built-in temporarily so a legacy command can own that name
+
+Stop using deferral once all critical paths are native Effigy tasks.
+
+Deep dive:
+- [`015-deferral-fallback-migration.md`](./015-deferral-fallback-migration.md)
+- [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
+
+## 10) When Effigy Still Feels Hard
 
 That usually means the built-in path or manifest still needs work.
 

@@ -362,7 +362,64 @@ Fix:
 - correct flag shape and placement,
 - for machine usage, prefer `effigy --json <command>`.
 
-## 7) Deferral Failures
+## 7) Container and System Recovery
+
+### Symptom: container environment is half-up or unresponsive
+
+Diagnosis:
+
+```sh
+effigy container status
+effigy system status
+```
+
+Fix:
+
+```sh
+# Gentle repair: restart services without data loss
+effigy system repair
+
+# Nuclear option: reset runtime state and rebuild from manifest
+effigy system reset-runtime
+```
+
+Use `system repair` when:
+- one service crashed but others are healthy
+- you want to preserve container data and volumes
+- the issue looks like a transient process failure
+
+Use `system reset-runtime` when:
+- compose state is corrupted or inconsistent
+- multiple services are stuck in a bad state
+- `repair` did not resolve the issue
+
+### Symptom: need to extract a bundled service for customization
+
+```sh
+# See what services are available
+effigy service list
+
+# Extract one service into your repo for modification
+effigy service extract postgres --dir ./services
+```
+
+This writes the bundled service definition to `./services/postgres.toml` so you
+can modify it without losing upstream updates.
+
+### Symptom: need container resource usage or ejected compose files
+
+```sh
+# Show resource usage for running containers
+effigy container stats
+
+# Export the generated compose for manual inspection
+effigy container <name> eject
+```
+
+Use `stats` when you need to debug memory/CPU issues.  
+Use `eject` when you need to inspect or manually edit the generated compose configuration.
+
+## 8) Deferral Failures
 
 ### Symptom: `deferral loop detected (...)`
 

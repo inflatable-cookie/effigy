@@ -25,7 +25,7 @@ type -a effigy effigy-dev
 
 `bootstrap:local` installs a local binary and stamps an active build identity.
 Expect `effigy version` to show the stable semver plus a local suffix such as
-`v0.3.1+local.abc123` when you are using a self-built checkout.
+`v0.3.3+local.abc123` when you are using a self-built checkout.
 
 ## Prerequisites
 

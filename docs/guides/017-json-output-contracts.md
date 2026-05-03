@@ -49,9 +49,9 @@ effigy --json test --plan
   "ok": true,
   "binary": {
     "name": "effigy",
-    "version": "0.3.1",
-    "active_version": "v0.3.1+local.abc123",
-    "display_version": "v0.3.1+local.abc123"
+    "version": "0.3.3",
+    "active_version": "v0.3.3+local.abc123",
+    "display_version": "v0.3.3+local.abc123"
   },
   "command": {
     "kind": "task",
@@ -71,9 +71,9 @@ Failure envelope shape:
   "ok": false,
   "binary": {
     "name": "effigy",
-    "version": "0.3.1",
-    "active_version": "v0.3.1+local.abc123",
-    "display_version": "v0.3.1+local.abc123"
+    "version": "0.3.3",
+    "active_version": "v0.3.3+local.abc123",
+    "display_version": "v0.3.3+local.abc123"
   },
   "command": {
     "kind": "task",
@@ -183,20 +183,59 @@ See `026-json-payload-examples.md` for realistic sample responses for each schem
 - `effigy --json scan attention-markers` is the raw attention-marker payload. Use it when you need the full marker list, line numbers, and text snapshot without doctor normalization.
 - `effigy --json scan stale-suppressions` is the raw suppression-marker payload. Use it when you need the full list of inline lint/type/tool bypasses without doctor normalization.
 
-## Contract Validation
+## Contracts Validation Workflow
 
-JSON contract smoke checks:
+Use `effigy contracts` when you need to validate JSON contract artifacts or check
+that Effigy's own command payloads still conform to declared schemas.
+
+### Fast vs full checks
 
 ```bash
+# Quick check: validates only schemas that have fast validators
 effigy contracts check-json --fast
+
+# Complete check: validates every declared schema
 effigy contracts check-json --full
-```
 
-Changed-only mode:
-
-```bash
+# Check only schemas touched since a git ref (great for PRs)
 effigy contracts check-json --fast --changed-only origin/main
 ```
+
+Use `--fast` for daily local checks. Use `--full` before releases or when you
+suspect a broad schema change. Use `--changed-only` in CI to keep PR checks fast.
+
+### Validate a selection artifact
+
+When CI produces a selection payload, gate it before using it:
+
+```bash
+# Generate a selection artifact
+effigy contracts check-json --full --print-selected=json > contracts-selected.json
+
+# Validate it independently
+effigy contracts validate-selection --artifact ./contracts-selected.json
+```
+
+This checks:
+- required keys exist,
+- `count == length(selected)`,
+- `selected` is string-only,
+- `mode` is allowed (`fast` or `full`).
+
+Use this in CI pipelines that pass contract selection data between jobs.
+
+### Print selected schemas
+
+```bash
+# Human-readable list
+effigy contracts check-json --fast --print-selected
+
+# Machine-readable JSON
+effigy contracts check-json --fast --print-selected=json
+```
+
+Use `--print-selected` when you need to know exactly which schemas were validated
+in a given run.
 
 ## Layered Contract Strategy
 

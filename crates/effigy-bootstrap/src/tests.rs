@@ -41,6 +41,7 @@ fn resolve_bootstrap_request_defaults_destination_under_cwd() {
         "git@github.com:inflatable-cookie/effigy.git",
         None,
         None,
+        &[],
         false,
     )
     .expect("resolve bootstrap");
@@ -57,6 +58,7 @@ fn resolve_bootstrap_request_honors_explicit_relative_path() {
         "git@github.com:inflatable-cookie/effigy.git",
         Some(Path::new("./sandbox/effigy-dev")),
         Some("main"),
+        &[PathBuf::from("./dumps/latest.sql")],
         true,
     )
     .expect("resolve bootstrap");
@@ -66,6 +68,7 @@ fn resolve_bootstrap_request_honors_explicit_relative_path() {
     );
     assert_eq!(resolved.destination_source, "explicit-path");
     assert_eq!(resolved.branch.as_deref(), Some("main"));
+    assert_eq!(resolved.db_seed_paths, vec![cwd.join("dumps/latest.sql")]);
     assert!(resolved.start_requested);
 }
 

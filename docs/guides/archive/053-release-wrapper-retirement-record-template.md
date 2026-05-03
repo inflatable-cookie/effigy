@@ -11,9 +11,9 @@ Historical note:
 Do not use this guide as an active procedure for current Effigy releases.
 Current release operation should use the built-in command surface described in:
 
-- [`014-release-checklist-template.md`](./014-release-checklist-template.md)
-- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
-- [`051-release-orchestration.md`](./051-release-orchestration.md)
+- [`014-release-checklist-template.md`](../014-release-checklist-template.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](../049-ci-binary-distribution-and-release-protocol.md)
+- [`051-release-orchestration.md`](../051-release-orchestration.md)
 
 ## Next Step
 

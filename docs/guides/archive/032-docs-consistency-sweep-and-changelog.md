@@ -68,9 +68,9 @@ When adding future guides:
 
 ## Related Guides
 
-- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
-- [`030-contributor-onboarding-15-minutes.md`](./030-contributor-onboarding-15-minutes.md)
-- [`031-docs-navigation-cleanup.md`](./031-docs-navigation-cleanup.md)
+- [`029-docs-qa-checklist-and-validation.md`](../029-docs-qa-checklist-and-validation.md)
+- [`030-contributor-onboarding-15-minutes.md`](../030-contributor-onboarding-15-minutes.md)
+- [`031-docs-navigation-cleanup.md`](../031-docs-navigation-cleanup.md)
 
 ## Next Step
 

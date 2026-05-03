@@ -6,6 +6,41 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- `effigy bootstrap` now accepts repeatable `--db-seed <FILE>` inputs.
+  Supplied SQL dumps are staged into the cloned repo before bootstrap-owned
+  setup runs, exposed through a standard bootstrap env surface, and can drive
+  one-command bring-up through a repo-owned `bootstrap:db-seed` task.
+
+### Changed
+- `effigy bootstrap <repo>` now prefers `[catalog].alias` for the default
+  cloned directory name when the cloned repo defines one and no explicit
+  destination path was supplied.
+- The bundled DecodeLabs bootstrap contract now defaults
+  `[bootstrap].start = "dev"`, so bundle consumers can seed and hand off into
+  the dev shell with one bootstrap command unless they override that start
+  behavior locally.
+- Pruned 7 unused direct dependencies from the root `Cargo.toml`
+  (`anstream`, `indicatif`, `tabled`, `indexmap`, `ignore`, `zeroize`, `rhai`).
+  The workspace still compiles and tests pass; members that need these crates
+  continue to declare them directly.
+
+### Fixed
+- `src/bin/effigy-qa.rs` no longer panics with `.expect()` when `cargo` is not on
+  `PATH`; it now prints a readable error and exits with code 1.
+- Fixed stale version references in user-facing documentation:
+  `README.md`, `docs/guides/017-json-output-contracts.md`,
+  `docs/guides/026-json-payload-examples.md`,
+  `docs/guides/030-contributor-onboarding-15-minutes.md`,
+  `docs/guides/041-distribution-ci-pinning-and-wrapper-migration.md`, and
+  `docs/guides/055-everyday-workflows.md` now show `v0.3.3` instead of
+  `v0.3.0` or `v0.3.1`.
+
+### Fixed
+- The bundled DecodeLabs seed helper now imports dumps through
+  `container_exec(...)` instead of assuming the host running Effigy has a
+  local `mysql` client installed.
+
 ## [0.3.3] - 2026-05-03
 
 ### Fixed

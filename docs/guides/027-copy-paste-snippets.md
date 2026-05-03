@@ -265,7 +265,61 @@ run = "composer global exec effigy -- {request} {args}"
 
 Use only when unresolved selectors must forward to legacy tooling.
 
-## 8) Repository Scanner Config
+See [`015-deferral-fallback-migration.md`](./015-deferral-fallback-migration.md) for the full deferral migration guide.
+
+## 8) Cache Configuration Snippet
+
+```toml
+[tasks.build]
+run = "cargo build --workspace"
+
+[tasks.build.cache]
+enabled = true
+inputs = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+outputs = ["target/debug/my-app"]
+env = ["RUSTFLAGS", "CARGO_PROFILE_DEV_DEBUG"]
+```
+
+Run:
+
+```sh
+# Check if the task would be a cache hit or miss
+effigy cache inspect build
+
+# Invalidate a specific task cache
+effigy cache invalidate build
+
+# Invalidate all caches
+effigy cache invalidate --all
+```
+
+Use when you want deterministic local up-to-date checks for expensive tasks.
+
+## 9) Shell Completion Setup
+
+Generate completions for your shell:
+
+```sh
+# Bash
+effigy completion bash > /usr/local/share/bash-completion/completions/effigy
+
+# Zsh
+effigy completion zsh > /usr/local/share/zsh/site-functions/_effigy
+
+# Fish
+effigy completion fish > ~/.config/fish/completions/effigy.fish
+```
+
+List available selector candidates (useful for IDE integration):
+
+```sh
+effigy completion candidates
+effigy completion candidates --prefix app/
+```
+
+Use when you want tab-completion for task selectors in your shell.
+
+## 10) Repository Scanner Config
 
 ```toml
 [scan.god_files]

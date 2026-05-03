@@ -19,6 +19,8 @@ fn parse_bootstrap_plan_with_path_branch_and_start() {
         "./loophole".to_owned(),
         "--branch".to_owned(),
         "main".to_owned(),
+        "--db-seed".to_owned(),
+        "./infra/bootstrap/latest.sql".to_owned(),
         "--start".to_owned(),
         "--plan".to_owned(),
         "--json".to_owned(),
@@ -32,6 +34,7 @@ fn parse_bootstrap_plan_with_path_branch_and_start() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: Some(PathBuf::from("./loophole")),
                 branch: Some("main".to_owned()),
+                db_seed_paths: vec![PathBuf::from("./infra/bootstrap/latest.sql")],
                 start: true,
                 plan: true,
             },
@@ -55,6 +58,7 @@ fn parse_bootstrap_defaults_to_start_when_unspecified() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
+                db_seed_paths: Vec::new(),
                 start: true,
                 plan: false,
             },
@@ -79,7 +83,39 @@ fn parse_bootstrap_no_start_disables_default_start() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
+                db_seed_paths: Vec::new(),
                 start: false,
+                plan: false,
+            },
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_bootstrap_accepts_repeated_db_seed_flags() {
+    let cmd = parse_command(vec![
+        "bootstrap".to_owned(),
+        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+        "--db-seed".to_owned(),
+        "./db/latest.sql".to_owned(),
+        "--db-seed".to_owned(),
+        "./db/legacy.sql".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Bootstrap(BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+                path: None,
+                branch: None,
+                db_seed_paths: vec![
+                    PathBuf::from("./db/latest.sql"),
+                    PathBuf::from("./db/legacy.sql"),
+                ],
+                start: true,
                 plan: false,
             },
             output_json: false,

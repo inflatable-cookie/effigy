@@ -10,17 +10,21 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "Phase 1 ships root clone/update, optional submodule sync, child repo checkout, bootstrap-local `run` steps, and automatic `[bootstrap].start` execution unless `--no-start` is passed.",
         ],
         &[
-            "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--no-start] [--plan] [--json]",
+            "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>]... [--no-start] [--plan] [--json]",
             "effigy --json bootstrap <GIT_URL> --plan",
         ],
         &[
             (
                 "--path <DIR>",
-                "Override the destination path instead of `./<repo-name>`",
+                "Override the destination path instead of the default clone directory",
             ),
             (
                 "--branch <NAME>",
                 "Override the initial branch/ref target for clone/update",
+            ),
+            (
+                "--db-seed <FILE>",
+                "Stage a SQL dump into the cloned repo for bootstrap-owned database seeding; repeatable",
             ),
             (
                 "--start",
@@ -41,6 +45,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy bootstrap git@github.com:inflatable-cookie/loophole.git --plan",
             "effigy bootstrap https://github.com/inflatable-cookie/loophole.git --path ./loophole --plan",
             "effigy bootstrap git@github.com:inflatable-cookie/loophole.git --branch main --no-start --plan",
+            "effigy bootstrap git@github.com:inflatable-cookie/legacy.git --db-seed ./backups/latest.sql --start",
         ],
     )
 }

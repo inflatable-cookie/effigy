@@ -826,6 +826,7 @@ where
 
     let mut path: Option<PathBuf> = None;
     let mut branch: Option<String> = None;
+    let mut db_seed_paths = Vec::<PathBuf>::new();
     let mut start = true;
     let mut plan = false;
     let mut output_json = false;
@@ -853,6 +854,14 @@ where
                     },
                 )?);
             }
+            "--db-seed" => {
+                db_seed_paths.push(PathBuf::from(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--db-seed".to_owned(),
+                    },
+                )?));
+            }
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ => return Err(unknown_argument(arg)),
         }
@@ -863,6 +872,7 @@ where
             repo_url,
             path,
             branch,
+            db_seed_paths,
             start,
             plan,
         },

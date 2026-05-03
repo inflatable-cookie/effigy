@@ -21,12 +21,18 @@ fn main() {
         }
     };
 
-    let status = Command::new("cargo")
+    let status = match Command::new("cargo")
         .args(["run", "--bin", "effigy", "--", &task, "--repo"])
         .arg(&repo_root)
         .current_dir(repo_root)
         .status()
-        .expect("failed to launch Effigy QA task");
+    {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("failed to launch Effigy QA task: {}", e);
+            exit(1);
+        }
+    };
 
     exit(status.code().unwrap_or(1));
 }

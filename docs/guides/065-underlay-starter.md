@@ -12,13 +12,36 @@ adopt through `[bundle]` in `effigy.toml`:
   dedicated `effigy init` starter; adopt by writing `base = "decodelabs"`
   into `effigy.toml` directly.
 
-Discover and inspect shipped bundles first:
+## Bundle Workflow
+
+The typical bundle adoption path is discover → inspect → adopt (or export):
 
 ```sh
+# 1. Discover what bundles are available
 effigy bundle list
+
+# 2. Inspect a bundle to see its inputs, services, and defaults
 effigy bundle inspect underlay
 effigy bundle inspect decodelabs
+
+# 3a. Adopt a shipped bundle directly (simplest path)
+#     Add to effigy.toml: [bundle] base = "underlay"
+
+# 3b. Or export it for repo-owned modifications
+effigy bundle export underlay --path bundles/underlay
 ```
+
+### When to adopt directly vs export
+
+**Adopt directly (`base = "underlay"`) when:**
+- the shipped defaults match your needs
+- you want automatic updates when Effigy ships new bundle versions
+- your overrides are small (host name, project name, ports)
+
+**Export (`base_path = "bundles/underlay"`) when:**
+- you need to modify service definitions, tasks, or scripts
+- you want version-controlled bundle changes
+- you need to fork a bundle for multiple similar repos
 
 If the shipped shape is close but needs repo-owned changes, export it and
 switch the manifest to `base_path`:

@@ -20,76 +20,44 @@ After that, choose one path below.
 
 ### I want to run tasks and get useful work done
 
-Start here:
+**Start here (everyone):**
 - [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md)
 - [`guides/055-everyday-workflows.md`](./guides/055-everyday-workflows.md)
 
-Then go deeper with:
-- [`guides/016-task-routing-precedence.md`](./guides/016-task-routing-precedence.md)
-- [`guides/023-troubleshooting-and-failure-recipes.md`](./guides/023-troubleshooting-and-failure-recipes.md)
+**Then go deeper:**
+- [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md) — copy-paste patterns for `effigy.toml`
+- [`guides/016-task-routing-precedence.md`](./guides/016-task-routing-precedence.md) — how task names resolve
+- [`guides/023-troubleshooting-and-failure-recipes.md`](./guides/023-troubleshooting-and-failure-recipes.md) — fix common problems
 
-### I want to shape `effigy.toml`
+### I want to run local dev environments with containers and services
 
-Start here:
-- [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md)
+Use this when a repo needs databases, caches, or language workspaces without
+installing them directly on your machine.
 
-Then go deeper with:
-- [`guides/059-manifest-composition-guide.md`](./guides/059-manifest-composition-guide.md)
-- [`guides/050-env-schema-integration.md`](./guides/050-env-schema-integration.md)
-- [`guides/028-migration-quick-paths.md`](./guides/028-migration-quick-paths.md)
-
-### I want host-clean local dev with services, containers, and local domains
-
-Start here:
+**Start here:**
 - [`guides/063-container-system-guide.md`](./guides/063-container-system-guide.md)
 - [`guides/064-system-workspace-and-dev-contract.md`](./guides/064-system-workspace-and-dev-contract.md)
 
-Then go deeper with:
-- [`guides/065-underlay-starter.md`](./guides/065-underlay-starter.md)
-- [`guides/067-catalog-services-reference.md`](./guides/067-catalog-services-reference.md)
-- [`guides/071-catalog-service-authoring.md`](./guides/071-catalog-service-authoring.md)
-- [`guides/069-workspace-host-integration.md`](./guides/069-workspace-host-integration.md)
-- [`guides/070-per-machine-overlays-and-external-mounts.md`](./guides/070-per-machine-overlays-and-external-mounts.md)
+**Then go deeper:**
+- [`guides/065-underlay-starter.md`](./guides/065-underlay-starter.md) — shipped bundle for Rust + Bun stacks
+- [`guides/067-catalog-services-reference.md`](./guides/067-catalog-services-reference.md) — postgres, redis, and more
+- [`guides/069-workspace-host-integration.md`](./guides/069-workspace-host-integration.md) — sibling repo mounts
 
-### I want to define and run proof demos
+### I want to automate, integrate, or go deeper
 
-Start here:
+**For CI and scripts:**
+- [`guides/017-json-output-contracts.md`](./guides/017-json-output-contracts.md) — JSON output for automation
+- [`guides/024-ci-and-automation-recipes.md`](./guides/024-ci-and-automation-recipes.md) — copy-paste CI workflows
+
+**For demos and proofs:**
 - [`guides/058-demo-system-guide.md`](./guides/058-demo-system-guide.md)
 
-Then go deeper with:
-- [`guides/060-consumer-demo-migration-guide.md`](./guides/060-consumer-demo-migration-guide.md)
-- [`guides/022-manifest-cookbook.md`](./guides/022-manifest-cookbook.md)
-
-### I want CI, agents, or other tooling to consume Effigy safely
-
-Start here:
-- [`guides/017-json-output-contracts.md`](./guides/017-json-output-contracts.md)
-- [`guides/024-ci-and-automation-recipes.md`](./guides/024-ci-and-automation-recipes.md)
-
-Then go deeper with:
-- [`guides/026-json-payload-examples.md`](./guides/026-json-payload-examples.md)
-- [`guides/047-agent-and-cross-repo-adoption.md`](./guides/047-agent-and-cross-repo-adoption.md)
-- [`guides/056-northstar-effigy-consumer-repo-contract.md`](./guides/056-northstar-effigy-consumer-repo-contract.md)
-
-### I want release and distribution workflows
-
-Start here:
+**For release workflows:**
 - [`guides/051-release-orchestration.md`](./guides/051-release-orchestration.md)
 - [`guides/062-distribution-system-guide.md`](./guides/062-distribution-system-guide.md)
 
-Then go deeper with:
-- [`guides/049-ci-binary-distribution-and-release-protocol.md`](./guides/049-ci-binary-distribution-and-release-protocol.md)
-- [`guides/052-changelog-workflows-and-northstar-profile.md`](./guides/052-changelog-workflows-and-northstar-profile.md)
-
-### I want to work on the docs themselves
-
-Start here:
+**For contributing to docs:**
 - [`guides/037-documentation-contribution-playbook.md`](./guides/037-documentation-contribution-playbook.md)
-
-Then go deeper with:
-- [`guides/029-docs-qa-checklist-and-validation.md`](./guides/029-docs-qa-checklist-and-validation.md)
-- [`guides/033-style-and-terminology-guide.md`](./guides/033-style-and-terminology-guide.md)
-- [`guides/040-docs-archive-and-deprecation-policy.md`](./guides/040-docs-archive-and-deprecation-policy.md)
 
 ## Other Areas
 

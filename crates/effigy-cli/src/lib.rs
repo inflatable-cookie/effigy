@@ -439,6 +439,7 @@ pub enum BootstrapSubcommand {
         repo_url: String,
         path: Option<PathBuf>,
         branch: Option<String>,
+        db_seed_paths: Vec<PathBuf>,
         start: bool,
         plan: bool,
     },

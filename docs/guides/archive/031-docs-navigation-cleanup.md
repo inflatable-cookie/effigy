@@ -50,9 +50,9 @@ When adding a new guide:
 
 ## Related Guides
 
-- [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
-- [`029-docs-qa-checklist-and-validation.md`](./029-docs-qa-checklist-and-validation.md)
-- [`030-contributor-onboarding-15-minutes.md`](./030-contributor-onboarding-15-minutes.md)
+- [`028-migration-quick-paths.md`](../028-migration-quick-paths.md)
+- [`029-docs-qa-checklist-and-validation.md`](../029-docs-qa-checklist-and-validation.md)
+- [`030-contributor-onboarding-15-minutes.md`](../030-contributor-onboarding-15-minutes.md)
 
 ## Next Step
 
