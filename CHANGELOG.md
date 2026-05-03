@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-05-03
+
 ### Added
 - `effigy deploy export railway` now generates the first bounded Railway
   deployment bundle for Underlay repos: service-local `railway.toml` files
