@@ -61,11 +61,19 @@ fn setup_fake_docker_deferral_runtime(
     );
     let old_path = std::env::var("PATH").ok().unwrap_or_default();
     let lease_home = root.join("lease-home");
+    let temp_home = root.join("fake-home");
+    let gateway_home = temp_home.join(".effigy/gateway");
     fs::create_dir_all(&lease_home).expect("mkdir lease home");
+    fs::create_dir_all(&gateway_home).expect("mkdir fake gateway home");
     let env = EnvGuard::set_many(&[
         ("PATH", Some(format!("{}:{old_path}", bin_dir.display()))),
+        ("HOME", Some(temp_home.display().to_string())),
         ("EFFIGY_EXECUTABLE", Some(fake_effigy.display().to_string())),
         ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        (
+            "EFFIGY_GATEWAY_MKCERT_BIN",
+            Some(bin_dir.join("mkcert").display().to_string()),
+        ),
         (
             "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
             Some("1".to_owned()),
