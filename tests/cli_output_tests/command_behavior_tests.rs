@@ -6697,6 +6697,7 @@ profile = "dev"
 compose_file = "infra/dev/docker-compose.yml"
 project_name = "fixture-web-dev"
 primary_service = "app"
+working_dir = "/workspace"
 
 [containers.web.lifecycle]
 on_task_exit = "stop"
