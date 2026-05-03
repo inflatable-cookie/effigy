@@ -54,10 +54,7 @@ fn setup_fake_docker_deferral_runtime(
     fs::create_dir_all(&lease_home).expect("mkdir lease home");
     let env = EnvGuard::set_many(&[
         ("PATH", Some(format!("{}:{old_path}", bin_dir.display()))),
-        (
-            "EFFIGY_EXECUTABLE",
-            Some(fake_effigy.display().to_string()),
-        ),
+        ("EFFIGY_EXECUTABLE", Some(fake_effigy.display().to_string())),
         ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
         (
             "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
