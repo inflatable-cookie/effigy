@@ -110,9 +110,10 @@ fn execute_bootstrap_request(
     let mut effective_db_seeds = request.db_seeds.clone();
     let mut db_seed_prompt_checked = false;
     let mut crate_request = request.clone();
-    if !effective_db_seeds.is_empty() && request.start_requested {
-        crate_request.start_requested = false;
-    }
+    // The runner owns start ordering so bootstrap-owned DB seed work,
+    // whether explicit or collected interactively, always runs before
+    // `[bootstrap].start`.
+    crate_request.start_requested = false;
 
     let mut result = crate_execute_bootstrap(
         &crate_request,
