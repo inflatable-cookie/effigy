@@ -55,8 +55,10 @@ fn callbacks() -> HostCallbacks {
             Ok(payload.to_string())
         }),
         container_up: Arc::new(|_, name, detach| Ok(format!("up:{name}:{detach}"))),
-        container_down: Arc::new(|_, name| Ok(format!("down:{name}"))),
-        container_shell: Arc::new(|_, name, command| Ok(format!("shell:{name}:{command}"))),
+        container_down: Arc::new(|_, name, all| Ok(format!("down:{name}:{all}"))),
+        container_shell: Arc::new(|_, name, service, command| {
+            Ok(format!("shell:{name}:{}:{command}", service.unwrap_or("")))
+        }),
         container_exec: Arc::new(|_, name, service, command| {
             Ok(HostCommandOutput {
                 status: 0,
@@ -116,8 +118,8 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
             let json = run_effigy_json(["demo", "list"]);
             if json["json"] != true { throw("json"); }
             if container_up("web", true) != "up:web:true" { throw("up"); }
-            if container_down("web") != "down:web" { throw("down"); }
-            if container_shell("web", "echo hi") != "shell:web:echo hi" { throw("shell"); }
+            if container_down("web") != "down:web:false" { throw("down"); }
+            if container_shell("web", "echo hi") != "shell:web::echo hi" { throw("shell"); }
             let exec = container_exec("web", "postgres", ["psql", "-c", "select 1"]);
             if !exec["success"] || exec["stdout"] != "exec:web:postgres:psql,-c,select 1" { throw("exec"); }
             let default_service = container_exec("web", ["pwd"]);

@@ -35,7 +35,7 @@ Policy:
 | --- | --- | --- |
 | Config | `config_raw`, `config_effective`, `config_get` | Exposed |
 | Tasks | `run_task`, `tasks_list`, `task_resolve`, `task_info`, `catalog_tasks` | Exposed |
-| Container lifecycle | `container_up`, `container_down`, `container_shell`, `container_exec` | Exposed |
+| Container lifecycle | `container_up`, `container_down`, `container_down_all`, `container_shell`, `container_shell` (with service), `container_exec` | Exposed |
 | Container inspection | `container_status`, `container_status_all`, `container_logs`, `container_stats_all` | Exposed |
 | Container data | `container_data_list`, `container_data_export`, `container_data_import`, `container_data_pull_production` | Exposed |
 | Container reset/eject | `container_reset`, `container_eject` | Exposed |
@@ -44,8 +44,15 @@ Policy:
 | Services | `service_list`, `service_extract` | Exposed |
 | Gateway | `gateway_status`, `gateway_setup_tls`, `gateway_up`, `gateway_down` | Exposed |
 | Doctor | `doctor` | Exposed |
-| Scan | `scan_god_files`, `scan_large_files`, `scan_generated`, `scan_generated_assets`, `scan_generated_in_src`, `scan_duplicate_blocks`, `scan_comment_ratio`, `scan_attention_markers`, `scan_stale_suppressions` | Exposed |
+| Scan | `scan_god_files`, `scan_generated_assets`, `scan_generated_in_src`, `scan_duplicate_blocks`, `scan_comment_ratio`, `scan_attention_markers`, `scan_stale_suppressions` | Exposed |
 | Cache | `cache_inspect`, `cache_invalidate` | Exposed |
+| Contracts | `contracts_check_json`, `contracts_validate_selection` | Exposed |
+| Deploy | `deploy_model`, `deploy_export_render`, `deploy_export_railway` | Exposed |
+| System | `system_status`, `system_logs` | Exposed |
+| Demo | `demo_list`, `demo_inspect`, `demo_history` | Exposed |
+| Changelog | `changelog_validate`, `changelog_extract` | Exposed |
+| Test | `test_plan` | Exposed |
+| Unlock | `unlock` | Exposed |
 
 ## Intentionally CLI-First
 
@@ -110,6 +117,91 @@ HTTP helpers return:
   path: "/repo/tmp/download.bin",
   size: 1234,
   headers: #{},
+}
+```
+
+## New Helpers
+
+### Structured Task Output
+
+- `run_task_json(task, args)` — like `run_task` but parses the task output as JSON
+  and returns a Rhai dynamic value.
+
+### Config with Default
+
+- `config_get_or(path, default)` — like `config_get` but returns `default` instead
+  of `()` when the path is missing or null.
+
+### HTTP Convenience
+
+- `http_post(url, body)` — POST with a plain string body; equivalent to
+  `http_post(url, #{ body: "..." })`.
+
+### Envfile Detail
+
+- `env_file_get_detail(path, key)` — returns a map with `file_exists`, `key_exists`,
+  and `value` fields so scripts can distinguish missing files from missing keys.
+
+### Container Service Targeting
+
+- `container_shell(name, command)` — shell in the default service
+- `container_shell(name, service, command)` — shell in a specific service
+- `container_down_all()` — stop all containers (equivalent to `effigy container --all down`)
+
+### Crypto and Random
+
+- `generate_jwt_env_keys()` — returns a map with `private_key` and `public_key`
+- `generate_random_base64(size)` — returns a secure random base64 string
+
+## Return Shapes
+
+### Process-like helpers
+
+Process-like helpers return:
+
+```rhai
+#{
+  status: 0,
+  success: true,
+  stdout: "...",
+  stderr: "...",
+}
+```
+
+For subprocess helpers:
+
+- `run_process(...)` captures output and returns it after exit
+- `run_process_stream(...)` streams output live and does not capture it
+- `run_process_tee(...)` streams output live and also returns captured
+  `stdout` / `stderr`
+- all three accept an optional options map with `cwd`, `env`, and `stdin_file`
+
+### Effigy escape hatches
+
+`run_effigy(...)` returns:
+
+```rhai
+#{
+  status: 0,
+  success: true,
+  output: "...",
+  error: "",
+  rendered_output: "",
+}
+```
+
+`run_effigy_json(...)` returns the parsed JSON payload directly as a Rhai
+map/array value.
+
+### Envfile detail
+
+`env_file_get_detail(...)` returns:
+
+```rhai
+#{
+  file_exists: true,
+  key_exists: true,
+  value: "...",
 }
 ```
 

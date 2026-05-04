@@ -10,7 +10,7 @@ use effigy_core::path_error_text::{failed_to_read_path, failed_to_write_path};
 use effigy_core::shell::shell_quote;
 use effigy_env::dotenv::parse_dotenv_entries;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::{
     allocate_temp_dir, dynamic_array_to_strings, effigy_result_map, emit_host_log,
@@ -444,6 +444,32 @@ pub(super) fn register_host_api(
             remove_env_file_entry(&path, key.as_str())
         },
     );
+    let file_context = context.clone();
+    engine.register_fn(
+        "env_file_get_detail",
+        move |path: ImmutableString, key: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            let mut map = Map::new();
+            if !path.exists() {
+                map.insert("file_exists".into(), Dynamic::from_bool(false));
+                map.insert("key_exists".into(), Dynamic::from_bool(false));
+                map.insert("value".into(), Dynamic::from(""));
+                return Ok(map);
+            }
+            map.insert("file_exists".into(), Dynamic::from_bool(true));
+            let contents = std::fs::read_to_string(&path)
+                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
+            let entries = parse_dotenv_entries(&contents);
+            if let Some(value) = entries.get(key.as_str()) {
+                map.insert("key_exists".into(), Dynamic::from_bool(true));
+                map.insert("value".into(), Dynamic::from(value.clone()));
+            } else {
+                map.insert("key_exists".into(), Dynamic::from_bool(false));
+                map.insert("value".into(), Dynamic::from(""));
+            }
+            Ok(map)
+        },
+    );
 
     engine.register_fn(
         "json_parse",
@@ -595,6 +621,14 @@ pub(super) fn register_host_api(
             run_http_request("POST", url.as_str(), options)
         },
     );
+    engine.register_fn(
+        "http_post",
+        move |url: ImmutableString, body: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+            let mut options = Map::new();
+            options.insert("body".into(), body.into());
+            run_http_request("POST", url.as_str(), options)
+        },
+    );
     let download_context = context.clone();
     engine.register_fn(
         "http_download",
@@ -629,6 +663,22 @@ pub(super) fn register_host_api(
                 &dynamic_array_to_strings(&args)?,
             )
             .map_err(rhai_runtime_error)
+        },
+    );
+    let task_json_context = context.clone();
+    let task_json_callbacks = callbacks.clone();
+    engine.register_fn(
+        "run_task_json",
+        move |task: ImmutableString, args: Array| -> Result<Dynamic, Box<EvalAltResult>> {
+            let output = (task_json_callbacks.run_task)(
+                &task_json_context.cwd,
+                task.as_str(),
+                &dynamic_array_to_strings(&args)?,
+            )
+            .map_err(rhai_runtime_error)?;
+            let value: serde_json::Value = serde_json::from_str(&output)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
         },
     );
 
@@ -681,6 +731,29 @@ pub(super) fn register_host_api(
         "path",
         context.clone(),
         callbacks.clone(),
+    );
+    let config_or_context = context.clone();
+    let config_or_callbacks = callbacks.clone();
+    engine.register_fn(
+        "config_get_or",
+        move |path: ImmutableString, default: Dynamic| -> Result<Dynamic, Box<EvalAltResult>> {
+            let output = (config_or_callbacks.run_feature)(
+                &config_or_context.repo_root,
+                "config.get",
+                json!({ "path": path.as_str() }),
+            )
+            .map_err(|error| rhai_runtime_error(error.message))?;
+            let value: serde_json::Value = serde_json::from_str(&output)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            let Some(found_value) = value.get("value") else {
+                return Ok(default);
+            };
+            if found_value.is_null() {
+                return Ok(default);
+            }
+            rhai::serde::to_dynamic(found_value.clone())
+                .map_err(|error| rhai_runtime_error(error.to_string()))
+        },
     );
 
     register_feature_no_args(
@@ -997,20 +1070,6 @@ pub(super) fn register_host_api(
     );
     register_feature_options(
         engine,
-        "scan_large_files",
-        "scan.god_files",
-        context.clone(),
-        callbacks.clone(),
-    );
-    register_feature_options(
-        engine,
-        "scan_generated",
-        "scan.generated_assets",
-        context.clone(),
-        callbacks.clone(),
-    );
-    register_feature_options(
-        engine,
         "scan_generated_assets",
         "scan.generated_assets",
         context.clone(),
@@ -1073,6 +1132,105 @@ pub(super) fn register_host_api(
         callbacks.clone(),
     );
 
+    register_feature_options(
+        engine,
+        "contracts_check_json",
+        "contracts.check_json",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "contracts_validate_selection",
+        "contracts.validate_selection",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_no_args(
+        engine,
+        "deploy_model",
+        "deploy.model",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "deploy_export_render",
+        "deploy.export_render",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "deploy_export_railway",
+        "deploy.export_railway",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "system_status",
+        "system.status",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "system_logs",
+        "system.logs",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "demo_list",
+        "demo.list",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "demo_inspect",
+        "demo.inspect",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "demo_history",
+        "demo.history",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "changelog_validate",
+        "changelog.validate",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "changelog_extract",
+        "changelog.extract",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "unlock",
+        "unlock",
+        context.clone(),
+        callbacks.clone(),
+    );
+    register_feature_options(
+        engine,
+        "test_plan",
+        "test.plan",
+        context.clone(),
+        callbacks.clone(),
+    );
+
     let container_context = context.clone();
     let container_callbacks = callbacks.clone();
     engine.register_fn(
@@ -1087,11 +1245,20 @@ pub(super) fn register_host_api(
     engine.register_fn(
         "container_down",
         move |name: ImmutableString| -> Result<String, Box<EvalAltResult>> {
-            (container_callbacks.container_down)(&container_context.repo_root, name.as_str())
+            (container_callbacks.container_down)(&container_context.repo_root, name.as_str(), false)
                 .map_err(rhai_runtime_error)
         },
     );
-    let container_context = context;
+    let container_context = context.clone();
+    let container_callbacks = callbacks.clone();
+    engine.register_fn(
+        "container_down_all",
+        move || -> Result<String, Box<EvalAltResult>> {
+            (container_callbacks.container_down)(&container_context.repo_root, "", true)
+                .map_err(rhai_runtime_error)
+        },
+    );
+    let container_context = context.clone();
     let container_exec_context = container_context.clone();
     let container_exec_callbacks = callbacks.clone();
     engine.register_fn(
@@ -1127,14 +1294,34 @@ pub(super) fn register_host_api(
             ))
         },
     );
+    let container_shell_context = context.clone();
+    let container_shell_callbacks = callbacks.clone();
     engine.register_fn(
         "container_shell",
         move |name: ImmutableString,
               command: ImmutableString|
               -> Result<String, Box<EvalAltResult>> {
-            (callbacks.container_shell)(
-                &container_context.repo_root,
+            (container_shell_callbacks.container_shell)(
+                &container_shell_context.repo_root,
                 name.as_str(),
+                None,
+                command.as_str(),
+            )
+            .map_err(rhai_runtime_error)
+        },
+    );
+    let container_shell_context = context;
+    let container_shell_callbacks = callbacks.clone();
+    engine.register_fn(
+        "container_shell",
+        move |name: ImmutableString,
+              service: ImmutableString,
+              command: ImmutableString|
+              -> Result<String, Box<EvalAltResult>> {
+            (container_shell_callbacks.container_shell)(
+                &container_shell_context.repo_root,
+                name.as_str(),
+                Some(service.as_str()),
                 command.as_str(),
             )
             .map_err(rhai_runtime_error)

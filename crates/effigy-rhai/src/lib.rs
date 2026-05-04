@@ -34,8 +34,10 @@ type EffigyRunner =
 type FeatureRunner =
     Arc<dyn Fn(&Path, &str, Value) -> Result<String, EffigyCommandError> + Send + Sync>;
 type ContainerUpRunner = Arc<dyn Fn(&Path, &str, bool) -> Result<String, String> + Send + Sync>;
-type ContainerDownRunner = Arc<dyn Fn(&Path, &str) -> Result<String, String> + Send + Sync>;
-type ContainerShellRunner = Arc<dyn Fn(&Path, &str, &str) -> Result<String, String> + Send + Sync>;
+type ContainerDownRunner =
+    Arc<dyn Fn(&Path, &str, bool) -> Result<String, String> + Send + Sync>;
+type ContainerShellRunner =
+    Arc<dyn Fn(&Path, &str, Option<&str>, &str) -> Result<String, String> + Send + Sync>;
 type ContainerExecRunner = Arc<
     dyn Fn(&Path, &str, Option<&str>, &[String]) -> Result<HostCommandOutput, String> + Send + Sync,
 >;

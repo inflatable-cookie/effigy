@@ -8,9 +8,12 @@ use effigy_rhai::{
 };
 
 use effigy_cli::{
-    BundleArgs, BundleSubcommand, ContainerArgs, ContainerDataSubcommand, ContainerSubcommand,
-    DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand,
-    InternalRhaiArgs, ServiceArgs, ServiceSubcommand, TaskInvocation, TasksArgs,
+    BundleArgs, BundleSubcommand, ChangelogArgs, ChangelogSubcommand, ContainerArgs,
+    ContainerDataSubcommand, ContainerSubcommand, ContractsArgs, ContractsCheckMode,
+    ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoListQuery, DemoSubcommand,
+    DeployArgs, DeployExportProvider, DeploySubcommand, DocsArgs, DocsBlockRequirement,
+    DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, InternalRhaiArgs, ServiceArgs,
+    ServiceSubcommand, SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs,
 };
 use serde_json::Value;
 
@@ -107,22 +110,22 @@ fn host_callbacks() -> HostCallbacks {
             )
             .map_err(|error| error.to_string())
         }),
-        container_down: Arc::new(|repo_root, name| {
+        container_down: Arc::new(|repo_root, name, all| {
             run_container_helper(
                 repo_root,
                 ContainerSubcommand::Down {
-                    name: Some(name.to_owned()),
-                    all: false,
+                    name: if all { None } else { Some(name.to_owned()) },
+                    all,
                 },
             )
             .map_err(|error| error.to_string())
         }),
-        container_shell: Arc::new(|repo_root, name, command| {
+        container_shell: Arc::new(|repo_root, name, service, command| {
             run_container_helper(
                 repo_root,
                 ContainerSubcommand::Shell {
                     name: Some(name.to_owned()),
-                    service: None,
+                    service: service.map(str::to_owned),
                     command: Some(command.to_owned()),
                 },
             )
@@ -426,6 +429,176 @@ fn run_rhai_feature(
         "cache.inspect" => run_builtin_json(repo_root, "cache", cache_inspect_args(&options)?),
         "cache.invalidate" => {
             run_builtin_json(repo_root, "cache", cache_invalidate_args(&options)?)
+        }
+        "contracts.check_json" => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Contracts(ContractsArgs {
+                subcommand: ContractsSubcommand::CheckJson {
+                    index_path: path_option(&options, "index")?,
+                    mode: match string_option(&options, "mode")?.as_deref() {
+                        Some("full") => ContractsCheckMode::Full,
+                        _ => ContractsCheckMode::Fast,
+                    },
+                    changed_only_base: string_option(&options, "changed_only")?,
+                    print_selected: match string_option(&options, "print_selected")?.as_deref() {
+                        Some("json") => ContractsSelectionPrintMode::Json,
+                        Some("text") => ContractsSelectionPrintMode::Text,
+                        _ => ContractsSelectionPrintMode::None,
+                    },
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        "contracts.validate_selection" => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Contracts(ContractsArgs {
+                subcommand: ContractsSubcommand::ValidateSelection {
+                    contract_path: path_option(&options, "contract")?,
+                    artifact_path: path_option(&options, "artifact")?,
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        "deploy.model" => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Model,
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        "deploy.export_render" => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Export {
+                    provider: DeployExportProvider::Render,
+                    path: PathBuf::from(required_string(&options, "path")?),
+                    plan: bool_option(&options, "plan")?.unwrap_or(false),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        "deploy.export_railway" => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Export {
+                    provider: DeployExportProvider::Railway,
+                    path: PathBuf::from(required_string(&options, "path")?),
+                    plan: bool_option(&options, "plan")?.unwrap_or(false),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        "system.status" => run_typed_command(
+            repo_root,
+            effigy_cli::Command::System(SystemArgs {
+                subcommand: SystemSubcommand::Status,
+                system: string_option(&options, "system")?,
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        "system.logs" => {
+            if bool_option(&options, "follow")?.unwrap_or(false) {
+                return Err(RunnerError::task_invocation(
+                    "`system_logs` does not support `follow = true` from Rhai",
+                ));
+            }
+            run_typed_command(
+                repo_root,
+                effigy_cli::Command::System(SystemArgs {
+                    subcommand: SystemSubcommand::Logs { follow: false },
+                    system: string_option(&options, "system")?,
+                    repo_override: Some(repo_root.to_path_buf()),
+                    output_json: true,
+                }),
+            )
+        }
+        "demo.list" => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Demo(DemoArgs {
+                subcommand: DemoSubcommand::List {
+                    query: DemoListQuery {
+                        search: string_option(&options, "search")?,
+                        owner: string_option(&options, "owner")?,
+                        tag: string_option(&options, "tag")?,
+                        mode: None,
+                        cover: string_option(&options, "cover")?,
+                        status: None,
+                        gap: None,
+                        stale_only: bool_option(&options, "stale_only")?.unwrap_or(false),
+                        group_by: None,
+                    },
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        "demo.inspect" => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Demo(DemoArgs {
+                subcommand: DemoSubcommand::Inspect {
+                    demo_id: required_string(&options, "demo_id")?,
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        "demo.history" => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Demo(DemoArgs {
+                subcommand: DemoSubcommand::History {
+                    demo_id: required_string(&options, "demo_id")?,
+                    limit: usize_option(&options, "limit")?,
+                    outcome: match string_option(&options, "outcome")?.as_deref() {
+                        Some("passed") => Some(effigy_cli::DemoHistoryOutcome::Passed),
+                        Some("failed") => Some(effigy_cli::DemoHistoryOutcome::Failed),
+                        Some("terminated") => Some(effigy_cli::DemoHistoryOutcome::Terminated),
+                        _ => None,
+                    },
+                    attempt_id: string_option(&options, "attempt_id")?,
+                    attempt_ordinal: usize_option(&options, "attempt_ordinal")?,
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        "changelog.validate" => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Changelog(ChangelogArgs {
+                subcommand: ChangelogSubcommand::Validate,
+                file: path_option(&options, "file")?,
+                output_json: true,
+            }),
+        ),
+        "changelog.extract" => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Changelog(ChangelogArgs {
+                subcommand: ChangelogSubcommand::Extract {
+                    version: required_string(&options, "version")?,
+                },
+                file: path_option(&options, "file")?,
+                output_json: true,
+            }),
+        ),
+        "unlock" => {
+            let mut args = vec!["unlock".to_owned()];
+            if bool_option(&options, "all")?.unwrap_or(false) {
+                args.push("--all".to_owned());
+            }
+            args.extend(string_array(&options, "scopes")?);
+            run_builtin_json(repo_root, "unlock", args)
+        }
+        "test.plan" => {
+            let mut args = vec!["test".to_owned(), "--plan".to_owned()];
+            if let Some(suite) = string_option(&options, "suite")? {
+                args.push(suite);
+            }
+            run_builtin_json(repo_root, "test", args)
         }
         other => Err(RunnerError::task_invocation(format!(
             "unknown Rhai feature `{other}`"

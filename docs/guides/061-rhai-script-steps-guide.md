@@ -157,8 +157,6 @@ Current v1 helpers:
   - `gateway_down(options_map)`
   - `doctor(options_map)`
   - `scan_god_files(options_map)`
-  - `scan_large_files(options_map)`
-  - `scan_generated(options_map)`
   - `scan_generated_assets(options_map)`
   - `scan_generated_in_src(options_map)`
   - `scan_duplicate_blocks(options_map)`
@@ -167,8 +165,31 @@ Current v1 helpers:
   - `scan_stale_suppressions(options_map)`
   - `cache_inspect(options_map)`
   - `cache_invalidate(options_map)`
+  - `contracts_check_json(options_map)`
+  - `contracts_validate_selection(options_map)`
+  - `deploy_model()`
+  - `deploy_export_render(options_map)`
+  - `deploy_export_railway(options_map)`
+  - `system_status(options_map)`
+  - `system_logs(options_map)`
+  - `demo_list(options_map)`
+  - `demo_inspect(options_map)`
+  - `demo_history(options_map)`
+  - `changelog_validate(options_map)`
+  - `changelog_extract(options_map)`
+  - `test_plan(options_map)`
+  - `unlock(options_map)`
+  - `container_down_all()`
+  - `container_shell(name, command)`
+  - `container_shell(name, service, command)`
   - `run_effigy(args_array)`
   - `run_effigy_json(args_array)`
+  - `run_task_json(task, args_array)`
+  - `config_get_or(path_string, default_value)`
+  - `http_post(url, body_string)`
+  - `env_file_get_detail(path, key)`
+  - `generate_jwt_env_keys()`
+  - `generate_random_base64(size)`
 
 `run_process(...)` is structured subprocess execution, not shell parsing.
 
