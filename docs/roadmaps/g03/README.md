@@ -34,7 +34,7 @@ Current milestones:
 - [`017-architecture-map-and-authority-surface-repair.md`](./017-architecture-map-and-authority-surface-repair.md) (complete; the live package and authority surfaces now match the post-hardening runtime/container seams closely enough to guide the final proof lane)
 - [`018-v1-runtime-hardening-proof-and-stress-matrix.md`](./018-v1-runtime-hardening-proof-and-stress-matrix.md) (complete; the runtime/container hardening program now closes on bounded executable proof instead of refactor optimism)
 - [`019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md`](./019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md) (complete; the runtime/container hardening foundation is proven and documented, and the `v0.x` release contract remains live while additional features and tidy-up continue in the `v0.3.x` line)
-- [`020-distribution-channel-proof-and-first-publish-closeout.md`](./020-distribution-channel-proof-and-first-publish-closeout.md) (planned; after the stable release contract is explicit, Effigy should close the channel story on first-publish and upgrade evidence instead of backlog theory)
+- [`020-distribution-channel-proof-and-first-publish-closeout.md`](./020-distribution-channel-proof-and-first-publish-closeout.md) (complete; the distribution channel story is closed with Homebrew and GitHub Releases proven, source install documented, and crates.io intentionally excluded)
 - [`021-root-manifest-dependency-pruning.md`](./021-root-manifest-dependency-pruning.md) (complete; removed 7 unused direct dependencies from root `Cargo.toml`, workspace compiles and tests pass)
 - [`022-binary-entrypoint-hardening.md`](./022-binary-entrypoint-hardening.md) (complete; `effigy-qa` no longer panics on missing `cargo`, exits gracefully with code 1)
 - [`023-documentation-drift-repair.md`](./023-documentation-drift-repair.md) (complete; fixed stale `v0.3.0`/`v0.3.1` references in README and 5 guide files)
@@ -55,7 +55,7 @@ Rules:
   lanes
 - no strict lane is active right now
 - `g03.019` through `g03.026` are now complete; the next planned seams are
-  `g03.020` (distribution channel proof) and any new work promoted from backlog
+  any new work promoted from backlog or a new generation rollover assessment
 
 ## Next Task
 

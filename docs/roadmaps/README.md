@@ -71,7 +71,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/017-architecture-map-and-authority-surface-repair.md` is complete; the live package and authority surfaces now match the post-hardening runtime/container seams closely enough to guide the final proof lane.
 - `g03/018-v1-runtime-hardening-proof-and-stress-matrix.md` is complete; the runtime/container core now has a bounded executable proof matrix for the historical brittle seams that blocked `v1.0` confidence.
 - `g03/019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md` is complete; the runtime/container hardening foundation is now proven and documented, and the `v0.x` release contract remains the live authority surface while additional features and tidy-up work continue in the `v0.3.x` line.
-- `g03/020-distribution-channel-proof-and-first-publish-closeout.md` is planned; once the stable release contract exists, the next release/distribution lane should close on direct first-publish and upgrade evidence.
+- `g03/020-distribution-channel-proof-and-first-publish-closeout.md` is complete; the distribution channel story is closed with Homebrew and GitHub Releases proven, source install documented, and crates.io intentionally excluded.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
