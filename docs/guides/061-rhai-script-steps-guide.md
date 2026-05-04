@@ -63,133 +63,133 @@ Current v1 helpers:
   - `task_name`
 - env and path helpers:
   - `env(name)`
-  - `now_utc()`
-  - `path_join(base, child)`
-  - `path_file_name(path)`
-  - `trim_string(value)`
-  - `string_contains(value, needle)`
-  - `string_starts_with(value, prefix)`
-  - `string_ends_with(value, suffix)`
-  - `replace_string(value, from, to)`
-  - `split_lines(value)`
+  - `time::now_utc()`
+  - `path::join(base, child)`
+  - `path::file_name(path)`
+  - `str::trim(value)`
+  - `str::contains(value, needle)`
+  - `str::starts_with(value, prefix)`
+  - `str::ends_with(value, suffix)`
+  - `str::replace(value, from, to)`
+  - `str::split_lines(value)`
 - file helpers:
-  - `make_temp_dir(prefix)`
-  - `append_file(path, contents)`
-  - `read_file(path)`
-  - `read_lines(path)`
-  - `write_file(path, contents)`
-  - `write_lines(path, lines_array)`
-  - `copy_file(source, destination)`
-  - `copy_if_missing(source, destination)`
-  - `env_file_entries(path)`
-  - `env_file_get(path, key)`
-  - `env_file_remove(path, key)`
-  - `env_file_set(path, key, value)`
-  - `path_exists(path)`
-  - `is_dir(path)`
-  - `list_dir(path)`
-  - `is_file(path)`
-  - `is_symlink(path)`
-  - `search_files(root, pattern, options_map)`
-  - `create_dir(path)`
-  - `remove_path(path)`
-  - `move_path(source, destination)`
-  - `replace_in_file(path, from, to)`
-  - `create_symlink(target, link)`
+  - `fs::make_temp_dir(prefix)`
+  - `fs::append_file(path, contents)`
+  - `fs::read_file(path)`
+  - `fs::read_lines(path)`
+  - `fs::write_file(path, contents)`
+  - `fs::write_lines(path, lines_array)`
+  - `fs::copy(source, destination)`
+  - `fs::copy_if_missing(source, destination)`
+  - `fs::env_file_entries(path)`
+  - `fs::env_file_get(path, key)`
+  - `fs::env_file_remove(path, key)`
+  - `fs::env_file_set(path, key, value)`
+  - `fs::exists(path)`
+  - `fs::is_dir(path)`
+  - `fs::list(path)`
+  - `fs::is_file(path)`
+  - `fs::is_symlink(path)`
+  - `search::files(root, pattern, options_map)`
+  - `fs::create_dir(path)`
+  - `fs::remove(path)`
+  - `fs::move_path(source, destination)`
+  - `fs::replace_in_file(path, from, to)`
+  - `fs::create_symlink(target, link)`
 - structured data helpers:
-  - `json_parse(raw)`
-  - `json_stringify(value)`
-  - `toml_parse(raw)`
-  - `toml_stringify(value)`
+  - `json::parse(raw)`
+  - `json::stringify(value)`
+  - `toml::parse(raw)`
+  - `toml::stringify(value)`
 - config helpers:
-  - `config_raw()`
-  - `config_effective()`
-  - `config_get(path_string)`
+  - `config::raw()`
+  - `config::effective()`
+  - `config::get(path_string)`
 - execution helpers:
-  - `stop_requested()`
-  - `process_id()`
-  - `sleep_ms(milliseconds)`
-  - `run_process(program, args_array)` / `run_process(program, args_array, options_map)`
-  - `run_process_stream(program, args_array)` / `run_process_stream(program, args_array, options_map)`
-  - `run_process_tee(program, args_array)` / `run_process_tee(program, args_array, options_map)`
-  - `http_get(url)`
-  - `http_post(url)` / `http_post(url, options_map)`
-  - `http_request(method, url, options_map)`
-  - `http_download(url, path)` / `http_download(url, path, options_map)`
-  - `run_task(task, args_array)`
-  - `tasks_list()` / `tasks_list(options_map)`
-  - `task_resolve(selector)`
-  - `task_info(selector)`
-  - `container_up(name, detach_bool)`
-  - `container_down(name)`
-  - `container_shell(name, command_string)`
-  - `container_exec(name, args_array)`
-  - `container_exec(name, service, args_array)`
-  - `container_status(name)`
-  - `container_status_all()`
-  - `container_logs(name, options_map)`
-  - `container_reset(name, options_map)`
-  - `container_data_list(name)`
-  - `container_data_export(name, volume, path)`
-  - `container_data_import(name, volume, path)`
-  - `container_data_pull_production(name, options_map)`
-  - `container_eject(name)`
-  - `container_stats_all()`
-  - `docs_check_links(options_map)`
-  - `docs_check_json_examples(options_map)`
-  - `docs_check_headings(options_map)`
-  - `docs_check_paths(options_map)`
-  - `docs_check_contains(options_map)`
-  - `docs_check_forbidden(options_map)`
-  - `docs_check_index(options_map)`
-  - `docs_check_next_action(options_map)`
-  - `docs_check_workflow_paths(options_map)`
-  - `docs_add_log_index(options_map)`
-  - `bundle_list()`
-  - `bundle_inspect(name)`
-  - `bundle_export(name, path)`
-  - `service_list()`
-  - `service_extract(name, options_map)`
-  - `catalog_tasks()` / `catalog_tasks(options_map)`
-  - `gateway_status()`
-  - `gateway_setup_tls(options_map)`
-  - `gateway_up(options_map)`
-  - `gateway_down(options_map)`
-  - `doctor(options_map)`
-  - `scan_god_files(options_map)`
-  - `scan_generated_assets(options_map)`
-  - `scan_generated_in_src(options_map)`
-  - `scan_duplicate_blocks(options_map)`
-  - `scan_comment_ratio(options_map)`
-  - `scan_attention_markers(options_map)`
-  - `scan_stale_suppressions(options_map)`
-  - `cache_inspect(options_map)`
-  - `cache_invalidate(options_map)`
-  - `contracts_check_json(options_map)`
-  - `contracts_validate_selection(options_map)`
-  - `deploy_model()`
-  - `deploy_export_render(options_map)`
-  - `deploy_export_railway(options_map)`
-  - `system_status(options_map)`
-  - `system_logs(options_map)`
-  - `demo_list(options_map)`
-  - `demo_inspect(options_map)`
-  - `demo_history(options_map)`
-  - `changelog_validate(options_map)`
-  - `changelog_extract(options_map)`
-  - `test_plan(options_map)`
-  - `unlock(options_map)`
-  - `container_down_all()`
-  - `container_shell(name, command)`
-  - `container_shell(name, service, command)`
-  - `run_effigy(args_array)`
-  - `run_effigy_json(args_array)`
-  - `run_task_json(task, args_array)`
-  - `config_get_or(path_string, default_value)`
-  - `http_post(url, body_string)`
-  - `env_file_get_detail(path, key)`
-  - `generate_jwt_env_keys()`
-  - `generate_random_base64(size)`
+  - `time::stop_requested()`
+  - `time::process_id()`
+  - `time::sleep_ms(milliseconds)`
+  - `process::run(program, args_array)` / `process::run(program, args_array, options_map)`
+  - `process::stream(program, args_array)` / `process::stream(program, args_array, options_map)`
+  - `process::tee(program, args_array)` / `process::tee(program, args_array, options_map)`
+  - `http::get(url)`
+  - `http::post(url)` / `http::post(url, options_map)`
+  - `http::request(method, url, options_map)`
+  - `http::download(url, path)` / `http::download(url, path, options_map)`
+  - `task::run(task, args_array)`
+  - `task::list()` / `task::list(options_map)`
+  - `task::resolve(selector)`
+  - `task::info(selector)`
+  - `container::up(name, detach_bool)`
+  - `container::down(name)`
+  - `container::shell(name, command_string)`
+  - `container::exec(name, args_array)`
+  - `container::exec(name, service, args_array)`
+  - `container::status(name)`
+  - `container::status_all()`
+  - `container::logs(name, options_map)`
+  - `container::reset(name, options_map)`
+  - `container::data_list(name)`
+  - `container::data_export(name, volume, path)`
+  - `container::data_import(name, volume, path)`
+  - `container::data_pull_production(name, options_map)`
+  - `container::eject(name)`
+  - `container::stats_all()`
+  - `docs::check_links(options_map)`
+  - `docs::check_json_examples(options_map)`
+  - `docs::check_headings(options_map)`
+  - `docs::check_paths(options_map)`
+  - `docs::check_contains(options_map)`
+  - `docs::check_forbidden(options_map)`
+  - `docs::check_index(options_map)`
+  - `docs::check_next_action(options_map)`
+  - `docs::check_workflow_paths(options_map)`
+  - `docs::add_log_index(options_map)`
+  - `bundle::list()`
+  - `bundle::inspect(name)`
+  - `bundle::export_bundle(name, path)`
+  - `service::list()`
+  - `service::extract(name, options_map)`
+  - `catalog::tasks()` / `catalog::tasks(options_map)`
+  - `gateway::status()`
+  - `gateway::setup_tls(options_map)`
+  - `gateway::up(options_map)`
+  - `gateway::down(options_map)`
+  - `doctor::run(options_map)`
+  - `scan::god_files(options_map)`
+  - `scan::generated_assets(options_map)`
+  - `scan::generated_in_src(options_map)`
+  - `scan::duplicate_blocks(options_map)`
+  - `scan::comment_ratio(options_map)`
+  - `scan::attention_markers(options_map)`
+  - `scan::stale_suppressions(options_map)`
+  - `cache::inspect(options_map)`
+  - `cache::invalidate(options_map)`
+  - `contracts::check_json(options_map)`
+  - `contracts::validate_selection(options_map)`
+  - `deploy::model()`
+  - `deploy::export_render(options_map)`
+  - `deploy::export_railway(options_map)`
+  - `system::status(options_map)`
+  - `system::logs(options_map)`
+  - `demo::list(options_map)`
+  - `demo::inspect(options_map)`
+  - `demo::history(options_map)`
+  - `changelog::validate(options_map)`
+  - `changelog::extract(options_map)`
+  - `test::plan(options_map)`
+  - `unlock::run(options_map)`
+  - `container::down_all()`
+  - `container::shell(name, command)`
+  - `container::shell(name, service, command)`
+  - `effigy::run(args_array)`
+  - `effigy::run_json(args_array)`
+  - `task::run_json(task, args_array)`
+  - `config::get_or(path_string, default_value)`
+  - `http::post(url, body_string)`
+  - `fs::env_file_get_detail(path, key)`
+  - `random::jwt_env_keys()`
+  - `random::base64(size)`
 
 `run_process(...)` is structured subprocess execution, not shell parsing.
 
@@ -212,7 +212,7 @@ instead of `run_process("effigy", ["exec", ...])` or `run_effigy(["exec", ...])`
 `run_process("effigy", ...)`, `run_process_stream("effigy", ...)`, and
 `run_process_tee("effigy", ...)` are rejected at runtime; hitting that seam
 means Effigy needs a new typed Rhai host helper.
-Use `config_effective()` or `config_get("systems.dev.container")` instead of
+Use `config::effective()` or `config_get("systems.dev.container")` instead of
 re-reading `effigy.toml` when a script needs Effigy's composed/bundle-expanded
 manifest view.
 Similarly, use `http_request(...)` or `http_post(...)` instead of

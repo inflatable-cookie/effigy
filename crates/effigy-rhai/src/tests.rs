@@ -111,44 +111,44 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
     let script = r#"
-            let task = run_task("demo:task", ["a", "b"]);
+            let task = task::run("demo:task", ["a", "b"]);
             if task != "task:demo:task:a,b" { throw("task"); }
-            let effigy = run_effigy(["demo", "list"]);
+            let effigy = effigy::run(["demo", "list"]);
             if !effigy["success"] || effigy["output"] != "demo list" { throw("effigy"); }
-            let json = run_effigy_json(["demo", "list"]);
+            let json = effigy::run_json(["demo", "list"]);
             if json["json"] != true { throw("json"); }
-            if container_up("web", true) != "up:web:true" { throw("up"); }
-            if container_down("web") != "down:web:false" { throw("down"); }
-            if container_shell("web", "echo hi") != "shell:web::echo hi" { throw("shell"); }
-            let exec = container_exec("web", "postgres", ["psql", "-c", "select 1"]);
+            if container::up("web", true) != "up:web:true" { throw("up"); }
+            if container::down("web") != "down:web:false" { throw("down"); }
+            if container::shell("web", "echo hi") != "shell:web::echo hi" { throw("shell"); }
+            let exec = container::exec("web", "postgres", ["psql", "-c", "select 1"]);
             if !exec["success"] || exec["stdout"] != "exec:web:postgres:psql,-c,select 1" { throw("exec"); }
-            let default_service = container_exec("web", ["pwd"]);
+            let default_service = container::exec("web", ["pwd"]);
             if default_service["stdout"] != "exec:web::pwd" { throw("exec default"); }
-            let tasks = tasks_list();
+            let tasks = task::list();
             if tasks["feature"] != "tasks.list" { throw("tasks list"); }
-            let resolved = task_resolve("api/test");
+            let resolved = task::resolve("api/test");
             if resolved["options"]["selector"] != "api/test" { throw("task resolve"); }
-            let status = container_status("stack");
+            let status = container::status("stack");
             if status["feature"] != "container.status" { throw("container status"); }
-            let logs = container_logs("stack", #{ service: "postgres" });
+            let logs = container::logs("stack", #{ service: "postgres" });
             if logs["options"]["service"] != "postgres" { throw("container logs"); }
-            let docs = docs_check_links(#{ paths: ["docs/README.md"] });
+            let docs = docs::check_links(#{ paths: ["docs/README.md"] });
             if docs["feature"] != "docs.check_links" { throw("docs"); }
-            let bundle = bundle_inspect("underlay");
+            let bundle = bundle::inspect("underlay");
             if bundle["options"]["bundle"] != "underlay" { throw("bundle"); }
-            let exported = bundle_export("underlay", "tmp/bundle");
+            let exported = bundle::export_bundle("underlay", "tmp/bundle");
             if exported["options"]["path"] != "tmp/bundle" { throw("bundle export"); }
-            let gateway = gateway_status();
+            let gateway = gateway::status();
             if gateway["feature"] != "gateway.status" { throw("gateway"); }
-            let scan = scan_god_files(#{ threshold: 900 });
+            let scan = scan::god_files(#{ threshold: 900 });
             if scan["feature"] != "scan.god_files" { throw("scan"); }
-            let cache = cache_inspect(#{ selector: "build" });
+            let cache = cache::inspect(#{ selector: "build" });
             if cache["options"]["selector"] != "build" { throw("cache"); }
-            let config = config_effective();
+            let config = config::effective();
             if config["feature"] != "config.effective" { throw("config effective"); }
-            let raw = config_raw();
+            let raw = config::raw();
             if raw["feature"] != "config.raw" { throw("config raw"); }
-            let value = config_get("systems.dev.container");
+            let value = config::get("systems.dev.container");
             if value != "stack" { throw("config get"); }
         "#;
 
@@ -165,7 +165,7 @@ fn execute_rhai_script_can_stream_process_output() {
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
     let script = r#"
-            let streamed = run_process_stream("sh", ["-lc", "printf stream-ok"]);
+            let streamed = process::stream("sh", ["-lc", "printf stream-ok"]);
             if !streamed["success"] { throw("stream"); }
         "#;
 
@@ -182,7 +182,7 @@ fn execute_rhai_script_can_tee_process_output_and_capture() {
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
     let script = r#"
-            let teed = run_process_tee("sh", ["-lc", "printf tee-out; printf tee-err >&2"]);
+            let teed = process::tee("sh", ["-lc", "printf tee-out; printf tee-err >\u00262"]);
             if !teed["success"] { throw("tee"); }
             if teed["stdout"] != "tee-out" { throw("tee stdout"); }
             if teed["stderr"] != "tee-err" { throw("tee stderr"); }
@@ -203,27 +203,27 @@ fn execute_rhai_script_process_helpers_accept_cwd_and_env_options() {
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
     let script = r#"
-            let buffered = run_process(
+            let buffered = process::run(
                 "cat",
                 [],
                 #{ stdin_file: "input.txt" },
             );
             if buffered["stdout"] != "streamed-input" { throw("buffered stdin"); }
 
-            let streamed = run_process_stream(
+            let streamed = process::stream(
                 "sh",
                 ["-lc", "test \"$(cat)\" = streamed-input && pwd | grep '/nested$' >/dev/null && test \"$EFFIGY_RHAI_TEST\" = streamed"],
                 #{ cwd: "nested", env: #{ EFFIGY_RHAI_TEST: "streamed" }, stdin_file: "input.txt" },
             );
             if !streamed["success"] { throw("streamed options"); }
 
-            let teed = run_process_tee(
+            let teed = process::tee(
                 "sh",
                 ["-lc", "printf '%s|%s|%s' \"$(cat)\" \"$PWD\" \"$EFFIGY_RHAI_TEST\""],
                 #{ cwd: "nested", env: #{ EFFIGY_RHAI_TEST: "teed" }, stdin_file: "input.txt" },
             );
-            if !string_starts_with(teed["stdout"], "streamed-input|") { throw("teed stdin"); }
-            if !string_ends_with(teed["stdout"], "/nested|teed") { throw("teed options"); }
+            if !str::starts_with(teed["stdout"], "streamed-input|") { throw("teed stdin"); }
+            if !str::ends_with(teed["stdout"], "/nested|teed") { throw("teed options"); }
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
@@ -239,9 +239,9 @@ fn execute_rhai_script_exposes_trim_string_helper() {
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
     let script = r#"
-            let value = trim_string("  hello  ");
+            let value = str::trim("  hello  ");
             if value != "hello" { throw("trim string"); }
-            let empty = trim_string(());
+            let empty = str::trim(());
             if empty != "" { throw("trim unit"); }
         "#;
 
@@ -265,43 +265,43 @@ fn execute_rhai_script_exposes_low_level_string_and_file_helpers() {
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
     let script = r#"
-            if !string_contains("alpha beta", "beta") { throw("contains"); }
-            if !string_starts_with("alpha beta", "alpha") { throw("starts"); }
-            if !string_ends_with("alpha beta", "beta") { throw("ends"); }
-            if replace_string("alpha beta", "beta", "gamma") != "alpha gamma" { throw("replace"); }
+            if !str::contains("alpha beta", "beta") { throw("contains"); }
+            if !str::starts_with("alpha beta", "alpha") { throw("starts"); }
+            if !str::ends_with("alpha beta", "beta") { throw("ends"); }
+            if str::replace("alpha beta", "beta", "gamma") != "alpha gamma" { throw("replace"); }
 
-            let inline = split_lines("one\ntwo\n");
+            let inline = str::split_lines("one\ntwo\n");
             if inline.len() != 2 || inline[0] != "one" || inline[1] != "two" { throw("split"); }
 
-            let copied = copy_file("source.txt", "nested/copied.txt");
+            let copied = fs::copy("source.txt", "nested/copied.txt");
             if copied <= 0 { throw("copy size"); }
-            if !is_dir("nested") { throw("nested dir"); }
+            if !fs::is_dir("nested") { throw("nested dir"); }
 
-            let lines = read_lines("nested/copied.txt");
+            let lines = fs::read_lines("nested/copied.txt");
             if lines.len() != 2 || lines[0] != "alpha" || lines[1] != "beta" { throw("read lines"); }
 
-            move_path("nested/copied.txt", "nested/moved.txt");
-            if path_exists("nested/copied.txt") { throw("copy still exists"); }
-            if !is_file("nested/moved.txt") { throw("move target"); }
+            fs::move_path("nested/copied.txt", "nested/moved.txt");
+            if fs::exists("nested/copied.txt") { throw("copy still exists"); }
+            if !fs::is_file("nested/moved.txt") { throw("move target"); }
 
-            if !copy_if_missing("source.txt", "nested/missing.txt") { throw("copy missing"); }
-            if copy_if_missing("source.txt", "nested/missing.txt") { throw("copy existing"); }
+            if !fs::copy_if_missing("source.txt", "nested/missing.txt") { throw("copy missing"); }
+            if fs::copy_if_missing("source.txt", "nested/missing.txt") { throw("copy existing"); }
 
-            if !replace_in_file("replace.txt", "example.test", "local.test") { throw("replace in file"); }
-            if replace_in_file("replace.txt", "missing", "value") { throw("replace absent"); }
+            if !fs::replace_in_file("replace.txt", "example.test", "local.test") { throw("replace in file"); }
+            if fs::replace_in_file("replace.txt", "missing", "value") { throw("replace absent"); }
 
-            if env_file_get("app.env", "HOST") != "example.test" { throw("env get host"); }
-            if env_file_get("app.env", "MISSING") != "" { throw("env get missing"); }
-            let before = env_file_entries("app.env");
+            if fs::env_file_get("app.env", "HOST") != "example.test" { throw("env get host"); }
+            if fs::env_file_get("app.env", "MISSING") != "" { throw("env get missing"); }
+            let before = fs::env_file_entries("app.env");
             if before["HOST"] != "example.test" || before["MODE"] != "dev" { throw("env entries before"); }
-            if !env_file_set("app.env", "HOST", "local.test") { throw("env set host"); }
-            if !env_file_set("app.env", "APP_NAME", "Cumberland Local") { throw("env append"); }
-            if env_file_set("app.env", "APP_NAME", "Cumberland Local") { throw("env unchanged"); }
-            if env_file_get("app.env", "HOST") != "local.test" { throw("env get updated"); }
-            if env_file_get("app.env", "APP_NAME") != "Cumberland Local" { throw("env get appended"); }
-            if !env_file_remove("app.env", "MODE") { throw("env remove"); }
-            if env_file_remove("app.env", "MODE") { throw("env remove missing"); }
-            let after = env_file_entries("app.env");
+            if !fs::env_file_set("app.env", "HOST", "local.test") { throw("env set host"); }
+            if !fs::env_file_set("app.env", "APP_NAME", "Cumberland Local") { throw("env append"); }
+            if fs::env_file_set("app.env", "APP_NAME", "Cumberland Local") { throw("env unchanged"); }
+            if fs::env_file_get("app.env", "HOST") != "local.test" { throw("env get updated"); }
+            if fs::env_file_get("app.env", "APP_NAME") != "Cumberland Local" { throw("env get appended"); }
+            if !fs::env_file_remove("app.env", "MODE") { throw("env remove"); }
+            if fs::env_file_remove("app.env", "MODE") { throw("env remove missing"); }
+            let after = fs::env_file_entries("app.env");
             if after.contains("MODE") { throw("env entries removed"); }
             if after["HOST"] != "local.test" || after["APP_NAME"] != "Cumberland Local" { throw("env entries after"); }
         "#;
@@ -335,11 +335,11 @@ fn execute_rhai_script_exposes_shell_quote_string_helper() {
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
     let script = r#"
-            let simple = shell_quote_string("secret");
+            let simple = str::shell_quote("secret");
             if simple != "'secret'" { throw("shell quote string"); }
-            let with_quote = shell_quote_string("it's");
+            let with_quote = str::shell_quote("it's");
             if with_quote != "'it'\"'\"'s'" { throw("shell quote apostrophe"); }
-            let empty = shell_quote_string(());
+            let empty = str::shell_quote(());
             if empty != "''" { throw("shell quote unit"); }
         "#;
 
@@ -356,9 +356,9 @@ fn execute_rhai_script_exposes_generate_jwt_env_keys_helper() {
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
     let script = r#"
-            let jwt = generate_jwt_env_keys();
-            let private_key = trim_string(jwt["private_key"]);
-            let public_key = trim_string(jwt["public_key"]);
+            let jwt = random::jwt_env_keys();
+            let private_key = str::trim(jwt["private_key"]);
+            let public_key = str::trim(jwt["public_key"]);
             if private_key == "" { throw("missing private_key"); }
             if public_key == "" { throw("missing public_key"); }
         "#;
@@ -376,9 +376,9 @@ fn execute_rhai_script_exposes_generate_random_base64_helper() {
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
     let script = r#"
-            let secret = generate_random_base64(32);
-            if trim_string(secret) == "" { throw("missing random secret"); }
-            if generate_random_base64(32) == secret { throw("random secret repeated"); }
+            let secret = random::base64(32);
+            if str::trim(secret) == "" { throw("missing random secret"); }
+            if random::base64(32) == secret { throw("random secret repeated"); }
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
@@ -396,7 +396,7 @@ fn execute_rhai_script_rejects_recursive_effigy_process_calls() {
 
     let error = execute_rhai_script(
         &context,
-        r#"run_process("effigy", ["tasks"]);"#,
+        r#"process::run("effigy", ["tasks"]);"#,
         &[],
         &callbacks(),
     )
@@ -405,7 +405,7 @@ fn execute_rhai_script_rejects_recursive_effigy_process_calls() {
 
     let error = execute_rhai_script(
         &context,
-        r#"run_process_stream("effigy", ["tasks"]);"#,
+        r#"process::stream("effigy", ["tasks"]);"#,
         &[],
         &callbacks(),
     )
@@ -414,7 +414,7 @@ fn execute_rhai_script_rejects_recursive_effigy_process_calls() {
 
     let error = execute_rhai_script(
         &context,
-        r#"run_process_tee("effigy", ["tasks"]);"#,
+        r#"process::tee("effigy", ["tasks"]);"#,
         &[],
         &callbacks(),
     )
@@ -443,7 +443,7 @@ fn execute_rhai_script_allows_explicit_effigy_binary_paths() {
 
     execute_rhai_script(
         &context,
-        &format!(r#"run_process("{}", ["tasks"]);"#, binary.display()),
+        &format!(r#"process::run("{}", ["tasks"]);"#, binary.display()),
         &[],
         &callbacks(),
     )
@@ -473,7 +473,7 @@ fn execute_rhai_script_can_make_http_requests() {
     };
     let script = format!(
         r#"
-            let response = http_request("POST", "http://{addr}/smoke", #{{ body: "ping" }});
+            let response = http::request("POST", "http://{addr}/smoke", #{{ body: "ping" }});
             if response["status"] != 201 {{ throw("status"); }}
             if response["body"] != "created" {{ throw("body"); }}
             if response["success"] != true {{ throw("success"); }}
@@ -507,11 +507,11 @@ fn execute_rhai_script_can_download_http_responses_to_a_file() {
     };
     let script = format!(
         r#"
-            let response = http_download("http://{addr}/file", "downloads/template.env");
+            let response = http::download("http://{addr}/file", "downloads/template.env");
             if response["status"] != 200 {{ throw("status"); }}
             if response["success"] != true {{ throw("success"); }}
             if response["size"] != 8 {{ throw("size"); }}
-            if path_file_name(response["path"].to_string()) != "template.env" {{ throw("path"); }}
+            if path::file_name(response["path"].to_string()) != "template.env" {{ throw("path"); }}
         "#
     );
 
@@ -539,10 +539,10 @@ fn execute_rhai_script_can_list_directory_entries() {
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
     let script = r#"
-            let entries = list_dir("fixture");
-            if path_file_name(entries[0].to_string()) != "a.txt" { throw("first"); }
-            if path_file_name(entries[1].to_string()) != "b.txt" { throw("second"); }
-            if path_file_name(entries[2].to_string()) != "subdir" { throw("third"); }
+            let entries = fs::list("fixture");
+            if path::file_name(entries[0].to_string()) != "a.txt" { throw("first"); }
+            if path::file_name(entries[1].to_string()) != "b.txt" { throw("second"); }
+            if path::file_name(entries[2].to_string()) != "subdir" { throw("third"); }
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
@@ -570,7 +570,7 @@ fn execute_rhai_script_can_search_files_without_rg() {
         stop_requested: install_stop_requested_flag().expect("stop flag"),
     };
     let script = r#"
-            let matches = search_files("routes", "StatusCode::BAD_REQUEST", #{ glob: "*.rs", literal: true });
+            let matches = search::files("routes", "StatusCode::BAD_REQUEST", #{ glob: "*.rs", literal: true });
             if matches["count"] != 1 { throw("count"); }
             if matches["matches"][0]["line"] != 1 { throw("line"); }
         "#;
@@ -602,7 +602,7 @@ fn run_effigy_json_surfaces_callback_errors_as_runtime_errors() {
         container_exec: callbacks().container_exec,
     };
 
-    let error = execute_rhai_script(&context, "run_effigy_json([\"demo\"]);", &[], &callbacks)
+    let error = execute_rhai_script(&context, "effigy::run_json([\"demo\"]);", &[], &callbacks)
         .expect_err("must fail");
     assert!(error.to_string().contains("boom"));
 }
@@ -763,4 +763,41 @@ fn collect_rhai_scripts_into(dir: &Path, scripts: &mut Vec<PathBuf>) {
             scripts.push(path);
         }
     }
+}
+
+#[test]
+fn test_module_access_syntax() {
+    use rhai::{Engine, Module};
+    let mut engine = Engine::new();
+    let mut module = Module::new();
+    module.set_native_fn("run", |x: i64| Ok(x + 1));
+    engine.register_static_module("process", std::rc::Rc::new(module));
+    
+    let result = engine.eval::<i64>(r#"process.run(41)"#);
+    println!("Result dot: {:?}", result);
+    let result2 = engine.eval::<i64>(r#"process::run(41)"#);
+    println!("Result colon: {:?}", result2);
+    
+    let mut module2 = Module::new();
+    module2.set_native_fn("export_bundle", |x: i64| Ok(x + 1));
+    engine.register_static_module("bundle", std::rc::Rc::new(module2));
+    let result3 = engine.eval::<i64>(r#"bundle::export_bundle(41)"#);
+    println!("Result export: {:?}", result3);
+}
+
+#[test]
+fn preprocess_module_calls_converts_dot_to_colon_outside_strings() {
+    use super::preprocess_module_calls;
+    
+    let input = r#"let x = process.run("sh", ["-lc", "printf ok"]);
+let y = path.join("a", "b");
+let js = "fs.readFileSync(path.join(dir, \"pkg\"))";
+let z = config.get("key");"#;
+    
+    let expected = r#"let x = process::run("sh", ["-lc", "printf ok"]);
+let y = path::join("a", "b");
+let js = "fs.readFileSync(path.join(dir, \"pkg\"))";
+let z = config::get("key");"#;
+    
+    assert_eq!(preprocess_module_calls(input), expected);
 }

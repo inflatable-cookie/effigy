@@ -1,12 +1,12 @@
 fn optional_config_string(path, fallback) {
-    let value = config_get(path);
+    let value = config.get(path);
     if value.type_of() == "()" {
         return fallback;
     }
     if value.type_of() != "string" {
         throw `expected Effigy config string at ${path}, got ${value.type_of()}`;
     }
-    return trim_string(value);
+    return str.trim(value);
 }
 
 fn bundle_host() {
@@ -27,8 +27,8 @@ fn route_domain(host, path, fallback_label) {
 
 fn first_existing_dir(candidates) {
     for relative in candidates {
-        let candidate = path_join(repo_root, relative);
-        if path_exists(candidate) {
+        let candidate = path.join(repo_root, relative);
+        if fs.exists(candidate) {
             return candidate;
         }
     }
@@ -38,7 +38,7 @@ fn first_existing_dir(candidates) {
 fn resolve_api_dir() {
     let configured = optional_config_string("bundle.dirs.api", "");
     if configured != "" {
-        return path_join(repo_root, configured);
+        return path.join(repo_root, configured);
     }
     return first_existing_dir(["app-api", "acme-api", "api"]);
 }
@@ -46,7 +46,7 @@ fn resolve_api_dir() {
 fn resolve_front_dir() {
     let configured = optional_config_string("bundle.dirs.front", "");
     if configured != "" {
-        return path_join(repo_root, configured);
+        return path.join(repo_root, configured);
     }
     return first_existing_dir(["app-front", "acme-front", "front"]);
 }
@@ -54,49 +54,49 @@ fn resolve_front_dir() {
 fn resolve_admin_dir() {
     let configured = optional_config_string("bundle.dirs.admin", "");
     if configured != "" {
-        return path_join(repo_root, configured);
+        return path.join(repo_root, configured);
     }
     return first_existing_dir(["app-admin", "acme-admin", "admin"]);
 }
 
 fn primary_database_name() {
-    let value = config_get("bundle.databases");
+    let value = config.get("bundle.databases");
     if value.type_of() == "array" && value.len() > 0 {
         let first = value[0];
         if first.type_of() == "string" {
-            return trim_string(first);
+            return str.trim(first);
         }
     }
     return optional_config_string("bundle.database", "");
 }
 
 fn secondary_database_name() {
-    let value = config_get("bundle.databases");
+    let value = config.get("bundle.databases");
     if value.type_of() == "array" && value.len() > 1 {
         let second = value[1];
         if second.type_of() == "string" {
-            return trim_string(second);
+            return str.trim(second);
         }
     }
     return "";
 }
 
 fn generated_jwt_env(_api_dir) {
-    let jwt = generate_jwt_env_keys();
-    let private_key = trim_string(jwt["private_key"]);
-    let public_key = trim_string(jwt["public_key"]);
+    let jwt = random.jwt_env_keys();
+    let private_key = str.trim(jwt["private_key"]);
+    let public_key = str.trim(jwt["public_key"]);
     if private_key == "" || public_key == "" {
-        throw "generate_jwt_env_keys did not return both private_key and public_key";
+        throw "random.jwt_env_keys did not return both private_key and public_key";
     }
     return #{ private_key: private_key, public_key: public_key };
 }
 
 fn ensure_env_file(path, lines, label) {
-    if path_exists(path) {
+    if fs.exists(path) {
         log("[info] preserving existing " + label + " at " + path);
         return;
     }
-    write_lines(path, lines);
+    fs.write_lines(path, lines);
     log("[ok] created " + label + " at " + path);
 }
 
@@ -119,8 +119,8 @@ if api_dir == "" && front_dir == "" && admin_dir == "" {
 
 if api_dir != "" {
     let jwt = generated_jwt_env(api_dir);
-    let oauth_secret = generate_random_base64(32);
-    let encryption_key = generate_random_base64(32);
+    let oauth_secret = random.base64(32);
+    let encryption_key = random.base64(32);
     let api_env = [
         "# Underlay API - Local Development",
         "#",
@@ -171,7 +171,7 @@ if api_dir != "" {
         "AUTH_OAUTH_SECRET_KEY=" + oauth_secret,
         "ENCRYPTION_KEY=" + encryption_key,
     ];
-    ensure_env_file(path_join(api_dir, ".env"), api_env, "api .env");
+    ensure_env_file(path.join(api_dir, ".env"), api_env, "api .env");
 } else {
     log_warn("skipping api .env; no api dir found");
 }
@@ -186,7 +186,7 @@ if admin_dir != "" {
         "PUBLIC_ADMIN_URL=https://" + admin_domain,
         "PUBLIC_FRONT_URL=https://" + front_domain,
     ];
-    ensure_env_file(path_join(admin_dir, ".env"), admin_env, "admin .env");
+    ensure_env_file(path.join(admin_dir, ".env"), admin_env, "admin .env");
 } else {
     log_warn("skipping admin .env; no admin dir found");
 }
@@ -201,7 +201,7 @@ if front_dir != "" {
         "PUBLIC_FRONT_URL=https://" + front_domain,
         "PUBLIC_ADMIN_URL=https://" + admin_domain,
     ];
-    ensure_env_file(path_join(front_dir, ".env"), front_env, "front .env");
+    ensure_env_file(path.join(front_dir, ".env"), front_env, "front .env");
 } else {
     log_warn("skipping front .env; no front dir found");
 }

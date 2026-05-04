@@ -1,21 +1,21 @@
-let artifact_dir = path_join(repo_root, ".effigy/demo/artifacts/browser-proof-report");
-let generated_at = now_utc();
+let artifact_dir = path.join(repo_root, ".effigy/demo/artifacts/browser-proof-report");
+let generated_at = time.now_utc();
 
-create_dir(artifact_dir);
+fs.create_dir(artifact_dir);
 
-let list_path = path_join(artifact_dir, "list.txt");
-let grouped_path = path_join(artifact_dir, "grouped-by-gap.txt");
-let inspect_path = path_join(artifact_dir, "inspect-lifecycle-window.txt");
-let html_path = path_join(artifact_dir, "index.html");
+let list_path = path.join(artifact_dir, "list.txt");
+let grouped_path = path.join(artifact_dir, "grouped-by-gap.txt");
+let inspect_path = path.join(artifact_dir, "inspect-lifecycle-window.txt");
+let html_path = path.join(artifact_dir, "index.html");
 
 fn run_capture(label, capture_path, process_args) {
-    let result = run_process_tee("cargo", process_args);
+    let result = process.tee("cargo", process_args);
     if !result["success"] {
         throw "[error] " + label + " failed"
             + "\nstdout:\n" + result["stdout"].to_string()
             + "\nstderr:\n" + result["stderr"].to_string();
     }
-    write_file(capture_path, result["stdout"].to_string());
+    fs.write_file(capture_path, result["stdout"].to_string());
 }
 
 run_capture("demo list", list_path, ["run", "--bin", "effigy", "--", "demo", "list"]);
@@ -126,5 +126,5 @@ let html_lines = [
     "</html>",
 ];
 
-write_lines(html_path, html_lines);
+fs.write_lines(html_path, html_lines);
 log("browser-proof-report refreshed at " + generated_at);

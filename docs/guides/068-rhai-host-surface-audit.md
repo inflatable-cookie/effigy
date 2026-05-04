@@ -24,35 +24,36 @@ Policy:
 
 | Surface | Rhai helpers | Status |
 | --- | --- | --- |
-| Logging and context | `log`, `log_warn`, `env`, `stop_requested`, `now_utc`, `process_id`, `sleep_ms` | Exposed |
-| Path and string utilities | `path_join`, `path_file_name`, `trim_string`, `string_contains`, `string_starts_with`, `string_ends_with`, `replace_string`, `split_lines`, `shell_quote_string` | Exposed |
-| File and directory operations | `make_temp_dir`, `read_file`, `read_lines`, `write_file`, `append_file`, `write_lines`, `copy_file`, `copy_if_missing`, `env_file_entries`, `env_file_get`, `env_file_remove`, `env_file_set`, `move_path`, `replace_in_file`, `path_exists`, `is_dir`, `is_file`, `is_symlink`, `list_dir`, `create_dir`, `remove_path`, `create_symlink`, `search_files` | Exposed |
-| Structured data | `json_parse`, `json_stringify`, `toml_parse`, `toml_stringify` | Exposed |
-| Host subprocess execution | `run_process`, `run_process_stream`, `run_process_tee` | Exposed |
-| Basic HTTP | `http_get`, `http_post`, `http_request`, `http_download` | Exposed |
+| Logging and context | `log`, `log_warn`, `env` (flat); `time::now_utc`, `time::process_id`, `time::sleep_ms`, `time::stop_requested` | Exposed |
+| Path and string utilities | `path::join`, `path::file_name`, `str::trim`, `str::contains`, `str::starts_with`, `str::ends_with`, `str::replace`, `str::split_lines`, `str::shell_quote` | Exposed |
+| File and directory operations | `fs::make_temp_dir`, `fs::read_file`, `fs::read_lines`, `fs::write_file`, `fs::append_file`, `fs::write_lines`, `fs::copy`, `fs::copy_if_missing`, `fs::env_file_entries`, `fs::env_file_get`, `fs::env_file_remove`, `fs::env_file_set`, `fs::env_file_get_detail`, `fs::move_path`, `fs::replace_in_file`, `fs::exists`, `fs::is_dir`, `fs::is_file`, `fs::is_symlink`, `fs::list`, `fs::create_dir`, `fs::remove`, `fs::create_symlink`, `search::files` | Exposed |
+| Structured data | `json::parse`, `json::stringify`, `toml::parse`, `toml::stringify` | Exposed |
+| Host subprocess execution | `process::run`, `process::stream`, `process::tee` | Exposed |
+| Basic HTTP | `http::get`, `http::post`, `http::request`, `http::download` | Exposed |
 
 | Surface | Rhai helpers | Status |
 | --- | --- | --- |
-| Config | `config_raw`, `config_effective`, `config_get` | Exposed |
-| Tasks | `run_task`, `tasks_list`, `task_resolve`, `task_info`, `catalog_tasks` | Exposed |
-| Container lifecycle | `container_up`, `container_down`, `container_down_all`, `container_shell`, `container_shell` (with service), `container_exec` | Exposed |
-| Container inspection | `container_status`, `container_status_all`, `container_logs`, `container_stats_all` | Exposed |
-| Container data | `container_data_list`, `container_data_export`, `container_data_import`, `container_data_pull_production` | Exposed |
-| Container reset/eject | `container_reset`, `container_eject` | Exposed |
-| Docs checks | `docs_check_links`, `docs_check_json_examples`, `docs_check_headings`, `docs_check_paths`, `docs_check_contains`, `docs_check_forbidden`, `docs_check_index`, `docs_check_next_action`, `docs_check_workflow_paths`, `docs_add_log_index` | Exposed |
-| Bundles | `bundle_list`, `bundle_inspect`, `bundle_export` | Exposed |
-| Services | `service_list`, `service_extract` | Exposed |
-| Gateway | `gateway_status`, `gateway_setup_tls`, `gateway_up`, `gateway_down` | Exposed |
-| Doctor | `doctor` | Exposed |
-| Scan | `scan_god_files`, `scan_generated_assets`, `scan_generated_in_src`, `scan_duplicate_blocks`, `scan_comment_ratio`, `scan_attention_markers`, `scan_stale_suppressions` | Exposed |
-| Cache | `cache_inspect`, `cache_invalidate` | Exposed |
-| Contracts | `contracts_check_json`, `contracts_validate_selection` | Exposed |
-| Deploy | `deploy_model`, `deploy_export_render`, `deploy_export_railway` | Exposed |
-| System | `system_status`, `system_logs` | Exposed |
-| Demo | `demo_list`, `demo_inspect`, `demo_history` | Exposed |
-| Changelog | `changelog_validate`, `changelog_extract` | Exposed |
-| Test | `test_plan` | Exposed |
-| Unlock | `unlock` | Exposed |
+| Config | `config::raw`, `config::effective`, `config::get`, `config::get_or` | Exposed |
+| Tasks | `task::run`, `task::run_json`, `task::list`, `task::resolve`, `task::info`, `catalog::tasks` | Exposed |
+| Container lifecycle | `container::up`, `container::down`, `container::down_all`, `container::shell`, `container::shell` (with service), `container::exec` | Exposed |
+| Container inspection | `container::status`, `container::status_all`, `container::logs`, `container::stats_all` | Exposed |
+| Container data | `container::data_list`, `container::data_export`, `container::data_import`, `container::data_pull_production` | Exposed |
+| Container reset/eject | `container::reset`, `container::eject` | Exposed |
+| Docs checks | `docs::check_links`, `docs::check_json_examples`, `docs::check_headings`, `docs::check_paths`, `docs::check_contains`, `docs::check_forbidden`, `docs::check_index`, `docs::check_next_action`, `docs::check_workflow_paths`, `docs::add_log_index` | Exposed |
+| Bundles | `bundle::list`, `bundle::inspect`, `bundle::export_bundle` | Exposed |
+| Services | `service::list`, `service::extract` | Exposed |
+| Gateway | `gateway::status`, `gateway::setup_tls`, `gateway::up`, `gateway::down` | Exposed |
+| Doctor | `doctor::run` | Exposed |
+| Scan | `scan::god_files`, `scan::generated_assets`, `scan::generated_in_src`, `scan::duplicate_blocks`, `scan::comment_ratio`, `scan::attention_markers`, `scan::stale_suppressions` | Exposed |
+| Cache | `cache::inspect`, `cache::invalidate` | Exposed |
+| Contracts | `contracts::check_json`, `contracts::validate_selection` | Exposed |
+| Deploy | `deploy::model`, `deploy::export_render`, `deploy::export_railway` | Exposed |
+| System | `system::status`, `system::logs` | Exposed |
+| Demo | `demo::list`, `demo::inspect`, `demo::history` | Exposed |
+| Changelog | `changelog::validate`, `changelog::extract` | Exposed |
+| Test | `test::plan` | Exposed |
+| Unlock | `unlock::run` | Exposed |
+| Effigy | `effigy::run`, `effigy::run_json` | Exposed |
 
 ## Intentionally CLI-First
 
@@ -94,7 +95,7 @@ Config helpers expose the manifest view Effigy uses:
 - `config_raw()` returns the parsed root `effigy.toml` only.
 - `config_effective()` returns the composed, include-merged, bundle-expanded
   manifest plus composition metadata.
-- `config_get(path)` returns a value from the effective manifest, using dot
+- `config::get(path)` returns a value from the effective manifest, using dot
   paths such as `systems.dev.container`.
 
 HTTP helpers return:
@@ -108,7 +109,7 @@ HTTP helpers return:
 }
 ```
 
-`http_download(...)` returns:
+`http::download(...)` returns:
 
 ```rhai
 #{
@@ -124,34 +125,34 @@ HTTP helpers return:
 
 ### Structured Task Output
 
-- `run_task_json(task, args)` — like `run_task` but parses the task output as JSON
+- `task::run_json(task, args)` — like `task::run` but parses the task output as JSON
   and returns a Rhai dynamic value.
 
 ### Config with Default
 
-- `config_get_or(path, default)` — like `config_get` but returns `default` instead
+- `config::get_or(path, default)` — like `config::get` but returns `default` instead
   of `()` when the path is missing or null.
 
 ### HTTP Convenience
 
-- `http_post(url, body)` — POST with a plain string body; equivalent to
-  `http_post(url, #{ body: "..." })`.
+- `http::post(url, body)` — POST with a plain string body; equivalent to
+  `http::post(url, #{ body: "..." })`.
 
 ### Envfile Detail
 
-- `env_file_get_detail(path, key)` — returns a map with `file_exists`, `key_exists`,
+- `fs::env_file_get_detail(path, key)` — returns a map with `file_exists`, `key_exists`,
   and `value` fields so scripts can distinguish missing files from missing keys.
 
 ### Container Service Targeting
 
-- `container_shell(name, command)` — shell in the default service
-- `container_shell(name, service, command)` — shell in a specific service
-- `container_down_all()` — stop all containers (equivalent to `effigy container --all down`)
+- `container::shell(name, command)` — shell in the default service
+- `container::shell(name, service, command)` — shell in a specific service
+- `container::down_all()` — stop all containers (equivalent to `effigy container --all down`)
 
 ### Crypto and Random
 
-- `generate_jwt_env_keys()` — returns a map with `private_key` and `public_key`
-- `generate_random_base64(size)` — returns a secure random base64 string
+- `random::jwt_env_keys()` — returns a map with `private_key` and `public_key`
+- `random::base64(size)` — returns a secure random base64 string
 
 ## Return Shapes
 
@@ -170,15 +171,15 @@ Process-like helpers return:
 
 For subprocess helpers:
 
-- `run_process(...)` captures output and returns it after exit
-- `run_process_stream(...)` streams output live and does not capture it
-- `run_process_tee(...)` streams output live and also returns captured
+- `process::run(...)` captures output and returns it after exit
+- `process::stream(...)` streams output live and does not capture it
+- `process::tee(...)` streams output live and also returns captured
   `stdout` / `stderr`
 - all three accept an optional options map with `cwd`, `env`, and `stdin_file`
 
 ### Effigy escape hatches
 
-`run_effigy(...)` returns:
+`effigy::run(...)` returns:
 
 ```rhai
 #{
@@ -190,12 +191,12 @@ For subprocess helpers:
 }
 ```
 
-`run_effigy_json(...)` returns the parsed JSON payload directly as a Rhai
+`effigy::run_json(...)` returns the parsed JSON payload directly as a Rhai
 map/array value.
 
 ### Envfile detail
 
-`env_file_get_detail(...)` returns:
+`fs::env_file_get_detail(...)` returns:
 
 ```rhai
 #{
@@ -210,28 +211,28 @@ map/array value.
 Helpers with optional arguments accept a Rhai map:
 
 ```rhai
-docs_check_headings(#{
+docs::check_headings(#{
   paths: ["docs/README.md"],
   required_headings: ["Overview", "Next"],
 });
 
-container_logs("stack", #{ service: "postgres" });
+container::logs("stack", #{ service: "postgres" });
 
-scan_god_files(#{
+scan::god_files(#{
   threshold: 900,
   show_warnings: true,
 });
 
-let response = http_post("https://api.acme.test/v1/dev/error-smoke");
+let response = http::post("https://api.acme.test/v1/dev/error-smoke");
 if response["status"] != 500 {
   throw response["body"];
 }
 
-let matches = search_files("crates/api/src/routes", "StatusCode::BAD_REQUEST", #{ glob: "*.rs" });
+let matches = search::files("crates/api/src/routes", "StatusCode::BAD_REQUEST", #{ glob: "*.rs" });
 if matches["success"] {
   throw matches["stdout"];
 }
 ```
 
-`container_logs(..., #{ follow: true })` is rejected from Rhai. Follow mode is
+`container::logs(..., #{ follow: true })` is rejected from Rhai. Follow mode is
 terminal-attached and should stay CLI-first.

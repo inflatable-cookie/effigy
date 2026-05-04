@@ -14,10 +14,10 @@ fn run_manifest_task_run_array_supports_file_backed_rhai_steps() {
     fs::write(
         root.join("scripts/rhai/validate.rhai"),
         r#"
-let process = run_process("sh", ["-lc", "printf process-ok"]);
-run_task("capture", []);
-write_file("process.txt", process["stdout"]);
-copy_file("nested-source.txt", "nested.txt");
+let process = process::run("sh", ["-lc", "printf process-ok"]);
+task::run("capture", []);
+fs::write_file("process.txt", process["stdout"]);
+fs::copy("nested-source.txt", "nested.txt");
 "#,
     )
     .expect("write rhai script");
@@ -72,20 +72,20 @@ fn run_manifest_task_run_array_rhai_steps_support_args_and_runtime_helpers() {
     fs::write(
         root.join("scripts/rhai/helpers.rhai"),
         r#"
-let stamp = now_utc();
-let scratch = make_temp_dir("rhai-runtime-helper");
-let pid = process_id().to_string();
-write_file("stamp.txt", stamp);
-write_file("arg.txt", args[0].to_string());
-write_file("scratch.txt", scratch);
-write_lines("lines.txt", ["one", "two"]);
-append_file("append.txt", "alpha\n");
-append_file("append.txt", "beta\n");
-write_file("pid.txt", pid);
-if !path_exists(scratch) {
+let stamp = time::now_utc();
+let scratch = fs::make_temp_dir("rhai-runtime-helper");
+let pid = time::process_id().to_string();
+fs::write_file("stamp.txt", stamp);
+fs::write_file("arg.txt", args[0].to_string());
+fs::write_file("scratch.txt", scratch);
+fs::write_lines("lines.txt", ["one", "two"]);
+fs::append_file("append.txt", "alpha\n");
+fs::append_file("append.txt", "beta\n");
+fs::write_file("pid.txt", pid);
+if !fs::exists(scratch) {
     throw "scratch dir was not created";
 }
-remove_path(scratch);
+fs::remove(scratch);
 "#,
     )
     .expect("write rhai script");
@@ -130,11 +130,11 @@ fn run_manifest_task_run_array_rhai_steps_support_typed_host_helpers() {
     fs::write(
         root.join("scripts/rhai/dispatch.rhai"),
         r#"
-let bundles = bundle_list();
+let bundles = bundle::list();
 if bundles["ok"] == false {
     throw "bundle list failed";
 }
-write_file("bundles.json", json_stringify(bundles));
+fs::write_file("bundles.json", json::stringify(bundles));
 "#,
     )
     .expect("write rhai script");
@@ -232,14 +232,14 @@ fn write_container_fixture(root: &std::path::Path) {
     fs::write(
         root.join("scripts/rhai/container-helpers.rhai"),
         r#"
-let up = container_up("web", true);
+let up = container::up("web", true);
 if up.trim() != "" {
-    write_file("up.txt", up);
+    fs::write_file("up.txt", up);
 }
-let shell = container_shell("web", "printf helper-shell");
-write_file("shell.txt", shell);
-let down = container_down("web");
-write_file("down.txt", down);
+let shell = container::shell("web", "printf helper-shell");
+fs::write_file("shell.txt", shell);
+let down = container::down("web");
+fs::write_file("down.txt", down);
 "#,
     )
     .expect("write rhai script");

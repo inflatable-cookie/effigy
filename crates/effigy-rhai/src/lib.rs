@@ -141,6 +141,74 @@ pub fn install_stop_requested_flag() -> Result<Arc<std::sync::atomic::AtomicBool
     Ok(flag)
 }
 
+const MODULE_NAMES: &[&str] = &[
+    "time", "path", "fs", "process", "http", "json", "toml", "str", "random", "search",
+    "config", "task", "container", "scan", "docs", "deploy", "system", "demo", "changelog",
+    "cache", "gateway", "bundle", "service", "catalog", "doctor", "contracts", "unlock",
+    "test", "effigy",
+];
+
+fn preprocess_module_calls(script: &str) -> String {
+    let mut result = String::with_capacity(script.len());
+    let mut in_string = false;
+    let mut escape = false;
+    let mut chars = script.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if escape {
+            result.push(ch);
+            escape = false;
+            continue;
+        }
+
+        if ch == '\\' {
+            result.push(ch);
+            escape = true;
+            continue;
+        }
+
+        if ch == '"' {
+            in_string = !in_string;
+            result.push(ch);
+            continue;
+        }
+
+        if ch == '`' && !in_string {
+            in_string = !in_string;
+            result.push(ch);
+            continue;
+        }
+
+        if !in_string && (ch.is_ascii_alphabetic() || ch == '_') {
+            let mut word = String::new();
+            word.push(ch);
+            while let Some(&next) = chars.peek() {
+                if next.is_ascii_alphanumeric() || next == '_' {
+                    word.push(next);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            if let Some(&next) = chars.peek() {
+                if next == '.' && MODULE_NAMES.contains(&word.as_str()) {
+                    result.push_str(&word);
+                    result.push(':');
+                    result.push(':');
+                    chars.next(); // consume '.'
+                    continue;
+                }
+            }
+            result.push_str(&word);
+            continue;
+        }
+
+        result.push(ch);
+    }
+
+    result
+}
+
 pub fn execute_rhai_script(
     context: &ScriptContext,
     script: &str,
@@ -165,8 +233,9 @@ pub fn execute_rhai_script(
     scope.push_constant("repo_root", context.repo_root.display().to_string());
     scope.push_constant("task_name", context.task_name.clone());
 
+    let preprocessed = preprocess_module_calls(script);
     engine
-        .run_with_scope(&mut scope, script)
+        .run_with_scope(&mut scope, &preprocessed)
         .map_err(|error| RhaiHostError::new(error.to_string()))
 }
 
@@ -562,26 +631,28 @@ fn host_command_output_map(output: HostCommandOutput) -> Map {
     map
 }
 
-fn register_feature_no_args(
-    engine: &mut Engine,
+// Module-based registration helpers
+
+fn module_feature_no_args(
+    module: &mut rhai::Module,
     function: &'static str,
     feature: &'static str,
     context: Arc<ScriptContext>,
     callbacks: HostCallbacks,
 ) {
-    engine.register_fn(function, move || -> Result<Dynamic, Box<EvalAltResult>> {
+    module.set_native_fn(function, move || -> Result<Dynamic, Box<EvalAltResult>> {
         run_feature_dynamic(&context, &callbacks, feature, json!({}))
     });
 }
 
-fn register_feature_options(
-    engine: &mut Engine,
+fn module_feature_options(
+    module: &mut rhai::Module,
     function: &'static str,
     feature: &'static str,
     context: Arc<ScriptContext>,
     callbacks: HostCallbacks,
 ) {
-    engine.register_fn(
+    module.set_native_fn(
         function,
         move |options: Map| -> Result<Dynamic, Box<EvalAltResult>> {
             run_feature_dynamic(&context, &callbacks, feature, map_to_json(options)?)
@@ -589,15 +660,15 @@ fn register_feature_options(
     );
 }
 
-fn register_feature_string(
-    engine: &mut Engine,
+fn module_feature_string(
+    module: &mut rhai::Module,
     function: &'static str,
     feature: &'static str,
     key: &'static str,
     context: Arc<ScriptContext>,
     callbacks: HostCallbacks,
 ) {
-    engine.register_fn(
+    module.set_native_fn(
         function,
         move |value: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
             run_feature_dynamic(
@@ -610,15 +681,15 @@ fn register_feature_string(
     );
 }
 
-fn register_feature_get_value(
-    engine: &mut Engine,
+fn module_feature_get_value(
+    module: &mut rhai::Module,
     function: &'static str,
     feature: &'static str,
     key: &'static str,
     context: Arc<ScriptContext>,
     callbacks: HostCallbacks,
 ) {
-    engine.register_fn(
+    module.set_native_fn(
         function,
         move |value: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
             let output = (callbacks.run_feature)(
@@ -641,8 +712,8 @@ fn register_feature_get_value(
     );
 }
 
-fn register_feature_string_options(
-    engine: &mut Engine,
+fn module_feature_string_options(
+    module: &mut rhai::Module,
     function: &'static str,
     feature: &'static str,
     key: &'static str,
@@ -651,7 +722,7 @@ fn register_feature_string_options(
 ) {
     let no_options_context = context.clone();
     let no_options_callbacks = callbacks.clone();
-    engine.register_fn(
+    module.set_native_fn(
         function,
         move |value: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
             run_feature_dynamic(
@@ -662,7 +733,7 @@ fn register_feature_string_options(
             )
         },
     );
-    engine.register_fn(
+    module.set_native_fn(
         function,
         move |value: ImmutableString, options: Map| -> Result<Dynamic, Box<EvalAltResult>> {
             let mut options = map_to_json_object(options)?;
@@ -672,15 +743,15 @@ fn register_feature_string_options(
     );
 }
 
-fn register_feature_two_strings(
-    engine: &mut Engine,
+fn module_feature_two_strings(
+    module: &mut rhai::Module,
     function: &'static str,
     feature: &'static str,
     keys: [&'static str; 2],
     context: Arc<ScriptContext>,
     callbacks: HostCallbacks,
 ) {
-    engine.register_fn(
+    module.set_native_fn(
         function,
         move |first: ImmutableString,
               second: ImmutableString|
@@ -695,15 +766,15 @@ fn register_feature_two_strings(
     );
 }
 
-fn register_feature_three_strings(
-    engine: &mut Engine,
+fn module_feature_three_strings(
+    module: &mut rhai::Module,
     function: &'static str,
     feature: &'static str,
     keys: [&'static str; 3],
     context: Arc<ScriptContext>,
     callbacks: HostCallbacks,
 ) {
-    engine.register_fn(
+    module.set_native_fn(
         function,
         move |first: ImmutableString,
               second: ImmutableString,

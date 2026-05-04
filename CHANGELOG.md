@@ -25,6 +25,14 @@ During v0.x, MINOR bumps may include breaking changes.
   The workspace still compiles and tests pass; members that need these crates
   continue to declare them directly.
 
+### Breaking
+- Rhai host API moved from flat functions to modular namespaces. All feature
+  surfaces are now namespaced (`scan::god_files`, `deploy::model`, etc.) and
+  core helpers live in modules (`fs::read_file`, `process::run`, `str::trim`,
+  etc.). Only `log`, `log_warn`, and `env` remain flat. Scripts using the old
+  flat names will continue to work through an internal preprocessor, but the
+  documented API is now modular.
+
 ### Fixed
 - `src/bin/effigy-qa.rs` no longer panics with `.expect()` when `cargo` is not on
   `PATH`; it now prints a readable error and exits with code 1.
