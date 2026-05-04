@@ -70,14 +70,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/016-container-and-runtime-error-taxonomy-and-diagnostics.md` is complete; the runtime/container core now has typed failure families across runtime prep, exec-surface selection, workspace handoff, lease policy, and gateway reconciliation instead of relying on string-first translation as the dominant shape.
 - `g03/017-architecture-map-and-authority-surface-repair.md` is complete; the live package and authority surfaces now match the post-hardening runtime/container seams closely enough to guide the final proof lane.
 - `g03/018-v1-runtime-hardening-proof-and-stress-matrix.md` is complete; the runtime/container core now has a bounded executable proof matrix for the historical brittle seams that blocked `v1.0` confidence.
-- `g03/019-v1-release-contract-and-compatibility-boundary.md` is planned; the next `v1.0` program is to define the stable release and compatibility promise Effigy is actually ready to make.
+- `g03/019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md` is complete; the runtime/container hardening foundation is now proven and documented, and the `v0.x` release contract remains the live authority surface while additional features and tidy-up work continue in the `v0.3.x` line.
 - `g03/020-distribution-channel-proof-and-first-publish-closeout.md` is planned; once the stable release contract exists, the next release/distribution lane should close on direct first-publish and upgrade evidence.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
 - no strict lane is active right now
-- the next honest move is planning, with `g03.019` as the next planned seam
+- the next honest move is planning; `g03.019` is complete and no strict lane is active
 
 ## Research Program
 

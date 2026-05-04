@@ -1,12 +1,10 @@
 # Release Contract (v0.x)
 
-Status: Promoted
+Status: Live
 Owner: Platform
 Created: 2026-02-27
+Updated: 2026-05-04
 Related: [Distribution Channels](./distribution-channels.md)
-
-Superseded by:
-- `g03.019-v1-release-contract-and-compatibility-boundary`
 
 ## 1) Purpose
 
@@ -14,8 +12,10 @@ Define the minimum release contract required before promoting Effigy to stable d
 
 This contract is intentionally scoped to `v0.x` while feature shape is still converging.
 
-That convergence is now far enough along that this draft should be treated as
-historical planning evidence, not the live contract target.
+The runtime/container core has been hardened (see `g03.018`) and the foundation
+for a future `v1.0` contract is now in place. This `v0.x` contract remains the
+live authority surface until additional features and tidy-up work are shipped
+and a `v1.0` contract is explicitly adopted.
 
 ## 2) Versioning Policy (v0.x)
 

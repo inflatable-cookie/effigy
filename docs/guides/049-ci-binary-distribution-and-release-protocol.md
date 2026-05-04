@@ -186,14 +186,14 @@ Per the release contract (`release-contract-v0.md`):
 Released-surface rule for deliberate `0.x` minor cuts:
 - keep the previous shipped tag as the compatibility floor until the next
   release ships
-- for the planned `v0.3.0` cut, treat `v0.2.13` as that floor
-- record any intentional break from that floor in
+- for the `v0.3.0` cut, `v0.2.13` was that floor
+- record any intentional break from the floor in
   `tests/fixtures/released_surface/v0.3.0/transition.json`
 - every intentional break entry must carry a migration note instead of relying
   on implied changelog context
-- the current recorded intentional break for that cut is retirement of the
-  legacy release wrapper scripts; keep that fixture aligned with the real
-  migration story when more deliberate breaks are approved
+- the recorded intentional break for `v0.3.0` is retirement of the legacy
+  release wrapper scripts; keep that fixture aligned with the real migration
+  story when more deliberate breaks are approved
 
 Supported-boundary rule for `v0.3` messaging:
 
