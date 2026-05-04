@@ -20,6 +20,9 @@ During v0.x, MINOR bumps may include breaking changes.
   `[bootstrap].start = "dev"`, so bundle consumers can seed and hand off into
   the dev shell with one bootstrap command unless they override that start
   behavior locally.
+- The bundled DecodeLabs bootstrap contract now also tries to copy
+  `infra/dev/bootstrap/app.env` to `.env` before handoff. If the template is
+  absent, bootstrap logs a skip message instead of failing.
 - Pruned 7 unused direct dependencies from the root `Cargo.toml`
   (`anstream`, `indicatif`, `tabled`, `indexmap`, `ignore`, `zeroize`, `rhai`).
   The workspace still compiles and tests pass; members that need these crates

@@ -37,10 +37,16 @@ pub(super) struct BundleExportFile {
     pub(super) contents: String,
 }
 
-const DECODELABS_ASSETS: &[EmbeddedBundleAsset] = &[EmbeddedBundleAsset {
-    path: "scripts/seed-latest-db-dump.rhai",
-    contents: include_str!("../../bundles/decodelabs/scripts/seed-latest-db-dump.rhai"),
-}];
+const DECODELABS_ASSETS: &[EmbeddedBundleAsset] = &[
+    EmbeddedBundleAsset {
+        path: "scripts/seed-latest-db-dump.rhai",
+        contents: include_str!("../../bundles/decodelabs/scripts/seed-latest-db-dump.rhai"),
+    },
+    EmbeddedBundleAsset {
+        path: "scripts/write-env-if-present.rhai",
+        contents: include_str!("../../bundles/decodelabs/scripts/write-env-if-present.rhai"),
+    },
+];
 
 const UNDERLAY_ASSETS: &[EmbeddedBundleAsset] = &[
     EmbeddedBundleAsset {

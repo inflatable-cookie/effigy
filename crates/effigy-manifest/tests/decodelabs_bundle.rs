@@ -31,6 +31,13 @@ version = "11.0"
         "decodelabs bundle should materialize its seed helper at {}",
         seed_script.display()
     );
+    let env_script = bundle_root.join("scripts/write-env-if-present.rhai");
+    let env_script_source = std::fs::read_to_string(&env_script).expect("env script");
+    assert!(
+        env_script_source.contains("bootstrap .env template not present"),
+        "decodelabs bundle should materialize its env helper at {}",
+        env_script.display()
+    );
     let manifest = loaded.manifest;
 
     let bundle = manifest.bundle.expect("bundle");
@@ -139,6 +146,18 @@ version = "11.0"
     assert_eq!(dev.default_workspace.as_deref(), Some("app"));
 
     let bootstrap = manifest.bootstrap.expect("bootstrap");
+    assert!(matches!(
+        bootstrap.run.as_ref().expect("bootstrap run"),
+        ManifestManagedRun::Sequence(steps)
+            if matches!(
+                steps.as_slice(),
+                [ManifestManagedRunStep::Step(step)]
+                    if step
+                        .rhai
+                        .as_deref()
+                        .is_some_and(|path| path.ends_with("/scripts/write-env-if-present.rhai"))
+            )
+    ));
     let start = bootstrap.start.expect("bootstrap start");
     assert_eq!(start.to_owned_selectors(), vec!["dev".to_owned()]);
 
