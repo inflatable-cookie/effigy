@@ -17,7 +17,7 @@ This guide standardizes deterministic CI installs and migration from legacy `bun
 
 Use explicit versions in CI for repeatable behavior.
 
-### Git tag install (recommended before crates.io publish)
+### Git tag install (primary source-build path)
 
 ```bash
 cargo install \
@@ -27,6 +27,9 @@ cargo install \
   effigy \
   --force
 ```
+
+Note: Effigy does not publish to crates.io because its workspace contains
+app-specific internal crates not intended as reusable library dependencies.
 
 ### Existing repo clone + local path install
 

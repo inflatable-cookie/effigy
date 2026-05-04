@@ -35,9 +35,11 @@ should be treated as historical backlog evidence rather than the live queue.
 - `cargo run --manifest-path ... --bin effigy -- ...`
 - Purpose: immediate local iteration while behavior is still moving.
 
-2. Rust install channel:
-- `cargo install` (first via git/tag, then crates.io).
-- Purpose: reproducible installs in Rust-native environments and CI.
+2. Source install channel:
+- `cargo install --git https://github.com/inflatable-cookie/effigy.git --tag vX.Y.Z`
+- Purpose: reproducible source builds in Rust-native environments and CI.
+- Not crates.io: Effigy's workspace contains app-specific internal crates not
+  intended as reusable library dependencies.
 
 3. Homebrew channel:
 - custom tap/formula for `brew install`/`brew upgrade`.
@@ -55,12 +57,11 @@ should be treated as historical backlog evidence rather than the live queue.
 - [x] Define rollback and hotfix process.
 - [x] Define changelog format and release notes template.
 
-### Phase B - Crates Path
-- [x] Finalize crate metadata and publish readiness checks.
-- [x] Add tag-driven release checklist for crates publication.
-- [ ] Validate `cargo install` flows from tag and from crates.io.
-  - [x] tag-based install validation automated in release gates
-  - [ ] crates.io install validation (pending first publish cycle)
+### Phase B - Source Install Path
+- [x] Tag-driven source install (`cargo install --git --tag`) documented and validated.
+- [x] Release checklist includes source-install verification.
+- [ ] Not applicable: Effigy does not publish to crates.io because its workspace
+  contains app-specific internal crates not intended as reusable library dependencies.
 
 ### Phase C - Homebrew Path
 - [x] Create and validate tap repository/formula workflow.
@@ -80,7 +81,8 @@ should be treated as historical backlog evidence rather than the live queue.
 
 ## 6) Acceptance Criteria
 
-- [ ] One-command install exists for both Rust-native and macOS-default users.
+- [x] One-command install exists for macOS-default users (Homebrew).
+- [x] Source-install path documented for Rust-native environments (`cargo install --git --tag`).
 - [ ] Version pinning and rollback are documented and tested.
 - [ ] Release and upgrade flow is repeatable from CI.
 - [x] Channel docs clearly distinguish dev channel vs stable channels.
@@ -92,9 +94,9 @@ should be treated as historical backlog evidence rather than the live queue.
   - CI pinning guidance and wrapper migration policy
   - Homebrew workflow and release automation policy
 - Still blocked until publish-cycle execution:
-  - crates.io install validation
   - release tag install validation on an actual published release tag
   - full end-to-end channel matrix execution evidence from one release cycle
+  - source-install path validated against a real tag
 
 ## 7) Risks and Mitigations
 
@@ -108,7 +110,7 @@ should be treated as historical backlog evidence rather than the live queue.
 ## 8) Deliverables
 
 - [x] Release contract doc + checklist.
-- [x] Crates publication workflow.
+- [x] Source install path documented (`cargo install --git --tag`).
 - [x] Homebrew tap + automation workflow.
 - [x] CI install recipes and migration guidance.
 
@@ -130,6 +132,6 @@ Target envelope:
 - Effigy distribution is repeatable across channels with one canonical binary source and reversible rollout controls.
 
 Promotion signals:
-- one completed publish cycle includes validated install evidence for tag install, crates install, and Homebrew flow
+- one completed publish cycle includes validated install evidence for tag install, source install, and Homebrew flow
 - rollback path is executed or dry-run validated and documented in a dated log
 - release contract checklist is fully linked to channel artifacts with no open blockers

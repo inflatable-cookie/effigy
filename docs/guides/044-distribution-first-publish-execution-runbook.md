@@ -1,6 +1,12 @@
 > Status: Deprecated
 > Superseded by: [`062-distribution-system-guide.md`](./062-distribution-system-guide.md) and [`051-release-orchestration.md`](./051-release-orchestration.md)
 > Kept for: historical first-publish execution detail
+> 
+> Note: This runbook originally included crates.io publish validation. Effigy
+> does not publish to crates.io because its workspace contains app-specific
+> internal crates not intended as reusable library dependencies. Binary
+> distribution (GitHub Releases + Homebrew) and source install (`cargo install
+> --git --tag`) are the supported channels.
 
 # 044 - Distribution First-Publish Execution Runbook
 
@@ -32,9 +38,8 @@ real publish/install cycle.
 Run this sequence in one release window:
 1. Create and push release tag.
 2. Validate install from tag.
-3. Publish crate and validate crates.io install.
-4. Update Homebrew formula and validate fresh install + upgrade path.
-5. Capture one consolidated channel matrix log.
+3. Update Homebrew formula and validate fresh install + upgrade path.
+4. Capture one consolidated channel matrix log.
 
 Optional one-command execution helper:
 
@@ -45,9 +50,9 @@ effigy distribution generate-closeout --tag vX.Y.Z --artifacts-dir ./artifacts/d
 # effigy distribution generate-closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z --expect-homebrew
 ```
 
-The built-in owns the real crates.io and Homebrew execution steps plus
-per-step log capture. Tag-install verification, artifact-summary writing, and
-artifact validation remain native Effigy subcommands inside the same workflow.
+The built-in owns the Homebrew execution steps plus per-step log capture.
+Tag-install verification, artifact-summary writing, and artifact validation
+remain native Effigy subcommands inside the same workflow.
 
 ## 3) Command Matrix
 
@@ -57,10 +62,15 @@ artifact validation remain native Effigy subcommands inside the same workflow.
 effigy release verify-install --tag vX.Y.Z
 ```
 
-### Crates.io Install Validation
+### Source Install Validation
 
 ```bash
-cargo install effigy --version X.Y.Z --locked --force
+cargo install \
+  --locked \
+  --git https://github.com/inflatable-cookie/effigy.git \
+  --tag vX.Y.Z \
+  effigy \
+  --force
 effigy --help
 effigy --json tasks
 ```
@@ -96,7 +106,7 @@ effigy --json help
 ## 4) Required Evidence Artifacts
 
 - tag-install output log
-- crates.io install output log
+- source-install output log
 - Homebrew fresh install + upgrade logs
 - CI pinned install log
 - one dated checkpoint log in `docs/logs/YYYY-MM/`

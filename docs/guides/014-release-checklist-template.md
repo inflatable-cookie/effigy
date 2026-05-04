@@ -77,10 +77,10 @@ Owner: `name/team`
 - [ ] Distribution metadata validation passes:
   - [ ] `effigy distribution validate-metadata --tag v0.__.__`
 - [ ] Tag points to intended commit.
-- [ ] Publish command executed/queued.
 - [ ] Install validated from git tag:
   - [ ] `effigy release verify-install --tag v0.__.__`
-- [ ] Install validated from published crate.
+- [ ] Source-install path validated:
+  - [ ] `cargo install --locked --git https://github.com/inflatable-cookie/effigy.git --tag v0.__.__ effigy --force`
 - [ ] First-publish artifact bundle captured:
   - [ ] `effigy distribution first-publish --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__`
   - [ ] `effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.__.__`

@@ -112,7 +112,7 @@ tag push (v*)
   │
   ├─ 6. Homebrew tap metadata + formula PR (existing)
   │
-  └─ 7. crates.io publish (existing, when ready)
+   └─ 7. Source install path documented (not crates.io; see Section 5d)
 ```
 
 The cross-compile and publish stages must not run unless release gates pass.
@@ -159,9 +159,26 @@ For non-GitHub-Actions CI systems, or if the action is not suitable:
 ### 5b) Version Pinning Policy
 
 During `v0.x`:
-- Consumer CI must pin an exact version (`EFFIGY_VERSION=0.1.0`)
+- Consumer CI must pin an exact version (`EFFIGY_VERSION=0.3.3`)
 - Floating or latest-tag references are not supported
 - Version bumps in consumer repos should be explicit commits, not automated
+
+### 5d) Source Install (Fallback)
+
+For Rust-native environments where prebuilt binaries are unavailable:
+
+```bash
+cargo install \
+  --locked \
+  --git https://github.com/inflatable-cookie/effigy.git \
+  --tag vX.Y.Z \
+  effigy \
+  --force
+```
+
+This is the supported source-build path. Effigy does not publish to crates.io
+because its workspace contains app-specific internal crates that are not
+intended as reusable library dependencies.
 
 ### 5c) Caching
 
@@ -304,8 +321,10 @@ and resolve the failure before continuing.
 
 - **Never initiate a release without explicit human instruction.** A human must
   ask for a release; agents do not decide when to release.
-- **Never publish to crates.io directly.** Publication is triggered by CI from a
-  tag, or performed manually by a human.
+- **Never publish to crates.io.** Effigy does not use crates.io distribution
+  because its workspace contains app-specific internal crates that are not
+  intended as reusable library dependencies. Binary distribution is the
+  primary channel.
 - **Never modify `.github/workflows/` without explicit human approval.** Workflow
   changes affect the release pipeline and require review.
 - **Never bypass release gates.** If gates fail, fix the underlying issue; do

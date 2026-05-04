@@ -25,8 +25,8 @@ evidence across the supported install channels.
 
 - execute the first stable channel proof across:
   - tag install
-  - crates.io install
   - Homebrew/tap install and upgrade
+  - source install (`cargo install --git --tag`) as the fallback path
 - validate the install and rollback surfaces against the `v1.0` release
   contract
 - tighten the operator guidance for:
