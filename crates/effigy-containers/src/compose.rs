@@ -28,6 +28,14 @@ thread_local! {
 
 const COMPOSE_BACKEND_OVERRIDE_ENV: &str = "EFFIGY_COMPOSE_BACKEND";
 
+#[cfg(target_os = "macos")]
+const MACOS_EXTRA_PROGRAM_DIRS: [&str; 4] = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/Applications/Docker.app/Contents/Resources/bin",
+    "/Applications/OrbStack.app/Contents/MacOS/bin",
+];
+
 /// Resolve which compose backend to use.
 ///
 /// Prefers `docker` if available on PATH, falls back to Colima nerdctl.
@@ -144,8 +152,46 @@ pub fn on_task_exit_label(mode: ManifestContainerOnTaskExit) -> &'static str {
 }
 
 fn command_exists(program: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|path| std::env::split_paths(&path).any(|entry| entry.join(program).is_file()))
+    resolve_host_cli_program_path(program).is_some()
+}
+
+pub fn resolve_host_cli_program(program: &str) -> OsString {
+    resolve_host_cli_program_path(program)
+        .map(|path| path.into_os_string())
+        .unwrap_or_else(|| OsString::from(program))
+}
+
+fn resolve_host_cli_program_path(program: &str) -> Option<std::path::PathBuf> {
+    resolve_host_cli_program_path_with_extra(program, &[])
+}
+
+fn resolve_host_cli_program_path_with_extra(
+    program: &str,
+    extra_dirs: &[std::path::PathBuf],
+) -> Option<std::path::PathBuf> {
+    if program.contains(std::path::MAIN_SEPARATOR) {
+        let path = std::path::PathBuf::from(program);
+        return path.is_file().then_some(path);
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("PATH") {
+        candidates.extend(std::env::split_paths(&path));
+    }
+    candidates.extend(extra_dirs.iter().cloned());
+    #[cfg(target_os = "macos")]
+    {
+        candidates.extend(
+            MACOS_EXTRA_PROGRAM_DIRS
+                .iter()
+                .map(std::path::PathBuf::from),
+        );
+    }
+
+    candidates
+        .into_iter()
+        .map(|entry| entry.join(program))
+        .find(|candidate| candidate.is_file())
 }
 
 #[cfg(test)]

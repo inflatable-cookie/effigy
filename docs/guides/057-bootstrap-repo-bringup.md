@@ -44,7 +44,7 @@ effigy bootstrap <git-url> --start
 ## Command Shape
 
 ```sh
-effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--start] [--plan] [--json]
+effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--start] [--plan] [--json]
 ```
 
 What each flag means:
@@ -54,6 +54,8 @@ What each flag means:
 - `--branch <NAME>`: target a specific branch during clone or update
 - `--db-seed <FILE>|<TARGET>=<FILE>`: stage one or more SQL dumps into the
   cloned repo before bootstrap-owned setup runs
+- `--no-prompt`: suppress interactive bootstrap prompts for missing database
+  seed inputs even on a real TTY
 - `--start`: run the repo's configured bootstrap start task after setup
 - `--plan`: preview destination, branch, and intent without mutating anything
 - `--json`: return `effigy.bootstrap.v1` inside the normal command envelope
@@ -98,6 +100,15 @@ Bundle-backed repos do not need extra seed mapping config for the normal case:
   use `<target>=<file>` and the target must match one declared bundle database
 - if `--db-seed` is supplied for a non-bundle repo, the old unnamed staged-file
   contract still works
+
+When bootstrap is running on a real interactive TTY and no `--db-seed` inputs
+were supplied, Effigy now prompts once per declared bundle database and lets
+the operator enter paths interactively. That prompt is suppressed for:
+
+- `--json`
+- `--plan`
+- redirected / non-interactive stdin or stdout
+- explicit `--no-prompt`
 
 If database seed input was supplied, Effigy also looks for a standard task
 named `bootstrap:db-seed` and runs it after root bootstrap setup, before

@@ -5,6 +5,12 @@ use effigy_manifest::{
     ManifestContainerStartup,
 };
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().expect("lock")
+}
 
 #[test]
 fn resolve_compose_backend_returns_something() {
@@ -15,6 +21,7 @@ fn resolve_compose_backend_returns_something() {
 
 #[test]
 fn resolve_compose_backend_honors_colima_override_env() {
+    let _lock = env_lock();
     let previous = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
     unsafe {
         std::env::set_var("EFFIGY_COMPOSE_BACKEND", "containerd");
@@ -33,6 +40,7 @@ fn resolve_compose_backend_honors_colima_override_env() {
 
 #[test]
 fn resolve_compose_backend_honors_docker_override_env() {
+    let _lock = env_lock();
     let previous = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
     unsafe {
         std::env::set_var("EFFIGY_COMPOSE_BACKEND", "docker");
@@ -47,6 +55,53 @@ fn resolve_compose_backend_honors_docker_override_env() {
         },
     }
     assert_eq!(backend, ComposeBackend::Docker);
+}
+
+#[test]
+fn resolve_host_cli_program_prefers_path_hits() {
+    let _lock = env_lock();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let bin = temp.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("mkdir bin");
+    std::fs::write(bin.join("colima"), "#!/bin/sh\n").expect("write colima");
+    let previous = std::env::var_os("PATH");
+    unsafe {
+        std::env::set_var("PATH", bin.display().to_string());
+    }
+    let resolved = resolve_host_cli_program("colima");
+    match previous {
+        Some(value) => unsafe {
+            std::env::set_var("PATH", value);
+        },
+        None => unsafe {
+            std::env::remove_var("PATH");
+        },
+    }
+    assert_eq!(resolved, bin.join("colima").into_os_string());
+}
+
+#[test]
+fn resolve_host_cli_program_path_helper_uses_extra_dirs() {
+    let _lock = env_lock();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let extra = temp.path().join("extra");
+    std::fs::create_dir_all(&extra).expect("mkdir extra");
+    std::fs::write(extra.join("colima"), "#!/bin/sh\n").expect("write colima");
+    let previous = std::env::var_os("PATH");
+    unsafe {
+        std::env::set_var("PATH", "");
+    }
+    let resolved = resolve_host_cli_program_path_with_extra("colima", std::slice::from_ref(&extra))
+        .expect("resolve colima from extra dir");
+    match previous {
+        Some(value) => unsafe {
+            std::env::set_var("PATH", value);
+        },
+        None => unsafe {
+            std::env::remove_var("PATH");
+        },
+    }
+    assert_eq!(resolved, extra.join("colima"));
 }
 
 #[test]

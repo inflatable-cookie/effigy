@@ -14,6 +14,7 @@ use effigy_cli::{BootstrapArgs, BootstrapDbSeedInput, BootstrapDepsSyncMode, Boo
 #[path = "../../../crates/effigy-bootstrap/tests/support.rs"]
 mod support;
 use std::fs;
+use std::io::Cursor;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use support::{
@@ -460,6 +461,7 @@ fn run_bootstrap_with_cwd_starts_when_requested() {
                 path: None,
                 branch: None,
                 db_seeds: Vec::new(),
+                no_prompt: false,
                 start: true,
                 plan: false,
             },
@@ -493,6 +495,7 @@ fn run_bootstrap_with_cwd_stages_db_seed_before_root_run() {
                     target: None,
                     path: dump.clone(),
                 }],
+                no_prompt: false,
                 start: false,
                 plan: false,
             },
@@ -532,6 +535,7 @@ fn run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start() {
                     target: None,
                     path: dump,
                 }],
+                no_prompt: false,
                 start: true,
                 plan: false,
             },
@@ -582,6 +586,7 @@ fn run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases() 
                         path: mortcalc_dump,
                     },
                 ],
+                no_prompt: false,
                 start: false,
                 plan: false,
             },
@@ -626,6 +631,7 @@ fn run_bootstrap_with_cwd_rejects_unnamed_db_seed_for_multi_database_bundle() {
                     target: None,
                     path: dump,
                 }],
+                no_prompt: false,
                 start: false,
                 plan: false,
             },
@@ -661,6 +667,7 @@ fn run_bootstrap_with_cwd_rejects_db_seed_when_standard_task_is_missing() {
                     target: None,
                     path: dump,
                 }],
+                no_prompt: false,
                 start: false,
                 plan: false,
             },
@@ -688,6 +695,7 @@ fn run_bootstrap_with_cwd_reports_optional_child_warning_in_text_output() {
                 path: None,
                 branch: None,
                 db_seeds: Vec::new(),
+                no_prompt: false,
                 start: false,
                 plan: false,
             },
@@ -788,6 +796,7 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
                 path: Some(PathBuf::from("underlay-reference")),
                 branch: None,
                 db_seeds: Vec::new(),
+                no_prompt: false,
                 start: false,
                 plan: false,
             },
@@ -802,6 +811,69 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
         cwd.join("underlay/bun.marker").is_file(),
         "bun marker should be written under the cloned repo sibling, not the bootstrap parent"
     );
+}
+
+#[test]
+fn prompt_bootstrap_db_seeds_collects_named_paths() {
+    let root = temp_dir("bootstrap-db-seed-prompt");
+    let cbs = root.join("cbs.sql");
+    let mortcalc = root.join("mortcalc.sql");
+    fs::write(&cbs, "cbs").expect("write cbs");
+    fs::write(&mortcalc, "mortcalc").expect("write mortcalc");
+
+    let input = format!("{}\n{}\n\n", cbs.display(), mortcalc.display());
+    let mut output = Vec::new();
+    let seeds = super::collect_bootstrap_db_seed_prompts_from_io(
+        &root,
+        &["cbs".to_owned(), "cbs-mortcalc".to_owned()],
+        &mut Cursor::new(input.into_bytes()),
+        &mut output,
+    )
+    .expect("prompt should succeed");
+
+    assert_eq!(
+        seeds,
+        vec![
+            super::BootstrapDbSeedInput {
+                target: Some("cbs".to_owned()),
+                path: cbs,
+            },
+            super::BootstrapDbSeedInput {
+                target: Some("cbs-mortcalc".to_owned()),
+                path: mortcalc,
+            },
+        ]
+    );
+    let rendered = String::from_utf8(output).expect("utf8");
+    assert!(rendered.contains("No --db-seed inputs were supplied."));
+    assert!(rendered.contains("Continue with 2 database seed file(s)? [Y/n]: "));
+}
+
+#[test]
+fn prompt_bootstrap_db_seeds_reprompts_invalid_paths_and_allows_skip() {
+    let root = temp_dir("bootstrap-db-seed-prompt-invalid");
+    let valid = root.join("cbs.sql");
+    fs::write(&valid, "cbs").expect("write cbs");
+
+    let input = format!("/definitely/not/real.sql\n{}\n\n\n", valid.display());
+    let mut output = Vec::new();
+    let seeds = super::collect_bootstrap_db_seed_prompts_from_io(
+        &root,
+        &["cbs".to_owned(), "cbs-mortcalc".to_owned()],
+        &mut Cursor::new(input.into_bytes()),
+        &mut output,
+    )
+    .expect("prompt should succeed");
+
+    assert_eq!(
+        seeds,
+        vec![super::BootstrapDbSeedInput {
+            target: Some("cbs".to_owned()),
+            path: valid,
+        }]
+    );
+    let rendered = String::from_utf8(output).expect("utf8");
+    assert!(rendered.contains("Path does not exist or is not a readable file"));
 }
 
 #[test]

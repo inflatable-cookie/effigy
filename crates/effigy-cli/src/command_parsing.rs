@@ -827,6 +827,7 @@ where
     let mut path: Option<PathBuf> = None;
     let mut branch: Option<String> = None;
     let mut db_seeds = Vec::<BootstrapDbSeedInput>::new();
+    let mut no_prompt = false;
     let mut start = true;
     let mut plan = false;
     let mut output_json = false;
@@ -835,6 +836,7 @@ where
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => output_json = true,
+            "--no-prompt" => no_prompt = true,
             "--start" => start = true,
             "--no-start" => start = false,
             "--plan" => plan = true,
@@ -874,6 +876,7 @@ where
             path,
             branch,
             db_seeds,
+            no_prompt,
             start,
             plan,
         },

@@ -21,7 +21,9 @@ use crate::{
         managed_colima_profile_resources, parse_colima_running, prepare_managed_colima_profile,
         shutdown_compose_commands,
     },
-    compose::{compose_invocation, resolve_compose_backend, ComposeBackend},
+    compose::{
+        compose_invocation, resolve_compose_backend, resolve_host_cli_program, ComposeBackend,
+    },
     EffectiveContainerPolicy, DEFAULT_COLIMA_PROFILE,
 };
 
@@ -496,7 +498,8 @@ pub fn run_command_capture_allow_failure(
     program: &str,
     args: &[&str],
 ) -> Result<Output, ContainerExecError> {
-    Command::new(program)
+    let resolved_program = resolve_host_cli_program(program);
+    Command::new(&resolved_program)
         .current_dir(repo_root)
         .args(args)
         .output()
@@ -512,7 +515,8 @@ fn run_command_capture_os(
     args: &[OsString],
     label: &str,
 ) -> Result<Output, ContainerExecError> {
-    let output = Command::new(program)
+    let resolved_program = resolve_host_cli_program(program);
+    let output = Command::new(&resolved_program)
         .current_dir(repo_root)
         .args(args)
         .output()
@@ -1047,7 +1051,8 @@ fn spawn_capture_child(
     program: &str,
     args: &[&str],
 ) -> Result<std::process::Child, std::io::Error> {
-    let mut command = Command::new(program);
+    let resolved_program = resolve_host_cli_program(program);
+    let mut command = Command::new(&resolved_program);
     command
         .current_dir(repo_root)
         .args(args)
@@ -1070,7 +1075,8 @@ fn spawn_stream_child(
     program: &str,
     args: &[&str],
 ) -> Result<std::process::Child, std::io::Error> {
-    let mut command = Command::new(program);
+    let resolved_program = resolve_host_cli_program(program);
+    let mut command = Command::new(&resolved_program);
     command
         .current_dir(repo_root)
         .args(args)

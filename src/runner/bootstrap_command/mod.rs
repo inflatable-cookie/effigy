@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::ffi::OsString;
-use std::io::IsTerminal;
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -46,13 +46,15 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
     cwd: PathBuf,
 ) -> Result<String, RunnerError> {
     match &args.subcommand {
-        BootstrapSubcommand::Clone { plan, .. } => {
+        BootstrapSubcommand::Clone {
+            plan, no_prompt, ..
+        } => {
             let request = resolve_bootstrap_request(&cwd, &args)?;
             if *plan {
                 return Ok(crate_render_bootstrap_plan(&request, args.output_json));
             }
 
-            let result = execute_bootstrap_request(&request, args.output_json)?;
+            let result = execute_bootstrap_request(&request, args.output_json, *no_prompt)?;
             Ok(crate_render_bootstrap_result(&result, args.output_json))
         }
         BootstrapSubcommand::DepsSync { mode, paths } => {
@@ -70,6 +72,7 @@ fn resolve_bootstrap_request(
         path,
         branch,
         db_seeds,
+        no_prompt: _,
         start,
         ..
     } = &args.subcommand
@@ -99,12 +102,15 @@ fn resolve_bootstrap_request(
 fn execute_bootstrap_request(
     request: &BootstrapResolution,
     output_json: bool,
+    no_prompt: bool,
 ) -> Result<BootstrapExecutionResult, RunnerError> {
     let progress = RefCell::new(BootstrapProgressReporter::new(output_json));
     let mut staged_db_seeds = None::<Vec<BootstrapStagedDbSeed>>;
     let mut db_seed_env = None::<ScopedEnvOverride>;
+    let mut effective_db_seeds = request.db_seeds.clone();
+    let mut db_seed_prompt_checked = false;
     let mut crate_request = request.clone();
-    if !request.db_seeds.is_empty() && request.start_requested {
+    if !effective_db_seeds.is_empty() && request.start_requested {
         crate_request.start_requested = false;
     }
 
@@ -116,8 +122,16 @@ fn execute_bootstrap_request(
             Ok(manifest.bootstrap)
         },
         |repo_root, run, phase| {
+            maybe_prompt_bootstrap_db_seed_inputs(
+                repo_root,
+                output_json,
+                no_prompt,
+                &mut effective_db_seeds,
+                &mut db_seed_prompt_checked,
+            )
+            .map_err(|e| BootstrapError::task_invocation(e.to_string()))?;
             maybe_stage_bootstrap_db_seed_inputs(
-                request,
+                &effective_db_seeds,
                 &crate_request.destination,
                 repo_root,
                 &mut staged_db_seeds,
@@ -136,12 +150,21 @@ fn execute_bootstrap_request(
     )
     .map_err(map_bootstrap_error)?;
 
-    result.request.start_requested = request.start_requested;
     let effective_destination = result.request.destination.clone();
+    maybe_prompt_bootstrap_db_seed_inputs(
+        &effective_destination,
+        output_json,
+        no_prompt,
+        &mut effective_db_seeds,
+        &mut db_seed_prompt_checked,
+    )?;
 
-    if !request.db_seeds.is_empty() {
+    result.request.start_requested = request.start_requested;
+    result.request.db_seeds = effective_db_seeds.clone();
+
+    if !effective_db_seeds.is_empty() {
         maybe_stage_bootstrap_db_seed_inputs(
-            request,
+            &effective_db_seeds,
             &effective_destination,
             &effective_destination,
             &mut staged_db_seeds,
@@ -188,14 +211,14 @@ fn execute_bootstrap_request(
 }
 
 fn maybe_stage_bootstrap_db_seed_inputs(
-    request: &BootstrapResolution,
+    db_seeds: &[BootstrapDbSeedInput],
     destination_root: &Path,
     repo_root: &Path,
     staged_db_seeds: &mut Option<Vec<BootstrapStagedDbSeed>>,
     db_seed_env: &mut Option<ScopedEnvOverride>,
     progress: &mut BootstrapProgressReporter,
 ) -> Result<(), RunnerError> {
-    if request.db_seeds.is_empty() || repo_root != destination_root {
+    if db_seeds.is_empty() || repo_root != destination_root {
         return Ok(());
     }
     if staged_db_seeds.is_some() {
@@ -204,8 +227,7 @@ fn maybe_stage_bootstrap_db_seed_inputs(
 
     progress.start_command_phase("[bootstrap] staging database seed files");
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
-    let resolved_seeds =
-        resolve_bootstrap_db_seed_targets(repo_root, &manifest, &request.db_seeds)?;
+    let resolved_seeds = resolve_bootstrap_db_seed_targets(repo_root, &manifest, db_seeds)?;
     let staged = stage_bootstrap_db_seed_files(repo_root, &resolved_seeds)?;
     *db_seed_env = Some(ScopedEnvOverride::set(&bootstrap_db_seed_env(&staged)));
     progress.finish_success(&format!(
@@ -221,6 +243,151 @@ fn maybe_stage_bootstrap_db_seed_inputs(
     ));
     *staged_db_seeds = Some(staged);
     Ok(())
+}
+
+fn maybe_prompt_bootstrap_db_seed_inputs(
+    repo_root: &Path,
+    output_json: bool,
+    no_prompt: bool,
+    effective_db_seeds: &mut Vec<BootstrapDbSeedInput>,
+    prompt_checked: &mut bool,
+) -> Result<(), RunnerError> {
+    if *prompt_checked
+        || !effective_db_seeds.is_empty()
+        || !should_prompt_bootstrap_db_seeds(output_json, no_prompt)
+    {
+        return Ok(());
+    }
+
+    let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
+    let Some(targets) = manifest.bundle.as_ref().and_then(bundle_database_targets) else {
+        *prompt_checked = true;
+        return Ok(());
+    };
+    if targets.is_empty() {
+        *prompt_checked = true;
+        return Ok(());
+    }
+
+    let mut stdin = io::stdin().lock();
+    let mut stdout = io::stdout().lock();
+    *effective_db_seeds =
+        collect_bootstrap_db_seed_prompts_from_io(repo_root, &targets, &mut stdin, &mut stdout)?;
+    *prompt_checked = true;
+    Ok(())
+}
+
+fn should_prompt_bootstrap_db_seeds(output_json: bool, no_prompt: bool) -> bool {
+    !output_json && !no_prompt && io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+
+fn prompt_yes_no<R: BufRead, W: Write>(
+    input: &mut R,
+    output: &mut W,
+    prompt: &str,
+) -> Result<bool, RunnerError> {
+    output
+        .write_all(prompt.as_bytes())
+        .and_then(|_| output.flush())
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to render interactive bootstrap prompt: {error}"
+            ))
+        })?;
+    let mut line = String::new();
+    input.read_line(&mut line).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to read interactive bootstrap input: {error}"
+        ))
+    })?;
+    let normalized = line.trim().to_ascii_lowercase();
+    Ok(normalized.is_empty() || normalized == "y" || normalized == "yes")
+}
+
+pub(super) fn collect_bootstrap_db_seed_prompts_from_io<R: BufRead, W: Write>(
+    repo_root: &Path,
+    targets: &[String],
+    input: &mut R,
+    output: &mut W,
+) -> Result<Vec<BootstrapDbSeedInput>, RunnerError> {
+    output
+        .write_all(
+            b"No --db-seed inputs were supplied.\nEnter a SQL dump path for each database, or leave blank to skip.\n\n",
+        )
+        .and_then(|_| output.flush())
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to render interactive bootstrap prompt: {error}"
+            ))
+        })?;
+
+    let mut db_seeds = Vec::new();
+    for target in targets {
+        loop {
+            write!(output, "{target}: ")
+                .and_then(|_| output.flush())
+                .map_err(|error| {
+                    RunnerError::task_invocation(format!(
+                        "failed to render interactive bootstrap prompt: {error}"
+                    ))
+                })?;
+            let mut line = String::new();
+            input.read_line(&mut line).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "failed to read interactive bootstrap input: {error}"
+                ))
+            })?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                break;
+            }
+            let path = PathBuf::from(trimmed);
+            let normalized = if path.is_absolute() {
+                path
+            } else {
+                repo_root.join(path)
+            };
+            if !normalized.is_file() {
+                writeln!(
+                    output,
+                    "Path does not exist or is not a readable file: {}",
+                    normalized.display()
+                )
+                .and_then(|_| output.flush())
+                .map_err(|error| {
+                    RunnerError::task_invocation(format!(
+                        "failed to render interactive bootstrap prompt: {error}"
+                    ))
+                })?;
+                continue;
+            }
+            db_seeds.push(BootstrapDbSeedInput {
+                target: Some(target.clone()),
+                path: normalized,
+            });
+            break;
+        }
+    }
+
+    if db_seeds.is_empty() {
+        return Ok(db_seeds);
+    }
+
+    let prompt = if db_seeds.len() == 1 {
+        "Continue with 1 database seed file? [Y/n]: ".to_owned()
+    } else {
+        format!(
+            "Continue with {} database seed file(s)? [Y/n]: ",
+            db_seeds.len()
+        )
+    };
+    if !prompt_yes_no(input, output, &prompt)? {
+        return Err(RunnerError::task_invocation(
+            "bootstrap cancelled during interactive database seed prompt",
+        ));
+    }
+
+    Ok(db_seeds)
 }
 
 fn stage_bootstrap_db_seed_files(

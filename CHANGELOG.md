@@ -15,6 +15,10 @@ During v0.x, MINOR bumps may include breaking changes.
   SQL dumps are staged into the cloned repo before bootstrap-owned setup runs,
   exposed through a standard bootstrap env surface, and can drive one-command
   bring-up through a repo-owned `bootstrap:db-seed` task.
+- `effigy bootstrap` can now prompt for missing database seed paths on a real
+  interactive TTY when a bundle declares databases and no `--db-seed` inputs
+  were supplied. The prompt is skipped for `--json`, `--plan`, redirected I/O,
+  and explicit `--no-prompt`.
 
 ### Changed
 - `effigy bootstrap <repo>` now prefers `[catalog].alias` for the default
