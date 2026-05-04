@@ -29,9 +29,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Rhai host API moved from flat functions to modular namespaces. All feature
   surfaces are now namespaced (`scan::god_files`, `deploy::model`, etc.) and
   core helpers live in modules (`fs::read_file`, `process::run`, `str::trim`,
-  etc.). Only `log`, `log_warn`, and `env` remain flat. Scripts using the old
-  flat names will continue to work through an internal preprocessor, but the
-  documented API is now modular.
+  etc.). Only `log`, `log_warn`, and `env` remain flat. The temporary
+  `module.func(...)` compatibility rewrite was removed; scripts must use real
+  Rhai namespace calls like `module::func(...)`.
 
 ### Fixed
 - `src/bin/effigy-qa.rs` no longer panics with `.expect()` when `cargo` is not on

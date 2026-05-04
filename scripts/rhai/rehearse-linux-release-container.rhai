@@ -1,27 +1,27 @@
 let container_name = "linux-release";
 let image_name = "effigy-linux-release-builder:latest";
-let host_artifacts_dir = path.join(repo_root, ".effigy/linux-release/artifacts");
+let host_artifacts_dir = path::join(repo_root, ".effigy/linux-release/artifacts");
 let release_triple = if env("EFFIGY_LINUX_RELEASE_TRIPLE") == "" {
     "x86_64-unknown-linux-gnu"
 } else {
     env("EFFIGY_LINUX_RELEASE_TRIPLE")
 };
-let copied_binary = path.join(host_artifacts_dir, "effigy-" + release_triple);
-let proof_log = path.join(host_artifacts_dir, "rehearsal.txt");
+let copied_binary = path::join(host_artifacts_dir, "effigy-" + release_triple);
+let proof_log = path::join(host_artifacts_dir, "rehearsal.txt");
 
 fn down_container(name) {
-    let output = container.down(name);
+    let output = container::down(name);
     if output.trim() != "" {
         log(output);
     }
 }
 
-fs.create_dir(host_artifacts_dir);
-process.run(
+fs::create_dir(host_artifacts_dir);
+process::run(
     "colima",
     ["nerdctl", "--profile", "effigy-release", "--", "image", "rm", image_name],
 );
-let up = container.up(container_name, true);
+let up = container::up(container_name, true);
 if up.trim() != "" {
     log(up);
 }
@@ -54,7 +54,7 @@ try {
     // a stateful in-container build flow with exports, command substitution,
     // redirection, and artifact writes inside `/workspace`; flattening it into
     // one-off Rhai host helpers would not simplify the behavior.
-    let output = container.shell(container_name, build_script);
+    let output = container::shell(container_name, build_script);
     if output.trim() != "" {
         log(output);
     }
@@ -67,10 +67,10 @@ if shell_error != "" {
 }
 
 down_container(container_name);
-if !fs.exists(copied_binary) || !fs.is_file(copied_binary) {
+if !fs::exists(copied_binary) || !fs::is_file(copied_binary) {
     throw "[error] expected copied Linux rehearsal binary at " + copied_binary;
 }
-if !fs.exists(proof_log) || !fs.is_file(proof_log) {
+if !fs::exists(proof_log) || !fs::is_file(proof_log) {
     throw "[error] expected Linux rehearsal proof log at " + proof_log;
 }
 log("[ok] linux release rehearsal passed");

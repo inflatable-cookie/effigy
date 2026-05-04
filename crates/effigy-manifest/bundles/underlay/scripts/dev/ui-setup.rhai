@@ -9,31 +9,31 @@
 // default, and repos can override the package directories through
 // `[bundle.dirs]`.
 // The Effigy runtime already supplies
-// `run_process_stream`, `path_join`, `task_name`, and `repo_root` as
+// `process::stream`, `path::join`, `task_name`, and `repo_root` as
 // script bindings.
 //
 // Contract expected by the managed `dev` task:
 //   - `task_name` is the `name` field of the concurrent entry (e.g. "front").
 //   - On failure, throw; the runtime will surface that as a setup error.
 
-let runtime_root = path.join(repo_root, ".effigy/runtime");
+let runtime_root = path::join(repo_root, ".effigy/runtime");
 
 fn optional_config_string(path, fallback) {
-    let value = config.get(path);
+    let value = config::get(path);
     if value.type_of() == "()" {
         return fallback;
     }
     if value.type_of() != "string" {
         throw `expected Effigy config string at ${path}, got ${value.type_of()}`;
     }
-    return str.trim(value);
+    return str::trim(value);
 }
 
 fn optional_repo_dir(configured) {
     if configured == "" {
         return "";
     }
-    return path.join(repo_root, configured);
+    return path::join(repo_root, configured);
 }
 
 let front_dir = optional_config_string("bundle.dirs.front", "");
@@ -42,20 +42,20 @@ let client_dir = optional_config_string("bundle.dirs.client", "");
 let ui_dir = optional_config_string("bundle.dirs.ui", "");
 let underlay_source = optional_config_string("bundle.sources.underlay", "../underlay");
 let poodle_source = optional_config_string("bundle.sources.poodle", "../poodle");
-let underlay_dir = path.join(repo_root, underlay_source);
-let poodle_dir = path.join(repo_root, poodle_source);
-let app_client_dir = path.join(repo_root, "app-client");
-let acme_client_dir = path.join(repo_root, "acme-client");
-let legacy_client_dir = path.join(repo_root, "client");
-let app_ui_dir = path.join(repo_root, "app-ui");
-let acme_ui_dir = path.join(repo_root, "acme-ui");
-let legacy_ui_dir = path.join(repo_root, "ui");
-let app_front_dir = path.join(repo_root, "app-front");
-let acme_front_dir = path.join(repo_root, "acme-front");
-let legacy_front_dir = path.join(repo_root, "front");
-let app_admin_dir = path.join(repo_root, "app-admin");
-let acme_admin_dir = path.join(repo_root, "acme-admin");
-let legacy_admin_dir = path.join(repo_root, "admin");
+let underlay_dir = path::join(repo_root, underlay_source);
+let poodle_dir = path::join(repo_root, poodle_source);
+let app_client_dir = path::join(repo_root, "app-client");
+let acme_client_dir = path::join(repo_root, "acme-client");
+let legacy_client_dir = path::join(repo_root, "client");
+let app_ui_dir = path::join(repo_root, "app-ui");
+let acme_ui_dir = path::join(repo_root, "acme-ui");
+let legacy_ui_dir = path::join(repo_root, "ui");
+let app_front_dir = path::join(repo_root, "app-front");
+let acme_front_dir = path::join(repo_root, "acme-front");
+let legacy_front_dir = path::join(repo_root, "front");
+let app_admin_dir = path::join(repo_root, "app-admin");
+let acme_admin_dir = path::join(repo_root, "acme-admin");
+let legacy_admin_dir = path::join(repo_root, "admin");
 let client_abs_dir = optional_repo_dir(client_dir);
 let ui_abs_dir = optional_repo_dir(ui_dir);
 let front_abs_dir = optional_repo_dir(front_dir);
@@ -260,7 +260,7 @@ let shell = shell_header + shell_functions + shell_layout_helpers + shell_target
 // locking, traps, grouped subshells, and package-manager probes across a small
 // directory matrix; a typed Rhai host surface would be more complex than the
 // script it replaces.
-let result = process.stream("sh", ["-lc", shell]);
+let result = process::stream("sh", ["-lc", shell]);
 if !result["success"] {
     throw result["stderr"].to_string();
 }

@@ -5,17 +5,17 @@ recursively launching `effigy`.
 
 Policy:
 
-- Prefer typed helpers such as `container_exec(...)` and `bundle_export(...)`.
-- Do not use `run_process("effigy", ...)` in first-party Rhai scripts.
-- `run_process("effigy", ...)`, `run_process_stream("effigy", ...)`, and
-  `run_process_tee("effigy", ...)` are rejected at runtime; add a typed host
+- Prefer typed helpers such as `container::exec(...)` and `bundle::emit(...)`.
+- Do not use `process::run("effigy", ...)` in first-party Rhai scripts.
+- `process::run("effigy", ...)`, `process::stream("effigy", ...)`, and
+  `process::tee("effigy", ...)` are rejected at runtime; add a typed host
   helper instead.
-- First-party `run_process(...)`, `run_process_stream(...)`, and
-  `run_process_tee(...)` use is covered by a static allowlist test. New
+- First-party `process::run(...)`, `process::stream(...)`, and
+  `process::tee(...)` use is covered by a static allowlist test. New
   entries should be rare and justified.
-- Treat `run_effigy(...)` and `run_effigy_json(...)` as escape hatches only.
-- First-party shipped Rhai scripts currently use neither `run_effigy(...)` nor
-  `run_effigy_json(...)`; a regression test keeps that true.
+- Treat `effigy::run(...)` and `effigy::run_json(...)` as escape hatches only.
+- First-party shipped Rhai scripts currently use neither `effigy::run(...)` nor
+  `effigy::run_json(...)`; a regression test keeps that true.
 - Keep long-running interactive flows CLI-first unless they gain a script-safe mode.
 
 ## Exposed Helpers
@@ -36,23 +36,23 @@ Policy:
 | Config | `config::raw`, `config::effective`, `config::get`, `config::get_or` | Exposed |
 | Tasks | `task::run`, `task::run_json`, `task::list`, `task::resolve`, `task::info`, `catalog::tasks` | Exposed |
 | Container lifecycle | `container::up`, `container::down`, `container::down_all`, `container::shell`, `container::shell` (with service), `container::exec` | Exposed |
-| Container inspection | `container::status`, `container::status_all`, `container::logs`, `container::stats_all` | Exposed |
-| Container data | `container::data_list`, `container::data_export`, `container::data_import`, `container::data_pull_production` | Exposed |
+| Container inspection | `container::status`, `container::logs`, `container::stats` | Exposed |
+| Container data | `container::data` | Exposed |
 | Container reset/eject | `container::reset`, `container::eject` | Exposed |
 | Docs checks | `docs::check_links`, `docs::check_json_examples`, `docs::check_headings`, `docs::check_paths`, `docs::check_contains`, `docs::check_forbidden`, `docs::check_index`, `docs::check_next_action`, `docs::check_workflow_paths`, `docs::add_log_index` | Exposed |
-| Bundles | `bundle::list`, `bundle::inspect`, `bundle::export_bundle` | Exposed |
+| Bundles | `bundle::list`, `bundle::inspect`, `bundle::emit` | Exposed |
 | Services | `service::list`, `service::extract` | Exposed |
 | Gateway | `gateway::status`, `gateway::setup_tls`, `gateway::up`, `gateway::down` | Exposed |
 | Doctor | `doctor::run` | Exposed |
 | Scan | `scan::god_files`, `scan::generated_assets`, `scan::generated_in_src`, `scan::duplicate_blocks`, `scan::comment_ratio`, `scan::attention_markers`, `scan::stale_suppressions` | Exposed |
 | Cache | `cache::inspect`, `cache::invalidate` | Exposed |
 | Contracts | `contracts::check_json`, `contracts::validate_selection` | Exposed |
-| Deploy | `deploy::model`, `deploy::export_render`, `deploy::export_railway` | Exposed |
+| Deploy | `deploy::model`, `deploy::emit` | Exposed |
 | System | `system::status`, `system::logs` | Exposed |
 | Demo | `demo::list`, `demo::inspect`, `demo::history` | Exposed |
 | Changelog | `changelog::validate`, `changelog::extract` | Exposed |
 | Test | `test::plan` | Exposed |
-| Unlock | `unlock::run` | Exposed |
+| Unlock | `unlock::scopes` | Exposed |
 | Effigy | `effigy::run`, `effigy::run_json` | Exposed |
 
 ## Intentionally CLI-First
@@ -81,9 +81,9 @@ Process-like helpers return:
 
 For subprocess helpers:
 
-- `run_process(...)` captures output and returns it after exit
-- `run_process_stream(...)` streams output live and does not capture it
-- `run_process_tee(...)` streams output live and also returns captured
+- `process::run(...)` captures output and returns it after exit
+- `process::stream(...)` streams output live and does not capture it
+- `process::tee(...)` streams output live and also returns captured
   `stdout` / `stderr`
 - all three accept an optional options map with `cwd`, `env`, and `stdin_file`
 

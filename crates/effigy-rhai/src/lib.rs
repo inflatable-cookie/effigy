@@ -34,8 +34,7 @@ type EffigyRunner =
 type FeatureRunner =
     Arc<dyn Fn(&Path, &str, Value) -> Result<String, EffigyCommandError> + Send + Sync>;
 type ContainerUpRunner = Arc<dyn Fn(&Path, &str, bool) -> Result<String, String> + Send + Sync>;
-type ContainerDownRunner =
-    Arc<dyn Fn(&Path, &str, bool) -> Result<String, String> + Send + Sync>;
+type ContainerDownRunner = Arc<dyn Fn(&Path, &str, bool) -> Result<String, String> + Send + Sync>;
 type ContainerShellRunner =
     Arc<dyn Fn(&Path, &str, Option<&str>, &str) -> Result<String, String> + Send + Sync>;
 type ContainerExecRunner = Arc<
@@ -141,74 +140,6 @@ pub fn install_stop_requested_flag() -> Result<Arc<std::sync::atomic::AtomicBool
     Ok(flag)
 }
 
-const MODULE_NAMES: &[&str] = &[
-    "time", "path", "fs", "process", "http", "json", "toml", "str", "random", "search",
-    "config", "task", "container", "scan", "docs", "deploy", "system", "demo", "changelog",
-    "cache", "gateway", "bundle", "service", "catalog", "doctor", "contracts", "unlock",
-    "test", "effigy",
-];
-
-fn preprocess_module_calls(script: &str) -> String {
-    let mut result = String::with_capacity(script.len());
-    let mut in_string = false;
-    let mut escape = false;
-    let mut chars = script.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if escape {
-            result.push(ch);
-            escape = false;
-            continue;
-        }
-
-        if ch == '\\' {
-            result.push(ch);
-            escape = true;
-            continue;
-        }
-
-        if ch == '"' {
-            in_string = !in_string;
-            result.push(ch);
-            continue;
-        }
-
-        if ch == '`' && !in_string {
-            in_string = !in_string;
-            result.push(ch);
-            continue;
-        }
-
-        if !in_string && (ch.is_ascii_alphabetic() || ch == '_') {
-            let mut word = String::new();
-            word.push(ch);
-            while let Some(&next) = chars.peek() {
-                if next.is_ascii_alphanumeric() || next == '_' {
-                    word.push(next);
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
-            if let Some(&next) = chars.peek() {
-                if next == '.' && MODULE_NAMES.contains(&word.as_str()) {
-                    result.push_str(&word);
-                    result.push(':');
-                    result.push(':');
-                    chars.next(); // consume '.'
-                    continue;
-                }
-            }
-            result.push_str(&word);
-            continue;
-        }
-
-        result.push(ch);
-    }
-
-    result
-}
-
 pub fn execute_rhai_script(
     context: &ScriptContext,
     script: &str,
@@ -233,13 +164,13 @@ pub fn execute_rhai_script(
     scope.push_constant("repo_root", context.repo_root.display().to_string());
     scope.push_constant("task_name", context.task_name.clone());
 
-    let preprocessed = preprocess_module_calls(script);
     engine
-        .run_with_scope(&mut scope, &preprocessed)
+        .run_with_scope(&mut scope, script)
         .map_err(|error| RhaiHostError::new(error.to_string()))
 }
 
 mod host_api;
+pub mod surface;
 use host_api::register_host_api;
 
 fn generate_jwt_env_keys_dynamic() -> Result<Dynamic, Box<EvalAltResult>> {
@@ -761,34 +692,6 @@ fn module_feature_two_strings(
                 &callbacks,
                 feature,
                 json!({ keys[0]: first.as_str(), keys[1]: second.as_str() }),
-            )
-        },
-    );
-}
-
-fn module_feature_three_strings(
-    module: &mut rhai::Module,
-    function: &'static str,
-    feature: &'static str,
-    keys: [&'static str; 3],
-    context: Arc<ScriptContext>,
-    callbacks: HostCallbacks,
-) {
-    module.set_native_fn(
-        function,
-        move |first: ImmutableString,
-              second: ImmutableString,
-              third: ImmutableString|
-              -> Result<Dynamic, Box<EvalAltResult>> {
-            run_feature_dynamic(
-                &context,
-                &callbacks,
-                feature,
-                json!({
-                    keys[0]: first.as_str(),
-                    keys[1]: second.as_str(),
-                    keys[2]: third.as_str(),
-                }),
             )
         },
     );

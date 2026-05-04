@@ -126,15 +126,15 @@ Current v1 helpers:
   - `container::exec(name, args_array)`
   - `container::exec(name, service, args_array)`
   - `container::status(name)`
-  - `container::status_all()`
+  - `container::status(#{ all: true })`
   - `container::logs(name, options_map)`
   - `container::reset(name, options_map)`
-  - `container::data_list(name)`
-  - `container::data_export(name, volume, path)`
-  - `container::data_import(name, volume, path)`
-  - `container::data_pull_production(name, options_map)`
+  - `container::data("list", name)`
+  - `container::data("export", name, volume, path)`
+  - `container::data("import", name, volume, path)`
+  - `container::data("pull_production", name)`
   - `container::eject(name)`
-  - `container::stats_all()`
+  - `container::stats()`
   - `docs::check_links(options_map)`
   - `docs::check_json_examples(options_map)`
   - `docs::check_headings(options_map)`
@@ -147,7 +147,7 @@ Current v1 helpers:
   - `docs::add_log_index(options_map)`
   - `bundle::list()`
   - `bundle::inspect(name)`
-  - `bundle::export_bundle(name, path)`
+  - `bundle::emit(name, path)`
   - `service::list()`
   - `service::extract(name, options_map)`
   - `catalog::tasks()` / `catalog::tasks(options_map)`
@@ -168,8 +168,7 @@ Current v1 helpers:
   - `contracts::check_json(options_map)`
   - `contracts::validate_selection(options_map)`
   - `deploy::model()`
-  - `deploy::export_render(options_map)`
-  - `deploy::export_railway(options_map)`
+  - `deploy::emit(#{ provider: "render", ... })`
   - `system::status(options_map)`
   - `system::logs(options_map)`
   - `demo::list(options_map)`
@@ -178,7 +177,7 @@ Current v1 helpers:
   - `changelog::validate(options_map)`
   - `changelog::extract(options_map)`
   - `test::plan(options_map)`
-  - `unlock::run(options_map)`
+  - `unlock::scopes(options_map)`
   - `container::down_all()`
   - `container::shell(name, command)`
   - `container::shell(name, service, command)`
@@ -191,36 +190,36 @@ Current v1 helpers:
   - `random::jwt_env_keys()`
   - `random::base64(size)`
 
-`run_process(...)` is structured subprocess execution, not shell parsing.
+`process::run(...)` is structured subprocess execution, not shell parsing.
 
 That means:
 
-- good: `run_process("cargo", ["test", "--workspace"])`
+- good: `process::run("cargo", ["test", "--workspace"])`
 - not v1: shell pipelines, shell quoting tricks, or arbitrary shell emulation
 
 Process helpers split cleanly by output behavior:
 
-- `run_process(...)` captures output and returns it after exit
-- `run_process_stream(...)` streams output live and does not return captured text
-- `run_process_tee(...)` streams output live and also returns captured
+- `process::run(...)` captures output and returns it after exit
+- `process::stream(...)` streams output live and does not return captured text
+- `process::tee(...)` streams output live and also returns captured
   `stdout` / `stderr`
 - all three accept an optional options map with `cwd`, `env`, and `stdin_file`
 
 Prefer first-class host helpers over recursively invoking Effigy. For example,
-use `container_exec("stack", "postgres", ["psql", "-U", "postgres", "-d", "acme", "-c", sql])`
-instead of `run_process("effigy", ["exec", ...])` or `run_effigy(["exec", ...])`.
-`run_process("effigy", ...)`, `run_process_stream("effigy", ...)`, and
-`run_process_tee("effigy", ...)` are rejected at runtime; hitting that seam
+use `container::exec("stack", "postgres", ["psql", "-U", "postgres", "-d", "acme", "-c", sql])`
+instead of `process::run("effigy", ["exec", ...])` or `effigy::run(["exec", ...])`.
+`process::run("effigy", ...)`, `process::stream("effigy", ...)`, and
+`process::tee("effigy", ...)` are rejected at runtime; hitting that seam
 means Effigy needs a new typed Rhai host helper.
-Use `config::effective()` or `config_get("systems.dev.container")` instead of
+Use `config::effective()` or `config::get("systems.dev.container")` instead of
 re-reading `effigy.toml` when a script needs Effigy's composed/bundle-expanded
 manifest view.
-Similarly, use `http_request(...)` or `http_post(...)` instead of
-`run_process("curl", [...])` for smoke probes.
-Use `search_files(root, pattern, #{ glob: "*.rs" })` instead of
-`run_process("rg", [...])` for portable file audits.
+Similarly, use `http::request(...)` or `http::post(...)` instead of
+`process::run("curl", [...])` for smoke probes.
+Use `search::files(root, pattern, #{ glob: "*.rs" })` instead of
+`process::run("rg", [...])` for portable file audits.
 
-`run_effigy(...)` and `run_effigy_json(...)` are escape hatches for surfaces
+`effigy::run(...)` and `effigy::run_json(...)` are escape hatches for surfaces
 that do not yet have a typed helper. First-party scripts should use the typed
 helper when one exists. First-party shipped Rhai scripts currently use neither
 escape hatch; a regression test keeps that true. The maintained coverage matrix is in
@@ -228,7 +227,7 @@ escape hatch; a regression test keeps that true. The maintained coverage matrix 
 
 Helpers that mirror CLI reports return the same JSON payload as the CLI
 `--json` mode, converted into Rhai maps/arrays. Process-like helpers such as
-`container_exec(...)` return `{ status, success, stdout, stderr }`.
+`container::exec(...)` return `{ status, success, stdout, stderr }`.
 
 ## 4) Practical Patterns
 
@@ -240,7 +239,7 @@ run = [{ rhai = "scripts/rhai/copy-template.rhai" }]
 ```
 
 ```rhai
-if copy_if_missing("infra/dev/bootstrap/template.env", ".env") {
+if fs::copy_if_missing("infra/dev/bootstrap/template.env", ".env") {
     log("[ok] wrote .env from template");
 }
 ```
@@ -248,22 +247,22 @@ if copy_if_missing("infra/dev/bootstrap/template.env", ".env") {
 Small in-place mutation after copy:
 
 ```rhai
-copy_if_missing("infra/dev/bootstrap/app.env", ".env");
-replace_in_file(".env", "APP_HOST=example.test", "APP_HOST=local.test");
+fs::copy_if_missing("infra/dev/bootstrap/app.env", ".env");
+fs::replace_in_file(".env", "APP_HOST=example.test", "APP_HOST=local.test");
 ```
 
 Envfile-aware mutation when the script really means “set this key”:
 
 ```rhai
-copy_if_missing("infra/dev/bootstrap/app.env", ".env");
-env_file_set(".env", "APP_HOST", "local.test");
-env_file_set(".env", "APP_NAME", "Cumberland Local");
+fs::copy_if_missing("infra/dev/bootstrap/app.env", ".env");
+fs::env_file_set(".env", "APP_HOST", "local.test");
+fs::env_file_set(".env", "APP_NAME", "Cumberland Local");
 ```
 
 Structured process call with live progress plus captured output:
 
 ```rhai
-let result = run_process_tee("cargo", ["test", "-p", "effigy-rhai", "--lib"]);
+let result = process::tee("cargo", ["test", "-p", "effigy-rhai", "--lib"]);
 if !result["success"] {
     throw result["stderr"];
 }
@@ -272,7 +271,7 @@ if !result["success"] {
 Structured process call with an overridden working directory and env:
 
 ```rhai
-let result = run_process(
+let result = process::run(
     "sh",
     ["-lc", "printf '%s|%s' \"$PWD\" \"$APP_ENV\""],
     #{ cwd: "services/api", env: #{ APP_ENV: "local" } },
@@ -285,7 +284,7 @@ if result["stdout"] != cwd + "/services/api|local" {
 Structured process call with file-backed stdin:
 
 ```rhai
-let result = run_process_tee(
+let result = process::tee(
     "mysql",
     ["--skip-ssl", "-h", "db", "-uroot", "cbs"],
     #{ stdin_file: "/var/www/html/.effigy/local/db-seeds/latest.sql" },
@@ -298,9 +297,9 @@ if !result["success"] {
 Reading and pruning dotenv entries:
 
 ```rhai
-let env = env_file_entries(".env");
+let env = fs::env_file_entries(".env");
 if env["APP_HOST"] == "example.test" {
-    env_file_remove(".env", "LEGACY_FLAG");
+    fs::env_file_remove(".env", "LEGACY_FLAG");
 }
 ```
 
@@ -314,16 +313,16 @@ run = [{ rhai = "scripts/rhai/test-smoke.rhai" }]
 Ephemeral workspace and timestamp:
 
 ```rhai
-let generated_at = now_utc();
-let scratch = make_temp_dir("repo-proof");
+let generated_at = time::now_utc();
+let scratch = fs::make_temp_dir("repo-proof");
 ```
 
 Long-running lifecycle loop:
 
 ```rhai
-while !stop_requested() {
-    append_file("artifacts/events.log", `heartbeat ${now_utc()}\n`);
-    sleep_ms(1000);
+while !time::stop_requested() {
+    fs::append_file("artifacts/events.log", `heartbeat ${time::now_utc()}\n`);
+    time::sleep_ms(1000);
 }
 ```
 

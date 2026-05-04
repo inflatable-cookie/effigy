@@ -3,6 +3,8 @@ use super::{
     render_host_log_message, resolve_script_path, EffigyCommandError, HostCallbacks,
     HostCommandOutput, ScriptContext, EFFIGY_RHAI_ARGS_JSON,
 };
+use crate::surface::{FEATURE_NAMES, MODULE_NAMES};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -75,6 +77,26 @@ fn callbacks() -> HostCallbacks {
 }
 
 #[test]
+fn rhai_surface_module_names_are_unique() {
+    let unique = MODULE_NAMES.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(
+        unique.len(),
+        MODULE_NAMES.len(),
+        "duplicate Rhai module names in surface registry"
+    );
+}
+
+#[test]
+fn rhai_surface_feature_names_are_unique() {
+    let unique = FEATURE_NAMES.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(
+        unique.len(),
+        FEATURE_NAMES.len(),
+        "duplicate Rhai feature names in surface registry"
+    );
+}
+
+#[test]
 fn load_script_reads_relative_path_from_cwd() {
     let root = temp_root("load-script");
     let script_path = root.join("scripts/test.rhai");
@@ -130,20 +152,30 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
             if resolved["options"]["selector"] != "api/test" { throw("task resolve"); }
             let status = container::status("stack");
             if status["feature"] != "container.status" { throw("container status"); }
+            let status_all = container::status(#{ "all": true });
+            if status_all["feature"] != "container.status" || status_all["options"]["all"] != true { throw("container status all"); }
             let logs = container::logs("stack", #{ service: "postgres" });
             if logs["options"]["service"] != "postgres" { throw("container logs"); }
+            let data = container::data("list", "stack");
+            if data["feature"] != "container.data" || data["options"]["operation"] != "list" { throw("container data"); }
+            let stats = container::stats();
+            if stats["feature"] != "container.stats" { throw("container stats"); }
             let docs = docs::check_links(#{ paths: ["docs/README.md"] });
             if docs["feature"] != "docs.check_links" { throw("docs"); }
             let bundle = bundle::inspect("underlay");
             if bundle["options"]["bundle"] != "underlay" { throw("bundle"); }
-            let exported = bundle::export_bundle("underlay", "tmp/bundle");
-            if exported["options"]["path"] != "tmp/bundle" { throw("bundle export"); }
+            let exported = bundle::emit("underlay", "tmp/bundle");
+            if exported["options"]["path"] != "tmp/bundle" { throw("bundle emit"); }
+            let deploy = deploy::emit(#{ provider: "render", path: "tmp/render", plan: true });
+            if deploy["feature"] != "deploy.emit" || deploy["options"]["provider"] != "render" { throw("deploy emit"); }
             let gateway = gateway::status();
             if gateway["feature"] != "gateway.status" { throw("gateway"); }
             let scan = scan::god_files(#{ threshold: 900 });
             if scan["feature"] != "scan.god_files" { throw("scan"); }
             let cache = cache::inspect(#{ selector: "build" });
             if cache["options"]["selector"] != "build" { throw("cache"); }
+            let unlock = unlock::scopes(#{ "all": true });
+            if unlock["feature"] != "unlock.scopes" || unlock["options"]["all"] != true { throw("unlock scopes"); }
             let config = config::effective();
             if config["feature"] != "config.effective" { throw("config effective"); }
             let raw = config::raw();
@@ -647,10 +679,14 @@ fn first_party_rhai_scripts_do_not_recursively_invoke_effigy() {
     let mut violations = Vec::new();
     for script in scripts {
         let contents = fs::read_to_string(&script).expect("read script");
-        if contents.contains("run_process(\"effigy\"")
-            || contents.contains("run_process(`effigy`")
-            || contents.contains("run_effigy(")
-            || contents.contains("run_effigy_json(")
+        if contents.contains("process::run(\"effigy\"")
+            || contents.contains("process::run(`effigy`")
+            || contents.contains("process::stream(\"effigy\"")
+            || contents.contains("process::stream(`effigy`")
+            || contents.contains("process::tee(\"effigy\"")
+            || contents.contains("process::tee(`effigy`")
+            || contents.contains("effigy::run(")
+            || contents.contains("effigy::run_json(")
         {
             violations.push(
                 script
@@ -680,7 +716,10 @@ fn first_party_rhai_process_calls_are_allowlisted() {
     let mut violations = Vec::new();
     for script in scripts {
         let contents = fs::read_to_string(&script).expect("read script");
-        if !contents.contains("run_process(") && !contents.contains("run_process_stream(") {
+        if !contents.contains("process::run(")
+            && !contents.contains("process::stream(")
+            && !contents.contains("process::tee(")
+        {
             continue;
         }
         let relative = script
@@ -695,7 +734,7 @@ fn first_party_rhai_process_calls_are_allowlisted() {
 
     assert!(
         violations.is_empty(),
-        "first-party Rhai run_process usage must be explicitly allowlisted or replaced with typed host helpers: {}",
+        "first-party Rhai process helper usage must be explicitly allowlisted or replaced with typed host helpers: {}",
         violations.join(", ")
     );
 }
@@ -703,37 +742,57 @@ fn first_party_rhai_process_calls_are_allowlisted() {
 fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
     match relative {
         "scripts/rhai/write-browser-proof-report.rhai" => {
-            contents.contains("run_process(\"cargo\", process_args)")
+            contents.contains("process::tee(\"cargo\", process_args)")
         }
         "scripts/rhai/check-release-smoke.rhai" => {
-            contents.contains("run_process(program, process_args)")
+            contents.contains("process::run(program, process_args)")
         }
         "scripts/rhai/rehearse-linux-release-container.rhai" => {
-            contents.contains("run_process(\n    \"colima\",")
+            contents.contains("process::run(\n    \"colima\",")
         }
         "crates/effigy-catalog/starters/underlay/scripts/dev/ui-setup.rhai"
         | "crates/effigy-manifest/bundles/underlay/scripts/dev/ui-setup.rhai" => {
-            contents.contains("run_process_stream(\"sh\", [\"-lc\", shell])")
-        }
-        "crates/effigy-catalog/starters/underlay/scripts/bootstrap-env.rhai"
-        | "crates/effigy-manifest/bundles/underlay/scripts/bootstrap-env.rhai" => {
-            contents.contains("run_process(program, args)")
-                || contents.contains("run_process(\n        \"cargo\",")
-                || contents.contains("run_process(\"openssl\",")
-        }
-        "crates/effigy-catalog/starters/decodelabs/scripts/seed-latest-db-dump.rhai"
-        | "crates/effigy-manifest/bundles/decodelabs/scripts/seed-latest-db-dump.rhai" => {
-            contents.contains("run_process_tee(\"mysql\", reset_args)")
-                && contents.contains(
-                    "run_process_tee(\"mysql\", import_args, #{ stdin_file: dump_container_path })",
-                )
+            contents.contains("process::stream(\"sh\", [\"-lc\", shell])")
         }
         "scripts/rhai/build-local-bin.rhai" => {
-            contents.contains("run_process_stream(program, process_args, options)")
+            contents.contains("process::stream(program, process_args, options)")
         }
-        "scripts/rhai/install-local-bin-links.rhai" => contents.contains("run_process("),
+        "scripts/rhai/install-local-bin-links.rhai" => contents.contains("process::run("),
         _ => false,
     }
+}
+
+#[test]
+fn first_party_rhai_scripts_do_not_use_legacy_module_dot_calls() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("repo root")
+        .to_path_buf();
+    let scripts = collect_rhai_scripts(&repo_root);
+    let mut violations = Vec::new();
+    let module_call = regex::Regex::new(
+        r"\b(?:time|path|fs|process|http|json|toml|str|random|search|config|task|container|scan|docs|deploy|system|demo|changelog|cache|gateway|bundle|service|catalog|doctor|contracts|unlock|test|effigy)\.[A-Za-z_][A-Za-z0-9_]*\s*\(",
+    )
+    .expect("module regex");
+    for script in scripts {
+        let contents = fs::read_to_string(&script).expect("read script");
+        if module_call.is_match(&strip_rhai_string_literals(&contents)) {
+            violations.push(
+                script
+                    .strip_prefix(&repo_root)
+                    .unwrap_or(&script)
+                    .display()
+                    .to_string(),
+            );
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "first-party Rhai scripts must use `module::func(...)` syntax, not `module.func(...)`: {}",
+        violations.join(", ")
+    );
 }
 
 fn collect_rhai_scripts(root: &Path) -> Vec<PathBuf> {
@@ -741,6 +800,43 @@ fn collect_rhai_scripts(root: &Path) -> Vec<PathBuf> {
     collect_rhai_scripts_into(root, &mut scripts);
     scripts.sort();
     scripts
+}
+
+fn strip_rhai_string_literals(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut in_double = false;
+    let mut in_backtick = false;
+    let mut escape = false;
+
+    for ch in input.chars() {
+        if escape {
+            escape = false;
+            output.push(if in_double || in_backtick { ' ' } else { ch });
+            continue;
+        }
+
+        if ch == '\\' {
+            escape = true;
+            output.push(if in_double || in_backtick { ' ' } else { ch });
+            continue;
+        }
+
+        if ch == '"' && !in_backtick {
+            in_double = !in_double;
+            output.push(' ');
+            continue;
+        }
+
+        if ch == '`' && !in_double {
+            in_backtick = !in_backtick;
+            output.push(' ');
+            continue;
+        }
+
+        output.push(if in_double || in_backtick { ' ' } else { ch });
+    }
+
+    output
 }
 
 fn collect_rhai_scripts_into(dir: &Path, scripts: &mut Vec<PathBuf>) {
@@ -766,38 +862,25 @@ fn collect_rhai_scripts_into(dir: &Path, scripts: &mut Vec<PathBuf>) {
 }
 
 #[test]
-fn test_module_access_syntax() {
-    use rhai::{Engine, Module};
-    let mut engine = Engine::new();
-    let mut module = Module::new();
-    module.set_native_fn("run", |x: i64| Ok(x + 1));
-    engine.register_static_module("process", std::rc::Rc::new(module));
-    
-    let result = engine.eval::<i64>(r#"process.run(41)"#);
-    println!("Result dot: {:?}", result);
-    let result2 = engine.eval::<i64>(r#"process::run(41)"#);
-    println!("Result colon: {:?}", result2);
-    
-    let mut module2 = Module::new();
-    module2.set_native_fn("export_bundle", |x: i64| Ok(x + 1));
-    engine.register_static_module("bundle", std::rc::Rc::new(module2));
-    let result3 = engine.eval::<i64>(r#"bundle::export_bundle(41)"#);
-    println!("Result export: {:?}", result3);
-}
+fn execute_rhai_script_rejects_legacy_module_dot_calls() {
+    let root = temp_root("legacy-dot-calls");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
 
-#[test]
-fn preprocess_module_calls_converts_dot_to_colon_outside_strings() {
-    use super::preprocess_module_calls;
-    
-    let input = r#"let x = process.run("sh", ["-lc", "printf ok"]);
-let y = path.join("a", "b");
-let js = "fs.readFileSync(path.join(dir, \"pkg\"))";
-let z = config.get("key");"#;
-    
-    let expected = r#"let x = process::run("sh", ["-lc", "printf ok"]);
-let y = path::join("a", "b");
-let js = "fs.readFileSync(path.join(dir, \"pkg\"))";
-let z = config::get("key");"#;
-    
-    assert_eq!(preprocess_module_calls(input), expected);
+    let error = execute_rhai_script(
+        &context,
+        r#"process.run("sh", ["-lc", "printf nope"]);"#,
+        &[],
+        &callbacks(),
+    )
+    .expect_err("legacy module dot syntax should fail");
+
+    assert!(
+        error.to_string().contains("Variable not found: process"),
+        "got: {error}"
+    );
 }

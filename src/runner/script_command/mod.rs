@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use effigy_rhai::{
     execute_rhai_script, install_stop_requested_flag, load_script, load_script_args_from_env,
-    required_env, EffigyCommandError, HostCallbacks, HostCommandOutput, ScriptContext,
+    required_env, surface::*, EffigyCommandError, HostCallbacks, HostCommandOutput, ScriptContext,
     EFFIGY_RHAI_REPO_ROOT, EFFIGY_RHAI_TASK_NAME,
 };
 
@@ -153,7 +153,7 @@ fn run_rhai_feature(
     options: Value,
 ) -> Result<String, RunnerError> {
     match feature {
-        "tasks.list" | "catalog.tasks" => run_typed_command(
+        FEATURE_TASKS_LIST | FEATURE_CATALOG_TASKS => run_typed_command(
             repo_root,
             effigy_cli::Command::Tasks(TasksArgs {
                 repo_override: Some(repo_root.to_path_buf()),
@@ -163,10 +163,10 @@ fn run_rhai_feature(
                 pretty_json: false,
             }),
         ),
-        "config.effective" => run_config_effective(repo_root),
-        "config.raw" => run_config_raw(repo_root),
-        "config.get" => run_config_get(repo_root, &required_string(&options, "path")?),
-        "tasks.resolve" => run_typed_command(
+        FEATURE_CONFIG_EFFECTIVE => run_config_effective(repo_root),
+        FEATURE_CONFIG_RAW => run_config_raw(repo_root),
+        FEATURE_CONFIG_GET => run_config_get(repo_root, &required_string(&options, "path")?),
+        FEATURE_TASKS_RESOLVE => run_typed_command(
             repo_root,
             effigy_cli::Command::Tasks(TasksArgs {
                 repo_override: Some(repo_root.to_path_buf()),
@@ -176,7 +176,7 @@ fn run_rhai_feature(
                 pretty_json: false,
             }),
         ),
-        "tasks.info" => run_typed_command(
+        FEATURE_TASKS_INFO => run_typed_command(
             repo_root,
             effigy_cli::Command::Tasks(TasksArgs {
                 repo_override: Some(repo_root.to_path_buf()),
@@ -186,25 +186,34 @@ fn run_rhai_feature(
                 pretty_json: false,
             }),
         ),
-        "container.status" => run_container_json(
-            repo_root,
-            ContainerSubcommand::Status {
-                name: Some(required_string(&options, "name")?),
-                all: false,
-            },
-        ),
-        "container.status_all" => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Container(ContainerArgs {
-                subcommand: ContainerSubcommand::Status {
-                    name: None,
-                    all: true,
-                },
-                repo_override: None,
-                output_json: true,
-            }),
-        ),
-        "container.logs" => {
+        FEATURE_CONTAINER_STATUS => {
+            if let Some(name) = string_option(&options, "name")? {
+                run_container_json(
+                    repo_root,
+                    ContainerSubcommand::Status {
+                        name: Some(name),
+                        all: false,
+                    },
+                )
+            } else if bool_option(&options, "all")?.unwrap_or(false) {
+                run_typed_command(
+                    repo_root,
+                    effigy_cli::Command::Container(ContainerArgs {
+                        subcommand: ContainerSubcommand::Status {
+                            name: None,
+                            all: true,
+                        },
+                        repo_override: None,
+                        output_json: true,
+                    }),
+                )
+            } else {
+                Err(RunnerError::task_invocation(
+                    "`container::status(...)` requires either a `name` or `all = true`",
+                ))
+            }
+        }
+        FEATURE_CONTAINER_LOGS => {
             if bool_option(&options, "follow")?.unwrap_or(false) {
                 return Err(RunnerError::task_invocation(
                     "`container_logs` does not support `follow = true` from Rhai",
@@ -219,54 +228,62 @@ fn run_rhai_feature(
                 },
             )
         }
-        "container.reset" => run_container_json(
+        FEATURE_CONTAINER_RESET => run_container_json(
             repo_root,
             ContainerSubcommand::Reset {
                 name: Some(required_string(&options, "name")?),
                 keep_data: bool_option(&options, "keep_data")?.unwrap_or(false),
             },
         ),
-        "container.data_list" => run_container_json(
-            repo_root,
-            ContainerSubcommand::Data {
-                name: Some(required_string(&options, "name")?),
-                subcommand: ContainerDataSubcommand::List,
-            },
-        ),
-        "container.data_export" => run_container_json(
-            repo_root,
-            ContainerSubcommand::Data {
-                name: Some(required_string(&options, "name")?),
-                subcommand: ContainerDataSubcommand::Export {
-                    volume: required_string(&options, "volume")?,
-                    path: PathBuf::from(required_string(&options, "path")?),
-                },
-            },
-        ),
-        "container.data_import" => run_container_json(
-            repo_root,
-            ContainerSubcommand::Data {
-                name: Some(required_string(&options, "name")?),
-                subcommand: ContainerDataSubcommand::Import {
-                    volume: required_string(&options, "volume")?,
-                    path: PathBuf::from(required_string(&options, "path")?),
-                },
-            },
-        ),
-        "container.data_pull_production" => run_container_json(
-            repo_root,
-            ContainerSubcommand::Data {
-                name: Some(required_string(&options, "name")?),
-                subcommand: ContainerDataSubcommand::PullProduction,
-            },
-        ),
-        "container.eject" => run_container_json(
+        FEATURE_CONTAINER_DATA => {
+            let name = required_string(&options, "name")?;
+            match required_string(&options, "operation")?.as_str() {
+                "list" => run_container_json(
+                    repo_root,
+                    ContainerSubcommand::Data {
+                        name: Some(name),
+                        subcommand: ContainerDataSubcommand::List,
+                    },
+                ),
+                "export" => run_container_json(
+                    repo_root,
+                    ContainerSubcommand::Data {
+                        name: Some(name),
+                        subcommand: ContainerDataSubcommand::Export {
+                            volume: required_string(&options, "volume")?,
+                            path: PathBuf::from(required_string(&options, "path")?),
+                        },
+                    },
+                ),
+                "import" => run_container_json(
+                    repo_root,
+                    ContainerSubcommand::Data {
+                        name: Some(name),
+                        subcommand: ContainerDataSubcommand::Import {
+                            volume: required_string(&options, "volume")?,
+                            path: PathBuf::from(required_string(&options, "path")?),
+                        },
+                    },
+                ),
+                "pull_production" => run_container_json(
+                    repo_root,
+                    ContainerSubcommand::Data {
+                        name: Some(name),
+                        subcommand: ContainerDataSubcommand::PullProduction,
+                    },
+                ),
+                other => Err(RunnerError::task_invocation(format!(
+                    "`container::data(...)` does not support operation `{other}`"
+                ))),
+            }
+        }
+        FEATURE_CONTAINER_EJECT => run_container_json(
             repo_root,
             ContainerSubcommand::Eject {
                 name: Some(required_string(&options, "name")?),
             },
         ),
-        "container.stats_all" => run_typed_command(
+        FEATURE_CONTAINER_STATS => run_typed_command(
             repo_root,
             effigy_cli::Command::Container(ContainerArgs {
                 subcommand: ContainerSubcommand::Stats { all: true },
@@ -274,13 +291,13 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "docs.check_links" => run_docs_json(
+        FEATURE_DOCS_CHECK_LINKS => run_docs_json(
             repo_root,
             DocsSubcommand::CheckLinks {
                 paths: path_array(&options, "paths")?,
             },
         ),
-        "docs.check_json_examples" => run_docs_json(
+        FEATURE_DOCS_CHECK_JSON_EXAMPLES => run_docs_json(
             repo_root,
             DocsSubcommand::CheckJsonExamples {
                 file: path_option(&options, "file")?,
@@ -290,34 +307,34 @@ fn run_rhai_feature(
                 required_blocks: docs_block_requirements(&options)?,
             },
         ),
-        "docs.check_headings" => run_docs_json(
+        FEATURE_DOCS_CHECK_HEADINGS => run_docs_json(
             repo_root,
             DocsSubcommand::CheckHeadings {
                 paths: path_array(&options, "paths")?,
                 required_headings: string_array(&options, "required_headings")?,
             },
         ),
-        "docs.check_paths" => run_docs_json(
+        FEATURE_DOCS_CHECK_PATHS => run_docs_json(
             repo_root,
             DocsSubcommand::CheckPaths {
                 paths: path_array(&options, "paths")?,
             },
         ),
-        "docs.check_contains" => run_docs_json(
+        FEATURE_DOCS_CHECK_CONTAINS => run_docs_json(
             repo_root,
             DocsSubcommand::CheckContains {
                 paths: path_array(&options, "paths")?,
                 required_text: string_array_any(&options, &["required_text", "required"])?,
             },
         ),
-        "docs.check_forbidden" => run_docs_json(
+        FEATURE_DOCS_CHECK_FORBIDDEN => run_docs_json(
             repo_root,
             DocsSubcommand::CheckForbidden {
                 paths: path_array(&options, "paths")?,
                 forbidden_text: string_array_any(&options, &["forbidden_text", "forbidden"])?,
             },
         ),
-        "docs.check_index" => run_docs_json(
+        FEATURE_DOCS_CHECK_INDEX => run_docs_json(
             repo_root,
             DocsSubcommand::CheckIndex {
                 policy_index: string_option(&options, "policy_index")?,
@@ -325,32 +342,32 @@ fn run_rhai_feature(
                 index: path_option(&options, "index")?,
             },
         ),
-        "docs.check_next_action" => run_docs_json(
+        FEATURE_DOCS_CHECK_NEXT_ACTION => run_docs_json(
             repo_root,
             DocsSubcommand::CheckNextAction {
                 policy_name: string_option(&options, "policy_name")?,
             },
         ),
-        "docs.check_workflow_paths" => run_docs_json(
+        FEATURE_DOCS_CHECK_WORKFLOW_PATHS => run_docs_json(
             repo_root,
             DocsSubcommand::CheckWorkflowPaths {
                 dir: path_option(&options, "dir")?,
             },
         ),
-        "docs.add_log_index" => run_docs_json(
+        FEATURE_DOCS_ADD_LOG_INDEX => run_docs_json(
             repo_root,
             DocsSubcommand::AddLogIndex {
                 log_path: PathBuf::from(required_string(&options, "log_path")?),
             },
         ),
-        "bundle.list" => run_typed_command(
+        FEATURE_BUNDLE_LIST => run_typed_command(
             repo_root,
             effigy_cli::Command::Bundle(BundleArgs {
                 subcommand: BundleSubcommand::List,
                 output_json: true,
             }),
         ),
-        "bundle.inspect" => run_typed_command(
+        FEATURE_BUNDLE_INSPECT => run_typed_command(
             repo_root,
             effigy_cli::Command::Bundle(BundleArgs {
                 subcommand: BundleSubcommand::Inspect {
@@ -359,7 +376,7 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "bundle.export" => run_typed_command(
+        FEATURE_BUNDLE_EMIT => run_typed_command(
             repo_root,
             effigy_cli::Command::Bundle(BundleArgs {
                 subcommand: BundleSubcommand::Export {
@@ -369,7 +386,7 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "service.list" => run_typed_command(
+        FEATURE_SERVICE_LIST => run_typed_command(
             repo_root,
             effigy_cli::Command::Service(ServiceArgs {
                 subcommand: ServiceSubcommand::List,
@@ -377,7 +394,7 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "service.extract" => run_typed_command(
+        FEATURE_SERVICE_EXTRACT => run_typed_command(
             repo_root,
             effigy_cli::Command::Service(ServiceArgs {
                 subcommand: ServiceSubcommand::Extract {
@@ -388,11 +405,11 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "gateway.status" => run_gateway_json(GatewaySubcommand::Status),
-        "gateway.setup_tls" => run_gateway_json(GatewaySubcommand::SetupTls),
-        "gateway.up" => run_gateway_json(GatewaySubcommand::Up),
-        "gateway.down" => run_gateway_json(GatewaySubcommand::Down),
-        "doctor.run" => run_typed_command(
+        FEATURE_GATEWAY_STATUS => run_gateway_json(GatewaySubcommand::Status),
+        FEATURE_GATEWAY_SETUP_TLS => run_gateway_json(GatewaySubcommand::SetupTls),
+        FEATURE_GATEWAY_UP => run_gateway_json(GatewaySubcommand::Up),
+        FEATURE_GATEWAY_DOWN => run_gateway_json(GatewaySubcommand::Down),
+        FEATURE_DOCTOR_RUN => run_typed_command(
             repo_root,
             effigy_cli::Command::Doctor(DoctorArgs {
                 repo_override: Some(repo_root.to_path_buf()),
@@ -405,32 +422,36 @@ fn run_rhai_feature(
                 }),
             }),
         ),
-        "scan.god_files" => run_builtin_json(repo_root, "scan", scan_args("god-files", &options)?),
-        "scan.duplicate_blocks" => {
+        FEATURE_SCAN_GOD_FILES => {
+            run_builtin_json(repo_root, "scan", scan_args("god-files", &options)?)
+        }
+        FEATURE_SCAN_DUPLICATE_BLOCKS => {
             run_builtin_json(repo_root, "scan", scan_args("duplicate-blocks", &options)?)
         }
-        "scan.comment_ratio" => {
+        FEATURE_SCAN_COMMENT_RATIO => {
             run_builtin_json(repo_root, "scan", scan_args("comment-ratio", &options)?)
         }
-        "scan.generated_assets" => {
+        FEATURE_SCAN_GENERATED_ASSETS => {
             run_builtin_json(repo_root, "scan", scan_args("generated-assets", &options)?)
         }
-        "scan.generated_in_src" => {
+        FEATURE_SCAN_GENERATED_IN_SRC => {
             run_builtin_json(repo_root, "scan", scan_args("generated-in-src", &options)?)
         }
-        "scan.attention_markers" => {
+        FEATURE_SCAN_ATTENTION_MARKERS => {
             run_builtin_json(repo_root, "scan", scan_args("attention-markers", &options)?)
         }
-        "scan.stale_suppressions" => run_builtin_json(
+        FEATURE_SCAN_STALE_SUPPRESSIONS => run_builtin_json(
             repo_root,
             "scan",
             scan_args("stale-suppressions", &options)?,
         ),
-        "cache.inspect" => run_builtin_json(repo_root, "cache", cache_inspect_args(&options)?),
-        "cache.invalidate" => {
+        FEATURE_CACHE_INSPECT => {
+            run_builtin_json(repo_root, "cache", cache_inspect_args(&options)?)
+        }
+        FEATURE_CACHE_INVALIDATE => {
             run_builtin_json(repo_root, "cache", cache_invalidate_args(&options)?)
         }
-        "contracts.check_json" => run_typed_command(
+        FEATURE_CONTRACTS_CHECK_JSON => run_typed_command(
             repo_root,
             effigy_cli::Command::Contracts(ContractsArgs {
                 subcommand: ContractsSubcommand::CheckJson {
@@ -450,7 +471,7 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "contracts.validate_selection" => run_typed_command(
+        FEATURE_CONTRACTS_VALIDATE_SELECTION => run_typed_command(
             repo_root,
             effigy_cli::Command::Contracts(ContractsArgs {
                 subcommand: ContractsSubcommand::ValidateSelection {
@@ -461,7 +482,7 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "deploy.model" => run_typed_command(
+        FEATURE_DEPLOY_MODEL => run_typed_command(
             repo_root,
             effigy_cli::Command::Deploy(DeployArgs {
                 subcommand: DeploySubcommand::Model,
@@ -469,11 +490,19 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "deploy.export_render" => run_typed_command(
+        FEATURE_DEPLOY_EMIT => run_typed_command(
             repo_root,
             effigy_cli::Command::Deploy(DeployArgs {
                 subcommand: DeploySubcommand::Export {
-                    provider: DeployExportProvider::Render,
+                    provider: match required_string(&options, "provider")?.as_str() {
+                        "render" => DeployExportProvider::Render,
+                        "railway" => DeployExportProvider::Railway,
+                        other => {
+                            return Err(RunnerError::task_invocation(format!(
+                                "`deploy::emit(...)` does not support provider `{other}`"
+                            )));
+                        }
+                    },
                     path: PathBuf::from(required_string(&options, "path")?),
                     plan: bool_option(&options, "plan")?.unwrap_or(false),
                 },
@@ -481,19 +510,7 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "deploy.export_railway" => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Deploy(DeployArgs {
-                subcommand: DeploySubcommand::Export {
-                    provider: DeployExportProvider::Railway,
-                    path: PathBuf::from(required_string(&options, "path")?),
-                    plan: bool_option(&options, "plan")?.unwrap_or(false),
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        "system.status" => run_typed_command(
+        FEATURE_SYSTEM_STATUS => run_typed_command(
             repo_root,
             effigy_cli::Command::System(SystemArgs {
                 subcommand: SystemSubcommand::Status,
@@ -502,7 +519,7 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "system.logs" => {
+        FEATURE_SYSTEM_LOGS => {
             if bool_option(&options, "follow")?.unwrap_or(false) {
                 return Err(RunnerError::task_invocation(
                     "`system_logs` does not support `follow = true` from Rhai",
@@ -518,7 +535,7 @@ fn run_rhai_feature(
                 }),
             )
         }
-        "demo.list" => run_typed_command(
+        FEATURE_DEMO_LIST => run_typed_command(
             repo_root,
             effigy_cli::Command::Demo(DemoArgs {
                 subcommand: DemoSubcommand::List {
@@ -538,7 +555,7 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "demo.inspect" => run_typed_command(
+        FEATURE_DEMO_INSPECT => run_typed_command(
             repo_root,
             effigy_cli::Command::Demo(DemoArgs {
                 subcommand: DemoSubcommand::Inspect {
@@ -548,7 +565,7 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "demo.history" => run_typed_command(
+        FEATURE_DEMO_HISTORY => run_typed_command(
             repo_root,
             effigy_cli::Command::Demo(DemoArgs {
                 subcommand: DemoSubcommand::History {
@@ -567,7 +584,7 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "changelog.validate" => run_typed_command(
+        FEATURE_CHANGELOG_VALIDATE => run_typed_command(
             repo_root,
             effigy_cli::Command::Changelog(ChangelogArgs {
                 subcommand: ChangelogSubcommand::Validate,
@@ -575,7 +592,7 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "changelog.extract" => run_typed_command(
+        FEATURE_CHANGELOG_EXTRACT => run_typed_command(
             repo_root,
             effigy_cli::Command::Changelog(ChangelogArgs {
                 subcommand: ChangelogSubcommand::Extract {
@@ -585,7 +602,7 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        "unlock" => {
+        FEATURE_UNLOCK_SCOPES => {
             let mut args = vec!["unlock".to_owned()];
             if bool_option(&options, "all")?.unwrap_or(false) {
                 args.push("--all".to_owned());
@@ -593,17 +610,81 @@ fn run_rhai_feature(
             args.extend(string_array(&options, "scopes")?);
             run_builtin_json(repo_root, "unlock", args)
         }
-        "test.plan" => {
+        FEATURE_TEST_PLAN => {
             let mut args = vec!["test".to_owned(), "--plan".to_owned()];
             if let Some(suite) = string_option(&options, "suite")? {
                 args.push(suite);
             }
             run_builtin_json(repo_root, "test", args)
         }
+        other if FEATURE_NAMES.contains(&other) => Err(RunnerError::Ui(format!(
+            "known Rhai feature `{other}` is not wired to a runner dispatch path"
+        ))),
         other => Err(RunnerError::task_invocation(format!(
             "unknown Rhai feature `{other}`"
         ))),
     }
+}
+
+fn is_runner_dispatch_feature(feature: &str) -> bool {
+    matches!(
+        feature,
+        FEATURE_TASKS_LIST
+            | FEATURE_CATALOG_TASKS
+            | FEATURE_CONFIG_EFFECTIVE
+            | FEATURE_CONFIG_RAW
+            | FEATURE_CONFIG_GET
+            | FEATURE_TASKS_RESOLVE
+            | FEATURE_TASKS_INFO
+            | FEATURE_CONTAINER_STATUS
+            | FEATURE_CONTAINER_LOGS
+            | FEATURE_CONTAINER_RESET
+            | FEATURE_CONTAINER_DATA
+            | FEATURE_CONTAINER_EJECT
+            | FEATURE_CONTAINER_STATS
+            | FEATURE_DOCS_CHECK_LINKS
+            | FEATURE_DOCS_CHECK_JSON_EXAMPLES
+            | FEATURE_DOCS_CHECK_HEADINGS
+            | FEATURE_DOCS_CHECK_PATHS
+            | FEATURE_DOCS_CHECK_CONTAINS
+            | FEATURE_DOCS_CHECK_FORBIDDEN
+            | FEATURE_DOCS_CHECK_INDEX
+            | FEATURE_DOCS_CHECK_NEXT_ACTION
+            | FEATURE_DOCS_CHECK_WORKFLOW_PATHS
+            | FEATURE_DOCS_ADD_LOG_INDEX
+            | FEATURE_BUNDLE_LIST
+            | FEATURE_BUNDLE_INSPECT
+            | FEATURE_BUNDLE_EMIT
+            | FEATURE_SERVICE_LIST
+            | FEATURE_SERVICE_EXTRACT
+            | FEATURE_GATEWAY_STATUS
+            | FEATURE_GATEWAY_SETUP_TLS
+            | FEATURE_GATEWAY_UP
+            | FEATURE_GATEWAY_DOWN
+            | FEATURE_DOCTOR_RUN
+            | FEATURE_SCAN_GOD_FILES
+            | FEATURE_SCAN_DUPLICATE_BLOCKS
+            | FEATURE_SCAN_COMMENT_RATIO
+            | FEATURE_SCAN_GENERATED_ASSETS
+            | FEATURE_SCAN_GENERATED_IN_SRC
+            | FEATURE_SCAN_ATTENTION_MARKERS
+            | FEATURE_SCAN_STALE_SUPPRESSIONS
+            | FEATURE_CACHE_INSPECT
+            | FEATURE_CACHE_INVALIDATE
+            | FEATURE_CONTRACTS_CHECK_JSON
+            | FEATURE_CONTRACTS_VALIDATE_SELECTION
+            | FEATURE_DEPLOY_MODEL
+            | FEATURE_DEPLOY_EMIT
+            | FEATURE_SYSTEM_STATUS
+            | FEATURE_SYSTEM_LOGS
+            | FEATURE_DEMO_LIST
+            | FEATURE_DEMO_INSPECT
+            | FEATURE_DEMO_HISTORY
+            | FEATURE_CHANGELOG_VALIDATE
+            | FEATURE_CHANGELOG_EXTRACT
+            | FEATURE_UNLOCK_SCOPES
+            | FEATURE_TEST_PLAN
+    )
 }
 
 fn run_typed_command(

@@ -10,7 +10,7 @@ fn require_success(result, message) {
 }
 
 fn required_config_string(path) {
-    let value = config.get(path);
+    let value = config::get(path);
     if value.type_of() == "()" {
         throw `missing required Effigy config value: ${path}`;
     }
@@ -21,7 +21,7 @@ fn run_sql(sql) {
     let system_name = required_config_string("systems.default");
     let container_name = required_config_string(`systems.${system_name}.container`);
     let database_name = required_config_string("bundle.database");
-    let result = container.exec(container_name,
+    let result = container::exec(container_name,
         "postgres",
         [
         "psql",
@@ -50,7 +50,7 @@ fn smoke_error_logging() {
 
     let url = api_base_url + smoke_endpoint;
     log(`Triggering forced error: ${url}`);
-    let response = http.post(url);
+    let response = http::post(url);
 
     let http_code = response["status"].to_string();
     if http_code != "500" {
@@ -58,7 +58,7 @@ fn smoke_error_logging() {
     }
     log("Smoke endpoint returned 500");
     log("Waiting briefly for async error-log write...");
-    time.sleep_ms(1000);
+    time::sleep_ms(1000);
 
     let sql = "SELECT json_build_object('error_code', error_code, 'message', message, 'handler_context', context->'handler_context') FROM platform.error_log WHERE error_code = 'smoke.forced_db_failure' ORDER BY occurred_at DESC LIMIT 1;";
     let row_json = run_sql(sql);
@@ -104,20 +104,20 @@ fn check_route_error_patterns() {
     if target_dir == "" {
         target_dir = "acme-api/crates/api/src/routes";
     }
-    if !fs.exists(target_dir) {
+    if !fs::exists(target_dir) {
         throw `target directory not found: ${target_dir}; set ERROR_REPORTING_ROUTES_DIR for this repo`;
     }
 
     log(`Checking route handlers in: ${target_dir}`);
     let raw_status_pattern = "StatusCode::(BAD_REQUEST|UNAUTHORIZED|FORBIDDEN|NOT_FOUND|METHOD_NOT_ALLOWED|CONFLICT|UNPROCESSABLE_ENTITY|TOO_MANY_REQUESTS|INTERNAL_SERVER_ERROR|NOT_IMPLEMENTED|BAD_GATEWAY|SERVICE_UNAVAILABLE|GATEWAY_TIMEOUT)\\s*\\.into_response\\(\\)";
-    let raw_status_matches = search.files(target_dir, raw_status_pattern, #{ glob: "*.rs" });
+    let raw_status_matches = search::files(target_dir, raw_status_pattern, #{ glob: "*.rs" });
     if raw_status_matches["success"] {
         log_warn("Non-canonical raw status error responses found:");
         log_warn(raw_status_matches["stdout"].to_string());
         throw "migrate raw status error responses to ApiError/ApiResult";
     }
 
-    let compat_matches = search.files(target_dir, "\\berror_response\\(", #{ glob: "*.rs" });
+    let compat_matches = search::files(target_dir, "\\berror_response\\(", #{ glob: "*.rs" });
     if compat_matches["success"] {
         let compat_count = compat_matches["count"];
         log_warn(`Compatibility helper usage found (migration candidates): ${compat_count}`);
@@ -142,7 +142,7 @@ fn validate_error_reporting() {
 
     log("Measuring handler_context null-rate");
     let metrics_json = error_log_metrics();
-    let metrics = json.parse(metrics_json);
+    let metrics = json::parse(metrics_json);
     let total_errors = metrics["total_errors"].to_int();
     let null_rate = metrics["null_rate_percent"].to_string();
 

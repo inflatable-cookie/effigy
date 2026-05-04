@@ -1,15 +1,15 @@
 let bin_path = if args.is_empty() {
-    path.join(repo_root, "target/release/effigy")
+    path::join(repo_root, "target/release/effigy")
 } else {
     args[0].to_string()
 };
 
-if !fs.exists(bin_path) || !fs.is_file(bin_path) {
+if !fs::exists(bin_path) || !fs::is_file(bin_path) {
     throw "[error] effigy binary is not executable: " + bin_path;
 }
 
 fn run_check(label, program, process_args) {
-    let result = process.run(program, process_args);
+    let result = process::run(program, process_args);
     if !result["success"] {
         let status = result["status"].to_string();
         let stdout = result["stdout"].to_string();
@@ -20,15 +20,15 @@ fn run_check(label, program, process_args) {
     log("[ok] " + label);
 }
 
-let tmp_dir = fs.make_temp_dir("effigy-release-smoke");
-let manifest_path = path.join(tmp_dir, "effigy.toml");
-let cargo_toml_path = path.join(tmp_dir, "Cargo.toml");
+let tmp_dir = fs::make_temp_dir("effigy-release-smoke");
+let manifest_path = path::join(tmp_dir, "effigy.toml");
+let cargo_toml_path = path::join(tmp_dir, "Cargo.toml");
 
-fs.write_file(
+fs::write_file(
     manifest_path,
     "[catalog]\nalias = \"catalog_a\"\n\n[tasks]\nnoop = \"echo noop\"\n",
 );
-fs.write_file(
+fs::write_file(
     cargo_toml_path,
     "[package]\nname = \"release-smoke\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
 );
@@ -53,5 +53,5 @@ run_check(
     ["completion", "candidates", "--repo", tmp_dir],
 );
 
-fs.remove(tmp_dir);
+fs::remove(tmp_dir);
 log("[ok] release smoke checks passed");

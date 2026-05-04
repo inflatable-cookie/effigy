@@ -12,14 +12,16 @@ use effigy_env::dotenv::parse_dotenv_entries;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map};
 use serde_json::{json, Value};
 
+use crate::surface::*;
+
 use super::{
     allocate_temp_dir, configure_process_command, dynamic_array_to_strings, effigy_result_map,
     emit_host_log, generate_jwt_env_keys_dynamic, generate_random_base64, host_command_output_map,
     module_feature_get_value, module_feature_no_args, module_feature_options,
-    module_feature_string, module_feature_string_options, module_feature_three_strings,
-    module_feature_two_strings, process_result_map, reject_recursive_effigy_process,
-    resolve_runtime_path, rhai_runtime_error, run_http_request, run_process_streaming,
-    run_process_teeing, search_files, with_local_node_bin_path, HostCallbacks, ScriptContext,
+    module_feature_string, module_feature_string_options, module_feature_two_strings,
+    process_result_map, reject_recursive_effigy_process, resolve_runtime_path, rhai_runtime_error,
+    run_feature_dynamic, run_http_request, run_process_streaming, run_process_teeing, search_files,
+    with_local_node_bin_path, HostCallbacks, ScriptContext,
 };
 
 pub(super) fn register_host_api(
@@ -39,35 +41,107 @@ pub(super) fn register_host_api(
     });
 
     // Register all modules
-    engine.register_static_module("time", std::rc::Rc::new(build_time_module(context.clone())));
-    engine.register_static_module("path", std::rc::Rc::new(build_path_module()));
-    engine.register_static_module("fs", std::rc::Rc::new(build_fs_module(context.clone())));
-    engine.register_static_module("process", std::rc::Rc::new(build_process_module(context.clone())));
-    engine.register_static_module("http", std::rc::Rc::new(build_http_module(context.clone())));
-    engine.register_static_module("json", std::rc::Rc::new(build_json_module()));
-    engine.register_static_module("toml", std::rc::Rc::new(build_toml_module()));
-    engine.register_static_module("str", std::rc::Rc::new(build_str_module()));
-    engine.register_static_module("random", std::rc::Rc::new(build_random_module()));
-    engine.register_static_module("search", std::rc::Rc::new(build_search_module(context.clone())));
-    engine.register_static_module("config", std::rc::Rc::new(build_config_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("task", std::rc::Rc::new(build_task_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("container", std::rc::Rc::new(build_container_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("scan", std::rc::Rc::new(build_scan_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("docs", std::rc::Rc::new(build_docs_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("deploy", std::rc::Rc::new(build_deploy_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("system", std::rc::Rc::new(build_system_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("demo", std::rc::Rc::new(build_demo_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("changelog", std::rc::Rc::new(build_changelog_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("cache", std::rc::Rc::new(build_cache_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("gateway", std::rc::Rc::new(build_gateway_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("bundle", std::rc::Rc::new(build_bundle_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("service", std::rc::Rc::new(build_service_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("catalog", std::rc::Rc::new(build_catalog_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("doctor", std::rc::Rc::new(build_doctor_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("contracts", std::rc::Rc::new(build_contracts_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("unlock", std::rc::Rc::new(build_unlock_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("test", std::rc::Rc::new(build_test_module(context.clone(), callbacks.clone())));
-    engine.register_static_module("effigy", std::rc::Rc::new(build_effigy_module(context.clone(), callbacks.clone())));
+    engine.register_static_module(
+        MODULE_TIME,
+        std::rc::Rc::new(build_time_module(context.clone())),
+    );
+    engine.register_static_module(MODULE_PATH, std::rc::Rc::new(build_path_module()));
+    engine.register_static_module(
+        MODULE_FS,
+        std::rc::Rc::new(build_fs_module(context.clone())),
+    );
+    engine.register_static_module(
+        MODULE_PROCESS,
+        std::rc::Rc::new(build_process_module(context.clone())),
+    );
+    engine.register_static_module(
+        MODULE_HTTP,
+        std::rc::Rc::new(build_http_module(context.clone())),
+    );
+    engine.register_static_module(MODULE_JSON, std::rc::Rc::new(build_json_module()));
+    engine.register_static_module(MODULE_TOML, std::rc::Rc::new(build_toml_module()));
+    engine.register_static_module(MODULE_STR, std::rc::Rc::new(build_str_module()));
+    engine.register_static_module(MODULE_RANDOM, std::rc::Rc::new(build_random_module()));
+    engine.register_static_module(
+        MODULE_SEARCH,
+        std::rc::Rc::new(build_search_module(context.clone())),
+    );
+    engine.register_static_module(
+        MODULE_CONFIG,
+        std::rc::Rc::new(build_config_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_TASK,
+        std::rc::Rc::new(build_task_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_CONTAINER,
+        std::rc::Rc::new(build_container_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_SCAN,
+        std::rc::Rc::new(build_scan_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_DOCS,
+        std::rc::Rc::new(build_docs_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_DEPLOY,
+        std::rc::Rc::new(build_deploy_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_SYSTEM,
+        std::rc::Rc::new(build_system_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_DEMO,
+        std::rc::Rc::new(build_demo_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_CHANGELOG,
+        std::rc::Rc::new(build_changelog_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_CACHE,
+        std::rc::Rc::new(build_cache_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_GATEWAY,
+        std::rc::Rc::new(build_gateway_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_BUNDLE,
+        std::rc::Rc::new(build_bundle_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_SERVICE,
+        std::rc::Rc::new(build_service_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_CATALOG,
+        std::rc::Rc::new(build_catalog_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_DOCTOR,
+        std::rc::Rc::new(build_doctor_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_CONTRACTS,
+        std::rc::Rc::new(build_contracts_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_UNLOCK,
+        std::rc::Rc::new(build_unlock_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_TEST,
+        std::rc::Rc::new(build_test_module(context.clone(), callbacks.clone())),
+    );
+    engine.register_static_module(
+        MODULE_EFFIGY,
+        std::rc::Rc::new(build_effigy_module(context.clone(), callbacks.clone())),
+    );
 }
 
 // Module builders
@@ -87,9 +161,12 @@ fn build_time_module(context: Arc<ScriptContext>) -> rhai::Module {
         Ok(())
     });
     let stop_context = context.clone();
-    module.set_native_fn("stop_requested", move || -> Result<bool, Box<EvalAltResult>> {
-        Ok(stop_context.stop_requested.load(Ordering::Relaxed))
-    });
+    module.set_native_fn(
+        "stop_requested",
+        move || -> Result<bool, Box<EvalAltResult>> {
+            Ok(stop_context.stop_requested.load(Ordering::Relaxed))
+        },
+    );
     module
 }
 
@@ -104,12 +181,15 @@ fn build_path_module() -> rhai::Module {
                 .to_string())
         },
     );
-    module.set_native_fn("file_name", |path: ImmutableString| -> Result<String, Box<EvalAltResult>> {
-        Ok(Path::new(path.as_str())
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default())
-    });
+    module.set_native_fn(
+        "file_name",
+        |path: ImmutableString| -> Result<String, Box<EvalAltResult>> {
+            Ok(Path::new(path.as_str())
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default())
+        },
+    );
     module
 }
 
@@ -131,7 +211,10 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
             let path = resolve_runtime_path(&file_context.cwd, path.as_str());
             let contents = std::fs::read_to_string(&path)
                 .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
-            Ok(contents.lines().map(|line| line.to_owned().into()).collect())
+            Ok(contents
+                .lines()
+                .map(|line| line.to_owned().into())
+                .collect())
         },
     );
     let file_context = context.clone();
@@ -190,7 +273,9 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
     let file_context = context.clone();
     module.set_native_fn(
         "copy",
-        move |source: ImmutableString, destination: ImmutableString| -> Result<i64, Box<EvalAltResult>> {
+        move |source: ImmutableString,
+              destination: ImmutableString|
+              -> Result<i64, Box<EvalAltResult>> {
             let source = resolve_runtime_path(&file_context.cwd, source.as_str());
             let destination = resolve_runtime_path(&file_context.cwd, destination.as_str());
             if let Some(parent) = destination.parent() {
@@ -206,7 +291,9 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
     let file_context = context.clone();
     module.set_native_fn(
         "copy_if_missing",
-        move |source: ImmutableString, destination: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
+        move |source: ImmutableString,
+              destination: ImmutableString|
+              -> Result<bool, Box<EvalAltResult>> {
             let source = resolve_runtime_path(&file_context.cwd, source.as_str());
             let destination = resolve_runtime_path(&file_context.cwd, destination.as_str());
             if destination.exists() {
@@ -224,7 +311,9 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
     let file_context = context.clone();
     module.set_native_fn(
         "move_path",
-        move |source: ImmutableString, destination: ImmutableString| -> Result<(), Box<EvalAltResult>> {
+        move |source: ImmutableString,
+              destination: ImmutableString|
+              -> Result<(), Box<EvalAltResult>> {
             let source = resolve_runtime_path(&file_context.cwd, source.as_str());
             let destination = resolve_runtime_path(&file_context.cwd, destination.as_str());
             if let Some(parent) = destination.parent() {
@@ -238,7 +327,10 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
     let file_context = context.clone();
     module.set_native_fn(
         "replace_in_file",
-        move |path: ImmutableString, from: ImmutableString, to: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
+        move |path: ImmutableString,
+              from: ImmutableString,
+              to: ImmutableString|
+              -> Result<bool, Box<EvalAltResult>> {
             let path = resolve_runtime_path(&file_context.cwd, path.as_str());
             let contents = std::fs::read_to_string(&path)
                 .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
@@ -467,11 +559,15 @@ fn build_process_module(context: Arc<ScriptContext>) -> rhai::Module {
     let process_context = context.clone();
     module.set_native_fn(
         "run",
-        move |program: ImmutableString, args: Array, options: Map| -> Result<Map, Box<EvalAltResult>> {
+        move |program: ImmutableString,
+              args: Array,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
             reject_recursive_effigy_process(program.as_str())?;
             let mut process = ProcessCommand::new(program.as_str());
             process.args(dynamic_array_to_strings(&args)?);
-            let resolved_cwd = configure_process_command(&mut process, &process_context.cwd, Some(options))?;
+            let resolved_cwd =
+                configure_process_command(&mut process, &process_context.cwd, Some(options))?;
             with_local_node_bin_path(&mut process, &resolved_cwd);
             let output = process
                 .output()
@@ -491,7 +587,10 @@ fn build_process_module(context: Arc<ScriptContext>) -> rhai::Module {
     let process_context = context.clone();
     module.set_native_fn(
         "stream",
-        move |program: ImmutableString, args: Array, options: Map| -> Result<Map, Box<EvalAltResult>> {
+        move |program: ImmutableString,
+              args: Array,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
             reject_recursive_effigy_process(program.as_str())?;
             let args = dynamic_array_to_strings(&args)?;
             super::run_process_streaming_with_options(
@@ -514,7 +613,10 @@ fn build_process_module(context: Arc<ScriptContext>) -> rhai::Module {
     let process_context = context.clone();
     module.set_native_fn(
         "tee",
-        move |program: ImmutableString, args: Array, options: Map| -> Result<Map, Box<EvalAltResult>> {
+        move |program: ImmutableString,
+              args: Array,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
             reject_recursive_effigy_process(program.as_str())?;
             let args = dynamic_array_to_strings(&args)?;
             super::run_process_teeing_with_options(
@@ -532,7 +634,10 @@ fn build_http_module(context: Arc<ScriptContext>) -> rhai::Module {
     let mut module = rhai::Module::new();
     module.set_native_fn(
         "request",
-        move |method: ImmutableString, url: ImmutableString, options: Map| -> Result<Map, Box<EvalAltResult>> {
+        move |method: ImmutableString,
+              url: ImmutableString,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
             run_http_request(method.as_str(), url.as_str(), options)
         },
     );
@@ -566,13 +671,21 @@ fn build_http_module(context: Arc<ScriptContext>) -> rhai::Module {
     module.set_native_fn(
         "download",
         move |url: ImmutableString, path: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
-            download_http_to_path(&download_context.cwd, url.as_str(), path.as_str(), Map::new())
+            download_http_to_path(
+                &download_context.cwd,
+                url.as_str(),
+                path.as_str(),
+                Map::new(),
+            )
         },
     );
     let download_context = context.clone();
     module.set_native_fn(
         "download",
-        move |url: ImmutableString, path: ImmutableString, options: Map| -> Result<Map, Box<EvalAltResult>> {
+        move |url: ImmutableString,
+              path: ImmutableString,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
             download_http_to_path(&download_context.cwd, url.as_str(), path.as_str(), options)
         },
     );
@@ -624,13 +737,16 @@ fn build_toml_module() -> rhai::Module {
 
 fn build_str_module() -> rhai::Module {
     let mut module = rhai::Module::new();
-    module.set_native_fn("trim", |value: Dynamic| -> Result<String, Box<EvalAltResult>> {
-        if value.is_unit() {
-            Ok(String::new())
-        } else {
-            Ok(value.to_string().trim().to_owned())
-        }
-    });
+    module.set_native_fn(
+        "trim",
+        |value: Dynamic| -> Result<String, Box<EvalAltResult>> {
+            if value.is_unit() {
+                Ok(String::new())
+            } else {
+                Ok(value.to_string().trim().to_owned())
+            }
+        },
+    );
     module.set_native_fn(
         "contains",
         |value: Dynamic, needle: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
@@ -651,7 +767,10 @@ fn build_str_module() -> rhai::Module {
     );
     module.set_native_fn(
         "replace",
-        |value: Dynamic, from: ImmutableString, to: ImmutableString| -> Result<String, Box<EvalAltResult>> {
+        |value: Dynamic,
+         from: ImmutableString,
+         to: ImmutableString|
+         -> Result<String, Box<EvalAltResult>> {
             if value.is_unit() {
                 Ok(String::new())
             } else {
@@ -659,33 +778,38 @@ fn build_str_module() -> rhai::Module {
             }
         },
     );
-    module.set_native_fn("split_lines", |value: Dynamic| -> Result<Array, Box<EvalAltResult>> {
-        if value.is_unit() {
-            Ok(Array::new())
-        } else {
-            Ok(value
-                .to_string()
-                .lines()
-                .map(|line| line.to_owned().into())
-                .collect())
-        }
-    });
-    module.set_native_fn("shell_quote", |value: Dynamic| -> Result<String, Box<EvalAltResult>> {
-        if value.is_unit() {
-            Ok(shell_quote(""))
-        } else {
-            Ok(shell_quote(&value.to_string()))
-        }
-    });
+    module.set_native_fn(
+        "split_lines",
+        |value: Dynamic| -> Result<Array, Box<EvalAltResult>> {
+            if value.is_unit() {
+                Ok(Array::new())
+            } else {
+                Ok(value
+                    .to_string()
+                    .lines()
+                    .map(|line| line.to_owned().into())
+                    .collect())
+            }
+        },
+    );
+    module.set_native_fn(
+        "shell_quote",
+        |value: Dynamic| -> Result<String, Box<EvalAltResult>> {
+            if value.is_unit() {
+                Ok(shell_quote(""))
+            } else {
+                Ok(shell_quote(&value.to_string()))
+            }
+        },
+    );
     module
 }
 
 fn build_random_module() -> rhai::Module {
     let mut module = rhai::Module::new();
-    module.set_native_fn(
-        "jwt_env_keys",
-        || -> Result<Dynamic, Box<EvalAltResult>> { generate_jwt_env_keys_dynamic() },
-    );
+    module.set_native_fn("jwt_env_keys", || -> Result<Dynamic, Box<EvalAltResult>> {
+        generate_jwt_env_keys_dynamic()
+    });
     module.set_native_fn(
         "base64",
         |size: i64| -> Result<String, Box<EvalAltResult>> { generate_random_base64(size) },
@@ -698,7 +822,10 @@ fn build_search_module(context: Arc<ScriptContext>) -> rhai::Module {
     let file_context = context.clone();
     module.set_native_fn(
         "files",
-        move |root: ImmutableString, pattern: ImmutableString, options: Map| -> Result<Map, Box<EvalAltResult>> {
+        move |root: ImmutableString,
+              pattern: ImmutableString,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
             let root = resolve_runtime_path(&file_context.cwd, root.as_str());
             search_files(&root, pattern.as_str(), options)
         },
@@ -708,9 +835,28 @@ fn build_search_module(context: Arc<ScriptContext>) -> rhai::Module {
 
 fn build_config_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_no_args(&mut module, "effective", "config.effective", context.clone(), callbacks.clone());
-    module_feature_no_args(&mut module, "raw", "config.raw", context.clone(), callbacks.clone());
-    module_feature_get_value(&mut module, "get", "config.get", "path", context.clone(), callbacks.clone());
+    module_feature_no_args(
+        &mut module,
+        "effective",
+        FEATURE_CONFIG_EFFECTIVE,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_no_args(
+        &mut module,
+        "raw",
+        FEATURE_CONFIG_RAW,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_get_value(
+        &mut module,
+        "get",
+        FEATURE_CONFIG_GET,
+        "path",
+        context.clone(),
+        callbacks.clone(),
+    );
     let config_or_context = context.clone();
     let config_or_callbacks = callbacks.clone();
     module.set_native_fn(
@@ -718,7 +864,7 @@ fn build_config_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) ->
         move |path: ImmutableString, default: Dynamic| -> Result<Dynamic, Box<EvalAltResult>> {
             let output = (config_or_callbacks.run_feature)(
                 &config_or_context.repo_root,
-                "config.get",
+                FEATURE_CONFIG_GET,
                 json!({ "path": path.as_str() }),
             )
             .map_err(|error| rhai_runtime_error(error.message))?;
@@ -768,10 +914,36 @@ fn build_task_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> r
             rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
         },
     );
-    module_feature_no_args(&mut module, "list", "tasks.list", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "list", "tasks.list", context.clone(), callbacks.clone());
-    module_feature_string(&mut module, "resolve", "tasks.resolve", "selector", context.clone(), callbacks.clone());
-    module_feature_string(&mut module, "info", "tasks.info", "selector", context.clone(), callbacks.clone());
+    module_feature_no_args(
+        &mut module,
+        "list",
+        FEATURE_TASKS_LIST,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "list",
+        FEATURE_TASKS_LIST,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_string(
+        &mut module,
+        "resolve",
+        FEATURE_TASKS_RESOLVE,
+        "selector",
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_string(
+        &mut module,
+        "info",
+        FEATURE_TASKS_INFO,
+        "selector",
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
@@ -797,18 +969,17 @@ fn build_container_module(context: Arc<ScriptContext>, callbacks: HostCallbacks)
     );
     let container_context = context.clone();
     let container_callbacks = callbacks.clone();
-    module.set_native_fn(
-        "down_all",
-        move || -> Result<String, Box<EvalAltResult>> {
-            (container_callbacks.container_down)(&container_context.repo_root, "", true)
-                .map_err(rhai_runtime_error)
-        },
-    );
+    module.set_native_fn("down_all", move || -> Result<String, Box<EvalAltResult>> {
+        (container_callbacks.container_down)(&container_context.repo_root, "", true)
+            .map_err(rhai_runtime_error)
+    });
     let container_shell_context = context.clone();
     let container_shell_callbacks = callbacks.clone();
     module.set_native_fn(
         "shell",
-        move |name: ImmutableString, command: ImmutableString| -> Result<String, Box<EvalAltResult>> {
+        move |name: ImmutableString,
+              command: ImmutableString|
+              -> Result<String, Box<EvalAltResult>> {
             (container_shell_callbacks.container_shell)(
                 &container_shell_context.repo_root,
                 name.as_str(),
@@ -822,7 +993,10 @@ fn build_container_module(context: Arc<ScriptContext>, callbacks: HostCallbacks)
     let container_shell_callbacks = callbacks.clone();
     module.set_native_fn(
         "shell",
-        move |name: ImmutableString, service: ImmutableString, command: ImmutableString| -> Result<String, Box<EvalAltResult>> {
+        move |name: ImmutableString,
+              service: ImmutableString,
+              command: ImmutableString|
+              -> Result<String, Box<EvalAltResult>> {
             (container_shell_callbacks.container_shell)(
                 &container_shell_context.repo_root,
                 name.as_str(),
@@ -852,7 +1026,10 @@ fn build_container_module(context: Arc<ScriptContext>, callbacks: HostCallbacks)
     let container_exec_callbacks = callbacks.clone();
     module.set_native_fn(
         "exec",
-        move |name: ImmutableString, service: ImmutableString, command: Array| -> Result<Map, Box<EvalAltResult>> {
+        move |name: ImmutableString,
+              service: ImmutableString,
+              command: Array|
+              -> Result<Map, Box<EvalAltResult>> {
             Ok(host_command_output_map(
                 (container_exec_callbacks.container_exec)(
                     &container_exec_context.repo_root,
@@ -864,142 +1041,520 @@ fn build_container_module(context: Arc<ScriptContext>, callbacks: HostCallbacks)
             ))
         },
     );
-    module_feature_string(&mut module, "status", "container.status", "name", context.clone(), callbacks.clone());
-    module_feature_no_args(&mut module, "status_all", "container.status_all", context.clone(), callbacks.clone());
-    module_feature_string_options(&mut module, "logs", "container.logs", "name", context.clone(), callbacks.clone());
-    module_feature_string_options(&mut module, "reset", "container.reset", "name", context.clone(), callbacks.clone());
-    module_feature_string(&mut module, "data_list", "container.data_list", "name", context.clone(), callbacks.clone());
-    module_feature_three_strings(&mut module, "data_export", "container.data_export", ["name", "volume", "path"], context.clone(), callbacks.clone());
-    module_feature_three_strings(&mut module, "data_import", "container.data_import", ["name", "volume", "path"], context.clone(), callbacks.clone());
-    module_feature_string_options(&mut module, "data_pull_production", "container.data_pull_production", "name", context.clone(), callbacks.clone());
-    module_feature_string(&mut module, "eject", "container.eject", "name", context.clone(), callbacks.clone());
-    module_feature_no_args(&mut module, "stats_all", "container.stats_all", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "stats_all", "container.stats_all", context.clone(), callbacks.clone());
+    module_feature_string(
+        &mut module,
+        "status",
+        FEATURE_CONTAINER_STATUS,
+        "name",
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "status",
+        FEATURE_CONTAINER_STATUS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_string_options(
+        &mut module,
+        "logs",
+        FEATURE_CONTAINER_LOGS,
+        "name",
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_string_options(
+        &mut module,
+        "reset",
+        FEATURE_CONTAINER_RESET,
+        "name",
+        context.clone(),
+        callbacks.clone(),
+    );
+    let data_context = context.clone();
+    let data_callbacks = callbacks.clone();
+    module.set_native_fn(
+        "data",
+        move |operation: ImmutableString,
+              name: ImmutableString|
+              -> Result<Dynamic, Box<EvalAltResult>> {
+            run_feature_dynamic(
+                &data_context,
+                &data_callbacks,
+                FEATURE_CONTAINER_DATA,
+                json!({
+                    "operation": operation.as_str(),
+                    "name": name.as_str(),
+                }),
+            )
+        },
+    );
+    let data_context = context.clone();
+    let data_callbacks = callbacks.clone();
+    module.set_native_fn(
+        "data",
+        move |operation: ImmutableString,
+              name: ImmutableString,
+              volume: ImmutableString,
+              path: ImmutableString|
+              -> Result<Dynamic, Box<EvalAltResult>> {
+            run_feature_dynamic(
+                &data_context,
+                &data_callbacks,
+                FEATURE_CONTAINER_DATA,
+                json!({
+                    "operation": operation.as_str(),
+                    "name": name.as_str(),
+                    "volume": volume.as_str(),
+                    "path": path.as_str(),
+                }),
+            )
+        },
+    );
+    module_feature_string(
+        &mut module,
+        "eject",
+        FEATURE_CONTAINER_EJECT,
+        "name",
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_no_args(
+        &mut module,
+        "stats",
+        FEATURE_CONTAINER_STATS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "stats",
+        FEATURE_CONTAINER_STATS,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_scan_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_options(&mut module, "god_files", "scan.god_files", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "generated_assets", "scan.generated_assets", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "generated_in_src", "scan.generated_in_src", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "duplicate_blocks", "scan.duplicate_blocks", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "comment_ratio", "scan.comment_ratio", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "attention_markers", "scan.attention_markers", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "stale_suppressions", "scan.stale_suppressions", context.clone(), callbacks.clone());
+    module_feature_options(
+        &mut module,
+        "god_files",
+        FEATURE_SCAN_GOD_FILES,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "generated_assets",
+        FEATURE_SCAN_GENERATED_ASSETS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "generated_in_src",
+        FEATURE_SCAN_GENERATED_IN_SRC,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "duplicate_blocks",
+        FEATURE_SCAN_DUPLICATE_BLOCKS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "comment_ratio",
+        FEATURE_SCAN_COMMENT_RATIO,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "attention_markers",
+        FEATURE_SCAN_ATTENTION_MARKERS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "stale_suppressions",
+        FEATURE_SCAN_STALE_SUPPRESSIONS,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_docs_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_options(&mut module, "check_links", "docs.check_links", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "check_json_examples", "docs.check_json_examples", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "check_headings", "docs.check_headings", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "check_paths", "docs.check_paths", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "check_contains", "docs.check_contains", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "check_forbidden", "docs.check_forbidden", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "check_index", "docs.check_index", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "check_next_action", "docs.check_next_action", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "check_workflow_paths", "docs.check_workflow_paths", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "add_log_index", "docs.add_log_index", context.clone(), callbacks.clone());
+    module_feature_options(
+        &mut module,
+        "check_links",
+        FEATURE_DOCS_CHECK_LINKS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "check_json_examples",
+        FEATURE_DOCS_CHECK_JSON_EXAMPLES,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "check_headings",
+        FEATURE_DOCS_CHECK_HEADINGS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "check_paths",
+        FEATURE_DOCS_CHECK_PATHS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "check_contains",
+        FEATURE_DOCS_CHECK_CONTAINS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "check_forbidden",
+        FEATURE_DOCS_CHECK_FORBIDDEN,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "check_index",
+        FEATURE_DOCS_CHECK_INDEX,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "check_next_action",
+        FEATURE_DOCS_CHECK_NEXT_ACTION,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "check_workflow_paths",
+        FEATURE_DOCS_CHECK_WORKFLOW_PATHS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "add_log_index",
+        FEATURE_DOCS_ADD_LOG_INDEX,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_deploy_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_no_args(&mut module, "model", "deploy.model", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "export_render", "deploy.export_render", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "export_railway", "deploy.export_railway", context.clone(), callbacks.clone());
+    module_feature_no_args(
+        &mut module,
+        "model",
+        FEATURE_DEPLOY_MODEL,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "emit",
+        FEATURE_DEPLOY_EMIT,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_system_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_options(&mut module, "status", "system.status", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "logs", "system.logs", context.clone(), callbacks.clone());
+    module_feature_options(
+        &mut module,
+        "status",
+        FEATURE_SYSTEM_STATUS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "logs",
+        FEATURE_SYSTEM_LOGS,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_demo_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_options(&mut module, "list", "demo.list", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "inspect", "demo.inspect", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "history", "demo.history", context.clone(), callbacks.clone());
+    module_feature_options(
+        &mut module,
+        "list",
+        FEATURE_DEMO_LIST,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "inspect",
+        FEATURE_DEMO_INSPECT,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "history",
+        FEATURE_DEMO_HISTORY,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_changelog_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_options(&mut module, "validate", "changelog.validate", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "extract", "changelog.extract", context.clone(), callbacks.clone());
+    module_feature_options(
+        &mut module,
+        "validate",
+        FEATURE_CHANGELOG_VALIDATE,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "extract",
+        FEATURE_CHANGELOG_EXTRACT,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_cache_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_no_args(&mut module, "inspect", "cache.inspect", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "inspect", "cache.inspect", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "invalidate", "cache.invalidate", context.clone(), callbacks.clone());
+    module_feature_no_args(
+        &mut module,
+        "inspect",
+        FEATURE_CACHE_INSPECT,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "inspect",
+        FEATURE_CACHE_INSPECT,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "invalidate",
+        FEATURE_CACHE_INVALIDATE,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_gateway_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_no_args(&mut module, "status", "gateway.status", context.clone(), callbacks.clone());
-    module_feature_no_args(&mut module, "setup_tls", "gateway.setup_tls", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "setup_tls", "gateway.setup_tls", context.clone(), callbacks.clone());
-    module_feature_no_args(&mut module, "up", "gateway.up", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "up", "gateway.up", context.clone(), callbacks.clone());
-    module_feature_no_args(&mut module, "down", "gateway.down", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "down", "gateway.down", context.clone(), callbacks.clone());
+    module_feature_no_args(
+        &mut module,
+        "status",
+        FEATURE_GATEWAY_STATUS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_no_args(
+        &mut module,
+        "setup_tls",
+        FEATURE_GATEWAY_SETUP_TLS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "setup_tls",
+        FEATURE_GATEWAY_SETUP_TLS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_no_args(
+        &mut module,
+        "up",
+        FEATURE_GATEWAY_UP,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "up",
+        FEATURE_GATEWAY_UP,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_no_args(
+        &mut module,
+        "down",
+        FEATURE_GATEWAY_DOWN,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "down",
+        FEATURE_GATEWAY_DOWN,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_bundle_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_no_args(&mut module, "list", "bundle.list", context.clone(), callbacks.clone());
-    module_feature_string(&mut module, "inspect", "bundle.inspect", "bundle", context.clone(), callbacks.clone());
-    module_feature_two_strings(&mut module, "export_bundle", "bundle.export", ["bundle", "path"], context.clone(), callbacks.clone());
+    module_feature_no_args(
+        &mut module,
+        "list",
+        FEATURE_BUNDLE_LIST,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_string(
+        &mut module,
+        "inspect",
+        FEATURE_BUNDLE_INSPECT,
+        "bundle",
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_two_strings(
+        &mut module,
+        "emit",
+        FEATURE_BUNDLE_EMIT,
+        ["bundle", "path"],
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_service_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_no_args(&mut module, "list", "service.list", context.clone(), callbacks.clone());
-    module_feature_string_options(&mut module, "extract", "service.extract", "service", context.clone(), callbacks.clone());
+    module_feature_no_args(
+        &mut module,
+        "list",
+        FEATURE_SERVICE_LIST,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_string_options(
+        &mut module,
+        "extract",
+        FEATURE_SERVICE_EXTRACT,
+        "service",
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_catalog_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_no_args(&mut module, "tasks", "catalog.tasks", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "tasks", "catalog.tasks", context.clone(), callbacks.clone());
+    module_feature_no_args(
+        &mut module,
+        "tasks",
+        FEATURE_CATALOG_TASKS,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "tasks",
+        FEATURE_CATALOG_TASKS,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_doctor_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_no_args(&mut module, "run", "doctor.run", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "run", "doctor.run", context.clone(), callbacks.clone());
+    module_feature_no_args(
+        &mut module,
+        "run",
+        FEATURE_DOCTOR_RUN,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "run",
+        FEATURE_DOCTOR_RUN,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_contracts_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_options(&mut module, "check_json", "contracts.check_json", context.clone(), callbacks.clone());
-    module_feature_options(&mut module, "validate_selection", "contracts.validate_selection", context.clone(), callbacks.clone());
+    module_feature_options(
+        &mut module,
+        "check_json",
+        FEATURE_CONTRACTS_CHECK_JSON,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "validate_selection",
+        FEATURE_CONTRACTS_VALIDATE_SELECTION,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_unlock_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_options(&mut module, "run", "unlock", context.clone(), callbacks.clone());
+    module_feature_options(
+        &mut module,
+        "scopes",
+        FEATURE_UNLOCK_SCOPES,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 
 fn build_test_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
-    module_feature_options(&mut module, "plan", "test.plan", context.clone(), callbacks.clone());
+    module_feature_options(
+        &mut module,
+        "plan",
+        FEATURE_TEST_PLAN,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }
 

@@ -1,14 +1,14 @@
-let artifact_dir = path.join(repo_root, ".effigy/demo/artifacts/lifecycle-window");
-let status_file = path.join(artifact_dir, "status.txt");
-let heartbeat_file = path.join(artifact_dir, "heartbeat.txt");
-let events_file = path.join(artifact_dir, "events.log");
-let index_file = path.join(artifact_dir, "index.html");
-let started_at = time.now_utc();
-let pid = time.process_id().to_string();
+let artifact_dir = path::join(repo_root, ".effigy/demo/artifacts/lifecycle-window");
+let status_file = path::join(artifact_dir, "status.txt");
+let heartbeat_file = path::join(artifact_dir, "heartbeat.txt");
+let events_file = path::join(artifact_dir, "events.log");
+let index_file = path::join(artifact_dir, "index.html");
+let started_at = time::now_utc();
+let pid = time::process_id().to_string();
 
-fs.create_dir(artifact_dir);
+fs::create_dir(artifact_dir);
 
-fs.write_lines(index_file, [
+fs::write_lines(index_file, [
     "<!doctype html>",
     "<html lang=\"en\">",
     "  <head>",
@@ -77,16 +77,16 @@ fs.write_lines(index_file, [
     "</html>",
 ]);
 
-fs.write_file(status_file, "running since " + started_at + "\n");
-fs.append_file(events_file, "started " + started_at + " pid=" + pid + "\n");
+fs::write_file(status_file, "running since " + started_at + "\n");
+fs::append_file(events_file, "started " + started_at + " pid=" + pid + "\n");
 
-while !time.stop_requested() {
-    let now = time.now_utc();
-    fs.write_file(heartbeat_file, now + "\n");
-    fs.append_file(events_file, "heartbeat " + now + " pid=" + pid + "\n");
-    time.sleep_ms(1000);
+while !time::stop_requested() {
+    let now = time::now_utc();
+    fs::write_file(heartbeat_file, now + "\n");
+    fs::append_file(events_file, "heartbeat " + now + " pid=" + pid + "\n");
+    time::sleep_ms(1000);
 }
 
-let finished_at = time.now_utc();
-fs.write_file(status_file, "terminated at " + finished_at + "\n");
-fs.append_file(events_file, "terminated " + finished_at + " pid=" + pid + "\n");
+let finished_at = time::now_utc();
+fs::write_file(status_file, "terminated at " + finished_at + "\n");
+fs::append_file(events_file, "terminated " + finished_at + " pid=" + pid + "\n");
