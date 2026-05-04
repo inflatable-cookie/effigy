@@ -113,7 +113,7 @@ Current authority surfaces:
 | Module | Responsibility |
 | --- | --- |
 | [`src/runner/execute/*`](../../src/runner/execute.rs) | routed task execution, managed/deferred activation handoff, execution binding consumption |
-| [`src/runner/exec_command.rs`](../../src/runner/exec_command.rs) | `effigy exec` command surface and raw container exec dispatch |
+| [`src/runner/exec_command/mod.rs`](../../src/runner/exec_command/mod.rs) | `effigy exec` command surface and raw container exec dispatch |
 | [`src/runner/exec_command/surface.rs`](../../src/runner/exec_command/surface.rs) | dev-container and named-container selection for exec surfaces |
 | [`src/runner/deferral/*`](../../src/runner/deferral.rs) | deferral selection, tracing, and delegated runtime activation |
 | [`src/runner/script_command.rs`](../../src/runner/script_command.rs) | Rhai-owned runner entry surface |

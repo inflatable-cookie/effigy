@@ -13,7 +13,6 @@ use effigy_exec::detection::{build_capabilities_from_results, standard_probe_spe
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::error::RunnerError;
 
-#[path = "transport/colima.rs"]
 mod colima;
 
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";

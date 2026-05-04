@@ -158,10 +158,10 @@ pub(super) fn ensure_container_running(
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct ResolvedExecSurface {
-    pub(super) container_name: String,
-    pub(super) config: ManifestContainerConfig,
-    pub(super) policy: EffectiveContainerPolicy,
+pub(in crate::runner) struct ResolvedExecSurface {
+    pub(in crate::runner) container_name: String,
+    pub(in crate::runner) config: ManifestContainerConfig,
+    pub(in crate::runner) policy: EffectiveContainerPolicy,
 }
 
 fn resolve_dev_container_name(

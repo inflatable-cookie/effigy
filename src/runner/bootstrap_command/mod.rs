@@ -1,9 +1,7 @@
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use effigy_bootstrap::{
@@ -13,26 +11,26 @@ use effigy_bootstrap::{
     resolve_bootstrap_request as crate_resolve_bootstrap, BootstrapError, BootstrapExecutionResult,
     BootstrapProgressEvent, BootstrapResolution,
 };
-use effigy_cli::{BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand, TaskInvocation};
-use effigy_manifest::{ManifestJsPackageManager, ManifestManagedRun, TASK_MANIFEST_FILE};
+use effigy_cli::{BootstrapArgs, BootstrapSubcommand, TaskInvocation};
+use effigy_manifest::{ManifestManagedRun, TASK_MANIFEST_FILE};
 use effigy_ui::theme::{is_ci_environment, resolve_color_enabled, Theme};
 use effigy_ui::{style_text, OutputMode, PlainRenderer, Renderer, SpinnerHandle};
-use serde::Serialize;
-use serde_json::json;
 
+use crate::runner::container_runtime_prep::{
+    activate_container_runtime_for_task, ActivationRequest, ExecutionSurfaceKind,
+};
 use crate::runner::embedded_runner::run_embedded_task;
-use crate::runner::execute::api::run_managed_run_with_cwd;
 use crate::runner::execute::api::resolve_execution_binding_resolution;
-use crate::runner::manifest::{load_task_manifest, load_task_manifest_with_inspection};
+use crate::runner::execute::api::run_managed_run_with_cwd;
+use crate::runner::manifest::load_task_manifest;
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, LeaseRefreshPolicy, PublicWorkspaceCleanupOverride,
     RuntimeSessionContext,
 };
-use crate::runner::container_runtime_prep::{
-    activate_container_runtime_for_task, ActivationRequest, ExecutionSurfaceKind,
-};
 
 use super::error::RunnerError;
+
+mod deps;
 
 const BOOTSTRAP_DB_SEED_TASK: &str = "bootstrap:db-seed";
 const BOOTSTRAP_DB_SEEDS_DIR: &str = ".effigy/local/db-seeds";
@@ -56,7 +54,7 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
             Ok(crate_render_bootstrap_result(&result, args.output_json))
         }
         BootstrapSubcommand::DepsSync { mode, paths } => {
-            run_bootstrap_deps_sync(&cwd, *mode, paths, args.output_json)
+            deps::run_bootstrap_deps_sync(&cwd, *mode, paths, args.output_json)
         }
     }
 }
@@ -257,8 +255,10 @@ fn stage_bootstrap_db_seed_files(
     Ok(staged)
 }
 
-fn bootstrap_db_seed_env(staged_db_seed_files: &[PathBuf]) -> BTreeMap<String, String> {
-    let mut env = BTreeMap::new();
+fn bootstrap_db_seed_env(
+    staged_db_seed_files: &[PathBuf],
+) -> std::collections::BTreeMap<String, String> {
+    let mut env = std::collections::BTreeMap::new();
     if staged_db_seed_files.is_empty() {
         return env;
     }
@@ -320,7 +320,10 @@ fn prepare_bootstrap_seed_runtime(
         return Ok(());
     };
     let binding_resolution = resolve_execution_binding_resolution(
-        manifest.task_defaults.as_ref().and_then(|defaults| defaults.run_in),
+        manifest
+            .task_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.run_in),
         manifest.systems.as_ref(),
         manifest.containers.as_ref(),
         BOOTSTRAP_DB_SEED_TASK,
@@ -349,7 +352,7 @@ struct ScopedEnvOverride {
 }
 
 impl ScopedEnvOverride {
-    fn set(entries: &BTreeMap<String, String>) -> Self {
+    fn set(entries: &std::collections::BTreeMap<String, String>) -> Self {
         let guard = bootstrap_env_override_lock()
             .lock()
             .expect("bootstrap env override mutex should not be poisoned");
@@ -602,252 +605,6 @@ pub(in crate::runner) fn bootstrap_runtime_session_context(phase: &str) -> Runti
             PublicWorkspaceCleanupOverride::Default
         },
     }
-}
-
-#[derive(Debug, Serialize)]
-struct BootstrapDepsOperation {
-    path: String,
-    absolute_path: String,
-    kind: &'static str,
-    command: String,
-    manifest_path: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct BootstrapDepsSkippedPath {
-    path: String,
-    reason: &'static str,
-}
-
-fn run_bootstrap_deps_sync(
-    repo_root: &Path,
-    mode: BootstrapDepsSyncMode,
-    paths: &[String],
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    let root_parent = repo_root.parent().unwrap_or(repo_root);
-    let mut manifest_cache = BTreeMap::<PathBuf, Option<ManifestJsPackageManager>>::new();
-    let mut operations = Vec::<BootstrapDepsOperation>::new();
-    let mut skipped = Vec::<BootstrapDepsSkippedPath>::new();
-
-    for path_raw in paths {
-        let Some(resolved) = resolve_bootstrap_sync_path(repo_root, root_parent, path_raw)? else {
-            skipped.push(BootstrapDepsSkippedPath {
-                path: path_raw.clone(),
-                reason: "missing directory",
-            });
-            continue;
-        };
-        let package_json = resolved.join("package.json");
-        let cargo_toml = resolved.join("Cargo.toml");
-        let wants_js = matches!(
-            mode,
-            BootstrapDepsSyncMode::Both | BootstrapDepsSyncMode::JsOnly
-        );
-        let wants_rust = matches!(
-            mode,
-            BootstrapDepsSyncMode::Both | BootstrapDepsSyncMode::RustOnly
-        );
-        let mut matched = false;
-
-        if wants_js && package_json.is_file() {
-            let manifest_path = find_nearest_manifest_path(&resolved, root_parent);
-            let package_manager =
-                js_package_manager_for_manifest(manifest_path.as_deref(), &mut manifest_cache)?;
-            let package_manager = package_manager.ok_or_else(|| {
-                RunnerError::task_invocation(format!(
-                    "`bootstrap deps sync {}` found package.json but no `[package_manager].js` is configured",
-                    path_raw
-                ))
-            })?;
-            let (program, args, command) = js_install_invocation(package_manager, path_raw)?;
-            run_sync_command(program, &args, &resolved, &command)?;
-            operations.push(BootstrapDepsOperation {
-                path: path_raw.clone(),
-                absolute_path: resolved.display().to_string(),
-                kind: "js",
-                command,
-                manifest_path: manifest_path.map(|path| path.display().to_string()),
-            });
-            matched = true;
-        }
-
-        if wants_rust && cargo_toml.is_file() {
-            let command = "cargo fetch --manifest-path Cargo.toml".to_owned();
-            run_sync_command(
-                "cargo",
-                &["fetch", "--manifest-path", "Cargo.toml"],
-                &resolved,
-                &command,
-            )?;
-            operations.push(BootstrapDepsOperation {
-                path: path_raw.clone(),
-                absolute_path: resolved.display().to_string(),
-                kind: "rust",
-                command,
-                manifest_path: None,
-            });
-            matched = true;
-        }
-
-        if !matched {
-            let detail = match mode {
-                BootstrapDepsSyncMode::Both => "expected package.json and/or Cargo.toml",
-                BootstrapDepsSyncMode::JsOnly => "expected package.json",
-                BootstrapDepsSyncMode::RustOnly => "expected Cargo.toml",
-            };
-            return Err(RunnerError::task_invocation(format!(
-                "`bootstrap deps sync {}` found no supported dependency manifest ({detail})",
-                path_raw
-            )));
-        }
-    }
-
-    if output_json {
-        return serde_json::to_string_pretty(&json!({
-            "schema": "effigy.bootstrap.deps.v1",
-            "schema_version": 1,
-            "ok": true,
-            "mode": match mode {
-                BootstrapDepsSyncMode::Both => "both",
-                BootstrapDepsSyncMode::JsOnly => "js",
-                BootstrapDepsSyncMode::RustOnly => "rust",
-            },
-            "operations": operations,
-            "skipped": skipped,
-        }))
-        .map_err(|error| RunnerError::task_invocation(error.to_string()));
-    }
-
-    let mut text = format!("bootstrap deps sync completed ({})", operations.len());
-    for operation in operations {
-        text.push_str(&format!(
-            "\n- {} [{}]: {}",
-            operation.path, operation.kind, operation.command
-        ));
-    }
-    for skipped_path in skipped {
-        text.push_str(&format!(
-            "\n- {} [skip]: {}",
-            skipped_path.path, skipped_path.reason
-        ));
-    }
-    Ok(text)
-}
-
-fn resolve_bootstrap_sync_path(
-    repo_root: &Path,
-    root_parent: &Path,
-    path_raw: &str,
-) -> Result<Option<PathBuf>, RunnerError> {
-    let canonical_repo_root = repo_root
-        .canonicalize()
-        .map_err(|error| RunnerError::task_invocation_failed_read(repo_root, error))?;
-    let canonical_root_parent = root_parent
-        .canonicalize()
-        .map_err(|error| RunnerError::task_invocation_failed_read(root_parent, error))?;
-    let candidate = repo_root.join(path_raw);
-    let metadata = match std::fs::metadata(&candidate) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(RunnerError::task_invocation_failed_read(&candidate, error)),
-    };
-    if !metadata.is_dir() {
-        return Err(RunnerError::task_invocation(format!(
-            "`bootstrap deps sync {path_raw}` must target a directory",
-        )));
-    }
-    let canonical = candidate
-        .canonicalize()
-        .map_err(|error| RunnerError::task_invocation_failed_read(&candidate, error))?;
-    if canonical.starts_with(&canonical_repo_root) || canonical.starts_with(&canonical_root_parent)
-    {
-        return Ok(Some(canonical));
-    }
-    Err(RunnerError::task_invocation(format!(
-        "`bootstrap deps sync {path_raw}` cannot escape the repo parent directory",
-    )))
-}
-
-fn find_nearest_manifest_path(start: &Path, root_parent: &Path) -> Option<PathBuf> {
-    let canonical_root_parent = root_parent.canonicalize().ok()?;
-    for ancestor in start.ancestors() {
-        if !ancestor.starts_with(&canonical_root_parent) {
-            break;
-        }
-        let manifest_path = ancestor.join(TASK_MANIFEST_FILE);
-        if manifest_path.is_file() {
-            return Some(manifest_path);
-        }
-        if ancestor == canonical_root_parent {
-            break;
-        }
-    }
-    None
-}
-
-fn js_package_manager_for_manifest(
-    manifest_path: Option<&Path>,
-    cache: &mut BTreeMap<PathBuf, Option<ManifestJsPackageManager>>,
-) -> Result<Option<ManifestJsPackageManager>, RunnerError> {
-    let Some(manifest_path) = manifest_path else {
-        return Ok(None);
-    };
-    if let Some(existing) = cache.get(manifest_path) {
-        return Ok(*existing);
-    }
-    let loaded = load_task_manifest_with_inspection(manifest_path)?;
-    let package_manager = loaded.manifest.package_manager.and_then(|config| config.js);
-    cache.insert(manifest_path.to_path_buf(), package_manager);
-    Ok(package_manager)
-}
-
-fn js_install_invocation(
-    package_manager: ManifestJsPackageManager,
-    path_raw: &str,
-) -> Result<(&'static str, [&'static str; 1], String), RunnerError> {
-    match package_manager {
-        ManifestJsPackageManager::Bun => Ok(("bun", ["install"], "bun install".to_owned())),
-        ManifestJsPackageManager::Pnpm => Ok(("pnpm", ["install"], "pnpm install".to_owned())),
-        ManifestJsPackageManager::Npm => Ok(("npm", ["install"], "npm install".to_owned())),
-        ManifestJsPackageManager::Direct => Err(RunnerError::task_invocation(format!(
-            "`bootstrap deps sync {path_raw}` cannot hydrate JS dependencies with `[package_manager].js = \"direct\"`",
-        ))),
-    }
-}
-
-fn run_sync_command(
-    program: &str,
-    args: &[&str],
-    cwd: &Path,
-    command_label: &str,
-) -> Result<(), RunnerError> {
-    let output = ProcessCommand::new(program)
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: command_label.to_owned(),
-            error,
-        })?;
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    let mut detail = format!(
-        "`{command_label}` failed in {} (code={:?})",
-        cwd.display(),
-        output.status.code()
-    );
-    if !stdout.is_empty() {
-        detail.push_str(&format!("\nstdout:\n{stdout}"));
-    }
-    if !stderr.is_empty() {
-        detail.push_str(&format!("\nstderr:\n{stderr}"));
-    }
-    Err(RunnerError::task_invocation(detail))
 }
 
 fn map_bootstrap_error(error: BootstrapError) -> RunnerError {

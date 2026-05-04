@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: In Progress
+Status: Complete
 Owner: Platform
 Created: 2026-05-03
 Depends on: —
@@ -16,13 +16,32 @@ Depends on: —
   - `render.rs` (223 lines) — Render export logic
   - `railway.rs` (254 lines) — Railway export logic
 
+- `exec_command.rs` (975 lines) → split into 4 modules:
+  - `mod.rs` (435 lines) — entry point and public API
+  - `surface.rs` (283 lines) — exec surface selection and resolution
+  - `transport.rs` (305 lines) — transport dispatch and compose exec
+  - `tests.rs` (545 lines) — all tests
+
+- `bootstrap_command.rs` (869 lines) → split into 3 modules:
+  - `mod.rs` (~621 lines) — main bootstrap flow
+  - `deps.rs` (~258 lines) — deps sync subsystem
+  - `tests.rs` (655 lines) — all tests
+
+- `container_runtime_prep.rs` (929 lines) → split into 2 modules:
+  - `mod.rs` (~334 lines) — runtime prep logic
+  - `tests.rs` (~596 lines) — all tests
+
+- `gateway_command.rs` (850 lines) → split into 2 modules:
+  - `mod.rs` (~671 lines) — gateway command logic
+  - `tests.rs` (~179 lines) — all tests
+
+- `script_command.rs` (833 lines) → split into 2 modules:
+  - `mod.rs` (~784 lines) — script command logic
+  - `tests.rs` (~48 lines) — all tests
+
 ## Remaining Work
 
-- `exec_command.rs` (975 lines) — split into surface selection and transport dispatch
-- `container_runtime_prep.rs` (929 lines) — evaluate for splitting
-- `gateway_command.rs` (850 lines) — evaluate for splitting
-- `script_command.rs` (833 lines) — evaluate for splitting
-- `bootstrap_command.rs` (866 lines) — deps sync is already isolated, evaluate rest
+All identified oversized modules have been decomposed. No runner module exceeds ~800 lines.
 
 ## Problem
 
@@ -82,5 +101,4 @@ Partially started:
 
 ## Next Task
 
-Start with `deploy_command.rs` because it is the largest and has the clearest
-internal seams (model derivation, render export, railway export, shared helpers).
+Milestone complete. No further action required on this roadmap item.

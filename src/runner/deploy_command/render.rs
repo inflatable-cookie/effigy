@@ -2,10 +2,13 @@ use std::path::Path;
 
 use serde_yaml;
 
-use crate::runner::error::RunnerError;
 use super::model::*;
+use crate::runner::error::RunnerError;
 
-pub(super) fn build_render_export(model: &DeployModel, path: &Path) -> Result<RenderExportPlan, RunnerError> {
+pub(super) fn build_render_export(
+    model: &DeployModel,
+    path: &Path,
+) -> Result<RenderExportPlan, RunnerError> {
     let postgres = model
         .backing_services
         .iter()

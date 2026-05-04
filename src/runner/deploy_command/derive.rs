@@ -2,9 +2,9 @@ use std::path::Path;
 
 use effigy_manifest::task_runtime::{ManifestManagedRun, ManifestTask};
 
+use super::model::*;
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::{load_task_manifest, load_task_manifest_with_inspection};
-use super::model::*;
 
 pub(super) fn derive_deploy_model(repo_root: &Path) -> Result<DeployModel, RunnerError> {
     let loaded =
