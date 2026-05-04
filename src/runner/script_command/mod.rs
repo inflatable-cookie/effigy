@@ -626,6 +626,7 @@ fn run_rhai_feature(
     }
 }
 
+#[cfg(test)]
 fn is_runner_dispatch_feature(feature: &str) -> bool {
     matches!(
         feature,
