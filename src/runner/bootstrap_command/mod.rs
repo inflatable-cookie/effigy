@@ -8,8 +8,8 @@ use effigy_bootstrap::{
     execute_bootstrap_request_with_progress as crate_execute_bootstrap,
     render_bootstrap_plan as crate_render_bootstrap_plan,
     render_bootstrap_result as crate_render_bootstrap_result,
-    resolve_bootstrap_request as crate_resolve_bootstrap, BootstrapError, BootstrapExecutionResult,
-    BootstrapProgressEvent, BootstrapResolution,
+    resolve_bootstrap_request as crate_resolve_bootstrap, BootstrapDbSeedInput, BootstrapError,
+    BootstrapExecutionResult, BootstrapProgressEvent, BootstrapResolution, BootstrapStagedDbSeed,
 };
 use effigy_cli::{BootstrapArgs, BootstrapSubcommand, TaskInvocation};
 use effigy_manifest::{ManifestManagedRun, TASK_MANIFEST_FILE};
@@ -38,6 +38,8 @@ const BOOTSTRAP_DB_SEEDS_DIR_ENV: &str = "EFFIGY_BOOTSTRAP_DB_SEEDS_DIR";
 const BOOTSTRAP_DB_SEED_FILE_ENV: &str = "EFFIGY_BOOTSTRAP_DB_SEED_FILE";
 const BOOTSTRAP_DB_SEED_COUNT_ENV: &str = "EFFIGY_BOOTSTRAP_DB_SEED_COUNT";
 const BOOTSTRAP_DB_SEED_FILES_ENV: &str = "EFFIGY_BOOTSTRAP_DB_SEED_FILES";
+const BOOTSTRAP_DB_SEEDS_JSON_ENV: &str = "EFFIGY_BOOTSTRAP_DB_SEEDS_JSON";
+const BOOTSTRAP_DB_SEED_TARGET_ENV: &str = "EFFIGY_BOOTSTRAP_DB_SEED_TARGET";
 
 pub(in crate::runner) fn run_bootstrap_with_cwd(
     args: BootstrapArgs,
@@ -67,7 +69,7 @@ fn resolve_bootstrap_request(
         repo_url,
         path,
         branch,
-        db_seed_paths,
+        db_seeds,
         start,
         ..
     } = &args.subcommand
@@ -82,7 +84,13 @@ fn resolve_bootstrap_request(
         repo_url,
         path.as_deref(),
         branch.as_deref(),
-        db_seed_paths,
+        &db_seeds
+            .iter()
+            .map(|seed| BootstrapDbSeedInput {
+                target: seed.target.clone(),
+                path: seed.path.clone(),
+            })
+            .collect::<Vec<_>>(),
         *start,
     )
     .map_err(map_bootstrap_error)
@@ -93,10 +101,10 @@ fn execute_bootstrap_request(
     output_json: bool,
 ) -> Result<BootstrapExecutionResult, RunnerError> {
     let progress = RefCell::new(BootstrapProgressReporter::new(output_json));
-    let mut staged_db_seed_files = None::<Vec<PathBuf>>;
+    let mut staged_db_seeds = None::<Vec<BootstrapStagedDbSeed>>;
     let mut db_seed_env = None::<ScopedEnvOverride>;
     let mut crate_request = request.clone();
-    if !request.db_seed_paths.is_empty() && request.start_requested {
+    if !request.db_seeds.is_empty() && request.start_requested {
         crate_request.start_requested = false;
     }
 
@@ -112,7 +120,7 @@ fn execute_bootstrap_request(
                 request,
                 &crate_request.destination,
                 repo_root,
-                &mut staged_db_seed_files,
+                &mut staged_db_seeds,
                 &mut db_seed_env,
                 &mut progress.borrow_mut(),
             )
@@ -131,16 +139,16 @@ fn execute_bootstrap_request(
     result.request.start_requested = request.start_requested;
     let effective_destination = result.request.destination.clone();
 
-    if !request.db_seed_paths.is_empty() {
+    if !request.db_seeds.is_empty() {
         maybe_stage_bootstrap_db_seed_inputs(
             request,
             &effective_destination,
             &effective_destination,
-            &mut staged_db_seed_files,
+            &mut staged_db_seeds,
             &mut db_seed_env,
             &mut progress.borrow_mut(),
         )?;
-        result.staged_db_seed_files = staged_db_seed_files.clone().unwrap_or_default();
+        result.staged_db_seeds = staged_db_seeds.clone().unwrap_or_default();
 
         progress
             .borrow_mut()
@@ -183,36 +191,42 @@ fn maybe_stage_bootstrap_db_seed_inputs(
     request: &BootstrapResolution,
     destination_root: &Path,
     repo_root: &Path,
-    staged_db_seed_files: &mut Option<Vec<PathBuf>>,
+    staged_db_seeds: &mut Option<Vec<BootstrapStagedDbSeed>>,
     db_seed_env: &mut Option<ScopedEnvOverride>,
     progress: &mut BootstrapProgressReporter,
 ) -> Result<(), RunnerError> {
-    if request.db_seed_paths.is_empty() || repo_root != destination_root {
+    if request.db_seeds.is_empty() || repo_root != destination_root {
         return Ok(());
     }
-    if staged_db_seed_files.is_some() {
+    if staged_db_seeds.is_some() {
         return Ok(());
     }
 
     progress.start_command_phase("[bootstrap] staging database seed files");
-    let staged = stage_bootstrap_db_seed_files(repo_root, &request.db_seed_paths)?;
+    let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
+    let resolved_seeds =
+        resolve_bootstrap_db_seed_targets(repo_root, &manifest, &request.db_seeds)?;
+    let staged = stage_bootstrap_db_seed_files(repo_root, &resolved_seeds)?;
     *db_seed_env = Some(ScopedEnvOverride::set(&bootstrap_db_seed_env(&staged)));
     progress.finish_success(&format!(
         "[ok] staged database seed files ({})",
         staged
             .iter()
-            .map(|path| path.display().to_string())
+            .map(|seed| match seed.target.as_deref() {
+                Some(target) => format!("{target}={}", seed.staged_path.display()),
+                None => seed.staged_path.display().to_string(),
+            })
             .collect::<Vec<_>>()
             .join(", ")
     ));
-    *staged_db_seed_files = Some(staged);
+    *staged_db_seeds = Some(staged);
     Ok(())
 }
 
 fn stage_bootstrap_db_seed_files(
     repo_root: &Path,
-    db_seed_paths: &[PathBuf],
-) -> Result<Vec<PathBuf>, RunnerError> {
+    db_seeds: &[BootstrapDbSeedInput],
+) -> Result<Vec<BootstrapStagedDbSeed>, RunnerError> {
     let staging_dir = repo_root.join(BOOTSTRAP_DB_SEEDS_DIR);
     std::fs::create_dir_all(&staging_dir).map_err(|error| {
         RunnerError::task_invocation(format!(
@@ -222,8 +236,9 @@ fn stage_bootstrap_db_seed_files(
     })?;
 
     let mut seen_names = std::collections::BTreeSet::new();
-    let mut staged = Vec::with_capacity(db_seed_paths.len());
-    for source in db_seed_paths {
+    let mut staged = Vec::with_capacity(db_seeds.len());
+    for seed in db_seeds {
+        let source = &seed.path;
         if !source.is_file() {
             return Err(RunnerError::task_invocation(format!(
                 "bootstrap db seed is not a readable file: {}",
@@ -236,13 +251,17 @@ fn stage_bootstrap_db_seed_files(
                 source.display()
             )));
         };
-        let file_name_string = file_name.to_string_lossy().to_string();
-        if !seen_names.insert(file_name_string.clone()) {
+        let base_name = file_name.to_string_lossy().to_string();
+        let staged_name = match seed.target.as_deref() {
+            Some(target) => format!("{target}--{base_name}"),
+            None => base_name.clone(),
+        };
+        if !seen_names.insert(staged_name.clone()) {
             return Err(RunnerError::task_invocation(format!(
-                "duplicate bootstrap db seed file name `{file_name_string}`; pass uniquely named files"
+                "duplicate staged bootstrap db seed file name `{staged_name}`; rename one input or use distinct seed targets"
             )));
         }
-        let destination = staging_dir.join(file_name);
+        let destination = staging_dir.join(&staged_name);
         std::fs::copy(source, &destination).map_err(|error| {
             RunnerError::task_invocation(format!(
                 "failed to stage bootstrap db seed {} -> {}: {error}",
@@ -250,16 +269,20 @@ fn stage_bootstrap_db_seed_files(
                 destination.display()
             ))
         })?;
-        staged.push(destination);
+        staged.push(BootstrapStagedDbSeed {
+            target: seed.target.clone(),
+            source_path: source.clone(),
+            staged_path: destination,
+        });
     }
     Ok(staged)
 }
 
 fn bootstrap_db_seed_env(
-    staged_db_seed_files: &[PathBuf],
+    staged_db_seeds: &[BootstrapStagedDbSeed],
 ) -> std::collections::BTreeMap<String, String> {
     let mut env = std::collections::BTreeMap::new();
-    if staged_db_seed_files.is_empty() {
+    if staged_db_seeds.is_empty() {
         return env;
     }
     let seeds_dir = Path::new(BOOTSTRAP_DB_SEEDS_DIR);
@@ -269,35 +292,151 @@ fn bootstrap_db_seed_env(
     );
     env.insert(
         BOOTSTRAP_DB_SEED_COUNT_ENV.to_owned(),
-        staged_db_seed_files.len().to_string(),
+        staged_db_seeds.len().to_string(),
     );
-    if staged_db_seed_files.len() == 1 {
+    if staged_db_seeds.len() == 1 {
         env.insert(
             BOOTSTRAP_DB_SEED_FILE_ENV.to_owned(),
             seeds_dir
                 .join(
-                    staged_db_seed_files[0]
+                    staged_db_seeds[0]
+                        .staged_path
                         .file_name()
                         .expect("staged seed file should have name"),
                 )
                 .display()
                 .to_string(),
         );
+        if let Some(target) = staged_db_seeds[0].target.as_deref() {
+            env.insert(BOOTSTRAP_DB_SEED_TARGET_ENV.to_owned(), target.to_owned());
+        }
     }
     env.insert(
         BOOTSTRAP_DB_SEED_FILES_ENV.to_owned(),
-        staged_db_seed_files
+        staged_db_seeds
             .iter()
-            .map(|path| {
+            .map(|seed| {
                 seeds_dir
-                    .join(path.file_name().expect("staged seed file should have name"))
+                    .join(
+                        seed.staged_path
+                            .file_name()
+                            .expect("staged seed file should have name"),
+                    )
                     .display()
                     .to_string()
             })
             .collect::<Vec<_>>()
             .join("\n"),
     );
+    env.insert(
+        BOOTSTRAP_DB_SEEDS_JSON_ENV.to_owned(),
+        serde_json::to_string(
+            &staged_db_seeds
+                .iter()
+                .map(|seed| {
+                    serde_json::json!({
+                        "target": seed.target,
+                        "source_path": seed.source_path.display().to_string(),
+                        "staged_path": seeds_dir
+                            .join(
+                                seed.staged_path
+                                    .file_name()
+                                    .expect("staged seed file should have name"),
+                            )
+                            .display()
+                            .to_string(),
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .expect("bootstrap db seed env json should serialize"),
+    );
     env
+}
+
+fn resolve_bootstrap_db_seed_targets(
+    repo_root: &Path,
+    manifest: &effigy_manifest::TaskManifest,
+    db_seeds: &[BootstrapDbSeedInput],
+) -> Result<Vec<BootstrapDbSeedInput>, RunnerError> {
+    let declared_targets = manifest.bundle.as_ref().and_then(bundle_database_targets);
+
+    let mut seen_targets = std::collections::BTreeSet::new();
+    let mut resolved = Vec::with_capacity(db_seeds.len());
+    for seed in db_seeds {
+        let effective_target = match seed.target.as_deref() {
+            Some(target) => {
+                if let Some(declared_targets) = declared_targets.as_ref() {
+                    if !declared_targets.iter().any(|declared| declared == target) {
+                        return Err(RunnerError::task_invocation(format!(
+                            "bootstrap db seed target `{target}` is not declared in `[bundle].databases` for {}; valid targets: {}",
+                            repo_root.join(TASK_MANIFEST_FILE).display(),
+                            declared_targets.join(", ")
+                        )));
+                    }
+                }
+                Some(target.to_owned())
+            }
+            None => match declared_targets.as_ref() {
+                Some(declared_targets) if declared_targets.len() == 1 => {
+                    Some(declared_targets[0].clone())
+                }
+                Some(declared_targets) if declared_targets.len() > 1 => {
+                    return Err(RunnerError::task_invocation(format!(
+                        "bootstrap db seed input `{}` must name a target because `[bundle].databases` declares multiple databases: {}",
+                        seed.path.display(),
+                        declared_targets.join(", ")
+                    )));
+                }
+                _ => None,
+            },
+        };
+        if let Some(target) = effective_target.as_deref() {
+            if !seen_targets.insert(target.to_owned()) {
+                return Err(RunnerError::task_invocation(format!(
+                    "duplicate bootstrap db seed target `{target}`"
+                )));
+            }
+        }
+        resolved.push(BootstrapDbSeedInput {
+            target: effective_target,
+            path: seed.path.clone(),
+        });
+    }
+    Ok(resolved)
+}
+
+fn bundle_database_targets(bundle: &effigy_manifest::ManifestBundleConfig) -> Option<Vec<String>> {
+    let value = bundle
+        .inputs
+        .get("databases")
+        .or_else(|| bundle.inputs.get("database"))?;
+
+    match value {
+        toml::Value::Array(values) => {
+            let targets = values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if targets.is_empty() {
+                None
+            } else {
+                Some(targets)
+            }
+        }
+        toml::Value::String(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(vec![value.to_owned()])
+            }
+        }
+        _ => None,
+    }
 }
 
 fn run_bootstrap_seed_task(repo_root: &Path) -> Result<(), RunnerError> {

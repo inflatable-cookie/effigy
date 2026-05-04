@@ -20,6 +20,18 @@ fn primary_database_name() {
     return optional_config_string("bundle.database", "");
 }
 
+fn declared_databases() {
+    let value = config::get("bundle.databases");
+    if value.type_of() == "array" && value.len() > 0 {
+        return value;
+    }
+    let database = optional_config_string("bundle.database", "");
+    if database != "" {
+        return [database];
+    }
+    return [];
+}
+
 fn latest_dump_path(dumps_dir) {
     let latest_path = "";
     let latest_name = "";
@@ -40,6 +52,68 @@ fn latest_dump_path(dumps_dir) {
     return latest_path;
 }
 
+fn seed_specs_from_env() {
+    let raw = optional_config_string("env.EFFIGY_BOOTSTRAP_DB_SEEDS_JSON", "");
+    if raw == "" {
+        return [];
+    }
+    let parsed = json::parse(raw);
+    if parsed.type_of() != "array" {
+        throw "EFFIGY_BOOTSTRAP_DB_SEEDS_JSON must decode to a JSON array";
+    }
+    return parsed;
+}
+
+fn import_dump(container_name, db_password, database, dump_repo_path, dump_name) {
+    let mysql_args = ["--skip-ssl", "-h", "db", "-uroot"];
+    if db_password != "" {
+        mysql_args.push("--password=" + db_password);
+    }
+    let reset_sql = "DROP DATABASE IF EXISTS `" + database + "`; CREATE DATABASE `" + database + "`;";
+
+    log("[check] resetting database " + database);
+
+    let reset_args = mysql_args + ["-e", reset_sql];
+    let reset_result = container::exec(container_name, ["mysql"] + reset_args);
+
+    if reset_result["status"] != 0 {
+        throw "[error] database reset failed"
+            + "\nstdout:\n" + reset_result["stdout"].to_string()
+            + "\nstderr:\n" + reset_result["stderr"].to_string();
+    }
+
+    let reset_output = reset_result["stdout"].to_string();
+    if str::trim(reset_output) != "" {
+        log(reset_output);
+    }
+
+    log("[check] importing SQL dump " + dump_name + " into " + database);
+
+    let import_args = mysql_args + [database];
+    let import_shell = "";
+    for arg in ["mysql"] + import_args {
+        if import_shell != "" {
+            import_shell += " ";
+        }
+        import_shell += str::shell_quote(arg);
+    }
+    import_shell += " < " + str::shell_quote(dump_repo_path);
+    let import_result = container::exec(container_name, ["sh", "-lc", import_shell]);
+
+    if import_result["status"] != 0 {
+        throw "[error] SQL import failed"
+            + "\nstdout:\n" + import_result["stdout"].to_string()
+            + "\nstderr:\n" + import_result["stderr"].to_string();
+    }
+
+    let import_output = import_result["stdout"].to_string();
+    if str::trim(import_output) != "" {
+        log(import_output);
+    }
+
+    log("[ok] reset and seeded database " + database + " from " + dump_name);
+}
+
 let database = primary_database_name();
 if database == "" {
     throw "decodelabs seed helper requires `[bundle].database` or `[bundle].databases`";
@@ -52,8 +126,40 @@ let dumps_dir = optional_config_string(
     "env.EFFIGY_BOOTSTRAP_DB_SEEDS_DIR",
     path::join(repo_root, ".effigy/local/db-seeds"),
 );
+let databases = declared_databases();
+let seed_specs = seed_specs_from_env();
 
 fs::create_dir(dumps_dir);
+
+if seed_specs.len() > 0 {
+    for spec in seed_specs {
+        let target = "";
+        if spec["target"].type_of() == "string" {
+            target = str::trim(spec["target"]);
+        }
+        let effective_database = target;
+        if effective_database == "" {
+            if databases.len() == 1 {
+                effective_database = databases[0].to_string();
+            } else {
+                throw "bootstrap db seed entry is missing a target for a multi-database bundle";
+            }
+        }
+        let staged_path = "";
+        if spec["staged_path"].type_of() == "string" {
+            staged_path = str::trim(spec["staged_path"]);
+        }
+        if staged_path == "" {
+            throw "bootstrap db seed entry is missing staged_path";
+        }
+        let dump_name = path::file_name(staged_path);
+        if dump_name == "" {
+            throw "bootstrap db seed entry has an invalid staged_path";
+        }
+        import_dump(container_name, db_password, effective_database, staged_path, dump_name);
+    }
+    return;
+}
 
 let latest_host_path = latest_dump_path(dumps_dir);
 
@@ -64,50 +170,4 @@ if latest_host_path == "" {
 
 let dump_name = path::file_name(latest_host_path);
 let dump_repo_path = path::join(".effigy/local/db-seeds", dump_name);
-let mysql_args = ["--skip-ssl", "-h", "db", "-uroot"];
-if db_password != "" {
-    mysql_args.push("--password=" + db_password);
-}
-let reset_sql = "DROP DATABASE IF EXISTS `" + database + "`; CREATE DATABASE `" + database + "`;";
-
-log("[check] resetting database " + database);
-
-let reset_args = mysql_args + ["-e", reset_sql];
-let reset_result = container::exec(container_name, ["mysql"] + reset_args);
-
-if reset_result["status"] != 0 {
-    throw "[error] database reset failed"
-        + "\nstdout:\n" + reset_result["stdout"].to_string()
-        + "\nstderr:\n" + reset_result["stderr"].to_string();
-}
-
-let reset_output = reset_result["stdout"].to_string();
-if str::trim(reset_output) != "" {
-    log(reset_output);
-}
-
-log("[check] importing latest SQL dump " + dump_name);
-
-let import_args = mysql_args + [database];
-let import_shell = "";
-for arg in ["mysql"] + import_args {
-    if import_shell != "" {
-        import_shell += " ";
-    }
-    import_shell += str::shell_quote(arg);
-}
-import_shell += " < " + str::shell_quote(dump_repo_path);
-let import_result = container::exec(container_name, ["sh", "-lc", import_shell]);
-
-if import_result["status"] != 0 {
-    throw "[error] SQL import failed"
-        + "\nstdout:\n" + import_result["stdout"].to_string()
-        + "\nstderr:\n" + import_result["stderr"].to_string();
-}
-
-let import_output = import_result["stdout"].to_string();
-if str::trim(import_output) != "" {
-    log(import_output);
-}
-
-log("[ok] reset and seeded database from " + dump_name);
+import_dump(container_name, db_password, database, dump_repo_path, dump_name);

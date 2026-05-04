@@ -10,13 +10,26 @@ use serde_json::json;
 pub const TASK_MANIFEST_FILE: &str = "effigy.toml";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapDbSeedInput {
+    pub target: Option<String>,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapStagedDbSeed {
+    pub target: Option<String>,
+    pub source_path: PathBuf,
+    pub staged_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootstrapResolution {
     pub repo_url: String,
     pub repo_name: String,
     pub destination: PathBuf,
     pub destination_source: &'static str,
     pub branch: Option<String>,
-    pub db_seed_paths: Vec<PathBuf>,
+    pub db_seeds: Vec<BootstrapDbSeedInput>,
     pub start_requested: bool,
 }
 
@@ -31,7 +44,7 @@ pub struct BootstrapExecutionResult {
     pub submodules_applied: bool,
     pub root_run: Option<String>,
     pub child_results: Vec<BootstrapChildResult>,
-    pub staged_db_seed_files: Vec<PathBuf>,
+    pub staged_db_seeds: Vec<BootstrapStagedDbSeed>,
     pub db_seed_task: Option<String>,
     pub start_tasks: Vec<String>,
     pub start_ran: bool,
@@ -148,7 +161,7 @@ pub fn resolve_bootstrap_request(
     repo_url: &str,
     path: Option<&Path>,
     branch: Option<&str>,
-    db_seed_paths: &[PathBuf],
+    db_seeds: &[BootstrapDbSeedInput],
     start_requested: bool,
 ) -> Result<BootstrapResolution, BootstrapError> {
     let repo_name = derive_repo_name(repo_url).ok_or_else(|| {
@@ -166,14 +179,15 @@ pub fn resolve_bootstrap_request(
         destination,
         destination_source,
         branch: branch.map(str::to_owned),
-        db_seed_paths: db_seed_paths
+        db_seeds: db_seeds
             .iter()
-            .map(|path| {
-                if path.is_absolute() {
-                    path.clone()
+            .map(|seed| BootstrapDbSeedInput {
+                target: seed.target.clone(),
+                path: if seed.path.is_absolute() {
+                    seed.path.clone()
                 } else {
-                    cwd.join(path)
-                }
+                    cwd.join(&seed.path)
+                },
             })
             .collect(),
         start_requested,
@@ -417,7 +431,7 @@ where
         submodules_applied,
         root_run,
         child_results,
-        staged_db_seed_files: Vec::new(),
+        staged_db_seeds: Vec::new(),
         db_seed_task: None,
         start_tasks,
         start_ran,
@@ -511,9 +525,12 @@ pub fn render_bootstrap_plan(request: &BootstrapResolution, output_json: bool) -
         "destination_source": request.destination_source,
         "branch": request.branch,
         "db_seed_files": request
-            .db_seed_paths
+            .db_seeds
             .iter()
-            .map(|path| path.display().to_string())
+            .map(|seed| json!({
+                "target": seed.target,
+                "path": seed.path.display().to_string(),
+            }))
             .collect::<Vec<_>>(),
         "start_requested": request.start_requested,
         "display": format!(
@@ -531,13 +548,16 @@ pub fn render_bootstrap_plan(request: &BootstrapResolution, output_json: bool) -
         .as_deref()
         .map_or("default remote HEAD".to_owned(), |branch| branch.to_owned());
     let start_line = if request.start_requested { "yes" } else { "no" };
-    let db_seed_line = if request.db_seed_paths.is_empty() {
+    let db_seed_line = if request.db_seeds.is_empty() {
         "none".to_owned()
     } else {
         request
-            .db_seed_paths
+            .db_seeds
             .iter()
-            .map(|path| path.display().to_string())
+            .map(|seed| match seed.target.as_deref() {
+                Some(target) => format!("{target}={}", seed.path.display()),
+                None => seed.path.display().to_string(),
+            })
             .collect::<Vec<_>>()
             .join(", ")
     };
@@ -565,14 +585,21 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
         "db_seeds": {
             "requested": result
                 .request
-                .db_seed_paths
+                .db_seeds
                 .iter()
-                .map(|path| path.display().to_string())
+                .map(|seed| json!({
+                    "target": seed.target,
+                    "path": seed.path.display().to_string(),
+                }))
                 .collect::<Vec<_>>(),
             "staged": result
-                .staged_db_seed_files
+                .staged_db_seeds
                 .iter()
-                .map(|path| path.display().to_string())
+                .map(|seed| json!({
+                    "target": seed.target,
+                    "source_path": seed.source_path.display().to_string(),
+                    "staged_path": seed.staged_path.display().to_string(),
+                }))
                 .collect::<Vec<_>>(),
             "task": result.db_seed_task,
             "ran": result.db_seed_task.is_some(),
@@ -662,20 +689,26 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
     } else {
         lines.push("manifest: no effigy.toml bootstrap contract found".to_owned());
     }
-    if !result.request.db_seed_paths.is_empty() {
+    if !result.request.db_seeds.is_empty() {
         let requested = result
             .request
-            .db_seed_paths
+            .db_seeds
             .iter()
-            .map(|path| path.display().to_string())
+            .map(|seed| match seed.target.as_deref() {
+                Some(target) => format!("{target}={}", seed.path.display()),
+                None => seed.path.display().to_string(),
+            })
             .collect::<Vec<_>>()
             .join(", ");
         let mut line = format!("db seed files: {requested}");
-        if !result.staged_db_seed_files.is_empty() {
+        if !result.staged_db_seeds.is_empty() {
             let staged = result
-                .staged_db_seed_files
+                .staged_db_seeds
                 .iter()
-                .map(|path| path.display().to_string())
+                .map(|seed| match seed.target.as_deref() {
+                    Some(target) => format!("{target}={}", seed.staged_path.display()),
+                    None => seed.staged_path.display().to_string(),
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             line.push_str(&format!("; staged {staged}"));

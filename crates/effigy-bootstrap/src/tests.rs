@@ -1,6 +1,6 @@
 use super::{
     derive_repo_name, normalize_bootstrap_repo_url, resolve_bootstrap_request,
-    resolve_child_destination, submodule_policy_label,
+    resolve_child_destination, submodule_policy_label, BootstrapDbSeedInput,
 };
 use effigy_manifest::ManifestBootstrapSubmodulesPolicy;
 use std::path::{Path, PathBuf};
@@ -58,7 +58,10 @@ fn resolve_bootstrap_request_honors_explicit_relative_path() {
         "git@github.com:inflatable-cookie/effigy.git",
         Some(Path::new("./sandbox/effigy-dev")),
         Some("main"),
-        &[PathBuf::from("./dumps/latest.sql")],
+        &[BootstrapDbSeedInput {
+            target: Some("cbs".to_owned()),
+            path: PathBuf::from("./dumps/latest.sql"),
+        }],
         true,
     )
     .expect("resolve bootstrap");
@@ -68,7 +71,13 @@ fn resolve_bootstrap_request_honors_explicit_relative_path() {
     );
     assert_eq!(resolved.destination_source, "explicit-path");
     assert_eq!(resolved.branch.as_deref(), Some("main"));
-    assert_eq!(resolved.db_seed_paths, vec![cwd.join("dumps/latest.sql")]);
+    assert_eq!(
+        resolved.db_seeds,
+        vec![BootstrapDbSeedInput {
+            target: Some("cbs".to_owned()),
+            path: cwd.join("dumps/latest.sql"),
+        }]
+    );
     assert!(resolved.start_requested);
 }
 

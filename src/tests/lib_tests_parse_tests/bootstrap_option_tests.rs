@@ -2,6 +2,7 @@ use crate::tests::prelude::{
     parse_command, BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand, Command, HelpTopic,
     PathBuf,
 };
+use effigy_cli::BootstrapDbSeedInput;
 
 #[test]
 fn parse_bootstrap_help_is_scoped() {
@@ -34,7 +35,10 @@ fn parse_bootstrap_plan_with_path_branch_and_start() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: Some(PathBuf::from("./loophole")),
                 branch: Some("main".to_owned()),
-                db_seed_paths: vec![PathBuf::from("./infra/bootstrap/latest.sql")],
+                db_seeds: vec![BootstrapDbSeedInput {
+                    target: None,
+                    path: PathBuf::from("./infra/bootstrap/latest.sql"),
+                }],
                 start: true,
                 plan: true,
             },
@@ -58,7 +62,7 @@ fn parse_bootstrap_defaults_to_start_when_unspecified() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
-                db_seed_paths: Vec::new(),
+                db_seeds: Vec::new(),
                 start: true,
                 plan: false,
             },
@@ -83,7 +87,7 @@ fn parse_bootstrap_no_start_disables_default_start() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
-                db_seed_paths: Vec::new(),
+                db_seeds: Vec::new(),
                 start: false,
                 plan: false,
             },
@@ -111,9 +115,52 @@ fn parse_bootstrap_accepts_repeated_db_seed_flags() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
-                db_seed_paths: vec![
-                    PathBuf::from("./db/latest.sql"),
-                    PathBuf::from("./db/legacy.sql"),
+                db_seeds: vec![
+                    BootstrapDbSeedInput {
+                        target: None,
+                        path: PathBuf::from("./db/latest.sql"),
+                    },
+                    BootstrapDbSeedInput {
+                        target: None,
+                        path: PathBuf::from("./db/legacy.sql"),
+                    },
+                ],
+                start: true,
+                plan: false,
+            },
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_bootstrap_accepts_named_db_seed_flags() {
+    let cmd = parse_command(vec![
+        "bootstrap".to_owned(),
+        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+        "--db-seed".to_owned(),
+        "cbs=./db/cbs.sql".to_owned(),
+        "--db-seed".to_owned(),
+        "cbs-mortcalc=./db/mortcalc.sql".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Bootstrap(BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+                path: None,
+                branch: None,
+                db_seeds: vec![
+                    BootstrapDbSeedInput {
+                        target: Some("cbs".to_owned()),
+                        path: PathBuf::from("./db/cbs.sql"),
+                    },
+                    BootstrapDbSeedInput {
+                        target: Some("cbs-mortcalc".to_owned()),
+                        path: PathBuf::from("./db/mortcalc.sql"),
+                    },
                 ],
                 start: true,
                 plan: false,

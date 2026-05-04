@@ -44,7 +44,7 @@ effigy bootstrap <git-url> --start
 ## Command Shape
 
 ```sh
-effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>]... [--start] [--plan] [--json]
+effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--start] [--plan] [--json]
 ```
 
 What each flag means:
@@ -52,8 +52,8 @@ What each flag means:
 - `--path <DIR>`: clone or update into a specific destination instead of
   the default clone directory
 - `--branch <NAME>`: target a specific branch during clone or update
-- `--db-seed <FILE>`: stage one or more SQL dumps into the cloned repo before
-  bootstrap-owned setup runs
+- `--db-seed <FILE>|<TARGET>=<FILE>`: stage one or more SQL dumps into the
+  cloned repo before bootstrap-owned setup runs
 - `--start`: run the repo's configured bootstrap start task after setup
 - `--plan`: preview destination, branch, and intent without mutating anything
 - `--json`: return `effigy.bootstrap.v1` inside the normal command envelope
@@ -67,6 +67,16 @@ directly to `effigy bootstrap`:
 effigy bootstrap <git-url> --db-seed ./backups/latest.sql --start
 ```
 
+For multi-database bundles, name each dump explicitly with the bundle database
+name:
+
+```bash
+effigy bootstrap git@github.com:Cumberland-BS/cbs.git \
+  --db-seed cbs=./backups/cbs.sql \
+  --db-seed cbs-mortcalc=./backups/cbs-mortcalc.sql \
+  --start
+```
+
 Effigy stages each supplied file into `.effigy/local/db-seeds/` before root
 bootstrap setup runs, and exports these env vars during bootstrap-owned setup:
 
@@ -74,9 +84,20 @@ bootstrap setup runs, and exports these env vars during bootstrap-owned setup:
 - `EFFIGY_BOOTSTRAP_DB_SEED_FILE` when exactly one file was supplied
 - `EFFIGY_BOOTSTRAP_DB_SEED_FILES` as newline-delimited staged paths
 - `EFFIGY_BOOTSTRAP_DB_SEED_COUNT`
+- `EFFIGY_BOOTSTRAP_DB_SEED_TARGET` when exactly one targeted seed was supplied
+- `EFFIGY_BOOTSTRAP_DB_SEEDS_JSON` with structured staged seed metadata
 
 Those env paths are repo-root-relative, so the same contract works for
 bootstrap-owned host setup and container-backed seed tasks.
+
+Bundle-backed repos do not need extra seed mapping config for the normal case:
+
+- if `[bundle].databases` declares exactly one database, an unnamed
+  `--db-seed ./dump.sql` binds to that one target automatically
+- if `[bundle].databases` declares multiple databases, each `--db-seed` must
+  use `<target>=<file>` and the target must match one declared bundle database
+- if `--db-seed` is supplied for a non-bundle repo, the old unnamed staged-file
+  contract still works
 
 If database seed input was supplied, Effigy also looks for a standard task
 named `bootstrap:db-seed` and runs it after root bootstrap setup, before

@@ -12,13 +12,13 @@ mod distribution;
 mod docs;
 
 use crate::{
-    BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand, BundleArgs, BundleSubcommand,
-    ChangelogArgs, ChangelogSubcommand, Command, ContractsArgs, ContractsCheckMode,
-    ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DoctorArgs, ExecArgs, GatewayArgs,
-    GatewaySubcommand, HelpTopic, InternalContainerLeaseReaperArgs, InternalGatewayArgs,
-    InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs, InternalRhaiArgs, ReleaseArgs,
-    ReleaseSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand,
-    TaskInvocation, TasksArgs, WorkspaceArgs,
+    BootstrapArgs, BootstrapDbSeedInput, BootstrapDepsSyncMode, BootstrapSubcommand, BundleArgs,
+    BundleSubcommand, ChangelogArgs, ChangelogSubcommand, Command, ContractsArgs,
+    ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DoctorArgs,
+    ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, InternalContainerLeaseReaperArgs,
+    InternalGatewayArgs, InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs,
+    InternalRhaiArgs, ReleaseArgs, ReleaseSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs,
+    SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 use container::parse_container_command;
 use demo::parse_demo_command;
@@ -826,7 +826,7 @@ where
 
     let mut path: Option<PathBuf> = None;
     let mut branch: Option<String> = None;
-    let mut db_seed_paths = Vec::<PathBuf>::new();
+    let mut db_seeds = Vec::<BootstrapDbSeedInput>::new();
     let mut start = true;
     let mut plan = false;
     let mut output_json = false;
@@ -855,12 +855,13 @@ where
                 )?);
             }
             "--db-seed" => {
-                db_seed_paths.push(PathBuf::from(next_required_value(
+                let value = next_required_value(
                     &mut args,
                     CliParseError::MissingFlagValue {
                         flag: "--db-seed".to_owned(),
                     },
-                )?));
+                )?;
+                db_seeds.push(parse_bootstrap_db_seed(value)?);
             }
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             _ => return Err(unknown_argument(arg)),
@@ -872,12 +873,31 @@ where
             repo_url,
             path,
             branch,
-            db_seed_paths,
+            db_seeds,
             start,
             plan,
         },
         output_json,
     }))
+}
+
+fn parse_bootstrap_db_seed(value: String) -> Result<BootstrapDbSeedInput, CliParseError> {
+    if let Some((target, path)) = value.split_once('=') {
+        if target.is_empty() || path.is_empty() {
+            return Err(CliParseError::InvalidArguments(
+                "--db-seed requires <file> or <target>=<file>".to_owned(),
+            ));
+        }
+        return Ok(BootstrapDbSeedInput {
+            target: Some(target.to_owned()),
+            path: PathBuf::from(path),
+        });
+    }
+
+    Ok(BootstrapDbSeedInput {
+        target: None,
+        path: PathBuf::from(value),
+    })
 }
 
 fn parse_bootstrap_deps<I>(args: I) -> Result<Command, CliParseError>

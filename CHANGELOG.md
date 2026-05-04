@@ -7,10 +7,14 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
-- `effigy bootstrap` now accepts repeatable `--db-seed <FILE>` inputs.
-  Supplied SQL dumps are staged into the cloned repo before bootstrap-owned
-  setup runs, exposed through a standard bootstrap env surface, and can drive
-  one-command bring-up through a repo-owned `bootstrap:db-seed` task.
+- `effigy bootstrap` now accepts repeatable `--db-seed` inputs in both
+  `<FILE>` and `<TARGET>=<FILE>` forms. Bundle-backed repos auto-bind unnamed
+  dumps when they declare exactly one database in `[bundle].databases`, and
+  multi-database bundles now require explicit target names like
+  `--db-seed cbs=./cbs.sql --db-seed cbs-mortcalc=./mortcalc.sql`. Supplied
+  SQL dumps are staged into the cloned repo before bootstrap-owned setup runs,
+  exposed through a standard bootstrap env surface, and can drive one-command
+  bring-up through a repo-owned `bootstrap:db-seed` task.
 
 ### Changed
 - `effigy bootstrap <repo>` now prefers `[catalog].alias` for the default
@@ -51,9 +55,8 @@ During v0.x, MINOR bumps may include breaking changes.
   `docs/guides/055-everyday-workflows.md` now show `v0.3.3` instead of
   `v0.3.0` or `v0.3.1`.
 
-### Fixed
 - The bundled DecodeLabs seed helper now imports dumps through
-  `container_exec(...)` instead of assuming the host running Effigy has a
+  `container::exec(...)` instead of assuming the host running Effigy has a
   local `mysql` client installed.
 
 ## [0.3.3] - 2026-05-03

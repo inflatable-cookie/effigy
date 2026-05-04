@@ -9,7 +9,7 @@ use super::{
     bootstrap_runtime_session_context, render_bootstrap_progress_message, run_bootstrap_with_cwd,
 };
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, PublicWorkspaceCleanupOverride};
-use effigy_cli::{BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand};
+use effigy_cli::{BootstrapArgs, BootstrapDbSeedInput, BootstrapDepsSyncMode, BootstrapSubcommand};
 #[allow(dead_code)]
 #[path = "../../../crates/effigy-bootstrap/tests/support.rs"]
 mod support;
@@ -311,6 +311,98 @@ printf started > start.txt
     remote
 }
 
+fn create_root_remote_with_multi_database_bootstrap_db_seed_task() -> PathBuf {
+    let worktree = temp_dir("root-multi-db-seed-worktree");
+    let bundle_dir = worktree.join("bundles/plain");
+    fs::create_dir_all(&bundle_dir).expect("mkdir bundle dir");
+    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        bundle_dir.join("bundle.toml"),
+        r#"[bundle]
+name = "plain"
+description = "Minimal local bundle for bootstrap db seed tests."
+
+[[inputs]]
+name = "databases"
+type = "list"
+required = true
+description = "Database names used for bootstrap db seed target validation."
+"#,
+    )
+    .expect("write bundle descriptor");
+    fs::write(bundle_dir.join("effigy.toml"), "").expect("write bundle manifest");
+    fs::write(
+        worktree.join("effigy.toml"),
+        r#"[bundle]
+base_path = "bundles/plain"
+databases = ["cbs", "cbs-mortcalc"]
+
+[bootstrap]
+start = "bootstrap:start"
+
+[tasks."bootstrap:db-seed"]
+run = "sh ./scripts/db-seed.sh"
+
+[tasks."bootstrap:start"]
+run = "sh ./scripts/start.sh"
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        worktree.join("scripts/db-seed.sh"),
+        r#"#!/bin/sh
+set -eu
+test "${EFFIGY_BOOTSTRAP_DB_SEED_COUNT:-}" = "2"
+test -z "${EFFIGY_BOOTSTRAP_DB_SEED_FILE:-}"
+test -z "${EFFIGY_BOOTSTRAP_DB_SEED_TARGET:-}"
+test -n "${EFFIGY_BOOTSTRAP_DB_SEEDS_DIR:-}"
+test -n "${EFFIGY_BOOTSTRAP_DB_SEED_FILES:-}"
+test -n "${EFFIGY_BOOTSTRAP_DB_SEEDS_JSON:-}"
+test -f ".effigy/local/db-seeds/cbs--latest.sql"
+test -f ".effigy/local/db-seeds/cbs-mortcalc--latest.sql"
+printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEED_FILES" | grep -F ".effigy/local/db-seeds/cbs--latest.sql"
+printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEED_FILES" | grep -F ".effigy/local/db-seeds/cbs-mortcalc--latest.sql"
+printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEEDS_JSON" | grep -F '"target":"cbs"'
+printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEEDS_JSON" | grep -F '"target":"cbs-mortcalc"'
+printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEEDS_JSON" | grep -F '"staged_path":".effigy/local/db-seeds/cbs--latest.sql"'
+printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEEDS_JSON" | grep -F '"staged_path":".effigy/local/db-seeds/cbs-mortcalc--latest.sql"'
+cmp ".effigy/local/db-seeds/cbs--latest.sql" expected-cbs.sql
+cmp ".effigy/local/db-seeds/cbs-mortcalc--latest.sql" expected-cbs-mortcalc.sql
+printf seeded > db-seed.txt
+"#,
+    )
+    .expect("write db seed task");
+    fs::write(
+        worktree.join("scripts/start.sh"),
+        r#"#!/bin/sh
+set -eu
+test -f db-seed.txt
+printf started > start.txt
+"#,
+    )
+    .expect("write start");
+    fs::write(worktree.join("expected-cbs.sql"), "seed cbs;\n").expect("write cbs expected");
+    fs::write(
+        worktree.join("expected-cbs-mortcalc.sql"),
+        "seed mortcalc;\n",
+    )
+    .expect("write mortcalc expected");
+    for name in ["db-seed.sh", "start.sh"] {
+        let script = worktree.join("scripts").join(name);
+        let mut perms = fs::metadata(&script)
+            .expect("script metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("chmod script");
+    }
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init root multi db seed");
+    let remote = bare_remote_path("root-multi-db-seed-bare");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    remote
+}
+
 fn create_root_remote_with_bootstrap_run_db_seed_visibility() -> PathBuf {
     let worktree = temp_dir("root-db-seed-run-worktree");
     fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
@@ -367,7 +459,7 @@ fn run_bootstrap_with_cwd_starts_when_requested() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
-                db_seed_paths: Vec::new(),
+                db_seeds: Vec::new(),
                 start: true,
                 plan: false,
             },
@@ -397,7 +489,10 @@ fn run_bootstrap_with_cwd_stages_db_seed_before_root_run() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
-                db_seed_paths: vec![dump.clone()],
+                db_seeds: vec![BootstrapDbSeedInput {
+                    target: None,
+                    path: dump.clone(),
+                }],
                 start: false,
                 plan: false,
             },
@@ -433,7 +528,10 @@ fn run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
-                db_seed_paths: vec![dump],
+                db_seeds: vec![BootstrapDbSeedInput {
+                    target: None,
+                    path: dump,
+                }],
                 start: true,
                 plan: false,
             },
@@ -456,6 +554,96 @@ fn run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start() {
 }
 
 #[test]
+fn run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases() {
+    let root_remote = create_root_remote_with_multi_database_bootstrap_db_seed_task();
+    let cwd = temp_dir("bootstrap-multi-db-seed-task");
+    let cbs_dir = cwd.join("cbs-dumps");
+    let mortcalc_dir = cwd.join("mortcalc-dumps");
+    fs::create_dir_all(&cbs_dir).expect("mkdir cbs dumps");
+    fs::create_dir_all(&mortcalc_dir).expect("mkdir mortcalc dumps");
+    let cbs_dump = cbs_dir.join("latest.sql");
+    let mortcalc_dump = mortcalc_dir.join("latest.sql");
+    fs::write(&cbs_dump, "seed cbs;\n").expect("write cbs dump");
+    fs::write(&mortcalc_dump, "seed mortcalc;\n").expect("write mortcalc dump");
+
+    let out = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: None,
+                branch: None,
+                db_seeds: vec![
+                    BootstrapDbSeedInput {
+                        target: Some("cbs".into()),
+                        path: cbs_dump,
+                    },
+                    BootstrapDbSeedInput {
+                        target: Some("cbs-mortcalc".into()),
+                        path: mortcalc_dump,
+                    },
+                ],
+                start: false,
+                plan: false,
+            },
+            output_json: false,
+        },
+        cwd.clone(),
+    )
+    .expect("run bootstrap");
+
+    assert!(out.contains("[ok] bootstrap completed"));
+    let destination = cwd.join("remote");
+    assert_eq!(
+        fs::read_to_string(destination.join("db-seed.txt")).expect("seed marker"),
+        "seeded"
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join(".effigy/local/db-seeds/cbs--latest.sql"))
+            .expect("staged cbs dump"),
+        "seed cbs;\n"
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join(".effigy/local/db-seeds/cbs-mortcalc--latest.sql"))
+            .expect("staged mortcalc dump"),
+        "seed mortcalc;\n"
+    );
+}
+
+#[test]
+fn run_bootstrap_with_cwd_rejects_unnamed_db_seed_for_multi_database_bundle() {
+    let root_remote = create_root_remote_with_multi_database_bootstrap_db_seed_task();
+    let cwd = temp_dir("bootstrap-multi-db-seed-unnamed");
+    let dump = cwd.join("latest.sql");
+    fs::write(&dump, "seed payload;\n").expect("write dump");
+
+    let err = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: None,
+                branch: None,
+                db_seeds: vec![BootstrapDbSeedInput {
+                    target: None,
+                    path: dump,
+                }],
+                start: false,
+                plan: false,
+            },
+            output_json: false,
+        },
+        cwd,
+    )
+    .expect_err("bootstrap should reject unnamed db seed for multi-db bundle");
+
+    assert!(
+        err.to_string().contains(
+            "must name a target because `[bundle].databases` declares multiple databases: cbs, cbs-mortcalc"
+        ),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn run_bootstrap_with_cwd_rejects_db_seed_when_standard_task_is_missing() {
     let child_remote = create_child_remote("child-app-db-seed-missing");
     let root_remote = create_root_remote_with_bootstrap(&child_remote);
@@ -469,7 +657,10 @@ fn run_bootstrap_with_cwd_rejects_db_seed_when_standard_task_is_missing() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
-                db_seed_paths: vec![dump],
+                db_seeds: vec![BootstrapDbSeedInput {
+                    target: None,
+                    path: dump,
+                }],
                 start: false,
                 plan: false,
             },
@@ -496,7 +687,7 @@ fn run_bootstrap_with_cwd_reports_optional_child_warning_in_text_output() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
-                db_seed_paths: Vec::new(),
+                db_seeds: Vec::new(),
                 start: false,
                 plan: false,
             },
@@ -596,7 +787,7 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
                 repo_url: root_remote.display().to_string(),
                 path: Some(PathBuf::from("underlay-reference")),
                 branch: None,
-                db_seed_paths: Vec::new(),
+                db_seeds: Vec::new(),
                 start: false,
                 plan: false,
             },

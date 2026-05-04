@@ -360,7 +360,7 @@ fn execute_bootstrap_request_fails_for_existing_remote_mismatch() {
         destination,
         destination_source: "explicit-path",
         branch: None,
-        db_seed_paths: Vec::new(),
+        db_seeds: Vec::new(),
         start_requested: false,
     };
 
@@ -387,7 +387,7 @@ fn execute_bootstrap_request_fails_for_existing_dirty_checkout() {
         destination,
         destination_source: "explicit-path",
         branch: None,
-        db_seed_paths: Vec::new(),
+        db_seeds: Vec::new(),
         start_requested: false,
     };
 

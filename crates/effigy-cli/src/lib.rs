@@ -434,12 +434,18 @@ pub struct BootstrapArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapDbSeedInput {
+    pub target: Option<String>,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootstrapSubcommand {
     Clone {
         repo_url: String,
         path: Option<PathBuf>,
         branch: Option<String>,
-        db_seed_paths: Vec<PathBuf>,
+        db_seeds: Vec<BootstrapDbSeedInput>,
         start: bool,
         plan: bool,
     },
