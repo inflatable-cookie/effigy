@@ -30,6 +30,12 @@ Current authority surfaces:
 - `docs/contracts/005-container-runtime-contract.md` for local runtime guarantees
 - `docs/contracts/009-execution-surface-convergence.md` for cross-surface
   execution responsibility rules
+- `docs/contracts/011-runtime-context-contract.md` for boot-time context and
+  path authority
+- `docs/contracts/012-container-manager-contract.md` for backend manager
+  ownership
+- `docs/contracts/013-task-execution-request-contract.md` for task request and
+  resolved-plan ownership
 
 ## Workspace Crates
 
@@ -51,6 +57,7 @@ Current authority surfaces:
 | `effigy-tasks` | shared task model and task-shape helpers |
 | `effigy-builtin` | builtin task inventory and builtin-facing task helpers |
 | `effigy-exec` | execution-binding model and routing helpers shared below the runner |
+| `effigy-execution` | canonical task execution request, surface, runtime-policy, environment-plan, and resolved-route model |
 | `effigy-managed` | managed-run/task-plan support |
 | `effigy-rhai` | Rhai integration and scripting support |
 
@@ -58,7 +65,9 @@ Current authority surfaces:
 
 | Crate | Responsibility |
 | --- | --- |
-| `effigy-containers` | effective container policy, compose assembly, workspace mount rewrite, container backend/runtime helpers |
+| `effigy-context` | boot-time runtime context, cwd/repo target authority, host facts, and container handoff capture |
+| `effigy-container-manager` | plugin-ready container manager facade, backend ids, backend operation requests, and operation reports |
+| `effigy-containers` | effective container policy, compose assembly, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
 | `effigy-catalog` | shipped and user/project service catalogs, compose assembly inputs, catalog schema |
 | `effigy-gateway` | local gateway loopback and host-port registry primitives |
 | `effigy-runtime` | runtime metadata and working-dir ownership helpers |
@@ -96,7 +105,7 @@ Current authority surfaces:
 | Module | Responsibility |
 | --- | --- |
 | [`src/runner/entrypoints.rs`](../../src/runner/entrypoints.rs) | top-level command dispatch into runner surfaces |
-| [`src/runner/command_context/*`](../../src/runner/command_context.rs) | cwd, repo targeting, resolved-root semantics, embedded repo override handling |
+| [`src/runner/command_context/*`](../../src/runner/command_context.rs) | context-backed cwd/repo helper wrappers, resolved-root semantics, embedded repo override handling |
 | [`src/runner/embedded_runner.rs`](../../src/runner/embedded_runner.rs) | shared embedded command replay for Rhai, bootstrap, and builtin nested dispatch |
 
 ### Runtime/container activation
@@ -112,11 +121,11 @@ Current authority surfaces:
 
 | Module | Responsibility |
 | --- | --- |
-| [`src/runner/execute/*`](../../src/runner/execute.rs) | routed task execution, managed/deferred activation handoff, execution binding consumption |
+| [`src/runner/execute/*`](../../src/runner/execute.rs) | routed task execution, managed/deferred activation handoff, execution binding consumption, `effigy-execution` request consumption |
 | [`src/runner/exec_command/mod.rs`](../../src/runner/exec_command/mod.rs) | `effigy exec` command surface and raw container exec dispatch |
 | [`src/runner/exec_command/surface.rs`](../../src/runner/exec_command/surface.rs) | dev-container and named-container selection for exec surfaces |
 | [`src/runner/deferral/*`](../../src/runner/deferral.rs) | deferral selection, tracing, and delegated runtime activation |
-| [`src/runner/script_command.rs`](../../src/runner/script_command.rs) | Rhai-owned runner entry surface |
+| [`src/runner/script_command.rs`](../../src/runner/script_command.rs) | Rhai-owned runner entry surface over captured runtime context and execution request helpers |
 
 ### Workspace/session ownership
 
@@ -153,8 +162,8 @@ These are the current `effigy-containers` ownership seams that matter most to
 | [`crates/effigy-containers/src/lib.rs`](../../crates/effigy-containers/src/lib.rs) | effective container policy model, shared-service binding model, top-level policy entrypoints |
 | [`crates/effigy-containers/src/policy_support.rs`](../../crates/effigy-containers/src/policy_support.rs) | typed generated-compose document, policy application over compose assembly, generated mount and env attachment |
 | [`crates/effigy-containers/src/workspace.rs`](../../crates/effigy-containers/src/workspace.rs) | workspace mount rewrite, workspace host integration materialization, container-home mount ownership |
-| [`crates/effigy-containers/src/compose.rs`](../../crates/effigy-containers/src/compose.rs) | compose backend resolution and compose invocation argument building |
-| [`crates/effigy-containers/src/exec.rs`](../../crates/effigy-containers/src/exec.rs) | container exec/process invocation and runtime probing |
+| [`crates/effigy-containers/src/compose.rs`](../../crates/effigy-containers/src/compose.rs) | lower-level compose backend compatibility wrappers and compose invocation argument building |
+| [`crates/effigy-containers/src/exec.rs`](../../crates/effigy-containers/src/exec.rs) | lower-level container exec/process invocation and runtime probing helpers used behind manager-backed callers |
 | [`crates/effigy-containers/src/session.rs`](../../crates/effigy-containers/src/session.rs) | container-local Effigy invocation prefix and session-related shell helpers |
 | [`crates/effigy-containers/src/report.rs`](../../crates/effigy-containers/src/report.rs) | container command report rendering models |
 
@@ -166,6 +175,12 @@ The current runtime/container architecture is not the same shape described by
 The important live hardening seams are now:
 
 - typed runtime/session context instead of bootstrap-only env steering
+- captured `effigy-context` authority instead of direct cwd/root rediscovery in
+  new runner code
+- `effigy-container-manager` facade for runner-facing backend selection and
+  operation reports
+- `effigy-execution` request builder for direct and embedded task plan
+  construction
 - typed generated-compose ownership instead of repeated YAML reparsing for the
   main generated policy seams
 - explicit workspace session and provisioning owners instead of one mixed
