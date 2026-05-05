@@ -13,7 +13,9 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- No active ready card. `g03.030` is active and card `374` is complete.
+- [`375-migrate-command-local-cwd-root-callers.md`](./375-migrate-command-local-cwd-root-callers.md)
+  is ready. It migrates the first command-local cwd/root callers behind
+  `EffigyRuntimeContext`.
 
 - [`374-plan-runtime-context-contract-and-crate-boundary.md`](./374-plan-runtime-context-contract-and-crate-boundary.md)
   is complete. It opened the runtime context lane and landed the first

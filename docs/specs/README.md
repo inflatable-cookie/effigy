@@ -62,4 +62,4 @@ Recently completed:
 
 ## Next Task
 
-Create the next `g03.030` migration card for command-local cwd/root callers.
+Implement ready card `375` for command-local cwd/root caller migration.

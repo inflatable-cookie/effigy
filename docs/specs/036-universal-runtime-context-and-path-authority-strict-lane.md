@@ -21,8 +21,9 @@ context.
 
 ## Current Ready Card
 
-No active ready card. Card `374` is complete; the next card should migrate
-command-local cwd/root callers behind `EffigyRuntimeContext`.
+[`375-migrate-command-local-cwd-root-callers.md`](./batch-cards/375-migrate-command-local-cwd-root-callers.md)
+is ready. It migrates the first direct CLI runner path callers behind
+`EffigyRuntimeContext`.
 
 ## Exit Condition
 
@@ -32,4 +33,4 @@ or explicitly queued into the next card.
 
 ## Next Task
 
-Create the next `g03.030` migration card for command-local cwd/root callers.
+Implement card `375`.
