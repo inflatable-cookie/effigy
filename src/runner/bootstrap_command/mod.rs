@@ -12,6 +12,7 @@ use effigy_bootstrap::{
     BootstrapExecutionResult, BootstrapProgressEvent, BootstrapResolution, BootstrapStagedDbSeed,
 };
 use effigy_cli::{BootstrapArgs, BootstrapSubcommand, TaskInvocation};
+use effigy_execution::ExecutionSurface;
 use effigy_manifest::{ManifestManagedRun, TASK_MANIFEST_FILE};
 use effigy_ui::theme::{is_ci_environment, resolve_color_enabled, Theme};
 use effigy_ui::{style_text, OutputMode, PlainRenderer, Renderer, SpinnerHandle};
@@ -22,7 +23,7 @@ use crate::runner::container_runtime_prep::{
 use crate::runner::embedded_runner::run_embedded_task;
 use crate::runner::execute::api::{
     resolve_execution_binding_resolution, run_managed_run_with_cwd,
-    run_manifest_task_with_cwd_and_env,
+    run_manifest_task_with_surface_and_env,
 };
 use crate::runner::manifest::load_task_manifest;
 use crate::runner::runtime_session_context::{
@@ -752,12 +753,13 @@ fn run_bootstrap_seed_task(
     with_runtime_session_context(
         bootstrap_runtime_session_context("bootstrap db seed"),
         || {
-            run_manifest_task_with_cwd_and_env(
+            run_manifest_task_with_surface_and_env(
                 &TaskInvocation {
                     name: BOOTSTRAP_DB_SEED_TASK.to_owned(),
                     args: Vec::new(),
                 },
                 repo_root.to_path_buf(),
+                ExecutionSurface::Bootstrap,
                 env_overrides,
             )
             .map(|_| ())

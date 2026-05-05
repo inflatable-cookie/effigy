@@ -13,8 +13,8 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- No active ready card. `381` is complete; choose the next execution request
-  migration card deliberately.
+- No active ready card. `g03.032` is complete; choose the next roadmap
+  deliberately.
 
 - [`381-migrate-embedded-task-dispatch-to-execution-request.md`](./381-migrate-embedded-task-dispatch-to-execution-request.md)
   is complete. It moved embedded task dispatch onto `TaskExecutionRequestBuilder`.

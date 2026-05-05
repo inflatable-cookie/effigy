@@ -76,7 +76,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/028-next-v0-x-readiness-and-roadmap-selection.md` is complete; it selected the next live roadmap target after prompt-lane closeout.
 - `g03/029-v0-x-release-readiness-audit-and-gate-alignment.md` is complete; current `v0.x` release readiness was audited without release execution.
 - `g03/030-universal-runtime-context-and-path-authority.md` is complete; runtime context and Rhai context exposure landed.
-- `g03/032-canonical-task-execution-request-and-pipeline.md` is active; execution request scaffolding is next.
+- `g03/032-canonical-task-execution-request-and-pipeline.md` is complete; execution request scaffolding, Rhai `exec::run`, and the initial caller migrations landed.
 - `g03/031-plugin-ready-container-manager-facade.md` is queued.
 - `g03/032-canonical-task-execution-request-and-pipeline.md` is queued.
 - `g03/033-runtime-container-caller-migration-and-cleanup.md` is queued.

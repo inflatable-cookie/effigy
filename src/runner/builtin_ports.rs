@@ -14,6 +14,7 @@ use effigy_builtin::{
     TaskCacheEntry, UnlockResult,
 };
 use effigy_cli::{DoctorArgs, TaskInvocation, TasksArgs};
+use effigy_execution::ExecutionSurface;
 use effigy_manifest::LoadedCatalog;
 
 use crate::runner::cache::ops;
@@ -68,7 +69,8 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts {
         task: &TaskInvocation,
         cwd: PathBuf,
     ) -> Result<String, BuiltinError> {
-        api::run_manifest_task_with_cwd(task, cwd).map_err(runner_to_builtin)
+        api::run_manifest_task_with_surface(task, cwd, ExecutionSurface::DirectCli)
+            .map_err(runner_to_builtin)
     }
 
     fn run_doctor(&self, args: DoctorArgs) -> Result<String, BuiltinError> {

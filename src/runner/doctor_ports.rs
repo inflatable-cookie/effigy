@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use effigy_cli::TaskInvocation;
 use effigy_doctor::{DoctorError, DoctorRuntimePorts};
+use effigy_execution::ExecutionSurface;
 use effigy_manifest::{DeferredCommand, LoadedCatalog};
 use effigy_tasks::TaskSelector;
 
@@ -33,7 +34,8 @@ impl DoctorRuntimePorts for RunnerDoctorPorts {
         invocation: &TaskInvocation,
         cwd: PathBuf,
     ) -> Result<String, DoctorError> {
-        api::run_manifest_task_with_cwd(invocation, cwd).map_err(runner_to_doctor)
+        api::run_manifest_task_with_surface(invocation, cwd, ExecutionSurface::DirectCli)
+            .map_err(runner_to_doctor)
     }
 
     fn select_deferral(

@@ -3,8 +3,7 @@ use std::path::Path;
 use effigy_cli::{
     apply_global_json_flag, parse_command, strip_global_json_flags, Command, TaskInvocation,
 };
-use effigy_context::EffigyRuntimeContext;
-use effigy_execution::{ExecutionSurface, TaskExecutionRequestBuilder};
+use effigy_execution::ExecutionSurface;
 
 use super::command_context::{apply_repo_target_to_embedded_command, EmbeddedRepoOverrideMode};
 use super::error::RunnerError;
@@ -41,15 +40,11 @@ pub(in crate::runner) fn run_embedded_task(
     task: &TaskInvocation,
     cwd: &Path,
 ) -> Result<String, RunnerError> {
-    let runtime_context = EffigyRuntimeContext::capture_lossy(Some(cwd.to_path_buf()), None)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let request = TaskExecutionRequestBuilder::new()
-        .runtime_context(runtime_context)
-        .task(task.name.clone(), task.args.clone())
-        .surface(ExecutionSurface::RunArray)
-        .build()
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    crate::runner::execute::api::run_manifest_task_request(request)
+    crate::runner::execute::api::run_manifest_task_with_surface(
+        task,
+        cwd.to_path_buf(),
+        ExecutionSurface::RunArray,
+    )
 }
 
 #[cfg(test)]

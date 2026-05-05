@@ -21,8 +21,7 @@ fn run_sql(sql) {
     let system_name = required_config_string("systems.default");
     let container_name = required_config_string(`systems.${system_name}.container`);
     let database_name = required_config_string("bundle.database");
-    let result = container::exec(container_name,
-        "postgres",
+    let result = exec::run(
         [
         "psql",
         "-U",
@@ -33,7 +32,9 @@ fn run_sql(sql) {
         "-A",
         "-c",
         sql,
-    ]);
+    ],
+        #{ run_in: "container", container: container_name, service: "postgres" },
+    );
     require_success(result, "failed to query postgres");
     return result["stdout"].to_string();
 }

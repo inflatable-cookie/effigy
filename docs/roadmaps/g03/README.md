@@ -46,7 +46,7 @@ Current milestones:
 - [`029-v0-x-release-readiness-audit-and-gate-alignment.md`](./029-v0-x-release-readiness-audit-and-gate-alignment.md) (complete; audited current `v0.x` release readiness without release execution)
 - [`030-universal-runtime-context-and-path-authority.md`](./030-universal-runtime-context-and-path-authority.md) (complete; created `effigy-context`, context-backed runner cwd/root helpers, and Rhai `runtime::context()`)
 - [`031-plugin-ready-container-manager-facade.md`](./031-plugin-ready-container-manager-facade.md) (queued)
-- [`032-canonical-task-execution-request-and-pipeline.md`](./032-canonical-task-execution-request-and-pipeline.md) (active)
+- [`032-canonical-task-execution-request-and-pipeline.md`](./032-canonical-task-execution-request-and-pipeline.md) (complete)
 - [`033-runtime-container-caller-migration-and-cleanup.md`](./033-runtime-container-caller-migration-and-cleanup.md) (queued)
 - [`034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md) (queued)
 - [`035-contract-promotion-public-cleanup-breaks-and-closeout.md`](./035-contract-promotion-public-cleanup-breaks-and-closeout.md) (queued)
@@ -67,10 +67,10 @@ Rules:
 - `g03.019` through `g03.028` are now complete
 - `g03.019` through `g03.029` are now complete
 - `g03.030` is complete
-- `g03.032` is active
-- strict lane `037` is active
-- card `378` is ready
+- `g03.032` is complete
+- no strict lane is active
+- no ready card is active
 
 ## Next Task
 
-Implement card `378`.
+Choose the next queued roadmap deliberately.

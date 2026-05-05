@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use effigy_execution::ExecutionSurface;
 use effigy_rhai::{
     execute_rhai_script_with_runtime_context, install_stop_requested_flag, load_script,
     load_script_args_from_env, required_env, surface::*, EffigyCommandError, HostCallbacks,
@@ -21,7 +22,6 @@ use super::command_context::active_runtime_context;
 use super::command_context::EmbeddedRepoOverrideMode;
 use super::embedded_runner::parse_embedded_command;
 use super::error::RunnerError;
-use super::execute::api::run_manifest_task_with_cwd;
 pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<String, RunnerError> {
     execute_repo_rhai_script(
         &required_repo_root(&args)?,
@@ -93,8 +93,12 @@ fn host_callbacks() -> HostCallbacks {
                 name: task.to_owned(),
                 args: args.to_vec(),
             };
-            run_manifest_task_with_cwd(&invocation, cwd.to_path_buf())
-                .map_err(|error| error.to_string())
+            super::execute::api::run_manifest_task_with_surface(
+                &invocation,
+                cwd.to_path_buf(),
+                ExecutionSurface::Rhai,
+            )
+            .map_err(|error| error.to_string())
         }),
         run_effigy: Arc::new(|repo_root, args, force_json| {
             run_effigy_command(repo_root, args, force_json).map_err(|error| EffigyCommandError {
@@ -841,12 +845,13 @@ fn run_builtin_json(
     if !args.iter().any(|arg| arg == "--json") {
         args.push("--json".to_owned());
     }
-    run_manifest_task_with_cwd(
+    super::execute::api::run_manifest_task_with_surface(
         &TaskInvocation {
             name: task.to_owned(),
             args,
         },
         repo_root.to_path_buf(),
+        ExecutionSurface::Rhai,
     )
 }
 

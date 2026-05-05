@@ -26,7 +26,6 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`037-canonical-task-execution-request-and-pipeline-strict-lane.md`](./037-canonical-task-execution-request-and-pipeline-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -35,6 +34,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`037-canonical-task-execution-request-and-pipeline-strict-lane.md`](./037-canonical-task-execution-request-and-pipeline-strict-lane.md)
 - [`036-universal-runtime-context-and-path-authority-strict-lane.md`](./036-universal-runtime-context-and-path-authority-strict-lane.md)
 - [`035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md`](./035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md)
 - [`034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md`](./034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md)
@@ -63,4 +63,4 @@ Recently completed:
 
 ## Next Task
 
-Choose the next execution request migration card.
+Choose the next queued roadmap deliberately.

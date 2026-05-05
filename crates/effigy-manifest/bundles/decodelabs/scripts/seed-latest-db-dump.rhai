@@ -96,9 +96,10 @@ fn import_dump(container_name, db_password, database, dump_repo_path, dump_name)
     let mysql_args = mysql_cli_args(db_password);
     let import_path = host_dump_path(dump_repo_path);
     let reset_sql = "DROP DATABASE IF EXISTS `" + database + "`; CREATE DATABASE `" + database + "`;";
+    let exec_options = #{ run_in: "container", container: container_name, service: "db" };
 
     log("[check] resetting database " + database);
-    let reset_result = container::exec(container_name, "db", mysql_args + ["-e", reset_sql]);
+    let reset_result = exec::run(mysql_args + ["-e", reset_sql], exec_options);
     if reset_result["status"] != 0 {
         throw "[error] database reset failed"
             + "\nstdout:\n" + reset_result["stdout"].to_string()
@@ -106,11 +107,9 @@ fn import_dump(container_name, db_password, database, dump_repo_path, dump_name)
     }
 
     log("[check] importing SQL dump " + dump_name + " into " + database);
-    let import_result = container::exec(
-        container_name,
-        "db",
+    let import_result = exec::run(
         mysql_args + [database],
-        #{ stdin_file: import_path },
+        #{ run_in: "container", container: container_name, service: "db", stdin_file: import_path },
     );
 
     if import_result["status"] != 0 {

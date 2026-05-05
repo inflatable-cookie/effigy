@@ -2,9 +2,10 @@
 
 Roadmap: [`g03.032`](../roadmaps/g03/032-canonical-task-execution-request-and-pipeline.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Purpose
 
@@ -22,8 +23,7 @@ migrating direct tasks, embedded callers, and Rhai `exec::run(...)`.
 
 ## Current Ready Card
 
-No active ready card. Card `381` is complete; the next migration should move
-another embedded or demo/bootstrap caller onto `TaskExecutionRequestBuilder`.
+No active ready card. Lane `037` is complete.
 
 ## Exit Condition
 
@@ -33,4 +33,5 @@ runtime/context and host/container intent expressed once.
 
 ## Next Task
 
-Choose the next execution request migration card.
+Continue with `g03.031` container manager facade or choose the next queued
+roadmap deliberately.

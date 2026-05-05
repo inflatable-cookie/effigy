@@ -1,4 +1,5 @@
 use super::*;
+use effigy_execution::ExecutionSurface;
 
 #[path = "task/runtime.rs"]
 mod runtime;
@@ -38,7 +39,11 @@ pub(in crate::runner::demo_command) fn execute_task_backed_demo(
             name: task_name.to_owned(),
             args: vec!["--json".to_owned()],
         };
-        return match run_manifest_task_with_cwd(&task, repo_root.to_path_buf()) {
+        return match crate::runner::execute::api::run_manifest_task_with_surface(
+            &task,
+            repo_root.to_path_buf(),
+            ExecutionSurface::Demo,
+        ) {
             Ok(rendered) => {
                 parse_task_backed_attempt_json(repo_root, demo_id, task_name, &rendered)
             }
@@ -62,7 +67,11 @@ pub(in crate::runner::demo_command) fn execute_task_backed_demo(
         name: task_name.to_owned(),
         args: Vec::new(),
     };
-    match run_manifest_task_with_cwd(&task, repo_root.to_path_buf()) {
+    match crate::runner::execute::api::run_manifest_task_with_surface(
+        &task,
+        repo_root.to_path_buf(),
+        ExecutionSurface::Demo,
+    ) {
         Ok(_) => Ok(successful_demo_attempt(
             "task",
             task_name,

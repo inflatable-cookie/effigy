@@ -2,15 +2,14 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use effigy_cli::TaskInvocation;
-use effigy_execution::TaskExecutionRequest;
+use effigy_context::EffigyRuntimeContext;
+use effigy_execution::{
+    ExecutionEnvironmentPlan, ExecutionSurface, TaskExecutionRequest, TaskExecutionRequestBuilder,
+};
 use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn, TaskSelection};
 use effigy_tasks::CatalogSelectionMode;
 
 use super::binding::resolve_container_execution_binding as resolve_container_execution_binding_impl;
-use super::entry::{
-    run_manifest_task_with_cwd as run_manifest_task_with_cwd_impl,
-    run_manifest_task_with_cwd_and_env as run_manifest_task_with_cwd_and_env_impl,
-};
 use super::planning::{
     build_execution_preflight as build_execution_preflight_impl, ExecutionPreflight,
 };
@@ -40,25 +39,48 @@ pub(in crate::runner) fn resolve_container_execution_binding(
     )
 }
 
-pub(in crate::runner) fn run_manifest_task_with_cwd(
-    task: &TaskInvocation,
-    cwd: PathBuf,
-) -> Result<String, RunnerError> {
-    run_manifest_task_with_cwd_impl(task, cwd)
-}
-
-pub(in crate::runner) fn run_manifest_task_with_cwd_and_env(
-    task: &TaskInvocation,
-    cwd: PathBuf,
-    env_overrides: &BTreeMap<String, String>,
-) -> Result<String, RunnerError> {
-    run_manifest_task_with_cwd_and_env_impl(task, cwd, env_overrides)
-}
-
 pub(in crate::runner) fn run_manifest_task_request(
     request: TaskExecutionRequest,
 ) -> Result<String, RunnerError> {
     super::entry::run_manifest_task_request(request)
+}
+
+#[cfg(test)]
+pub(in crate::runner) fn run_manifest_task_with_cwd(
+    task: &TaskInvocation,
+    cwd: PathBuf,
+) -> Result<String, RunnerError> {
+    run_manifest_task_with_surface(task, cwd, ExecutionSurface::DirectCli)
+}
+
+pub(in crate::runner) fn run_manifest_task_with_surface(
+    task: &TaskInvocation,
+    cwd: PathBuf,
+    surface: ExecutionSurface,
+) -> Result<String, RunnerError> {
+    run_manifest_task_with_surface_and_env(task, cwd, surface, &BTreeMap::new())
+}
+
+pub(in crate::runner) fn run_manifest_task_with_surface_and_env(
+    task: &TaskInvocation,
+    cwd: PathBuf,
+    surface: ExecutionSurface,
+    env_overrides: &BTreeMap<String, String>,
+) -> Result<String, RunnerError> {
+    let runtime_context = EffigyRuntimeContext::capture_lossy(Some(cwd.clone()), None)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let mut environment = ExecutionEnvironmentPlan::default().cwd(cwd);
+    for (key, value) in env_overrides {
+        environment = environment.env(key.clone(), value.clone());
+    }
+    let request = TaskExecutionRequestBuilder::new()
+        .runtime_context(runtime_context)
+        .task(task.name.clone(), task.args.clone())
+        .surface(surface)
+        .environment(environment)
+        .build()
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    run_manifest_task_request(request)
 }
 
 pub(in crate::runner) fn build_execution_preflight(
