@@ -7190,6 +7190,7 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
         .arg("container")
         .arg("data")
         .arg("pull-production")
+        .arg("--yes")
         .arg("--repo")
         .arg(&root)
         .arg("--json")
