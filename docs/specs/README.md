@@ -26,6 +26,7 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
+- [`034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md`](./034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -59,5 +60,4 @@ Recently completed:
 
 ## Next Task
 
-No active ready card. Stop in planning and choose the next live roadmap
-deliberately.
+Execute [`372-decide-next-live-roadmap-after-prompt-lane-closeout.md`](./batch-cards/372-decide-next-live-roadmap-after-prompt-lane-closeout.md).

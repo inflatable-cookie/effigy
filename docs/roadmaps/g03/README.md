@@ -42,6 +42,7 @@ Current milestones:
 - [`025-test-module-extraction-and-reorganization.md`](./025-test-module-extraction-and-reorganization.md) (complete; moved `workspace_tests.rs` and `gateway_registration_tests.rs` to standard directory modules, eliminated `#[path]` from `system_command.rs`)
 - [`026-runner-module-decomposition.md`](./026-runner-module-decomposition.md) (complete; split oversized runner modules into focused submodules without changing behavior)
 - [`027-interactive-cli-prompt-expansion-and-guardrails.md`](./027-interactive-cli-prompt-expansion-and-guardrails.md) (complete; the shared prompt policy, bootstrap path-reuse confirmation, container data confirmations, and broad `unlock` confirmation have landed)
+- [`028-next-v0-x-readiness-and-roadmap-selection.md`](./028-next-v0-x-readiness-and-roadmap-selection.md) (active; selecting the next live roadmap target after prompt-lane closeout)
 
 Architecture anchor:
 
@@ -56,9 +57,10 @@ Rules:
   lanes
 - `g03.019` through `g03.026` are now complete
 - `g03.019` through `g03.027` are now complete
-- no strict lane is active
+- `g03.028` is active
+- strict lane `034` is active
+- current ready card: `372`
 
 ## Next Task
 
-No active ready card. Stop in planning and choose the next live roadmap
-deliberately.
+Execute [`372-decide-next-live-roadmap-after-prompt-lane-closeout.md`](../../specs/batch-cards/372-decide-next-live-roadmap-after-prompt-lane-closeout.md).
