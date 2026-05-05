@@ -399,6 +399,58 @@ mod tests {
     }
 
     #[test]
+    fn direct_bootstrap_and_rhai_task_surfaces_keep_plan_parity_for_same_inputs() {
+        let context = context("surface-parity");
+        let cwd = context.invocation_cwd().join("bundle");
+        let environment = ExecutionEnvironmentPlan::default()
+            .cwd(cwd)
+            .stdin_file("bundle/database/seeds/latest.sql")
+            .env("MYSQL_PWD", OsString::from("secret"));
+        let runtime_policy = ExecutionRuntimePolicy::container("web", Some("db".to_owned()));
+
+        let plans = [
+            ExecutionSurface::DirectCli,
+            ExecutionSurface::Bootstrap,
+            ExecutionSurface::Rhai,
+        ]
+        .into_iter()
+        .map(|surface| {
+            TaskExecutionRequestBuilder::new()
+                .runtime_context(context.clone())
+                .task("db:seed", vec!["--fresh".to_owned()])
+                .surface(surface)
+                .output_mode(ExecutionOutputMode::Capture)
+                .runtime_policy(runtime_policy.clone())
+                .environment(environment.clone())
+                .resolve()
+                .expect("plan")
+        })
+        .collect::<Vec<_>>();
+
+        let expected_route = ExecutionRoute::Container {
+            container: Some("web".to_owned()),
+            service: Some("db".to_owned()),
+        };
+        for plan in &plans {
+            assert_eq!(plan.route, expected_route);
+            assert_eq!(
+                plan.request.invocation,
+                ExecutionIntent::Task {
+                    selector: "db:seed".to_owned(),
+                    args: vec!["--fresh".to_owned()],
+                }
+            );
+            assert_eq!(plan.request.output_mode, ExecutionOutputMode::Capture);
+            assert_eq!(plan.request.runtime_policy, runtime_policy);
+            assert_eq!(plan.request.environment, environment);
+            assert_eq!(plan.request.runtime_context, context);
+        }
+        assert_eq!(plans[0].request.surface, ExecutionSurface::DirectCli);
+        assert_eq!(plans[1].request.surface, ExecutionSurface::Bootstrap);
+        assert_eq!(plans[2].request.surface, ExecutionSurface::Rhai);
+    }
+
+    #[test]
     fn container_intent_in_handoff_routes_locally_without_losing_captured_paths() {
         let root = temp_repo("handoff");
         let nested = root.join("bundle/scripts");

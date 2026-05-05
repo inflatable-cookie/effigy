@@ -34,7 +34,7 @@ real project repos or production data.
 
 ## Current Ready Card
 
-[`405-add-execution-surface-plan-parity-proof.md`](./batch-cards/405-add-execution-surface-plan-parity-proof.md)
+[`406-decide-dependability-proof-matrix-closeout-boundary.md`](./batch-cards/406-decide-dependability-proof-matrix-closeout-boundary.md)
 
 ## Exit Condition
 
@@ -44,4 +44,4 @@ milestone has an explicit start point.
 
 ## Next Task
 
-Complete card `405`.
+Complete card `406`.

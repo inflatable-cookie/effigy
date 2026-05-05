@@ -34,4 +34,4 @@ data.
 ## Next Task
 
 Complete card
-[`405-add-execution-surface-plan-parity-proof.md`](../../specs/batch-cards/405-add-execution-surface-plan-parity-proof.md).
+[`406-decide-dependability-proof-matrix-closeout-boundary.md`](../../specs/batch-cards/406-decide-dependability-proof-matrix-closeout-boundary.md).
