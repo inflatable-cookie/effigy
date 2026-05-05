@@ -148,8 +148,9 @@ pub struct ResolvedTaskExecutionPlan {
     pub route: ExecutionRoute,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ExecutionSurface {
+    #[default]
     DirectCli,
     Deferral,
     Bootstrap,
@@ -159,31 +160,20 @@ pub enum ExecutionSurface {
     Managed,
 }
 
-impl Default for ExecutionSurface {
-    fn default() -> Self {
-        Self::DirectCli
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecutionIntent {
     Task { selector: String, args: Vec<String> },
     Command { command: Vec<String> },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExecutionOutputMode {
+    #[default]
     Capture,
     Stream,
     Tee,
     Json,
     Interactive,
-}
-
-impl Default for ExecutionOutputMode {
-    fn default() -> Self {
-        Self::Capture
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,30 +222,20 @@ pub enum ExecutionRunTarget {
     Either,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExecutionHandoffPolicy {
+    #[default]
     AllowContainerHandoff,
     ForceHostBoundary,
     RejectRecursiveHandoff,
 }
 
-impl Default for ExecutionHandoffPolicy {
-    fn default() -> Self {
-        Self::AllowContainerHandoff
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExecutionCleanupPolicy {
+    #[default]
     Preserve,
     CleanupOnSuccess,
     CleanupAlways,
-}
-
-impl Default for ExecutionCleanupPolicy {
-    fn default() -> Self {
-        Self::Preserve
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

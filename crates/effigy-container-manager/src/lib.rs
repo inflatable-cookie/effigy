@@ -29,17 +29,12 @@ impl fmt::Display for BackendId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ContainerInterruptPolicy {
     Ignore,
+    #[default]
     Forward,
     ShutdownOnInterrupt,
-}
-
-impl Default for ContainerInterruptPolicy {
-    fn default() -> Self {
-        Self::Forward
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -513,6 +513,7 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
 ) -> Result<PathBuf, RunnerError> {
     let cache_path = linux_workspace_effigy_cache_path(target)?;
     if cache_path.is_file() {
+        ensure_workspace_effigy_active_version_file(&cache_path)?;
         return Ok(cache_path);
     }
 

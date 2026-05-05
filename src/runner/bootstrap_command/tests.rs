@@ -372,8 +372,11 @@ printf seeded > db-seed.txt
 "#,
     )
     .expect("write db seed task");
-    fs::write(worktree.join("expected-contactpatch.sql"), "seed contactpatch;\n")
-        .expect("write expected dump");
+    fs::write(
+        worktree.join("expected-contactpatch.sql"),
+        "seed contactpatch;\n",
+    )
+    .expect("write expected dump");
     let script = worktree.join("scripts/db-seed.sh");
     let mut perms = fs::metadata(&script)
         .expect("script metadata")
