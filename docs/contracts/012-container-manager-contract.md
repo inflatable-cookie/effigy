@@ -3,6 +3,7 @@
 Status: Active
 Owner: Platform
 Created: 2026-05-05
+Last Updated: 2026-05-05
 
 ## Purpose
 
@@ -63,6 +64,29 @@ Runner code must not:
 Temporary wrappers are allowed only while a card is actively migrating
 callers.
 
+## Shipped Migration State
+
+`g03.031` ships the manager facade and moves runner-level backend selection
+behind it.
+
+Shipped manager-owned surfaces:
+
+- backend detection and explicit override parsing
+- Docker Compose and Colima/nerdctl backend ids
+- compose process invocation wrapping
+- raw runtime process invocation wrapping for copy, volume, and image commands
+- internal lifecycle operation reports
+- runner-level exec/copy/data/lifecycle backend selection
+
+Remaining compatibility boundary:
+
+- `effigy-containers::compose` keeps `ComposeBackend` and
+  `resolve_compose_backend()` as temporary lower-level compatibility wrappers
+- `effigy-containers::exec` and `effigy-containers::colima` still contain
+  backend-local implementation details for Colima repair, runtime probing, and
+  direct exec helpers
+- those wrappers must not leak back into runner command code
+
 ## Operation Reports
 
 Internal operation reports must include at least:
@@ -96,3 +120,14 @@ Minimum proof:
 - attached interrupt path runs manager-owned cleanup
 - copy, exec, status, logs, and stats route through the manager
 - runner drift guards reject caller-local backend branching
+
+Lightweight drift check:
+
+```bash
+rg "resolve_compose_backend|ComposeBackend" \
+  src/runner/exec_command \
+  src/runner/container_command \
+  crates/effigy-runtime/src/write.rs -n
+```
+
+The command should return no matches.

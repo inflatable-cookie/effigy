@@ -2,9 +2,10 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 Depends on: [`030-universal-runtime-context-and-path-authority.md`](./030-universal-runtime-context-and-path-authority.md)
 
 ## Goal
@@ -29,5 +30,5 @@ Colima, and nerdctl branching.
 
 ## Next Task
 
-Complete card
-[`386-close-container-manager-facade-lane.md`](../../specs/batch-cards/386-close-container-manager-facade-lane.md).
+Roadmap complete. Continue with `g03.033` or choose the next queued roadmap
+deliberately.

@@ -2,9 +2,10 @@
 
 Roadmap: [`g03.031`](../roadmaps/g03/031-plugin-ready-container-manager-facade.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Purpose
 
@@ -22,7 +23,7 @@ before migrating runner container commands and execution transports.
 
 ## Current Ready Card
 
-[`386-close-container-manager-facade-lane.md`](./batch-cards/386-close-container-manager-facade-lane.md)
+No active ready card. Lane `038` is complete.
 
 ## Exit Condition
 
@@ -32,4 +33,5 @@ longer branches directly on Docker, Colima, or nerdctl.
 
 ## Next Task
 
-Complete card `386`.
+Choose the next queued roadmap deliberately. The likely next roadmap is
+`g03.033`.

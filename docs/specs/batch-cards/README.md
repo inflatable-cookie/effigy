@@ -29,8 +29,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
   manager facade.
 
 - [`386-close-container-manager-facade-lane.md`](./386-close-container-manager-facade-lane.md)
-  is ready. It closes `g03.031` with drift guards and contract/readme
+  is complete. It closed `g03.031` with drift guards and contract/readme
   alignment.
+
+- No active ready card. `g03.031` is complete; choose the next roadmap
+  deliberately.
 
 - [`381-migrate-embedded-task-dispatch-to-execution-request.md`](./381-migrate-embedded-task-dispatch-to-execution-request.md)
   is complete. It moved embedded task dispatch onto `TaskExecutionRequestBuilder`.

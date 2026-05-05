@@ -35,6 +35,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`038-plugin-ready-container-manager-facade-strict-lane.md`](./038-plugin-ready-container-manager-facade-strict-lane.md)
 - [`037-canonical-task-execution-request-and-pipeline-strict-lane.md`](./037-canonical-task-execution-request-and-pipeline-strict-lane.md)
 - [`036-universal-runtime-context-and-path-authority-strict-lane.md`](./036-universal-runtime-context-and-path-authority-strict-lane.md)
 - [`035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md`](./035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md)
@@ -64,5 +65,5 @@ Recently completed:
 
 ## Next Task
 
-Complete card
-[`386-close-container-manager-facade-lane.md`](./batch-cards/386-close-container-manager-facade-lane.md).
+Choose the next queued roadmap deliberately. The likely next roadmap is
+`g03.033`.
