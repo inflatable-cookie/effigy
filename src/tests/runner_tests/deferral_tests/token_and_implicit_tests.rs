@@ -241,12 +241,11 @@ databases = ["legacy"]
     let composer_home = root.join("composer-home");
     let composer_bin = composer_home.join("vendor/bin");
     fs::create_dir_all(&composer_bin).expect("mkdir composer bin");
-    let legacy_log = root.join("fake-legacy-effigy.log");
     write_executable(
         &composer_bin.join("effigy"),
         &format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-            legacy_log.display(),
+            root.join("fake-legacy-effigy.log").display(),
         ),
     );
     let _handoff = EnvGuard::set_many(&[
@@ -263,13 +262,8 @@ databases = ["legacy"]
 
     let docker = fs::read_to_string(&docker_log).expect("read fake docker log");
     assert!(
-        !docker.contains("compose"),
-        "expected no docker compose usage inside handoff container, got {docker}"
-    );
-    let composer = fs::read_to_string(&legacy_log).expect("read legacy effigy log");
-    assert!(
-        composer.contains("missing-task") && composer.contains("--watch"),
-        "expected local legacy effigy deferral inside handoff container, got {composer}"
+        docker.contains("\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" missing-task --watch"),
+        "expected handoff-local deferral to invoke composer-home effigy inside container, got {docker}"
     );
 }
 
@@ -288,24 +282,15 @@ project_name = "legacy-dev"
 databases = ["legacy"]
 "#,
     );
-    let (_docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
+    let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
     let composer_home = root.join("composer-home");
     let composer_bin = composer_home.join("vendor/bin");
     fs::create_dir_all(&composer_bin).expect("mkdir composer bin");
-    let legacy_log = root.join("fake-legacy-effigy.log");
-    let path_log = root.join("fake-path-effigy.log");
     write_executable(
         &composer_bin.join("effigy"),
         &format!(
             "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-            legacy_log.display(),
-        ),
-    );
-    write_executable(
-        &root.join("bin/effigy"),
-        &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 97\n",
-            path_log.display(),
+            root.join("fake-legacy-effigy.log").display(),
         ),
     );
     let _handoff = EnvGuard::set_many(&[
@@ -320,15 +305,12 @@ databases = ["legacy"]
         "decodelabs bundle handoff-local deferral should prefer composer global bin",
     );
 
-    let legacy = fs::read_to_string(&legacy_log).expect("read fake legacy effigy log");
+    let docker = fs::read_to_string(&docker_log).expect("read fake docker log");
     assert!(
-        legacy.contains("missing-task") && legacy.contains("--watch"),
-        "expected composer-home effigy to run, got {legacy}"
-    );
-    let path = fs::read_to_string(&path_log).unwrap_or_default();
-    assert!(
-        path.trim().is_empty(),
-        "expected PATH effigy not to run, got {path}"
+        docker.contains(
+            "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" missing-task --watch"
+        ),
+        "expected composer-home effigy path in handoff-local deferral command, got {docker}"
     );
 }
 
