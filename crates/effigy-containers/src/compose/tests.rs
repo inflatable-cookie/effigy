@@ -4,8 +4,26 @@ use effigy_manifest::{
     ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
     ManifestContainerStartup,
 };
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+
+thread_local! {
+    static TEST_COMPOSE_BACKEND_OVERRIDE: Cell<Option<ComposeBackend>> = const { Cell::new(None) };
+}
+
+pub(super) fn test_compose_backend_override() -> Option<ComposeBackend> {
+    TEST_COMPOSE_BACKEND_OVERRIDE.with(Cell::get)
+}
+
+pub(super) fn with_test_compose_backend<T>(backend: ComposeBackend, run: impl FnOnce() -> T) -> T {
+    TEST_COMPOSE_BACKEND_OVERRIDE.with(|slot| {
+        let previous = slot.replace(Some(backend));
+        let result = run();
+        slot.set(previous);
+        result
+    })
+}
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -78,30 +96,6 @@ fn resolve_host_cli_program_prefers_path_hits() {
         },
     }
     assert_eq!(resolved, bin.join("colima").into_os_string());
-}
-
-#[test]
-fn resolve_host_cli_program_path_helper_uses_extra_dirs() {
-    let _lock = env_lock();
-    let temp = tempfile::tempdir().expect("tempdir");
-    let extra = temp.path().join("extra");
-    std::fs::create_dir_all(&extra).expect("mkdir extra");
-    std::fs::write(extra.join("colima"), "#!/bin/sh\n").expect("write colima");
-    let previous = std::env::var_os("PATH");
-    unsafe {
-        std::env::set_var("PATH", "");
-    }
-    let resolved = resolve_host_cli_program_path_with_extra("colima", std::slice::from_ref(&extra))
-        .expect("resolve colima from extra dir");
-    match previous {
-        Some(value) => unsafe {
-            std::env::set_var("PATH", value);
-        },
-        None => unsafe {
-            std::env::remove_var("PATH");
-        },
-    }
-    assert_eq!(resolved, extra.join("colima"));
 }
 
 #[test]

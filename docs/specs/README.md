@@ -65,4 +65,4 @@ Recently completed:
 ## Next Task
 
 Complete card
-[`383-move-compose-backend-detection-behind-container-manager.md`](./batch-cards/383-move-compose-backend-detection-behind-container-manager.md).
+[`384-migrate-container-lifecycle-through-manager.md`](./batch-cards/384-migrate-container-lifecycle-through-manager.md).

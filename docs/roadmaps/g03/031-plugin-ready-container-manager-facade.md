@@ -30,4 +30,4 @@ Colima, and nerdctl branching.
 ## Next Task
 
 Complete card
-[`383-move-compose-backend-detection-behind-container-manager.md`](../../specs/batch-cards/383-move-compose-backend-detection-behind-container-manager.md).
+[`384-migrate-container-lifecycle-through-manager.md`](../../specs/batch-cards/384-migrate-container-lifecycle-through-manager.md).

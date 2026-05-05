@@ -4,12 +4,14 @@
 //! container-domain decisions about how to invoke Docker/Colima,
 //! not runner shell behavior.
 
-#[cfg(test)]
-use std::cell::Cell;
 use std::ffi::OsString;
 
 use crate::EffectiveContainerPolicy;
 
+use effigy_container_manager::{
+    resolve_host_cli_program as manager_resolve_host_cli_program, BackendId,
+    ContainerBackendDetection, ContainerBackendRegistry,
+};
 use effigy_manifest::{ManifestContainerOnTaskExit, ManifestContainerShutdownMode};
 
 /// The backend used to run Docker Compose commands.
@@ -21,63 +23,24 @@ pub enum ComposeBackend {
     ColimaNerdctl,
 }
 
-#[cfg(test)]
-thread_local! {
-    static TEST_COMPOSE_BACKEND_OVERRIDE: Cell<Option<ComposeBackend>> = const { Cell::new(None) };
-}
-
-const COMPOSE_BACKEND_OVERRIDE_ENV: &str = "EFFIGY_COMPOSE_BACKEND";
-
-#[cfg(target_os = "macos")]
-const MACOS_EXTRA_PROGRAM_DIRS: [&str; 4] = [
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    "/Applications/Docker.app/Contents/Resources/bin",
-    "/Applications/OrbStack.app/Contents/MacOS/bin",
-];
-
 /// Resolve which compose backend to use.
 ///
 /// Prefers `docker` if available on PATH, falls back to Colima nerdctl.
 pub fn resolve_compose_backend() -> ComposeBackend {
     #[cfg(test)]
-    if let Some(backend) = TEST_COMPOSE_BACKEND_OVERRIDE.with(Cell::get) {
+    if let Some(backend) = tests::test_compose_backend_override() {
         return backend;
     }
-    if let Some(backend) = compose_backend_override_from_env() {
-        return backend;
-    }
-    if command_exists("docker") {
-        ComposeBackend::Docker
-    } else {
-        ComposeBackend::ColimaNerdctl
-    }
+    let detection = ContainerBackendDetection::from_env_and_path();
+    let backend_id = ContainerBackendRegistry::defaults()
+        .detect_backend(&detection)
+        .unwrap_or_else(|_| BackendId::colima_nerdctl());
+    ComposeBackend::from_backend_id(&backend_id)
 }
 
 #[cfg(test)]
 pub(crate) fn with_test_compose_backend<T>(backend: ComposeBackend, run: impl FnOnce() -> T) -> T {
-    TEST_COMPOSE_BACKEND_OVERRIDE.with(|slot| {
-        let previous = slot.replace(Some(backend));
-        let result = run();
-        slot.set(previous);
-        result
-    })
-}
-
-fn compose_backend_override_from_env() -> Option<ComposeBackend> {
-    match std::env::var(COMPOSE_BACKEND_OVERRIDE_ENV)
-        .ok()?
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "" | "auto" => None,
-        "docker" => Some(ComposeBackend::Docker),
-        "colima" | "colima-nerdctl" | "nerdctl" | "containerd" => {
-            Some(ComposeBackend::ColimaNerdctl)
-        }
-        _ => None,
-    }
+    tests::with_test_compose_backend(backend, run)
 }
 
 /// Build docker compose arguments for a given policy and subcommand.
@@ -120,19 +83,16 @@ pub fn compose_invocation(
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
 ) -> (&'static str, Vec<OsString>) {
-    match resolve_compose_backend() {
-        ComposeBackend::Docker => ("docker", args.to_vec()),
-        ComposeBackend::ColimaNerdctl => {
-            let mut resolved = vec![
-                OsString::from("nerdctl"),
-                OsString::from("--profile"),
-                OsString::from(policy.profile.as_str()),
-                OsString::from("--"),
-            ];
-            resolved.extend(args.iter().cloned());
-            ("colima", resolved)
-        }
-    }
+    let detection = compose_backend_detection();
+    let (program, resolved_args) = effigy_container_manager::ContainerManager::defaults()
+        .compose_process_invocation(&detection, policy.profile.as_str(), args)
+        .unwrap_or_else(|_| (OsString::from("colima"), colima_nerdctl_args(policy, args)));
+    let program = if program == OsString::from("docker") {
+        "docker"
+    } else {
+        "colima"
+    };
+    (program, resolved_args)
 }
 
 /// Human-readable label for a shutdown mode.
@@ -151,47 +111,51 @@ pub fn on_task_exit_label(mode: ManifestContainerOnTaskExit) -> &'static str {
     }
 }
 
-fn command_exists(program: &str) -> bool {
-    resolve_host_cli_program_path(program).is_some()
-}
-
 pub fn resolve_host_cli_program(program: &str) -> OsString {
-    resolve_host_cli_program_path(program)
-        .map(|path| path.into_os_string())
-        .unwrap_or_else(|| OsString::from(program))
+    manager_resolve_host_cli_program(program)
 }
 
-fn resolve_host_cli_program_path(program: &str) -> Option<std::path::PathBuf> {
-    resolve_host_cli_program_path_with_extra(program, &[])
+fn colima_nerdctl_args(policy: &EffectiveContainerPolicy, args: &[OsString]) -> Vec<OsString> {
+    let mut resolved = vec![
+        OsString::from("nerdctl"),
+        OsString::from("--profile"),
+        OsString::from(policy.profile.as_str()),
+        OsString::from("--"),
+    ];
+    resolved.extend(args.iter().cloned());
+    resolved
 }
 
-fn resolve_host_cli_program_path_with_extra(
-    program: &str,
-    extra_dirs: &[std::path::PathBuf],
-) -> Option<std::path::PathBuf> {
-    if program.contains(std::path::MAIN_SEPARATOR) {
-        let path = std::path::PathBuf::from(program);
-        return path.is_file().then_some(path);
+#[cfg(not(test))]
+fn compose_backend_detection() -> ContainerBackendDetection {
+    ContainerBackendDetection::from_env_and_path()
+}
+
+#[cfg(test)]
+fn compose_backend_detection() -> ContainerBackendDetection {
+    let mut detection = ContainerBackendDetection::from_env_and_path();
+    if let Some(backend) = tests::test_compose_backend_override() {
+        detection.backend_override = Some(backend.backend_id());
+    }
+    detection
+}
+
+impl ComposeBackend {
+    #[cfg(test)]
+    fn backend_id(self) -> BackendId {
+        match self {
+            Self::Docker => BackendId::docker_compose(),
+            Self::ColimaNerdctl => BackendId::colima_nerdctl(),
+        }
     }
 
-    let mut candidates = Vec::new();
-    if let Some(path) = std::env::var_os("PATH") {
-        candidates.extend(std::env::split_paths(&path));
+    fn from_backend_id(value: &BackendId) -> Self {
+        if *value == BackendId::docker_compose() {
+            Self::Docker
+        } else {
+            Self::ColimaNerdctl
+        }
     }
-    candidates.extend(extra_dirs.iter().cloned());
-    #[cfg(target_os = "macos")]
-    {
-        candidates.extend(
-            MACOS_EXTRA_PROGRAM_DIRS
-                .iter()
-                .map(std::path::PathBuf::from),
-        );
-    }
-
-    candidates
-        .into_iter()
-        .map(|entry| entry.join(program))
-        .find(|candidate| candidate.is_file())
 }
 
 #[cfg(test)]

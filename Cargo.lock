@@ -729,6 +729,7 @@ name = "effigy-containers"
 version = "0.3.3"
 dependencies = [
  "effigy-catalog",
+ "effigy-container-manager",
  "effigy-core",
  "effigy-gateway",
  "effigy-manifest",

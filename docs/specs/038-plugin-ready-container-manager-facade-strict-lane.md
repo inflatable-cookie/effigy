@@ -22,7 +22,7 @@ before migrating runner container commands and execution transports.
 
 ## Current Ready Card
 
-[`383-move-compose-backend-detection-behind-container-manager.md`](./batch-cards/383-move-compose-backend-detection-behind-container-manager.md)
+[`384-migrate-container-lifecycle-through-manager.md`](./batch-cards/384-migrate-container-lifecycle-through-manager.md)
 
 ## Exit Condition
 
@@ -32,4 +32,4 @@ longer branches directly on Docker, Colima, or nerdctl.
 
 ## Next Task
 
-Complete card `383`.
+Complete card `384`.

@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -65,6 +66,33 @@ impl ContainerManagerRequest {
     pub fn interrupt_policy(mut self, policy: ContainerInterruptPolicy) -> Self {
         self.interrupt_policy = policy;
         self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerBackendDetection {
+    pub backend_override: Option<BackendId>,
+    pub docker_cli_available: bool,
+}
+
+impl ContainerBackendDetection {
+    pub fn new(docker_cli_available: bool) -> Self {
+        Self {
+            backend_override: None,
+            docker_cli_available,
+        }
+    }
+
+    pub fn backend_override(mut self, backend: BackendId) -> Self {
+        self.backend_override = Some(backend);
+        self
+    }
+
+    pub fn from_env_and_path() -> Self {
+        Self {
+            backend_override: backend_override_from_env(),
+            docker_cli_available: command_exists("docker"),
+        }
     }
 }
 
@@ -182,6 +210,11 @@ pub trait ContainerBackend: Send + Sync {
     fn capabilities(&self) -> ContainerBackendCapabilities;
 
     fn compose_invocation(&self, repo_root: &Path) -> Vec<String>;
+    fn compose_process_invocation(
+        &self,
+        profile: &str,
+        args: &[OsString],
+    ) -> (OsString, Vec<OsString>);
 
     fn status(&self, request: &ContainerManagerRequest) -> ContainerOperationReport {
         ContainerOperationReport::new(
@@ -219,6 +252,14 @@ impl ContainerBackend for DockerComposeBackend {
             repo_root.display().to_string(),
         ]
     }
+
+    fn compose_process_invocation(
+        &self,
+        _profile: &str,
+        args: &[OsString],
+    ) -> (OsString, Vec<OsString>) {
+        (OsString::from("docker"), args.to_vec())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -245,6 +286,21 @@ impl ContainerBackend for ColimaNerdctlBackend {
             "--project-directory".to_owned(),
             repo_root.display().to_string(),
         ]
+    }
+
+    fn compose_process_invocation(
+        &self,
+        profile: &str,
+        args: &[OsString],
+    ) -> (OsString, Vec<OsString>) {
+        let mut resolved = vec![
+            OsString::from("nerdctl"),
+            OsString::from("--profile"),
+            OsString::from(profile),
+            OsString::from("--"),
+        ];
+        resolved.extend(args.iter().cloned());
+        (OsString::from("colima"), resolved)
     }
 }
 
@@ -298,6 +354,23 @@ impl ContainerBackendRegistry {
             .map(|backend| backend.as_ref())
             .ok_or(ContainerManagerError::NoBackendsRegistered)
     }
+
+    pub fn detect_backend(
+        &self,
+        detection: &ContainerBackendDetection,
+    ) -> Result<BackendId, ContainerManagerError> {
+        let backend_id = if let Some(backend_id) = detection.backend_override.as_ref() {
+            backend_id.clone()
+        } else if detection.docker_cli_available {
+            BackendId::docker_compose()
+        } else {
+            BackendId::colima_nerdctl()
+        };
+
+        self.find(&backend_id)
+            .map(|backend| backend.id())
+            .ok_or(ContainerManagerError::UnknownBackend { backend_id })
+    }
 }
 
 impl Default for ContainerBackendRegistry {
@@ -336,6 +409,22 @@ impl ContainerManager {
     ) -> Result<ContainerOperationReport, ContainerManagerError> {
         Ok(self.selected_backend(request)?.status(request))
     }
+
+    pub fn compose_process_invocation(
+        &self,
+        detection: &ContainerBackendDetection,
+        profile: &str,
+        args: &[OsString],
+    ) -> Result<(OsString, Vec<OsString>), ContainerManagerError> {
+        let backend_id = self.registry.detect_backend(detection)?;
+        let backend =
+            self.registry
+                .find(&backend_id)
+                .ok_or(ContainerManagerError::UnknownBackend {
+                    backend_id: backend_id.clone(),
+                })?;
+        Ok(backend.compose_process_invocation(profile, args))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -365,15 +454,75 @@ fn interrupt_policy_name(policy: ContainerInterruptPolicy) -> &'static str {
     }
 }
 
+pub fn backend_override_from_env_value(value: &str) -> Option<BackendId> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" => None,
+        "docker" | "docker-compose" => Some(BackendId::docker_compose()),
+        "colima" | "colima-nerdctl" | "nerdctl" | "containerd" => Some(BackendId::colima_nerdctl()),
+        _ => None,
+    }
+}
+
+pub fn resolve_host_cli_program(program: &str) -> OsString {
+    resolve_host_cli_program_path(program)
+        .map(|path| path.into_os_string())
+        .unwrap_or_else(|| OsString::from(program))
+}
+
+fn backend_override_from_env() -> Option<BackendId> {
+    std::env::var("EFFIGY_COMPOSE_BACKEND")
+        .ok()
+        .and_then(|value| backend_override_from_env_value(&value))
+}
+
+fn command_exists(program: &str) -> bool {
+    resolve_host_cli_program_path(program).is_some()
+}
+
+fn resolve_host_cli_program_path(program: &str) -> Option<PathBuf> {
+    resolve_host_cli_program_path_with_extra(program, &[])
+}
+
+fn resolve_host_cli_program_path_with_extra(
+    program: &str,
+    extra_dirs: &[PathBuf],
+) -> Option<PathBuf> {
+    if program.contains(std::path::MAIN_SEPARATOR) {
+        let path = PathBuf::from(program);
+        return path.is_file().then_some(path);
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("PATH") {
+        candidates.extend(std::env::split_paths(&path));
+    }
+    candidates.extend(extra_dirs.iter().cloned());
+    #[cfg(target_os = "macos")]
+    {
+        candidates.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/Applications/Docker.app/Contents/Resources/bin"),
+            PathBuf::from("/Applications/OrbStack.app/Contents/MacOS/bin"),
+        ]);
+    }
+
+    candidates
+        .into_iter()
+        .map(|entry| entry.join(program))
+        .find(|candidate| candidate.is_file())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
     use std::path::PathBuf;
 
     use super::{
-        BackendId, ColimaNerdctlBackend, ContainerAction, ContainerBackend,
-        ContainerBackendRegistry, ContainerInterruptPolicy, ContainerManager,
-        ContainerManagerError, ContainerManagerRequest, ContainerRuntimeState,
-        DockerComposeBackend,
+        backend_override_from_env_value, BackendId, ColimaNerdctlBackend, ContainerAction,
+        ContainerBackend, ContainerBackendDetection, ContainerBackendRegistry,
+        ContainerInterruptPolicy, ContainerManager, ContainerManagerError, ContainerManagerRequest,
+        ContainerRuntimeState, DockerComposeBackend,
     };
 
     #[test]
@@ -417,6 +566,53 @@ mod tests {
     }
 
     #[test]
+    fn detection_prefers_explicit_override() {
+        let registry = ContainerBackendRegistry::defaults();
+        let detection =
+            ContainerBackendDetection::new(true).backend_override(BackendId::colima_nerdctl());
+
+        let backend_id = registry.detect_backend(&detection).expect("backend id");
+
+        assert_eq!(backend_id, BackendId::colima_nerdctl());
+    }
+
+    #[test]
+    fn detection_prefers_docker_when_available() {
+        let registry = ContainerBackendRegistry::defaults();
+
+        let backend_id = registry
+            .detect_backend(&ContainerBackendDetection::new(true))
+            .expect("backend id");
+
+        assert_eq!(backend_id, BackendId::docker_compose());
+    }
+
+    #[test]
+    fn detection_falls_back_to_colima_when_docker_is_unavailable() {
+        let registry = ContainerBackendRegistry::defaults();
+
+        let backend_id = registry
+            .detect_backend(&ContainerBackendDetection::new(false))
+            .expect("backend id");
+
+        assert_eq!(backend_id, BackendId::colima_nerdctl());
+    }
+
+    #[test]
+    fn backend_override_values_match_legacy_compose_env() {
+        assert_eq!(
+            backend_override_from_env_value("docker"),
+            Some(BackendId::docker_compose())
+        );
+        assert_eq!(
+            backend_override_from_env_value("containerd"),
+            Some(BackendId::colima_nerdctl())
+        );
+        assert_eq!(backend_override_from_env_value("auto"), None);
+        assert_eq!(backend_override_from_env_value("unknown"), None);
+    }
+
+    #[test]
     fn compose_invocations_are_stable() {
         let repo = PathBuf::from("/tmp/repo");
 
@@ -427,6 +623,30 @@ mod tests {
         assert_eq!(
             ColimaNerdctlBackend.compose_invocation(&repo),
             vec!["nerdctl", "compose", "--project-directory", "/tmp/repo"]
+        );
+    }
+
+    #[test]
+    fn compose_process_invocations_are_stable() {
+        let args = vec![OsString::from("compose"), OsString::from("ps")];
+
+        assert_eq!(
+            DockerComposeBackend.compose_process_invocation("effigy", &args),
+            (OsString::from("docker"), args.clone())
+        );
+        assert_eq!(
+            ColimaNerdctlBackend.compose_process_invocation("effigy", &args),
+            (
+                OsString::from("colima"),
+                vec![
+                    OsString::from("nerdctl"),
+                    OsString::from("--profile"),
+                    OsString::from("effigy"),
+                    OsString::from("--"),
+                    OsString::from("compose"),
+                    OsString::from("ps"),
+                ]
+            )
         );
     }
 

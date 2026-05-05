@@ -18,8 +18,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
   `effigy-container-manager` facade slice.
 
 - [`383-move-compose-backend-detection-behind-container-manager.md`](./383-move-compose-backend-detection-behind-container-manager.md)
-  is ready. It moves compose backend detection and invocation shape behind the
-  manager facade.
+  is complete. It moved compose backend detection and invocation shape behind
+  the manager facade.
+
+- [`384-migrate-container-lifecycle-through-manager.md`](./384-migrate-container-lifecycle-through-manager.md)
+  is ready. It migrates lifecycle commands through the manager facade.
 
 - [`381-migrate-embedded-task-dispatch-to-execution-request.md`](./381-migrate-embedded-task-dispatch-to-execution-request.md)
   is complete. It moved embedded task dispatch onto `TaskExecutionRequestBuilder`.

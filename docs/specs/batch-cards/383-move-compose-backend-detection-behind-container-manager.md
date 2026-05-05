@@ -2,9 +2,10 @@
 
 Lane: [`038-plugin-ready-container-manager-facade-strict-lane.md`](../038-plugin-ready-container-manager-facade-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Goal
 
@@ -27,6 +28,22 @@ Move existing compose backend detection and invocation shape behind
 This card is complete when existing compose backend selection can be expressed
 through `ContainerManager`, tests prove current Docker/Colima selection parity,
 and the next card can migrate lifecycle commands through the facade.
+
+## Closeout
+
+Compose backend selection now uses `ContainerBackendDetection` and
+`ContainerBackendRegistry` from `effigy-container-manager`.
+
+`effigy-containers::compose` remains as a compatibility wrapper for existing
+callers, but backend override parsing, Docker fallback selection, host CLI
+program resolution, and Docker-vs-Colima process wrapping now sit in the
+manager crate.
+
+## Validation
+
+- `CARGO_TARGET_DIR=/tmp/effigy-container-manager-target cargo test -p effigy-container-manager -- --nocapture`
+- `CARGO_TARGET_DIR=/tmp/effigy-containers-target cargo test -p effigy-containers compose -- --nocapture`
+- `CARGO_TARGET_DIR=/tmp/effigy-main-check-target cargo check -p effigy`
 
 ## Next Task
 

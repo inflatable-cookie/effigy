@@ -45,7 +45,7 @@ Current milestones:
 - [`028-next-v0-x-readiness-and-roadmap-selection.md`](./028-next-v0-x-readiness-and-roadmap-selection.md) (complete; selected `g03.029` as the next live roadmap)
 - [`029-v0-x-release-readiness-audit-and-gate-alignment.md`](./029-v0-x-release-readiness-audit-and-gate-alignment.md) (complete; audited current `v0.x` release readiness without release execution)
 - [`030-universal-runtime-context-and-path-authority.md`](./030-universal-runtime-context-and-path-authority.md) (complete; created `effigy-context`, context-backed runner cwd/root helpers, and Rhai `runtime::context()`)
-- [`031-plugin-ready-container-manager-facade.md`](./031-plugin-ready-container-manager-facade.md) (active; lane `038` is open and card `383` is ready)
+- [`031-plugin-ready-container-manager-facade.md`](./031-plugin-ready-container-manager-facade.md) (active; lane `038` is open and card `384` is ready)
 - [`032-canonical-task-execution-request-and-pipeline.md`](./032-canonical-task-execution-request-and-pipeline.md) (complete)
 - [`033-runtime-container-caller-migration-and-cleanup.md`](./033-runtime-container-caller-migration-and-cleanup.md) (queued)
 - [`034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md) (queued)
@@ -69,8 +69,8 @@ Rules:
 - `g03.030` is complete
 - `g03.032` is complete
 - `g03.031` is active as strict lane `038`
-- ready card: [`383-move-compose-backend-detection-behind-container-manager.md`](../../specs/batch-cards/383-move-compose-backend-detection-behind-container-manager.md)
+- ready card: [`384-migrate-container-lifecycle-through-manager.md`](../../specs/batch-cards/384-migrate-container-lifecycle-through-manager.md)
 
 ## Next Task
 
-Complete card `383`.
+Complete card `384`.
