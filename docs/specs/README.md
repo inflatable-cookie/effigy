@@ -26,6 +26,7 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
+- [`040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md`](./040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -65,4 +66,5 @@ Recently completed:
 
 ## Next Task
 
-Open `g03.034`: dependability proof matrix for DecodeLabs and Underlay shapes.
+Complete card
+[`401-add-underlay-generated-compose-path-proof.md`](./batch-cards/401-add-underlay-generated-compose-path-proof.md).

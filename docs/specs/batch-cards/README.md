@@ -13,6 +13,18 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`399-scaffold-dependability-proof-matrix-lane.md`](./399-scaffold-dependability-proof-matrix-lane.md)
+  is complete. It opened `g03.034` as strict lane `040` and chose the first
+  proof fixture slice.
+
+- [`400-add-decodelabs-mysql-seed-rhai-execution-proof.md`](./400-add-decodelabs-mysql-seed-rhai-execution-proof.md)
+  is complete. It proved DecodeLabs mysql seed execution through Rhai
+  `exec::run(...)` with container routing and `stdin_file`.
+
+- [`401-add-underlay-generated-compose-path-proof.md`](./401-add-underlay-generated-compose-path-proof.md)
+  is ready. It proves Underlay generated-compose path and external mount
+  stability.
+
 - [`387-inventory-runtime-container-cleanup-targets.md`](./387-inventory-runtime-container-cleanup-targets.md)
   is complete. It inventoried the remaining runtime/container cleanup targets
   after `g03.030` through `g03.032`.

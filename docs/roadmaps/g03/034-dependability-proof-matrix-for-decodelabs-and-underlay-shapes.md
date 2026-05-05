@@ -2,9 +2,10 @@
 
 Generation: `g03`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-05
+Started: 2026-05-05
 Depends on: [`033-runtime-container-caller-migration-and-cleanup.md`](./033-runtime-container-caller-migration-and-cleanup.md)
 
 ## Goal
@@ -32,4 +33,5 @@ data.
 
 ## Next Task
 
-Open the strict lane and first proof-matrix planning card.
+Complete card
+[`401-add-underlay-generated-compose-path-proof.md`](../../specs/batch-cards/401-add-underlay-generated-compose-path-proof.md).

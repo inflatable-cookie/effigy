@@ -4,12 +4,13 @@ use super::{
     EffigyCommandError, HostCallbacks, HostCommandOutput, ScriptContext, EFFIGY_RHAI_ARGS_JSON,
 };
 use crate::surface::{FEATURE_NAMES, MODULE_NAMES};
+use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 fn temp_root(name: &str) -> PathBuf {
@@ -273,6 +274,85 @@ fn execute_rhai_script_exposes_exec_run_helper() {
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
+fn execute_rhai_script_proves_decodelabs_mysql_seed_uses_container_exec_with_stdin_file() {
+    let root = temp_root("decodelabs-mysql-seed");
+    let seed_path = root.join("bundle/database/seeds/contactpatch.sql");
+    fs::create_dir_all(seed_path.parent().expect("seed parent")).expect("seed parent dir");
+    fs::write(&seed_path, "insert into contacts values (1);\n").expect("seed sql");
+
+    let context = ScriptContext {
+        cwd: root.join("bundle"),
+        repo_root: root.clone(),
+        task_name: "db:seed".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    fs::create_dir_all(&context.cwd).expect("bundle cwd");
+
+    let captured = Arc::new(Mutex::new(
+        None::<(PathBuf, String, Option<String>, Vec<String>, Value)>,
+    ));
+    let captured_exec = Arc::clone(&captured);
+    let mut host_callbacks = callbacks();
+    host_callbacks.container_exec_with_options =
+        Arc::new(move |repo_root, name, service, command, options| {
+            *captured_exec.lock().expect("capture lock") = Some((
+                repo_root.to_path_buf(),
+                name.to_owned(),
+                service.map(str::to_owned),
+                command.to_vec(),
+                options,
+            ));
+            Ok(HostCommandOutput {
+                status: 0,
+                success: true,
+                stdout: "mysql-seed-ok".to_owned(),
+                stderr: String::new(),
+            })
+        });
+
+    let script = r#"
+            let result = exec::run(
+                ["mysql", "--database", "app"],
+                #{
+                    run_in: "container",
+                    container: "web",
+                    service: "db",
+                    stdin_file: "bundle/database/seeds/contactpatch.sql",
+                },
+            );
+            if !result["success"] { throw("mysql seed failed"); }
+            if result["stdout"] != "mysql-seed-ok" { throw("mysql seed stdout"); }
+            if result["route"]["run_in"] != "container" { throw("mysql seed route"); }
+            if result["route"]["container"] != "web" { throw("mysql seed container"); }
+            if result["route"]["service"] != "db" { throw("mysql seed service"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &host_callbacks).expect("execute");
+
+    let captured = captured
+        .lock()
+        .expect("capture lock")
+        .clone()
+        .expect("container exec call");
+    assert_eq!(captured.0, root);
+    assert_eq!(captured.1, "web");
+    assert_eq!(captured.2, Some("db".to_owned()));
+    assert_eq!(
+        captured.3,
+        vec![
+            "mysql".to_owned(),
+            "--database".to_owned(),
+            "app".to_owned()
+        ]
+    );
+    assert_eq!(
+        captured.4["stdin_file"],
+        serde_json::json!("bundle/database/seeds/contactpatch.sql")
+    );
+    assert_eq!(captured.4["run_in"], serde_json::json!("container"));
 }
 
 #[test]
