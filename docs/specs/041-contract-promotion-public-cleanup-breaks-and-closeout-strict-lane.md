@@ -36,7 +36,7 @@ contracts, architecture ownership, and cleanup-break notes.
 
 ## Current Ready Card
 
-[`413-decide-cleanup-break-and-changelog-boundary.md`](./batch-cards/413-decide-cleanup-break-and-changelog-boundary.md)
+[`414-close-contract-promotion-and-modularisation-round.md`](./batch-cards/414-close-contract-promotion-and-modularisation-round.md)
 
 ## Exit Condition
 
@@ -46,4 +46,4 @@ breaks are documented, and the g03 modularisation round has no stale ready card.
 
 ## Next Task
 
-Complete card `413`.
+Complete card `414`.

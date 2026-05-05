@@ -2,9 +2,10 @@
 
 Lane: [`041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md`](../041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Goal
 
@@ -25,6 +26,19 @@ that need `CHANGELOG.md`.
 This card is complete when the lane explicitly records either no changelog entry
 needed, or the exact changelog entry for a documented public change.
 
+## Decision
+
+No new `CHANGELOG.md` entry is needed for the contract-promotion closeout work.
+
+Rationale:
+
+- the user-facing DecodeLabs/bootstrap seed fixes are already documented under
+  `[Unreleased]`
+- this card sequence promoted internal contracts, package-map ownership, and
+  planning front doors
+- no public CLI option, config field, command JSON schema, or documented cleanup
+  break was introduced by cards `408` through `412`
+
 ## Next Task
 
-Decide cleanup-break and changelog boundary.
+Close `g03.035`.
