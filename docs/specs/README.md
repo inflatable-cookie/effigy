@@ -63,4 +63,4 @@ Recently completed:
 
 ## Next Task
 
-Implement ready card `381` for embedded task dispatch.
+Choose the next execution request migration card.

@@ -2,9 +2,10 @@
 
 Lane: [`037-canonical-task-execution-request-and-pipeline-strict-lane.md`](../037-canonical-task-execution-request-and-pipeline-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Goal
 
@@ -23,6 +24,12 @@ Move embedded task dispatch through `TaskExecutionRequestBuilder`.
 This card is complete when run-array task steps cross the execution request
 boundary without changing output or repo-target behavior.
 
+## Closeout
+
+`run_embedded_task(...)` now builds a `TaskExecutionRequest` with
+`ExecutionSurface::RunArray` before entering the existing task execution
+pipeline.
+
 ## Validation
 
 - targeted run-array task test
@@ -30,4 +37,4 @@ boundary without changing output or repo-target behavior.
 
 ## Next Task
 
-Implement this card.
+Choose the next execution request migration card.
