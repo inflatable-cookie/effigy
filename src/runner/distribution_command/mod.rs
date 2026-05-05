@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use effigy_distribution::{effective_brew_formula, effective_repo_url, load_distribution_policy};
 
-use crate::runner::command_context::{current_working_dir, resolve_repo_root};
+use crate::runner::command_context::resolve_active_repo_root;
 use effigy_cli::{DistributionArgs, DistributionSubcommand};
 
 use super::error::RunnerError;
@@ -12,8 +12,7 @@ use super::error::RunnerError;
 mod ops;
 
 pub(super) fn run_distribution(args: DistributionArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
+    let resolved = resolve_active_repo_root(args.repo_override.clone())?;
     let repo_root = resolved.resolved_root;
     let distribution_policy = load_distribution_policy(&repo_root)?;
 

@@ -17,14 +17,13 @@ use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 use std::io::IsTerminal;
 use std::path::Path;
 
-use crate::runner::command_context::{current_working_dir, resolve_repo_root};
+use crate::runner::command_context::resolve_active_repo_root;
 use crate::runner::container_command::run_container;
 
 use super::error::RunnerError;
 
 pub(super) fn run_system(args: SystemArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
+    let resolved = resolve_active_repo_root(args.repo_override.clone())?;
     let repo_root = resolved.resolved_root;
     let container_name = workspace::resolve_public_workspace_container(
         &repo_root,

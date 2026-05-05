@@ -2,9 +2,10 @@
 
 Generation: `g03`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-05
+Started: 2026-05-05
 Depends on: [`031-plugin-ready-container-manager-facade.md`](./031-plugin-ready-container-manager-facade.md), [`032-canonical-task-execution-request-and-pipeline.md`](./032-canonical-task-execution-request-and-pipeline.md)
 
 ## Goal
@@ -29,4 +30,5 @@ surfaces, then remove duplicated glue.
 
 ## Next Task
 
-Wait for `g03.031` and `g03.032` to provide stable APIs.
+Complete card
+[`389-migrate-stateful-runner-context-callers.md`](../../specs/batch-cards/389-migrate-stateful-runner-context-callers.md).

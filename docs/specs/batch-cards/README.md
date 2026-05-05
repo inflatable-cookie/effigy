@@ -13,6 +13,17 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`387-inventory-runtime-container-cleanup-targets.md`](./387-inventory-runtime-container-cleanup-targets.md)
+  is complete. It inventoried the remaining runtime/container cleanup targets
+  after `g03.030` through `g03.032`.
+
+- [`388-migrate-simple-runner-context-callers.md`](./388-migrate-simple-runner-context-callers.md)
+  is complete. It migrated simple command cwd/root callers to an explicit runtime
+  context helper.
+
+- [`389-migrate-stateful-runner-context-callers.md`](./389-migrate-stateful-runner-context-callers.md)
+  is ready. It migrates remaining stateful cwd/root callers.
+
 - [`382-scaffold-container-manager-contract-and-crate.md`](./382-scaffold-container-manager-contract-and-crate.md)
   is complete. It opened `g03.031` and created the first
   `effigy-container-manager` facade slice.
@@ -31,9 +42,6 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`386-close-container-manager-facade-lane.md`](./386-close-container-manager-facade-lane.md)
   is complete. It closed `g03.031` with drift guards and contract/readme
   alignment.
-
-- No active ready card. `g03.031` is complete; choose the next roadmap
-  deliberately.
 
 - [`381-migrate-embedded-task-dispatch-to-execution-request.md`](./381-migrate-embedded-task-dispatch-to-execution-request.md)
   is complete. It moved embedded task dispatch onto `TaskExecutionRequestBuilder`.

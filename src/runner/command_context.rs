@@ -21,6 +21,13 @@ pub(super) use root::{resolve_command_root, resolve_repo_root};
 pub(super) use runtime::{active_runtime_context, with_runtime_context};
 pub(super) use tasks::task_selection_precedence_notes;
 
+pub(in crate::runner) fn resolve_active_repo_root(
+    repo_override: Option<std::path::PathBuf>,
+) -> Result<effigy_core::resolver::ResolvedTarget, super::error::RunnerError> {
+    let cwd = current_working_dir()?;
+    resolve_repo_root(cwd, repo_override)
+}
+
 fn task_repo_override(cmd: &Command) -> Option<std::path::PathBuf> {
     parse_task_runtime_args(match cmd {
         Command::Task(task) => &task.args,

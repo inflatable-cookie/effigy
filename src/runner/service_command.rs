@@ -4,12 +4,11 @@ use effigy_catalog::CatalogResolver;
 use effigy_cli::{ServiceArgs, ServiceSubcommand};
 use serde_json::json;
 
-use super::command_context::{current_working_dir, resolve_repo_root};
+use super::command_context::resolve_active_repo_root;
 use super::error::RunnerError;
 
 pub(super) fn run_service(args: ServiceArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
+    let resolved = resolve_active_repo_root(args.repo_override.clone())?;
     let repo_root = resolved.resolved_root;
     let resolver = catalog_resolver(&repo_root);
 

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use effigy_cli::{DeployArgs, DeployExportProvider, DeploySubcommand};
 
-use super::command_context::{current_working_dir, resolve_repo_root};
+use super::command_context::resolve_active_repo_root;
 use super::error::RunnerError;
 
 mod derive;
@@ -14,8 +14,7 @@ mod render;
 use model::*;
 
 pub(super) fn run_deploy(args: DeployArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd, args.repo_override)?;
+    let resolved = resolve_active_repo_root(args.repo_override)?;
 
     match args.subcommand {
         DeploySubcommand::Model => run_deploy_model(&resolved.resolved_root, args.output_json),

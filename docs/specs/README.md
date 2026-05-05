@@ -26,7 +26,7 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`038-plugin-ready-container-manager-facade-strict-lane.md`](./038-plugin-ready-container-manager-facade-strict-lane.md)
+- [`039-runtime-container-caller-migration-and-cleanup-strict-lane.md`](./039-runtime-container-caller-migration-and-cleanup-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -65,5 +65,5 @@ Recently completed:
 
 ## Next Task
 
-Choose the next queued roadmap deliberately. The likely next roadmap is
-`g03.033`.
+Complete card
+[`389-migrate-stateful-runner-context-callers.md`](./batch-cards/389-migrate-stateful-runner-context-callers.md).

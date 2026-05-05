@@ -1,8 +1,7 @@
 use super::*;
 
 pub(in crate::runner) fn run_demo(args: DemoArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
+    let resolved = resolve_active_repo_root(args.repo_override.clone())?;
     let repo_root = resolved.resolved_root;
     let manifest_path = repo_root.join("effigy.toml");
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;

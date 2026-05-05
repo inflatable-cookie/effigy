@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use effigy_docs_policy::{resolve_repo_input as resolve_docs_repo_input, DocsPolicyError};
 
-use crate::runner::command_context::{current_working_dir, resolve_repo_root};
+use crate::runner::command_context::resolve_active_repo_root;
 use crate::runner::manifest::{load_task_manifest, ManifestDocsPolicyConfig};
 use effigy_cli::{DocsArgs, DocsSubcommand};
 
@@ -19,8 +19,7 @@ const DEFAULT_LOGS_DIR: &str = "docs/logs";
 const DEFAULT_WORKFLOW_DOCS_DIR: &str = "docs";
 
 pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
+    let resolved = resolve_active_repo_root(args.repo_override.clone())?;
     let repo_root = resolved.resolved_root;
 
     match args.subcommand {

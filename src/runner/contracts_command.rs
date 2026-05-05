@@ -6,14 +6,13 @@ use effigy_contracts::{
     prepare_check_json, run_prepared_check_json, validate_selection, ContractsError,
 };
 
-use crate::runner::command_context::{current_working_dir, resolve_repo_root};
+use crate::runner::command_context::resolve_active_repo_root;
 use effigy_cli::{ContractsArgs, ContractsSelectionPrintMode, ContractsSubcommand};
 
 use super::error::RunnerError;
 
 pub(super) fn run_contracts(args: ContractsArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
+    let resolved = resolve_active_repo_root(args.repo_override.clone())?;
     let repo_root = resolved.resolved_root;
 
     match args.subcommand {
