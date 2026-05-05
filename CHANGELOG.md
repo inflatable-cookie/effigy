@@ -100,6 +100,10 @@ During v0.x, MINOR bumps may include breaking changes.
   service. This stops DecodeLabs `web` containers from keeping stale upstream
   `app` IPs after recovery and removes the `502 Bad Gateway` footgun seen on
   Contact Patch-style stacks.
+- Generated MariaDB and Postgres catalog services now use managed named volumes
+  for database data instead of repo-local bind mounts. This avoids Colima
+  host-mount ownership drift where database files appeared as root-owned inside
+  the DB container and caused permission errors during migrations.
 
 ## [0.3.3] - 2026-05-03
 

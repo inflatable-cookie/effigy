@@ -739,17 +739,17 @@ fn full_stack_with_all_services() {
         validate_service(&doc, name);
     }
 
-    // Should have named volumes for storage and search. The database uses a
-    // repo-local bind mount.
-    assert_eq!(result.volumes.len(), 2);
+    // Should have named volumes for database, storage, and search.
+    assert_eq!(result.volumes.len(), 3);
     let vol_names: Vec<&str> = result.volumes.iter().map(|v| v.name.as_str()).collect();
+    assert!(vol_names.iter().any(|n| n.contains("db-data")));
     assert!(vol_names.iter().any(|n| n.contains("storage")));
     assert!(vol_names.iter().any(|n| n.contains("search")));
     assert!(
         result
             .compose_yaml
-            .contains("./.effigy/runtime/data/db/mysql:/var/lib/mysql"),
-        "should have a repo-local mariadb bind mount:\n{}",
+            .contains("full-stack-db-data:/var/lib/mysql"),
+        "should have a named mariadb data volume:\n{}",
         result.compose_yaml
     );
 }
