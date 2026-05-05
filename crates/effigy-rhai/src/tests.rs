@@ -73,6 +73,18 @@ fn callbacks() -> HostCallbacks {
                 stderr: String::new(),
             })
         }),
+        container_exec_with_options: Arc::new(|_, name, service, command, _| {
+            Ok(HostCommandOutput {
+                status: 0,
+                success: true,
+                stdout: format!(
+                    "exec:{name}:{}:{}",
+                    service.unwrap_or(""),
+                    command.join(",")
+                ),
+                stderr: String::new(),
+            })
+        }),
     }
 }
 
@@ -245,14 +257,14 @@ fn execute_rhai_script_process_helpers_accept_cwd_and_env_options() {
             let streamed = process::stream(
                 "sh",
                 ["-lc", "test \"$(cat)\" = streamed-input && pwd | grep '/nested$' >/dev/null && test \"$EFFIGY_RHAI_TEST\" = streamed"],
-                #{ cwd: "nested", env: #{ EFFIGY_RHAI_TEST: "streamed" }, stdin_file: "input.txt" },
+                #{ cwd: "nested", env: #{ EFFIGY_RHAI_TEST: "streamed" }, stdin_file: "../input.txt" },
             );
             if !streamed["success"] { throw("streamed options"); }
 
             let teed = process::tee(
                 "sh",
                 ["-lc", "printf '%s|%s|%s' \"$(cat)\" \"$PWD\" \"$EFFIGY_RHAI_TEST\""],
-                #{ cwd: "nested", env: #{ EFFIGY_RHAI_TEST: "teed" }, stdin_file: "input.txt" },
+                #{ cwd: "nested", env: #{ EFFIGY_RHAI_TEST: "teed" }, stdin_file: "../input.txt" },
             );
             if !str::starts_with(teed["stdout"], "streamed-input|") { throw("teed stdin"); }
             if !str::ends_with(teed["stdout"], "/nested|teed") { throw("teed options"); }
@@ -632,6 +644,7 @@ fn run_effigy_json_surfaces_callback_errors_as_runtime_errors() {
         container_down: callbacks().container_down,
         container_shell: callbacks().container_shell,
         container_exec: callbacks().container_exec,
+        container_exec_with_options: callbacks().container_exec_with_options,
     };
 
     let error = execute_rhai_script(&context, "effigy::run_json([\"demo\"]);", &[], &callbacks)

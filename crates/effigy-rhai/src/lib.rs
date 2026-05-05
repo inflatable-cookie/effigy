@@ -336,7 +336,7 @@ fn resolve_process_execution_options(
     let stdin_file = options
         .get("stdin_file")
         .map(|value| match value {
-            Value::String(value) => Ok(Some(resolve_runtime_path(base_cwd, value))),
+            Value::String(value) => Ok(Some(resolve_runtime_path(&cwd, value))),
             Value::Null => Ok(None),
             _ => Err(rhai_runtime_error("`stdin_file` must be a string")),
         })

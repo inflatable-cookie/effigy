@@ -84,11 +84,16 @@ fn host_dump_path(dump_repo_path) {
     return path::join(repo_root, dump_repo_path);
 }
 
-fn import_dump(container_name, db_password, database, dump_repo_path, dump_name) {
-    let mysql_args = ["mysql", "--skip-ssl", "-h", "db", "-uroot"];
+fn mysql_cli_args(db_password) {
+    let args = ["mysql", "--skip-ssl", "-h", "db", "-uroot"];
     if db_password != "" {
-        mysql_args.push("--password=" + db_password);
+        args.push("--password=" + db_password);
     }
+    return args;
+}
+
+fn import_dump(container_name, db_password, database, dump_repo_path, dump_name) {
+    let mysql_args = mysql_cli_args(db_password);
     let import_path = host_dump_path(dump_repo_path);
     let reset_sql = "DROP DATABASE IF EXISTS `" + database + "`; CREATE DATABASE `" + database + "`;";
 
@@ -132,7 +137,7 @@ let db_password_path = "containers." + container_name + ".services.db.params.pas
 let db_password = optional_config_string(db_password_path, "secret");
 let dumps_dir = optional_env_string(
     "EFFIGY_BOOTSTRAP_DB_SEEDS_DIR",
-    path::join(repo_root, ".effigy/local/db-seeds"),
+    ".effigy/local/db-seeds",
 );
 let databases = declared_databases();
 let seed_specs = seed_specs_from_env_or_file(dumps_dir);
