@@ -43,7 +43,7 @@ Current milestones:
 - [`026-runner-module-decomposition.md`](./026-runner-module-decomposition.md) (complete; split oversized runner modules into focused submodules without changing behavior)
 - [`027-interactive-cli-prompt-expansion-and-guardrails.md`](./027-interactive-cli-prompt-expansion-and-guardrails.md) (complete; the shared prompt policy, bootstrap path-reuse confirmation, container data confirmations, and broad `unlock` confirmation have landed)
 - [`028-next-v0-x-readiness-and-roadmap-selection.md`](./028-next-v0-x-readiness-and-roadmap-selection.md) (complete; selected `g03.029` as the next live roadmap)
-- [`029-v0-x-release-readiness-audit-and-gate-alignment.md`](./029-v0-x-release-readiness-audit-and-gate-alignment.md) (active; auditing current `v0.x` release readiness without release execution)
+- [`029-v0-x-release-readiness-audit-and-gate-alignment.md`](./029-v0-x-release-readiness-audit-and-gate-alignment.md) (complete; audited current `v0.x` release readiness without release execution)
 
 Architecture anchor:
 
@@ -59,10 +59,11 @@ Rules:
 - `g03.019` through `g03.026` are now complete
 - `g03.019` through `g03.027` are now complete
 - `g03.019` through `g03.028` are now complete
-- `g03.029` is active
-- strict lane `035` is active
-- current ready card: `373`
+- `g03.019` through `g03.029` are now complete
+- no strict lane is active
+- no ready card is active
 
 ## Next Task
 
-Execute [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](../../specs/batch-cards/373-audit-v0-x-release-readiness-and-gate-alignment.md).
+No active ready card. A human can request the next release flow explicitly, or
+the repo can stay in planning.

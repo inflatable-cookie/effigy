@@ -3,12 +3,14 @@
 Status: Live
 Owner: Platform
 Created: 2026-02-27
-Updated: 2026-05-04
+Updated: 2026-05-05
 Related: [Distribution Channels](./distribution-channels.md)
 
 ## 1) Purpose
 
-Define the minimum release contract required before promoting Effigy to stable distribution channels (crates + Homebrew).
+Define the minimum release contract required before promoting Effigy through
+the supported stable distribution channels: GitHub Releases, Homebrew, and
+tagged source install.
 
 This contract is intentionally scoped to `v0.x` while feature shape is still converging.
 
@@ -65,11 +67,11 @@ A version can be tagged for channel publication only if all are true:
   - `effigy release verify-install --tag <tag>`
 - [ ] Release notes drafted with change summary and migration notes (if needed).
 - [ ] Rollback candidate tag identified (previous known-good).
-- [x] Distribution metadata validated (crate metadata, install docs, checksum path):
-  - `./scripts/check-distribution-metadata.sh [--tag <tag>]`
+- [x] Distribution metadata validated (package metadata, install docs, checksum path):
+  - `effigy distribution validate-metadata [--tag <tag>]`
 - [x] First-publish evidence artifacts can be validated and rendered into closeout log:
-  - `./scripts/validate-distribution-artifacts.sh --artifacts-dir <dir> [--expect-homebrew]`
-  - `./scripts/generate-distribution-closeout-log.sh --tag <tag> --artifacts-dir <dir> [--expect-homebrew]`
+  - `effigy distribution validate-artifacts --artifacts-dir <dir> [--expect-homebrew]`
+  - `effigy distribution generate-closeout --tag <tag> --artifacts-dir <dir> [--expect-homebrew]`
 
 Automation entrypoint:
 - `effigy release gates` (compatibility fallback: `cargo qa-release`)

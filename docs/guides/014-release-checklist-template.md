@@ -72,8 +72,8 @@ Owner: `name/team`
 
 ## 5) Channel Artifacts
 
-### Crates
-- [ ] `Cargo.toml` metadata verified.
+### GitHub Releases and Source Install
+- [ ] Package metadata verified.
 - [ ] Distribution metadata validation passes:
   - [ ] `effigy distribution validate-metadata --tag v0.__.__`
 - [ ] Tag points to intended commit.

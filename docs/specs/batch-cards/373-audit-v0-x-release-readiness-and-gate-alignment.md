@@ -2,9 +2,10 @@
 
 Lane: [`035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md`](../035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Goal
 
@@ -37,4 +38,12 @@ explicitly deferred.
 
 ## Next Task
 
-Execute this audit. Use non-destructive checks only.
+No active ready card. A human can request the next release flow explicitly, or
+the repo can stay in planning.
+
+## Closeout
+
+The audit is complete. `release status --json` reports no blockers and suggests
+`0.4.0`; `release prepare --plan --json` previews the expected version,
+changelog, and lockfile mutations without writing state; distribution metadata
+validation passes; and small release/distribution docs drift was repaired.

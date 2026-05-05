@@ -74,14 +74,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/020-distribution-channel-proof-and-first-publish-closeout.md` is complete; the distribution channel story is closed with Homebrew and GitHub Releases proven, source install documented, and crates.io intentionally excluded.
 - `g03/027-interactive-cli-prompt-expansion-and-guardrails.md` is complete; the shared prompt policy, bootstrap existing-path reuse confirmation, container data confirmations, and broad `unlock` confirmation have landed.
 - `g03/028-next-v0-x-readiness-and-roadmap-selection.md` is complete; it selected the next live roadmap target after prompt-lane closeout.
-- `g03/029-v0-x-release-readiness-audit-and-gate-alignment.md` is active; current `v0.x` release readiness is being audited without release execution.
+- `g03/029-v0-x-release-readiness-audit-and-gate-alignment.md` is complete; current `v0.x` release readiness was audited without release execution.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
-- [`g03.029`](./g03/029-v0-x-release-readiness-audit-and-gate-alignment.md)
-- [`../specs/035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md`](../specs/035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md)
-- current ready card: [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](../specs/batch-cards/373-audit-v0-x-release-readiness-and-gate-alignment.md)
+- No active strict lane.
+- No active ready card.
 
 ## Research Program
 
@@ -117,7 +116,8 @@ Before rollover:
 
 ## Next Task
 
-Execute [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](../specs/batch-cards/373-audit-v0-x-release-readiness-and-gate-alignment.md).
+No active ready card. A human can request the next release flow explicitly, or
+the repo can stay in planning.
 
 
 ## Historical language boundary

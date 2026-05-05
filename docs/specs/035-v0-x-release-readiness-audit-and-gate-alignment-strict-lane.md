@@ -2,9 +2,10 @@
 
 Roadmap: [`g03.029`](../roadmaps/g03/029-v0-x-release-readiness-audit-and-gate-alignment.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Purpose
 
@@ -32,7 +33,7 @@ line up before a human asks for a release flow.
 
 ## Current Ready Card
 
-[`373-audit-v0-x-release-readiness-and-gate-alignment.md`](./batch-cards/373-audit-v0-x-release-readiness-and-gate-alignment.md)
+No active ready card. This lane is complete.
 
 ## Exit Condition
 
@@ -41,4 +42,11 @@ readiness-doc drift found during the audit is repaired.
 
 ## Next Task
 
-Execute [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](./batch-cards/373-audit-v0-x-release-readiness-and-gate-alignment.md).
+No active ready card. A human can request the next release flow explicitly, or
+the repo can stay in planning.
+
+## Closeout
+
+The release-readiness audit completed with no non-destructive release-status
+blockers. Small release/distribution docs drift was repaired. Release gates
+were not run, and no release flow was initiated.

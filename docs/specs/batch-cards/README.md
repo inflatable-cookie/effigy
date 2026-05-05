@@ -13,8 +13,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- No active ready card. `g03.029` is complete.
+
 - [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](./373-audit-v0-x-release-readiness-and-gate-alignment.md)
-  is ready. It audits current `v0.x` release readiness without release
+  is complete. It audited current `v0.x` release readiness without release
   execution.
 
 - [`372-decide-next-live-roadmap-after-prompt-lane-closeout.md`](./372-decide-next-live-roadmap-after-prompt-lane-closeout.md)

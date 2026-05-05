@@ -69,7 +69,7 @@ Typical full distribution cycle:
 
 1. `effigy distribution preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env`
 2. `effigy distribution first-publish --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
-3. `effigy distribution validate-artifacts --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+3. `effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-vX.Y.Z`
 4. `effigy distribution generate-closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
 
 `first-publish` already runs `effigy release verify-install`, writes

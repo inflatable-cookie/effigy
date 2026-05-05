@@ -2,9 +2,10 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 Depends on: [`019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md`](./019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md), [`020-distribution-channel-proof-and-first-publish-closeout.md`](./020-distribution-channel-proof-and-first-publish-closeout.md), [`027-interactive-cli-prompt-expansion-and-guardrails.md`](./027-interactive-cli-prompt-expansion-and-guardrails.md), [`028-next-v0-x-readiness-and-roadmap-selection.md`](./028-next-v0-x-readiness-and-roadmap-selection.md)
 
 ## Problem
@@ -51,4 +52,11 @@ release flow.
 
 ## Next Task
 
-Execute [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](../../specs/batch-cards/373-audit-v0-x-release-readiness-and-gate-alignment.md).
+No active ready card. A human can request the next release flow explicitly, or
+the repo can stay in planning.
+
+## Closeout
+
+`g03.029` is complete. The audit found the non-destructive release status ready
+for a suggested `0.4.0` release, repaired small release/distribution docs
+drift, and did not initiate a release flow.
