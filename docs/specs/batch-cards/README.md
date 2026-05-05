@@ -26,8 +26,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
   stability.
 
 - [`402-add-bootstrap-target-repo-path-proof.md`](./402-add-bootstrap-target-repo-path-proof.md)
-  is ready. It proves bootstrap task execution keeps target repo path
+  is complete. It proved bootstrap task execution keeps target repo path
   authority.
+
+- [`403-add-inside-container-reentry-context-proof.md`](./403-add-inside-container-reentry-context-proof.md)
+  is ready. It proves inside-container re-entry keeps captured runtime context
+  stable.
 
 - [`387-inventory-runtime-container-cleanup-targets.md`](./387-inventory-runtime-container-cleanup-targets.md)
   is complete. It inventoried the remaining runtime/container cleanup targets

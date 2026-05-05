@@ -34,7 +34,7 @@ real project repos or production data.
 
 ## Current Ready Card
 
-[`402-add-bootstrap-target-repo-path-proof.md`](./batch-cards/402-add-bootstrap-target-repo-path-proof.md)
+[`403-add-inside-container-reentry-context-proof.md`](./batch-cards/403-add-inside-container-reentry-context-proof.md)
 
 ## Exit Condition
 
@@ -44,4 +44,4 @@ milestone has an explicit start point.
 
 ## Next Task
 
-Complete card `402`.
+Complete card `403`.

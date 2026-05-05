@@ -109,7 +109,7 @@ run = "sh ./scripts/child-setup.sh"
     .expect("write child manifest");
     fs::write(
         worktree.join("scripts/child-setup.sh"),
-        "#!/bin/sh\nset -eu\nprintf child-setup > child-setup.txt\n",
+        "#!/bin/sh\nset -eu\nprintf child-setup > child-setup.txt\npwd > child-pwd.txt\n",
     )
     .expect("write child setup");
     let mut perms = fs::metadata(worktree.join("scripts/child-setup.sh"))
@@ -153,12 +153,12 @@ run = "sh ./scripts/start.sh"
     .expect("write root manifest");
     fs::write(
         worktree.join("scripts/root-setup.sh"),
-        "#!/bin/sh\nset -eu\nprintf root-setup > root-setup.txt\n",
+        "#!/bin/sh\nset -eu\nprintf root-setup > root-setup.txt\npwd > root-pwd.txt\n",
     )
     .expect("write root setup");
     fs::write(
         worktree.join("scripts/start.sh"),
-        "#!/bin/sh\nset -eu\nprintf started > start.txt\n",
+        "#!/bin/sh\nset -eu\nprintf started > start.txt\npwd > start-pwd.txt\n",
     )
     .expect("write start script");
     for name in ["root-setup.sh", "start.sh"] {
@@ -285,7 +285,7 @@ fn bootstrap_help_is_command_specific() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("bootstrap Help"));
     assert!(stdout.contains(
-        "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>]... [--no-start] [--plan] [--json]"
+        "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--no-start] [--plan] [--json]"
     ));
     assert!(stdout.contains("child repo checkout"));
     assert!(!stdout.contains("release Help"));
@@ -348,9 +348,20 @@ fn bootstrap_executes_root_child_and_start_via_binary() {
     assert_eq!(parsed["result"]["start"]["ran"], true);
 
     let destination = cwd.join("remote");
+    let canonical_destination = destination.canonicalize().expect("canonical destination");
+    let canonical_child = destination
+        .join("child-app")
+        .canonicalize()
+        .expect("canonical child destination");
     assert_eq!(
         fs::read_to_string(destination.join("root-setup.txt")).expect("root setup marker"),
         "root-setup"
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join("root-pwd.txt"))
+            .expect("root setup cwd marker")
+            .trim(),
+        canonical_destination.display().to_string()
     );
     assert_eq!(
         fs::read_to_string(destination.join("child-app/child-setup.txt"))
@@ -358,8 +369,26 @@ fn bootstrap_executes_root_child_and_start_via_binary() {
         "child-setup"
     );
     assert_eq!(
+        fs::read_to_string(destination.join("child-app/child-pwd.txt"))
+            .expect("child setup cwd marker")
+            .trim(),
+        canonical_child.display().to_string()
+    );
+    assert_eq!(
         fs::read_to_string(destination.join("start.txt")).expect("start marker"),
         "started"
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join("start-pwd.txt"))
+            .expect("start cwd marker")
+            .trim(),
+        canonical_destination.display().to_string()
+    );
+    assert!(
+        !cwd.join("root-setup.txt").exists()
+            && !cwd.join("child-setup.txt").exists()
+            && !cwd.join("start.txt").exists(),
+        "bootstrap tasks should not write markers into invocation cwd"
     );
 }
 
