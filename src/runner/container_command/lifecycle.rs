@@ -449,8 +449,14 @@ mod tests {
             root.join("effigy.toml"),
             r#"
 [containers.web]
+primary_service = "app"
 working_dir = "/var/www/contact-patch"
-services = { db = { catalog = "mariadb" } }
+
+[containers.web.services.app]
+catalog = "php-fpm"
+
+[containers.web.services.db]
+catalog = "mariadb"
 "#,
         )
         .expect("write manifest");
@@ -469,7 +475,11 @@ services = { db = { catalog = "mariadb" } }
             root.join("effigy.toml"),
             r#"
 [containers.web]
+primary_service = "app"
 working_dir = "/var/www/contact-patch"
+
+[containers.web.services.app]
+catalog = "php-fpm"
 "#,
         )
         .expect("write manifest");

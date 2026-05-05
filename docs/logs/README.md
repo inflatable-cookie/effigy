@@ -76,6 +76,9 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/05-105807-v0-x-release-readiness-audit.md`](./2026-05/05-105807-v0-x-release-readiness-audit.md)
+- [`2026-05/05-105448-next-roadmap-selection-decision.md`](./2026-05/05-105448-next-roadmap-selection-decision.md)
+- [`2026-05/05-105258-next-roadmap-selection-lane-opened.md`](./2026-05/05-105258-next-roadmap-selection-lane-opened.md)
 - [`2026-05/05-104642-interactive-cli-prompt-expansion-lane-closeout.md`](./2026-05/05-104642-interactive-cli-prompt-expansion-lane-closeout.md)
 - [`2026-05/05-104600-post-broad-unlock-confirmation-boundary.md`](./2026-05/05-104600-post-broad-unlock-confirmation-boundary.md)
 - [`2026-05/05-104051-broad-unlock-confirmation.md`](./2026-05/05-104051-broad-unlock-confirmation.md)
