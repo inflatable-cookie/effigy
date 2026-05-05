@@ -45,6 +45,7 @@ The first covered surfaces are:
 - `effigy container shell`
 - run-array builtin command re-entry
 - Rhai `run_effigy_command`
+- Rhai `exec::run(...)`
 - demo task re-entry through normal task dispatch
 
 This contract covers local execution semantics. It does not define provider
@@ -76,6 +77,8 @@ Current shared ownership should converge around:
 | Responsibility | Owner |
 | --- | --- |
 | Repo targeting and resolved root semantics | `src/runner/command_context/*` |
+| Boot-time runtime context | `effigy_context::EffigyRuntimeContext` |
+| Task execution request and plan construction | `effigy_execution::TaskExecutionRequestBuilder`; contract `013-task-execution-request-contract.md` |
 | Embedded command repo targeting | shared helper under `src/runner/command_context/*` or adjacent shared runner module |
 | Execution binding resolution | `src/runner/execute/binding.rs` |
 | Standard routing policy | `src/runner/execute/routing.rs` plus `crates/effigy-exec` |
@@ -110,6 +113,7 @@ The table below describes the required behavior by surface.
 | `effigy container shell` | command-context resolved root | explicit container selection | explicit operator path; runtime must already satisfy shell contract or prepare through shared shell-ready path once widened | shell-visible container contract must match workspace shell guarantees where both target the same runtime | no lease | session-owned | session ownership model | interactive only | not applicable | must set and respect shared handoff marker when re-entering Effigy |
 | Run-array builtin re-entry | parent task repo target | shared embedded-runner entry | delegated to the resolved inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | nested command projection rules only | same as delegated inner surface | must not invent its own recursion rules |
 | Rhai `run_effigy_command` | script repo target | shared embedded-runner entry | delegated to the resolved inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | nested command projection rules only | same as delegated inner surface | must not invent its own recursion rules |
+| Rhai `exec::run(...)` | script repo target from captured runtime context | `TaskExecutionRequestBuilder` command intent | resolved execution plan route | same as resolved execution route | non-shell container paths refresh lease where activation owns warm reuse | none | activation-owned | command-shaped | not applicable | container intent inside handoff resolves to local container handoff |
 | Demo task re-entry | demo repo target | shared task dispatch entry | delegated to the resolved inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | demo may wrap output, not runtime semantics | same as delegated inner surface | same as delegated inner surface |
 
 ## Convergence rules
@@ -128,6 +132,23 @@ The following must converge across covered surfaces.
 - binding resolution must happen once per surface entry
 - downstream code may consume the resolved binding, but should not silently
   re-derive a different one from local context
+
+### Request construction
+
+- direct and embedded task dispatch must start from
+  `TaskExecutionRequestBuilder` once the caller has its selector, command argv,
+  runtime context, surface label, output mode, runtime policy, handoff policy,
+  cleanup policy, and environment plan
+- request construction must preserve the captured `EffigyRuntimeContext`
+  instead of re-probing process cwd or handoff env vars
+- Rhai `exec::run(...)` must submit command intent and runtime policy through
+  the request builder instead of choosing host process execution versus
+  container exec locally
+- `stdin_file`, cwd, and env overrides must travel through
+  `ExecutionEnvironmentPlan`
+- equivalent inputs across direct CLI, bootstrap, Rhai, run-array, deferral,
+  demo, and managed task surfaces should produce equivalent resolved plans
+  unless this contract names a deliberate surface difference
 
 ### Runtime activation
 
@@ -161,6 +182,8 @@ The following must converge across covered surfaces.
 
 - all Effigy-in-Effigy re-entry must respect the shared handoff marker
 - nested callers must not each define their own recursion escape hatch
+- request resolution must turn container intent into local container handoff
+  when the captured runtime context is already inside Effigy's handoff marker
 
 ## Allowed differences
 
@@ -225,6 +248,7 @@ Update this contract when Effigy changes:
 
 - which execution surfaces are public or embedded entrypoints
 - repo-targeting propagation rules
+- runtime context ownership or request-builder fields
 - binding-resolution ownership
 - activation semantics for `exec`, deferred execution, bootstrap, or shell
   handoff
@@ -241,6 +265,9 @@ Minimum proof areas:
 
 - `effigy exec` parity with non-shell container task activation
 - repo-targeting parity across run-array, Rhai, bootstrap, and direct CLI
+- resolved plan parity across direct task, bootstrap task, and Rhai task
+- Rhai `exec::run(...)` container-targeted command proof with `stdin_file`
+- inside-container handoff proof for container-targeted requests
 - bootstrap `start` parity with direct `dev` or workspace shell semantics
 - deferred versus explicit container-task lease parity
 - interactive ownership parity across workspace, managed handoff, and
@@ -249,6 +276,7 @@ Minimum proof areas:
 
 ## Next Task
 
-Use this contract to centralize repo targeting and embedded command re-entry
-first, then move `exec` and the remaining container-backed activation surfaces
-onto the shared runtime activation contract.
+Use this contract with `011-runtime-context-contract.md`,
+`012-container-manager-contract.md`, and
+`013-task-execution-request-contract.md` as the durable authority set for
+runtime/context/container/execution convergence.

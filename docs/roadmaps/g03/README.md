@@ -49,7 +49,7 @@ Current milestones:
 - [`032-canonical-task-execution-request-and-pipeline.md`](./032-canonical-task-execution-request-and-pipeline.md) (complete)
 - [`033-runtime-container-caller-migration-and-cleanup.md`](./033-runtime-container-caller-migration-and-cleanup.md) (complete)
 - [`034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md) (complete)
-- [`035-contract-promotion-public-cleanup-breaks-and-closeout.md`](./035-contract-promotion-public-cleanup-breaks-and-closeout.md) (active; lane `041` is open and card `410` is ready)
+- [`035-contract-promotion-public-cleanup-breaks-and-closeout.md`](./035-contract-promotion-public-cleanup-breaks-and-closeout.md) (active; lane `041` is open and card `411` is ready)
 
 Architecture anchor:
 
@@ -72,8 +72,8 @@ Rules:
 - `g03.033` is complete
 - `g03.034` is complete
 - `g03.035` is active as strict lane `041`
-- ready card: [`410-widen-execution-convergence-contract-for-request-builder.md`](../../specs/batch-cards/410-widen-execution-convergence-contract-for-request-builder.md)
+- ready card: [`411-update-package-map-for-runtime-container-execution-crates.md`](../../specs/batch-cards/411-update-package-map-for-runtime-container-execution-crates.md)
 
 ## Next Task
 
-Complete card `410`.
+Complete card `411`.
