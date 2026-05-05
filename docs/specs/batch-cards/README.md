@@ -58,8 +58,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. It updated the package map for the new core crates.
 
 - [`412-widen-container-runtime-contract-for-manager-and-context.md`](./412-widen-container-runtime-contract-for-manager-and-context.md)
-  is ready. It widens the runtime contract around manager and context
+  is complete. It widened the runtime contract around manager and context
   ownership.
+
+- [`413-decide-cleanup-break-and-changelog-boundary.md`](./413-decide-cleanup-break-and-changelog-boundary.md)
+  is ready. It decides whether a changelog entry is needed.
 
 - [`387-inventory-runtime-container-cleanup-targets.md`](./387-inventory-runtime-container-cleanup-targets.md)
   is complete. It inventoried the remaining runtime/container cleanup targets

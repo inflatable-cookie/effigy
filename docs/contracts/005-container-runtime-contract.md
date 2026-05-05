@@ -35,6 +35,7 @@ The first covered surfaces are:
 - standard routed task execution
 - `effigy workspace`
 - bootstrap-driven container task execution
+- Rhai container-targeted execution helpers
 
 Direct operator use of raw compose commands is outside this contract.
 
@@ -52,6 +53,7 @@ When Effigy routes work into a container-backed runtime, it should guarantee:
 
 The runtime contract derives from:
 
+- the captured `EffigyRuntimeContext`
 - the effective manifest
 - the resolved container policy
 - the generated compose/runtime metadata
@@ -59,6 +61,9 @@ The runtime contract derives from:
 
 It must not depend on whether a user happened to start the runtime previously
 through `dev`, `workspace`, `container up`, or `bootstrap`.
+
+It must also not depend on caller-local cwd, env, Docker, Colima, or nerdctl
+probing in runner command modules.
 
 ## Runtime prep contract
 
@@ -77,6 +82,9 @@ The runtime-prep phase owns:
 - refreshing non-shell task leases when Effigy owns warm-runtime reuse
 
 Surface-specific presentation may differ. The prep contract must not.
+
+Runtime prep must consume captured context facts and typed execution policy. It
+must not rediscover invocation cwd or handoff state after request construction.
 
 ## Handoff contract
 
@@ -101,6 +109,30 @@ Meaning:
   consistently across managed and standard surfaces
 
 The marker name and meaning are product contract, not incidental plumbing.
+`EffigyRuntimeContext` captures marker presence at process entry; downstream
+runtime code should consume that captured state when a context is available.
+
+## Container manager contract
+
+Runner-facing container operations must route through `ContainerManager`.
+
+This covers:
+
+- backend selection
+- compose invocation shape
+- container exec and shell operation shape
+- copy, logs, status, stats, up, and down operation shape
+- backend-owned repair or retry behavior
+- attached-session interrupt closeout
+- internal operation reports
+
+Backend-specific Docker Compose and Colima/nerdctl behavior belongs behind the
+manager facade. Runner command modules may request a container operation, but
+must not branch on backend internals or construct `docker`, `colima`, or
+`nerdctl` process commands locally.
+
+The detailed manager contract lives in
+`012-container-manager-contract.md`.
 
 ## Activation ownership
 
@@ -135,6 +167,7 @@ This covers:
 - standard routed tasks with `run_in = "container"`
 - deferred requests with `[defer].run_in = "container"`
 - bootstrap `run` steps that dispatch into a container without opening a shell
+- Rhai `exec::run(...)` requests with container runtime policy
 
 Contract:
 
@@ -146,6 +179,8 @@ Contract:
   explicit task routing
 
 This is the required shared contract for warm non-shell container reuse.
+Task-shaped requests should reach this contract through
+`TaskExecutionRequestBuilder` and a resolved execution plan.
 
 ## Alias contract
 
@@ -260,6 +295,9 @@ The minimum proof set should cover:
   guarantees
 - runtime prep repairing backend-sensitive gaps before the user command runs
 - compatibility behavior on the supported Colima + `nerdctl compose` path
+- runner container commands routing through `ContainerManager`
+- container-targeted execution plans consuming captured runtime context instead
+  of caller-local cwd/env probes
 
 ## Drift triggers
 
@@ -270,12 +308,12 @@ Update this contract when Effigy changes:
 - the boundary between gateway-owned and runtime-owned alias behavior
 - the runtime-prep steps required before exec or handoff
 - the supported backend fallback model
+- runner-facing container manager operation ownership
+- runtime context facts used by container-backed execution
 
 ## Next Task
 
-Use this contract to drive `g03.005`:
-
-- extract one shared runtime-prep API
-- centralize handoff-marker ownership
-- make alias reconciliation run through that shared prep path instead of
-  surface-specific hooks
+Use this contract with `011-runtime-context-contract.md`,
+`012-container-manager-contract.md`, and
+`013-task-execution-request-contract.md` as the durable authority set for
+container-backed local runtime behavior.

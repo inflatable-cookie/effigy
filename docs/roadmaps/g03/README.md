@@ -49,7 +49,7 @@ Current milestones:
 - [`032-canonical-task-execution-request-and-pipeline.md`](./032-canonical-task-execution-request-and-pipeline.md) (complete)
 - [`033-runtime-container-caller-migration-and-cleanup.md`](./033-runtime-container-caller-migration-and-cleanup.md) (complete)
 - [`034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md) (complete)
-- [`035-contract-promotion-public-cleanup-breaks-and-closeout.md`](./035-contract-promotion-public-cleanup-breaks-and-closeout.md) (active; lane `041` is open and card `412` is ready)
+- [`035-contract-promotion-public-cleanup-breaks-and-closeout.md`](./035-contract-promotion-public-cleanup-breaks-and-closeout.md) (active; lane `041` is open and card `413` is ready)
 
 Architecture anchor:
 
@@ -72,8 +72,8 @@ Rules:
 - `g03.033` is complete
 - `g03.034` is complete
 - `g03.035` is active as strict lane `041`
-- ready card: [`412-widen-container-runtime-contract-for-manager-and-context.md`](../../specs/batch-cards/412-widen-container-runtime-contract-for-manager-and-context.md)
+- ready card: [`413-decide-cleanup-break-and-changelog-boundary.md`](../../specs/batch-cards/413-decide-cleanup-break-and-changelog-boundary.md)
 
 ## Next Task
 
-Complete card `412`.
+Complete card `413`.
