@@ -32,10 +32,10 @@ version = "11.0"
         seed_script.display()
     );
     assert!(
-        seed_script_source.contains(r#"container::exec(container_name, "db", mysql_args + ["-e", reset_sql])"#)
-            && seed_script_source.contains(r#"#{ stdin_file: import_path }"#)
+        seed_script_source.contains(r#"exec::run(mysql_args + ["-e", reset_sql], exec_options)"#)
+            && seed_script_source.contains(r#"#{ run_in: "container", container: container_name, service: "db", stdin_file: import_path }"#)
             && seed_script_source.contains(r#"return path::join(repo_root, dump_repo_path);"#),
-        "decodelabs seed helper should import dumps through the db service with host-file stdin handoff at {}",
+        "decodelabs seed helper should import dumps through the execution builder with host-file stdin handoff at {}",
         seed_script.display()
     );
     let env_script = bundle_root.join("scripts/write-env-if-present.rhai");

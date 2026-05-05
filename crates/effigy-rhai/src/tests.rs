@@ -264,7 +264,14 @@ fn execute_rhai_script_exposes_exec_run_helper() {
 
             let container = exec::run(
                 ["mysql", "app"],
-                #{ run_in: "container", container: "web", service: "db", stdin_file: "input.sql" },
+                #{
+                    run_in: "container",
+                    container: "web",
+                    service: "db",
+                    cwd: "db",
+                    stdin_file: "../input.sql",
+                    env: #{ MYSQL_PWD: "secret" },
+                },
             );
             if !container["success"] { throw("container exec"); }
             if container["stdout"] != "exec:web:db:mysql,app" { throw("container stdout"); }
@@ -273,7 +280,47 @@ fn execute_rhai_script_exposes_exec_run_helper() {
             if container["route"]["service"] != "db" { throw("container service"); }
         "#;
 
-    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+    let captured = Arc::new(Mutex::new(None::<Value>));
+    let captured_exec = Arc::clone(&captured);
+    let mut host_callbacks = callbacks();
+    host_callbacks.container_exec_with_options = Arc::new(move |_, _, _, _, options| {
+        *captured_exec.lock().expect("capture lock") = Some(options);
+        Ok(HostCommandOutput {
+            status: 0,
+            success: true,
+            stdout: "exec:web:db:mysql,app".to_owned(),
+            stderr: String::new(),
+        })
+    });
+
+    fs::create_dir_all(context.cwd.join("db")).expect("db cwd");
+    execute_rhai_script(&context, script, &[], &host_callbacks).expect("execute");
+    let captured = captured
+        .lock()
+        .expect("capture lock")
+        .clone()
+        .expect("container exec options");
+    assert_eq!(
+        captured["cwd"],
+        serde_json::json!(context
+            .cwd
+            .join("db")
+            .canonicalize()
+            .expect("canonical cwd")
+            .display()
+            .to_string())
+    );
+    assert_eq!(
+        captured["stdin_file"],
+        serde_json::json!(context
+            .cwd
+            .join("input.sql")
+            .canonicalize()
+            .expect("canonical stdin")
+            .display()
+            .to_string())
+    );
+    assert_eq!(captured["env"]["MYSQL_PWD"], serde_json::json!("secret"));
 }
 
 #[test]
@@ -320,7 +367,7 @@ fn execute_rhai_script_proves_decodelabs_mysql_seed_uses_container_exec_with_std
                     run_in: "container",
                     container: "web",
                     service: "db",
-                    stdin_file: "bundle/database/seeds/contactpatch.sql",
+                    stdin_file: "database/seeds/contactpatch.sql",
                 },
             );
             if !result["success"] { throw("mysql seed failed"); }
@@ -350,9 +397,21 @@ fn execute_rhai_script_proves_decodelabs_mysql_seed_uses_container_exec_with_std
     );
     assert_eq!(
         captured.4["stdin_file"],
-        serde_json::json!("bundle/database/seeds/contactpatch.sql")
+        serde_json::json!(seed_path
+            .canonicalize()
+            .expect("canonical seed")
+            .display()
+            .to_string())
     );
-    assert_eq!(captured.4["run_in"], serde_json::json!("container"));
+    assert_eq!(
+        captured.4["cwd"],
+        serde_json::json!(context
+            .cwd
+            .canonicalize()
+            .expect("canonical cwd")
+            .display()
+            .to_string())
+    );
 }
 
 #[test]
@@ -904,6 +963,35 @@ fn first_party_rhai_process_calls_are_allowlisted() {
     assert!(
         violations.is_empty(),
         "first-party Rhai process helper usage must be explicitly allowlisted or replaced with typed host helpers: {}",
+        violations.join(", ")
+    );
+}
+
+#[test]
+fn first_party_rhai_scripts_use_exec_run_for_container_commands() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("repo root")
+        .to_path_buf();
+    let scripts = collect_rhai_scripts(&repo_root);
+    let mut violations = Vec::new();
+    for script in scripts {
+        let contents = fs::read_to_string(&script).expect("read script");
+        if contents.contains("container::exec(") {
+            violations.push(
+                script
+                    .strip_prefix(&repo_root)
+                    .unwrap_or(&script)
+                    .display()
+                    .to_string(),
+            );
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "first-party Rhai scripts must use exec::run(..., #{{ run_in: \"container\", ... }}) for container commands: {}",
         violations.join(", ")
     );
 }

@@ -757,7 +757,7 @@ fn run_execution_request(
 
     let output = match &plan.route {
         ExecutionRoute::Host | ExecutionRoute::LocalContainerHandoff { .. } => {
-            run_exec_host_capture(context, &command, options)?
+            run_exec_host_capture_with_environment(context, &command, &plan.request.environment)?
         }
         ExecutionRoute::Container { container, service } => {
             let container = container.as_deref().unwrap_or_default();
@@ -766,7 +766,7 @@ fn run_execution_request(
                 container,
                 service.as_deref(),
                 &command,
-                Value::Object(options_json.clone()),
+                resolved_execution_options_json(context, &plan.request.environment),
             )
             .map_err(rhai_runtime_error)?
         }
@@ -777,17 +777,26 @@ fn run_execution_request(
     Ok(result)
 }
 
-fn run_exec_host_capture(
+fn run_exec_host_capture_with_environment(
     context: &ScriptContext,
     command: &[String],
-    options: Map,
+    environment: &ExecutionEnvironmentPlan,
 ) -> Result<super::HostCommandOutput, Box<EvalAltResult>> {
     let program = command
         .first()
         .ok_or_else(|| rhai_runtime_error("exec::run command must not be empty"))?;
     let mut process = ProcessCommand::new(program);
     process.args(&command[1..]);
-    let resolved_cwd = configure_process_command(&mut process, &context.cwd, Some(options))?;
+    let resolved_cwd = resolved_execution_cwd(&context.cwd, environment);
+    process.current_dir(&resolved_cwd);
+    for (key, value) in &environment.env {
+        process.env(key, value);
+    }
+    if let Some(stdin_file) = resolved_execution_stdin_file(&resolved_cwd, environment) {
+        let file = std::fs::File::open(&stdin_file)
+            .map_err(|error| rhai_runtime_error(failed_to_read_path(&stdin_file, error)))?;
+        process.stdin(std::process::Stdio::from(file));
+    }
     with_local_node_bin_path(&mut process, &resolved_cwd);
     let output = process
         .output()
@@ -798,6 +807,65 @@ fn run_exec_host_capture(
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
     })
+}
+
+fn resolved_execution_options_json(
+    context: &ScriptContext,
+    environment: &ExecutionEnvironmentPlan,
+) -> Value {
+    let cwd = resolved_execution_cwd(&context.cwd, environment);
+    let mut options = serde_json::Map::new();
+    options.insert("cwd".to_owned(), json!(cwd.display().to_string()));
+    if let Some(stdin_file) = resolved_execution_stdin_file(&cwd, environment) {
+        options.insert(
+            "stdin_file".to_owned(),
+            json!(stdin_file.display().to_string()),
+        );
+    }
+    if !environment.env.is_empty() {
+        options.insert(
+            "env".to_owned(),
+            Value::Object(
+                environment
+                    .env
+                    .iter()
+                    .map(|(key, value)| (key.clone(), json!(value.to_string_lossy().to_string())))
+                    .collect(),
+            ),
+        );
+    }
+    Value::Object(options)
+}
+
+fn resolved_execution_cwd(base_cwd: &Path, environment: &ExecutionEnvironmentPlan) -> PathBuf {
+    environment
+        .cwd
+        .as_ref()
+        .map(|cwd| resolve_execution_path(base_cwd, cwd))
+        .unwrap_or_else(|| {
+            base_cwd
+                .canonicalize()
+                .unwrap_or_else(|_| base_cwd.to_path_buf())
+        })
+}
+
+fn resolved_execution_stdin_file(
+    resolved_cwd: &Path,
+    environment: &ExecutionEnvironmentPlan,
+) -> Option<PathBuf> {
+    environment
+        .stdin_file
+        .as_ref()
+        .map(|stdin_file| resolve_execution_path(resolved_cwd, stdin_file))
+}
+
+fn resolve_execution_path(base: &Path, path: &Path) -> PathBuf {
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    };
+    resolved.canonicalize().unwrap_or(resolved)
 }
 
 fn execution_run_target(
