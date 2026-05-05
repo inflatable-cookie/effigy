@@ -1,0 +1,10 @@
+[package]
+name = "effigy-execution"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Canonical execution request model for Effigy"
+
+[dependencies]
+effigy-context = { path = "../effigy-context" }

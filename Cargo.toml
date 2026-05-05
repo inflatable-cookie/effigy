@@ -12,6 +12,7 @@ members = [
     "crates/effigy-contracts",
     "crates/effigy-context",
     "crates/effigy-core",
+    "crates/effigy-execution",
     "crates/effigy-managed",
     "crates/effigy-manifest",
     "crates/effigy-tasks",
@@ -57,6 +58,7 @@ effigy-docs-policy = { path = "crates/effigy-docs-policy" }
 effigy-distribution = { path = "crates/effigy-distribution" }
 effigy-env = { path = "crates/effigy-env" }
 effigy-exec = { path = "crates/effigy-exec" }
+effigy-execution = { path = "crates/effigy-execution" }
 effigy-gateway = { path = "crates/effigy-gateway" }
 effigy-managed = { path = "crates/effigy-managed" }
 effigy-manifest = { path = "crates/effigy-manifest" }

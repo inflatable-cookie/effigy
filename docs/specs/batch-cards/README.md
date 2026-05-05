@@ -13,8 +13,15 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- No active ready card. `377` is complete; choose the next context migration or
-  execution-builder card deliberately.
+- No active ready card. `379` is complete; choose the next execution request
+  migration card deliberately.
+
+- [`379-expose-rhai-exec-run-through-execution-request.md`](./379-expose-rhai-exec-run-through-execution-request.md)
+  is complete. It exposes Rhai `exec::run(...)` through the execution request
+  builder.
+
+- [`378-scaffold-canonical-execution-request-crate.md`](./378-scaffold-canonical-execution-request-crate.md)
+  is complete. It opened the first `effigy-execution` crate slice.
 
 - [`377-expose-rhai-runtime-context-helper.md`](./377-expose-rhai-runtime-context-helper.md)
   is complete. It exposes the captured runtime context to Rhai before the

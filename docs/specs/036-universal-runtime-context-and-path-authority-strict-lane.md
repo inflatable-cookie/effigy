@@ -2,9 +2,10 @@
 
 Roadmap: [`g03.030`](../roadmaps/g03/030-universal-runtime-context-and-path-authority.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Purpose
 
@@ -21,9 +22,7 @@ context.
 
 ## Current Ready Card
 
-No active ready card. Card `377` is complete; the next move is either another
-`g03.030` caller/context migration card or opening `g03.032` once the execution
-request crate work is ready.
+No active ready card. This lane is complete enough to hand off to `g03.032`.
 
 ## Exit Condition
 
@@ -33,5 +32,4 @@ or explicitly queued into the next card.
 
 ## Next Task
 
-Choose the next ready card: continue `g03.030` caller/context migration or open
-the first `g03.032` execution-builder implementation card.
+Continue with `037` and card `378`.

@@ -26,7 +26,7 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`036-universal-runtime-context-and-path-authority-strict-lane.md`](./036-universal-runtime-context-and-path-authority-strict-lane.md)
+- [`037-canonical-task-execution-request-and-pipeline-strict-lane.md`](./037-canonical-task-execution-request-and-pipeline-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -35,6 +35,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`036-universal-runtime-context-and-path-authority-strict-lane.md`](./036-universal-runtime-context-and-path-authority-strict-lane.md)
 - [`035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md`](./035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md)
 - [`034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md`](./034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md)
 - [`033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md`](./033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md)
@@ -62,5 +63,4 @@ Recently completed:
 
 ## Next Task
 
-Choose the next ready card: continue `g03.030` caller/context migration or open
-the first `g03.032` execution-builder implementation card.
+Create the next execution request migration card.

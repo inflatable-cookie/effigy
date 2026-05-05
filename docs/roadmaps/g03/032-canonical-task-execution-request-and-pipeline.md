@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-05
 Depends on: [`030-universal-runtime-context-and-path-authority.md`](./030-universal-runtime-context-and-path-authority.md)
@@ -70,5 +70,4 @@ First-party migration list:
 
 ## Next Task
 
-Wait for `g03.030` context contract to stabilize before opening the execution
-request lane.
+Implement card `378` to scaffold `crates/effigy-execution`.

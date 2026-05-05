@@ -75,11 +75,13 @@ fn run_manifest_task_run_array_rhai_steps_support_args_and_runtime_helpers() {
 let stamp = time::now_utc();
 let scratch = fs::make_temp_dir("rhai-runtime-helper");
 let ctx = runtime::context();
+let exec = exec::run(["sh", "-lc", "printf exec-ok"], #{ run_in: "host" });
 let pid = time::process_id().to_string();
 fs::write_file("stamp.txt", stamp);
 fs::write_file("arg.txt", args[0].to_string());
 fs::write_file("scratch.txt", scratch);
 fs::write_file("runtime-root.txt", ctx["command_root"]);
+fs::write_file("exec.txt", exec["stdout"]);
 fs::write_lines("lines.txt", ["one", "two"]);
 fs::append_file("append.txt", "alpha\n");
 fs::append_file("append.txt", "beta\n");
@@ -110,6 +112,7 @@ run = [{ rhai = "scripts/rhai/helpers.rhai" }]
     let stamp = fs::read_to_string(root.join("stamp.txt")).expect("read stamp");
     assert!(stamp.ends_with('Z'), "expected UTC timestamp: {stamp}");
     assert_file_text_equals(&root.join("arg.txt"), "helper-ok");
+    assert_file_text_equals(&root.join("exec.txt"), "exec-ok");
     let canonical_root = root.canonicalize().expect("canonical root");
     assert_file_text_equals(
         &root.join("runtime-root.txt"),

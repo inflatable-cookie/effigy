@@ -247,6 +247,35 @@ fn execute_rhai_script_exposes_runtime_context_helper() {
 }
 
 #[test]
+fn execute_rhai_script_exposes_exec_run_helper() {
+    let root = temp_root("exec-run");
+    fs::write(root.join("input.sql"), "select 1;").expect("input");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            let host = exec::run(["sh", "-lc", "printf host-ok"], #{ run_in: "host" });
+            if !host["success"] || host["stdout"] != "host-ok" { throw("host exec"); }
+            if host["route"]["run_in"] != "host" { throw("host route"); }
+
+            let container = exec::run(
+                ["mysql", "app"],
+                #{ run_in: "container", container: "web", service: "db", stdin_file: "input.sql" },
+            );
+            if !container["success"] { throw("container exec"); }
+            if container["stdout"] != "exec:web:db:mysql,app" { throw("container stdout"); }
+            if container["route"]["run_in"] != "container" { throw("container route"); }
+            if container["route"]["container"] != "web" { throw("container name"); }
+            if container["route"]["service"] != "db" { throw("container service"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
 fn execute_rhai_script_can_stream_process_output() {
     let root = temp_root("stream-process");
     let context = ScriptContext {

@@ -3,6 +3,7 @@ pub const MODULE_RUNTIME: &str = "runtime";
 pub const MODULE_PATH: &str = "path";
 pub const MODULE_FS: &str = "fs";
 pub const MODULE_PROCESS: &str = "process";
+pub const MODULE_EXEC: &str = "exec";
 pub const MODULE_HTTP: &str = "http";
 pub const MODULE_JSON: &str = "json";
 pub const MODULE_TOML: &str = "toml";
@@ -35,6 +36,7 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_PATH,
     MODULE_FS,
     MODULE_PROCESS,
+    MODULE_EXEC,
     MODULE_HTTP,
     MODULE_JSON,
     MODULE_TOML,

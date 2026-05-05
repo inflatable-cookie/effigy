@@ -9,6 +9,10 @@ use chrono::Utc;
 use effigy_core::path_error_text::{failed_to_read_path, failed_to_write_path};
 use effigy_core::shell::shell_quote;
 use effigy_env::dotenv::parse_dotenv_entries;
+use effigy_execution::{
+    ExecutionEnvironmentPlan, ExecutionIntent, ExecutionOutputMode, ExecutionRoute,
+    ExecutionRunTarget, ExecutionRuntimePolicy, ExecutionSurface, TaskExecutionRequestBuilder,
+};
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map};
 use serde_json::{json, Value};
 
@@ -57,6 +61,10 @@ pub(super) fn register_host_api(
     engine.register_static_module(
         MODULE_PROCESS,
         std::rc::Rc::new(build_process_module(context.clone())),
+    );
+    engine.register_static_module(
+        MODULE_EXEC,
+        std::rc::Rc::new(build_exec_module(context.clone(), callbacks.clone())),
     );
     engine.register_static_module(
         MODULE_HTTP,
@@ -682,6 +690,184 @@ fn build_process_module(context: Arc<ScriptContext>) -> rhai::Module {
         },
     );
     module
+}
+
+fn build_exec_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
+    let mut module = rhai::Module::new();
+    module.set_native_fn(
+        "run",
+        move |command: Array, options: Map| -> Result<Map, Box<EvalAltResult>> {
+            let command = dynamic_array_to_strings(&command)?;
+            run_execution_request(&context, &callbacks, command, options)
+        },
+    );
+    module
+}
+
+fn run_execution_request(
+    context: &ScriptContext,
+    callbacks: &HostCallbacks,
+    command: Vec<String>,
+    options: Map,
+) -> Result<Map, Box<EvalAltResult>> {
+    let program = command
+        .first()
+        .ok_or_else(|| rhai_runtime_error("exec::run command must not be empty"))?;
+    reject_recursive_effigy_process(program)?;
+
+    let options_json = match map_to_json(options.clone())? {
+        Value::Object(map) => map,
+        _ => unreachable!("map_to_json returns an object for Rhai maps"),
+    };
+    let run_in = execution_run_target(&options_json)?;
+    let container = execution_string_option(&options_json, "container")?;
+    let service = execution_string_option(&options_json, "service")?;
+    if run_in == ExecutionRunTarget::Container && container.is_none() {
+        return Err(rhai_runtime_error(
+            "`container` is required when `run_in` is \"container\"",
+        ));
+    }
+
+    let environment = execution_environment_plan(&options_json)?;
+    let runtime_policy = match run_in {
+        ExecutionRunTarget::Host => ExecutionRuntimePolicy::host(),
+        ExecutionRunTarget::Container => ExecutionRuntimePolicy::container(
+            container.clone().unwrap_or_default(),
+            service.clone(),
+        ),
+        ExecutionRunTarget::Either => ExecutionRuntimePolicy {
+            run_in,
+            container: container.clone(),
+            service: service.clone(),
+        },
+    };
+    let runtime_context = super::active_runtime_context_for_script(context)
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let plan = TaskExecutionRequestBuilder::new()
+        .runtime_context(runtime_context)
+        .invocation(ExecutionIntent::Command {
+            command: command.clone(),
+        })
+        .surface(ExecutionSurface::Rhai)
+        .output_mode(ExecutionOutputMode::Capture)
+        .runtime_policy(runtime_policy)
+        .environment(environment)
+        .resolve()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+
+    let output = match &plan.route {
+        ExecutionRoute::Host | ExecutionRoute::LocalContainerHandoff { .. } => {
+            run_exec_host_capture(context, &command, options)?
+        }
+        ExecutionRoute::Container { container, service } => {
+            let container = container.as_deref().unwrap_or_default();
+            (callbacks.container_exec_with_options)(
+                &context.repo_root,
+                container,
+                service.as_deref(),
+                &command,
+                Value::Object(options_json.clone()),
+            )
+            .map_err(rhai_runtime_error)?
+        }
+    };
+
+    let mut result = host_command_output_map(output);
+    result.insert("route".into(), execution_route_map(&plan.route).into());
+    Ok(result)
+}
+
+fn run_exec_host_capture(
+    context: &ScriptContext,
+    command: &[String],
+    options: Map,
+) -> Result<super::HostCommandOutput, Box<EvalAltResult>> {
+    let program = command
+        .first()
+        .ok_or_else(|| rhai_runtime_error("exec::run command must not be empty"))?;
+    let mut process = ProcessCommand::new(program);
+    process.args(&command[1..]);
+    let resolved_cwd = configure_process_command(&mut process, &context.cwd, Some(options))?;
+    with_local_node_bin_path(&mut process, &resolved_cwd);
+    let output = process
+        .output()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    Ok(super::HostCommandOutput {
+        status: output.status.code().unwrap_or(-1).into(),
+        success: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    })
+}
+
+fn execution_run_target(
+    options: &serde_json::Map<String, Value>,
+) -> Result<ExecutionRunTarget, Box<EvalAltResult>> {
+    match execution_string_option(options, "run_in")?.as_deref() {
+        Some("host") => Ok(ExecutionRunTarget::Host),
+        Some("container") => Ok(ExecutionRunTarget::Container),
+        Some("either") | None => Ok(ExecutionRunTarget::Either),
+        Some(value) => Err(rhai_runtime_error(format!(
+            "`run_in` must be \"host\", \"container\", or \"either\", got `{value}`"
+        ))),
+    }
+}
+
+fn execution_string_option(
+    options: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, Box<EvalAltResult>> {
+    match options.get(key) {
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => Err(rhai_runtime_error(format!("`{key}` must be a string"))),
+    }
+}
+
+fn execution_environment_plan(
+    options: &serde_json::Map<String, Value>,
+) -> Result<ExecutionEnvironmentPlan, Box<EvalAltResult>> {
+    let mut plan = ExecutionEnvironmentPlan::default();
+    if let Some(cwd) = execution_string_option(options, "cwd")? {
+        plan = plan.cwd(cwd);
+    }
+    if let Some(stdin_file) = execution_string_option(options, "stdin_file")? {
+        plan = plan.stdin_file(stdin_file);
+    }
+    if let Some(value) = options.get("env") {
+        let Value::Object(env) = value else {
+            return Err(rhai_runtime_error("`env` must be a map of string values"));
+        };
+        for (key, value) in env {
+            let Value::String(value) = value else {
+                return Err(rhai_runtime_error("`env` values must be strings"));
+            };
+            plan = plan.env(key.clone(), value.clone());
+        }
+    }
+    Ok(plan)
+}
+
+fn execution_route_map(route: &ExecutionRoute) -> Map {
+    let mut map = Map::new();
+    match route {
+        ExecutionRoute::Host => {
+            map.insert("run_in".into(), "host".into());
+        }
+        ExecutionRoute::Container { container, service } => {
+            map.insert("run_in".into(), "container".into());
+            map.insert(
+                "container".into(),
+                container.clone().unwrap_or_default().into(),
+            );
+            map.insert("service".into(), service.clone().unwrap_or_default().into());
+        }
+        ExecutionRoute::LocalContainerHandoff { service } => {
+            map.insert("run_in".into(), "container_handoff".into());
+            map.insert("service".into(), service.clone().unwrap_or_default().into());
+        }
+    }
+    map
 }
 
 fn build_http_module(context: Arc<ScriptContext>) -> rhai::Module {

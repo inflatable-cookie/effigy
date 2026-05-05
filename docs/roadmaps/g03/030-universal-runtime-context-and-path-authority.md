@@ -2,9 +2,10 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 Depends on: [`029-v0-x-release-readiness-audit-and-gate-alignment.md`](./029-v0-x-release-readiness-audit-and-gate-alignment.md)
 
 ## Problem
@@ -43,5 +44,4 @@ remaining cwd/root/env probes.
 
 ## Next Task
 
-Continue with the next `g03.030` card to migrate command-local cwd/root callers
-behind `EffigyRuntimeContext`.
+Continue with `g03.032` execution request scaffolding.

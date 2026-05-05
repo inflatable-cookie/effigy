@@ -623,6 +623,7 @@ dependencies = [
  "effigy-doctor",
  "effigy-env",
  "effigy-exec",
+ "effigy-execution",
  "effigy-gateway",
  "effigy-managed",
  "effigy-manifest",
@@ -830,6 +831,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "effigy-execution"
+version = "0.3.3"
+dependencies = [
+ "effigy-context",
+]
+
+[[package]]
 name = "effigy-gateway"
 version = "0.3.3"
 dependencies = [
@@ -911,6 +919,7 @@ dependencies = [
  "effigy-context",
  "effigy-core",
  "effigy-env",
+ "effigy-execution",
  "effigy-ui",
  "portable-pty",
  "regex",
