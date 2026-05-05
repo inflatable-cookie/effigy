@@ -613,6 +613,7 @@ dependencies = [
  "effigy-catalog",
  "effigy-changelog",
  "effigy-cli",
+ "effigy-container-manager",
  "effigy-containers",
  "effigy-context",
  "effigy-contracts",
@@ -718,6 +719,10 @@ dependencies = [
  "effigy-core",
  "effigy-ui",
 ]
+
+[[package]]
+name = "effigy-container-manager"
+version = "0.3.3"
 
 [[package]]
 name = "effigy-containers"

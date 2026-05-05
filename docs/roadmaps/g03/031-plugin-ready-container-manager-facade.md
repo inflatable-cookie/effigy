@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-05
 Depends on: [`030-universal-runtime-context-and-path-authority.md`](./030-universal-runtime-context-and-path-authority.md)
@@ -29,5 +29,5 @@ Colima, and nerdctl branching.
 
 ## Next Task
 
-Wait for `g03.030` to close, then open a container-manager contract and first
-manager facade card.
+Complete card
+[`383-move-compose-backend-detection-behind-container-manager.md`](../../specs/batch-cards/383-move-compose-backend-detection-behind-container-manager.md).

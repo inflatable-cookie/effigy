@@ -44,6 +44,9 @@ This folder contains both:
 - [`011-runtime-context-contract.md`](./011-runtime-context-contract.md):
   boot-time runtime context contract for cwd, repo target, host facts, and
   container handoff state.
+- [`012-container-manager-contract.md`](./012-container-manager-contract.md):
+  manager-facade contract for backend selection, container operations, and
+  interrupt-aware closeout.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -56,6 +59,7 @@ This folder contains both:
 | `009-execution-surface-convergence.md` | Platform maintainers | Execution-surface parity rules, repo-targeting propagation, activation/session ownership, embedded command re-entry semantics | Targeted parity tests across explicit tasks, deferred execution, exec, bootstrap, workspace, and embedded command surfaces |
 | `010-decodelabs-production-strategy.md` | Platform maintainers | Decodelabs production boundary, provider-readiness claims, operator-owned production concerns, future widening target | Planning review against `g03.003` plus any future Decodelabs deploy-surface proofs |
 | `011-runtime-context-contract.md` | Platform maintainers | Cwd/root resolution, repo override propagation, boot-time host facts, container handoff marker semantics | `cargo test -p effigy-context` plus targeted runner context tests |
+| `012-container-manager-contract.md` | Platform maintainers | Supported backend ids, backend capability boundaries, interrupt/shutdown policy, manager report fields, public report exposure if added | `cargo test -p effigy-container-manager` plus targeted runner container migration tests |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -82,4 +86,6 @@ contract anchor for the active `g03.003` Decodelabs planning lane,
 to `g03.006` runtime-hardening lane, `006-compose-backend-compatibility.md`
 as the backend capability matrix for `g03.006`,
 `009-execution-surface-convergence.md` as the convergence contract, and
-`011-runtime-context-contract.md` as the active `g03.030` context contract.
+`011-runtime-context-contract.md` as the active `g03.030` context contract,
+and `012-container-manager-contract.md` as the active `g03.031` manager
+contract.

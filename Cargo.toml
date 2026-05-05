@@ -11,6 +11,7 @@ members = [
     "crates/effigy-cli",
     "crates/effigy-contracts",
     "crates/effigy-context",
+    "crates/effigy-container-manager",
     "crates/effigy-core",
     "crates/effigy-execution",
     "crates/effigy-managed",
@@ -50,6 +51,7 @@ effigy-changelog = { path = "crates/effigy-changelog" }
 effigy-cli = { path = "crates/effigy-cli" }
 effigy-contracts = { path = "crates/effigy-contracts" }
 effigy-context = { path = "crates/effigy-context" }
+effigy-container-manager = { path = "crates/effigy-container-manager" }
 effigy-containers = { path = "crates/effigy-containers" }
 effigy-core = { path = "crates/effigy-core" }
 effigy-demo = { path = "crates/effigy-demo" }

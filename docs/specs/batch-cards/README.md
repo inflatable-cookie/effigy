@@ -13,8 +13,13 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- No active ready card. `g03.032` is complete; choose the next roadmap
-  deliberately.
+- [`382-scaffold-container-manager-contract-and-crate.md`](./382-scaffold-container-manager-contract-and-crate.md)
+  is complete. It opened `g03.031` and created the first
+  `effigy-container-manager` facade slice.
+
+- [`383-move-compose-backend-detection-behind-container-manager.md`](./383-move-compose-backend-detection-behind-container-manager.md)
+  is ready. It moves compose backend detection and invocation shape behind the
+  manager facade.
 
 - [`381-migrate-embedded-task-dispatch-to-execution-request.md`](./381-migrate-embedded-task-dispatch-to-execution-request.md)
   is complete. It moved embedded task dispatch onto `TaskExecutionRequestBuilder`.

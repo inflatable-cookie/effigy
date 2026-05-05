@@ -26,6 +26,7 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
+- [`038-plugin-ready-container-manager-facade-strict-lane.md`](./038-plugin-ready-container-manager-facade-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -63,4 +64,5 @@ Recently completed:
 
 ## Next Task
 
-Choose the next queued roadmap deliberately.
+Complete card
+[`383-move-compose-backend-detection-behind-container-manager.md`](./batch-cards/383-move-compose-backend-detection-behind-container-manager.md).
