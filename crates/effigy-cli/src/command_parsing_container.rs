@@ -4,6 +4,7 @@ use crate::{Command, ContainerArgs, ContainerDataSubcommand, ContainerSubcommand
 
 use crate::value_parsing::{next_required_value, parse_repo_path};
 
+use super::parse_bootstrap_db_seed;
 use super::{unknown_argument, CliParseError};
 
 pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseError>
@@ -234,7 +235,7 @@ where
     let mut args = args.into_iter();
     let Some(subcmd) = args.next() else {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container data` requires a subcommand; use `list`, `export`, `import`, or `pull-production` in this batch".to_owned(),
+            "`effigy container data` requires a subcommand; use `list`, `export`, `import`, `pull-production`, or `seed` in this batch".to_owned(),
         ));
     };
 
@@ -244,6 +245,7 @@ where
         "export" => parse_container_data_export(name, args),
         "import" => parse_container_data_import(name, args),
         "pull-production" => parse_container_data_pull_production(name, args),
+        "seed" => parse_container_data_seed(name, args),
         other => Err(unknown_argument(other)),
     }
 }
@@ -349,6 +351,51 @@ where
         subcommand: ContainerSubcommand::Data {
             name,
             subcommand: ContainerDataSubcommand::PullProduction { yes },
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_container_data_seed<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut no_prompt = false;
+    let mut yes = false;
+    let mut db_seeds = Vec::new();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--db-seed" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--db-seed".to_owned(),
+                    },
+                )?;
+                db_seeds.push(parse_bootstrap_db_seed(value)?);
+            }
+            "--no-prompt" => no_prompt = true,
+            "--yes" => yes = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Data {
+            name,
+            subcommand: ContainerDataSubcommand::Seed {
+                db_seeds,
+                no_prompt,
+                yes,
+            },
         },
         repo_override,
         output_json,

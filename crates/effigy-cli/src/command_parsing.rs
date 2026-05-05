@@ -884,7 +884,9 @@ where
     }))
 }
 
-fn parse_bootstrap_db_seed(value: String) -> Result<BootstrapDbSeedInput, CliParseError> {
+pub(super) fn parse_bootstrap_db_seed(
+    value: String,
+) -> Result<BootstrapDbSeedInput, CliParseError> {
     if let Some((target, path)) = value.split_once('=') {
         if target.is_empty() || path.is_empty() {
             return Err(CliParseError::InvalidArguments(

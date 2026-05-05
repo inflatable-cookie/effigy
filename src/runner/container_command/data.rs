@@ -5,12 +5,17 @@ use effigy_runtime::data::{
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::Path;
 
+use effigy_bootstrap::BootstrapStagedDbSeed;
 use effigy_builtin::{PromptDecision, PromptPolicy};
+use effigy_cli::BootstrapDbSeedInput;
 
 use super::gateway_registration::register_gateway_routes_for_container;
 use super::runtime_error_from_runner;
 use super::support::{ensure_shared_services_running, wait_for_container_ready};
 use super::RunnerError;
+use crate::runner::db_seed::{
+    db_seed_env, maybe_prompt_db_seed_inputs, run_db_seed_task, stage_db_seed_files,
+};
 
 #[path = "data/hooks.rs"]
 mod hooks;
@@ -51,6 +56,82 @@ pub(super) fn run_container_data_pull_production(
         },
     )
     .map_err(Into::into)
+}
+
+pub(super) fn run_container_data_seed(
+    repo_root: &Path,
+    name: Option<&str>,
+    db_seeds: &[BootstrapDbSeedInput],
+    output_json: bool,
+    no_prompt: bool,
+    yes: bool,
+) -> Result<String, RunnerError> {
+    if name.is_some() {
+        return Err(RunnerError::task_invocation(
+            "`effigy container <NAME> data seed` is not supported in this batch; run `effigy container data seed` from the target repo instead",
+        ));
+    }
+
+    let policy = effigy_containers::load_container_policy(repo_root, None)?;
+    ensure_seed_prompt_target(&policy)?;
+
+    let mut effective_db_seeds = db_seeds.to_vec();
+    let mut prompt_checked = false;
+    maybe_prompt_db_seed_inputs(
+        repo_root,
+        output_json,
+        no_prompt,
+        &mut effective_db_seeds,
+        &mut prompt_checked,
+    )?;
+    if effective_db_seeds.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "container data seed requires one or more `--db-seed` values, or an interactive TTY prompt to collect them",
+        ));
+    }
+
+    let staged = stage_db_seed_files(repo_root, &effective_db_seeds)?;
+    maybe_confirm_container_data_seed(&policy.name, &staged, output_json, yes)?;
+    run_db_seed_task(repo_root, &db_seed_env(&staged))?;
+
+    if output_json {
+        Ok(serde_json::json!({
+            "$schema": "effigy.container.data-seed.v1",
+            "ok": true,
+            "container": policy.name,
+            "count": staged.len(),
+            "seeds": staged
+                .iter()
+                .map(|seed| serde_json::json!({
+                    "target": seed.target,
+                    "source_path": seed.source_path.display().to_string(),
+                    "staged_path": seed.staged_path.display().to_string(),
+                }))
+                .collect::<Vec<_>>(),
+        })
+        .to_string())
+    } else {
+        let detail = staged
+            .iter()
+            .map(|seed| match seed.target.as_deref() {
+                Some(target) => format!(
+                    "{target}={}",
+                    seed.staged_path
+                        .file_name()
+                        .expect("staged seed file should have name")
+                        .to_string_lossy()
+                ),
+                None => seed
+                    .staged_path
+                    .file_name()
+                    .expect("staged seed file should have name")
+                    .to_string_lossy()
+                    .to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        Ok(format!("[ok] seeded local databases from {detail}"))
+    }
 }
 
 pub(super) fn maybe_confirm_container_data_import(
@@ -135,6 +216,18 @@ fn ensure_pull_production_prompt_target(
     Ok(())
 }
 
+fn ensure_seed_prompt_target(
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    if policy.compose_source != effigy_containers::EffectiveComposeSource::Generated {
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` uses direct `compose_file` ownership; `data seed` is only supported on the generated-compose path in this batch",
+            policy.name
+        )));
+    }
+    Ok(())
+}
+
 fn maybe_confirm_container_data_pull_production(
     container_name: &str,
     output_json: bool,
@@ -153,6 +246,27 @@ fn maybe_confirm_container_data_pull_production(
     let mut stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
     confirm_container_data_pull_production_from_io(container_name, &mut stdin, &mut stdout)
+}
+
+fn maybe_confirm_container_data_seed(
+    container_name: &str,
+    staged_db_seeds: &[BootstrapStagedDbSeed],
+    output_json: bool,
+    yes: bool,
+) -> Result<(), RunnerError> {
+    if !container_data_seed_prompt_required(
+        container_name,
+        output_json,
+        yes,
+        io::stdin().is_terminal(),
+        io::stdout().is_terminal(),
+    )? {
+        return Ok(());
+    }
+
+    let mut stdin = io::stdin().lock();
+    let mut stdout = io::stdout().lock();
+    confirm_container_data_seed_from_io(container_name, staged_db_seeds, &mut stdin, &mut stdout)
 }
 
 fn container_data_pull_production_prompt_required(
@@ -201,6 +315,31 @@ fn container_data_import_prompt_required(
         | PromptDecision::SuppressedByPlan
         | PromptDecision::SuppressedByNonTty => Err(RunnerError::task_invocation(format!(
             "`effigy container {container_name} data import` requires confirmation before importing archive data into the local generated-compose environment. Rerun from an interactive terminal to confirm, or pass --yes when automation intentionally accepts this action."
+        ))),
+    }
+}
+
+fn container_data_seed_prompt_required(
+    container_name: &str,
+    output_json: bool,
+    yes: bool,
+    stdin_is_tty: bool,
+    stdout_is_tty: bool,
+) -> Result<bool, RunnerError> {
+    let policy = PromptPolicy {
+        output_json,
+        plan: false,
+        explicit_non_interactive: yes,
+        stdin_is_tty,
+        stdout_is_tty,
+    };
+    match policy.decide() {
+        PromptDecision::Prompt => Ok(true),
+        PromptDecision::SuppressedByExplicitNonInteractive => Ok(false),
+        PromptDecision::SuppressedByJson
+        | PromptDecision::SuppressedByPlan
+        | PromptDecision::SuppressedByNonTty => Err(RunnerError::task_invocation(format!(
+            "`effigy container {container_name} data seed` requires confirmation before resetting and importing local database dumps. Rerun from an interactive terminal to confirm, or pass --yes when automation intentionally accepts this action."
         ))),
     }
 }
@@ -347,13 +486,63 @@ fn confirm_container_data_pull_production_from_io<R: BufRead, W: Write>(
     ))
 }
 
+fn confirm_container_data_seed_from_io<R: BufRead, W: Write>(
+    container_name: &str,
+    staged_db_seeds: &[BootstrapStagedDbSeed],
+    input: &mut R,
+    output: &mut W,
+) -> Result<(), RunnerError> {
+    let seed_lines = staged_db_seeds
+        .iter()
+        .map(|seed| match seed.target.as_deref() {
+            Some(target) => format!("{target}: {}", seed.source_path.display()),
+            None => seed.source_path.display().to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    writeln!(
+        output,
+        "Reset and seed local database(s) for container `{container_name}`.\nSQL dumps:\n{seed_lines}\nThis may overwrite local generated-compose data.\n"
+    )
+    .and_then(|_| output.flush())
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to render interactive container data prompt: {error}"
+        ))
+    })?;
+    output
+        .write_all(b"Continue? [y/N]: ")
+        .and_then(|_| output.flush())
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to render interactive container data prompt: {error}"
+            ))
+        })?;
+    let mut line = String::new();
+    input.read_line(&mut line).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to read interactive container data input: {error}"
+        ))
+    })?;
+    let normalized = line.trim().to_ascii_lowercase();
+    if normalized == "y" || normalized == "yes" {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(
+        "container data seed cancelled during confirmation",
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         confirm_container_data_import_from_io, confirm_container_data_pull_production_from_io,
-        container_data_import_prompt_required, container_data_pull_production_prompt_required,
-        run_container_data_pull_production,
+        confirm_container_data_seed_from_io, container_data_import_prompt_required,
+        container_data_pull_production_prompt_required, container_data_seed_prompt_required,
+        run_container_data_pull_production, run_container_data_seed,
     };
+    use effigy_bootstrap::BootstrapStagedDbSeed;
+    use effigy_cli::BootstrapDbSeedInput;
     use effigy_containers::{
         EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
     };
@@ -635,6 +824,81 @@ pull_production = "scripts/pull-production.sh"
         let json = container_data_import_prompt_required("web", true, false, true, true)
             .expect_err("json should fail");
         assert!(json.to_string().contains("--yes"));
+    }
+
+    #[test]
+    fn prompt_container_data_seed_renders_and_confirms() {
+        let mut output = Vec::new();
+        confirm_container_data_seed_from_io(
+            "web",
+            &[BootstrapStagedDbSeed {
+                target: Some("contactpatch".to_owned()),
+                source_path: PathBuf::from("/tmp/latest.sql"),
+                staged_path: PathBuf::from(".effigy/local/db-seeds/contactpatch--latest.sql"),
+            }],
+            &mut Cursor::new(b"yes\n".to_vec()),
+            &mut output,
+        )
+        .expect("confirmation should pass");
+
+        let rendered = String::from_utf8(output).expect("utf8");
+        assert!(rendered.contains("Reset and seed local database(s) for container `web`"));
+        assert!(rendered.contains("contactpatch: /tmp/latest.sql"));
+        assert!(rendered.contains("This may overwrite local generated-compose data."));
+    }
+
+    #[test]
+    fn container_data_seed_prompt_policy_suppresses_non_tty_json_and_yes() {
+        assert!(
+            container_data_seed_prompt_required("web", false, false, true, true)
+                .expect("tty should prompt")
+        );
+        assert!(
+            !container_data_seed_prompt_required("web", false, true, false, false)
+                .expect("--yes should bypass")
+        );
+        let non_tty = container_data_seed_prompt_required("web", false, false, false, true)
+            .expect_err("non-tty should fail");
+        assert!(non_tty.to_string().contains("--yes"));
+
+        let json = container_data_seed_prompt_required("web", true, false, true, true)
+            .expect_err("json should fail");
+        assert!(json.to_string().contains("--yes"));
+    }
+
+    #[test]
+    fn run_container_data_seed_rejects_direct_compose_ownership() {
+        let root = temp_repo("data-seed-direct");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+        )
+        .expect("write manifest");
+        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+        let error = run_container_data_seed(
+            &root,
+            None,
+            &[BootstrapDbSeedInput {
+                target: None,
+                path: PathBuf::from("/tmp/latest.sql"),
+            }],
+            false,
+            true,
+            true,
+        )
+        .expect_err("should fail");
+        assert!(error
+            .to_string()
+            .contains("`data seed` is only supported on the generated-compose path"));
     }
 
     #[test]

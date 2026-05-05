@@ -31,6 +31,11 @@ During v0.x, MINOR bumps may include breaking changes.
   archive into local generated-compose data. Real TTY runs prompt with a
   default-no confirmation, while `--json` and redirected I/O fail clearly unless
   automation passes the explicit `--yes` bypass.
+- `effigy container data seed` now reuses the bootstrap DB-seed surface after
+  bring-up. It accepts the same repeatable `--db-seed <FILE>|<TARGET>=<FILE>`
+  inputs, can prompt for missing bundle database dumps on a real TTY, stages
+  the same metadata under `.effigy/local/db-seeds/`, and executes the standard
+  `bootstrap:db-seed` task to reset and reseed local databases on demand.
 - Broad `effigy unlock` actions now require confirmation before clearing lock
   scopes. Real TTY runs prompt with a default-no confirmation, while `--json`
   and redirected I/O fail clearly unless automation passes the explicit

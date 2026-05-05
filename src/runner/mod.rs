@@ -8,6 +8,7 @@ mod container_command;
 mod container_runtime;
 mod container_runtime_prep;
 mod contracts_command;
+mod db_seed;
 mod defer_command;
 mod deferral;
 mod demo_command;

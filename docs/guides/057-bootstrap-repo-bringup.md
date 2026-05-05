@@ -114,6 +114,17 @@ If database seed input was supplied, Effigy also looks for a standard task
 named `bootstrap:db-seed` and runs it after root bootstrap setup, before
 `[bootstrap].start`.
 
+The same staged seed contract is now available after bootstrap too:
+
+```bash
+effigy container data seed --db-seed ./backups/latest.sql
+effigy container data seed --db-seed cbs=./backups/cbs.sql --db-seed cbs-mortcalc=./backups/cbs-mortcalc.sql
+```
+
+That command reuses the same target validation, TTY prompt collection, staged
+metadata file, and `bootstrap:db-seed` execution path, so local DB reset/reseed
+matches bootstrap instead of relying on a repo-specific `seed` task shape.
+
 That gives repos one clean adoption path:
 
 - accept staged SQL dumps from the CLI

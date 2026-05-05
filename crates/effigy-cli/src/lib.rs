@@ -604,6 +604,11 @@ pub enum ContainerDataSubcommand {
     PullProduction {
         yes: bool,
     },
+    Seed {
+        db_seeds: Vec<BootstrapDbSeedInput>,
+        no_prompt: bool,
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -61,18 +61,26 @@ fn latest_dump_path(dumps_dir) {
 }
 
 fn seed_specs_from_env_or_file(dumps_dir) {
-    let metadata_path = path::join(dumps_dir, "_effigy-bootstrap-db-seeds.json");
+    let metadata_path = path::join(dumps_dir, "_effigy-db-seeds.json");
+    let legacy_metadata_path = path::join(dumps_dir, "_effigy-bootstrap-db-seeds.json");
     let raw = if fs::exists(metadata_path) {
         str::trim(fs::read_file(metadata_path))
+    } else if fs::exists(legacy_metadata_path) {
+        str::trim(fs::read_file(legacy_metadata_path))
     } else {
-        optional_env_string("EFFIGY_BOOTSTRAP_DB_SEEDS_JSON", "")
+        let generic = optional_env_string("EFFIGY_DB_SEEDS_JSON", "");
+        if generic != "" {
+            generic
+        } else {
+            optional_env_string("EFFIGY_BOOTSTRAP_DB_SEEDS_JSON", "")
+        }
     };
     if raw == "" {
         return [];
     }
     let parsed = json::parse(raw);
     if parsed.type_of() != "array" {
-        throw "EFFIGY_BOOTSTRAP_DB_SEEDS_JSON must decode to a JSON array";
+        throw "EFFIGY_DB_SEEDS_JSON must decode to a JSON array";
     }
     return parsed;
 }

@@ -3,7 +3,7 @@ use crate::tests::prelude::{
     PathBuf, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand, TaskInvocation,
     WorkspaceArgs,
 };
-use effigy_cli::{BundleArgs, BundleSubcommand, ContainerDataSubcommand};
+use effigy_cli::{BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerDataSubcommand};
 
 #[test]
 fn parse_service_help_is_scoped() {
@@ -583,6 +583,77 @@ fn parse_container_data_pull_production_accepts_yes() {
             subcommand: ContainerSubcommand::Data {
                 name: Some("web".to_owned()),
                 subcommand: ContainerDataSubcommand::PullProduction { yes: true },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_container_data_seed_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "data".to_owned(),
+        "seed".to_owned(),
+        "--db-seed".to_owned(),
+        "./latest.sql".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: None,
+                subcommand: ContainerDataSubcommand::Seed {
+                    db_seeds: vec![BootstrapDbSeedInput {
+                        target: None,
+                        path: PathBuf::from("./latest.sql"),
+                    }],
+                    no_prompt: false,
+                    yes: false,
+                },
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_data_seed_accepts_named_targets_and_flags() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "data".to_owned(),
+        "seed".to_owned(),
+        "--db-seed".to_owned(),
+        "cbs=./cbs.sql".to_owned(),
+        "--db-seed".to_owned(),
+        "cbs-mortcalc=./mortcalc.sql".to_owned(),
+        "--no-prompt".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: None,
+                subcommand: ContainerDataSubcommand::Seed {
+                    db_seeds: vec![
+                        BootstrapDbSeedInput {
+                            target: Some("cbs".to_owned()),
+                            path: PathBuf::from("./cbs.sql"),
+                        },
+                        BootstrapDbSeedInput {
+                            target: Some("cbs-mortcalc".to_owned()),
+                            path: PathBuf::from("./mortcalc.sql"),
+                        },
+                    ],
+                    no_prompt: true,
+                    yes: true,
+                },
             },
             repo_override: None,
             output_json: false,

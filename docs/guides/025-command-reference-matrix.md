@@ -154,6 +154,7 @@ effigy gateway <up|down|status|setup-tls> [--json]
 effigy container [<NAME>] <up|down|status|logs|shell|reset|eject> [FLAGS...]
 effigy container [<NAME>] data <list|export> [ARGS...] [--json]
 effigy container [<NAME>] data <import|pull-production> [ARGS...] [--yes] [--json]
+effigy container data seed [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--yes] [--repo <PATH>] [--json]
 effigy system <up|down|status|logs|repair|reset-runtime> [--system <NAME>] [--json]
 effigy workspace [<WORKSPACE>] [--system <NAME>]
 ```

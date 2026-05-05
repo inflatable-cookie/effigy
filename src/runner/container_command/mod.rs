@@ -15,10 +15,14 @@ use effigy_runtime::write::{
 use effigy_runtime::EffigyRuntimeError;
 
 use crate::runner::command_context::resolve_active_command_context;
+use crate::runner::db_seed::resolve_db_seed_input_paths;
 use effigy_cli::{ContainerArgs, ContainerDataSubcommand, ContainerSubcommand};
 
 use super::error::RunnerError;
-use data::{maybe_confirm_container_data_import, run_container_data_pull_production};
+use data::{
+    maybe_confirm_container_data_import, run_container_data_pull_production,
+    run_container_data_seed,
+};
 use lifecycle::{run_container_eject, run_container_shell, run_container_up};
 
 pub(in crate::runner) use gateway_registration::{
@@ -195,6 +199,25 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
                 &context.resolved.resolved_root,
                 name.as_deref(),
                 args.output_json,
+                yes,
+            )
+        }
+        ContainerSubcommand::Data {
+            name,
+            subcommand:
+                ContainerDataSubcommand::Seed {
+                    db_seeds,
+                    no_prompt,
+                    yes,
+                },
+        } => {
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            run_container_data_seed(
+                &context.resolved.resolved_root,
+                name.as_deref(),
+                &resolve_db_seed_input_paths(&context.invocation_cwd, &db_seeds),
+                args.output_json,
+                no_prompt,
                 yes,
             )
         }
