@@ -30,4 +30,4 @@ close the modularisation round cleanly.
 ## Next Task
 
 Complete card
-[`409-add-task-execution-request-contract.md`](../../specs/batch-cards/409-add-task-execution-request-contract.md).
+[`410-widen-execution-convergence-contract-for-request-builder.md`](../../specs/batch-cards/410-widen-execution-convergence-contract-for-request-builder.md).

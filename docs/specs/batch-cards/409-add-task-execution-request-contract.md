@@ -2,9 +2,10 @@
 
 Lane: [`041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md`](../041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Goal
 
@@ -28,6 +29,14 @@ canonical owner, input model, resolution rules, Rhai expectations, and validatio
 direction for direct, bootstrap, Rhai, run-array, deferral, demo, and managed
 flows.
 
+## Closeout
+
+Added `013-task-execution-request-contract.md` and linked it from the contracts
+index.
+
+No JSON schema index change was needed because resolved execution plans remain
+internal in this round.
+
 ## Next Task
 
-Add `013-task-execution-request-contract.md`.
+Widen the execution convergence contract to reference the request builder.

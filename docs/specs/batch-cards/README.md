@@ -49,7 +49,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. It opened `g03.035` as strict lane `041`.
 
 - [`409-add-task-execution-request-contract.md`](./409-add-task-execution-request-contract.md)
-  is ready. It adds the durable task execution request contract.
+  is complete. It added the durable task execution request contract.
+
+- [`410-widen-execution-convergence-contract-for-request-builder.md`](./410-widen-execution-convergence-contract-for-request-builder.md)
+  is ready. It widens `009` around the request-builder authority.
 
 - [`387-inventory-runtime-container-cleanup-targets.md`](./387-inventory-runtime-container-cleanup-targets.md)
   is complete. It inventoried the remaining runtime/container cleanup targets

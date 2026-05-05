@@ -36,7 +36,7 @@ contracts, architecture ownership, and cleanup-break notes.
 
 ## Current Ready Card
 
-[`409-add-task-execution-request-contract.md`](./batch-cards/409-add-task-execution-request-contract.md)
+[`410-widen-execution-convergence-contract-for-request-builder.md`](./batch-cards/410-widen-execution-convergence-contract-for-request-builder.md)
 
 ## Exit Condition
 
@@ -46,4 +46,4 @@ breaks are documented, and the g03 modularisation round has no stale ready card.
 
 ## Next Task
 
-Complete card `409`.
+Complete card `410`.
