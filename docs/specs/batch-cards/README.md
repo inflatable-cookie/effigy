@@ -22,7 +22,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
   the manager facade.
 
 - [`384-migrate-container-lifecycle-through-manager.md`](./384-migrate-container-lifecycle-through-manager.md)
-  is ready. It migrates lifecycle commands through the manager facade.
+  is complete. It migrated lifecycle commands through the manager facade.
+
+- [`385-migrate-exec-copy-data-through-manager.md`](./385-migrate-exec-copy-data-through-manager.md)
+  is ready. It migrates exec, copy, and data operation branching through the
+  manager facade.
 
 - [`381-migrate-embedded-task-dispatch-to-execution-request.md`](./381-migrate-embedded-task-dispatch-to-execution-request.md)
   is complete. It moved embedded task dispatch onto `TaskExecutionRequestBuilder`.

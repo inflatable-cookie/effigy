@@ -410,6 +410,26 @@ impl ContainerManager {
         Ok(self.selected_backend(request)?.status(request))
     }
 
+    pub fn operation_report(
+        &self,
+        request: &ContainerManagerRequest,
+        action: ContainerAction,
+        state: ContainerRuntimeState,
+        cleanup_result: Option<ContainerCleanupResult>,
+    ) -> Result<ContainerOperationReport, ContainerManagerError> {
+        let mut report = ContainerOperationReport::new(
+            self.selected_backend(request)?.id(),
+            request.repo_root.clone(),
+            action,
+        )
+        .policy_name(interrupt_policy_name(request.interrupt_policy))
+        .state(state);
+        if let Some(cleanup_result) = cleanup_result {
+            report = report.cleanup_result(cleanup_result);
+        }
+        Ok(report)
+    }
+
     pub fn compose_process_invocation(
         &self,
         detection: &ContainerBackendDetection,
@@ -665,5 +685,29 @@ mod tests {
         assert_eq!(report.action, ContainerAction::Status);
         assert_eq!(report.cleanup_result, None);
         assert_eq!(report.state, ContainerRuntimeState::Unknown);
+    }
+
+    #[test]
+    fn lifecycle_operation_report_includes_cleanup_result() {
+        let request =
+            ContainerManagerRequest::new("/tmp/repo").backend_override(BackendId::docker_compose());
+        let manager = ContainerManager::defaults();
+
+        let report = manager
+            .operation_report(
+                &request,
+                ContainerAction::Shutdown,
+                ContainerRuntimeState::Stopped,
+                Some(super::ContainerCleanupResult::Completed),
+            )
+            .expect("operation report");
+
+        assert_eq!(report.backend_id, BackendId::docker_compose());
+        assert_eq!(report.action, ContainerAction::Shutdown);
+        assert_eq!(
+            report.cleanup_result,
+            Some(super::ContainerCleanupResult::Completed)
+        );
+        assert_eq!(report.state, ContainerRuntimeState::Stopped);
     }
 }

@@ -952,6 +952,7 @@ version = "0.3.3"
 dependencies = [
  "anstyle",
  "effigy-catalog",
+ "effigy-container-manager",
  "effigy-containers",
  "effigy-core",
  "effigy-gateway",

@@ -2,6 +2,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Output;
 
+use effigy_container_manager::{ContainerAction, ContainerRuntimeState};
 use effigy_containers::{
     compose::{compose_args, compose_up_args},
     effective_attach_mode, eject_generated_compose, eject_report,
@@ -66,6 +67,14 @@ pub(super) fn run_container_up(
         return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
     }
     let shared_service_notes = ensure_shared_services_running(&policy)?;
+    let _manager_report = effigy_runtime::container_manager::lifecycle_operation_report(
+        repo_root,
+        &policy,
+        ContainerAction::Activate,
+        ContainerRuntimeState::Starting,
+        None,
+    )
+    .map_err(RunnerError::from)?;
     if attach_mode == EffectiveAttachMode::Attached {
         match run_compose_inherit_with_stop_flag(
             repo_root,

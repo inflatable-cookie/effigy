@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use effigy_container_manager::{ContainerAction, ContainerRuntimeState};
 use effigy_containers::{
     exec::{
         capture_compose_ps, capture_running_container_stats_for_profile, colima_is_running,
@@ -18,6 +19,7 @@ use effigy_containers::{
 };
 use effigy_gateway::ports::PortRegistry;
 
+use crate::container_manager::lifecycle_operation_report;
 use crate::signals::{run_docker_capture, spawn_docker_inherit};
 use crate::EffigyRuntimeError;
 
@@ -34,6 +36,17 @@ pub fn run_container_status(
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let colima_running = colima_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let _manager_report = lifecycle_operation_report(
+        repo_root,
+        &policy,
+        ContainerAction::Status,
+        if colima_running {
+            ContainerRuntimeState::Running
+        } else {
+            ContainerRuntimeState::Stopped
+        },
+        None,
+    )?;
     let compose_ps = if colima_running {
         Some(capture_compose_ps(
             repo_root,
@@ -82,6 +95,13 @@ pub fn run_container_logs(
         )));
     }
     let service = service.unwrap_or(policy.primary_service.as_str());
+    let _manager_report = lifecycle_operation_report(
+        repo_root,
+        &policy,
+        ContainerAction::Logs,
+        ContainerRuntimeState::Running,
+        None,
+    )?;
 
     if follow {
         let mut child = spawn_docker_inherit(
@@ -169,6 +189,15 @@ pub fn run_container_status_all(output_json: bool) -> Result<String, EffigyRunti
 
 pub fn run_container_stats_all(output_json: bool) -> Result<String, EffigyRuntimeError> {
     let environments = discover_running_environments()?;
+    for environment in &environments {
+        let _manager_report = lifecycle_operation_report(
+            Path::new(&environment.repo_root),
+            &environment.policy,
+            ContainerAction::Stats,
+            ContainerRuntimeState::Running,
+            None,
+        )?;
+    }
     let mut stats_warning_lines = Vec::new();
     let mut stats_by_container = BTreeMap::new();
     let grouped_names = environments.iter().fold(

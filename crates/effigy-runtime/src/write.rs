@@ -2,6 +2,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use effigy_catalog::volumes::classify_for_reset;
+use effigy_container_manager::{ContainerAction, ContainerCleanupResult, ContainerRuntimeState};
 use effigy_containers::{
     compose::{compose_args, resolve_compose_backend, ComposeBackend},
     down_report,
@@ -11,6 +12,7 @@ use effigy_containers::{
 };
 use serde_yaml::{Mapping, Value};
 
+use crate::container_manager::lifecycle_operation_report;
 use crate::read::discover_running_environments;
 use crate::signals::run_docker_capture;
 use crate::EffigyRuntimeError;
@@ -36,6 +38,21 @@ where
         shutdown_container_via_exec(repo_root, &policy)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     }
+    let _manager_report = lifecycle_operation_report(
+        repo_root,
+        &policy,
+        ContainerAction::Shutdown,
+        if colima_running {
+            ContainerRuntimeState::Stopped
+        } else {
+            ContainerRuntimeState::Unknown
+        },
+        Some(if colima_running {
+            ContainerCleanupResult::Completed
+        } else {
+            ContainerCleanupResult::NotRequested
+        }),
+    )?;
     let removed_gateway_domains = deregister_gateway_routes(&policy)?;
     let mut report = down_report(&policy, colima_running);
     annotate_left_running_shared_services(&mut report, &policy);
@@ -81,6 +98,21 @@ where
             shutdown_container_via_exec(repo_root, &policy)
                 .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
         }
+        let _manager_report = lifecycle_operation_report(
+            repo_root,
+            &policy,
+            ContainerAction::Shutdown,
+            if colima_running {
+                ContainerRuntimeState::Stopped
+            } else {
+                ContainerRuntimeState::Unknown
+            },
+            Some(if colima_running {
+                ContainerCleanupResult::Completed
+            } else {
+                ContainerCleanupResult::NotRequested
+            }),
+        )?;
         let removed_gateway_domains = deregister_gateway_routes(&policy)?;
         stopped.push(StoppedContainerEnvironment {
             repo_root: environment.repo_root,

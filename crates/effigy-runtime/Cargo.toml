@@ -9,6 +9,7 @@ description = "Runtime session and orchestration helpers for Effigy"
 [dependencies]
 anstyle = "1"
 effigy-catalog = { path = "../effigy-catalog" }
+effigy-container-manager = { path = "../effigy-container-manager" }
 effigy-containers = { path = "../effigy-containers" }
 effigy-core = { path = "../effigy-core" }
 effigy-gateway = { path = "../effigy-gateway" }
