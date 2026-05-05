@@ -785,25 +785,32 @@ mod tests {
 
     #[test]
     fn lifecycle_operation_report_includes_cleanup_result() {
-        let request =
-            ContainerManagerRequest::new("/tmp/repo").backend_override(BackendId::docker_compose());
+        let request = ContainerManagerRequest::new("/tmp/repo")
+            .backend_override(BackendId::docker_compose())
+            .interrupt_policy(ContainerInterruptPolicy::ShutdownOnInterrupt);
         let manager = ContainerManager::defaults();
 
         let report = manager
             .operation_report(
                 &request,
-                ContainerAction::Shutdown,
-                ContainerRuntimeState::Stopped,
-                Some(super::ContainerCleanupResult::Completed),
+                ContainerAction::Activate,
+                ContainerRuntimeState::Degraded,
+                Some(super::ContainerCleanupResult::Failed(
+                    "compose down failed".to_owned(),
+                )),
             )
             .expect("operation report");
 
         assert_eq!(report.backend_id, BackendId::docker_compose());
-        assert_eq!(report.action, ContainerAction::Shutdown);
+        assert_eq!(report.policy_name, "shutdown-on-interrupt");
+        assert_eq!(report.repo_root, PathBuf::from("/tmp/repo"));
+        assert_eq!(report.action, ContainerAction::Activate);
         assert_eq!(
             report.cleanup_result,
-            Some(super::ContainerCleanupResult::Completed)
+            Some(super::ContainerCleanupResult::Failed(
+                "compose down failed".to_owned()
+            ))
         );
-        assert_eq!(report.state, ContainerRuntimeState::Stopped);
+        assert_eq!(report.state, ContainerRuntimeState::Degraded);
     }
 }

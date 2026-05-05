@@ -34,7 +34,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
   context stable.
 
 - [`404-add-manager-operation-report-proof.md`](./404-add-manager-operation-report-proof.md)
-  is ready. It proves manager operation-report identity and cleanup fields.
+  is complete. It proved manager operation-report identity and cleanup fields.
+
+- [`405-add-execution-surface-plan-parity-proof.md`](./405-add-execution-surface-plan-parity-proof.md)
+  is ready. It proves direct/bootstrap/Rhai execution-plan parity.
 
 - [`387-inventory-runtime-container-cleanup-targets.md`](./387-inventory-runtime-container-cleanup-targets.md)
   is complete. It inventoried the remaining runtime/container cleanup targets

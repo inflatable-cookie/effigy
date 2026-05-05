@@ -67,4 +67,4 @@ Recently completed:
 ## Next Task
 
 Complete card
-[`404-add-manager-operation-report-proof.md`](./batch-cards/404-add-manager-operation-report-proof.md).
+[`405-add-execution-surface-plan-parity-proof.md`](./batch-cards/405-add-execution-surface-plan-parity-proof.md).
