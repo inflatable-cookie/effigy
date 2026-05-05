@@ -11,6 +11,7 @@ pub struct EffigyRuntimeContext {
     command_root: PathBuf,
     repo_override: Option<PathBuf>,
     target: ResolvedRuntimeTarget,
+    resolved_target: ResolvedTarget,
     paths: RuntimePathSet,
     host: HostRuntimeInfo,
     container: ContainerRuntimeInfo,
@@ -58,6 +59,10 @@ impl EffigyRuntimeContext {
         &self.target
     }
 
+    pub fn resolved_target(&self) -> &ResolvedTarget {
+        &self.resolved_target
+    }
+
     pub fn paths(&self) -> &RuntimePathSet {
         &self.paths
     }
@@ -81,8 +86,14 @@ impl EffigyRuntimeContext {
             command_root: command_root.clone(),
             repo_override: None,
             target: ResolvedRuntimeTarget {
-                resolved_root: command_root,
+                resolved_root: command_root.clone(),
                 resolution_mode: "test".to_owned(),
+                evidence: vec!["test context".to_owned()],
+                warnings: Vec::new(),
+            },
+            resolved_target: ResolvedTarget {
+                resolved_root: command_root,
+                resolution_mode: effigy_core::resolver::ResolutionMode::AutoNearest,
                 evidence: vec!["test context".to_owned()],
                 warnings: Vec::new(),
             },
@@ -192,7 +203,8 @@ impl EffigyRuntimeContextBuilder {
             invocation_cwd,
             command_root,
             repo_override: effective_repo_override,
-            target: resolved.into(),
+            target: resolved.clone().into(),
+            resolved_target: resolved,
             paths: RuntimePathSet {
                 home: env.home.map(PathBuf::from),
                 shell: env.shell.map(PathBuf::from),
@@ -234,8 +246,16 @@ impl EffigyRuntimeContextBuilder {
                     command_root: command_root.clone(),
                     repo_override,
                     target: ResolvedRuntimeTarget {
-                        resolved_root: command_root,
+                        resolved_root: command_root.clone(),
                         resolution_mode: "LossyCwdFallback".to_owned(),
+                        evidence: Vec::new(),
+                        warnings: vec![format!(
+                            "target root resolution failed; using cwd fallback: {error}"
+                        )],
+                    },
+                    resolved_target: ResolvedTarget {
+                        resolved_root: command_root,
+                        resolution_mode: effigy_core::resolver::ResolutionMode::AutoNearest,
                         evidence: Vec::new(),
                         warnings: vec![format!(
                             "target root resolution failed; using cwd fallback: {error}"

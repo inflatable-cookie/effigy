@@ -21,9 +21,9 @@ context.
 
 ## Current Ready Card
 
-[`375-migrate-command-local-cwd-root-callers.md`](./batch-cards/375-migrate-command-local-cwd-root-callers.md)
-is ready. It migrates the first direct CLI runner path callers behind
-`EffigyRuntimeContext`.
+[`376-design-rhai-runtime-context-and-execution-helper.md`](./batch-cards/376-design-rhai-runtime-context-and-execution-helper.md)
+is ready. It turns the DecodeLabs mysql seed bug into the concrete Rhai context
+and execution-builder API requirement.
 
 ## Exit Condition
 
@@ -33,4 +33,4 @@ or explicitly queued into the next card.
 
 ## Next Task
 
-Implement card `375`.
+Implement card `376`.

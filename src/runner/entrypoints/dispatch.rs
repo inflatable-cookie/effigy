@@ -27,14 +27,21 @@ use super::super::run_workspace;
 use crate::runner::error::RunnerError;
 
 pub(super) fn run_command(cmd: Command) -> Result<String, RunnerError> {
-    run_command_with_cwd(cmd, &std::env::current_dir().unwrap_or_else(|_| ".".into()))
+    let context = EffigyRuntimeContext::capture_lossy(
+        None,
+        crate::runner::command_context::command_repo_override_for_context(&cmd),
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    run_command_with_context(cmd, &context)
 }
 
 pub(super) fn run_command_with_context(
     cmd: Command,
     context: &EffigyRuntimeContext,
 ) -> Result<String, RunnerError> {
-    run_command_with_cwd(cmd, context.invocation_cwd())
+    crate::runner::command_context::with_runtime_context(context, || {
+        run_command_with_cwd(cmd, context.invocation_cwd())
+    })
 }
 
 pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, RunnerError> {

@@ -95,7 +95,7 @@ mod tests {
         )
         .expect("write manifest");
 
-        let original = std::env::current_dir().expect("current dir");
+        let original = effigy_core::repo::current_working_dir().expect("current dir");
         std::env::set_current_dir(&root).expect("set cwd");
         let out = run_defer(DeferArgs {
             task: TaskInvocation {

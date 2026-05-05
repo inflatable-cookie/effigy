@@ -10,8 +10,8 @@ use effigy_manifest::{load_task_manifest, ManifestTask, ManifestTaskRunIn};
 
 use super::policy::DEFER_DEPTH_ENV;
 use super::trace::render_deferral_trace;
+use crate::runner::command_context::active_runtime_context;
 use crate::runner::container_command::support::validate_running_container_runtime_match;
-use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME;
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, ActivationRequest, ExecutionSurfaceKind,
 };
@@ -229,9 +229,10 @@ fn run_deferred_request_with_binding(
                     ))
                 })?;
             let command = build_deferred_command(task, runtime_args, deferral, &exec_working_dir)?;
-            if std::env::var_os(CONTAINER_HANDOFF_ENV_NAME).is_some() {
-                let local_working_dir =
-                    std::env::current_dir().unwrap_or_else(|_| deferral.working_dir.clone());
+            if let Some(context) = active_runtime_context()
+                .filter(|context| context.container().inside_container_handoff)
+            {
+                let local_working_dir = context.invocation_cwd().to_path_buf();
                 let output = run_deferred_request_locally(
                     task,
                     runtime_args,

@@ -62,4 +62,5 @@ Recently completed:
 
 ## Next Task
 
-Implement ready card `375` for command-local cwd/root caller migration.
+Implement ready card `376` for Rhai runtime context and execution-helper
+design.

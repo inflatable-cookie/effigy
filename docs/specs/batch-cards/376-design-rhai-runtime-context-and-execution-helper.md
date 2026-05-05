@@ -2,7 +2,7 @@
 
 Lane: [`036-universal-runtime-context-and-path-authority-strict-lane.md`](../036-universal-runtime-context-and-path-authority-strict-lane.md)
 
-Status: Queued
+Status: Ready
 Owner: Platform
 Created: 2026-05-05
 
@@ -36,5 +36,4 @@ proof is represented in the `g03.034` matrix.
 
 ## Next Task
 
-Implement card `375`, then promote this queued Rhai card when the context
-caller migration has landed.
+Implement this card.
