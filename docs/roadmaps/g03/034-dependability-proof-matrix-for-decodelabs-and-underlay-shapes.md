@@ -34,4 +34,4 @@ data.
 ## Next Task
 
 Complete card
-[`401-add-underlay-generated-compose-path-proof.md`](../../specs/batch-cards/401-add-underlay-generated-compose-path-proof.md).
+[`402-add-bootstrap-target-repo-path-proof.md`](../../specs/batch-cards/402-add-bootstrap-target-repo-path-proof.md).

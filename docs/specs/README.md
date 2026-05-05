@@ -67,4 +67,4 @@ Recently completed:
 ## Next Task
 
 Complete card
-[`401-add-underlay-generated-compose-path-proof.md`](./batch-cards/401-add-underlay-generated-compose-path-proof.md).
+[`402-add-bootstrap-target-repo-path-proof.md`](./batch-cards/402-add-bootstrap-target-repo-path-proof.md).

@@ -81,6 +81,89 @@ variant = "default"
 }
 
 #[test]
+fn generated_compose_underlay_shape_keeps_runtime_paths_and_external_mounts_stable() {
+    with_temp_effigy_home("underlay-generated-compose-paths", |_| {
+        let parent = tempfile::tempdir().expect("underlay parent tempdir");
+        let root = parent.path().join("underlay-reference");
+        let underlay = parent.path().join("underlay");
+        fs::create_dir_all(&root).expect("mkdir root");
+        fs::create_dir_all(&underlay).expect("mkdir underlay sibling");
+        fs::write(
+            root.join("effigy.toml"),
+            format!(
+                r#"
+[bundle]
+base = "underlay"
+host = "underlay.test"
+databases = ["underlay"]
+project_name = "underlay-reference-dev"
+workspace_subdir = "underlay-reference"
+
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+working_dir = "/workspace-root/underlay-reference"
+
+[containers.web.host]
+mounts = [
+  {{ host = "{}",
+     container = "/workspace-root/underlay",
+     external = true }},
+]
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+"#,
+                underlay.display()
+            ),
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, None).expect("policy");
+        let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
+        let canonical_root = root.canonicalize().expect("canonical root");
+        let canonical_underlay = underlay.canonicalize().expect("canonical underlay");
+        let runtime_compose_dir = root.join(".effigy/runtime/compose");
+
+        assert_eq!(policy.compose_source, EffectiveComposeSource::Generated);
+        assert_eq!(policy.project_name, "underlay-reference-web-dev");
+        assert!(policy.compose_files[0].starts_with(&runtime_compose_dir));
+        assert!(
+            policy.compose_files[0].exists(),
+            "runtime compose path should exist"
+        );
+        assert!(
+            policy
+                .compose_file_display
+                .contains(".effigy/runtime/compose/"),
+            "display should stay under runtime compose dir: {}",
+            policy.compose_file_display
+        );
+        assert!(
+            compose.contains(&format!(
+                "{}:/workspace-root/underlay-reference",
+                canonical_root.display()
+            )),
+            "generated compose should mount the target repo at the Underlay workspace path: {compose}"
+        );
+        assert!(
+            compose.contains(&format!(
+                "{}:/workspace-root/underlay",
+                canonical_underlay.display()
+            )),
+            "generated compose should preserve the external Underlay sibling mount: {compose}"
+        );
+    });
+}
+
+#[test]
 fn generated_compose_uses_explicit_host_ports_when_declared() {
     with_temp_effigy_home("catalog-explicit-host-ports", |_| {
         let root = temp_repo("catalog-explicit-host-ports");

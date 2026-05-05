@@ -22,8 +22,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
   `exec::run(...)` with container routing and `stdin_file`.
 
 - [`401-add-underlay-generated-compose-path-proof.md`](./401-add-underlay-generated-compose-path-proof.md)
-  is ready. It proves Underlay generated-compose path and external mount
+  is complete. It proved Underlay generated-compose path and external mount
   stability.
+
+- [`402-add-bootstrap-target-repo-path-proof.md`](./402-add-bootstrap-target-repo-path-proof.md)
+  is ready. It proves bootstrap task execution keeps target repo path
+  authority.
 
 - [`387-inventory-runtime-container-cleanup-targets.md`](./387-inventory-runtime-container-cleanup-targets.md)
   is complete. It inventoried the remaining runtime/container cleanup targets
