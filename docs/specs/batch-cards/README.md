@@ -17,6 +17,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is ready. It migrates the first command-local cwd/root callers behind
   `EffigyRuntimeContext`.
 
+- [`376-design-rhai-runtime-context-and-execution-helper.md`](./376-design-rhai-runtime-context-and-execution-helper.md)
+  is queued. It turns the DecodeLabs mysql seed path bug into a concrete Rhai
+  runtime-context and execution-builder requirement.
+
 - [`374-plan-runtime-context-contract-and-crate-boundary.md`](./374-plan-runtime-context-contract-and-crate-boundary.md)
   is complete. It opened the runtime context lane and landed the first
   `effigy-context` slice.

@@ -22,6 +22,8 @@ data.
 - host path and external mount proof
 - manager operation report proof
 - direct task, bootstrap task, and Rhai task parity proof
+- DecodeLabs mysql seed proof where a Rhai script imports SQL via a
+  container-targeted execution request, including `stdin_file` path handling
 
 ## Non-Goals
 

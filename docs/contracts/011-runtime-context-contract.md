@@ -12,6 +12,9 @@ caller-local code.
 
 This contract covers the boot-time context needed by local execution,
 container-backed work, embedded command replay, and bootstrap handoff.
+Rhai scripts are part of that surface: a script must be able to ask Effigy for
+the same context the runner is using instead of guessing from cwd, env vars, or
+container-local paths.
 
 ## Context Owner
 
@@ -64,6 +67,27 @@ Future migration must move these callers behind the context:
 - demo task re-entry
 - container/runtime prep callers that re-probe cwd or handoff state
 
+## Rhai Exposure Rules
+
+The Rhai host surface must expose a read-only runtime context view before
+first-party scripts depend on context-sensitive path or container behavior.
+
+Minimum Rhai context fields:
+
+- invocation cwd
+- command root / repo root
+- effective repo override, when present
+- invocation mode: host or container handoff
+- inside-container handoff flag
+- host OS and architecture
+
+Rhai scripts must not decide host-versus-container execution by probing cwd,
+`env(...)`, or container marker variables directly. When a script needs a
+command to run in a service container, it should submit a typed execution
+request with `run_in = "container"` and service/container intent. The execution
+builder owns whether that becomes host `process::run(...)`, container
+`exec(...)`, or an inside-container direct process execution.
+
 ## Drift Triggers
 
 Update this contract when Effigy changes:
@@ -82,4 +106,6 @@ Minimum proof:
 - nested command replay keeps the parent repo target
 - bootstrap task dispatch targets the cloned repo, not invocation cwd
 - container handoff state is captured once and is visible through the context
+- Rhai can read the captured context and run container-targeted execution
+  without host/container path guessing
 - runner code has a drift guard against new direct cwd discovery

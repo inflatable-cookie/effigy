@@ -19,6 +19,31 @@ Rhai, run-array, demo, and managed flows.
 - move task preflight discovery into one request path
 - make runner execution consume a resolved request/plan
 - replace ad hoc task invocation construction in embedded callers
+- expose the request builder to Rhai as the canonical command execution helper
+- migrate first-party Rhai scripts away from direct host/container branching
+  where `run_in` intent is enough
+
+## Rhai Requirement
+
+Rhai must get two typed surfaces from this milestone:
+
+- `runtime::context()` or equivalent read-only context map backed by
+  `EffigyRuntimeContext`
+- an execution helper backed by `TaskExecutionRequestBuilder`, with options such
+  as `run_in = "container"`, `container`, `service`, `stdin_file`, `cwd`, and
+  `env`
+
+The helper owns the host/container decision. First-party scripts must not have
+to choose between `process::run(...)` and `container::exec(...)` when the desired
+execution target is expressible as a request.
+
+The DecodeLabs mysql seed helper is the reference bug:
+
+- mysql must execute inside the database service container
+- SQL dump paths must be interpreted from the captured repo/runtime context
+- inside-container handoff must avoid recursive container exec
+- the script should express `run_in = "container"` plus service/stdin intent,
+  not reconstruct host and container paths locally
 
 ## Non-Goals
 

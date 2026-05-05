@@ -17,6 +17,10 @@ Policy:
 - First-party shipped Rhai scripts currently use neither `effigy::run(...)` nor
   `effigy::run_json(...)`; a regression test keeps that true.
 - Keep long-running interactive flows CLI-first unless they gain a script-safe mode.
+- Runtime-sensitive scripts should move toward the universal runtime context and
+  execution request helper. `process::run(...)` and `container::exec(...)`
+  remain low-level helpers, not the preferred way for first-party scripts to
+  choose host versus container execution.
 
 ## Exposed Helpers
 
@@ -33,6 +37,8 @@ Policy:
 
 | Surface | Rhai helpers | Status |
 | --- | --- | --- |
+| Runtime context | planned universal context helper backed by `EffigyRuntimeContext` | Planned |
+| Execution request | planned execution helper backed by `TaskExecutionRequestBuilder` | Planned |
 | Config | `config::raw`, `config::effective`, `config::get`, `config::get_or` | Exposed |
 | Tasks | `task::run`, `task::run_json`, `task::list`, `task::resolve`, `task::info`, `catalog::tasks` | Exposed |
 | Container lifecycle | `container::up`, `container::down`, `container::down_all`, `container::shell`, `container::shell` (with service), `container::exec` | Exposed |
@@ -137,6 +143,31 @@ HTTP helpers return:
 
 - `http::post(url, body)` — POST with a plain string body; equivalent to
   `http::post(url, #{ body: "..." })`.
+
+## Planned Runtime/Execution Surface
+
+The runtime/container/execution modularisation lane will add a typed helper for
+scripts that need Effigy to choose the correct execution route from declared
+intent.
+
+Target shape:
+
+```rhai
+let result = exec::run(
+    ["mysql", "--skip-ssl", "-h", "db", "-uroot", database],
+    #{
+        run_in: "container",
+        container: "web",
+        service: "db",
+        stdin_file: staged_path,
+    },
+);
+```
+
+The helper should route through the execution request builder. It should use
+the captured runtime context to decide whether the process is already inside a
+container handoff, how repo-relative paths resolve, and whether container exec
+is required.
 
 ### Envfile Detail
 

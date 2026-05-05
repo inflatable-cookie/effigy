@@ -18,6 +18,8 @@ object.
 - keep legacy cwd/root helpers as wrappers only where migration is not complete
 - migrate command-local `current_working_dir()` and `resolve_repo_root()` callers
   that sit on the direct CLI dispatch path
+- inventory Rhai script entrypoints that still receive only cwd/repo root and
+  mark what they need from `EffigyRuntimeContext`
 - add the first lightweight drift guard for direct `std::env::current_dir()` in
   `src/runner/**`
 - leave container backend and task execution request work to later cards
@@ -26,7 +28,9 @@ object.
 
 This card is complete when direct CLI dispatch no longer recalculates cwd/root
 after context capture, affected tests pass, and remaining runner-local path
-probes are either migrated or inventoried into the next card.
+probes are either migrated or inventoried into the next card. Rhai must be
+called out explicitly in that inventory because it is the current known
+host/container path failure mode.
 
 ## Validation
 
