@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use effigy_cli::TaskInvocation;
@@ -5,7 +6,10 @@ use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn, TaskS
 use effigy_tasks::CatalogSelectionMode;
 
 use super::binding::resolve_container_execution_binding as resolve_container_execution_binding_impl;
-use super::entry::run_manifest_task_with_cwd as run_manifest_task_with_cwd_impl;
+use super::entry::{
+    run_manifest_task_with_cwd as run_manifest_task_with_cwd_impl,
+    run_manifest_task_with_cwd_and_env as run_manifest_task_with_cwd_and_env_impl,
+};
 use super::planning::{
     build_execution_preflight as build_execution_preflight_impl, ExecutionPreflight,
 };
@@ -40,6 +44,14 @@ pub(in crate::runner) fn run_manifest_task_with_cwd(
     cwd: PathBuf,
 ) -> Result<String, RunnerError> {
     run_manifest_task_with_cwd_impl(task, cwd)
+}
+
+pub(in crate::runner) fn run_manifest_task_with_cwd_and_env(
+    task: &TaskInvocation,
+    cwd: PathBuf,
+    env_overrides: &BTreeMap<String, String>,
+) -> Result<String, RunnerError> {
+    run_manifest_task_with_cwd_and_env_impl(task, cwd, env_overrides)
 }
 
 pub(in crate::runner) fn build_execution_preflight(

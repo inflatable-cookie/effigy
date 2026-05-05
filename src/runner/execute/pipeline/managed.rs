@@ -35,7 +35,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const MANAGED_LIFECYCLE_CLEANUP_TIMEOUT_SECS: u64 = 90;
-pub(super) fn run_managed_task(
+pub(in crate::runner) fn run_managed_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
 ) -> Result<Option<String>, RunnerError> {

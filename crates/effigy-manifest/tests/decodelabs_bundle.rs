@@ -31,6 +31,13 @@ version = "11.0"
         "decodelabs bundle should materialize its seed helper at {}",
         seed_script.display()
     );
+    assert!(
+        seed_script_source.contains(r#"process::run("mysql", reset_args)"#)
+            && seed_script_source.contains("stdin_file: dump_repo_path")
+            && !seed_script_source.contains("container::exec("),
+        "decodelabs seed helper should import dumps locally inside the container task at {}",
+        seed_script.display()
+    );
     let env_script = bundle_root.join("scripts/write-env-if-present.rhai");
     let env_script_source = std::fs::read_to_string(&env_script).expect("env script");
     assert!(

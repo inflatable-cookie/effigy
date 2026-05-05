@@ -20,8 +20,10 @@ use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, ActivationRequest, ExecutionSurfaceKind,
 };
 use crate::runner::embedded_runner::run_embedded_task;
-use crate::runner::execute::api::resolve_execution_binding_resolution;
-use crate::runner::execute::api::run_managed_run_with_cwd;
+use crate::runner::execute::api::{
+    resolve_execution_binding_resolution, run_managed_run_with_cwd,
+    run_manifest_task_with_cwd_and_env,
+};
 use crate::runner::manifest::load_task_manifest;
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, LeaseRefreshPolicy, PublicWorkspaceCleanupOverride,
@@ -34,6 +36,7 @@ mod deps;
 
 const BOOTSTRAP_DB_SEED_TASK: &str = "bootstrap:db-seed";
 const BOOTSTRAP_DB_SEEDS_DIR: &str = ".effigy/local/db-seeds";
+const BOOTSTRAP_DB_SEEDS_METADATA_FILE: &str = "_effigy-bootstrap-db-seeds.json";
 const BOOTSTRAP_DB_SEEDS_DIR_ENV: &str = "EFFIGY_BOOTSTRAP_DB_SEEDS_DIR";
 const BOOTSTRAP_DB_SEED_FILE_ENV: &str = "EFFIGY_BOOTSTRAP_DB_SEED_FILE";
 const BOOTSTRAP_DB_SEED_COUNT_ENV: &str = "EFFIGY_BOOTSTRAP_DB_SEED_COUNT";
@@ -177,7 +180,8 @@ fn execute_bootstrap_request(
         progress
             .borrow_mut()
             .start_command_phase("[bootstrap] running database seed task");
-        run_bootstrap_seed_task(&effective_destination)?;
+        let db_seed_env_entries = bootstrap_db_seed_env(&result.staged_db_seeds);
+        run_bootstrap_seed_task(&effective_destination, &db_seed_env_entries)?;
         progress.borrow_mut().finish_success(&format!(
             "[ok] database seed task complete ({BOOTSTRAP_DB_SEED_TASK})"
         ));
@@ -443,6 +447,35 @@ fn stage_bootstrap_db_seed_files(
             staged_path: destination,
         });
     }
+    std::fs::write(
+        staging_dir.join(BOOTSTRAP_DB_SEEDS_METADATA_FILE),
+        serde_json::to_string(
+            &staged
+                .iter()
+                .map(|seed| {
+                    serde_json::json!({
+                        "target": seed.target,
+                        "source_path": seed.source_path.display().to_string(),
+                        "staged_path": Path::new(BOOTSTRAP_DB_SEEDS_DIR)
+                            .join(
+                                seed.staged_path
+                                    .file_name()
+                                    .expect("staged seed file should have name"),
+                            )
+                            .display()
+                            .to_string(),
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .expect("bootstrap db seed metadata should serialize"),
+    )
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to write bootstrap db seed metadata file {}: {error}",
+            staging_dir.join(BOOTSTRAP_DB_SEEDS_METADATA_FILE).display()
+        ))
+    })?;
     Ok(staged)
 }
 
@@ -607,7 +640,10 @@ fn bundle_database_targets(bundle: &effigy_manifest::ManifestBundleConfig) -> Op
     }
 }
 
-fn run_bootstrap_seed_task(repo_root: &Path) -> Result<(), RunnerError> {
+fn run_bootstrap_seed_task(
+    repo_root: &Path,
+    env_overrides: &std::collections::BTreeMap<String, String>,
+) -> Result<(), RunnerError> {
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     if !manifest.tasks.contains_key(BOOTSTRAP_DB_SEED_TASK) {
         return Err(RunnerError::task_invocation(format!(
@@ -616,7 +652,25 @@ fn run_bootstrap_seed_task(repo_root: &Path) -> Result<(), RunnerError> {
         )));
     }
     prepare_bootstrap_seed_runtime(repo_root, &manifest)?;
-    run_bootstrap_task(repo_root, BOOTSTRAP_DB_SEED_TASK, "bootstrap db seed")
+    with_runtime_session_context(
+        bootstrap_runtime_session_context("bootstrap db seed"),
+        || {
+            run_manifest_task_with_cwd_and_env(
+                &TaskInvocation {
+                    name: BOOTSTRAP_DB_SEED_TASK.to_owned(),
+                    args: Vec::new(),
+                },
+                repo_root.to_path_buf(),
+                env_overrides,
+            )
+            .map(|_| ())
+            .map_err(|err| {
+                RunnerError::task_invocation(format!(
+                    "bootstrap db seed task `{BOOTSTRAP_DB_SEED_TASK}` failed: {err}"
+                ))
+            })
+        },
+    )
 }
 
 fn prepare_bootstrap_seed_runtime(

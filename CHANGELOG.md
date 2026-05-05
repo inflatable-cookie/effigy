@@ -66,6 +66,14 @@ During v0.x, MINOR bumps may include breaking changes.
   compose binaries through the same bounded host CLI lookup as the container
   runtime layer, so `container::exec(...)` no longer fails under thin GUI or
   wrapper `PATH` environments.
+- The bundled DecodeLabs `bootstrap:db-seed` task now runs MySQL imports
+  with local `process::run(...)` calls inside the workspace container instead
+  of recursively using `container::exec(...)`, so bootstrap DB seeding no
+  longer tries to reach host-side Colima from inside the container.
+- Workspace-installed Linux Effigy artifacts now carry a sibling
+  `effigy.active-version` file into the container, so the in-container header
+  keeps the local build identity instead of collapsing to the plain package
+  version string.
 
 ## [0.3.3] - 2026-05-03
 

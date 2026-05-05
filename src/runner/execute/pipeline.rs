@@ -1,7 +1,7 @@
 #[path = "pipeline/command.rs"]
 mod command;
 #[path = "pipeline/managed.rs"]
-mod managed;
+pub(super) mod managed;
 #[path = "pipeline/standard.rs"]
 pub(super) mod standard;
 

@@ -9,6 +9,14 @@ fn optional_config_string(path, fallback) {
     return str::trim(value);
 }
 
+fn optional_env_string(name, fallback) {
+    let value = env(name);
+    if value == "" {
+        return fallback;
+    }
+    return str::trim(value);
+}
+
 fn primary_database_name() {
     let value = config::get("bundle.databases");
     if value.type_of() == "array" && value.len() > 0 {
@@ -52,8 +60,13 @@ fn latest_dump_path(dumps_dir) {
     return latest_path;
 }
 
-fn seed_specs_from_env() {
-    let raw = optional_config_string("env.EFFIGY_BOOTSTRAP_DB_SEEDS_JSON", "");
+fn seed_specs_from_env_or_file(dumps_dir) {
+    let metadata_path = path::join(dumps_dir, "_effigy-bootstrap-db-seeds.json");
+    let raw = if fs::exists(metadata_path) {
+        str::trim(fs::read_file(metadata_path))
+    } else {
+        optional_env_string("EFFIGY_BOOTSTRAP_DB_SEEDS_JSON", "")
+    };
     if raw == "" {
         return [];
     }
@@ -74,7 +87,7 @@ fn import_dump(container_name, db_password, database, dump_repo_path, dump_name)
     log("[check] resetting database " + database);
 
     let reset_args = mysql_args + ["-e", reset_sql];
-    let reset_result = container::exec(container_name, ["mysql"] + reset_args);
+    let reset_result = process::run("mysql", reset_args);
 
     if reset_result["status"] != 0 {
         throw "[error] database reset failed"
@@ -90,15 +103,7 @@ fn import_dump(container_name, db_password, database, dump_repo_path, dump_name)
     log("[check] importing SQL dump " + dump_name + " into " + database);
 
     let import_args = mysql_args + [database];
-    let import_shell = "";
-    for arg in ["mysql"] + import_args {
-        if import_shell != "" {
-            import_shell += " ";
-        }
-        import_shell += str::shell_quote(arg);
-    }
-    import_shell += " < " + str::shell_quote(dump_repo_path);
-    let import_result = container::exec(container_name, ["sh", "-lc", import_shell]);
+    let import_result = process::run("mysql", import_args, #{ stdin_file: dump_repo_path });
 
     if import_result["status"] != 0 {
         throw "[error] SQL import failed"
@@ -122,12 +127,12 @@ if database == "" {
 let container_name = optional_config_string("bundle.container_name", "web");
 let db_password_path = "containers." + container_name + ".services.db.params.password";
 let db_password = optional_config_string(db_password_path, "secret");
-let dumps_dir = optional_config_string(
-    "env.EFFIGY_BOOTSTRAP_DB_SEEDS_DIR",
+let dumps_dir = optional_env_string(
+    "EFFIGY_BOOTSTRAP_DB_SEEDS_DIR",
     path::join(repo_root, ".effigy/local/db-seeds"),
 );
 let databases = declared_databases();
-let seed_specs = seed_specs_from_env();
+let seed_specs = seed_specs_from_env_or_file(dumps_dir);
 
 fs::create_dir(dumps_dir);
 

@@ -15,8 +15,8 @@ use crate::runner::system_command::workspace_provisioning::{
     linux_workspace_effigy_release_url, render_workspace_effigy_install_command,
     render_workspace_effigy_staging_path, resolve_local_effigy_repo_root_from_paths,
     resolve_local_workspace_effigy_freshness_anchor, run_linux_workspace_effigy_rehearsal,
-    sibling_effigy_repo_root, LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
-    EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+    sibling_effigy_repo_root, workspace_effigy_active_version_file, LinuxWorkspaceArtifactSource,
+    LinuxWorkspaceTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
 use crate::runner::system_command::workspace_session::classify_workspace_session_ownership;
 use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
@@ -474,6 +474,10 @@ fn workspace_artifact_source_download_bypasses_discoverable_local_repo() {
             .expect("resolve artifact");
 
     assert_eq!(artifact, cache_path);
+    let active_version = workspace_effigy_active_version_file(&artifact);
+    assert!(active_version.is_file());
+    let contents = std::fs::read_to_string(active_version).expect("read active version");
+    assert!(!contents.trim().is_empty());
 }
 
 #[test]
@@ -1057,10 +1061,15 @@ fn workspace_handoff_preparation_registers_routes_when_gateway_surface_is_active
 
 #[test]
 fn workspace_effigy_install_command_targets_usr_local_bin() {
-    let rendered = render_workspace_effigy_install_command("/tmp/effigy-host-1");
+    let rendered = render_workspace_effigy_install_command(
+        "/tmp/effigy-host-1",
+        Some("/tmp/effigy-host-1.active-version"),
+    );
     assert!(rendered.contains("/tmp/effigy-host"));
     assert!(rendered.contains("/usr/local/bin/effigy"));
+    assert!(rendered.contains("/usr/local/bin/effigy.active-version"));
     assert!(rendered.contains("install -m 0755"));
+    assert!(rendered.contains("install -m 0644"));
 }
 
 #[test]
