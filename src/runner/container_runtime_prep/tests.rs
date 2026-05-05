@@ -2,14 +2,14 @@ use super::{
     activate_container_runtime_for_task_using,
     ensure_primary_service_exec_ready_with_recovery_using, parse_bind_mount_host_path,
     prepare_host_bind_mount_dirs, restart_primary_service_using, run_runtime_prep_steps,
-    service_depends_on_primary, validate_policy_runtime,
-    ActivationRequest, ContainerTaskActivation, ExecutionSurfaceKind,
+    service_depends_on_primary, validate_policy_runtime, ActivationRequest,
+    ContainerTaskActivation, ExecutionSurfaceKind,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
 use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
-use std::os::unix::process::ExitStatusExt;
 use std::fs;
+use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -360,8 +360,14 @@ depends_on:
     .expect("sequence yaml");
 
     assert!(service_depends_on_primary(mapping.get("depends_on"), "app"));
-    assert!(service_depends_on_primary(sequence.get("depends_on"), "app"));
-    assert!(!service_depends_on_primary(sequence.get("depends_on"), "db"));
+    assert!(service_depends_on_primary(
+        sequence.get("depends_on"),
+        "app"
+    ));
+    assert!(!service_depends_on_primary(
+        sequence.get("depends_on"),
+        "db"
+    ));
 }
 
 #[test]

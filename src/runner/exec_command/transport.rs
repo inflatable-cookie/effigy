@@ -264,24 +264,27 @@ pub(super) fn run_command_capture_allow_failure_with_stdin(
     let mut command = ProcessCommand::new(&resolved_program);
     command.current_dir(repo_root).args(args);
     if let Some(stdin_file) = stdin_file {
-        let file = std::fs::File::open(stdin_file).map_err(|error| RunnerError::TaskCommandLaunch {
+        let file =
+            std::fs::File::open(stdin_file).map_err(|error| RunnerError::TaskCommandLaunch {
+                command: format!(
+                    "{} {}",
+                    resolved_program.to_string_lossy(),
+                    format_args(args)
+                ),
+                error,
+            })?;
+        command.stdin(Stdio::from(file));
+    }
+    command
+        .output()
+        .map_err(|error| RunnerError::TaskCommandLaunch {
             command: format!(
                 "{} {}",
                 resolved_program.to_string_lossy(),
                 format_args(args)
             ),
             error,
-        })?;
-        command.stdin(Stdio::from(file));
-    }
-    command.output().map_err(|error| RunnerError::TaskCommandLaunch {
-        command: format!(
-            "{} {}",
-            resolved_program.to_string_lossy(),
-            format_args(args)
-        ),
-        error,
-    })
+        })
 }
 
 pub(super) fn resolve_host_program(program: impl AsRef<OsStr>) -> OsString {

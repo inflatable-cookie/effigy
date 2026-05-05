@@ -283,7 +283,12 @@ fn restart_primary_service_using(
     ) -> Result<std::process::Output, RunnerError>,
 ) -> Result<(), RunnerError> {
     let restart_args = compose_args(policy, ["restart", policy.primary_service.as_str()]);
-    run_compose(repo_root, policy, &restart_args, "docker compose restart primary service")?;
+    run_compose(
+        repo_root,
+        policy,
+        &restart_args,
+        "docker compose restart primary service",
+    )?;
 
     let dependent_services = load_services_depending_on_primary(repo_root, policy)?;
     if dependent_services.is_empty() {
@@ -327,10 +332,10 @@ fn load_services_depending_on_primary(
                 continue;
             }
             let depends_on = service_value.get("depends_on");
-            if service_depends_on_primary(depends_on, &policy.primary_service) {
-                if !services.iter().any(|existing| existing == service_name) {
-                    services.push(service_name.to_owned());
-                }
+            if service_depends_on_primary(depends_on, &policy.primary_service)
+                && !services.iter().any(|existing| existing == service_name)
+            {
+                services.push(service_name.to_owned());
             }
         }
     }

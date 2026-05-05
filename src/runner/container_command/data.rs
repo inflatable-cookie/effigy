@@ -521,9 +521,8 @@ pull_production = "scripts/pull-production.sh"
                 .expect("tty should prompt")
         );
         assert!(
-            container_data_pull_production_prompt_required("web", false, true, false, false)
+            !container_data_pull_production_prompt_required("web", false, true, false, false)
                 .expect("--yes should bypass")
-                == false
         );
         let non_tty =
             container_data_pull_production_prompt_required("web", false, false, false, true)
@@ -542,9 +541,8 @@ pull_production = "scripts/pull-production.sh"
                 .expect("tty should prompt")
         );
         assert!(
-            container_data_import_prompt_required("web", false, true, false, false)
+            !container_data_import_prompt_required("web", false, true, false, false)
                 .expect("--yes should bypass")
-                == false
         );
         let non_tty = container_data_import_prompt_required("web", false, false, false, true)
             .expect_err("non-tty should fail");
