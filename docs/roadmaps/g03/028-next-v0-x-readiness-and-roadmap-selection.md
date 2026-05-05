@@ -2,9 +2,10 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 Depends on: [`019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md`](./019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md), [`020-distribution-channel-proof-and-first-publish-closeout.md`](./020-distribution-channel-proof-and-first-publish-closeout.md), [`027-interactive-cli-prompt-expansion-and-guardrails.md`](./027-interactive-cli-prompt-expansion-and-guardrails.md)
 
 ## Problem
@@ -52,4 +53,10 @@ the repo has a documented reason to remain in planning with no ready card.
 
 ## Next Task
 
-Execute [`372-decide-next-live-roadmap-after-prompt-lane-closeout.md`](../../specs/batch-cards/372-decide-next-live-roadmap-after-prompt-lane-closeout.md).
+Execute [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](../../specs/batch-cards/373-audit-v0-x-release-readiness-and-gate-alignment.md).
+
+## Closeout
+
+`g03.028` selected `g03.029` as the next live roadmap. The next lane is a
+bounded `v0.x` release-readiness audit and gate-alignment pass, not a release
+execution flow.

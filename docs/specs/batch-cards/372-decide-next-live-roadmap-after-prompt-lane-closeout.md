@@ -2,9 +2,10 @@
 
 Lane: [`034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md`](../034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Goal
 
@@ -37,5 +38,9 @@ stop with no active ready card.
 
 ## Next Task
 
-Execute this card. Start from the completed roadmap anchors, then promote one
-next target or stop in planning with evidence.
+Execute [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](./373-audit-v0-x-release-readiness-and-gate-alignment.md).
+
+## Closeout
+
+Selected `g03.029` as the next live roadmap. The repo should run a bounded
+`v0.x` release-readiness audit before any future human-initiated release flow.

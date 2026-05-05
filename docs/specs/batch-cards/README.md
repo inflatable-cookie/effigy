@@ -13,8 +13,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](./373-audit-v0-x-release-readiness-and-gate-alignment.md)
+  is ready. It audits current `v0.x` release readiness without release
+  execution.
+
 - [`372-decide-next-live-roadmap-after-prompt-lane-closeout.md`](./372-decide-next-live-roadmap-after-prompt-lane-closeout.md)
-  is ready. It selects the next live roadmap target after `g03.027` closeout.
+  is complete. It selected `g03.029` as the next live roadmap.
 
 - [`371-close-interactive-cli-prompt-expansion-lane.md`](./371-close-interactive-cli-prompt-expansion-lane.md)
   is complete. `g03.027` is closed.

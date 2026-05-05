@@ -26,7 +26,7 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md`](./034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md)
+- [`035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md`](./035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -35,6 +35,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md`](./034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md)
 - [`033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md`](./033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md)
 - [`032-v1-runtime-hardening-proof-and-stress-matrix-strict-lane.md`](./032-v1-runtime-hardening-proof-and-stress-matrix-strict-lane.md)
 - [`031-architecture-map-and-authority-surface-repair-strict-lane.md`](./031-architecture-map-and-authority-surface-repair-strict-lane.md)
@@ -60,4 +61,4 @@ Recently completed:
 
 ## Next Task
 
-Execute [`372-decide-next-live-roadmap-after-prompt-lane-closeout.md`](./batch-cards/372-decide-next-live-roadmap-after-prompt-lane-closeout.md).
+Execute [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](./batch-cards/373-audit-v0-x-release-readiness-and-gate-alignment.md).

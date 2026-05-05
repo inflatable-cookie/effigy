@@ -2,9 +2,10 @@
 
 Roadmap: [`g03.028`](../roadmaps/g03/028-next-v0-x-readiness-and-roadmap-selection.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Purpose
 
@@ -32,7 +33,7 @@ authority surfaces, promote one concrete next lane if warranted, and close.
 
 ## Current Ready Card
 
-[`372-decide-next-live-roadmap-after-prompt-lane-closeout.md`](./batch-cards/372-decide-next-live-roadmap-after-prompt-lane-closeout.md)
+No active ready card. This lane is complete.
 
 ## Exit Condition
 
@@ -41,4 +42,11 @@ records why no ready implementation card should be opened.
 
 ## Next Task
 
-Execute [`372-decide-next-live-roadmap-after-prompt-lane-closeout.md`](./batch-cards/372-decide-next-live-roadmap-after-prompt-lane-closeout.md).
+Execute [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](./batch-cards/373-audit-v0-x-release-readiness-and-gate-alignment.md).
+
+## Closeout
+
+The lane selected `g03.029` as the next live roadmap. Release-readiness audit
+is the right next move because the live `v0.x` contract still governs the repo,
+distribution proof is closed, prompt guardrails landed, and no backlog item is
+promoted.

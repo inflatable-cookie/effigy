@@ -73,14 +73,15 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md` is complete; the runtime/container hardening foundation is now proven and documented, and the `v0.x` release contract remains the live authority surface while additional features and tidy-up work continue in the `v0.3.x` line.
 - `g03/020-distribution-channel-proof-and-first-publish-closeout.md` is complete; the distribution channel story is closed with Homebrew and GitHub Releases proven, source install documented, and crates.io intentionally excluded.
 - `g03/027-interactive-cli-prompt-expansion-and-guardrails.md` is complete; the shared prompt policy, bootstrap existing-path reuse confirmation, container data confirmations, and broad `unlock` confirmation have landed.
-- `g03/028-next-v0-x-readiness-and-roadmap-selection.md` is active; the next live roadmap target is being selected after prompt-lane closeout.
+- `g03/028-next-v0-x-readiness-and-roadmap-selection.md` is complete; it selected the next live roadmap target after prompt-lane closeout.
+- `g03/029-v0-x-release-readiness-audit-and-gate-alignment.md` is active; current `v0.x` release readiness is being audited without release execution.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
-- [`g03.028`](./g03/028-next-v0-x-readiness-and-roadmap-selection.md)
-- [`../specs/034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md`](../specs/034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md)
-- current ready card: [`372-decide-next-live-roadmap-after-prompt-lane-closeout.md`](../specs/batch-cards/372-decide-next-live-roadmap-after-prompt-lane-closeout.md)
+- [`g03.029`](./g03/029-v0-x-release-readiness-audit-and-gate-alignment.md)
+- [`../specs/035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md`](../specs/035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md)
+- current ready card: [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](../specs/batch-cards/373-audit-v0-x-release-readiness-and-gate-alignment.md)
 
 ## Research Program
 
@@ -116,7 +117,7 @@ Before rollover:
 
 ## Next Task
 
-Execute [`372-decide-next-live-roadmap-after-prompt-lane-closeout.md`](../specs/batch-cards/372-decide-next-live-roadmap-after-prompt-lane-closeout.md).
+Execute [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](../specs/batch-cards/373-audit-v0-x-release-readiness-and-gate-alignment.md).
 
 
 ## Historical language boundary
