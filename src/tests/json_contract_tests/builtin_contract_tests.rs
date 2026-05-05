@@ -216,7 +216,7 @@ fn builtin_unlock_json_contract_has_versioned_shape() {
     let parsed = run_invocation_json(
         root,
         "unlock",
-        &["--repo", &repo_arg, "--json", "shared:dev-stack"],
+        &["--repo", &repo_arg, "--json", "--yes", "shared:dev-stack"],
     );
     assert_schema_v1(&parsed, "effigy.unlock.v1");
     assert_eq!(parsed["ok"], true);

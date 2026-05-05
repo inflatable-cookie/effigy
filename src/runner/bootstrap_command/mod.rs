@@ -25,11 +25,11 @@ use crate::runner::execute::api::{
     run_manifest_task_with_cwd_and_env,
 };
 use crate::runner::manifest::load_task_manifest;
-use crate::runner::prompt_policy::{PromptDecision, PromptPolicy};
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, LeaseRefreshPolicy, PublicWorkspaceCleanupOverride,
     RuntimeSessionContext,
 };
+use effigy_builtin::{PromptDecision, PromptPolicy};
 
 use super::error::RunnerError;
 

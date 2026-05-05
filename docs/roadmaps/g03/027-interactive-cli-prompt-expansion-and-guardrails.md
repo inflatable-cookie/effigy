@@ -2,9 +2,10 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 Depends on: [`018-v1-runtime-hardening-proof-and-stress-matrix.md`](./018-v1-runtime-hardening-proof-and-stress-matrix.md), [`019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md`](./019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md)
 
 ## Problem
@@ -48,8 +49,8 @@ then apply it to the next highest-value cases after bootstrap DB seeding.
   - `container data pull-production`
   - `container data import` when the target import is broad or overwriting
   - `unlock` for `--all`, broad shared scopes, or multiple scopes at once
-  - optional `init` starter selection when no starter name is supplied in a
-    real TTY
+  - optional `init` starter selection was evaluated and deferred out of this
+    guardrail lane
 - keep prompt behavior front-end only; the underlying command contract should
   still be driven by the same parsed arguments and execution path
 - add targeted proof for TTY-only behavior and non-interactive suppression
@@ -75,4 +76,16 @@ This milestone is complete when:
 
 ## Next Task
 
-Execute `368-promote-prompt-policy-for-builtin-unlock.md`.
+No active ready card. Stop in planning and choose the next live roadmap
+deliberately.
+
+## Closeout
+
+`g03.027` is complete. Effigy now has one shared prompt policy and applies it
+to bootstrap destination reuse, generated-compose data imports, production-data
+pulls, and broad unlock operations. Prompting remains TTY-only and script-safe:
+`--json`, `--plan`, redirected I/O, and explicit automation bypasses never ask
+for input.
+
+Optional `init` starter selection is deferred because it is convenience UX, not
+part of the destructive or missing-input guardrail contract.

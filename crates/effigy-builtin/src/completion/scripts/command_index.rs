@@ -64,7 +64,7 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
             "--help",
             "-h",
         ],
-        "unlock" => &["--all", "--json", "--help", "-h"],
+        "unlock" => &["--all", "--yes", "--json", "--help", "-h"],
         "cache" => &["inspect", "invalidate", "--all", "--json", "--help", "-h"],
         "completion" => COMPLETION_COMMAND_OPTIONS,
         _ => &[],

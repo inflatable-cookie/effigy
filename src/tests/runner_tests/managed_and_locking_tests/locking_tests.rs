@@ -139,13 +139,36 @@ run = "printf ok"
 #[test]
 fn run_manifest_task_builtin_unlock_clears_explicit_scopes() {
     let _guard = lock_test();
-    let cases = [ManagedUnlockSuccessCase {
-        workspace: "unlock-explicit-scopes",
-        args: &["shared:dev-stack", "task:dev"],
-        lock_files: &[("shared-dev-stack.lock", "{}"), ("task-dev.lock", "{}")],
-        removed_lock_files: &["shared-dev-stack.lock", "task-dev.lock"],
-        expected: &["removed: 2"],
-    }];
+    let cases = [
+        ManagedUnlockSuccessCase {
+            workspace: "unlock-explicit-task-scope",
+            args: &["task:dev"],
+            lock_files: &[("task-dev.lock", "{}")],
+            removed_lock_files: &["task-dev.lock"],
+            expected: &["removed: 1"],
+        },
+        ManagedUnlockSuccessCase {
+            workspace: "unlock-explicit-profile-scope",
+            args: &["profile:watch/test"],
+            lock_files: &[("profile-watch-test.lock", "{}")],
+            removed_lock_files: &["profile-watch-test.lock"],
+            expected: &["removed: 1"],
+        },
+        ManagedUnlockSuccessCase {
+            workspace: "unlock-explicit-broad-scopes-yes",
+            args: &["shared:dev-stack", "task:dev", "--yes"],
+            lock_files: &[("shared-dev-stack.lock", "{}"), ("task-dev.lock", "{}")],
+            removed_lock_files: &["shared-dev-stack.lock", "task-dev.lock"],
+            expected: &["removed: 2"],
+        },
+        ManagedUnlockSuccessCase {
+            workspace: "unlock-all-yes",
+            args: &["--all", "--yes"],
+            lock_files: &[("shared-dev-stack.lock", "{}"), ("task-dev.lock", "{}")],
+            removed_lock_files: &["shared-dev-stack.lock", "task-dev.lock"],
+            expected: &["mode: all", "removed: 2"],
+        },
+    ];
 
     assert_unlock_success_case_table(&cases);
 }
@@ -163,6 +186,21 @@ fn run_manifest_task_builtin_unlock_argument_validation_contract_table() {
             workspace: "unlock-rejects-all-with-scope",
             args: &["--all", "workspace"],
             expected: &["`unlock` accepts either `--all` or explicit scope values, not both"],
+        },
+        ManagedUnlockInvocationErrorCase {
+            workspace: "unlock-all-requires-confirmation",
+            args: &["--all"],
+            expected: &["requires confirmation", "--yes"],
+        },
+        ManagedUnlockInvocationErrorCase {
+            workspace: "unlock-shared-requires-confirmation",
+            args: &["shared:dev-stack"],
+            expected: &["requires confirmation", "--yes"],
+        },
+        ManagedUnlockInvocationErrorCase {
+            workspace: "unlock-multiple-scopes-requires-confirmation",
+            args: &["task:dev", "profile:watch/test"],
+            expected: &["requires confirmation", "--yes"],
         },
     ];
 

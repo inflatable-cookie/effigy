@@ -7,6 +7,7 @@ use crate::LockScope;
 pub(super) struct UnlockRequest {
     pub(super) output_json: bool,
     pub(super) unlock_all_flag: bool,
+    pub(super) yes: bool,
     pub(super) scopes: Vec<LockScope>,
 }
 
@@ -17,12 +18,17 @@ pub(super) fn parse_unlock_request(
     let mut parser = BuiltinArgParser::new(args);
     let mut output_json = false;
     let mut unlock_all_flag = false;
+    let mut yes = false;
     let mut scopes = Vec::<LockScope>::new();
 
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
         if parser.consume_any_bool_flag(
             arg,
-            &mut [("--json", &mut output_json), ("--all", &mut unlock_all_flag)],
+            &mut [
+                ("--json", &mut output_json),
+                ("--all", &mut unlock_all_flag),
+                ("--yes", &mut yes),
+            ],
         ) {
             return Ok(ParseLoopAction::Handled);
         }
@@ -52,6 +58,7 @@ pub(super) fn parse_unlock_request(
     Ok(UnlockRequest {
         output_json,
         unlock_all_flag,
+        yes,
         scopes,
     })
 }

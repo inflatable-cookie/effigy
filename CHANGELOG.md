@@ -31,6 +31,10 @@ During v0.x, MINOR bumps may include breaking changes.
   archive into local generated-compose data. Real TTY runs prompt with a
   default-no confirmation, while `--json` and redirected I/O fail clearly unless
   automation passes the explicit `--yes` bypass.
+- Broad `effigy unlock` actions now require confirmation before clearing lock
+  scopes. Real TTY runs prompt with a default-no confirmation, while `--json`
+  and redirected I/O fail clearly unless automation passes the explicit
+  `--yes` bypass.
 
 ### Changed
 - `effigy bootstrap <repo>` now prefers `[catalog].alias` for the default

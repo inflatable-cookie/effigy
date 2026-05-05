@@ -5,7 +5,7 @@ use effigy_runtime::data::{
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::Path;
 
-use crate::runner::prompt_policy::{PromptDecision, PromptPolicy};
+use effigy_builtin::{PromptDecision, PromptPolicy};
 
 use super::gateway_registration::register_gateway_routes_for_container;
 use super::runtime_error_from_runner;

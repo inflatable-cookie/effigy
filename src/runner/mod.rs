@@ -27,7 +27,6 @@ mod interactive_session;
 mod locking;
 mod managed_shell;
 mod manifest;
-mod prompt_policy;
 mod release_command;
 mod runtime_session_context;
 mod script_command;

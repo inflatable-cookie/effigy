@@ -2,9 +2,10 @@
 
 Lane: [`033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md`](../033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Goal
 
@@ -44,5 +45,26 @@ still pass.
 
 ## Next Card
 
-After this lands, implement broad `unlock` confirmation using the promoted
-policy and `--yes` as the explicit automation bypass.
+[`369-implement-broad-unlock-confirmation.md`](./369-implement-broad-unlock-confirmation.md)
+implements broad `unlock` confirmation using the promoted policy and `--yes`
+as the explicit automation bypass.
+
+## Closeout
+
+`PromptPolicy` and `PromptDecision` now live in `effigy-builtin`, where the
+runner and built-in `unlock` implementation can both use the same decision
+rules. Existing bootstrap and container prompt call sites now import the
+promoted policy.
+
+Validation:
+
+- `cargo check -p effigy-builtin`
+- `cargo check -p effigy`
+- `cargo test -p effigy-builtin prompt_policy -- --nocapture`
+- `cargo test -p effigy --lib prompt_bootstrap_path_reuse -- --nocapture`
+- `cargo test -p effigy --lib container_data_pull_production_prompt -- --nocapture`
+- `cargo test -p effigy --lib container_data_import_prompt -- --nocapture`
+
+## Next Task
+
+Execute `369-implement-broad-unlock-confirmation.md`.

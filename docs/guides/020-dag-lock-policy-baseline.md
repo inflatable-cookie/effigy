@@ -68,10 +68,12 @@ Use the built-in unlock command:
 effigy unlock task:dev
 effigy unlock shared:dev-stack task:dev profile:dev/admin
 effigy unlock --all
-effigy unlock --all --json
+effigy unlock --all --yes --json
 ```
 
-`--json` returns `effigy.unlock.v1`.
+`--json` returns `effigy.unlock.v1`. Broad unlock actions such as `--all`,
+`workspace`, `shared:<name>`, or multiple explicit scopes require confirmation
+in a real TTY. Use `--yes` for intentional automation.
 
 ## Related Guides
 

@@ -321,7 +321,7 @@ Fix:
 ```sh
 effigy unlock task:watch:<target>
 # if needed
-effigy unlock --all
+effigy unlock --all --yes
 ```
 
 ### Symptom: `lock conflict for <scope> ...`

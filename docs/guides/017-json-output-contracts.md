@@ -147,7 +147,7 @@ effigy --json test
 effigy --json watch --owner effigy --once test
 effigy --json init --dry-run
 effigy --json migrate --apply
-effigy --json unlock --all
+effigy --json unlock --all --yes
 effigy --json completion bash
 effigy --json completion candidates --prefix farm
 effigy --json build --repo /path/to/workspace

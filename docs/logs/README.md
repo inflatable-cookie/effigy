@@ -76,6 +76,10 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/05-104642-interactive-cli-prompt-expansion-lane-closeout.md`](./2026-05/05-104642-interactive-cli-prompt-expansion-lane-closeout.md)
+- [`2026-05/05-104600-post-broad-unlock-confirmation-boundary.md`](./2026-05/05-104600-post-broad-unlock-confirmation-boundary.md)
+- [`2026-05/05-104051-broad-unlock-confirmation.md`](./2026-05/05-104051-broad-unlock-confirmation.md)
+- [`2026-05/05-102851-prompt-policy-promotion-for-builtin-unlock.md`](./2026-05/05-102851-prompt-policy-promotion-for-builtin-unlock.md)
 - [`2026-05/05-101818-post-container-data-import-confirmation-boundary.md`](./2026-05/05-101818-post-container-data-import-confirmation-boundary.md)
 - [`2026-05/05-100749-container-data-import-confirmation.md`](./2026-05/05-100749-container-data-import-confirmation.md)
 - [`2026-05/05-094517-post-container-data-pull-production-confirmation-boundary.md`](./2026-05/05-094517-post-container-data-pull-production-confirmation-boundary.md)

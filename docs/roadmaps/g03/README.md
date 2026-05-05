@@ -41,7 +41,7 @@ Current milestones:
 - [`024-git-history-cleanup.md`](./024-git-history-cleanup.md) (complete; purged `.cache/cargo/` blobs using `git filter-repo`, repo size 42 MB → 21 MB)
 - [`025-test-module-extraction-and-reorganization.md`](./025-test-module-extraction-and-reorganization.md) (complete; moved `workspace_tests.rs` and `gateway_registration_tests.rs` to standard directory modules, eliminated `#[path]` from `system_command.rs`)
 - [`026-runner-module-decomposition.md`](./026-runner-module-decomposition.md) (complete; split oversized runner modules into focused submodules without changing behavior)
-- [`027-interactive-cli-prompt-expansion-and-guardrails.md`](./027-interactive-cli-prompt-expansion-and-guardrails.md) (active; the shared prompt policy, bootstrap path-reuse confirmation, `container data pull-production`, and `container data import` confirmations have landed)
+- [`027-interactive-cli-prompt-expansion-and-guardrails.md`](./027-interactive-cli-prompt-expansion-and-guardrails.md) (complete; the shared prompt policy, bootstrap path-reuse confirmation, container data confirmations, and broad `unlock` confirmation have landed)
 
 Architecture anchor:
 
@@ -55,9 +55,10 @@ Rules:
 - new deployment-export work starts in `g03`, not by reopening old release
   lanes
 - `g03.019` through `g03.026` are now complete
-- `g03.027` is the active roadmap lane
-- strict execution now runs through `docs/specs/033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md`
+- `g03.019` through `g03.027` are now complete
+- no strict lane is active
 
 ## Next Task
 
-Execute `368-promote-prompt-policy-for-builtin-unlock.md`.
+No active ready card. Stop in planning and choose the next live roadmap
+deliberately.

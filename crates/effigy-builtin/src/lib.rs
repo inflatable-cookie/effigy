@@ -32,6 +32,7 @@ mod help_text;
 mod init;
 mod migrate;
 pub mod ports;
+mod prompt_policy;
 mod registry;
 mod response;
 mod scan;
@@ -46,6 +47,7 @@ mod watch;
 pub use constants::{BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
 pub use error::BuiltinError;
 pub use ports::{BuiltinLockGuards, BuiltinRuntimePorts, LockScope, TaskCacheEntry, UnlockResult};
+pub use prompt_policy::{PromptDecision, PromptPolicy};
 
 pub(crate) use support::{
     ensure_no_unknown_builtin_args, ensure_no_unknown_builtin_args_with_prefix,

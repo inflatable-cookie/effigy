@@ -87,7 +87,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy init` | Scaffold baseline `effigy.toml` from a named starter (e.g. `minimal`, `underlay`, `northstar`) or list available starters | `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy config` | Render config reference/schema snippets or inspect the effective composed manifest | `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
-| `effigy unlock` | Clear lock scopes manually | `--all`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
+| `effigy unlock` | Clear lock scopes manually | `--all`, `--yes`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
 | `effigy cache` | Inspect and invalidate phase-1 cache metadata | `inspect`, `invalidate`, `--all`, `--json` | `effigy.cache.v1` | `022-manifest-cookbook.md` |
 | `effigy completion` | Generate shell completion scripts and selector candidates | `bash\|zsh\|fish`, `candidates`, `--repo`, `--prefix`, `--json` | `effigy.completion.v1`, `effigy.completion.candidates.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy changelog` | Validate, format, analyze, and extract Northstar changelog content | `validate`, `format`, `analyze`, `extract`, `--write`, `--preview`, `--version`, `--json` | changelog subcommands render direct output; some results can be wrapped in `effigy.command.v1` with global JSON mode | `052-changelog-workflows-and-northstar-profile.md` |
@@ -185,7 +185,7 @@ effigy <catalog>/<task> [task args]
 ### Cache, Completion, Changelog, and Release
 
 ```sh
-effigy unlock [--all | <scope>...] [--json]
+effigy unlock [--all | <scope>...] [--yes] [--json]
 effigy cache inspect [<selector>] [--json]
 effigy cache invalidate [<selector>...] [--all] [--json]
 effigy completion <bash|zsh|fish> [--json]
@@ -293,7 +293,7 @@ Lock recovery:
 
 ```sh
 effigy unlock task:watch:test
-effigy unlock --all
+effigy unlock --all --yes
 ```
 
 ## Related Guides

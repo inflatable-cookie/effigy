@@ -30,7 +30,10 @@ fn run_manifest_task_builtin_help_precedence_contract_table() {
             "builtin-unlock-help-precedence",
             "unlock",
             &["--wat", "--help"],
-            &["unlock Help", "effigy unlock [--all | <scope>...] [--json]"],
+            &[
+                "unlock Help",
+                "effigy unlock [--all | <scope>...] [--yes] [--json]",
+            ],
         ),
     ]);
     cases.extend(builtin_scan_help_precedence_cases());

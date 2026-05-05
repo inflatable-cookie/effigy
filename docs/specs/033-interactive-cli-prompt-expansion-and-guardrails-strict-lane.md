@@ -2,9 +2,10 @@
 
 Roadmap: [`g03.027`](../roadmaps/g03/027-interactive-cli-prompt-expansion-and-guardrails.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Purpose
 
@@ -49,8 +50,15 @@ This lane closes when:
 
 ## Current Ready Card
 
-- [`batch-cards/368-promote-prompt-policy-for-builtin-unlock.md`](./batch-cards/368-promote-prompt-policy-for-builtin-unlock.md)
+No active ready card. This lane is complete.
 
 ## Next Task
 
-Execute `368-promote-prompt-policy-for-builtin-unlock.md`.
+No active ready card. Stop in planning and choose the next live roadmap
+deliberately.
+
+## Closeout
+
+The lane closed after landing the shared prompt policy, bootstrap path-reuse
+confirmation, container data confirmations, and broad `unlock` confirmation.
+Optional `init` starter selection is deferred out of this guardrail lane.

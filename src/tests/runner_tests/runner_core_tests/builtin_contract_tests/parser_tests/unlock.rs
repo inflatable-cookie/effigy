@@ -11,6 +11,14 @@ fn builtin_unlock_parser_contracts_are_stable() {
         .expect("unlock parse");
     assert!(parsed.output_json);
     assert!(parsed.unlock_all_flag);
+    assert!(!parsed.yes);
+    assert!(parsed.scopes.is_empty());
+
+    let parsed = parse_unlock_contract_request(&task, &string_args(&["--all", "--yes"]))
+        .expect("unlock parse");
+    assert!(!parsed.output_json);
+    assert!(parsed.unlock_all_flag);
+    assert!(parsed.yes);
     assert!(parsed.scopes.is_empty());
 
     let parsed = parse_unlock_contract_request(
@@ -25,6 +33,7 @@ fn builtin_unlock_parser_contracts_are_stable() {
     .expect("unlock parse");
     assert!(!parsed.output_json);
     assert!(!parsed.unlock_all_flag);
+    assert!(!parsed.yes);
     assert_eq!(
         parsed.scopes,
         string_args(&[

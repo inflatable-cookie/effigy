@@ -26,7 +26,6 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md`](./033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -35,6 +34,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md`](./033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md)
 - [`032-v1-runtime-hardening-proof-and-stress-matrix-strict-lane.md`](./032-v1-runtime-hardening-proof-and-stress-matrix-strict-lane.md)
 - [`031-architecture-map-and-authority-surface-repair-strict-lane.md`](./031-architecture-map-and-authority-surface-repair-strict-lane.md)
 - [`030-container-and-runtime-error-taxonomy-and-diagnostics-strict-lane.md`](./030-container-and-runtime-error-taxonomy-and-diagnostics-strict-lane.md)
@@ -59,4 +59,5 @@ Recently completed:
 
 ## Next Task
 
-Execute [`batch-cards/368-promote-prompt-policy-for-builtin-unlock.md`](./batch-cards/368-promote-prompt-policy-for-builtin-unlock.md).
+No active ready card. Stop in planning and choose the next live roadmap
+deliberately.

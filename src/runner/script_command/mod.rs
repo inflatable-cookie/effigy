@@ -630,6 +630,7 @@ fn run_rhai_feature(
                 args.push("--all".to_owned());
             }
             args.extend(string_array(&options, "scopes")?);
+            args.push("--yes".to_owned());
             run_builtin_json(repo_root, "unlock", args)
         }
         FEATURE_TEST_PLAN => {

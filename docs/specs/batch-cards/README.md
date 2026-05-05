@@ -13,9 +13,22 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- No active ready card. `g03.027` is complete.
+
+- [`371-close-interactive-cli-prompt-expansion-lane.md`](./371-close-interactive-cli-prompt-expansion-lane.md)
+  is complete. `g03.027` is closed.
+
+- [`370-decide-post-broad-unlock-confirmation-boundary.md`](./370-decide-post-broad-unlock-confirmation-boundary.md)
+  is complete. Optional `init` starter selection is out of scope for this
+  guardrail lane.
+
+- [`369-implement-broad-unlock-confirmation.md`](./369-implement-broad-unlock-confirmation.md)
+  is complete. Broad `unlock` actions now require confirmation in eligible
+  interactive flows and use `--yes` as the automation bypass.
+
 - [`368-promote-prompt-policy-for-builtin-unlock.md`](./368-promote-prompt-policy-for-builtin-unlock.md)
-  is the active ready card. It promotes the shared prompt policy to a crate
-  surface that `effigy-builtin` can use before broad `unlock` confirmation.
+  is complete. The shared prompt policy now lives in `effigy-builtin`, where
+  runner and built-in prompt surfaces can both use it.
 
 - [`367-decide-post-container-data-import-confirmation-boundary.md`](./367-decide-post-container-data-import-confirmation-boundary.md)
   is complete. Broad `unlock` confirmation needs a prompt-policy promotion

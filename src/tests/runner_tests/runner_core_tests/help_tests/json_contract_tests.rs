@@ -73,7 +73,7 @@ fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_an
             "unlock",
             &["--help", "--json", "--wat"],
             "unlock",
-            "effigy unlock [--all | <scope>...] [--json]",
+            "effigy unlock [--all | <scope>...] [--yes] [--json]",
         ),
     ];
 

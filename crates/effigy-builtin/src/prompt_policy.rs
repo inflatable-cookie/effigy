@@ -1,14 +1,14 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PromptPolicy {
-    pub(crate) output_json: bool,
-    pub(crate) plan: bool,
-    pub(crate) explicit_non_interactive: bool,
-    pub(crate) stdin_is_tty: bool,
-    pub(crate) stdout_is_tty: bool,
+pub struct PromptPolicy {
+    pub output_json: bool,
+    pub plan: bool,
+    pub explicit_non_interactive: bool,
+    pub stdin_is_tty: bool,
+    pub stdout_is_tty: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PromptDecision {
+pub enum PromptDecision {
     Prompt,
     SuppressedByPlan,
     SuppressedByJson,
@@ -17,15 +17,15 @@ pub(crate) enum PromptDecision {
 }
 
 impl PromptPolicy {
-    pub(crate) fn decide(self) -> PromptDecision {
+    pub fn decide(self) -> PromptDecision {
         if self.plan {
             return PromptDecision::SuppressedByPlan;
         }
-        if self.output_json {
-            return PromptDecision::SuppressedByJson;
-        }
         if self.explicit_non_interactive {
             return PromptDecision::SuppressedByExplicitNonInteractive;
+        }
+        if self.output_json {
+            return PromptDecision::SuppressedByJson;
         }
         if !self.stdin_is_tty || !self.stdout_is_tty {
             return PromptDecision::SuppressedByNonTty;
@@ -73,6 +73,15 @@ mod tests {
         );
         assert_eq!(
             PromptPolicy {
+                explicit_non_interactive: true,
+                ..policy()
+            }
+            .decide(),
+            PromptDecision::SuppressedByExplicitNonInteractive
+        );
+        assert_eq!(
+            PromptPolicy {
+                output_json: true,
                 explicit_non_interactive: true,
                 ..policy()
             }
