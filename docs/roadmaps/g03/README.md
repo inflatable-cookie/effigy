@@ -48,7 +48,7 @@ Current milestones:
 - [`031-plugin-ready-container-manager-facade.md`](./031-plugin-ready-container-manager-facade.md) (complete; manager facade, backend detection, lifecycle reports, and runner exec/copy/data routing are shipped)
 - [`032-canonical-task-execution-request-and-pipeline.md`](./032-canonical-task-execution-request-and-pipeline.md) (complete)
 - [`033-runtime-container-caller-migration-and-cleanup.md`](./033-runtime-container-caller-migration-and-cleanup.md) (complete)
-- [`034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md) (active; lane `040` is open and card `403` is ready)
+- [`034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md) (active; lane `040` is open and card `404` is ready)
 - [`035-contract-promotion-public-cleanup-breaks-and-closeout.md`](./035-contract-promotion-public-cleanup-breaks-and-closeout.md) (queued)
 
 Architecture anchor:
@@ -71,8 +71,8 @@ Rules:
 - `g03.031` is complete
 - `g03.033` is complete
 - `g03.034` is active as strict lane `040`
-- ready card: [`403-add-inside-container-reentry-context-proof.md`](../../specs/batch-cards/403-add-inside-container-reentry-context-proof.md)
+- ready card: [`404-add-manager-operation-report-proof.md`](../../specs/batch-cards/404-add-manager-operation-report-proof.md)
 
 ## Next Task
 
-Complete card `403`.
+Complete card `404`.

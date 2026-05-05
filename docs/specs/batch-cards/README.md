@@ -30,8 +30,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
   authority.
 
 - [`403-add-inside-container-reentry-context-proof.md`](./403-add-inside-container-reentry-context-proof.md)
-  is ready. It proves inside-container re-entry keeps captured runtime context
-  stable.
+  is complete. It proved inside-container re-entry keeps captured runtime
+  context stable.
+
+- [`404-add-manager-operation-report-proof.md`](./404-add-manager-operation-report-proof.md)
+  is ready. It proves manager operation-report identity and cleanup fields.
 
 - [`387-inventory-runtime-container-cleanup-targets.md`](./387-inventory-runtime-container-cleanup-targets.md)
   is complete. It inventoried the remaining runtime/container cleanup targets

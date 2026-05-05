@@ -399,9 +399,14 @@ mod tests {
     }
 
     #[test]
-    fn container_intent_in_handoff_routes_locally() {
+    fn container_intent_in_handoff_routes_locally_without_losing_captured_paths() {
+        let root = temp_repo("handoff");
+        let nested = root.join("bundle/scripts");
+        fs::create_dir_all(&nested).expect("mkdir nested");
+        let root = root.canonicalize().expect("canonical root");
+        let nested = nested.canonicalize().expect("canonical nested");
         let context = EffigyRuntimeContext::builder()
-            .cwd_override(Some(temp_repo("handoff")))
+            .cwd_override(Some(nested.clone()))
             .captured_env(CapturedEnv {
                 container_handoff: Some(OsString::from("1")),
                 ..CapturedEnv::default()
@@ -424,6 +429,19 @@ mod tests {
             ExecutionRoute::LocalContainerHandoff {
                 service: Some("db".to_owned()),
             }
+        );
+        assert!(
+            plan.request
+                .runtime_context
+                .container()
+                .inside_container_handoff
+        );
+        assert_eq!(plan.request.runtime_context.invocation_cwd(), nested);
+        assert_eq!(plan.request.runtime_context.command_root(), root);
+        assert_eq!(
+            plan.request.runtime_context.target().resolved_root,
+            root,
+            "execution plans must keep target repo authority from the captured context"
         );
     }
 }

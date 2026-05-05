@@ -34,7 +34,7 @@ real project repos or production data.
 
 ## Current Ready Card
 
-[`403-add-inside-container-reentry-context-proof.md`](./batch-cards/403-add-inside-container-reentry-context-proof.md)
+[`404-add-manager-operation-report-proof.md`](./batch-cards/404-add-manager-operation-report-proof.md)
 
 ## Exit Condition
 
@@ -44,4 +44,4 @@ milestone has an explicit start point.
 
 ## Next Task
 
-Complete card `403`.
+Complete card `404`.
