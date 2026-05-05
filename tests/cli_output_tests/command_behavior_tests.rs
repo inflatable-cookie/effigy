@@ -7138,6 +7138,7 @@ fn cli_container_data_import_json_reports_transfer_contract() {
         .arg("import")
         .arg("fixture-web-dev-db-data")
         .arg(&archive)
+        .arg("--yes")
         .arg("--repo")
         .arg(&root)
         .arg("--json")
