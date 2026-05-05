@@ -19,6 +19,18 @@ During v0.x, MINOR bumps may include breaking changes.
   interactive TTY when a bundle declares databases and no `--db-seed` inputs
   were supplied. The prompt is skipped for `--json`, `--plan`, redirected I/O,
   and explicit `--no-prompt`.
+- `effigy bootstrap` now applies the same prompt policy before reusing an
+  existing non-empty destination path. Real TTY runs ask for confirmation;
+  `--json`, `--plan`, and redirected I/O never prompt, and `--no-prompt`
+  remains the explicit automation bypass.
+- `effigy container data pull-production` now requires confirmation before
+  pulling production data into a local generated-compose environment. Real TTY
+  runs prompt with a default-no confirmation, while `--json` and redirected I/O
+  fail clearly unless automation passes the explicit `--yes` bypass.
+- `effigy container data import` now requires confirmation before importing an
+  archive into local generated-compose data. Real TTY runs prompt with a
+  default-no confirmation, while `--json` and redirected I/O fail clearly unless
+  automation passes the explicit `--yes` bypass.
 
 ### Changed
 - `effigy bootstrap <repo>` now prefers `[catalog].alias` for the default

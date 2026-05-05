@@ -478,10 +478,40 @@ fn parse_container_data_import_is_supported() {
                 subcommand: ContainerDataSubcommand::Import {
                     volume: "fixture-web-dev-db-data".to_owned(),
                     path: PathBuf::from("./backup.tar.gz"),
+                    yes: false,
                 },
             },
             repo_override: None,
             output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_data_import_accepts_yes() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "web".to_owned(),
+        "data".to_owned(),
+        "import".to_owned(),
+        "fixture-web-dev-db-data".to_owned(),
+        "./backup.tar.gz".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: Some("web".to_owned()),
+                subcommand: ContainerDataSubcommand::Import {
+                    volume: "fixture-web-dev-db-data".to_owned(),
+                    path: PathBuf::from("./backup.tar.gz"),
+                    yes: true,
+                },
+            },
+            repo_override: None,
+            output_json: false,
         })
     );
 }
@@ -501,10 +531,33 @@ fn parse_container_data_pull_production_is_supported() {
         Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Data {
                 name: Some("web".to_owned()),
-                subcommand: ContainerDataSubcommand::PullProduction,
+                subcommand: ContainerDataSubcommand::PullProduction { yes: false },
             },
             repo_override: None,
             output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_data_pull_production_accepts_yes() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "web".to_owned(),
+        "data".to_owned(),
+        "pull-production".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: Some("web".to_owned()),
+                subcommand: ContainerDataSubcommand::PullProduction { yes: true },
+            },
+            repo_override: None,
+            output_json: false,
         })
     );
 }

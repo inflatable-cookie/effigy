@@ -69,6 +69,17 @@ pub(in crate::runner) fn run_compose_exec(
     capture: bool,
     label: &str,
 ) -> Result<Output, RunnerError> {
+    run_compose_exec_with_options(repo_root, policy, args, capture, label, None)
+}
+
+pub(in crate::runner) fn run_compose_exec_with_options(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    args: &[OsString],
+    capture: bool,
+    label: &str,
+    stdin_file: Option<&Path>,
+) -> Result<Output, RunnerError> {
     if resolve_compose_backend() == ComposeBackend::ColimaNerdctl {
         return colima::run_colima_direct_exec(
             repo_root,
@@ -76,15 +87,22 @@ pub(in crate::runner) fn run_compose_exec(
             args,
             capture,
             label,
+            stdin_file,
             &parse_compose_exec_args,
             &run_command_capture_allow_failure,
+            &run_command_capture_allow_failure_with_stdin,
             &format_args,
         );
     }
 
     let (program, resolved_args) = compose_invocation(policy, args);
     if capture {
-        return run_command_capture_allow_failure(repo_root, OsStr::new(program), &resolved_args);
+        return run_command_capture_allow_failure_with_stdin(
+            repo_root,
+            OsStr::new(program),
+            &resolved_args,
+            stdin_file,
+        );
     }
 
     let resolved_program = resolve_host_program(program);
@@ -233,19 +251,37 @@ pub(super) fn run_command_capture_allow_failure(
     program: &OsStr,
     args: &[OsString],
 ) -> Result<Output, RunnerError> {
+    run_command_capture_allow_failure_with_stdin(repo_root, program, args, None)
+}
+
+pub(super) fn run_command_capture_allow_failure_with_stdin(
+    repo_root: &Path,
+    program: &OsStr,
+    args: &[OsString],
+    stdin_file: Option<&Path>,
+) -> Result<Output, RunnerError> {
     let resolved_program = resolve_host_program(program);
-    ProcessCommand::new(&resolved_program)
-        .current_dir(repo_root)
-        .args(args)
-        .output()
-        .map_err(|error| RunnerError::TaskCommandLaunch {
+    let mut command = ProcessCommand::new(&resolved_program);
+    command.current_dir(repo_root).args(args);
+    if let Some(stdin_file) = stdin_file {
+        let file = std::fs::File::open(stdin_file).map_err(|error| RunnerError::TaskCommandLaunch {
             command: format!(
                 "{} {}",
                 resolved_program.to_string_lossy(),
                 format_args(args)
             ),
             error,
-        })
+        })?;
+        command.stdin(Stdio::from(file));
+    }
+    command.output().map_err(|error| RunnerError::TaskCommandLaunch {
+        command: format!(
+            "{} {}",
+            resolved_program.to_string_lossy(),
+            format_args(args)
+        ),
+        error,
+    })
 }
 
 pub(super) fn resolve_host_program(program: impl AsRef<OsStr>) -> OsString {

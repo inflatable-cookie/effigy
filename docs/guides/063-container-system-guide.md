@@ -279,6 +279,11 @@ Generated-compose environments support:
 These stay on the generated-compose path so Effigy can keep the runtime data
 behavior predictable.
 
+`data import` and `data pull-production` are guarded because they can overwrite
+local generated-compose data. In a real interactive terminal, Effigy asks for
+confirmation and defaults to no. In non-interactive or JSON mode it does not
+prompt; automation must pass `--yes` when the data change is intentional.
+
 ## DNS and Gateway
 
 `[containers.<name>.dns]` integrates with the gateway:

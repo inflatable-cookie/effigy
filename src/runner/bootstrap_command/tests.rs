@@ -142,6 +142,18 @@ fn create_js_child_remote(name: &str) -> PathBuf {
     remote
 }
 
+fn create_plain_remote(name: &str) -> PathBuf {
+    let worktree = temp_dir(&format!("{name}-worktree"));
+    fs::write(worktree.join("README.md"), format!("# {name}\n")).expect("write readme");
+    fs::write(worktree.join("effigy.toml"), "").expect("write manifest");
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init plain");
+    let remote = bare_remote_path(&format!("{name}-bare"));
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    remote
+}
+
 fn create_root_remote_with_bootstrap(child_remote: &Path) -> PathBuf {
     let worktree = temp_dir("root-worktree");
     fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
@@ -874,6 +886,187 @@ fn prompt_bootstrap_db_seeds_reprompts_invalid_paths_and_allows_skip() {
     );
     let rendered = String::from_utf8(output).expect("utf8");
     assert!(rendered.contains("Path does not exist or is not a readable file"));
+}
+
+#[test]
+fn prompt_bootstrap_path_reuse_confirms_existing_destination() {
+    let root = temp_dir("bootstrap-path-reuse-prompt");
+    let destination = root.join("existing");
+    fs::create_dir_all(&destination).expect("mkdir destination");
+    fs::write(destination.join("README.md"), "existing\n").expect("write marker");
+
+    let mut output = Vec::new();
+    super::confirm_bootstrap_path_reuse_from_io(
+        &destination,
+        &mut Cursor::new(b"y\n".to_vec()),
+        &mut output,
+    )
+    .expect("reuse confirmation should pass");
+
+    let rendered = String::from_utf8(output).expect("utf8");
+    assert!(rendered.contains("Bootstrap destination already exists and is non-empty"));
+    assert!(rendered.contains(&destination.display().to_string()));
+    assert!(rendered.contains("Reuse this destination and continue? [y/N]: "));
+}
+
+#[test]
+fn prompt_bootstrap_path_reuse_empty_response_cancels_by_default() {
+    let root = temp_dir("bootstrap-path-reuse-prompt-default");
+    let destination = root.join("existing");
+    fs::create_dir_all(&destination).expect("mkdir destination");
+
+    let err = super::confirm_bootstrap_path_reuse_from_io(
+        &destination,
+        &mut Cursor::new(b"\n".to_vec()),
+        &mut Vec::new(),
+    )
+    .expect_err("empty confirmation should cancel");
+
+    assert!(
+        err.to_string()
+            .contains("bootstrap cancelled during destination reuse confirmation"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_without_tty_prompt() {
+    let child_remote = create_child_remote("child-app-path-reuse-non-tty");
+    let root_remote = create_root_remote_with_bootstrap(&child_remote);
+    let cwd = temp_dir("bootstrap-path-reuse-non-tty");
+    let destination = cwd.join("reuse-target");
+    fs::create_dir_all(&destination).expect("mkdir destination");
+    fs::write(destination.join("README.md"), "existing\n").expect("write marker");
+
+    let err = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: Some(destination.clone()),
+                branch: None,
+                db_seeds: Vec::new(),
+                no_prompt: false,
+                start: false,
+                plan: false,
+            },
+            output_json: false,
+        },
+        cwd,
+    )
+    .expect_err("non-tty path reuse should fail");
+
+    assert!(
+        err.to_string()
+            .contains("bootstrap destination already exists and is non-empty"),
+        "unexpected error: {err}"
+    );
+    assert!(err.to_string().contains("--no-prompt"));
+}
+
+#[test]
+fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_in_json_mode() {
+    let child_remote = create_child_remote("child-app-path-reuse-json");
+    let root_remote = create_root_remote_with_bootstrap(&child_remote);
+    let cwd = temp_dir("bootstrap-path-reuse-json");
+    let destination = cwd.join("reuse-target");
+    fs::create_dir_all(&destination).expect("mkdir destination");
+    fs::write(destination.join("README.md"), "existing\n").expect("write marker");
+
+    let err = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: Some(destination),
+                branch: None,
+                db_seeds: Vec::new(),
+                no_prompt: false,
+                start: false,
+                plan: false,
+            },
+            output_json: true,
+        },
+        cwd,
+    )
+    .expect_err("json path reuse should fail instead of prompting");
+
+    assert!(
+        err.to_string()
+            .contains("bootstrap destination already exists and is non-empty"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn run_bootstrap_with_cwd_plan_skips_existing_destination_prompt() {
+    let child_remote = create_child_remote("child-app-path-reuse-plan");
+    let root_remote = create_root_remote_with_bootstrap(&child_remote);
+    let cwd = temp_dir("bootstrap-path-reuse-plan");
+    let destination = cwd.join("reuse-target");
+    fs::create_dir_all(&destination).expect("mkdir destination");
+    fs::write(destination.join("README.md"), "existing\n").expect("write marker");
+
+    let out = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: Some(destination.clone()),
+                branch: None,
+                db_seeds: Vec::new(),
+                no_prompt: false,
+                start: false,
+                plan: true,
+            },
+            output_json: false,
+        },
+        cwd,
+    )
+    .expect("plan should not prompt or fail");
+
+    assert!(out.contains("[planned] bootstrap request resolved"));
+    assert!(out.contains(&destination.display().to_string()));
+}
+
+#[test]
+fn run_bootstrap_with_cwd_no_prompt_bypasses_existing_checkout_confirmation() {
+    let root_remote = create_plain_remote("root-path-reuse-bypass");
+    let cwd = temp_dir("bootstrap-path-reuse-bypass");
+    let destination = cwd.join("reuse-target");
+
+    run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: Some(destination.clone()),
+                branch: None,
+                db_seeds: Vec::new(),
+                no_prompt: false,
+                start: false,
+                plan: false,
+            },
+            output_json: false,
+        },
+        cwd.clone(),
+    )
+    .expect("initial clone");
+
+    let out = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: Some(destination),
+                branch: None,
+                db_seeds: Vec::new(),
+                no_prompt: true,
+                start: false,
+                plan: false,
+            },
+            output_json: false,
+        },
+        cwd,
+    )
+    .expect("--no-prompt should bypass path reuse confirmation");
+
+    assert!(out.contains("[ok] bootstrap completed"));
 }
 
 #[test]

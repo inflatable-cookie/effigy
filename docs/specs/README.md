@@ -26,6 +26,7 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
+- [`033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md`](./033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -58,4 +59,4 @@ Recently completed:
 
 ## Next Task
 
-Stop in planning.
+Execute [`batch-cards/367-decide-post-container-data-import-confirmation-boundary.md`](./batch-cards/367-decide-post-container-data-import-confirmation-boundary.md).

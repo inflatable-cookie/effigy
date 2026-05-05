@@ -13,9 +13,31 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- no ready card is active right now
-- `g03.018` is complete
-- the next honest move is planning
+- [`367-decide-post-container-data-import-confirmation-boundary.md`](./367-decide-post-container-data-import-confirmation-boundary.md)
+  is the active ready card. It decides whether the lane should move directly
+  into broad `unlock` confirmation.
+
+- [`366-implement-container-data-import-confirmation.md`](./366-implement-container-data-import-confirmation.md)
+  is complete. `container data import` now requires confirmation in eligible
+  interactive flows and uses `--yes` as the automation bypass.
+
+- [`365-decide-post-container-data-pull-production-confirmation-boundary.md`](./365-decide-post-container-data-pull-production-confirmation-boundary.md)
+  is complete. The next prompt seam is `container data import` because it can
+  overwrite local generated-compose data and is part of the lane exit
+  condition.
+
+- [`364-implement-container-data-pull-production-confirmation.md`](./364-implement-container-data-pull-production-confirmation.md)
+  is complete. `container data pull-production` now requires confirmation in
+  eligible interactive flows and uses `--yes` as the automation bypass.
+
+- [`363-decide-post-bootstrap-path-reuse-prompt-boundary.md`](./363-decide-post-bootstrap-path-reuse-prompt-boundary.md)
+  is complete. The policy is strong enough to widen directly into
+  `container data pull-production`, with `--yes` as the explicit automation
+  bypass.
+
+- [`362-implement-prompt-policy-and-bootstrap-path-reuse-confirmation.md`](./362-implement-prompt-policy-and-bootstrap-path-reuse-confirmation.md)
+  is complete. Bootstrap now has a shared prompt policy and confirms reuse of
+  existing non-empty destinations only in eligible interactive flows.
 
 - [`361-decide-post-host-integration-proof-boundary.md`](./361-decide-post-host-integration-proof-boundary.md)
   is complete. `g03.018` now closes cleanly because the remaining

@@ -16,13 +16,15 @@ use crate::runner::command_context::{current_working_dir, resolve_repo_root};
 use effigy_cli::{ContainerArgs, ContainerDataSubcommand, ContainerSubcommand};
 
 use super::error::RunnerError;
-use data::run_container_data_pull_production;
+use data::{maybe_confirm_container_data_import, run_container_data_pull_production};
 use lifecycle::{run_container_eject, run_container_shell, run_container_up};
 
 pub(in crate::runner) use gateway_registration::{
     gateway_routes_registered_for_container, register_gateway_routes_for_container,
 };
-pub(in crate::runner) use lifecycle::run_container_exec_capture;
+pub(in crate::runner) use lifecycle::{
+    run_container_exec_capture, run_container_exec_capture_with_options,
+};
 
 mod data;
 mod gateway_registration;
@@ -138,18 +140,19 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         ),
         ContainerSubcommand::Data {
             name,
-            subcommand: ContainerDataSubcommand::Import { volume, path },
+            subcommand: ContainerDataSubcommand::Import { volume, path, yes },
         } => run_container_data_import_adapter(
             &repo_root,
             name.as_deref(),
             &volume,
             &resolve_archive_path(&cwd, &path),
             args.output_json,
+            yes,
         ),
         ContainerSubcommand::Data {
             name,
-            subcommand: ContainerDataSubcommand::PullProduction,
-        } => run_container_data_pull_production(&repo_root, name.as_deref(), args.output_json),
+            subcommand: ContainerDataSubcommand::PullProduction { yes },
+        } => run_container_data_pull_production(&repo_root, name.as_deref(), args.output_json, yes),
         ContainerSubcommand::Eject { name } => {
             run_container_eject(&repo_root, name.as_deref(), args.output_json)
         }
@@ -242,7 +245,16 @@ fn run_container_data_import_adapter(
     volume_name: &str,
     archive_path: &std::path::Path,
     output_json: bool,
+    yes: bool,
 ) -> Result<String, RunnerError> {
+    maybe_confirm_container_data_import(
+        repo_root,
+        name,
+        volume_name,
+        archive_path,
+        output_json,
+        yes,
+    )?;
     run_container_data_import(
         repo_root,
         name,

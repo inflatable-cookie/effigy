@@ -590,9 +590,18 @@ pub enum SystemSubcommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerDataSubcommand {
     List,
-    Export { volume: String, path: PathBuf },
-    Import { volume: String, path: PathBuf },
-    PullProduction,
+    Export {
+        volume: String,
+        path: PathBuf,
+    },
+    Import {
+        volume: String,
+        path: PathBuf,
+        yes: bool,
+    },
+    PullProduction {
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

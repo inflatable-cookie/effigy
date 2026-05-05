@@ -25,6 +25,7 @@ use crate::runner::execute::api::{
     run_manifest_task_with_cwd_and_env,
 };
 use crate::runner::manifest::load_task_manifest;
+use crate::runner::prompt_policy::{PromptDecision, PromptPolicy};
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, LeaseRefreshPolicy, PublicWorkspaceCleanupOverride,
     RuntimeSessionContext,
@@ -57,6 +58,7 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
                 return Ok(crate_render_bootstrap_plan(&request, args.output_json));
             }
 
+            maybe_confirm_bootstrap_path_reuse(&request.destination, args.output_json, *no_prompt)?;
             let result = execute_bootstrap_request(&request, args.output_json, *no_prompt)?;
             Ok(crate_render_bootstrap_result(&result, args.output_json))
         }
@@ -100,6 +102,89 @@ fn resolve_bootstrap_request(
         *start,
     )
     .map_err(map_bootstrap_error)
+}
+
+fn maybe_confirm_bootstrap_path_reuse(
+    destination: &Path,
+    output_json: bool,
+    no_prompt: bool,
+) -> Result<(), RunnerError> {
+    if !is_existing_non_empty_dir(destination)? {
+        return Ok(());
+    }
+
+    let policy = PromptPolicy {
+        output_json,
+        plan: false,
+        explicit_non_interactive: no_prompt,
+        stdin_is_tty: io::stdin().is_terminal(),
+        stdout_is_tty: io::stdout().is_terminal(),
+    };
+    match policy.decide() {
+        PromptDecision::Prompt => {
+            let mut stdin = io::stdin().lock();
+            let mut stdout = io::stdout().lock();
+            confirm_bootstrap_path_reuse_from_io(destination, &mut stdin, &mut stdout)
+        }
+        PromptDecision::SuppressedByExplicitNonInteractive => Ok(()),
+        PromptDecision::SuppressedByJson
+        | PromptDecision::SuppressedByPlan
+        | PromptDecision::SuppressedByNonTty => Err(RunnerError::task_invocation(format!(
+            "bootstrap destination already exists and is non-empty: {}. Rerun from an interactive terminal to confirm reuse, pass --no-prompt to use the existing path non-interactively, or choose a different --path.",
+            destination.display()
+        ))),
+    }
+}
+
+fn is_existing_non_empty_dir(path: &Path) -> Result<bool, RunnerError> {
+    if !path.exists() || !path.is_dir() {
+        return Ok(false);
+    }
+    let mut entries = std::fs::read_dir(path).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to inspect bootstrap destination {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(entries
+        .next()
+        .transpose()
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to inspect bootstrap destination {}: {error}",
+                path.display()
+            ))
+        })?
+        .is_some())
+}
+
+fn confirm_bootstrap_path_reuse_from_io<R: BufRead, W: Write>(
+    destination: &Path,
+    input: &mut R,
+    output: &mut W,
+) -> Result<(), RunnerError> {
+    writeln!(
+        output,
+        "Bootstrap destination already exists and is non-empty:\n{}\n",
+        destination.display()
+    )
+    .and_then(|_| output.flush())
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to render interactive bootstrap prompt: {error}"
+        ))
+    })?;
+    if prompt_yes_no_with_default(
+        input,
+        output,
+        "Reuse this destination and continue? [y/N]: ",
+        false,
+    )? {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(
+        "bootstrap cancelled during destination reuse confirmation",
+    ))
 }
 
 fn execute_bootstrap_request(
@@ -291,6 +376,15 @@ fn prompt_yes_no<R: BufRead, W: Write>(
     output: &mut W,
     prompt: &str,
 ) -> Result<bool, RunnerError> {
+    prompt_yes_no_with_default(input, output, prompt, true)
+}
+
+fn prompt_yes_no_with_default<R: BufRead, W: Write>(
+    input: &mut R,
+    output: &mut W,
+    prompt: &str,
+    default: bool,
+) -> Result<bool, RunnerError> {
     output
         .write_all(prompt.as_bytes())
         .and_then(|_| output.flush())
@@ -306,7 +400,10 @@ fn prompt_yes_no<R: BufRead, W: Write>(
         ))
     })?;
     let normalized = line.trim().to_ascii_lowercase();
-    Ok(normalized.is_empty() || normalized == "y" || normalized == "yes")
+    if normalized.is_empty() {
+        return Ok(default);
+    }
+    Ok(normalized == "y" || normalized == "yes")
 }
 
 pub(super) fn collect_bootstrap_db_seed_prompts_from_io<R: BufRead, W: Write>(

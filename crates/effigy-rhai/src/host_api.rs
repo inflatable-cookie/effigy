@@ -17,7 +17,7 @@ use crate::surface::*;
 use super::{
     allocate_temp_dir, configure_process_command, dynamic_array_to_strings, effigy_result_map,
     emit_host_log, generate_jwt_env_keys_dynamic, generate_random_base64, host_command_output_map,
-    module_feature_get_value, module_feature_no_args, module_feature_options,
+    map_to_json, module_feature_get_value, module_feature_no_args, module_feature_options,
     module_feature_string, module_feature_string_options, module_feature_two_strings,
     process_result_map, reject_recursive_effigy_process, resolve_runtime_path, rhai_runtime_error,
     run_feature_dynamic, run_http_request, run_process_streaming, run_process_teeing, search_files,
@@ -1027,6 +1027,26 @@ fn build_container_module(context: Arc<ScriptContext>, callbacks: HostCallbacks)
     module.set_native_fn(
         "exec",
         move |name: ImmutableString,
+              command: Array,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
+            Ok(host_command_output_map(
+                (container_exec_callbacks.container_exec_with_options)(
+                    &container_exec_context.repo_root,
+                    name.as_str(),
+                    None,
+                    &dynamic_array_to_strings(&command)?,
+                    map_to_json(options)?,
+                )
+                .map_err(rhai_runtime_error)?,
+            ))
+        },
+    );
+    let container_exec_context = context.clone();
+    let container_exec_callbacks = callbacks.clone();
+    module.set_native_fn(
+        "exec",
+        move |name: ImmutableString,
               service: ImmutableString,
               command: Array|
               -> Result<Map, Box<EvalAltResult>> {
@@ -1036,6 +1056,27 @@ fn build_container_module(context: Arc<ScriptContext>, callbacks: HostCallbacks)
                     name.as_str(),
                     Some(service.as_str()),
                     &dynamic_array_to_strings(&command)?,
+                )
+                .map_err(rhai_runtime_error)?,
+            ))
+        },
+    );
+    let container_exec_context = context.clone();
+    let container_exec_callbacks = callbacks.clone();
+    module.set_native_fn(
+        "exec",
+        move |name: ImmutableString,
+              service: ImmutableString,
+              command: Array,
+              options: Map|
+              -> Result<Map, Box<EvalAltResult>> {
+            Ok(host_command_output_map(
+                (container_exec_callbacks.container_exec_with_options)(
+                    &container_exec_context.repo_root,
+                    name.as_str(),
+                    Some(service.as_str()),
+                    &dynamic_array_to_strings(&command)?,
+                    map_to_json(options)?,
                 )
                 .map_err(rhai_runtime_error)?,
             ))

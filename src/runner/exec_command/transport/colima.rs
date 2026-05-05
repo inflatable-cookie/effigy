@@ -20,11 +20,18 @@ pub(super) fn run_colima_direct_exec(
     compose_exec_args: &[OsString],
     capture: bool,
     label: &str,
+    stdin_file: Option<&Path>,
     parse_compose_exec_args: &dyn Fn(&[OsString]) -> Result<ParsedComposeExec, RunnerError>,
     run_command_capture_allow_failure: &dyn Fn(
         &Path,
         &std::ffi::OsStr,
         &[OsString],
+    ) -> Result<Output, RunnerError>,
+    run_command_capture_allow_failure_with_stdin: &dyn Fn(
+        &Path,
+        &std::ffi::OsStr,
+        &[OsString],
+        Option<&Path>,
     ) -> Result<Output, RunnerError>,
     format_args: &dyn Fn(&[OsString]) -> String,
 ) -> Result<Output, RunnerError> {
@@ -37,10 +44,11 @@ pub(super) fn run_colima_direct_exec(
         format_args,
     )?;
     if capture {
-        return run_command_capture_allow_failure(
+        return run_command_capture_allow_failure_with_stdin(
             repo_root,
             std::ffi::OsStr::new("colima"),
             &resolved,
+            stdin_file,
         );
     }
 

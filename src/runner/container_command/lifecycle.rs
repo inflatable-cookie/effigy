@@ -35,6 +35,7 @@ use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::container_runtime_prep::ensure_primary_service_exec_ready_for_runtime;
 use crate::runner::exec_command::{
     append_color_exec_env, probe_container_capabilities, run_compose_exec,
+    run_compose_exec_with_options,
 };
 use crate::runner::host_container_lease::clear_host_container_lease;
 use crate::runner::host_process::start_host_processes_for_container;
@@ -297,22 +298,59 @@ pub(in crate::runner) fn run_container_exec_capture(
     service: Option<&str>,
     command: &[String],
 ) -> Result<Output, RunnerError> {
+    run_container_exec_capture_with_options(repo_root, name, service, command, None)
+}
+
+pub(in crate::runner) fn run_container_exec_capture_with_options(
+    repo_root: &Path,
+    name: Option<&str>,
+    service: Option<&str>,
+    command: &[String],
+    stdin_file: Option<&Path>,
+) -> Result<Output, RunnerError> {
     if command.is_empty() {
         return Err(RunnerError::task_invocation(
             "container_exec requires at least one command argument",
         ));
     }
 
-    let (policy, service, working_dir) = resolve_container_shell_session(repo_root, name, service)?;
+    let (policy, service, _) = resolve_container_shell_session(repo_root, name, service)?;
     maybe_refresh_workspace_effigy_for_shell(repo_root, &policy)?;
-    let mut args = compose_args(&policy, ["exec", "-T", "-w"]);
-    args.push(OsString::from(working_dir));
+    let mut args = compose_args(&policy, ["exec", "-T"]);
+    if let Some(working_dir) =
+        resolve_container_exec_working_dir_for_service(repo_root, name, &policy, &service)?
+    {
+        args.push(OsString::from("-w"));
+        args.push(OsString::from(working_dir));
+    }
     append_color_exec_env(&mut args, false);
     args.push(OsString::from("-e"));
     args.push(OsString::from(CONTAINER_HANDOFF_ENV_ASSIGNMENT));
     args.push(OsString::from(service));
     args.extend(command.iter().map(OsString::from));
-    run_compose_exec(repo_root, &policy, &args, true, "docker compose exec")
+    run_compose_exec_with_options(
+        repo_root,
+        &policy,
+        &args,
+        true,
+        "docker compose exec",
+        stdin_file,
+    )
+}
+
+fn resolve_container_exec_working_dir_for_service(
+    repo_root: &Path,
+    name: Option<&str>,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+) -> Result<Option<std::path::PathBuf>, RunnerError> {
+    if service != policy.primary_service {
+        return Ok(None);
+    }
+
+    load_container_exec_working_dir(repo_root, name)
+        .map(Some)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 fn validate_runtime_shell_match(
@@ -384,16 +422,16 @@ fn maybe_refresh_workspace_effigy_for_shell(
 #[cfg(test)]
 mod tests {
     use super::{
-        finish_container_up_failure, render_interrupted_up_closeout_text, run_container_eject,
-        EffectiveAttachMode,
+        finish_container_up_failure, render_interrupted_up_closeout_text,
+        resolve_container_exec_working_dir_for_service, run_container_eject, EffectiveAttachMode,
     };
     use crate::runner::container_command::support::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
     use crate::runner::RunnerError;
     use effigy_containers::{
-        down_report, up_detached_report, EffectiveComposeSource, EffectiveContainerPolicy,
-        SharedServiceBinding,
+        down_report, load_container_policy, up_detached_report, EffectiveComposeSource,
+        EffectiveContainerPolicy, SharedServiceBinding,
     };
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
@@ -403,6 +441,45 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn non_primary_service_exec_does_not_force_primary_working_dir() {
+        let root = temp_repo("non-primary-service-exec-no-cwd");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers.web]
+working_dir = "/var/www/contact-patch"
+services = { db = { catalog = "mariadb" } }
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, Some("web")).expect("load policy");
+        let working_dir =
+            resolve_container_exec_working_dir_for_service(&root, Some("web"), &policy, "db")
+                .expect("resolve working dir");
+        assert_eq!(working_dir, None);
+    }
+
+    #[test]
+    fn primary_service_exec_keeps_primary_working_dir() {
+        let root = temp_repo("primary-service-exec-cwd");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers.web]
+working_dir = "/var/www/contact-patch"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, Some("web")).expect("load policy");
+        let working_dir =
+            resolve_container_exec_working_dir_for_service(&root, Some("web"), &policy, "app")
+                .expect("resolve working dir");
+        assert_eq!(working_dir, Some(PathBuf::from("/var/www/contact-patch")));
+    }
 
     fn temp_repo(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(

@@ -54,8 +54,8 @@ What each flag means:
 - `--branch <NAME>`: target a specific branch during clone or update
 - `--db-seed <FILE>|<TARGET>=<FILE>`: stage one or more SQL dumps into the
   cloned repo before bootstrap-owned setup runs
-- `--no-prompt`: suppress interactive bootstrap prompts for missing database
-  seed inputs even on a real TTY
+- `--no-prompt`: suppress interactive bootstrap prompts for destination reuse
+  and missing database seed inputs even on a real TTY
 - `--start`: run the repo's configured bootstrap start task after setup
 - `--plan`: preview destination, branch, and intent without mutating anything
 - `--json`: return `effigy.bootstrap.v1` inside the normal command envelope
@@ -122,6 +122,20 @@ That gives repos one clean adoption path:
 
 When `--db-seed` is supplied but `bootstrap:db-seed` is missing, bootstrap
 fails instead of silently skipping the seed request.
+
+## Prompt Policy
+
+Bootstrap prompts only run for real interactive terminal use:
+
+- stdin and stdout must both be TTYs
+- prompts are suppressed for `--json`
+- prompts are suppressed for `--plan`
+- prompts are suppressed by explicit `--no-prompt`
+
+When the resolved destination already exists and is non-empty, bootstrap asks
+for confirmation before clone/update work proceeds. Non-interactive execution
+fails clearly instead of waiting for input. Use `--no-prompt` only when reuse
+of that existing path is intentional in automation.
 
 ## Minimal Manifest Contract
 

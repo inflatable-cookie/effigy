@@ -273,9 +273,39 @@ fn parse_container_data_import<I>(name: Option<String>, args: I) -> Result<Comma
 where
     I: IntoIterator<Item = String>,
 {
-    parse_container_data_transfer(name, args, "import", |volume, path| {
-        ContainerDataSubcommand::Import { volume, path }
-    })
+    let mut args = args.into_iter();
+    let volume = args.next().ok_or_else(|| {
+        CliParseError::InvalidArguments(
+            "`effigy container data import` requires <VOLUME> and <PATH>".to_owned(),
+        )
+    })?;
+    let path = PathBuf::from(args.next().ok_or_else(|| {
+        CliParseError::InvalidArguments(
+            "`effigy container data import` requires <VOLUME> and <PATH>".to_owned(),
+        )
+    })?);
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut yes = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--yes" => yes = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Data {
+            name,
+            subcommand: ContainerDataSubcommand::Import { volume, path, yes },
+        },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_container_data_pull_production<I>(
@@ -288,11 +318,13 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
+    let mut yes = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
+            "--yes" => yes = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
@@ -301,7 +333,7 @@ where
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Data {
             name,
-            subcommand: ContainerDataSubcommand::PullProduction,
+            subcommand: ContainerDataSubcommand::PullProduction { yes },
         },
         repo_override,
         output_json,

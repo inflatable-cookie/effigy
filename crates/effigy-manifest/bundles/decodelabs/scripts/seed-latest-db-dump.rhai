@@ -77,33 +77,36 @@ fn seed_specs_from_env_or_file(dumps_dir) {
     return parsed;
 }
 
+fn host_dump_path(dump_repo_path) {
+    if str::starts_with(dump_repo_path, "/") {
+        return dump_repo_path;
+    }
+    return path::join(repo_root, dump_repo_path);
+}
+
 fn import_dump(container_name, db_password, database, dump_repo_path, dump_name) {
-    let mysql_args = ["--skip-ssl", "-h", "db", "-uroot"];
+    let mysql_args = ["mysql", "--skip-ssl", "-h", "db", "-uroot"];
     if db_password != "" {
         mysql_args.push("--password=" + db_password);
     }
+    let import_path = host_dump_path(dump_repo_path);
     let reset_sql = "DROP DATABASE IF EXISTS `" + database + "`; CREATE DATABASE `" + database + "`;";
 
     log("[check] resetting database " + database);
-
-    let reset_args = mysql_args + ["-e", reset_sql];
-    let reset_result = process::run("mysql", reset_args);
-
+    let reset_result = container::exec(container_name, "db", mysql_args + ["-e", reset_sql]);
     if reset_result["status"] != 0 {
         throw "[error] database reset failed"
             + "\nstdout:\n" + reset_result["stdout"].to_string()
             + "\nstderr:\n" + reset_result["stderr"].to_string();
     }
 
-    let reset_output = reset_result["stdout"].to_string();
-    if str::trim(reset_output) != "" {
-        log(reset_output);
-    }
-
     log("[check] importing SQL dump " + dump_name + " into " + database);
-
-    let import_args = mysql_args + [database];
-    let import_result = process::run("mysql", import_args, #{ stdin_file: dump_repo_path });
+    let import_result = container::exec(
+        container_name,
+        "db",
+        mysql_args + [database],
+        #{ stdin_file: import_path },
+    );
 
     if import_result["status"] != 0 {
         throw "[error] SQL import failed"

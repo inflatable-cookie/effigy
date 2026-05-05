@@ -28,7 +28,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--no-prompt",
-                "Disable interactive bootstrap prompts for missing database seed inputs even on a real TTY",
+                "Disable interactive bootstrap prompts for destination reuse and missing database seed inputs even on a real TTY",
             ),
             (
                 "--start",

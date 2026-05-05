@@ -76,6 +76,11 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/05-100749-container-data-import-confirmation.md`](./2026-05/05-100749-container-data-import-confirmation.md)
+- [`2026-05/05-094517-post-container-data-pull-production-confirmation-boundary.md`](./2026-05/05-094517-post-container-data-pull-production-confirmation-boundary.md)
+- [`2026-05/05-093000-container-data-pull-production-confirmation.md`](./2026-05/05-093000-container-data-pull-production-confirmation.md)
+- [`2026-05/05-092950-post-bootstrap-path-reuse-prompt-boundary.md`](./2026-05/05-092950-post-bootstrap-path-reuse-prompt-boundary.md)
+- [`2026-05/05-092200-bootstrap-path-reuse-prompt-policy.md`](./2026-05/05-092200-bootstrap-path-reuse-prompt-policy.md)
 - [`2026-05/02-018-final-boundary-decision.md`](./2026-05/02-018-final-boundary-decision.md)
 - [`2026-05/02-018-host-integration-and-shared-service-proof-slice.md`](./2026-05/02-018-host-integration-and-shared-service-proof-slice.md)
 - [`2026-05/02-018-proof-matrix-foundation-boundary-decision.md`](./2026-05/02-018-proof-matrix-foundation-boundary-decision.md)

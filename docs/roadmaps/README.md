@@ -72,12 +72,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/018-v1-runtime-hardening-proof-and-stress-matrix.md` is complete; the runtime/container core now has a bounded executable proof matrix for the historical brittle seams that blocked `v1.0` confidence.
 - `g03/019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md` is complete; the runtime/container hardening foundation is now proven and documented, and the `v0.x` release contract remains the live authority surface while additional features and tidy-up work continue in the `v0.3.x` line.
 - `g03/020-distribution-channel-proof-and-first-publish-closeout.md` is complete; the distribution channel story is closed with Homebrew and GitHub Releases proven, source install documented, and crates.io intentionally excluded.
+- `g03/027-interactive-cli-prompt-expansion-and-guardrails.md` is active; the shared prompt policy, bootstrap existing-path reuse confirmation, `container data pull-production`, and `container data import` confirmations have landed.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
-- no strict lane is active right now
-- the next honest move is planning; `g03.019` is complete and no strict lane is active
+- `g03.027` is now active through `docs/specs/033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md`
+- the active ready card is `367-decide-post-container-data-import-confirmation-boundary.md`
 
 ## Research Program
 
@@ -113,7 +114,7 @@ Before rollover:
 
 ## Next Task
 
-Stop in planning.
+Execute `367-decide-post-container-data-import-confirmation-boundary.md`.
 
 
 ## Historical language boundary

@@ -144,6 +144,27 @@ fn host_callbacks() -> HostCallbacks {
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             })
         }),
+        container_exec_with_options: Arc::new(|repo_root, name, service, command, options| {
+            let name = if name.is_empty() { None } else { Some(name) };
+            let stdin_file = options
+                .get("stdin_file")
+                .and_then(Value::as_str)
+                .map(std::path::PathBuf::from);
+            let output = crate::runner::container_command::run_container_exec_capture_with_options(
+                repo_root,
+                name,
+                service,
+                command,
+                stdin_file.as_deref(),
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(HostCommandOutput {
+                status: i64::from(output.status.code().unwrap_or(-1)),
+                success: output.status.success(),
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            })
+        }),
     }
 }
 
@@ -262,6 +283,7 @@ fn run_rhai_feature(
                         subcommand: ContainerDataSubcommand::Import {
                             volume: required_string(&options, "volume")?,
                             path: PathBuf::from(required_string(&options, "path")?),
+                            yes: true,
                         },
                     },
                 ),
@@ -269,7 +291,7 @@ fn run_rhai_feature(
                     repo_root,
                     ContainerSubcommand::Data {
                         name: Some(name),
-                        subcommand: ContainerDataSubcommand::PullProduction,
+                        subcommand: ContainerDataSubcommand::PullProduction { yes: true },
                     },
                 ),
                 other => Err(RunnerError::task_invocation(format!(

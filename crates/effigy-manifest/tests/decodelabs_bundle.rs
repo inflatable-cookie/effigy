@@ -32,10 +32,9 @@ version = "11.0"
         seed_script.display()
     );
     assert!(
-        seed_script_source.contains(r#"process::run("mysql", reset_args)"#)
-            && seed_script_source.contains("stdin_file: dump_repo_path")
-            && !seed_script_source.contains("container::exec("),
-        "decodelabs seed helper should import dumps locally inside the container task at {}",
+        seed_script_source.contains(r#"container::exec(container_name, "db", mysql_args + ["-e", reset_sql])"#)
+            && seed_script_source.contains(r#"#{ stdin_file: import_path }"#),
+        "decodelabs seed helper should import dumps through the db service with stdin handoff at {}",
         seed_script.display()
     );
     let env_script = bundle_root.join("scripts/write-env-if-present.rhai");
