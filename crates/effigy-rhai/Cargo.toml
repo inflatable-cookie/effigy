@@ -8,6 +8,7 @@ description = "Rhai runtime and host API contracts for Effigy"
 
 [dependencies]
 effigy-core = { path = "../effigy-core" }
+effigy-context = { path = "../effigy-context" }
 effigy-env = { path = "../effigy-env" }
 effigy-ui = { path = "../effigy-ui" }
 anstyle = "1"

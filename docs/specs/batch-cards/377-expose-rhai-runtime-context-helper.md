@@ -2,9 +2,10 @@
 
 Lane: [`036-universal-runtime-context-and-path-authority-strict-lane.md`](../036-universal-runtime-context-and-path-authority-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Goal
 
@@ -26,12 +27,30 @@ runtime context map.
 This card is complete when Rhai scripts can call `runtime::context()` and see
 the same boot-time context the runner captured.
 
+## Closeout
+
+Rhai now exposes `runtime::context()` through `effigy-rhai`. Runner script
+execution passes the active `EffigyRuntimeContext` when available, with a lossy
+repo-root fallback for direct Rhai crate execution.
+
+The context map includes:
+
+- `invocation_cwd`
+- `command_root`
+- `repo_override`
+- `invocation_mode`
+- `inside_container_handoff`
+- `host`
+
+`exec::run(...)` remains the next implementation step because it depends on the
+canonical execution request builder.
+
 ## Validation
 
 - `CARGO_TARGET_DIR=/tmp/effigy-main-check-target cargo test -p effigy-rhai runtime -- --nocapture`
-- targeted runner Rhai script test
+- `CARGO_TARGET_DIR=/tmp/effigy-main-check-target cargo test -p effigy --lib run_manifest_task_run_array_rhai_steps_support_args_and_runtime_helpers -- --nocapture`
 - `CARGO_TARGET_DIR=/tmp/effigy-main-check-target cargo check -p effigy`
 
 ## Next Task
 
-Implement this card.
+Choose the next ready card.

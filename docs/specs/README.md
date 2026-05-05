@@ -62,4 +62,5 @@ Recently completed:
 
 ## Next Task
 
-Implement ready card `377` for Rhai runtime context exposure.
+Choose the next ready card: continue `g03.030` caller/context migration or open
+the first `g03.032` execution-builder implementation card.

@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use effigy_rhai::{
-    execute_rhai_script, install_stop_requested_flag, load_script, load_script_args_from_env,
-    required_env, surface::*, EffigyCommandError, HostCallbacks, HostCommandOutput, ScriptContext,
-    EFFIGY_RHAI_REPO_ROOT, EFFIGY_RHAI_TASK_NAME,
+    execute_rhai_script_with_runtime_context, install_stop_requested_flag, load_script,
+    load_script_args_from_env, required_env, surface::*, EffigyCommandError, HostCallbacks,
+    HostCommandOutput, ScriptContext, EFFIGY_RHAI_REPO_ROOT, EFFIGY_RHAI_TASK_NAME,
 };
 
 use effigy_cli::{
@@ -17,6 +17,7 @@ use effigy_cli::{
 };
 use serde_json::Value;
 
+use super::command_context::active_runtime_context;
 use super::command_context::EmbeddedRepoOverrideMode;
 use super::embedded_runner::parse_embedded_command;
 use super::error::RunnerError;
@@ -44,7 +45,15 @@ pub(in crate::runner) fn execute_repo_rhai_script(
         stop_requested: install_stop_requested_flag().map_err(map_rhai_error)?,
     };
     let script = load_script(file, &context.cwd).map_err(map_rhai_error)?;
-    execute_rhai_script(&context, &script, args, &host_callbacks()).map_err(map_rhai_error)
+    let runtime_context = active_runtime_context();
+    execute_rhai_script_with_runtime_context(
+        &context,
+        runtime_context.as_ref(),
+        &script,
+        args,
+        &host_callbacks(),
+    )
+    .map_err(map_rhai_error)
 }
 
 fn required_repo_root(args: &InternalRhaiArgs) -> Result<PathBuf, RunnerError> {

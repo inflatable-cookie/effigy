@@ -21,9 +21,9 @@ context.
 
 ## Current Ready Card
 
-[`377-expose-rhai-runtime-context-helper.md`](./batch-cards/377-expose-rhai-runtime-context-helper.md)
-is ready. It exposes the captured runtime context to Rhai before the execution
-builder lands.
+No active ready card. Card `377` is complete; the next move is either another
+`g03.030` caller/context migration card or opening `g03.032` once the execution
+request crate work is ready.
 
 ## Exit Condition
 
@@ -33,4 +33,5 @@ or explicitly queued into the next card.
 
 ## Next Task
 
-Implement card `377`.
+Choose the next ready card: continue `g03.030` caller/context migration or open
+the first `g03.032` execution-builder implementation card.

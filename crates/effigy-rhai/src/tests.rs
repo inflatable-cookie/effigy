@@ -1,7 +1,7 @@
 use super::{
-    execute_rhai_script, install_stop_requested_flag, load_script, load_script_args_from_env,
-    render_host_log_message, resolve_script_path, EffigyCommandError, HostCallbacks,
-    HostCommandOutput, ScriptContext, EFFIGY_RHAI_ARGS_JSON,
+    execute_rhai_script, execute_rhai_script_with_runtime_context, install_stop_requested_flag,
+    load_script, load_script_args_from_env, render_host_log_message, resolve_script_path,
+    EffigyCommandError, HostCallbacks, HostCommandOutput, ScriptContext, EFFIGY_RHAI_ARGS_JSON,
 };
 use crate::surface::{FEATURE_NAMES, MODULE_NAMES};
 use std::collections::BTreeSet;
@@ -197,6 +197,53 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
+fn execute_rhai_script_exposes_runtime_context_helper() {
+    let root = temp_root("runtime-context");
+    fs::write(root.join("Cargo.toml"), "[package]\nname = \"ctx\"\n").expect("manifest");
+    let nested = root.join("nested");
+    fs::create_dir_all(&nested).expect("nested");
+    let runtime_context = effigy_context::EffigyRuntimeContext::builder()
+        .cwd_override(Some(nested.clone()))
+        .repo_override(Some(root.clone()))
+        .captured_env(effigy_context::CapturedEnv {
+            container_handoff: Some("1".into()),
+            ..effigy_context::CapturedEnv::default()
+        })
+        .capture()
+        .expect("runtime context");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = format!(
+        r#"
+            let ctx = runtime::context();
+            if ctx["invocation_cwd"] != "{}" {{ throw("invocation cwd"); }}
+            if ctx["command_root"] != "{}" {{ throw("command root"); }}
+            if ctx["repo_override"] != "{}" {{ throw("repo override"); }}
+            if ctx["invocation_mode"] != "container_handoff" {{ throw("mode"); }}
+            if !ctx["inside_container_handoff"] {{ throw("handoff"); }}
+            if ctx["host"]["os"] == "" {{ throw("host os"); }}
+            if ctx["host"]["arch"] == "" {{ throw("host arch"); }}
+        "#,
+        runtime_context.invocation_cwd().display(),
+        runtime_context.command_root().display(),
+        runtime_context.repo_override().unwrap().display(),
+    );
+
+    execute_rhai_script_with_runtime_context(
+        &context,
+        Some(&runtime_context),
+        &script,
+        &[],
+        &callbacks(),
+    )
+    .expect("execute");
 }
 
 #[test]

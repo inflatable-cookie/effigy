@@ -908,6 +908,7 @@ dependencies = [
  "anstyle",
  "base64",
  "chrono",
+ "effigy-context",
  "effigy-core",
  "effigy-env",
  "effigy-ui",

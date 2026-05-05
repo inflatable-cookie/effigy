@@ -45,6 +45,10 @@ pub(super) fn register_host_api(
         MODULE_TIME,
         std::rc::Rc::new(build_time_module(context.clone())),
     );
+    engine.register_static_module(
+        MODULE_RUNTIME,
+        std::rc::Rc::new(build_runtime_module(context.clone())),
+    );
     engine.register_static_module(MODULE_PATH, std::rc::Rc::new(build_path_module()));
     engine.register_static_module(
         MODULE_FS,
@@ -145,6 +149,56 @@ pub(super) fn register_host_api(
 }
 
 // Module builders
+
+fn build_runtime_module(context: Arc<ScriptContext>) -> rhai::Module {
+    let mut module = rhai::Module::new();
+    module.set_native_fn("context", move || -> Result<Dynamic, Box<EvalAltResult>> {
+        let runtime_context = super::active_runtime_context_for_script(&context)
+            .map_err(|error| rhai_runtime_error(error.to_string()))?;
+        let mut host = Map::new();
+        host.insert("os".into(), runtime_context.host().os.clone().into());
+        host.insert("arch".into(), runtime_context.host().arch.clone().into());
+        host.insert("no_color".into(), runtime_context.host().no_color.into());
+        host.insert("ci".into(), runtime_context.host().ci.into());
+
+        let mut value = Map::new();
+        value.insert(
+            "invocation_cwd".into(),
+            runtime_context
+                .invocation_cwd()
+                .display()
+                .to_string()
+                .into(),
+        );
+        value.insert(
+            "command_root".into(),
+            runtime_context.command_root().display().to_string().into(),
+        );
+        value.insert(
+            "repo_override".into(),
+            runtime_context
+                .repo_override()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default()
+                .into(),
+        );
+        value.insert(
+            "invocation_mode".into(),
+            match runtime_context.invocation_mode() {
+                effigy_context::RuntimeInvocationMode::Host => "host",
+                effigy_context::RuntimeInvocationMode::ContainerHandoff => "container_handoff",
+            }
+            .into(),
+        );
+        value.insert(
+            "inside_container_handoff".into(),
+            runtime_context.container().inside_container_handoff.into(),
+        );
+        value.insert("host".into(), host.into());
+        Ok(value.into())
+    });
+    module
+}
 
 fn build_time_module(context: Arc<ScriptContext>) -> rhai::Module {
     let mut module = rhai::Module::new();

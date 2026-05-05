@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anstyle::Style;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine as _;
+use effigy_context::EffigyRuntimeContext;
 use effigy_core::path_error_text::failed_to_read_path;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
@@ -27,6 +29,10 @@ pub const EFFIGY_RHAI_TASK_NAME: &str = "EFFIGY_RHAI_TASK_NAME";
 pub const EFFIGY_RHAI_REPO_ROOT: &str = "EFFIGY_RHAI_REPO_ROOT";
 
 static RHAI_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    static ACTIVE_RUNTIME_CONTEXT: RefCell<Option<EffigyRuntimeContext>> = const { RefCell::new(None) };
+}
 
 type TaskRunner = Arc<dyn Fn(&Path, &str, &[String]) -> Result<String, String> + Send + Sync>;
 type EffigyRunner =
@@ -152,6 +158,27 @@ pub fn execute_rhai_script(
     script_args: &[String],
     callbacks: &HostCallbacks,
 ) -> Result<(), RhaiHostError> {
+    execute_rhai_script_with_runtime_context(context, None, script, script_args, callbacks)
+}
+
+pub fn execute_rhai_script_with_runtime_context(
+    context: &ScriptContext,
+    runtime_context: Option<&EffigyRuntimeContext>,
+    script: &str,
+    script_args: &[String],
+    callbacks: &HostCallbacks,
+) -> Result<(), RhaiHostError> {
+    with_rhai_runtime_context(runtime_context, || {
+        execute_rhai_script_inner(context, script, script_args, callbacks)
+    })
+}
+
+fn execute_rhai_script_inner(
+    context: &ScriptContext,
+    script: &str,
+    script_args: &[String],
+    callbacks: &HostCallbacks,
+) -> Result<(), RhaiHostError> {
     let context = Arc::new(context.clone());
     let callbacks = callbacks.clone();
     let mut engine = Engine::new();
@@ -173,6 +200,31 @@ pub fn execute_rhai_script(
     engine
         .run_with_scope(&mut scope, script)
         .map_err(|error| RhaiHostError::new(error.to_string()))
+}
+
+fn with_rhai_runtime_context<T>(
+    context: Option<&EffigyRuntimeContext>,
+    run: impl FnOnce() -> T,
+) -> T {
+    ACTIVE_RUNTIME_CONTEXT.with(|active| {
+        let previous = active.replace(context.cloned());
+        let output = run();
+        active.replace(previous);
+        output
+    })
+}
+
+pub(crate) fn active_runtime_context_for_script(
+    script_context: &ScriptContext,
+) -> Result<EffigyRuntimeContext, RhaiHostError> {
+    if let Some(context) = ACTIVE_RUNTIME_CONTEXT.with(|active| active.borrow().clone()) {
+        return Ok(context);
+    }
+    EffigyRuntimeContext::capture_lossy(
+        Some(script_context.cwd.clone()),
+        Some(script_context.repo_root.clone()),
+    )
+    .map_err(|error| RhaiHostError::new(error.to_string()))
 }
 
 mod host_api;
