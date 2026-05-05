@@ -1,4 +1,5 @@
 use effigy_cli::Command;
+use effigy_context::EffigyRuntimeContext;
 use std::path::Path;
 
 use super::super::doctor_ports::RunnerDoctorPorts;
@@ -27,6 +28,13 @@ use crate::runner::error::RunnerError;
 
 pub(super) fn run_command(cmd: Command) -> Result<String, RunnerError> {
     run_command_with_cwd(cmd, &std::env::current_dir().unwrap_or_else(|_| ".".into()))
+}
+
+pub(super) fn run_command_with_context(
+    cmd: Command,
+    context: &EffigyRuntimeContext,
+) -> Result<String, RunnerError> {
+    run_command_with_cwd(cmd, context.invocation_cwd())
 }
 
 pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, RunnerError> {

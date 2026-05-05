@@ -26,3 +26,7 @@ fn task_repo_override(cmd: &Command) -> Option<std::path::PathBuf> {
     .ok()
     .and_then(|parsed| parsed.repo_override)
 }
+
+pub fn command_repo_override_for_context(cmd: &Command) -> Option<std::path::PathBuf> {
+    command_repo_override(cmd)
+}

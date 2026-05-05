@@ -13,7 +13,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- No active ready card. `g03.029` is complete.
+- No active ready card. `g03.030` is active and card `374` is complete.
+
+- [`374-plan-runtime-context-contract-and-crate-boundary.md`](./374-plan-runtime-context-contract-and-crate-boundary.md)
+  is complete. It opened the runtime context lane and landed the first
+  `effigy-context` slice.
 
 - [`373-audit-v0-x-release-readiness-and-gate-alignment.md`](./373-audit-v0-x-release-readiness-and-gate-alignment.md)
   is complete. It audited current `v0.x` release readiness without release

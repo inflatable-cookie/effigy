@@ -1,0 +1,10 @@
+[package]
+name = "effigy-context"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Boot-time runtime context and path authority for Effigy"
+
+[dependencies]
+effigy-core = { path = "../effigy-core" }

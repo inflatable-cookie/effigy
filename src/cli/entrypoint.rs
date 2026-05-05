@@ -6,6 +6,7 @@ use crate::{
 use effigy_cli::{
     apply_global_json_flag, command_requests_json, parse_command, strip_global_json_flags, Command,
 };
+use effigy_context::EffigyRuntimeContext;
 use effigy_core::widgets::MessageBlock;
 use effigy_ui::{OutputMode, PlainRenderer, Renderer};
 use std::path::{Path, PathBuf};
@@ -41,9 +42,17 @@ pub fn run_cli(raw_args: Vec<String>) {
     let suppress_header = internal_suppress_header || command_requests_json(&cmd, global_json_mode);
     let emit_json_envelope = !internal_suppress_header && suppress_header;
     let (command_kind, command_name) = command_kind_and_name(&cmd);
-    let command_root = crate::runner::resolve_command_root(&cmd);
+    let runtime_context = EffigyRuntimeContext::capture_lossy(
+        Some(cwd.clone()),
+        crate::runner::command_repo_override_for_context(&cmd),
+    )
+    .unwrap_or_else(|error| {
+        panic!("failed to capture runtime context after cwd was resolved: {error}")
+    });
+    let command_root = runtime_context.command_root().to_path_buf();
     let context = CliExecutionContext {
         output_mode,
+        runtime_context: &runtime_context,
         command_root: &command_root,
         suppress_header,
         emit_json_envelope,
@@ -86,7 +95,7 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
     if !context.suppress_header {
         let _ = render_cli_header(&mut renderer, context.command_root);
     }
-    match crate::runner::run_command(command) {
+    match crate::runner::run_command_with_context(command, context.runtime_context) {
         Ok(output) => {
             if context.emit_json_envelope {
                 emit_json_envelope_success(context.command_kind, context.command_name, &output);

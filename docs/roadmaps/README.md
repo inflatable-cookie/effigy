@@ -75,12 +75,19 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g03/027-interactive-cli-prompt-expansion-and-guardrails.md` is complete; the shared prompt policy, bootstrap existing-path reuse confirmation, container data confirmations, and broad `unlock` confirmation have landed.
 - `g03/028-next-v0-x-readiness-and-roadmap-selection.md` is complete; it selected the next live roadmap target after prompt-lane closeout.
 - `g03/029-v0-x-release-readiness-audit-and-gate-alignment.md` is complete; current `v0.x` release readiness was audited without release execution.
+- `g03/030-universal-runtime-context-and-path-authority.md` is active; runtime context and path authority are being centralized.
+- `g03/031-plugin-ready-container-manager-facade.md` is queued.
+- `g03/032-canonical-task-execution-request-and-pipeline.md` is queued.
+- `g03/033-runtime-container-caller-migration-and-cleanup.md` is queued.
+- `g03/034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md` is queued.
+- `g03/035-contract-promotion-public-cleanup-breaks-and-closeout.md` is queued.
 - research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
 
 ## Active Strict Lane
 
-- No active strict lane.
-- No active ready card.
+- [`g03.030`](./g03/030-universal-runtime-context-and-path-authority.md)
+- [`../specs/036-universal-runtime-context-and-path-authority-strict-lane.md`](../specs/036-universal-runtime-context-and-path-authority-strict-lane.md)
+- No active ready card. Card `374` is complete.
 
 ## Research Program
 
@@ -116,8 +123,7 @@ Before rollover:
 
 ## Next Task
 
-No active ready card. A human can request the next release flow explicitly, or
-the repo can stay in planning.
+Create the next `g03.030` migration card for command-local cwd/root callers.
 
 
 ## Historical language boundary

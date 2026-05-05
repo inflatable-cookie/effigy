@@ -37,6 +37,7 @@ mod util;
 
 pub(in crate::runner) use bundle_command::run_bundle;
 pub(in crate::runner) use changelog_command::run_changelog;
+pub use command_context::command_repo_override_for_context;
 pub(in crate::runner) use container_command::run_container;
 pub(in crate::runner) use contracts_command::run_contracts;
 pub(in crate::runner) use defer_command::run_defer;
@@ -45,7 +46,7 @@ pub(in crate::runner) use demo_command::run_demo;
 pub(in crate::runner) use deploy_command::run_deploy;
 pub(in crate::runner) use distribution_command::run_distribution;
 pub(in crate::runner) use docs_command::run_docs;
-pub use entrypoints::{resolve_command_root, run_command};
+pub use entrypoints::{resolve_command_root, run_command, run_command_with_context};
 pub use error::RunnerError;
 pub(in crate::runner) use exec_command::run_exec;
 pub(in crate::runner) use gateway_command::{run_gateway, run_internal_gateway};

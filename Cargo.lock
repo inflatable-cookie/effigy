@@ -614,6 +614,7 @@ dependencies = [
  "effigy-changelog",
  "effigy-cli",
  "effigy-containers",
+ "effigy-context",
  "effigy-contracts",
  "effigy-core",
  "effigy-demo",
@@ -731,6 +732,13 @@ dependencies = [
  "serde_yaml",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "effigy-context"
+version = "0.3.3"
+dependencies = [
+ "effigy-core",
 ]
 
 [[package]]

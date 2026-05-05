@@ -2,6 +2,7 @@
 mod dispatch;
 
 use effigy_cli::Command;
+use effigy_context::EffigyRuntimeContext;
 use std::path::Path;
 
 use crate::runner::error::RunnerError;
@@ -15,6 +16,13 @@ pub(in crate::runner) fn run_command_with_cwd(
     cwd: &Path,
 ) -> Result<String, RunnerError> {
     dispatch::run_command_with_cwd(cmd, cwd)
+}
+
+pub fn run_command_with_context(
+    cmd: Command,
+    context: &EffigyRuntimeContext,
+) -> Result<String, RunnerError> {
+    dispatch::run_command_with_context(cmd, context)
 }
 
 pub fn resolve_command_root(cmd: &Command) -> std::path::PathBuf {

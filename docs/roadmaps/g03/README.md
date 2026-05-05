@@ -44,6 +44,12 @@ Current milestones:
 - [`027-interactive-cli-prompt-expansion-and-guardrails.md`](./027-interactive-cli-prompt-expansion-and-guardrails.md) (complete; the shared prompt policy, bootstrap path-reuse confirmation, container data confirmations, and broad `unlock` confirmation have landed)
 - [`028-next-v0-x-readiness-and-roadmap-selection.md`](./028-next-v0-x-readiness-and-roadmap-selection.md) (complete; selected `g03.029` as the next live roadmap)
 - [`029-v0-x-release-readiness-audit-and-gate-alignment.md`](./029-v0-x-release-readiness-audit-and-gate-alignment.md) (complete; audited current `v0.x` release readiness without release execution)
+- [`030-universal-runtime-context-and-path-authority.md`](./030-universal-runtime-context-and-path-authority.md) (active; centralizing runtime context and path authority)
+- [`031-plugin-ready-container-manager-facade.md`](./031-plugin-ready-container-manager-facade.md) (queued)
+- [`032-canonical-task-execution-request-and-pipeline.md`](./032-canonical-task-execution-request-and-pipeline.md) (queued)
+- [`033-runtime-container-caller-migration-and-cleanup.md`](./033-runtime-container-caller-migration-and-cleanup.md) (queued)
+- [`034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md) (queued)
+- [`035-contract-promotion-public-cleanup-breaks-and-closeout.md`](./035-contract-promotion-public-cleanup-breaks-and-closeout.md) (queued)
 
 Architecture anchor:
 
@@ -60,10 +66,10 @@ Rules:
 - `g03.019` through `g03.027` are now complete
 - `g03.019` through `g03.028` are now complete
 - `g03.019` through `g03.029` are now complete
-- no strict lane is active
-- no ready card is active
+- `g03.030` is active
+- strict lane `036` is active
+- no ready card is active; card `374` is complete
 
 ## Next Task
 
-No active ready card. A human can request the next release flow explicitly, or
-the repo can stay in planning.
+Create the next `g03.030` migration card for command-local cwd/root callers.

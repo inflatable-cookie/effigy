@@ -26,6 +26,7 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
+- [`036-universal-runtime-context-and-path-authority-strict-lane.md`](./036-universal-runtime-context-and-path-authority-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -61,5 +62,4 @@ Recently completed:
 
 ## Next Task
 
-No active ready card. A human can request the next release flow explicitly, or
-the repo can stay in planning.
+Create the next `g03.030` migration card for command-local cwd/root callers.
