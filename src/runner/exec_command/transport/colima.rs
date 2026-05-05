@@ -40,6 +40,7 @@ pub(super) fn run_colima_direct_exec(
         repo_root,
         policy,
         &parsed,
+        stdin_file.is_some(),
         run_command_capture_allow_failure,
         format_args,
     )?;
@@ -99,6 +100,7 @@ fn resolve_colima_direct_exec_invocation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     parsed: &ParsedComposeExec,
+    has_stdin_file: bool,
     run_command_capture_allow_failure: &dyn Fn(
         &Path,
         &std::ffi::OsStr,
@@ -121,8 +123,10 @@ fn resolve_colima_direct_exec_invocation(
         OsString::from("--"),
         OsString::from("exec"),
     ];
-    if parsed.tty {
+    if parsed.tty || has_stdin_file {
         args.push(OsString::from("-i"));
+    }
+    if parsed.tty {
         args.push(OsString::from("-t"));
     }
     if let Some(working_dir) = parsed.working_dir.as_ref() {
@@ -410,5 +414,85 @@ mod tests {
         .expect("container id");
 
         assert_eq!(container_id.to_string_lossy(), "abc123");
+    }
+
+    #[test]
+    fn direct_exec_with_stdin_file_keeps_interactive_stdin_without_tty() {
+        let repo_root = Path::new("/tmp/repo");
+        let policy = effigy_containers::EffectiveContainerPolicy {
+            name: "web".to_owned(),
+            driver: effigy_manifest::ManifestContainerDriver::Colima,
+            startup: effigy_manifest::ManifestContainerStartup::Detached,
+            profile: "effigy".to_owned(),
+            compose_source: effigy_containers::EffectiveComposeSource::Generated,
+            compose_files: vec![std::path::PathBuf::from("/tmp/docker-compose.yml")],
+            compose_file_display: "docker-compose.yml".to_owned(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: "demo".to_owned(),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            service_aliases: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            workspace_user: None,
+            workspace_home: None,
+            on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
+            shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+            host_processes: Vec::new(),
+        };
+        let parsed = ParsedComposeExec {
+            env: Vec::new(),
+            working_dir: None,
+            user: None,
+            tty: false,
+            service: "db".to_owned(),
+            command: vec![
+                OsString::from("mysql"),
+                OsString::from("-uroot"),
+                OsString::from("contactpatch"),
+            ],
+        };
+
+        let args = resolve_colima_direct_exec_invocation(
+            repo_root,
+            &policy,
+            &parsed,
+            true,
+            &|_, _, _| {
+                Ok(Output {
+                    status: std::process::ExitStatus::from_raw(0),
+                    stdout: b"db123\n".to_vec(),
+                    stderr: Vec::new(),
+                })
+            },
+            &|_| String::new(),
+        )
+        .expect("resolved args");
+
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("nerdctl"),
+                OsString::from("--profile"),
+                OsString::from("effigy"),
+                OsString::from("--"),
+                OsString::from("exec"),
+                OsString::from("-i"),
+                OsString::from("db123"),
+                OsString::from("mysql"),
+                OsString::from("-uroot"),
+                OsString::from("contactpatch"),
+            ]
+        );
     }
 }
