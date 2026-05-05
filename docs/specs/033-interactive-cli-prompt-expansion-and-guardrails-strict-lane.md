@@ -49,8 +49,8 @@ This lane closes when:
 
 ## Current Ready Card
 
-- [`batch-cards/367-decide-post-container-data-import-confirmation-boundary.md`](./batch-cards/367-decide-post-container-data-import-confirmation-boundary.md)
+- [`batch-cards/368-promote-prompt-policy-for-builtin-unlock.md`](./batch-cards/368-promote-prompt-policy-for-builtin-unlock.md)
 
 ## Next Task
 
-Execute `367-decide-post-container-data-import-confirmation-boundary.md`.
+Execute `368-promote-prompt-policy-for-builtin-unlock.md`.

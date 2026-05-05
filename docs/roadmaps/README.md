@@ -78,7 +78,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Active Strict Lane
 
 - `g03.027` is now active through `docs/specs/033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md`
-- the active ready card is `367-decide-post-container-data-import-confirmation-boundary.md`
+- the active ready card is `368-promote-prompt-policy-for-builtin-unlock.md`
 
 ## Research Program
 
@@ -114,7 +114,7 @@ Before rollover:
 
 ## Next Task
 
-Execute `367-decide-post-container-data-import-confirmation-boundary.md`.
+Execute `368-promote-prompt-policy-for-builtin-unlock.md`.
 
 
 ## Historical language boundary

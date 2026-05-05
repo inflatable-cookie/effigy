@@ -76,6 +76,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/05-101818-post-container-data-import-confirmation-boundary.md`](./2026-05/05-101818-post-container-data-import-confirmation-boundary.md)
 - [`2026-05/05-100749-container-data-import-confirmation.md`](./2026-05/05-100749-container-data-import-confirmation.md)
 - [`2026-05/05-094517-post-container-data-pull-production-confirmation-boundary.md`](./2026-05/05-094517-post-container-data-pull-production-confirmation-boundary.md)
 - [`2026-05/05-093000-container-data-pull-production-confirmation.md`](./2026-05/05-093000-container-data-pull-production-confirmation.md)

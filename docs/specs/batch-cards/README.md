@@ -13,9 +13,13 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`368-promote-prompt-policy-for-builtin-unlock.md`](./368-promote-prompt-policy-for-builtin-unlock.md)
+  is the active ready card. It promotes the shared prompt policy to a crate
+  surface that `effigy-builtin` can use before broad `unlock` confirmation.
+
 - [`367-decide-post-container-data-import-confirmation-boundary.md`](./367-decide-post-container-data-import-confirmation-boundary.md)
-  is the active ready card. It decides whether the lane should move directly
-  into broad `unlock` confirmation.
+  is complete. Broad `unlock` confirmation needs a prompt-policy promotion
+  prerequisite because `unlock` lives in `effigy-builtin`.
 
 - [`366-implement-container-data-import-confirmation.md`](./366-implement-container-data-import-confirmation.md)
   is complete. `container data import` now requires confirmation in eligible
