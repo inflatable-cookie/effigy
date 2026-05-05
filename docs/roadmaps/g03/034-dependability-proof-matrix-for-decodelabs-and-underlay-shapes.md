@@ -34,4 +34,4 @@ data.
 ## Next Task
 
 Complete card
-[`406-decide-dependability-proof-matrix-closeout-boundary.md`](../../specs/batch-cards/406-decide-dependability-proof-matrix-closeout-boundary.md).
+[`407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](../../specs/batch-cards/407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md).

@@ -34,7 +34,7 @@ real project repos or production data.
 
 ## Current Ready Card
 
-[`406-decide-dependability-proof-matrix-closeout-boundary.md`](./batch-cards/406-decide-dependability-proof-matrix-closeout-boundary.md)
+[`407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./batch-cards/407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md)
 
 ## Exit Condition
 
@@ -44,4 +44,4 @@ milestone has an explicit start point.
 
 ## Next Task
 
-Complete card `406`.
+Complete card `407`.
