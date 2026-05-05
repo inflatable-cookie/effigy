@@ -267,9 +267,96 @@ fn restart_primary_service(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
+    restart_primary_service_using(repo_root, policy, |repo_root, policy, args, label| {
+        Ok(run_docker_capture(repo_root, policy, args, label)?)
+    })
+}
+
+fn restart_primary_service_using(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    run_compose: impl Fn(
+        &Path,
+        &EffectiveContainerPolicy,
+        &[std::ffi::OsString],
+        &str,
+    ) -> Result<std::process::Output, RunnerError>,
+) -> Result<(), RunnerError> {
     let restart_args = compose_args(policy, ["restart", policy.primary_service.as_str()]);
-    run_docker_capture(repo_root, policy, &restart_args, "docker compose restart")?;
+    run_compose(repo_root, policy, &restart_args, "docker compose restart primary service")?;
+
+    let dependent_services = load_services_depending_on_primary(repo_root, policy)?;
+    if dependent_services.is_empty() {
+        return Ok(());
+    }
+
+    for service in dependent_services {
+        let restart_args = compose_args(policy, ["restart", service.as_str()]);
+        run_compose(
+            repo_root,
+            policy,
+            &restart_args,
+            "docker compose restart dependent service",
+        )?;
+    }
     Ok(())
+}
+
+fn load_services_depending_on_primary(
+    _repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<String>, RunnerError> {
+    let mut services = Vec::new();
+    for compose_file in &policy.compose_files {
+        let raw = match std::fs::read_to_string(compose_file) {
+            Ok(text) => text,
+            Err(_) => continue,
+        };
+        let yaml: serde_yaml::Value = match serde_yaml::from_str(&raw) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let Some(service_map) = yaml.get("services").and_then(|value| value.as_mapping()) else {
+            continue;
+        };
+        for (service_name, service_value) in service_map {
+            let Some(service_name) = service_name.as_str() else {
+                continue;
+            };
+            if service_name == policy.primary_service {
+                continue;
+            }
+            let depends_on = service_value.get("depends_on");
+            if service_depends_on_primary(depends_on, &policy.primary_service) {
+                if !services.iter().any(|existing| existing == service_name) {
+                    services.push(service_name.to_owned());
+                }
+            }
+        }
+    }
+    Ok(services)
+}
+
+fn service_depends_on_primary(
+    depends_on: Option<&serde_yaml::Value>,
+    primary_service: &str,
+) -> bool {
+    let Some(depends_on) = depends_on else {
+        return false;
+    };
+    if let Some(sequence) = depends_on.as_sequence() {
+        return sequence
+            .iter()
+            .filter_map(|value| value.as_str())
+            .any(|value| value == primary_service);
+    }
+    if let Some(mapping) = depends_on.as_mapping() {
+        return mapping
+            .keys()
+            .filter_map(|value| value.as_str())
+            .any(|value| value == primary_service);
+    }
+    false
 }
 
 fn prepare_host_bind_mount_dirs(

@@ -1,12 +1,14 @@
 use super::{
     activate_container_runtime_for_task_using,
     ensure_primary_service_exec_ready_with_recovery_using, parse_bind_mount_host_path,
-    prepare_host_bind_mount_dirs, run_runtime_prep_steps, validate_policy_runtime,
+    prepare_host_bind_mount_dirs, restart_primary_service_using, run_runtime_prep_steps,
+    service_depends_on_primary, validate_policy_runtime,
     ActivationRequest, ContainerTaskActivation, ExecutionSurfaceKind,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
 use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
+use std::os::unix::process::ExitStatusExt;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -336,6 +338,112 @@ fn exec_readiness_recovery_fails_when_probe_never_recovers() {
         "expected typed exec-ready error, got {error}"
     );
     assert_eq!(*restarted.lock().expect("restart lock"), 1);
+}
+
+#[test]
+fn service_dependency_check_supports_mapping_and_sequence_forms() {
+    let mapping: serde_yaml::Value = serde_yaml::from_str(
+        r#"
+depends_on:
+  app:
+    condition: service_started
+"#,
+    )
+    .expect("mapping yaml");
+    let sequence: serde_yaml::Value = serde_yaml::from_str(
+        r#"
+depends_on:
+  - app
+  - redis
+"#,
+    )
+    .expect("sequence yaml");
+
+    assert!(service_depends_on_primary(mapping.get("depends_on"), "app"));
+    assert!(service_depends_on_primary(sequence.get("depends_on"), "app"));
+    assert!(!service_depends_on_primary(sequence.get("depends_on"), "db"));
+}
+
+#[test]
+fn primary_restart_refreshes_dependent_services_after_primary() {
+    let repo_root = temp_test_dir("restart-primary-dependents");
+    let compose_file = repo_root.join("docker-compose.yml");
+    fs::write(
+        &compose_file,
+        r#"
+services:
+  app:
+    image: php
+  web:
+    image: nginx
+    depends_on:
+      app:
+        condition: service_started
+  worker:
+    image: busybox
+    depends_on:
+      - app
+  pma:
+    image: phpmyadmin
+    depends_on:
+      db:
+        condition: service_started
+"#,
+    )
+    .expect("write compose");
+    let policy = test_policy(compose_file);
+    let restarts = Arc::new(Mutex::new(Vec::<Vec<String>>::new()));
+
+    restart_primary_service_using(&repo_root, &policy, {
+        let restarts = Arc::clone(&restarts);
+        move |_repo_root, _policy, args, _label| {
+            restarts.lock().expect("restart log").push(
+                args.iter()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .collect(),
+            );
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        }
+    })
+    .expect("restart should succeed");
+
+    let restarts = restarts.lock().expect("restart log");
+    assert_eq!(
+        *restarts,
+        vec![
+            vec![
+                "compose".to_owned(),
+                "-f".to_owned(),
+                repo_root.join("docker-compose.yml").display().to_string(),
+                "-p".to_owned(),
+                "demo-web".to_owned(),
+                "restart".to_owned(),
+                "app".to_owned(),
+            ],
+            vec![
+                "compose".to_owned(),
+                "-f".to_owned(),
+                repo_root.join("docker-compose.yml").display().to_string(),
+                "-p".to_owned(),
+                "demo-web".to_owned(),
+                "restart".to_owned(),
+                "web".to_owned(),
+            ],
+            vec![
+                "compose".to_owned(),
+                "-f".to_owned(),
+                repo_root.join("docker-compose.yml").display().to_string(),
+                "-p".to_owned(),
+                "demo-web".to_owned(),
+                "restart".to_owned(),
+                "worker".to_owned(),
+            ],
+        ]
+    );
 }
 
 #[test]

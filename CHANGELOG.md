@@ -90,6 +90,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy.active-version` file into the container, so the in-container header
   keeps the local build identity instead of collapsing to the plain package
   version string.
+- Runtime prep now refreshes generated-compose sibling services that depend on
+  the primary service when exec-readiness recovery has to restart that primary
+  service. This stops DecodeLabs `web` containers from keeping stale upstream
+  `app` IPs after recovery and removes the `502 Bad Gateway` footgun seen on
+  Contact Patch-style stacks.
 
 ## [0.3.3] - 2026-05-03
 
