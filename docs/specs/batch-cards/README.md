@@ -13,8 +13,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
-- No active ready card. `379` is complete; choose the next execution request
-  migration card deliberately.
+- [`381-migrate-embedded-task-dispatch-to-execution-request.md`](./381-migrate-embedded-task-dispatch-to-execution-request.md)
+  is ready. It moves embedded task dispatch onto `TaskExecutionRequestBuilder`.
+
+- [`380-migrate-direct-task-dispatch-to-execution-request.md`](./380-migrate-direct-task-dispatch-to-execution-request.md)
+  is complete. It moved direct task dispatch onto `TaskExecutionRequestBuilder`.
 
 - [`379-expose-rhai-exec-run-through-execution-request.md`](./379-expose-rhai-exec-run-through-execution-request.md)
   is complete. It exposes Rhai `exec::run(...)` through the execution request

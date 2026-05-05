@@ -22,8 +22,8 @@ migrating direct tasks, embedded callers, and Rhai `exec::run(...)`.
 
 ## Current Ready Card
 
-No active ready card. Card `379` is complete; the next card should migrate the
-first runner execution caller to `TaskExecutionRequestBuilder`.
+[`381-migrate-embedded-task-dispatch-to-execution-request.md`](./batch-cards/381-migrate-embedded-task-dispatch-to-execution-request.md)
+is ready. It moves embedded task dispatch onto `TaskExecutionRequestBuilder`.
 
 ## Exit Condition
 
@@ -33,4 +33,4 @@ runtime/context and host/container intent expressed once.
 
 ## Next Task
 
-Create the next execution request migration card.
+Implement card `381`.

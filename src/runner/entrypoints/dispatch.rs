@@ -1,5 +1,6 @@
 use effigy_cli::Command;
 use effigy_context::EffigyRuntimeContext;
+use effigy_execution::{ExecutionSurface, TaskExecutionRequestBuilder};
 use std::path::Path;
 
 use super::super::doctor_ports::RunnerDoctorPorts;
@@ -77,7 +78,18 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::InternalHostProcessSupervise(args) => run_internal_host_process_supervise(args),
         Command::InternalHostProcessStop(args) => run_internal_host_process_stop(args),
         Command::Task(task) => {
-            crate::runner::execute::api::run_manifest_task_with_cwd(&task, cwd.to_path_buf())
+            let runtime_context = crate::runner::command_context::active_runtime_context()
+                .unwrap_or_else(|| {
+                    EffigyRuntimeContext::capture_lossy(Some(cwd.to_path_buf()), None)
+                        .expect("runtime context capture should fall back to cwd")
+                });
+            let request = TaskExecutionRequestBuilder::new()
+                .runtime_context(runtime_context)
+                .task(task.name, task.args)
+                .surface(ExecutionSurface::DirectCli)
+                .build()
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            crate::runner::execute::api::run_manifest_task_request(request)
         }
     }
 }

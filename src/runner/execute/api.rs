@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use effigy_cli::TaskInvocation;
+use effigy_execution::TaskExecutionRequest;
 use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn, TaskSelection};
 use effigy_tasks::CatalogSelectionMode;
 
@@ -52,6 +53,12 @@ pub(in crate::runner) fn run_manifest_task_with_cwd_and_env(
     env_overrides: &BTreeMap<String, String>,
 ) -> Result<String, RunnerError> {
     run_manifest_task_with_cwd_and_env_impl(task, cwd, env_overrides)
+}
+
+pub(in crate::runner) fn run_manifest_task_request(
+    request: TaskExecutionRequest,
+) -> Result<String, RunnerError> {
+    super::entry::run_manifest_task_request(request)
 }
 
 pub(in crate::runner) fn build_execution_preflight(
