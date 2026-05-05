@@ -62,5 +62,4 @@ Recently completed:
 
 ## Next Task
 
-Implement ready card `376` for Rhai runtime context and execution-helper
-design.
+Implement ready card `377` for Rhai runtime context exposure.

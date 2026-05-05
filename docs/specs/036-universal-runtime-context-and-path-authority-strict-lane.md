@@ -21,9 +21,9 @@ context.
 
 ## Current Ready Card
 
-[`376-design-rhai-runtime-context-and-execution-helper.md`](./batch-cards/376-design-rhai-runtime-context-and-execution-helper.md)
-is ready. It turns the DecodeLabs mysql seed bug into the concrete Rhai context
-and execution-builder API requirement.
+[`377-expose-rhai-runtime-context-helper.md`](./batch-cards/377-expose-rhai-runtime-context-helper.md)
+is ready. It exposes the captured runtime context to Rhai before the execution
+builder lands.
 
 ## Exit Condition
 
@@ -33,4 +33,4 @@ or explicitly queued into the next card.
 
 ## Next Task
 
-Implement card `376`.
+Implement card `377`.

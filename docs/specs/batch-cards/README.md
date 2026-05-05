@@ -13,8 +13,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`377-expose-rhai-runtime-context-helper.md`](./377-expose-rhai-runtime-context-helper.md)
+  is ready. It exposes the captured runtime context to Rhai before the
+  execution helper lands.
+
 - [`376-design-rhai-runtime-context-and-execution-helper.md`](./376-design-rhai-runtime-context-and-execution-helper.md)
-  is ready. It turns the DecodeLabs mysql seed path bug into a concrete Rhai
+  is complete. It turned the DecodeLabs mysql seed path bug into a concrete Rhai
   runtime-context and execution-builder requirement.
 
 - [`375-migrate-command-local-cwd-root-callers.md`](./375-migrate-command-local-cwd-root-callers.md)

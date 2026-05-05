@@ -33,6 +33,16 @@ Rhai must get two typed surfaces from this milestone:
   as `run_in = "container"`, `container`, `service`, `stdin_file`, `cwd`, and
   `env`
 
+Target helper names:
+
+- `runtime::context()`
+- `exec::run(command, options)`
+
+`exec::run(...)` must return the normal process-like output map plus a route
+summary. It must accept `run_in`, `container`, `service`, `stdin_file`, `cwd`,
+and `env` options. `stdin_file` and `cwd` resolve through the captured runtime
+context, not script-local cwd guessing.
+
 The helper owns the host/container decision. First-party scripts must not have
 to choose between `process::run(...)` and `container::exec(...)` when the desired
 execution target is expressible as a request.
@@ -44,6 +54,14 @@ The DecodeLabs mysql seed helper is the reference bug:
 - inside-container handoff must avoid recursive container exec
 - the script should express `run_in = "container"` plus service/stdin intent,
   not reconstruct host and container paths locally
+
+First-party migration list:
+
+- DecodeLabs `seed-latest-db-dump.rhai`
+- Underlay `error-reporting.rhai`
+- any shipped script that shells into a service with `container::exec(...)`
+- any shipped script that uses `process::run(...)` because it is uncertain
+  whether the current process is host-side or container-side
 
 ## Non-Goals
 

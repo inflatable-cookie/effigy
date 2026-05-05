@@ -150,6 +150,43 @@ The runtime/container/execution modularisation lane will add a typed helper for
 scripts that need Effigy to choose the correct execution route from declared
 intent.
 
+### Runtime Context
+
+Target shape:
+
+```rhai
+let ctx = runtime::context();
+```
+
+Return shape:
+
+```rhai
+#{
+  invocation_cwd: "/path/where/effigy/started",
+  command_root: "/path/to/target/repo",
+  repo_override: "/path/to/target/repo",
+  invocation_mode: "host",
+  inside_container_handoff: false,
+  host: #{
+    os: "macos",
+    arch: "aarch64",
+    no_color: false,
+    ci: false,
+  },
+}
+```
+
+Rules:
+
+- the map is read-only from Effigy's perspective
+- paths are strings because Rhai has no native path type
+- `repo_override` is `()` when no explicit override was used
+- `invocation_mode` is `"host"` or `"container_handoff"`
+- scripts may use this for reporting and path construction, but execution
+  routing should still go through `exec::run(...)`
+
+### Execution Helper
+
 Target shape:
 
 ```rhai
@@ -164,10 +201,67 @@ let result = exec::run(
 );
 ```
 
-The helper should route through the execution request builder. It should use
-the captured runtime context to decide whether the process is already inside a
-container handoff, how repo-relative paths resolve, and whether container exec
-is required.
+Required options:
+
+- `run_in`: `"host"`, `"container"`, or `"either"`
+- `container`: container stack name when `run_in = "container"`
+- `service`: service name when the command targets a specific service
+
+Optional options:
+
+- `cwd`: repo-relative or absolute working directory
+- `env`: map of string env overrides
+- `stdin_file`: repo-relative or absolute file path to stream into stdin
+- `output`: `"capture"` initially; `"stream"` and `"tee"` can follow later
+
+Return shape matches process-like helpers and adds route detail:
+
+```rhai
+#{
+  status: 0,
+  success: true,
+  stdout: "...",
+  stderr: "...",
+  route: #{
+    run_in: "container",
+    container: "web",
+    service: "db",
+    invocation_mode: "host",
+  },
+}
+```
+
+Routing rules:
+
+- `run_in = "host"` uses host process execution
+- `run_in = "container"` uses the container manager when invocation mode is host
+- `run_in = "container"` with `inside_container_handoff = true` runs the command
+  directly when the active handoff already targets the requested service
+- `stdin_file` resolves from the captured command root unless absolute
+- scripts should not switch manually between `process::run(...)` and
+  `container::exec(...)` for the same logical command
+
+### DecodeLabs Seed Migration Target
+
+```rhai
+let reset = exec::run(
+    mysql_args + ["-e", reset_sql],
+    #{ run_in: "container", container: container_name, service: "db" },
+);
+
+let imported = exec::run(
+    mysql_args + [database],
+    #{
+        run_in: "container",
+        container: container_name,
+        service: "db",
+        stdin_file: staged_path,
+    },
+);
+```
+
+The script should stop constructing separate host/container execution branches.
+Effigy owns the path and handoff decision.
 
 ### Envfile Detail
 
