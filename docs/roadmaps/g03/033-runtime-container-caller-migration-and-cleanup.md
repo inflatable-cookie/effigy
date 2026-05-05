@@ -31,4 +31,4 @@ surfaces, then remove duplicated glue.
 ## Next Task
 
 Complete card
-[`391-decide-execution-surface-policy-bridge-cleanup.md`](../../specs/batch-cards/391-decide-execution-surface-policy-bridge-cleanup.md).
+[`393-decide-post-surface-cleanup-boundary.md`](../../specs/batch-cards/393-decide-post-surface-cleanup-boundary.md).

@@ -3,7 +3,7 @@ use super::{
     ensure_primary_service_exec_ready_with_recovery_using, parse_bind_mount_host_path,
     prepare_host_bind_mount_dirs, restart_primary_service_using, run_runtime_prep_steps,
     service_depends_on_primary, validate_policy_runtime, ActivationRequest,
-    ContainerTaskActivation, ExecutionSurfaceKind,
+    ContainerTaskActivation,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
@@ -473,90 +473,75 @@ fn validate_policy_runtime_uses_typed_policy_error_family() {
 }
 
 #[test]
-fn task_activation_side_effects_run_in_shared_order_for_all_non_shell_surfaces() {
-    for surface in [
-        ExecutionSurfaceKind::StandardTask,
-        ExecutionSurfaceKind::DeferredTask,
-        ExecutionSurfaceKind::ExplicitExec,
-    ] {
-        let repo_root = Path::new("/tmp/demo-repo");
-        let policy = test_policy(PathBuf::from("docker-compose.yml"));
-        let events = Arc::new(Mutex::new(Vec::<String>::new()));
+fn task_activation_side_effects_run_in_shared_order() {
+    let repo_root = Path::new("/tmp/demo-repo");
+    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let events = Arc::new(Mutex::new(Vec::<String>::new()));
 
-        let activation = activate_container_runtime_for_task_using(
-            repo_root,
-            &policy,
-            ActivationRequest {
-                surface,
-                container_name: Some("web"),
-                repo_override: Some(repo_root.to_path_buf()),
-                session_context: RuntimeSessionContext::default(),
-            },
-            {
-                let events = Arc::clone(&events);
-                move |repo_root, policy, container_name, repo_override| {
-                    events.lock().expect("events lock").push(format!(
-                        "prepare:{surface:?}:{container_name:?}:{repo_override:?}:{}:{}",
-                        repo_root.display(),
-                        policy.name
-                    ));
-                    Ok(false)
-                }
-            },
-            {
-                let events = Arc::clone(&events);
-                move |repo_root, policy| {
-                    events.lock().expect("events lock").push(format!(
-                        "gateway:{surface:?}:{}:{}",
-                        repo_root.display(),
-                        policy.name
-                    ));
-                    Ok(())
-                }
-            },
-            {
-                let events = Arc::clone(&events);
-                move |repo_root, policy, system_was_running| {
-                    events.lock().expect("events lock").push(format!(
-                        "lease:{surface:?}:{}:{}:{system_was_running}",
-                        repo_root.display(),
-                        policy.name
-                    ));
-                    Ok(true)
-                }
-            },
-        )
-        .expect("activate container runtime");
-
-        assert_eq!(
-            *events.lock().expect("events lock"),
-            vec![
-                format!(
-                    "prepare:{surface:?}:Some(\"web\"):Some(\"{}\"):{}:{}",
-                    repo_root.display(),
+    let activation = activate_container_runtime_for_task_using(
+        repo_root,
+        &policy,
+        ActivationRequest {
+            container_name: Some("web"),
+            repo_override: Some(repo_root.to_path_buf()),
+            session_context: RuntimeSessionContext::default(),
+        },
+        {
+            let events = Arc::clone(&events);
+            move |repo_root, policy, container_name, repo_override| {
+                events.lock().expect("events lock").push(format!(
+                    "prepare:{container_name:?}:{repo_override:?}:{}:{}",
                     repo_root.display(),
                     policy.name
-                ),
-                format!(
-                    "gateway:{surface:?}:{}:{}",
-                    repo_root.display(),
-                    policy.name
-                ),
-                format!(
-                    "lease:{surface:?}:{}:{}:false",
-                    repo_root.display(),
-                    policy.name
-                ),
-            ]
-        );
-        assert_eq!(
-            activation,
-            ContainerTaskActivation {
-                system_was_running: false,
-                refreshed_host_container_lease: true,
+                ));
+                Ok(false)
             }
-        );
-    }
+        },
+        {
+            let events = Arc::clone(&events);
+            move |repo_root, policy| {
+                events.lock().expect("events lock").push(format!(
+                    "gateway:{}:{}",
+                    repo_root.display(),
+                    policy.name
+                ));
+                Ok(())
+            }
+        },
+        {
+            let events = Arc::clone(&events);
+            move |repo_root, policy, system_was_running| {
+                events.lock().expect("events lock").push(format!(
+                    "lease:{}:{}:{system_was_running}",
+                    repo_root.display(),
+                    policy.name
+                ));
+                Ok(true)
+            }
+        },
+    )
+    .expect("activate container runtime");
+
+    assert_eq!(
+        *events.lock().expect("events lock"),
+        vec![
+            format!(
+                "prepare:Some(\"web\"):Some(\"{}\"):{}:{}",
+                repo_root.display(),
+                repo_root.display(),
+                policy.name
+            ),
+            format!("gateway:{}:{}", repo_root.display(), policy.name),
+            format!("lease:{}:{}:false", repo_root.display(), policy.name),
+        ]
+    );
+    assert_eq!(
+        activation,
+        ContainerTaskActivation {
+            system_was_running: false,
+            refreshed_host_container_lease: true,
+        }
+    );
 }
 
 #[test]
@@ -569,7 +554,6 @@ fn task_activation_can_skip_lease_refresh_without_skipping_gateway_readiness() {
         repo_root,
         &policy,
         ActivationRequest {
-            surface: ExecutionSurfaceKind::StandardTask,
             container_name: Some("web"),
             repo_override: Some(repo_root.to_path_buf()),
             session_context: RuntimeSessionContext {
@@ -615,40 +599,14 @@ fn task_activation_can_skip_lease_refresh_without_skipping_gateway_readiness() {
 }
 
 #[test]
-fn reused_runtime_activation_matrix_keeps_gateway_parity_across_surfaces_and_lease_modes() {
-    for (surface, lease_refresh_policy, expected_events, expected_refreshed_lease) in [
+fn reused_runtime_activation_matrix_keeps_gateway_parity_across_lease_modes() {
+    for (lease_refresh_policy, expected_events, expected_refreshed_lease) in [
         (
-            ExecutionSurfaceKind::StandardTask,
             LeaseRefreshPolicy::RefreshOnActivation,
             vec!["prepare", "gateway", "lease"],
             true,
         ),
         (
-            ExecutionSurfaceKind::DeferredTask,
-            LeaseRefreshPolicy::RefreshOnActivation,
-            vec!["prepare", "gateway", "lease"],
-            true,
-        ),
-        (
-            ExecutionSurfaceKind::ExplicitExec,
-            LeaseRefreshPolicy::RefreshOnActivation,
-            vec!["prepare", "gateway", "lease"],
-            true,
-        ),
-        (
-            ExecutionSurfaceKind::StandardTask,
-            LeaseRefreshPolicy::SkipRefresh,
-            vec!["prepare", "gateway"],
-            false,
-        ),
-        (
-            ExecutionSurfaceKind::DeferredTask,
-            LeaseRefreshPolicy::SkipRefresh,
-            vec!["prepare", "gateway"],
-            false,
-        ),
-        (
-            ExecutionSurfaceKind::ExplicitExec,
             LeaseRefreshPolicy::SkipRefresh,
             vec!["prepare", "gateway"],
             false,
@@ -662,7 +620,6 @@ fn reused_runtime_activation_matrix_keeps_gateway_parity_across_surfaces_and_lea
             repo_root,
             &policy,
             ActivationRequest {
-                surface,
                 container_name: Some("web"),
                 repo_override: Some(repo_root.to_path_buf()),
                 session_context: RuntimeSessionContext {
@@ -695,10 +652,10 @@ fn reused_runtime_activation_matrix_keeps_gateway_parity_across_surfaces_and_lea
         .expect("activate container runtime");
 
         assert_eq!(
-                *events.lock().expect("events lock"),
-                expected_events,
-                "unexpected reused-runtime side-effect order for {surface:?} with {lease_refresh_policy:?}"
-            );
+            *events.lock().expect("events lock"),
+            expected_events,
+            "unexpected reused-runtime side-effect order for {lease_refresh_policy:?}"
+        );
         assert_eq!(
             activation,
             ContainerTaskActivation {

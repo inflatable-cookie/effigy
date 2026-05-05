@@ -25,16 +25,8 @@ pub(in crate::runner) struct ContainerTaskActivation {
     pub(in crate::runner) refreshed_host_container_lease: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::runner) enum ExecutionSurfaceKind {
-    StandardTask,
-    DeferredTask,
-    ExplicitExec,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct ActivationRequest<'a> {
-    pub(in crate::runner) surface: ExecutionSurfaceKind,
     pub(in crate::runner) container_name: Option<&'a str>,
     pub(in crate::runner) repo_override: Option<PathBuf>,
     pub(in crate::runner) session_context: RuntimeSessionContext,

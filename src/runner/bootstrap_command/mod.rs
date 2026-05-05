@@ -18,7 +18,7 @@ use effigy_ui::theme::{is_ci_environment, resolve_color_enabled, Theme};
 use effigy_ui::{style_text, OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 
 use crate::runner::container_runtime_prep::{
-    activate_container_runtime_for_task, ActivationRequest, ExecutionSurfaceKind,
+    activate_container_runtime_for_task, ActivationRequest,
 };
 use crate::runner::embedded_runner::run_embedded_task;
 use crate::runner::execute::api::{
@@ -797,7 +797,6 @@ fn prepare_bootstrap_seed_runtime(
         repo_root,
         &policy,
         ActivationRequest {
-            surface: ExecutionSurfaceKind::StandardTask,
             container_name: binding_resolution.binding().container_name(),
             repo_override: Some(repo_root.to_path_buf()),
             session_context: bootstrap_runtime_session_context("bootstrap db seed"),

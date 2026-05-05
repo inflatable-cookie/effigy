@@ -13,7 +13,7 @@ use super::trace::render_deferral_trace;
 use crate::runner::command_context::active_runtime_context;
 use crate::runner::container_command::support::validate_running_container_runtime_match;
 use crate::runner::container_runtime_prep::{
-    activate_container_runtime_for_task, ActivationRequest, ExecutionSurfaceKind,
+    activate_container_runtime_for_task, ActivationRequest,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::append_color_exec_env;
@@ -257,7 +257,6 @@ fn run_deferred_request_with_binding(
                 &deferral.working_dir,
                 &policy,
                 ActivationRequest {
-                    surface: ExecutionSurfaceKind::DeferredTask,
                     container_name: Some(policy.name.as_str()),
                     repo_override: Some(deferral.working_dir.clone()),
                     session_context: current_runtime_session_context(),

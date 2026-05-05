@@ -18,7 +18,7 @@ use super::super::routing::{
 };
 use super::{super::process_run, command};
 use crate::runner::container_runtime_prep::{
-    activate_container_runtime_for_task, ActivationRequest, ExecutionSurfaceKind,
+    activate_container_runtime_for_task, ActivationRequest,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::execute::nested;
@@ -281,7 +281,6 @@ fn activate_routed_container_runtime_with(
         repo_root,
         &policy,
         ActivationRequest {
-            surface: ExecutionSurfaceKind::StandardTask,
             container_name: Some(container_name),
             repo_override: Some(repo_root.to_path_buf()),
             session_context: current_runtime_session_context(),
@@ -419,7 +418,6 @@ fn activate_inline_workspace_container_runtime_with(
         repo_root,
         policy,
         ActivationRequest {
-            surface: ExecutionSurfaceKind::StandardTask,
             container_name: Some(policy.name.as_str()),
             repo_override: Some(repo_root.to_path_buf()),
             session_context: RuntimeSessionContext {
@@ -464,7 +462,7 @@ mod tests {
         should_stay_in_workspace_shell, ContainerExecutionBinding,
     };
     use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME as CONTAINER_HANDOFF_ENV;
-    use crate::runner::container_runtime_prep::{ContainerTaskActivation, ExecutionSurfaceKind};
+    use crate::runner::container_runtime_prep::ContainerTaskActivation;
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::runtime_session_context::LeaseRefreshPolicy;
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
@@ -613,7 +611,6 @@ mod tests {
             |repo_root, _policy, request| {
                 activation_call = Some((
                     repo_root.to_path_buf(),
-                    request.surface,
                     request.container_name.map(str::to_owned),
                     request.repo_override,
                     request.session_context.lease_refresh_policy,
@@ -630,7 +627,6 @@ mod tests {
             activation_call,
             Some((
                 repo_root.to_path_buf(),
-                ExecutionSurfaceKind::StandardTask,
                 Some("web".to_owned()),
                 Some(repo_root.to_path_buf()),
                 LeaseRefreshPolicy::RefreshOnActivation,
@@ -682,7 +678,6 @@ mod tests {
                 activation_call = Some((
                     repo_root.to_path_buf(),
                     policy.name.clone(),
-                    request.surface,
                     request.container_name.map(str::to_owned),
                     request.repo_override,
                     request.session_context.lease_refresh_policy,
@@ -700,7 +695,6 @@ mod tests {
             Some((
                 repo_root.to_path_buf(),
                 "dev__app".to_owned(),
-                ExecutionSurfaceKind::StandardTask,
                 Some("dev__app".to_owned()),
                 Some(repo_root.to_path_buf()),
                 LeaseRefreshPolicy::SkipRefresh,

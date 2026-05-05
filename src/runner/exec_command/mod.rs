@@ -11,7 +11,6 @@ use effigy_tasks::{render_task_selector, TaskSelector};
 use super::command_context::resolve_active_command_context;
 use super::container_runtime_prep::{
     activate_container_runtime_for_task, ActivationRequest, ContainerTaskActivation,
-    ExecutionSurfaceKind,
 };
 use super::error::RunnerError;
 use super::host_container_lease::emit_host_container_lease_notice;
@@ -228,7 +227,6 @@ fn activate_exec_surface(
             repo_root,
             &surface.policy,
             ActivationRequest {
-                surface: ExecutionSurfaceKind::ExplicitExec,
                 container_name: Some(surface.container_name.as_str()),
                 repo_override: Some(repo_root.to_path_buf()),
                 session_context: current_runtime_session_context(),

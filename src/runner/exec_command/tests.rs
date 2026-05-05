@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use effigy_manifest::ManifestContainerConfig;
 
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
-use crate::runner::container_runtime_prep::{ContainerTaskActivation, ExecutionSurfaceKind};
+use crate::runner::container_runtime_prep::ContainerTaskActivation;
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::surface::{
     build_alias_table, build_raw_exec_args, resolve_dev_exec_surface, resolve_exec_working_dir,
@@ -554,7 +554,6 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
             repo_root.to_path_buf(),
             surface.container_name.clone(),
             surface.policy.name.clone(),
-            ExecutionSurfaceKind::ExplicitExec,
         ));
         Ok(ContainerTaskActivation {
             system_was_running: false,
@@ -569,7 +568,6 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
             PathBuf::from("/tmp/repo"),
             "web".to_owned(),
             "web".to_owned(),
-            ExecutionSurfaceKind::ExplicitExec,
         ))
     );
     assert!(activation.refreshed_host_container_lease);

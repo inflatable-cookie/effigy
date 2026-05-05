@@ -29,7 +29,13 @@ Batch cards are the execution units for active Effigy strict-lane work.
   context callers now.
 
 - [`391-decide-execution-surface-policy-bridge-cleanup.md`](./391-decide-execution-surface-policy-bridge-cleanup.md)
-  is ready. It decides how to clean up execution-surface policy bridging.
+  is complete. It decided to remove the unused runtime-prep surface bridge.
+
+- [`392-remove-unused-runtime-prep-surface-kind.md`](./392-remove-unused-runtime-prep-surface-kind.md)
+  is complete. It removed `ExecutionSurfaceKind` from runtime prep.
+
+- [`393-decide-post-surface-cleanup-boundary.md`](./393-decide-post-surface-cleanup-boundary.md)
+  is ready. It decides the next cleanup target in `g03.033`.
 
 - [`382-scaffold-container-manager-contract-and-crate.md`](./382-scaffold-container-manager-contract-and-crate.md)
   is complete. It opened `g03.031` and created the first
