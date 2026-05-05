@@ -6,121 +6,65 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+- **Rhai script steps:** host helpers are grouped into namespaces (`scan::…`,
+  `fs::…`, `deploy::…`, and so on). Only `log`, `log_warn`, and `env` stay at the
+  top level. Remove any reliance on the old `module.func(...)` rewrite; use
+  `module::func(...)` (or the real module path) instead.
+
 ### Added
-- `effigy bootstrap` now accepts repeatable `--db-seed` inputs in both
-  `<FILE>` and `<TARGET>=<FILE>` forms. Bundle-backed repos auto-bind unnamed
-  dumps when they declare exactly one database in `[bundle].databases`, and
-  multi-database bundles now require explicit target names like
-  `--db-seed cbs=./cbs.sql --db-seed cbs-mortcalc=./mortcalc.sql`. Supplied
-  SQL dumps are staged into the cloned repo before bootstrap-owned setup runs,
-  exposed through a standard bootstrap env surface, and can drive one-command
-  bring-up through a repo-owned `bootstrap:db-seed` task.
-- `effigy bootstrap` can now prompt for missing database seed paths on a real
-  interactive TTY when a bundle declares databases and no `--db-seed` inputs
-  were supplied. The prompt is skipped for `--json`, `--plan`, redirected I/O,
-  and explicit `--no-prompt`.
-- `effigy bootstrap` now applies the same prompt policy before reusing an
-  existing non-empty destination path. Real TTY runs ask for confirmation;
-  `--json`, `--plan`, and redirected I/O never prompt, and `--no-prompt`
-  remains the explicit automation bypass.
-- `effigy container data pull-production` now requires confirmation before
-  pulling production data into a local generated-compose environment. Real TTY
-  runs prompt with a default-no confirmation, while `--json` and redirected I/O
-  fail clearly unless automation passes the explicit `--yes` bypass.
-- `effigy container data import` now requires confirmation before importing an
-  archive into local generated-compose data. Real TTY runs prompt with a
-  default-no confirmation, while `--json` and redirected I/O fail clearly unless
-  automation passes the explicit `--yes` bypass.
-- `effigy container data seed` now reuses the bootstrap DB-seed surface after
-  bring-up. It accepts the same repeatable `--db-seed <FILE>|<TARGET>=<FILE>`
-  inputs, can prompt for missing bundle database dumps on a real TTY, stages
-  the same metadata under `.effigy/local/db-seeds/`, and executes the standard
-  `bootstrap:db-seed` task to reset and reseed local databases on demand.
-- Broad `effigy unlock` actions now require confirmation before clearing lock
-  scopes. Real TTY runs prompt with a default-no confirmation, while `--json`
-  and redirected I/O fail clearly unless automation passes the explicit
-  `--yes` bypass.
+- **`effigy bootstrap`:** repeatable **`--db-seed`** (`<file>` or
+  `<database>=<file>`). Single-database bundles can omit the target; multi-database
+  bundles must name each target. Staged dumps are available to your bootstrap
+  tasks via the documented env vars (see bootstrap guide).
+- **`effigy bootstrap`:** on a real TTY, optional prompts for missing DB seed
+  paths and before reusing a non-empty clone destination. No prompts for
+  **`--json`**, **`--plan`**, non-interactive I/O, or **`--no-prompt`**.
+- **`effigy container data pull-production`**, **`data import`**, and broad
+  **`effigy unlock`** use the same confirmation pattern: TTY asks (default no);
+  JSON or non-interactive runs need **`--yes`** where applicable or they fail
+  clearly.
+- **`effigy container data seed`** matches the bootstrap DB-seed contract after
+  bring-up (repeatable **`--db-seed`**, optional TTY prompts, staging under
+  **`.effigy/local/db-seeds/`**, then **`bootstrap:db-seed`**).
 
 ### Changed
-- Generated MariaDB and Postgres catalog services now use persistent named
-  volumes for database data. `effigy container reset` preserves persistent
-  generated-compose data by default; deleting those volumes now requires the
-  explicit `reset --wipe-data` path.
-- `effigy bootstrap <repo>` now prefers `[catalog].alias` for the default
-  cloned directory name when the cloned repo defines one and no explicit
-  destination path was supplied.
-- `effigy container status` and `effigy container down` now fall back to
-  subtree-scoped discovery when invoked outside an Effigy repo root. Running
-  them from an ancestor like `~/Dev/test` now targets descendant Effigy repos
-  under that path instead of requiring the global `--all` cross-repo mode.
-- `effigy container data seed` now runs on its own direct reseed execution
-  surface instead of borrowing bootstrap session semantics, and the CLI/help
-  contract now explicitly limits it to the repo default container on the
-  generated-compose path.
-- The bundled DecodeLabs bootstrap contract now defaults
-  `[bootstrap].start = "dev"`, so bundle consumers can seed and hand off into
-  the dev shell with one bootstrap command unless they override that start
-  behavior locally.
-- The bundled DecodeLabs bootstrap contract now also tries to copy
-  `infra/dev/bootstrap/app.env` to `.env` before handoff. If the template is
-  absent, bootstrap logs a skip message instead of failing.
-- Pruned 7 unused direct dependencies from the root `Cargo.toml`
-  (`anstream`, `indicatif`, `tabled`, `indexmap`, `ignore`, `zeroize`, `rhai`).
-  The workspace still compiles and tests pass; members that need these crates
-  continue to declare them directly.
-
-### Breaking
-- Rhai host API moved from flat functions to modular namespaces. All feature
-  surfaces are now namespaced (`scan::god_files`, `deploy::model`, etc.) and
-  core helpers live in modules (`fs::read_file`, `process::run`, `str::trim`,
-  etc.). Only `log`, `log_warn`, and `env` remain flat. The temporary
-  `module.func(...)` compatibility rewrite was removed; scripts must use real
-  Rhai namespace calls like `module::func(...)`.
+- **Shipped catalog Postgres/MariaDB** services use **named volumes** for DB
+  data. **`effigy container reset`** keeps that data unless you pass
+  **`--wipe-data`**.
+- **`effigy bootstrap`** picks the default clone directory from **`[catalog].alias`**
+  when the repo defines it and you did not pass **`--path`**.
+- **`effigy container status`** and **`effigy container down`** can discover Effigy
+  repos under the current directory when you are not at a repo root, so you
+  often do not need **`--all`** for subtree checks.
+- **`effigy container data seed`** is documented and implemented only for the
+  repo default container on the **generated-compose** path.
+- **DecodeLabs starter bundle:** default **`[bootstrap].start`** is **`dev`**;
+  bootstrap may copy **`infra/dev/bootstrap/app.env`** to **`.env`** when that
+  template exists (otherwise it logs a skip).
+- Fewer unused dependencies on the main **`effigy`** crate (no expected impact
+  for normal installs).
 
 ### Fixed
-- Corrected bootstrap bring-up docs: `[bootstrap].start` runs by default after
-  setup unless `--no-start` is passed (aligned with CLI help and parsing).
-- Command matrix and bundled agent skill now document `effigy defer` and the
-  real doctor explain invocation shape (`effigy doctor <selector> -- <args>`).
-- `src/bin/effigy-qa.rs` no longer panics with `.expect()` when `cargo` is not on
-  `PATH`; it now prints a readable error and exits with code 1.
-- Removed `.cache/cargo/` blobs from git history using `git filter-repo`.
-  Repository clone size reduced from ~42 MB to ~21 MB (object store: 30 MB →
-  8.7 MB). A backup branch `backup-before-filter-repo-20250503` preserves the
-  pre-rewrite state.
-- Fixed stale version references in user-facing documentation:
-  `README.md`, `docs/guides/017-json-output-contracts.md`,
-  `docs/guides/026-json-payload-examples.md`,
-  `docs/guides/030-contributor-onboarding-15-minutes.md`,
-  `docs/guides/041-distribution-ci-pinning-and-wrapper-migration.md`, and
-  `docs/guides/055-everyday-workflows.md` now show `v0.3.3` instead of
-  `v0.3.0` or `v0.3.1`.
+- **Docs and bundled agent skill:** bootstrap default **`[bootstrap].start`**
+  behavior matches the CLI; command matrix includes **`effigy defer`**; skill uses
+  **`effigy doctor <selector> -- <args>`** for routing explain.
+- **`effigy qa`** exits cleanly with a clear message when **`cargo`** is not on
+  **`PATH`** (instead of panicking).
+- **Fresh clones** of this repository are much smaller after a one-time history
+  cleanup.
+- **Install examples** in docs now reference **`v0.3.3`** where they were stale.
+- **DecodeLabs / DB seeding:** MySQL imports run through the container (no host
+  **`mysql`** client required); seeding is more reliable on **Colima** (stdin from
+  files, working directory, staged dumps, **`PATH`** for host tools).
+- **DecodeLabs `bootstrap:db-seed`:** MySQL import no longer nests container exec
+  in a way that broke from inside the workspace container.
+- **Linux** installs that ship **`effigy.active-version`** next to the binary keep
+  the full local version string visible inside dev containers.
+- **Generated compose:** when readiness recovery restarts the **primary** service,
+  **dependent** services in the same project are refreshed so they do not keep a
+  stale upstream address (avoids **502**-class failures on multi-service stacks).
 
-- The bundled DecodeLabs seed helper now imports dumps through
-  `container::exec(...)` instead of assuming the host running Effigy has a
-  local `mysql` client installed.
-- Fixed bootstrap DB seeding for bundle-backed sites that import SQL dumps
-  through container exec on Colima. File-backed stdin now preserves the
-  required interactive pipe, `stdin_file` resolves relative to the requested
-  task cwd, and the bundled DecodeLabs seed helper correctly hands staged dump
-  files to the database container instead of dropping or misrouting the import.
-- Bootstrap-owned DecodeLabs DB seed imports now resolve host `colima` and
-  compose binaries through the same bounded host CLI lookup as the container
-  runtime layer, so `container::exec(...)` no longer fails under thin GUI or
-  wrapper `PATH` environments.
-- The bundled DecodeLabs `bootstrap:db-seed` task now runs MySQL imports
-  with local `process::run(...)` calls inside the workspace container instead
-  of recursively using `container::exec(...)`, so bootstrap DB seeding no
-  longer tries to reach host-side Colima from inside the container.
-- Workspace-installed Linux Effigy artifacts now carry a sibling
-  `effigy.active-version` file into the container, so the in-container header
-  keeps the local build identity instead of collapsing to the plain package
-  version string.
-- Runtime prep now refreshes generated-compose sibling services that depend on
-  the primary service when exec-readiness recovery has to restart that primary
-  service. This stops DecodeLabs `web` containers from keeping stale upstream
-  `app` IPs after recovery and removes the `502 Bad Gateway` footgun seen on
-  Contact Patch-style stacks.
 ## [0.3.3] - 2026-05-03
 
 ### Fixed
