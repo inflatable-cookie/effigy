@@ -2,9 +2,12 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use effigy_catalog::volumes::classify_for_reset;
-use effigy_container_manager::{ContainerAction, ContainerCleanupResult, ContainerRuntimeState};
+use effigy_container_manager::{
+    ContainerAction, ContainerBackendDetection, ContainerCleanupResult, ContainerManager,
+    ContainerRuntimeState,
+};
 use effigy_containers::{
-    compose::{compose_args, resolve_compose_backend, ComposeBackend},
+    compose::compose_args,
     down_report,
     exec::{colima_is_running, shutdown_container as shutdown_container_via_exec},
     load_container_policy, reset_report, validate_compose_backend_runtime,
@@ -289,38 +292,29 @@ fn remove_runtime_image_allow_missing(
     policy: &EffectiveContainerPolicy,
     image_ref: &str,
 ) -> Result<(), EffigyRuntimeError> {
-    let (program, args) = match resolve_compose_backend() {
-        ComposeBackend::Docker => (
+    let docker_args = vec![
+        OsString::from("image"),
+        OsString::from("rm"),
+        OsString::from("-f"),
+        OsString::from(image_ref),
+    ];
+    let (program, args) = ContainerManager::defaults()
+        .runtime_process_invocation(
+            &ContainerBackendDetection::from_env_and_path(),
+            policy.profile.as_str(),
             "docker",
-            vec![
-                OsString::from("image"),
-                OsString::from("rm"),
-                OsString::from("-f"),
-                OsString::from(image_ref),
-            ],
-        ),
-        ComposeBackend::ColimaNerdctl => (
-            "colima",
-            vec![
-                OsString::from("nerdctl"),
-                OsString::from("--profile"),
-                OsString::from(policy.profile.as_str()),
-                OsString::from("--"),
-                OsString::from("image"),
-                OsString::from("rm"),
-                OsString::from("-f"),
-                OsString::from(image_ref),
-            ],
-        ),
-    };
+            &docker_args,
+        )
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
 
-    let output = std::process::Command::new(program)
+    let output = std::process::Command::new(&program)
         .current_dir(repo_root)
         .args(&args)
         .output()
         .map_err(|error| EffigyRuntimeError::TaskCommandLaunch {
             command: format!(
-                "remove generated image `{image_ref}` ({program} {})",
+                "remove generated image `{image_ref}` ({} {})",
+                program.to_string_lossy(),
                 format_os_args(&args)
             ),
             error,

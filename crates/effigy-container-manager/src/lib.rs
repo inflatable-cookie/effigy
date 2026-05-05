@@ -445,6 +445,28 @@ impl ContainerManager {
                 })?;
         Ok(backend.compose_process_invocation(profile, args))
     }
+
+    pub fn runtime_process_invocation(
+        &self,
+        detection: &ContainerBackendDetection,
+        profile: &str,
+        docker_program: impl Into<OsString>,
+        docker_args: &[OsString],
+    ) -> Result<(OsString, Vec<OsString>), ContainerManagerError> {
+        let backend_id = self.registry.detect_backend(detection)?;
+        if backend_id == BackendId::docker_compose() {
+            return Ok((docker_program.into(), docker_args.to_vec()));
+        }
+
+        let mut resolved = vec![
+            OsString::from("nerdctl"),
+            OsString::from("--profile"),
+            OsString::from(profile),
+            OsString::from("--"),
+        ];
+        resolved.extend(docker_args.iter().cloned());
+        Ok((OsString::from("colima"), resolved))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -665,6 +687,50 @@ mod tests {
                     OsString::from("--"),
                     OsString::from("compose"),
                     OsString::from("ps"),
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn runtime_process_invocations_are_stable() {
+        let manager = ContainerManager::defaults();
+        let args = vec![
+            OsString::from("cp"),
+            OsString::from("a"),
+            OsString::from("b"),
+        ];
+
+        assert_eq!(
+            manager
+                .runtime_process_invocation(
+                    &ContainerBackendDetection::new(true),
+                    "effigy",
+                    "docker",
+                    &args
+                )
+                .expect("docker invocation"),
+            (OsString::from("docker"), args.clone())
+        );
+        assert_eq!(
+            manager
+                .runtime_process_invocation(
+                    &ContainerBackendDetection::new(false),
+                    "effigy",
+                    "docker",
+                    &args
+                )
+                .expect("colima invocation"),
+            (
+                OsString::from("colima"),
+                vec![
+                    OsString::from("nerdctl"),
+                    OsString::from("--profile"),
+                    OsString::from("effigy"),
+                    OsString::from("--"),
+                    OsString::from("cp"),
+                    OsString::from("a"),
+                    OsString::from("b"),
                 ]
             )
         );

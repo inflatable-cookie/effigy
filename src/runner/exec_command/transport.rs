@@ -4,11 +4,9 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command as ProcessCommand, Output, Stdio};
 
+use effigy_container_manager::{BackendId, ContainerBackendDetection, ContainerManager};
 use effigy_containers::{
-    compose::{
-        compose_args, compose_invocation, resolve_compose_backend, resolve_host_cli_program,
-        ComposeBackend,
-    },
+    compose::{compose_args, compose_invocation, resolve_host_cli_program},
     EffectiveContainerPolicy,
 };
 use effigy_env::secret::SecretString;
@@ -80,7 +78,7 @@ pub(in crate::runner) fn run_compose_exec_with_options(
     label: &str,
     stdin_file: Option<&Path>,
 ) -> Result<Output, RunnerError> {
-    if resolve_compose_backend() == ComposeBackend::ColimaNerdctl {
+    if active_backend_id()? == BackendId::colima_nerdctl() {
         return colima::run_colima_direct_exec(
             repo_root,
             policy,
@@ -130,6 +128,13 @@ pub(in crate::runner) fn run_compose_exec_with_options(
     })
 }
 
+fn active_backend_id() -> Result<BackendId, RunnerError> {
+    ContainerManager::defaults()
+        .registry()
+        .detect_backend(&ContainerBackendDetection::from_env_and_path())
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+}
+
 pub(in crate::runner) fn copy_file_into_service(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -144,16 +149,7 @@ pub(in crate::runner) fn copy_file_into_service(
         &run_command_capture_allow_failure,
         &format_args,
     )?;
-    let mut args = match resolve_compose_backend() {
-        ComposeBackend::Docker => vec![OsString::from("cp")],
-        ComposeBackend::ColimaNerdctl => vec![
-            OsString::from("nerdctl"),
-            OsString::from("--profile"),
-            OsString::from(policy.profile.as_str()),
-            OsString::from("--"),
-            OsString::from("cp"),
-        ],
-    };
+    let mut args = vec![OsString::from("cp")];
     args.push(OsString::from(host_source));
     args.push(OsString::from(format!(
         "{}:{}",
@@ -161,14 +157,22 @@ pub(in crate::runner) fn copy_file_into_service(
         container_dest
     )));
 
-    let (program, resolved_args) = match resolve_compose_backend() {
-        ComposeBackend::Docker => ("docker", args),
-        ComposeBackend::ColimaNerdctl => ("colima", args),
-    };
-    let output = run_command_capture_allow_failure(repo_root, OsStr::new(program), &resolved_args)?;
+    let (program, resolved_args) = ContainerManager::defaults()
+        .runtime_process_invocation(
+            &ContainerBackendDetection::from_env_and_path(),
+            policy.profile.as_str(),
+            "docker",
+            &args,
+        )
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let output = run_command_capture_allow_failure(repo_root, program.as_os_str(), &resolved_args)?;
     if !output.status.success() {
         return Err(RunnerError::TaskCommandFailure {
-            command: format!("{program} {}", format_args(&resolved_args)),
+            command: format!(
+                "{} {}",
+                program.to_string_lossy(),
+                format_args(&resolved_args)
+            ),
             code: output.status.code(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),

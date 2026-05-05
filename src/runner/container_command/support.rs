@@ -3,8 +3,9 @@ use std::path::Path;
 use std::process::Output;
 
 use effigy_catalog::volumes::{reset_commands, DockerCommand, VolumeClassification};
+use effigy_container_manager::{ContainerBackendDetection, ContainerManager};
 use effigy_containers::{
-    compose::{compose_args, resolve_compose_backend, ComposeBackend},
+    compose::compose_args,
     exec::{
         list_running_compose_containers_for_profile, run_docker_capture, ContainerExecError,
         RunningComposeContainer,
@@ -445,25 +446,17 @@ fn run_shared_compose_capture(
     args: &[OsString],
     label: &str,
 ) -> Result<std::process::Output, RunnerError> {
-    let (program, args) = match resolve_compose_backend() {
-        ComposeBackend::Docker => ("docker", args.to_vec()),
-        ComposeBackend::ColimaNerdctl => {
-            let mut resolved = vec![
-                OsString::from("nerdctl"),
-                OsString::from("--profile"),
-                OsString::from(profile),
-                OsString::from("--"),
-            ];
-            resolved.extend(args.iter().cloned());
-            ("colima", resolved)
-        }
-    };
-    std::process::Command::new(program)
+    let (program, args) = runtime_process_invocation(profile, "docker", args)?;
+    std::process::Command::new(&program)
         .current_dir(repo_root)
         .args(&args)
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: format!("{label} ({program} {})", format_args(&args)),
+            command: format!(
+                "{label} ({} {})",
+                program.to_string_lossy(),
+                format_args(&args)
+            ),
             error,
         })
         .and_then(|output| {
@@ -485,25 +478,20 @@ pub(super) fn run_runtime_volume_capture(
     profile: &str,
     command: &DockerCommand,
 ) -> Result<Output, RunnerError> {
-    let (program, args) = match resolve_compose_backend() {
-        ComposeBackend::Docker => (command.program.as_str(), runtime_args(&command.args)),
-        ComposeBackend::ColimaNerdctl => {
-            let mut resolved = vec![
-                OsString::from("nerdctl"),
-                OsString::from("--profile"),
-                OsString::from(profile),
-                OsString::from("--"),
-            ];
-            resolved.extend(runtime_args(&command.args));
-            ("colima", resolved)
-        }
-    };
-    std::process::Command::new(program)
+    let docker_args = runtime_args(&command.args);
+    let (program, args) =
+        runtime_process_invocation(profile, command.program.as_str(), &docker_args)?;
+    std::process::Command::new(&program)
         .current_dir(repo_root)
         .args(&args)
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: format!("{} ({program} {})", command.description, format_args(&args)),
+            command: format!(
+                "{} ({} {})",
+                command.description,
+                program.to_string_lossy(),
+                format_args(&args)
+            ),
             error,
         })
         .and_then(|output| {
@@ -519,6 +507,21 @@ pub(super) fn run_runtime_volume_capture(
                 )))
             }
         })
+}
+
+fn runtime_process_invocation(
+    profile: &str,
+    docker_program: &str,
+    args: &[OsString],
+) -> Result<(OsString, Vec<OsString>), RunnerError> {
+    ContainerManager::defaults()
+        .runtime_process_invocation(
+            &ContainerBackendDetection::from_env_and_path(),
+            profile,
+            docker_program,
+            args,
+        )
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 fn runtime_args(args: &[String]) -> Vec<OsString> {

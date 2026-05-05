@@ -22,7 +22,7 @@ before migrating runner container commands and execution transports.
 
 ## Current Ready Card
 
-[`385-migrate-exec-copy-data-through-manager.md`](./batch-cards/385-migrate-exec-copy-data-through-manager.md)
+[`386-close-container-manager-facade-lane.md`](./batch-cards/386-close-container-manager-facade-lane.md)
 
 ## Exit Condition
 
@@ -32,4 +32,4 @@ longer branches directly on Docker, Colima, or nerdctl.
 
 ## Next Task
 
-Complete card `385`.
+Complete card `386`.
