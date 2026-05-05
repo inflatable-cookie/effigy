@@ -223,8 +223,10 @@ fn resolve_running_service_container_name(
     policy: &EffectiveContainerPolicy,
     service: &str,
 ) -> Result<Option<String>, RunnerError> {
-    let rows = list_running_compose_containers_for_profile(&policy.profile)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let rows = match list_running_compose_containers_for_profile(&policy.profile) {
+        Ok(rows) => rows,
+        Err(_) => return Ok(None),
+    };
     Ok(select_running_service_container_name(
         rows, repo_root, policy, service,
     ))

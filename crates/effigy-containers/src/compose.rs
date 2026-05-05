@@ -87,7 +87,7 @@ pub fn compose_invocation(
     let (program, resolved_args) = effigy_container_manager::ContainerManager::defaults()
         .compose_process_invocation(&detection, policy.profile.as_str(), args)
         .unwrap_or_else(|_| (OsString::from("colima"), colima_nerdctl_args(policy, args)));
-    let program = if program == OsString::from("docker") {
+    let program = if program == "docker" {
         "docker"
     } else {
         "colima"
