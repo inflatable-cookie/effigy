@@ -48,7 +48,7 @@ pub const BUILTIN_TASKS: &[(&str, &str)] = &[
     ),
     (
         "scan",
-        "Run built-in repository scanners such as `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-in-src`, `attention-markers`, and `stale-suppressions`",
+        "Run built-in repository scanners such as `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, and `stale-suppressions`",
     ),
 ];
 

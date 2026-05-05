@@ -1,8 +1,8 @@
 # 057 - Bootstrap Repo Bring-Up
 
 Use this guide when you want one command to clone or update a repo into the
-current directory tree, run its declared setup, and optionally start the dev
-environment.
+current directory tree, run its declared setup, and (by default) run
+`[bootstrap].start` afterward unless you pass `--no-start`.
 
 The goal is straightforward:
 
@@ -34,17 +34,22 @@ Start with:
 effigy bootstrap <git-url> --plan
 ```
 
-Then run the real bring-up:
+Then run the real bring-up (starts `[bootstrap].start` by default):
 
 ```sh
 effigy bootstrap <git-url>
-effigy bootstrap <git-url> --start
+```
+
+To bring up without running `[bootstrap].start`:
+
+```sh
+effigy bootstrap <git-url> --no-start
 ```
 
 ## Command Shape
 
 ```sh
-effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--start] [--plan] [--json]
+effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--no-start] [--start] [--plan] [--json]
 ```
 
 What each flag means:
@@ -56,7 +61,10 @@ What each flag means:
   cloned repo before bootstrap-owned setup runs
 - `--no-prompt`: suppress interactive bootstrap prompts for destination reuse
   and missing database seed inputs even on a real TTY
-- `--start`: run the repo's configured bootstrap start task after setup
+- `--no-start`: skip the repo's configured `[bootstrap].start` task after
+  setup completes
+- `--start`: force `[bootstrap].start` to run after setup (this is already the
+  default when `--no-start` is not passed)
 - `--plan`: preview destination, branch, and intent without mutating anything
 - `--json`: return `effigy.bootstrap.v1` inside the normal command envelope
 
@@ -167,7 +175,8 @@ This means:
 - clone or update the root repo
 - sync submodules recursively
 - execute the bootstrap `run` sequence
-- if `--start` was supplied, run `dev`
+- unless `--no-start` was passed, run the `[bootstrap].start` selector(s)
+  (for example `dev` in the snippet above)
 
 `start` accepts either a single selector (shown above) or an array of
 entries that run sequentially in declaration order; the first failure
@@ -293,7 +302,8 @@ What ships now:
 - submodule policy (`none`, `init`, `recursive`)
 - child repo clone or update
 - bootstrap-local `run` execution for root and children
-- explicit `--start`
+- `[bootstrap].start` after setup by default, with `--no-start` / `--start`
+  overrides
 - plan mode and JSON payloads
 - explicit reporting for root/child checkout state, requested branch behavior,
   and whether a manifest existed without a `[bootstrap]` contract

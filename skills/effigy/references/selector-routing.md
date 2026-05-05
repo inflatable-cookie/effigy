@@ -41,7 +41,7 @@ Repo layout:
 When a selector resolves somewhere unexpected, run:
 
 ```bash
-effigy doctor explain <selector>
+effigy doctor <selector> --
 ```
 
 This shows the routing decision tree — which catalogs were considered, which
@@ -49,8 +49,8 @@ matched, and why one won.
 
 ## When to stop and ask
 
-If `doctor explain` returns multiple candidates with no clear winner, **stop
-and ask** the user which scope they meant. Don't guess.
+If `effigy doctor <selector> --` returns multiple candidates with no clear
+winner, **stop and ask** the user which scope they meant. Don't guess.
 
 Common ambiguity causes:
 

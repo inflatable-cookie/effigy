@@ -80,9 +80,9 @@ A task selector (`test`, `api/test`, `qa:ci:fast`) resolves through:
 3. **CWD-nearest** workspace
 4. **Shallowest** match if still ambiguous
 
-Use `effigy doctor explain <selector>` to see why a selector resolved as it
-did. If routing is ambiguous and `--explain` doesn't disambiguate, **stop and
-ask**.
+Use `effigy doctor <selector> -- <args>` (explain mode) to see why a selector
+resolved as it did. If routing is ambiguous and explain output does not
+disambiguate, **stop and ask**.
 
 Details: `references/selector-routing.md`. Full spec:
 `docs/guides/016-task-routing-precedence.md`.
@@ -149,7 +149,7 @@ Details: `references/release-protocol.md`. Full spec:
 
 Hand back to the human rather than guess when:
 
-- Selector routing is ambiguous and `effigy doctor explain` does not resolve it.
+- Selector routing is ambiguous and `effigy doctor <selector> --` does not resolve it.
 - `effigy doctor` returns structural errors (manifest invalid, config malformed).
 - A release command was not explicitly requested.
 - The change requires editing `.github/workflows/` or `release/` workflow files.

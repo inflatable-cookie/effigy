@@ -77,7 +77,7 @@ is **not** safe to run unprompted — see `release-protocol.md` and
 
 ```bash
 effigy doctor                       # health + routing diagnostic
-effigy doctor explain <selector>    # why does this selector resolve here
+effigy doctor <selector> --           # why does this selector resolve here
 effigy doctor --json                # machine-readable envelope
 ```
 

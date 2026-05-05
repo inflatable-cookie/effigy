@@ -78,6 +78,10 @@ During v0.x, MINOR bumps may include breaking changes.
   Rhai namespace calls like `module::func(...)`.
 
 ### Fixed
+- Corrected bootstrap bring-up docs: `[bootstrap].start` runs by default after
+  setup unless `--no-start` is passed (aligned with CLI help and parsing).
+- Command matrix and bundled agent skill now document `effigy defer` and the
+  real doctor explain invocation shape (`effigy doctor <selector> -- <args>`).
 - `src/bin/effigy-qa.rs` no longer panics with `.expect()` when `cargo` is not on
   `PATH`; it now prints a readable error and exits with code 1.
 - Removed `.cache/cargo/` blobs from git history using `git filter-repo`.
