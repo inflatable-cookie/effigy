@@ -90,7 +90,7 @@ pub(super) fn run_container_data_seed(
 
     if output_json {
         Ok(serde_json::json!({
-            "$schema": "effigy.container.data-seed.v1",
+            "schema": "effigy.container.data-seed.v1",
             "ok": true,
             "container": policy.name,
             "count": staged.len(),

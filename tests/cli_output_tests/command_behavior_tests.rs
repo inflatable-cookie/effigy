@@ -7293,7 +7293,7 @@ fn cli_container_data_seed_json_reports_seed_contract() {
 
     assert!(output.status.success(), "data seed failed: {output:?}");
     let parsed = parse_stdout_json(&output);
-    assert_eq!(parsed["result"]["$schema"], "effigy.container.data-seed.v1");
+    assert_eq!(parsed["result"]["schema"], "effigy.container.data-seed.v1");
     assert_eq!(parsed["result"]["container"], "web");
     assert_eq!(parsed["result"]["count"], 1);
     assert_eq!(parsed["result"]["seeds"][0]["target"], "contactpatch");
