@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Queued
+Status: Ready
 Owner: Platform
 Created: 2026-05-05
 Depends on: [`034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md)
@@ -28,4 +28,4 @@ close the modularisation round cleanly.
 
 ## Next Task
 
-Wait for the proof matrix to close.
+Start the `g03.035` strict lane.

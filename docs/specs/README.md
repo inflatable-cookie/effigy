@@ -26,7 +26,6 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md`](./040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -35,6 +34,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md`](./040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md)
 - [`039-runtime-container-caller-migration-and-cleanup-strict-lane.md`](./039-runtime-container-caller-migration-and-cleanup-strict-lane.md)
 - [`038-plugin-ready-container-manager-facade-strict-lane.md`](./038-plugin-ready-container-manager-facade-strict-lane.md)
 - [`037-canonical-task-execution-request-and-pipeline-strict-lane.md`](./037-canonical-task-execution-request-and-pipeline-strict-lane.md)
@@ -66,5 +66,4 @@ Recently completed:
 
 ## Next Task
 
-Complete card
-[`407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./batch-cards/407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md).
+Start the `g03.035` strict lane.

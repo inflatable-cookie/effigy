@@ -43,7 +43,7 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. It decided `g03.034` can close.
 
 - [`407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md)
-  is ready. It closes `g03.034` and hands off to `g03.035`.
+  is complete. It closed `g03.034` and handed off to `g03.035`.
 
 - [`387-inventory-runtime-container-cleanup-targets.md`](./387-inventory-runtime-container-cleanup-targets.md)
   is complete. It inventoried the remaining runtime/container cleanup targets

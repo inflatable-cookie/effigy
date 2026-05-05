@@ -2,9 +2,10 @@
 
 Roadmap: [`g03.034`](../roadmaps/g03/034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Purpose
 
@@ -34,7 +35,7 @@ real project repos or production data.
 
 ## Current Ready Card
 
-[`407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./batch-cards/407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md)
+None. This lane is complete.
 
 ## Exit Condition
 
@@ -44,4 +45,4 @@ milestone has an explicit start point.
 
 ## Next Task
 
-Complete card `407`.
+Start `g03.035`.

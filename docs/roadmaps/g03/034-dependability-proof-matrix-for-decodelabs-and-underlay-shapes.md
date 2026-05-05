@@ -2,10 +2,11 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
 Started: 2026-05-05
+Completed: 2026-05-05
 Depends on: [`033-runtime-container-caller-migration-and-cleanup.md`](./033-runtime-container-caller-migration-and-cleanup.md)
 
 ## Goal
@@ -31,7 +32,14 @@ data.
 - fixing every app-specific bootstrap issue from the separate thread
 - live production data access
 
+## Closeout
+
+Closed with focused proof coverage for DecodeLabs mysql/Rhai container
+execution, Underlay generated-compose paths, bootstrap target stability,
+inside-container re-entry, manager operation reports, and direct/bootstrap/Rhai
+execution-plan parity.
+
 ## Next Task
 
-Complete card
-[`407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](../../specs/batch-cards/407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md).
+Start
+[`035-contract-promotion-public-cleanup-breaks-and-closeout.md`](./035-contract-promotion-public-cleanup-breaks-and-closeout.md).
