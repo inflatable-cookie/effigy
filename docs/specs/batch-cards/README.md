@@ -65,7 +65,7 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. It decided no new changelog entry is needed.
 
 - [`414-close-contract-promotion-and-modularisation-round.md`](./414-close-contract-promotion-and-modularisation-round.md)
-  is ready. It closes `g03.035`.
+  is complete. It closed `g03.035`.
 
 - [`387-inventory-runtime-container-cleanup-targets.md`](./387-inventory-runtime-container-cleanup-targets.md)
   is complete. It inventoried the remaining runtime/container cleanup targets

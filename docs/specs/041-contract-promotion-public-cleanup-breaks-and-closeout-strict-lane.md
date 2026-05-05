@@ -2,9 +2,10 @@
 
 Roadmap: [`g03.035`](../roadmaps/g03/035-contract-promotion-public-cleanup-breaks-and-closeout.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Purpose
 
@@ -36,7 +37,7 @@ contracts, architecture ownership, and cleanup-break notes.
 
 ## Current Ready Card
 
-[`414-close-contract-promotion-and-modularisation-round.md`](./batch-cards/414-close-contract-promotion-and-modularisation-round.md)
+None. This lane is complete.
 
 ## Exit Condition
 
@@ -46,4 +47,4 @@ breaks are documented, and the g03 modularisation round has no stale ready card.
 
 ## Next Task
 
-Complete card `414`.
+Planning stop. Choose the next roadmap or request release work explicitly.

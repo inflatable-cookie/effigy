@@ -2,10 +2,11 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
 Started: 2026-05-05
+Completed: 2026-05-05
 Depends on: [`034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md)
 
 ## Goal
@@ -27,7 +28,20 @@ close the modularisation round cleanly.
 - release execution
 - workflow edits
 
+## Closeout
+
+Closed with the modularisation contract set promoted:
+
+- `005-container-runtime-contract.md` now names context, manager, and request
+  ownership for container-backed local execution
+- `009-execution-surface-convergence.md` now names the task request builder and
+  Rhai `exec::run(...)` route
+- `013-task-execution-request-contract.md` now owns the canonical request/plan
+  surface
+- `010-package-map.md` now names `effigy-context`,
+  `effigy-container-manager`, and `effigy-execution`
+- no new cleanup-break changelog entry was needed
+
 ## Next Task
 
-Complete card
-[`414-close-contract-promotion-and-modularisation-round.md`](../../specs/batch-cards/414-close-contract-promotion-and-modularisation-round.md).
+Planning stop. Choose the next roadmap or request release work explicitly.

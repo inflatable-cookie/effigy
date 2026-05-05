@@ -2,9 +2,10 @@
 
 Lane: [`041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md`](../041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Goal
 
@@ -23,6 +24,19 @@ Close `g03.035` and the runtime/container/execution modularisation round.
 This card is complete when `g03.035` is closed and the front doors no longer
 advertise an active ready card for the modularisation round.
 
+## Closeout
+
+Closed `g03.035` and the runtime/context/container/execution modularisation
+round.
+
+Completed contract-promotion outputs:
+
+- `013-task-execution-request-contract.md`
+- widened `009-execution-surface-convergence.md`
+- widened `005-container-runtime-contract.md`
+- updated `010-package-map.md`
+- cleanup-break/changelog boundary decision
+
 ## Next Task
 
-Close `g03.035`.
+Planning stop. Choose the next roadmap or request release work explicitly.

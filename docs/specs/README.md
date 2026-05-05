@@ -26,7 +26,6 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md`](./041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -35,6 +34,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md`](./041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md)
 - [`040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md`](./040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md)
 - [`039-runtime-container-caller-migration-and-cleanup-strict-lane.md`](./039-runtime-container-caller-migration-and-cleanup-strict-lane.md)
 - [`038-plugin-ready-container-manager-facade-strict-lane.md`](./038-plugin-ready-container-manager-facade-strict-lane.md)
@@ -67,5 +67,4 @@ Recently completed:
 
 ## Next Task
 
-Complete card
-[`414-close-contract-promotion-and-modularisation-round.md`](./batch-cards/414-close-contract-promotion-and-modularisation-round.md).
+Planning stop. Choose the next roadmap or request release work explicitly.
