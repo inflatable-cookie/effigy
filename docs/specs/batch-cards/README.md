@@ -45,6 +45,12 @@ Batch cards are the execution units for active Effigy strict-lane work.
 - [`407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./407-close-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md)
   is complete. It closed `g03.034` and handed off to `g03.035`.
 
+- [`408-scaffold-contract-promotion-lane.md`](./408-scaffold-contract-promotion-lane.md)
+  is complete. It opened `g03.035` as strict lane `041`.
+
+- [`409-add-task-execution-request-contract.md`](./409-add-task-execution-request-contract.md)
+  is ready. It adds the durable task execution request contract.
+
 - [`387-inventory-runtime-container-cleanup-targets.md`](./387-inventory-runtime-container-cleanup-targets.md)
   is complete. It inventoried the remaining runtime/container cleanup targets
   after `g03.030` through `g03.032`.

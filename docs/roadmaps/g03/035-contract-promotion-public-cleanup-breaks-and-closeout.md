@@ -2,9 +2,10 @@
 
 Generation: `g03`
 
-Status: Ready
+Status: Active
 Owner: Platform
 Created: 2026-05-05
+Started: 2026-05-05
 Depends on: [`034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md)
 
 ## Goal
@@ -28,4 +29,5 @@ close the modularisation round cleanly.
 
 ## Next Task
 
-Start the `g03.035` strict lane.
+Complete card
+[`409-add-task-execution-request-contract.md`](../../specs/batch-cards/409-add-task-execution-request-contract.md).

@@ -26,6 +26,7 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
+- [`041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md`](./041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -66,4 +67,5 @@ Recently completed:
 
 ## Next Task
 
-Start the `g03.035` strict lane.
+Complete card
+[`409-add-task-execution-request-contract.md`](./batch-cards/409-add-task-execution-request-contract.md).
