@@ -66,4 +66,4 @@ Recently completed:
 ## Next Task
 
 Complete card
-[`390-decide-preflight-workspace-provisioning-context-boundary.md`](./batch-cards/390-decide-preflight-workspace-provisioning-context-boundary.md).
+[`391-decide-execution-surface-policy-bridge-cleanup.md`](./batch-cards/391-decide-execution-surface-policy-bridge-cleanup.md).

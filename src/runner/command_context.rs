@@ -31,15 +31,23 @@ pub(in crate::runner) fn active_invocation_cwd(
     current_working_dir()
 }
 
-pub(in crate::runner) fn resolve_active_command_context(
+pub(in crate::runner) fn resolve_command_context_from_cwd(
+    cwd: std::path::PathBuf,
     repo_override: Option<std::path::PathBuf>,
 ) -> Result<ResolvedCommandContext, super::error::RunnerError> {
-    let invocation_cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(invocation_cwd.clone(), repo_override)?;
+    let invocation_cwd = canonicalize_or_original(&cwd);
+    let resolved = resolve_repo_root(cwd, repo_override)?;
     Ok(ResolvedCommandContext {
         invocation_cwd,
         resolved,
     })
+}
+
+pub(in crate::runner) fn resolve_active_command_context(
+    repo_override: Option<std::path::PathBuf>,
+) -> Result<ResolvedCommandContext, super::error::RunnerError> {
+    let invocation_cwd = current_working_dir()?;
+    resolve_command_context_from_cwd(invocation_cwd, repo_override)
 }
 
 pub(in crate::runner) fn resolve_active_repo_root(

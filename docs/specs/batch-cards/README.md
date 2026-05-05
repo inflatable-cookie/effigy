@@ -25,8 +25,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. It migrated remaining stateful cwd/root callers.
 
 - [`390-decide-preflight-workspace-provisioning-context-boundary.md`](./390-decide-preflight-workspace-provisioning-context-boundary.md)
-  is ready. It decides whether to migrate preflight/workspace provisioning
+  is complete. It decided whether to migrate preflight/workspace provisioning
   context callers now.
+
+- [`391-decide-execution-surface-policy-bridge-cleanup.md`](./391-decide-execution-surface-policy-bridge-cleanup.md)
+  is ready. It decides how to clean up execution-surface policy bridging.
 
 - [`382-scaffold-container-manager-contract-and-crate.md`](./382-scaffold-container-manager-contract-and-crate.md)
   is complete. It opened `g03.031` and created the first

@@ -21,7 +21,7 @@ Remove duplicated runtime/container glue now that `EffigyRuntimeContext`,
 
 ## Current Ready Card
 
-[`390-decide-preflight-workspace-provisioning-context-boundary.md`](./batch-cards/390-decide-preflight-workspace-provisioning-context-boundary.md)
+[`391-decide-execution-surface-policy-bridge-cleanup.md`](./batch-cards/391-decide-execution-surface-policy-bridge-cleanup.md)
 
 ## Exit Condition
 
@@ -31,4 +31,4 @@ glue is either removed or documented as a lower-level compatibility boundary.
 
 ## Next Task
 
-Complete card `390`.
+Complete card `391`.
