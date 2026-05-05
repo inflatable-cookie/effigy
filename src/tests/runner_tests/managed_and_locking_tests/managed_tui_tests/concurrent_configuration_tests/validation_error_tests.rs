@@ -139,7 +139,7 @@ concurrent = [{ role = "shell" }]
             expected_task: "dev",
             expected_process: "process",
             expected_detail_substring: Some(
-                "owns the container shell in this batch; omit `run` and `task`",
+                "owns the container shell; omit `run` and `task`",
             ),
         },
         ManagedInvalidDefinitionCase {

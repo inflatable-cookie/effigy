@@ -322,7 +322,7 @@ fn normalize_role(
                 return Err(invalid_managed_process_definition(
                     selector,
                     process,
-                    "`role = \"lifecycle\"` owns container startup/shutdown in this batch; omit `run` and `task`",
+                    "`role = \"lifecycle\"` owns container startup/shutdown; omit `run` and `task`",
                 ));
             }
             Ok(ManagedProcessRole::Lifecycle)
@@ -339,7 +339,7 @@ fn normalize_role(
                 return Err(invalid_managed_process_definition(
                     selector,
                     process,
-                    "`role = \"shell\"` owns the container shell in this batch; omit `run` and `task`",
+                    "`role = \"shell\"` owns the container shell; omit `run` and `task`",
                 ));
             }
             Ok(ManagedProcessRole::Shell)
@@ -348,7 +348,7 @@ fn normalize_role(
             selector,
             process,
             &format!(
-                "unsupported `role = \"{role}\"` in this batch; supported roles: `lifecycle`, `shell`"
+                "unsupported `role = \"{role}\"`; supported roles: `lifecycle`, `shell`"
             ),
         )),
     }

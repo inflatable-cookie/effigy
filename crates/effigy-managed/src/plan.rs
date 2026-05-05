@@ -118,7 +118,7 @@ fn validate_lifecycle_role_usage(
         return Err(invalid_managed_process_definition(
             selector,
             "lifecycle",
-            "only one `role = \"lifecycle\"` entry is supported in this batch",
+            "only one `role = \"lifecycle\"` entry is supported",
         ));
     }
     if task.container_lifecycle.unwrap_or(false) && lifecycle_count == 0 {
@@ -172,7 +172,7 @@ fn validate_lifecycle_role_usage(
             return Err(invalid_managed_process_definition(
                 selector,
                 "managed",
-                "`ready_message` requires `health_wait = true` in this batch",
+                "`ready_message` requires `health_wait = true`",
             ));
         }
     }

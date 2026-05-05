@@ -235,7 +235,7 @@ where
     let mut args = args.into_iter();
     let Some(subcmd) = args.next() else {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container data` requires a subcommand; use `list`, `export`, `import`, `pull-production`, or `seed` in this batch".to_owned(),
+            "`effigy container data` requires a subcommand; use `list`, `export`, `import`, `pull-production`, or `seed`".to_owned(),
         ));
     };
 

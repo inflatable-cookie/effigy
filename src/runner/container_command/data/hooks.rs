@@ -72,7 +72,7 @@ fn resolve_repo_relative_hook_path(
     let path = Path::new(raw);
     if path.is_absolute() {
         return Err(RunnerError::task_invocation(format!(
-            "`{field}` must stay repo-relative in this batch"
+            "`{field}` must stay repo-relative"
         )));
     }
     Ok(repo_root.join(path))
