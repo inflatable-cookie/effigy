@@ -10,6 +10,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "V1 stays explicit: host-facing ports and repo-relative mounts are declared in `[containers.*.host]`, and attached sessions shut the environment down on owner exit by default.",
             "Generated compose also supports bounded `shared = true` backing services for standalone shared databases and caches on the product-owned path.",
             "Mounted sibling repos listed in `systems.<name>.mounts` auto-adopt producer `[isolation].paths` into workspace containers, and Colima/nerdctl now preflights oversized mount payloads before compose-up.",
+            "`container data seed` currently targets the repo default container only and stays on the generated-compose path, just like the other built-in data lifecycle commands.",
         ],
         &[
             "effigy container up [--repo <PATH>] [--attach|--detach] [--json]",
@@ -72,7 +73,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--db-seed <FILE>|<TARGET>=<FILE>",
-                "Stage one SQL dump for `data seed`; single-database bundles can omit the target, multi-database bundles must name one",
+                "Stage one SQL dump for `data seed`; single-database bundles can omit the target, multi-database bundles must name one. `data seed` currently targets the repo default container only.",
             ),
             (
                 "--no-prompt",

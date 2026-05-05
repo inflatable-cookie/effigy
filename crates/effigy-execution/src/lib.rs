@@ -154,6 +154,7 @@ pub enum ExecutionSurface {
     DirectCli,
     Deferral,
     Bootstrap,
+    DataSeed,
     Rhai,
     RunArray,
     Demo,
@@ -379,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_bootstrap_and_rhai_task_surfaces_keep_plan_parity_for_same_inputs() {
+    fn direct_bootstrap_data_seed_and_rhai_task_surfaces_keep_plan_parity_for_same_inputs() {
         let context = context("surface-parity");
         let cwd = context.invocation_cwd().join("bundle");
         let environment = ExecutionEnvironmentPlan::default()
@@ -391,6 +392,7 @@ mod tests {
         let plans = [
             ExecutionSurface::DirectCli,
             ExecutionSurface::Bootstrap,
+            ExecutionSurface::DataSeed,
             ExecutionSurface::Rhai,
         ]
         .into_iter()
@@ -427,7 +429,8 @@ mod tests {
         }
         assert_eq!(plans[0].request.surface, ExecutionSurface::DirectCli);
         assert_eq!(plans[1].request.surface, ExecutionSurface::Bootstrap);
-        assert_eq!(plans[2].request.surface, ExecutionSurface::Rhai);
+        assert_eq!(plans[2].request.surface, ExecutionSurface::DataSeed);
+        assert_eq!(plans[3].request.surface, ExecutionSurface::Rhai);
     }
 
     #[test]

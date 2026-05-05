@@ -10,7 +10,6 @@ use effigy_execution::ExecutionSurface;
 use effigy_manifest::TASK_MANIFEST_FILE;
 use serde_json::json;
 
-use crate::runner::bootstrap_command::bootstrap_runtime_session_context;
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, ActivationRequest,
 };
@@ -18,7 +17,7 @@ use crate::runner::execute::api::{
     resolve_execution_binding_resolution, run_manifest_task_with_surface_and_env,
 };
 use crate::runner::manifest::load_task_manifest;
-use crate::runner::runtime_session_context::with_runtime_session_context;
+use crate::runner::runtime_session_context::{with_runtime_session_context, RuntimeSessionContext};
 
 use super::error::RunnerError;
 use effigy_cli::TaskInvocation;
@@ -46,6 +45,10 @@ pub(in crate::runner) const LEGACY_BOOTSTRAP_DB_SEEDS_JSON_ENV: &str =
     "EFFIGY_BOOTSTRAP_DB_SEEDS_JSON";
 pub(in crate::runner) const LEGACY_BOOTSTRAP_DB_SEED_TARGET_ENV: &str =
     "EFFIGY_BOOTSTRAP_DB_SEED_TARGET";
+
+pub(in crate::runner) fn data_seed_runtime_session_context() -> RuntimeSessionContext {
+    RuntimeSessionContext::default()
+}
 
 pub(in crate::runner) fn resolve_db_seed_input_paths(
     cwd: &Path,
@@ -400,26 +403,23 @@ pub(in crate::runner) fn run_db_seed_task(
         )));
     }
     prepare_db_seed_runtime(repo_root, &manifest)?;
-    with_runtime_session_context(
-        bootstrap_runtime_session_context("bootstrap db seed"),
-        || {
-            run_manifest_task_with_surface_and_env(
-                &TaskInvocation {
-                    name: DB_SEED_TASK.to_owned(),
-                    args: Vec::new(),
-                },
-                repo_root.to_path_buf(),
-                ExecutionSurface::Bootstrap,
-                env_overrides,
-            )
-            .map(|_| ())
-            .map_err(|err| {
-                RunnerError::task_invocation(format!(
-                    "database seed task `{DB_SEED_TASK}` failed: {err}"
-                ))
-            })
-        },
-    )
+    with_runtime_session_context(data_seed_runtime_session_context(), || {
+        run_manifest_task_with_surface_and_env(
+            &TaskInvocation {
+                name: DB_SEED_TASK.to_owned(),
+                args: Vec::new(),
+            },
+            repo_root.to_path_buf(),
+            ExecutionSurface::DataSeed,
+            env_overrides,
+        )
+        .map(|_| ())
+        .map_err(|err| {
+            RunnerError::task_invocation(format!(
+                "database seed task `{DB_SEED_TASK}` failed: {err}"
+            ))
+        })
+    })
 }
 
 fn prepare_db_seed_runtime(
@@ -449,7 +449,7 @@ fn prepare_db_seed_runtime(
         ActivationRequest {
             container_name: binding_resolution.binding().container_name(),
             repo_override: Some(repo_root.to_path_buf()),
-            session_context: bootstrap_runtime_session_context("bootstrap db seed"),
+            session_context: data_seed_runtime_session_context(),
         },
     )?;
     Ok(())

@@ -6661,6 +6661,33 @@ variant = "default"
     .expect("write generated pull-production manifest");
 }
 
+fn write_generated_container_data_seed_fixture(root: &std::path::Path) {
+    fs::create_dir_all(root.join("app")).expect("mkdir app dir");
+    fs::create_dir_all(root.join(".effigy/local")).expect("mkdir local effigy dir");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "attached"
+profile = "dev"
+project_name = "fixture-web-dev"
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[tasks."bootstrap:db-seed"]
+run = "sh -lc 'printf seeded > .effigy/local/db-seed.marker'"
+"#,
+    )
+    .expect("write generated data-seed manifest");
+}
+
 fn write_container_fixture_with_task(
     root: &std::path::Path,
     health_check: Option<&str>,
@@ -7223,6 +7250,60 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
     assert!(
         docker_invocations.contains(" up -d"),
         "got: {docker_invocations}"
+    );
+}
+
+#[test]
+fn cli_container_data_seed_json_reports_seed_contract() {
+    let root = temp_workspace("container-data-seed");
+    write_generated_container_data_seed_fixture(&root);
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let seed = root.join("latest.sql");
+    fs::write(&seed, "create table contacts(id int);\n").expect("write sql dump");
+    fs::write(&colima_state, "running\n").expect("seed colima state");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("data")
+        .arg("seed")
+        .arg("--db-seed")
+        .arg(format!("contactpatch={}", seed.display()))
+        .arg("--yes")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("HOME", &root)
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .env("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "data seed failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["$schema"], "effigy.container.data-seed.v1");
+    assert_eq!(parsed["result"]["container"], "web");
+    assert_eq!(parsed["result"]["count"], 1);
+    assert_eq!(parsed["result"]["seeds"][0]["target"], "contactpatch");
+    assert_eq!(
+        parsed["result"]["seeds"][0]["source_path"],
+        seed.display().to_string()
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".effigy/local/db-seed.marker")).expect("read marker"),
+        "seeded"
     );
 }
 

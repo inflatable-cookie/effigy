@@ -53,6 +53,10 @@ During v0.x, MINOR bumps may include breaking changes.
   subtree-scoped discovery when invoked outside an Effigy repo root. Running
   them from an ancestor like `~/Dev/test` now targets descendant Effigy repos
   under that path instead of requiring the global `--all` cross-repo mode.
+- `effigy container data seed` now runs on its own direct reseed execution
+  surface instead of borrowing bootstrap session semantics, and the CLI/help
+  contract now explicitly limits it to the repo default container on the
+  generated-compose path.
 - The bundled DecodeLabs bootstrap contract now defaults
   `[bootstrap].start = "dev"`, so bundle consumers can seed and hand off into
   the dev shell with one bootstrap command unless they override that start

@@ -361,6 +361,12 @@ fn parse_container_data_seed<I>(name: Option<String>, args: I) -> Result<Command
 where
     I: IntoIterator<Item = String>,
 {
+    if let Some(container_name) = name.as_deref() {
+        return Err(CliParseError::InvalidArguments(format!(
+            "`effigy container {container_name} data seed` is not supported; `data seed` currently targets the repo default container only"
+        )));
+    }
+
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;

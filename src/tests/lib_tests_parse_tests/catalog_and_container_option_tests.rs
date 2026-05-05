@@ -660,3 +660,20 @@ fn parse_container_data_seed_accepts_named_targets_and_flags() {
         })
     );
 }
+
+#[test]
+fn parse_named_container_data_seed_is_rejected() {
+    let err = parse_command(vec![
+        "container".to_owned(),
+        "web".to_owned(),
+        "data".to_owned(),
+        "seed".to_owned(),
+        "--db-seed".to_owned(),
+        "./latest.sql".to_owned(),
+    ])
+    .expect_err("named container data seed should be rejected");
+
+    assert!(err
+        .to_string()
+        .contains("`effigy container web data seed` is not supported"));
+}

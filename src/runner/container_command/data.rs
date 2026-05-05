@@ -66,13 +66,7 @@ pub(super) fn run_container_data_seed(
     no_prompt: bool,
     yes: bool,
 ) -> Result<String, RunnerError> {
-    if name.is_some() {
-        return Err(RunnerError::task_invocation(
-            "`effigy container <NAME> data seed` is not supported in this batch; run `effigy container data seed` from the target repo instead",
-        ));
-    }
-
-    let policy = effigy_containers::load_container_policy(repo_root, None)?;
+    let policy = effigy_containers::load_container_policy(repo_root, name)?;
     ensure_seed_prompt_target(&policy)?;
 
     let mut effective_db_seeds = db_seeds.to_vec();

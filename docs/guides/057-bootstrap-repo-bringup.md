@@ -123,7 +123,9 @@ effigy container data seed --db-seed cbs=./backups/cbs.sql --db-seed cbs-mortcal
 
 That command reuses the same target validation, TTY prompt collection, staged
 metadata file, and `bootstrap:db-seed` execution path, so local DB reset/reseed
-matches bootstrap instead of relying on a repo-specific `seed` task shape.
+matches bootstrap instead of relying on a repo-specific `seed` task shape. It
+currently targets the repo default container only and stays on the
+generated-compose path.
 
 That gives repos one clean adoption path:
 
