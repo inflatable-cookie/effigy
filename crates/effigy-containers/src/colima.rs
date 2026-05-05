@@ -4,8 +4,9 @@
 //! Docker Compose operations (up, down, kill, ps). The caller handles
 //! actual process execution.
 
-use crate::compose::{compose_args, resolve_compose_backend, ComposeBackend};
+use crate::compose::compose_args;
 use crate::{EffectiveContainerPolicy, DEFAULT_COLIMA_PROFILE};
+use effigy_container_manager::{ContainerBackendDetection, ContainerManager};
 use effigy_manifest::ManifestContainerShutdownMode;
 use serde_yaml::{Mapping, Number, Value};
 use std::ffi::OsString;
@@ -58,10 +59,9 @@ pub fn colima_status_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
 
 /// Build the command to start a Colima profile.
 pub fn colima_start_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
-    let runtime = match resolve_compose_backend() {
-        ComposeBackend::Docker => "docker",
-        ComposeBackend::ColimaNerdctl => "containerd",
-    };
+    let runtime = ContainerManager::defaults()
+        .colima_start_runtime(&ContainerBackendDetection::from_env_and_path())
+        .unwrap_or("containerd");
     let mut args = vec![
         "start".to_string(),
         "--profile".to_string(),

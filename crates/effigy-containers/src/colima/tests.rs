@@ -1,4 +1,12 @@
 use super::*;
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+fn env_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[test]
 fn parse_colima_running_detects_running() {
@@ -74,6 +82,7 @@ fn colima_start_command_skips_arch_and_vm_type_overrides_on_linux() {
 
 #[test]
 fn colima_start_command_applies_managed_resources_for_effigy_profile() {
+    let _lock = env_lock();
     unsafe {
         std::env::set_var(
             "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
@@ -93,6 +102,7 @@ fn colima_start_command_applies_managed_resources_for_effigy_profile() {
 
 #[test]
 fn managed_colima_profile_resources_scale_with_host_memory() {
+    let _lock = env_lock();
     unsafe {
         std::env::set_var(
             "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
@@ -119,6 +129,7 @@ fn managed_colima_profile_resources_scale_with_host_memory() {
 
 #[test]
 fn prepare_managed_colima_profile_writes_memory_and_swap_provision() {
+    let _lock = env_lock();
     let root = std::env::temp_dir().join(format!(
         "effigy-colima-config-test-{}",
         std::time::SystemTime::now()

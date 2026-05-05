@@ -467,6 +467,18 @@ impl ContainerManager {
         resolved.extend(docker_args.iter().cloned());
         Ok((OsString::from("colima"), resolved))
     }
+
+    pub fn colima_start_runtime(
+        &self,
+        detection: &ContainerBackendDetection,
+    ) -> Result<&'static str, ContainerManagerError> {
+        let backend_id = self.registry.detect_backend(detection)?;
+        if backend_id == BackendId::docker_compose() {
+            Ok("docker")
+        } else {
+            Ok("containerd")
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -733,6 +745,24 @@ mod tests {
                     OsString::from("b"),
                 ]
             )
+        );
+    }
+
+    #[test]
+    fn colima_start_runtime_tracks_selected_backend() {
+        let manager = ContainerManager::defaults();
+
+        assert_eq!(
+            manager
+                .colima_start_runtime(&ContainerBackendDetection::new(true))
+                .expect("docker runtime"),
+            "docker"
+        );
+        assert_eq!(
+            manager
+                .colima_start_runtime(&ContainerBackendDetection::new(false))
+                .expect("containerd runtime"),
+            "containerd"
         );
     }
 

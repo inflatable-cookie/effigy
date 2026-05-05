@@ -31,4 +31,4 @@ surfaces, then remove duplicated glue.
 ## Next Task
 
 Complete card
-[`395-decide-remaining-backend-branching-cleanup-boundary.md`](../../specs/batch-cards/395-decide-remaining-backend-branching-cleanup-boundary.md).
+[`397-decide-runtime-container-cleanup-closeout-boundary.md`](../../specs/batch-cards/397-decide-runtime-container-cleanup-closeout-boundary.md).

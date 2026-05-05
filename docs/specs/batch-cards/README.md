@@ -43,8 +43,16 @@ Batch cards are the execution units for active Effigy strict-lane work.
   `ContainerManager`.
 
 - [`395-decide-remaining-backend-branching-cleanup-boundary.md`](./395-decide-remaining-backend-branching-cleanup-boundary.md)
-  is ready. It decides whether remaining backend branching should move or stay
-  as compatibility-layer code.
+  is complete. It selected Colima start runtime selection as the next backend
+  cleanup.
+
+- [`396-move-colima-start-runtime-selection-behind-manager.md`](./396-move-colima-start-runtime-selection-behind-manager.md)
+  is complete. It moved Colima `--runtime` selection behind
+  `ContainerManager`.
+
+- [`397-decide-runtime-container-cleanup-closeout-boundary.md`](./397-decide-runtime-container-cleanup-closeout-boundary.md)
+  is ready. It decides whether `g03.033` closes or needs one final cleanup
+  card.
 
 - [`382-scaffold-container-manager-contract-and-crate.md`](./382-scaffold-container-manager-contract-and-crate.md)
   is complete. It opened `g03.031` and created the first
