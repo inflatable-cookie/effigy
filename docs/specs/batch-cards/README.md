@@ -35,7 +35,16 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. It removed `ExecutionSurfaceKind` from runtime prep.
 
 - [`393-decide-post-surface-cleanup-boundary.md`](./393-decide-post-surface-cleanup-boundary.md)
-  is ready. It decides the next cleanup target in `g03.033`.
+  is complete. It selected container inspection invocation branching as the next
+  cleanup target.
+
+- [`394-move-container-inspection-invocations-behind-manager.md`](./394-move-container-inspection-invocations-behind-manager.md)
+  is complete. It moved `ps`, `inspect`, and `stats` invocation shape behind
+  `ContainerManager`.
+
+- [`395-decide-remaining-backend-branching-cleanup-boundary.md`](./395-decide-remaining-backend-branching-cleanup-boundary.md)
+  is ready. It decides whether remaining backend branching should move or stay
+  as compatibility-layer code.
 
 - [`382-scaffold-container-manager-contract-and-crate.md`](./382-scaffold-container-manager-contract-and-crate.md)
   is complete. It opened `g03.031` and created the first

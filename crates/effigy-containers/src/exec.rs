@@ -15,15 +15,15 @@ use nix::sys::signal::{kill, Signal};
 use nix::unistd::{setpgid, Pid};
 use serde_json::Value as JsonValue;
 
+use effigy_container_manager::{BackendId, ContainerBackendDetection, ContainerManager};
+
 use crate::{
     colima::{
         colima_start_command, colima_status_command, colima_stop_command,
         managed_colima_profile_resources, parse_colima_running, prepare_managed_colima_profile,
         shutdown_compose_commands,
     },
-    compose::{
-        compose_invocation, resolve_compose_backend, resolve_host_cli_program, ComposeBackend,
-    },
+    compose::{compose_invocation, resolve_host_cli_program},
     EffectiveContainerPolicy, DEFAULT_COLIMA_PROFILE,
 };
 
@@ -250,11 +250,11 @@ pub fn run_docker_capture(
 
 pub fn list_running_compose_containers() -> Result<Vec<RunningComposeContainer>, ContainerExecError>
 {
-    match resolve_compose_backend() {
-        ComposeBackend::Docker => {
+    match detect_container_backend()? {
+        backend if backend == BackendId::docker_compose() => {
             list_running_compose_containers_for_profile(DEFAULT_COLIMA_PROFILE)
         }
-        ComposeBackend::ColimaNerdctl => {
+        _ => {
             let mut rows = Vec::new();
             for profile in running_colima_profiles(Path::new("."))? {
                 rows.extend(list_running_compose_containers_for_profile(&profile)?);
@@ -267,45 +267,33 @@ pub fn list_running_compose_containers() -> Result<Vec<RunningComposeContainer>,
 pub fn list_running_compose_containers_for_profile(
     profile: &str,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
-    let output = match resolve_compose_backend() {
-        ComposeBackend::Docker => run_command_capture(
-            Path::new("."),
-            "docker",
-            &["ps", "--format", DOCKER_PS_FORMAT],
-            "docker ps",
-        )?,
-        ComposeBackend::ColimaNerdctl => run_command_capture(
-            Path::new("."),
-            "colima",
-            &[
-                "nerdctl",
-                "--profile",
-                profile,
-                "--",
-                "ps",
-                "--format",
-                DOCKER_PS_FORMAT,
-            ],
-            "colima nerdctl ps",
-        )?,
-    };
+    let output = run_runtime_command_capture(
+        Path::new("."),
+        profile,
+        &[
+            OsString::from("ps"),
+            OsString::from("--format"),
+            OsString::from(DOCKER_PS_FORMAT),
+        ],
+        "runtime ps",
+    )?;
 
     parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))
 }
 
 pub fn list_running_compose_containers_profiled(
 ) -> Result<Vec<RunningComposeContainerProfiled>, ContainerExecError> {
-    match resolve_compose_backend() {
-        ComposeBackend::Docker => Ok(list_running_compose_containers_for_profile(
-            DEFAULT_COLIMA_PROFILE,
-        )?
-        .into_iter()
-        .map(|row| RunningComposeContainerProfiled {
-            profile: DEFAULT_COLIMA_PROFILE.to_owned(),
-            row,
-        })
-        .collect()),
-        ComposeBackend::ColimaNerdctl => {
+    match detect_container_backend()? {
+        backend if backend == BackendId::docker_compose() => Ok(
+            list_running_compose_containers_for_profile(DEFAULT_COLIMA_PROFILE)?
+                .into_iter()
+                .map(|row| RunningComposeContainerProfiled {
+                    profile: DEFAULT_COLIMA_PROFILE.to_owned(),
+                    row,
+                })
+                .collect(),
+        ),
+        _ => {
             let mut rows = Vec::new();
             for profile in running_colima_profiles(Path::new("."))? {
                 rows.extend(
@@ -326,27 +314,12 @@ pub fn infer_host_working_dir_for_container(
     profile: &str,
     container_name: &str,
 ) -> Result<Option<String>, ContainerExecError> {
-    let output = match resolve_compose_backend() {
-        ComposeBackend::Docker => run_command_capture(
-            Path::new("."),
-            "docker",
-            &["inspect", container_name],
-            "docker inspect",
-        )?,
-        ComposeBackend::ColimaNerdctl => run_command_capture(
-            Path::new("."),
-            "colima",
-            &[
-                "nerdctl",
-                "--profile",
-                profile,
-                "--",
-                "inspect",
-                container_name,
-            ],
-            "colima nerdctl inspect",
-        )?,
-    };
+    let output = run_runtime_command_capture(
+        Path::new("."),
+        profile,
+        &[OsString::from("inspect"), OsString::from(container_name)],
+        "runtime inspect",
+    )?;
 
     infer_host_working_dir_from_inspect(&String::from_utf8_lossy(&output.stdout)).map_err(|error| {
         ContainerExecError::Failure {
@@ -380,16 +353,11 @@ pub fn capture_running_container_stats_for_profile(
         .collect::<Vec<_>>();
     command.extend(names.iter().copied());
 
-    let output = match resolve_compose_backend() {
-        ComposeBackend::Docker => {
-            run_command_capture_allow_failure(Path::new("."), "docker", &command)
-        }
-        ComposeBackend::ColimaNerdctl => {
-            let mut nerdctl_command = vec!["nerdctl", "--profile", profile, "--"];
-            nerdctl_command.extend(command.iter().copied());
-            run_command_capture_allow_failure(Path::new("."), "colima", &nerdctl_command)
-        }
-    };
+    let output = run_runtime_command_capture_allow_failure(
+        Path::new("."),
+        profile,
+        &command.iter().map(OsString::from).collect::<Vec<_>>(),
+    );
 
     let Ok(output) = output else {
         return RunningContainerStatsCapture {
@@ -507,6 +475,67 @@ pub fn run_command_capture_allow_failure(
             command: format!("{program} {}", args.join(" ")),
             error,
         })
+}
+
+fn detect_container_backend() -> Result<BackendId, ContainerExecError> {
+    ContainerManager::defaults()
+        .registry()
+        .detect_backend(&ContainerBackendDetection::from_env_and_path())
+        .map_err(container_manager_error)
+}
+
+fn run_runtime_command_capture(
+    repo_root: &Path,
+    profile: &str,
+    docker_args: &[OsString],
+    label: &str,
+) -> Result<Output, ContainerExecError> {
+    let (program, args) = ContainerManager::defaults()
+        .runtime_process_invocation(
+            &ContainerBackendDetection::from_env_and_path(),
+            profile,
+            "docker",
+            docker_args,
+        )
+        .map_err(container_manager_error)?;
+    let program = program.to_string_lossy().into_owned();
+    run_command_capture_os(repo_root, &program, &args, label)
+}
+
+fn run_runtime_command_capture_allow_failure(
+    repo_root: &Path,
+    profile: &str,
+    docker_args: &[OsString],
+) -> Result<Output, ContainerExecError> {
+    let (program, args) = ContainerManager::defaults()
+        .runtime_process_invocation(
+            &ContainerBackendDetection::from_env_and_path(),
+            profile,
+            "docker",
+            docker_args,
+        )
+        .map_err(container_manager_error)?;
+    let program = program.to_string_lossy().into_owned();
+    let resolved_program = resolve_host_cli_program(&program);
+    Command::new(&resolved_program)
+        .current_dir(repo_root)
+        .args(args.iter())
+        .output()
+        .map_err(|error| ContainerExecError::Launch {
+            command: format!("{program} {}", format_args(&args)),
+            error,
+        })
+}
+
+fn container_manager_error(
+    error: effigy_container_manager::ContainerManagerError,
+) -> ContainerExecError {
+    ContainerExecError::Failure {
+        command: "container manager backend selection".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: error.to_string(),
+    }
 }
 
 fn run_command_capture_os(

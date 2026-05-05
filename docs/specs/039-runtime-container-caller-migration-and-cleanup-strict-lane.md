@@ -21,7 +21,7 @@ Remove duplicated runtime/container glue now that `EffigyRuntimeContext`,
 
 ## Current Ready Card
 
-[`393-decide-post-surface-cleanup-boundary.md`](./batch-cards/393-decide-post-surface-cleanup-boundary.md)
+[`395-decide-remaining-backend-branching-cleanup-boundary.md`](./batch-cards/395-decide-remaining-backend-branching-cleanup-boundary.md)
 
 ## Exit Condition
 
@@ -31,4 +31,4 @@ glue is either removed or documented as a lower-level compatibility boundary.
 
 ## Next Task
 
-Complete card `393`.
+Complete card `395`.
