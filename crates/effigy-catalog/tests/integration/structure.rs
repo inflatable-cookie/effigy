@@ -439,25 +439,23 @@ fn assembled_yaml_is_structurally_valid_compose() {
     let cmd_str = format!("{sessions_cmd:?}");
     assert!(cmd_str.contains("128"), "memcached should use 128MB memory");
 
-    // 3. Validate persistent database storage uses a named volume so the
-    // database image owns filesystem permissions inside the runtime.
+    // 3. Validate persistent database storage is repo-local, not a named
+    // Docker volume.
     assert!(
         result
             .compose_yaml
-            .contains("client-project-db-data:/var/lib/mysql"),
-        "should have a named mariadb data volume:\n{}",
+            .contains("./.effigy/runtime/data/db/mysql:/var/lib/mysql"),
+        "should have a repo-local mariadb bind mount:\n{}",
         result.compose_yaml
     );
-    let volumes = doc
-        .get("volumes")
-        .and_then(|value| value.as_mapping())
-        .expect("volumes");
-    assert!(
-        volumes
-            .keys()
-            .any(|k| { k.as_str().map(|s| s.contains("db-data")).unwrap_or(false) }),
-        "mariadb should emit a named data volume"
-    );
+    if let Some(volumes) = doc.get("volumes").and_then(|value| value.as_mapping()) {
+        assert!(
+            !volumes
+                .keys()
+                .any(|k| { k.as_str().map(|s| s.contains("db-data")).unwrap_or(false) }),
+            "mariadb should not emit a named data volume"
+        );
+    }
 
     // 4. Validate artifacts.
     assert!(
@@ -514,10 +512,9 @@ fn assembled_yaml_is_structurally_valid_compose() {
         "mariadb init config should create the extra database"
     );
 
-    // 5. Validate volume metadata.
-    assert_eq!(result.volumes.len(), 1);
-    assert_eq!(result.volumes[0].name, "client-project-db-data");
-    assert!(result.volumes[0].persist);
+    // 5. Validate volume metadata. MariaDB uses a repo-local bind mount, so
+    // this stack has no named volumes.
+    assert!(result.volumes.is_empty());
 }
 
 #[test]
@@ -630,13 +627,11 @@ fn rust_postgres_stack_assembles_correctly() {
     assert!(
         result
             .compose_yaml
-            .contains("rust-svc-db-data:/var/lib/postgresql/data"),
-        "missing named Postgres data volume:\n{}",
+            .contains("./.effigy/runtime/data/db/postgres:/var/lib/postgresql/data"),
+        "missing repo-local Postgres bind mount:\n{}",
         result.compose_yaml
     );
-    assert_eq!(result.volumes.len(), 1);
-    assert_eq!(result.volumes[0].name, "rust-svc-db-data");
-    assert!(result.volumes[0].persist);
+    assert!(result.volumes.is_empty());
 }
 
 #[test]

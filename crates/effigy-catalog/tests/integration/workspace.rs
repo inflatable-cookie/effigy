@@ -392,14 +392,14 @@ fn underlay_style_stack_assembles_with_bundled_fragments_only() {
         "postgres"
     );
 
-    // Named volumes expected: cargo-registry, cargo-git, Postgres data, minio
-    // data, and dbgate settings. Mailpit has no persistent volume.
+    // Named volumes expected: cargo-registry, cargo-git, minio data, and
+    // dbgate settings. Postgres persists through its repo-local bind mount;
+    // mailpit has no persistent volume.
     let vol_names: std::collections::BTreeSet<&str> =
         result.volumes.iter().map(|v| v.name.as_str()).collect();
     for expected in &[
         "underlay-reference-dev-workspace-cargo-registry",
         "underlay-reference-dev-workspace-cargo-git",
-        "underlay-reference-dev-postgres-data",
         "underlay-reference-dev-minio-data",
         "underlay-reference-dev-dbgate-data",
     ] {
@@ -719,9 +719,8 @@ memory = 128
         "MariaDB should have a healthcheck"
     );
 
-    assert_eq!(assembly.volumes.len(), 1);
-    assert_eq!(assembly.volumes[0].name, "client-project-db-data");
-    assert!(assembly.volumes[0].persist);
+    // Repo-local DB bind mounts should not surface as managed named volumes.
+    assert!(assembly.volumes.is_empty());
 
     // 8. Verify second write is cached.
     let write2 = output.write(&assembly, manifest_content).unwrap();
