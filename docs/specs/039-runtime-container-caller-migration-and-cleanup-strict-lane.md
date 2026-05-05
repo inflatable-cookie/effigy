@@ -2,9 +2,10 @@
 
 Roadmap: [`g03.033`](../roadmaps/g03/033-runtime-container-caller-migration-and-cleanup.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
+Completed: 2026-05-05
 
 ## Purpose
 
@@ -19,9 +20,9 @@ Remove duplicated runtime/container glue now that `EffigyRuntimeContext`,
 - avoid broad formatting churn
 - delete compatibility shims only after all internal callers have moved
 
-## Current Ready Card
+## Final Card
 
-[`397-decide-runtime-container-cleanup-closeout-boundary.md`](./batch-cards/397-decide-runtime-container-cleanup-closeout-boundary.md)
+[`398-close-runtime-container-caller-migration-and-cleanup.md`](./batch-cards/398-close-runtime-container-caller-migration-and-cleanup.md)
 
 ## Exit Condition
 
@@ -31,4 +32,4 @@ glue is either removed or documented as a lower-level compatibility boundary.
 
 ## Next Task
 
-Complete card `397`.
+Open `g03.034`.

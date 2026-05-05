@@ -32,4 +32,4 @@ data.
 
 ## Next Task
 
-Wait for caller migration to close.
+Open the strict lane and first proof-matrix planning card.

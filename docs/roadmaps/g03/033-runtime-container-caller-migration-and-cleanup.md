@@ -2,10 +2,11 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-05
 Started: 2026-05-05
+Completed: 2026-05-05
 Depends on: [`031-plugin-ready-container-manager-facade.md`](./031-plugin-ready-container-manager-facade.md), [`032-canonical-task-execution-request-and-pipeline.md`](./032-canonical-task-execution-request-and-pipeline.md)
 
 ## Goal
@@ -30,5 +31,4 @@ surfaces, then remove duplicated glue.
 
 ## Next Task
 
-Complete card
-[`397-decide-runtime-container-cleanup-closeout-boundary.md`](../../specs/batch-cards/397-decide-runtime-container-cleanup-closeout-boundary.md).
+Open `g03.034`: dependability proof matrix for DecodeLabs and Underlay shapes.

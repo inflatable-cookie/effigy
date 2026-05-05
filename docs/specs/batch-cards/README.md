@@ -51,8 +51,10 @@ Batch cards are the execution units for active Effigy strict-lane work.
   `ContainerManager`.
 
 - [`397-decide-runtime-container-cleanup-closeout-boundary.md`](./397-decide-runtime-container-cleanup-closeout-boundary.md)
-  is ready. It decides whether `g03.033` closes or needs one final cleanup
-  card.
+  is complete. It selected closeout for `g03.033`.
+
+- [`398-close-runtime-container-caller-migration-and-cleanup.md`](./398-close-runtime-container-caller-migration-and-cleanup.md)
+  is complete. It closed `g03.033` and handed off to the proof matrix.
 
 - [`382-scaffold-container-manager-contract-and-crate.md`](./382-scaffold-container-manager-contract-and-crate.md)
   is complete. It opened `g03.031` and created the first

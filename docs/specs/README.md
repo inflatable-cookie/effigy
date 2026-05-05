@@ -26,7 +26,6 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`039-runtime-container-caller-migration-and-cleanup-strict-lane.md`](./039-runtime-container-caller-migration-and-cleanup-strict-lane.md)
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
 Paused but still useful:
@@ -35,6 +34,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`039-runtime-container-caller-migration-and-cleanup-strict-lane.md`](./039-runtime-container-caller-migration-and-cleanup-strict-lane.md)
 - [`038-plugin-ready-container-manager-facade-strict-lane.md`](./038-plugin-ready-container-manager-facade-strict-lane.md)
 - [`037-canonical-task-execution-request-and-pipeline-strict-lane.md`](./037-canonical-task-execution-request-and-pipeline-strict-lane.md)
 - [`036-universal-runtime-context-and-path-authority-strict-lane.md`](./036-universal-runtime-context-and-path-authority-strict-lane.md)
@@ -65,5 +65,4 @@ Recently completed:
 
 ## Next Task
 
-Complete card
-[`397-decide-runtime-container-cleanup-closeout-boundary.md`](./batch-cards/397-decide-runtime-container-cleanup-closeout-boundary.md).
+Open `g03.034`: dependability proof matrix for DecodeLabs and Underlay shapes.
