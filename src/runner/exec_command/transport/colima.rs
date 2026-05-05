@@ -12,7 +12,7 @@ use effigy_containers::{
 
 use crate::runner::error::RunnerError;
 
-use super::ParsedComposeExec;
+use super::{resolve_host_program, ParsedComposeExec};
 
 pub(super) fn run_colima_direct_exec(
     repo_root: &Path,
@@ -23,7 +23,7 @@ pub(super) fn run_colima_direct_exec(
     parse_compose_exec_args: &dyn Fn(&[OsString]) -> Result<ParsedComposeExec, RunnerError>,
     run_command_capture_allow_failure: &dyn Fn(
         &Path,
-        &str,
+        &std::ffi::OsStr,
         &[OsString],
     ) -> Result<Output, RunnerError>,
     format_args: &dyn Fn(&[OsString]) -> String,
@@ -37,11 +37,16 @@ pub(super) fn run_colima_direct_exec(
         format_args,
     )?;
     if capture {
-        return run_command_capture_allow_failure(repo_root, "colima", &resolved);
+        return run_command_capture_allow_failure(
+            repo_root,
+            std::ffi::OsStr::new("colima"),
+            &resolved,
+        );
     }
 
     let suppress_exit_noise = looks_like_interactive_shell_exec(&parsed);
-    let mut command = ProcessCommand::new("colima");
+    let resolved_program = resolve_host_program("colima");
+    let mut command = ProcessCommand::new(&resolved_program);
     command
         .current_dir(repo_root)
         .args(&resolved)
@@ -88,7 +93,7 @@ fn resolve_colima_direct_exec_invocation(
     parsed: &ParsedComposeExec,
     run_command_capture_allow_failure: &dyn Fn(
         &Path,
-        &str,
+        &std::ffi::OsStr,
         &[OsString],
     ) -> Result<Output, RunnerError>,
     format_args: &dyn Fn(&[OsString]) -> String,
@@ -135,7 +140,7 @@ pub(super) fn resolve_compose_service_container_id(
     service: &str,
     run_command_capture_allow_failure: &dyn Fn(
         &Path,
-        &str,
+        &std::ffi::OsStr,
         &[OsString],
     ) -> Result<Output, RunnerError>,
     format_args: &dyn Fn(&[OsString]) -> String,
@@ -161,7 +166,7 @@ fn resolve_compose_service_container_id_via_ps(
     service: &str,
     run_command_capture_allow_failure: &dyn Fn(
         &Path,
-        &str,
+        &std::ffi::OsStr,
         &[OsString],
     ) -> Result<Output, RunnerError>,
     format_args: &dyn Fn(&[OsString]) -> String,
@@ -169,7 +174,11 @@ fn resolve_compose_service_container_id_via_ps(
     let mut args = compose_args(policy, ["ps", "-q"]);
     args.push(OsString::from(service));
     let (program, resolved_args) = compose_invocation(policy, &args);
-    let output = run_command_capture_allow_failure(repo_root, program, &resolved_args)?;
+    let output = run_command_capture_allow_failure(
+        repo_root,
+        std::ffi::OsStr::new(program),
+        &resolved_args,
+    )?;
     if !output.status.success() {
         return Err(RunnerError::TaskCommandFailure {
             command: format!("{program} {}", format_args(&resolved_args)),

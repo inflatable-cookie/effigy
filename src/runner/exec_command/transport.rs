@@ -1,10 +1,14 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command as ProcessCommand, Output, Stdio};
 
 use effigy_containers::{
-    compose::{compose_args, compose_invocation, resolve_compose_backend, ComposeBackend},
+    compose::{
+        compose_args, compose_invocation, resolve_compose_backend, resolve_host_cli_program,
+        ComposeBackend,
+    },
     EffectiveContainerPolicy,
 };
 use effigy_env::secret::SecretString;
@@ -80,10 +84,11 @@ pub(in crate::runner) fn run_compose_exec(
 
     let (program, resolved_args) = compose_invocation(policy, args);
     if capture {
-        return run_command_capture_allow_failure(repo_root, program, &resolved_args);
+        return run_command_capture_allow_failure(repo_root, OsStr::new(program), &resolved_args);
     }
 
-    let mut child = ProcessCommand::new(program)
+    let resolved_program = resolve_host_program(program);
+    let mut child = ProcessCommand::new(&resolved_program)
         .current_dir(repo_root)
         .args(&resolved_args)
         .stdin(Stdio::inherit())
@@ -142,7 +147,7 @@ pub(in crate::runner) fn copy_file_into_service(
         ComposeBackend::Docker => ("docker", args),
         ComposeBackend::ColimaNerdctl => ("colima", args),
     };
-    let output = run_command_capture_allow_failure(repo_root, program, &resolved_args)?;
+    let output = run_command_capture_allow_failure(repo_root, OsStr::new(program), &resolved_args)?;
     if !output.status.success() {
         return Err(RunnerError::TaskCommandFailure {
             command: format!("{program} {}", format_args(&resolved_args)),
@@ -225,17 +230,30 @@ pub(super) fn parse_compose_exec_args(args: &[OsString]) -> Result<ParsedCompose
 
 pub(super) fn run_command_capture_allow_failure(
     repo_root: &Path,
-    program: &str,
+    program: &OsStr,
     args: &[OsString],
 ) -> Result<Output, RunnerError> {
-    ProcessCommand::new(program)
+    let resolved_program = resolve_host_program(program);
+    ProcessCommand::new(&resolved_program)
         .current_dir(repo_root)
         .args(args)
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: format!("{program} {}", format_args(args)),
+            command: format!(
+                "{} {}",
+                resolved_program.to_string_lossy(),
+                format_args(args)
+            ),
             error,
         })
+}
+
+pub(super) fn resolve_host_program(program: impl AsRef<OsStr>) -> OsString {
+    let program = program.as_ref();
+    match program.to_str() {
+        Some(value) if !value.contains('/') => resolve_host_cli_program(value),
+        _ => program.to_os_string(),
+    }
 }
 
 pub(in crate::runner) fn probe_container_capabilities(
@@ -294,7 +312,7 @@ fn run_command_capture_allow_failure_with_policy(
     args: &[OsString],
 ) -> Result<Output, RunnerError> {
     let (program, resolved_args) = compose_invocation(policy, args);
-    run_command_capture_allow_failure(repo_root, program, &resolved_args)
+    run_command_capture_allow_failure(repo_root, OsStr::new(program), &resolved_args)
 }
 
 fn format_args(args: &[OsString]) -> String {

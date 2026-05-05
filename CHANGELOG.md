@@ -62,6 +62,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - The bundled DecodeLabs seed helper now imports dumps through
   `container::exec(...)` instead of assuming the host running Effigy has a
   local `mysql` client installed.
+- Bootstrap-owned DecodeLabs DB seed imports now resolve host `colima` and
+  compose binaries through the same bounded host CLI lookup as the container
+  runtime layer, so `container::exec(...)` no longer fails under thin GUI or
+  wrapper `PATH` environments.
 
 ## [0.3.3] - 2026-05-03
 

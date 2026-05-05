@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 
 use effigy_manifest::ManifestContainerConfig;
@@ -13,7 +14,7 @@ use crate::runner::exec_command::surface::{
     resolve_named_exec_surface,
 };
 use crate::runner::exec_command::transport::{
-    build_routed_task_exec_args, parse_compose_exec_args,
+    build_routed_task_exec_args, parse_compose_exec_args, resolve_host_program,
 };
 use crate::runner::exec_command::{
     activate_exec_surface_with, strategy_requires_workspace_effigy_install,
@@ -34,6 +35,13 @@ fn temp_repo(name: &str) -> PathBuf {
     ));
     fs::create_dir_all(&root).expect("mkdir");
     root
+}
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("env lock")
 }
 
 fn write_container_manifest(root: &std::path::Path, working_dir: &str) {
@@ -240,6 +248,34 @@ fn parse_compose_exec_args_defaults_to_tty_when_not_disabled() {
 
     assert!(parsed.tty);
     assert_eq!(parsed.service, "workspace");
+}
+
+#[test]
+fn resolve_host_program_uses_host_cli_resolver_for_bare_names() {
+    let _env_lock = env_lock();
+    let temp_dir = temp_repo("host-cli-resolver");
+    let bin_dir = temp_dir.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let fake_colima = bin_dir.join("colima");
+    fs::write(&fake_colima, "#!/bin/sh\nexit 0\n").expect("write fake colima");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&fake_colima).expect("stat").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_colima, permissions).expect("chmod");
+    }
+
+    let original_path = std::env::var_os("PATH");
+    std::env::set_var("PATH", &bin_dir);
+    let resolved = resolve_host_program("colima");
+    match original_path {
+        Some(path) => std::env::set_var("PATH", path),
+        None => std::env::remove_var("PATH"),
+    }
+
+    assert_eq!(resolved, fake_colima.into_os_string());
 }
 
 #[test]
