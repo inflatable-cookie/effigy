@@ -324,6 +324,70 @@ printf started > start.txt
     remote
 }
 
+fn create_root_remote_with_single_database_bundle_bootstrap_db_seed_task() -> PathBuf {
+    let worktree = temp_dir("root-single-db-seed-worktree");
+    let bundle_dir = worktree.join("bundles/plain");
+    fs::create_dir_all(&bundle_dir).expect("mkdir bundle dir");
+    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        bundle_dir.join("bundle.toml"),
+        r#"[bundle]
+name = "plain"
+description = "Minimal local bundle for bootstrap db seed tests."
+
+[[inputs]]
+name = "databases"
+type = "list"
+required = true
+description = "Database names used for bootstrap db seed target validation."
+"#,
+    )
+    .expect("write bundle descriptor");
+    fs::write(bundle_dir.join("effigy.toml"), "").expect("write bundle manifest");
+    fs::write(
+        worktree.join("effigy.toml"),
+        r#"[bundle]
+base_path = "bundles/plain"
+databases = ["contactpatch"]
+
+[tasks."bootstrap:db-seed"]
+run = "sh ./scripts/db-seed.sh"
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        worktree.join("scripts/db-seed.sh"),
+        r#"#!/bin/sh
+set -eu
+test "${EFFIGY_BOOTSTRAP_DB_SEED_COUNT:-}" = "1"
+test -n "${EFFIGY_BOOTSTRAP_DB_SEED_FILE:-}"
+test "${EFFIGY_BOOTSTRAP_DB_SEED_TARGET:-}" = "contactpatch"
+test -n "${EFFIGY_BOOTSTRAP_DB_SEEDS_JSON:-}"
+test -f ".effigy/local/db-seeds/contactpatch--latest.sql"
+cmp "$EFFIGY_BOOTSTRAP_DB_SEED_FILE" ".effigy/local/db-seeds/contactpatch--latest.sql"
+printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEEDS_JSON" | grep -F '"target":"contactpatch"'
+printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEEDS_JSON" | grep -F '"staged_path":".effigy/local/db-seeds/contactpatch--latest.sql"'
+cmp ".effigy/local/db-seeds/contactpatch--latest.sql" expected-contactpatch.sql
+printf seeded > db-seed.txt
+"#,
+    )
+    .expect("write db seed task");
+    fs::write(worktree.join("expected-contactpatch.sql"), "seed contactpatch;\n")
+        .expect("write expected dump");
+    let script = worktree.join("scripts/db-seed.sh");
+    let mut perms = fs::metadata(&script)
+        .expect("script metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&script, perms).expect("chmod script");
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init root single db seed");
+    let remote = bare_remote_path("root-single-db-seed-bare");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    remote
+}
+
 fn create_root_remote_with_multi_database_bootstrap_db_seed_task() -> PathBuf {
     let worktree = temp_dir("root-multi-db-seed-worktree");
     let bundle_dir = worktree.join("bundles/plain");
@@ -566,6 +630,46 @@ fn run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start() {
     assert_eq!(
         fs::read_to_string(destination.join("start.txt")).expect("start marker"),
         "started"
+    );
+}
+
+#[test]
+fn run_bootstrap_with_cwd_auto_targets_single_database_bundle_seed_input() {
+    let root_remote = create_root_remote_with_single_database_bundle_bootstrap_db_seed_task();
+    let cwd = temp_dir("bootstrap-single-db-seed-task");
+    let dump = cwd.join("latest.sql");
+    fs::write(&dump, "seed contactpatch;\n").expect("write dump");
+
+    let out = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: None,
+                branch: None,
+                db_seeds: vec![BootstrapDbSeedInput {
+                    target: None,
+                    path: dump,
+                }],
+                no_prompt: false,
+                start: false,
+                plan: false,
+            },
+            output_json: false,
+        },
+        cwd.clone(),
+    )
+    .expect("run bootstrap");
+
+    assert!(out.contains("[ok] bootstrap completed"));
+    let destination = cwd.join("remote");
+    assert_eq!(
+        fs::read_to_string(destination.join("db-seed.txt")).expect("seed marker"),
+        "seeded"
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join(".effigy/local/db-seeds/contactpatch--latest.sql"))
+            .expect("staged dump"),
+        "seed contactpatch;\n"
     );
 }
 
