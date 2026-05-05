@@ -1,12 +1,12 @@
 use effigy_cli::{DeferArgs, TaskInvocation};
 
-use crate::runner::command_context::current_working_dir;
+use crate::runner::command_context::active_invocation_cwd;
 use crate::runner::deferral::{run_deferred_request, select_deferral};
 use crate::runner::error::RunnerError;
 use crate::runner::execute::api::build_execution_preflight;
 
 pub(in crate::runner) fn run_defer(args: DeferArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
+    let cwd = active_invocation_cwd()?;
     let task = normalize_defer_task(args);
     let preflight = build_execution_preflight(&task, cwd)?;
     let Some(deferral) = select_deferral(

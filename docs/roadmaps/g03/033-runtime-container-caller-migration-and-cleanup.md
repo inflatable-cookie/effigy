@@ -31,4 +31,4 @@ surfaces, then remove duplicated glue.
 ## Next Task
 
 Complete card
-[`389-migrate-stateful-runner-context-callers.md`](../../specs/batch-cards/389-migrate-stateful-runner-context-callers.md).
+[`390-decide-preflight-workspace-provisioning-context-boundary.md`](../../specs/batch-cards/390-decide-preflight-workspace-provisioning-context-boundary.md).

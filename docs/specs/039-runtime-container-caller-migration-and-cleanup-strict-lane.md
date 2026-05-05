@@ -21,7 +21,7 @@ Remove duplicated runtime/container glue now that `EffigyRuntimeContext`,
 
 ## Current Ready Card
 
-[`389-migrate-stateful-runner-context-callers.md`](./batch-cards/389-migrate-stateful-runner-context-callers.md)
+[`390-decide-preflight-workspace-provisioning-context-boundary.md`](./batch-cards/390-decide-preflight-workspace-provisioning-context-boundary.md)
 
 ## Exit Condition
 
@@ -31,4 +31,4 @@ glue is either removed or documented as a lower-level compatibility boundary.
 
 ## Next Task
 
-Complete card `389`.
+Complete card `390`.

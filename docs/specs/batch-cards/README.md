@@ -22,7 +22,11 @@ Batch cards are the execution units for active Effigy strict-lane work.
   context helper.
 
 - [`389-migrate-stateful-runner-context-callers.md`](./389-migrate-stateful-runner-context-callers.md)
-  is ready. It migrates remaining stateful cwd/root callers.
+  is complete. It migrated remaining stateful cwd/root callers.
+
+- [`390-decide-preflight-workspace-provisioning-context-boundary.md`](./390-decide-preflight-workspace-provisioning-context-boundary.md)
+  is ready. It decides whether to migrate preflight/workspace provisioning
+  context callers now.
 
 - [`382-scaffold-container-manager-contract-and-crate.md`](./382-scaffold-container-manager-contract-and-crate.md)
   is complete. It opened `g03.031` and created the first

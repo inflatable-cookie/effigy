@@ -12,7 +12,7 @@ use effigy_runtime::write::{
 };
 use effigy_runtime::EffigyRuntimeError;
 
-use crate::runner::command_context::{current_working_dir, resolve_repo_root};
+use crate::runner::command_context::resolve_active_command_context;
 use effigy_cli::{ContainerArgs, ContainerDataSubcommand, ContainerSubcommand};
 
 use super::error::RunnerError;
@@ -72,9 +72,9 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         .map_err(Into::into);
     }
 
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd.clone(), args.repo_override.clone())?;
-    let repo_root = resolved.resolved_root;
+    let context = resolve_active_command_context(args.repo_override.clone())?;
+    let cwd = context.invocation_cwd;
+    let repo_root = context.resolved.resolved_root;
 
     match args.subcommand {
         ContainerSubcommand::Up {

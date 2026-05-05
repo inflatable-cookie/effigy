@@ -21,11 +21,31 @@ pub(super) use root::{resolve_command_root, resolve_repo_root};
 pub(super) use runtime::{active_runtime_context, with_runtime_context};
 pub(super) use tasks::task_selection_precedence_notes;
 
+pub(in crate::runner) struct ResolvedCommandContext {
+    pub(in crate::runner) invocation_cwd: std::path::PathBuf,
+    pub(in crate::runner) resolved: effigy_core::resolver::ResolvedTarget,
+}
+
+pub(in crate::runner) fn active_invocation_cwd(
+) -> Result<std::path::PathBuf, super::error::RunnerError> {
+    current_working_dir()
+}
+
+pub(in crate::runner) fn resolve_active_command_context(
+    repo_override: Option<std::path::PathBuf>,
+) -> Result<ResolvedCommandContext, super::error::RunnerError> {
+    let invocation_cwd = current_working_dir()?;
+    let resolved = resolve_repo_root(invocation_cwd.clone(), repo_override)?;
+    Ok(ResolvedCommandContext {
+        invocation_cwd,
+        resolved,
+    })
+}
+
 pub(in crate::runner) fn resolve_active_repo_root(
     repo_override: Option<std::path::PathBuf>,
 ) -> Result<effigy_core::resolver::ResolvedTarget, super::error::RunnerError> {
-    let cwd = current_working_dir()?;
-    resolve_repo_root(cwd, repo_override)
+    resolve_active_command_context(repo_override).map(|context| context.resolved)
 }
 
 fn task_repo_override(cmd: &Command) -> Option<std::path::PathBuf> {

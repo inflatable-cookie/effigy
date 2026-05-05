@@ -9,7 +9,7 @@ use std::ffi::OsString;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use crate::runner::command_context::{current_working_dir, resolve_repo_root};
+use crate::runner::command_context::resolve_active_repo_root;
 use crate::runner::container_command::{
     gateway_routes_registered_for_container, register_gateway_routes_for_container, run_container,
     runtime_error_from_runner,
@@ -35,8 +35,7 @@ pub(super) fn run_workspace(args: WorkspaceArgs) -> Result<String, RunnerError> 
         ));
     }
 
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd, args.repo_override.clone())?;
+    let resolved = resolve_active_repo_root(args.repo_override.clone())?;
     run_workspace_with_repo_root(
         &resolved.resolved_root,
         args.system.as_deref(),

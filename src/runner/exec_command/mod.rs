@@ -8,7 +8,7 @@ use effigy_exec::detection::determine_strategy;
 use effigy_manifest::ManifestContainerConfig;
 use effigy_tasks::{render_task_selector, TaskSelector};
 
-use super::command_context::{current_working_dir, resolve_repo_root};
+use super::command_context::resolve_active_command_context;
 use super::container_runtime_prep::{
     activate_container_runtime_for_task, ActivationRequest, ContainerTaskActivation,
     ExecutionSurfaceKind,
@@ -33,11 +33,10 @@ pub(in crate::runner) use transport::{
 };
 
 pub(super) fn run_exec(args: ExecArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd.clone(), args.repo_override)?;
+    let context = resolve_active_command_context(args.repo_override)?;
     run_explicit_exec(
-        &resolved.resolved_root,
-        &cwd,
+        &context.resolved.resolved_root,
+        &context.invocation_cwd,
         args.service.as_deref(),
         &args.command,
         args.output_json,

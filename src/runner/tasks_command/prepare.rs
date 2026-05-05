@@ -7,7 +7,7 @@ use effigy_tasks::{
 };
 
 use super::super::command_context::{
-    current_working_dir, resolve_repo_root, task_selection_precedence_notes,
+    resolve_active_command_context, task_selection_precedence_notes,
 };
 use super::super::deferred_builtins_from_catalogs;
 use crate::runner::error::RunnerError;
@@ -51,8 +51,9 @@ pub(in crate::runner) fn run_tasks(args: TasksArgs) -> Result<String, RunnerErro
 }
 
 pub(super) fn prepare_tasks_command(args: &TasksArgs) -> Result<PreparedTasksCommand, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd.clone(), args.repo_override.clone())?;
+    let context = resolve_active_command_context(args.repo_override.clone())?;
+    let cwd = context.invocation_cwd;
+    let resolved = context.resolved;
     let catalogs = discover_catalogs_allow_missing(&resolved.resolved_root)?;
     let deferred_builtins = deferred_builtins_from_catalogs(&catalogs, &resolved.resolved_root);
     let resolve_probe = probe_task_resolution(

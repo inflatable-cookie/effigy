@@ -19,7 +19,7 @@ use effigy_release::{
     render_release_verify_install_text, ReleaseBlockedStage,
 };
 
-use super::command_context::{current_working_dir, resolve_repo_root};
+use super::command_context::resolve_active_repo_root;
 use super::RunnerError;
 #[cfg(test)]
 use interactive::parse_prepare_mutation_inspection_request;
@@ -42,8 +42,7 @@ const RELEASE_PREPARED_STATE_FILE: &str = ".release-prepared.json";
 const RELEASE_STATE_STALE_THRESHOLD_SECS: i64 = 60 * 60;
 
 pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
-    let cwd = current_working_dir()?;
-    let resolved = resolve_repo_root(cwd, args.repo_override)?;
+    let resolved = resolve_active_repo_root(args.repo_override)?;
 
     match args.subcommand {
         ReleaseSubcommand::Status { check_gates } => {

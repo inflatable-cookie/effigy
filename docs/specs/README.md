@@ -66,4 +66,4 @@ Recently completed:
 ## Next Task
 
 Complete card
-[`389-migrate-stateful-runner-context-callers.md`](./batch-cards/389-migrate-stateful-runner-context-callers.md).
+[`390-decide-preflight-workspace-provisioning-context-boundary.md`](./batch-cards/390-decide-preflight-workspace-provisioning-context-boundary.md).
