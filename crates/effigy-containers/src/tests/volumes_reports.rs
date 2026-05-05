@@ -485,6 +485,7 @@ primary_service = "app"
         &policy,
         true,
         true,
+        false,
         Some(&VolumeClassification {
             keep: vec!["demo-web-dev-db-data".to_owned()],
             remove: vec!["demo-web-dev-cache-data".to_owned()],
@@ -501,6 +502,7 @@ primary_service = "app"
         .success_text
         .contains("removed_volumes: demo-web-dev-cache-data"));
     assert_eq!(report.json["keep_data"], true);
+    assert_eq!(report.json["wipe_data"], false);
     assert_eq!(report.json["volumes"]["kept"][0], "demo-web-dev-db-data");
     assert_eq!(
         report.json["volumes"]["removed"][0],

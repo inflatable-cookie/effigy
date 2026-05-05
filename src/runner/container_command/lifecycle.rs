@@ -742,8 +742,8 @@ services:
     }
 
     #[test]
-    fn run_container_reset_keep_data_rejects_direct_compose_ownership() {
-        let root = temp_repo("reset-keep-data-direct");
+    fn run_container_reset_rejects_keep_data_with_wipe_data() {
+        let root = temp_repo("reset-conflicting-data-flags");
         fs::write(
             root.join("effigy.toml"),
             r#"
@@ -763,6 +763,7 @@ primary_service = "app"
             &root,
             None,
             true,
+            true,
             false,
             |_| Ok(Vec::new()),
             |_, _, _| Ok(()),
@@ -770,6 +771,6 @@ primary_service = "app"
         .expect_err("should fail");
         assert!(error
             .to_string()
-            .contains("`reset --keep-data` is only supported on the generated-compose path"));
+            .contains("does not accept both `--keep-data` and `--wipe-data`"));
     }
 }

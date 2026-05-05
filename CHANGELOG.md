@@ -37,9 +37,17 @@ During v0.x, MINOR bumps may include breaking changes.
   `--yes` bypass.
 
 ### Changed
+- Generated MariaDB and Postgres catalog services now use persistent named
+  volumes for database data. `effigy container reset` preserves persistent
+  generated-compose data by default; deleting those volumes now requires the
+  explicit `reset --wipe-data` path.
 - `effigy bootstrap <repo>` now prefers `[catalog].alias` for the default
   cloned directory name when the cloned repo defines one and no explicit
   destination path was supplied.
+- `effigy container status` and `effigy container down` now fall back to
+  subtree-scoped discovery when invoked outside an Effigy repo root. Running
+  them from an ancestor like `~/Dev/test` now targets descendant Effigy repos
+  under that path instead of requiring the global `--all` cross-repo mode.
 - The bundled DecodeLabs bootstrap contract now defaults
   `[bootstrap].start = "dev"`, so bundle consumers can seed and hand off into
   the dev shell with one bootstrap command unless they override that start

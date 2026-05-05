@@ -6,9 +6,11 @@ use effigy_runtime::data::{
 };
 use effigy_runtime::read::{
     run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
+    run_container_status_under_path,
 };
 use effigy_runtime::write::{
-    run_container_down, run_container_down_all_with_hook, run_container_reset,
+    run_container_down, run_container_down_all_with_hook, run_container_down_under_path_with_hook,
+    run_container_reset,
 };
 use effigy_runtime::EffigyRuntimeError;
 
@@ -72,29 +74,32 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         .map_err(Into::into);
     }
 
-    let context = resolve_active_command_context(args.repo_override.clone())?;
-    let cwd = context.invocation_cwd;
-    let repo_root = context.resolved.resolved_root;
-
     match args.subcommand {
         ContainerSubcommand::Up {
             name,
             attach,
             detach,
-        } => run_container_up(
-            &repo_root,
+        } => {
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            run_container_up(
+                &context.resolved.resolved_root,
+                name.as_deref(),
+                attach,
+                detach,
+                args.output_json,
+            )
+        }
+        ContainerSubcommand::Down { name, all: false } => run_container_down_fallback(
+            args.repo_override.clone(),
             name.as_deref(),
-            attach,
-            detach,
             args.output_json,
         ),
-        ContainerSubcommand::Down { name, all: false } => {
-            run_container_down_adapter(&repo_root, name.as_deref(), args.output_json)
-        }
         ContainerSubcommand::Down { all: true, .. } => unreachable!("handled above"),
-        ContainerSubcommand::Status { name, all: false } => {
-            run_container_status(&repo_root, name.as_deref(), args.output_json).map_err(Into::into)
-        }
+        ContainerSubcommand::Status { name, all: false } => run_container_status_fallback(
+            args.repo_override.clone(),
+            name.as_deref(),
+            args.output_json,
+        ),
         ContainerSubcommand::Status { all: true, .. } => unreachable!("handled above"),
         ContainerSubcommand::Stats { all: false } => unreachable!("parser rejects this shape"),
         ContainerSubcommand::Stats { all: true } => unreachable!("handled above"),
@@ -102,59 +107,104 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             name,
             service,
             follow,
-        } => run_container_logs(
-            &repo_root,
-            name.as_deref(),
-            service.as_deref(),
-            follow,
-            args.output_json,
-        )
-        .map_err(Into::into),
+        } => {
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            run_container_logs(
+                &context.resolved.resolved_root,
+                name.as_deref(),
+                service.as_deref(),
+                follow,
+                args.output_json,
+            )
+            .map_err(Into::into)
+        }
         ContainerSubcommand::Shell {
             name,
             service,
             command,
-        } => run_container_shell(
-            &repo_root,
-            name.as_deref(),
-            service.as_deref(),
-            command.as_deref(),
-            args.output_json,
-        ),
-        ContainerSubcommand::Reset { name, keep_data } => {
-            run_container_reset_adapter(&repo_root, name.as_deref(), keep_data, args.output_json)
+        } => {
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            run_container_shell(
+                &context.resolved.resolved_root,
+                name.as_deref(),
+                service.as_deref(),
+                command.as_deref(),
+                args.output_json,
+            )
+        }
+        ContainerSubcommand::Reset {
+            name,
+            keep_data,
+            wipe_data,
+            yes,
+        } => {
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            run_container_reset_adapter(
+                &context.resolved.resolved_root,
+                name.as_deref(),
+                keep_data,
+                wipe_data,
+                yes,
+                args.output_json,
+            )
         }
         ContainerSubcommand::Data {
             name,
             subcommand: ContainerDataSubcommand::List,
-        } => run_container_data_list_adapter(&repo_root, name.as_deref(), args.output_json),
+        } => {
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            run_container_data_list_adapter(
+                &context.resolved.resolved_root,
+                name.as_deref(),
+                args.output_json,
+            )
+        }
         ContainerSubcommand::Data {
             name,
             subcommand: ContainerDataSubcommand::Export { volume, path },
-        } => run_container_data_export_adapter(
-            &repo_root,
-            name.as_deref(),
-            &volume,
-            &resolve_archive_path(&cwd, &path),
-            args.output_json,
-        ),
+        } => {
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            run_container_data_export_adapter(
+                &context.resolved.resolved_root,
+                name.as_deref(),
+                &volume,
+                &resolve_archive_path(&context.invocation_cwd, &path),
+                args.output_json,
+            )
+        }
         ContainerSubcommand::Data {
             name,
             subcommand: ContainerDataSubcommand::Import { volume, path, yes },
-        } => run_container_data_import_adapter(
-            &repo_root,
-            name.as_deref(),
-            &volume,
-            &resolve_archive_path(&cwd, &path),
-            args.output_json,
-            yes,
-        ),
+        } => {
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            run_container_data_import_adapter(
+                &context.resolved.resolved_root,
+                name.as_deref(),
+                &volume,
+                &resolve_archive_path(&context.invocation_cwd, &path),
+                args.output_json,
+                yes,
+            )
+        }
         ContainerSubcommand::Data {
             name,
             subcommand: ContainerDataSubcommand::PullProduction { yes },
-        } => run_container_data_pull_production(&repo_root, name.as_deref(), args.output_json, yes),
+        } => {
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            run_container_data_pull_production(
+                &context.resolved.resolved_root,
+                name.as_deref(),
+                args.output_json,
+                yes,
+            )
+        }
         ContainerSubcommand::Eject { name } => {
-            run_container_eject(&repo_root, name.as_deref(), args.output_json)
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            run_container_eject(
+                &context.resolved.resolved_root,
+                name.as_deref(),
+                args.output_json,
+            )
         }
     }
 }
@@ -182,17 +232,96 @@ fn run_container_down_adapter(
     .map_err(Into::into)
 }
 
+fn run_container_status_fallback(
+    repo_override: Option<std::path::PathBuf>,
+    name: Option<&str>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    match resolve_active_command_context(repo_override.clone()) {
+        Ok(context) if repo_root_has_effigy_manifest(&context.resolved.resolved_root) => {
+            run_container_status(&context.resolved.resolved_root, name, output_json)
+                .map_err(Into::into)
+        }
+        Ok(_) if repo_override.is_none() => {
+            let cwd = crate::runner::command_context::active_invocation_cwd()?;
+            run_container_status_under_path(&cwd, name, output_json).map_err(Into::into)
+        }
+        Ok(context) => Err(RunnerError::task_invocation(format!(
+            "`--repo {}` does not point to an Effigy repo",
+            context.resolved.resolved_root.display()
+        ))),
+        Err(RunnerError::Resolve(_)) if repo_override.is_none() => {
+            let cwd = crate::runner::command_context::active_invocation_cwd()?;
+            run_container_status_under_path(&cwd, name, output_json).map_err(Into::into)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn run_container_down_fallback(
+    repo_override: Option<std::path::PathBuf>,
+    name: Option<&str>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    match resolve_active_command_context(repo_override.clone()) {
+        Ok(context) if repo_root_has_effigy_manifest(&context.resolved.resolved_root) => {
+            run_container_down_adapter(&context.resolved.resolved_root, name, output_json)
+        }
+        Ok(_) if repo_override.is_none() => {
+            let cwd = crate::runner::command_context::active_invocation_cwd()?;
+            run_container_down_under_path_with_hook(
+                &cwd,
+                name,
+                output_json,
+                deregister_runtime_gateway_routes,
+                |repo_root, policy| {
+                    let _ =
+                        super::host_process::stop_host_processes_for_container(repo_root, policy);
+                },
+            )
+            .map_err(Into::into)
+        }
+        Ok(context) => Err(RunnerError::task_invocation(format!(
+            "`--repo {}` does not point to an Effigy repo",
+            context.resolved.resolved_root.display()
+        ))),
+        Err(RunnerError::Resolve(_)) if repo_override.is_none() => {
+            let cwd = crate::runner::command_context::active_invocation_cwd()?;
+            run_container_down_under_path_with_hook(
+                &cwd,
+                name,
+                output_json,
+                deregister_runtime_gateway_routes,
+                |repo_root, policy| {
+                    let _ =
+                        super::host_process::stop_host_processes_for_container(repo_root, policy);
+                },
+            )
+            .map_err(Into::into)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn repo_root_has_effigy_manifest(repo_root: &std::path::Path) -> bool {
+    repo_root.join("effigy.toml").is_file()
+}
+
 fn run_container_reset_adapter(
     repo_root: &std::path::Path,
     name: Option<&str>,
     keep_data: bool,
+    wipe_data: bool,
+    yes: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     stop_host_processes_best_effort(repo_root, name);
+    maybe_confirm_container_reset_wipe_data(repo_root, name, output_json, wipe_data, yes)?;
     run_container_reset(
         repo_root,
         name,
         keep_data,
+        wipe_data,
         output_json,
         deregister_runtime_gateway_routes,
         |repo_root, policy, classification| {
@@ -201,6 +330,28 @@ fn run_container_reset_adapter(
         },
     )
     .map_err(Into::into)
+}
+
+fn maybe_confirm_container_reset_wipe_data(
+    repo_root: &std::path::Path,
+    name: Option<&str>,
+    output_json: bool,
+    wipe_data: bool,
+    yes: bool,
+) -> Result<(), RunnerError> {
+    if !wipe_data {
+        return Ok(());
+    }
+    let policy = effigy_containers::load_container_policy(repo_root, name)?;
+    data::maybe_confirm_destructive_container_action(
+        &format!("`effigy container {} reset --wipe-data`", policy.name),
+        &format!(
+            "Reset container `{}` and delete persistent generated-compose data volumes.",
+            policy.name
+        ),
+        output_json,
+        yes,
+    )
 }
 
 /// Best-effort host-process shutdown. Runs before any compose-down so
@@ -320,5 +471,18 @@ mod tests {
         assert!(error
             .to_string()
             .contains("`effigy container down --all` does not accept `--repo`"));
+    }
+
+    #[test]
+    fn repo_root_has_effigy_manifest_requires_real_manifest() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let plain = temp.path().join("plain");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&plain).expect("mkdir plain");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        std::fs::write(repo.join("effigy.toml"), "[manifest]\n").expect("write manifest");
+
+        assert!(!repo_root_has_effigy_manifest(&plain));
+        assert!(repo_root_has_effigy_manifest(&repo));
     }
 }

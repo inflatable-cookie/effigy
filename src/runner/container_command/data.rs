@@ -84,6 +84,27 @@ pub(super) fn maybe_confirm_container_data_import(
     )
 }
 
+pub(super) fn maybe_confirm_destructive_container_action(
+    command_label: &str,
+    description: &str,
+    output_json: bool,
+    yes: bool,
+) -> Result<(), RunnerError> {
+    if !destructive_container_action_prompt_required(
+        command_label,
+        output_json,
+        yes,
+        io::stdin().is_terminal(),
+        io::stdout().is_terminal(),
+    )? {
+        return Ok(());
+    }
+
+    let mut stdin = io::stdin().lock();
+    let mut stdout = io::stdout().lock();
+    confirm_destructive_container_action_from_io(description, &mut stdin, &mut stdout)
+}
+
 fn ensure_import_prompt_target(
     policy: &effigy_containers::EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
@@ -182,6 +203,69 @@ fn container_data_import_prompt_required(
             "`effigy container {container_name} data import` requires confirmation before importing archive data into the local generated-compose environment. Rerun from an interactive terminal to confirm, or pass --yes when automation intentionally accepts this action."
         ))),
     }
+}
+
+fn destructive_container_action_prompt_required(
+    command_label: &str,
+    output_json: bool,
+    yes: bool,
+    stdin_is_tty: bool,
+    stdout_is_tty: bool,
+) -> Result<bool, RunnerError> {
+    let policy = PromptPolicy {
+        output_json,
+        plan: false,
+        explicit_non_interactive: yes,
+        stdin_is_tty,
+        stdout_is_tty,
+    };
+    match policy.decide() {
+        PromptDecision::Prompt => Ok(true),
+        PromptDecision::SuppressedByExplicitNonInteractive => Ok(false),
+        PromptDecision::SuppressedByJson
+        | PromptDecision::SuppressedByPlan
+        | PromptDecision::SuppressedByNonTty => Err(RunnerError::task_invocation(format!(
+            "{command_label} requires confirmation because it deletes persistent local container data. Rerun from an interactive terminal to confirm, or pass --yes when automation intentionally accepts this action."
+        ))),
+    }
+}
+
+fn confirm_destructive_container_action_from_io<R: BufRead, W: Write>(
+    description: &str,
+    input: &mut R,
+    output: &mut W,
+) -> Result<(), RunnerError> {
+    writeln!(
+        output,
+        "{description}\nThis deletes persistent local data.\n"
+    )
+    .and_then(|_| output.flush())
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to render interactive container data prompt: {error}"
+        ))
+    })?;
+    output
+        .write_all(b"Continue? [y/N]: ")
+        .and_then(|_| output.flush())
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to render interactive container data prompt: {error}"
+            ))
+        })?;
+    let mut line = String::new();
+    input.read_line(&mut line).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to read interactive container data input: {error}"
+        ))
+    })?;
+    let normalized = line.trim().to_ascii_lowercase();
+    if normalized == "y" || normalized == "yes" {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(
+        "destructive container action cancelled during confirmation",
+    ))
 }
 
 fn confirm_container_data_import_from_io<R: BufRead, W: Write>(

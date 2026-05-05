@@ -567,6 +567,8 @@ pub enum ContainerSubcommand {
     Reset {
         name: Option<String>,
         keep_data: bool,
+        wipe_data: bool,
+        yes: bool,
     },
     Data {
         name: Option<String>,

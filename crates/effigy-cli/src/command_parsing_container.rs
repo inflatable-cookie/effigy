@@ -150,19 +150,34 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut keep_data = false;
+    let mut wipe_data = false;
+    let mut yes = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
             "--keep-data" => keep_data = true,
+            "--wipe-data" => wipe_data = true,
+            "--yes" => yes = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
     }
+    if keep_data && wipe_data {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container reset` does not accept both `--keep-data` and `--wipe-data`"
+                .to_owned(),
+        ));
+    }
 
     Ok(Command::Container(ContainerArgs {
-        subcommand: ContainerSubcommand::Reset { name, keep_data },
+        subcommand: ContainerSubcommand::Reset {
+            name,
+            keep_data,
+            wipe_data,
+            yes,
+        },
         repo_override,
         output_json,
     }))

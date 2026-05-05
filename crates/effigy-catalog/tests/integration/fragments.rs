@@ -81,7 +81,7 @@ fn resolve_mariadb_with_volumes() {
     assert_eq!(fragment.schema.volumes.len(), 1);
     let data_vol = &fragment.schema.volumes["data"];
     assert_eq!(data_vol.mount, "/var/lib/mysql");
-    assert!(!data_vol.named);
+    assert!(data_vol.named);
     assert!(data_vol.persist);
 }
 
@@ -192,12 +192,12 @@ fn assemble_php_mariadb_redis_stack() {
         result.compose_yaml
     );
 
-    // MariaDB should bind data into the repo-local .effigy tree.
+    // MariaDB should use a named data volume owned inside the runtime.
     assert!(
         result
             .compose_yaml
-            .contains("./.effigy/runtime/data/db/mysql:/var/lib/mysql"),
-        "missing repo-local MariaDB bind mount:\n{}",
+            .contains("test-project-db-data:/var/lib/mysql"),
+        "missing named MariaDB data volume:\n{}",
         result.compose_yaml
     );
 
@@ -205,8 +205,9 @@ fn assemble_php_mariadb_redis_stack() {
     assert!(result.dockerfiles.contains_key("app"));
     assert!(result.dockerfiles["app"].contains("PHP_VERSION"));
 
-    // Bind-mounted DB storage should not surface as a managed named volume.
-    assert!(result.volumes.is_empty());
+    assert_eq!(result.volumes.len(), 1);
+    assert_eq!(result.volumes[0].name, "test-project-db-data");
+    assert!(result.volumes[0].persist);
 }
 
 #[test]
@@ -627,13 +628,13 @@ fn generated_compose_pins_runtime_volume_names() {
     assert!(
         result
             .compose_yaml
-            .contains("./.effigy/runtime/data/db/postgres:/var/lib/postgresql/data"),
-        "missing repo-local Postgres bind mount:\n{}",
+            .contains("farmyard-dev-db-data:/var/lib/postgresql/data"),
+        "missing named Postgres data volume:\n{}",
         result.compose_yaml
     );
     assert!(
-        !result.compose_yaml.contains("farmyard-dev-db-data"),
-        "unexpected Postgres named volume output:\n{}",
+        result.compose_yaml.contains("farmyard-dev-db-data"),
+        "expected Postgres named volume output:\n{}",
         result.compose_yaml
     );
 }

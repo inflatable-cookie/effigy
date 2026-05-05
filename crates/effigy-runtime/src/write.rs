@@ -16,7 +16,7 @@ use effigy_containers::{
 use serde_yaml::{Mapping, Value};
 
 use crate::container_manager::lifecycle_operation_report;
-use crate::read::discover_running_environments;
+use crate::read::{discover_running_environments, filter_running_environments_for_scope};
 use crate::signals::run_docker_capture;
 use crate::EffigyRuntimeError;
 
@@ -135,10 +135,70 @@ where
     render_container_down_all_report(&stopped, output_json)
 }
 
+pub fn run_container_down_under_path_with_hook<F, H>(
+    scope_root: &Path,
+    name: Option<&str>,
+    output_json: bool,
+    deregister_gateway_routes: F,
+    pre_shutdown: H,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&EffectiveContainerPolicy) -> Result<Vec<String>, EffigyRuntimeError>,
+    H: Fn(&Path, &EffectiveContainerPolicy),
+{
+    let environments =
+        filter_running_environments_for_scope(discover_running_environments()?, scope_root, name);
+    let mut stopped = Vec::new();
+
+    for environment in environments {
+        let repo_root = Path::new(&environment.repo_root);
+        let policy = environment.policy;
+        let colima_running = colima_is_running(&policy, repo_root)
+            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+        pre_shutdown(repo_root, &policy);
+        if colima_running {
+            shutdown_container_via_exec(repo_root, &policy)
+                .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+        }
+        let _manager_report = lifecycle_operation_report(
+            repo_root,
+            &policy,
+            ContainerAction::Shutdown,
+            if colima_running {
+                ContainerRuntimeState::Stopped
+            } else {
+                ContainerRuntimeState::Unknown
+            },
+            Some(if colima_running {
+                ContainerCleanupResult::Completed
+            } else {
+                ContainerCleanupResult::NotRequested
+            }),
+        )?;
+        let removed_gateway_domains = deregister_gateway_routes(&policy)?;
+        stopped.push(StoppedContainerEnvironment {
+            repo_root: environment.repo_root,
+            container: policy.name.clone(),
+            project_name: policy.project_name.clone(),
+            profile: policy.profile.clone(),
+            removed_gateway_domains,
+            left_running_shared_services: policy
+                .shared_services
+                .iter()
+                .map(|service| service.service_name.clone())
+                .collect(),
+            runtime_was_running: colima_running,
+        });
+    }
+
+    render_container_down_all_report(&stopped, output_json)
+}
+
 pub fn run_container_reset<FDeregister, FRemoveVolumes>(
     repo_root: &Path,
     name: Option<&str>,
-    keep_data: bool,
+    _keep_data: bool,
+    wipe_data: bool,
     output_json: bool,
     deregister_gateway_routes: FDeregister,
     remove_reset_volumes: FRemoveVolumes,
@@ -153,11 +213,10 @@ where
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    if keep_data && policy.compose_source != EffectiveComposeSource::Generated {
-        return Err(EffigyRuntimeError::task_invocation(format!(
-            "container `{}` uses direct `compose_file` ownership; `reset --keep-data` is only supported on the generated-compose path in this batch",
-            policy.name
-        )));
+    if _keep_data && wipe_data {
+        return Err(EffigyRuntimeError::task_invocation(
+            "`reset` does not accept both `--keep-data` and `--wipe-data`",
+        ));
     }
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -165,15 +224,17 @@ where
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let colima_running = colima_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    let volume_actions = if keep_data {
-        Some(classify_for_reset(&policy.managed_volumes, true))
-    } else if !policy.managed_volumes.is_empty() {
-        Some(classify_for_reset(&policy.managed_volumes, false))
+    let preserve_persistent_data = !wipe_data;
+    let volume_actions = if policy.compose_source == EffectiveComposeSource::Generated {
+        Some(classify_for_reset(
+            &policy.managed_volumes,
+            preserve_persistent_data,
+        ))
     } else {
         None
     };
     if colima_running {
-        if keep_data {
+        if preserve_persistent_data {
             run_docker_capture(
                 repo_root,
                 &policy,
@@ -195,7 +256,13 @@ where
     remove_generated_runtime_artifacts(repo_root, &policy)?;
     remove_generated_service_images(repo_root, &policy)?;
     let removed_gateway_domains = deregister_gateway_routes(&policy)?;
-    let mut report = reset_report(&policy, colima_running, keep_data, volume_actions.as_ref());
+    let mut report = reset_report(
+        &policy,
+        colima_running,
+        preserve_persistent_data,
+        wipe_data,
+        volume_actions.as_ref(),
+    );
     annotate_left_running_shared_services(&mut report, &policy);
     annotate_removed_gateway_routes(&mut report, &removed_gateway_domains);
     Ok(render_container_report(report, output_json))

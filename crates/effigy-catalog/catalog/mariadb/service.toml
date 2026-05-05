@@ -33,7 +33,7 @@ shared_port_env_vars = ["DB_PORT", "MYSQL_PORT"]
 
 [volumes.data]
 mount = "/var/lib/mysql"
-named = false
+named = true
 persist = true
 description = "Database storage"
 

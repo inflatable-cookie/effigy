@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+#[cfg(unix)]
+use std::{fs, os::unix::fs::PermissionsExt};
 
 use effigy_cli::{ContainerArgs, ContainerSubcommand};
 use effigy_containers::compose::compose_args;
@@ -360,6 +362,7 @@ fn prepare_host_bind_mount_dirs(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
+    let runtime_data_root = repo_root.join(".effigy/runtime/data");
     for compose_file in &policy.compose_files {
         let raw = match std::fs::read_to_string(compose_file) {
             Ok(text) => text,
@@ -397,10 +400,52 @@ fn prepare_host_bind_mount_dirs(
                     }
                 }
                 let _ = std::fs::create_dir_all(host_path);
+                #[cfg(unix)]
+                if host_path.starts_with(&runtime_data_root) {
+                    let _ = relax_runtime_data_permissions(host_path);
+                }
             }
         }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn relax_runtime_data_permissions(root: &Path) -> std::io::Result<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+    relax_runtime_data_permissions_entry(root)?;
+    if root.is_dir() {
+        for entry in walk_runtime_data(root)? {
+            relax_runtime_data_permissions_entry(&entry)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn walk_runtime_data(root: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut discovered = Vec::new();
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                pending.push(path.clone());
+            }
+            discovered.push(path);
+        }
+    }
+    Ok(discovered)
+}
+
+#[cfg(unix)]
+fn relax_runtime_data_permissions_entry(path: &Path) -> std::io::Result<()> {
+    let metadata = fs::metadata(path)?;
+    let mode = if metadata.is_dir() { 0o777 } else { 0o666 };
+    let permissions = fs::Permissions::from_mode(mode);
+    fs::set_permissions(path, permissions)
 }
 
 fn parse_bind_mount_host_path(spec: &str) -> Option<&str> {

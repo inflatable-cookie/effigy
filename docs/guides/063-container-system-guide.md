@@ -57,7 +57,9 @@ Useful flags:
 - `--service <NAME>` focuses `logs` or `shell` on one service
 - `--all` turns `status` and `stats` into cross-project views
 - `--command <CMD>` runs one command string inside the service via `sh -lc`
-- `--keep-data` preserves persistent named volumes during `reset`
+- `reset` preserves persistent named volumes by default
+- `--wipe-data` deletes persistent named volumes during `reset`
+- `--keep-data` remains accepted as a compatibility alias for reset's default
 - `--json` returns machine-readable payloads for non-interactive paths
 
 ## When To Use `container`
@@ -273,16 +275,18 @@ Generated-compose environments support:
 - `data export`
 - `data import`
 - `data pull-production`
-- `reset --keep-data`
+- data-safe `reset`
+- explicit `reset --wipe-data`
 - `eject`
 
 These stay on the generated-compose path so Effigy can keep the runtime data
 behavior predictable.
 
-`data import` and `data pull-production` are guarded because they can overwrite
-local generated-compose data. In a real interactive terminal, Effigy asks for
-confirmation and defaults to no. In non-interactive or JSON mode it does not
-prompt; automation must pass `--yes` when the data change is intentional.
+`data import`, `data pull-production`, and `reset --wipe-data` are guarded
+because they can overwrite or delete local generated-compose data. In a real
+interactive terminal, Effigy asks for confirmation and defaults to no. In
+non-interactive or JSON mode it does not prompt; automation must pass `--yes`
+when the data change is intentional.
 
 ## DNS and Gateway
 

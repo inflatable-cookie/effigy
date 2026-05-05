@@ -134,6 +134,67 @@ services:
     let _ = fs::remove_dir_all(&outside_dir);
 }
 
+#[cfg(unix)]
+#[test]
+fn prepare_host_bind_mount_dirs_relaxes_repo_runtime_data_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo_root = temp_test_dir("bind-mount-perms");
+    let runtime_dir = repo_root.join(".effigy/runtime/data/db/mysql");
+    let child_dir = runtime_dir.join("contactpatch");
+    let child_file = child_dir.join("ibdata1");
+    let compose_file = repo_root.join("docker-compose.yml");
+
+    fs::create_dir_all(&child_dir).expect("create child dir");
+    fs::write(&child_file, "fixture").expect("write child file");
+    fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(0o700)).expect("chmod runtime");
+    fs::set_permissions(&child_dir, fs::Permissions::from_mode(0o700)).expect("chmod child dir");
+    fs::set_permissions(&child_file, fs::Permissions::from_mode(0o600)).expect("chmod child file");
+    fs::write(
+        &compose_file,
+        format!(
+            r#"
+services:
+  db:
+    volumes:
+      - "{}:/var/lib/mysql"
+"#,
+            runtime_dir.display(),
+        ),
+    )
+    .expect("write compose file");
+
+    let policy = test_policy(compose_file);
+    prepare_host_bind_mount_dirs(&repo_root, &policy).expect("prepare bind mounts");
+
+    assert_eq!(
+        fs::metadata(&runtime_dir)
+            .expect("runtime metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o777
+    );
+    assert_eq!(
+        fs::metadata(&child_dir)
+            .expect("child dir metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o777
+    );
+    assert_eq!(
+        fs::metadata(&child_file)
+            .expect("child file metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o666
+    );
+
+    let _ = fs::remove_dir_all(&repo_root);
+}
+
 #[test]
 fn runtime_prep_runs_sibling_service_recovery_before_exec_and_alias_reconciliation() {
     let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));

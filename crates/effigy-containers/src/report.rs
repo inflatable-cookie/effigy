@@ -166,7 +166,8 @@ pub fn down_report(
 pub fn reset_report(
     policy: &EffectiveContainerPolicy,
     colima_running: bool,
-    keep_data: bool,
+    preserve_persistent_data: bool,
+    wipe_data: bool,
     volume_actions: Option<&VolumeClassification>,
 ) -> ContainerCommandReport {
     let volume_actions = volume_actions.cloned().unwrap_or(VolumeClassification {
@@ -181,14 +182,15 @@ pub fn reset_report(
         "profile": policy.profile,
         "shared_services": shared_services_json(policy),
         "colima_running": colima_running,
-        "keep_data": keep_data,
+        "keep_data": preserve_persistent_data,
+        "wipe_data": wipe_data,
         "volumes": {
             "kept": volume_actions.keep,
             "removed": volume_actions.remove,
         },
     });
     let mut lines = vec![if colima_running {
-        if keep_data {
+        if preserve_persistent_data {
             format!(
                 "[ok] reset container environment `{}` and preserved persistent data volumes",
                 policy.name

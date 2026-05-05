@@ -33,7 +33,7 @@ shared_port_env_vars = ["POSTGRES_PORT", "PGPORT"]
 
 [volumes.data]
 mount = "/var/lib/postgresql/data"
-named = false
+named = true
 persist = true
 description = "Database storage"
 

@@ -267,6 +267,8 @@ fn run_rhai_feature(
             ContainerSubcommand::Reset {
                 name: Some(required_string(&options, "name")?),
                 keep_data: bool_option(&options, "keep_data")?.unwrap_or(false),
+                wipe_data: bool_option(&options, "wipe_data")?.unwrap_or(false),
+                yes: bool_option(&options, "yes")?.unwrap_or(false),
             },
         ),
         FEATURE_CONTAINER_DATA => {

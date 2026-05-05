@@ -7,7 +7,7 @@ services:
     ports:
       - "3306:3306"
     volumes:
-      - {{ repo_root }}/.effigy/runtime/data/{{ service_name }}/mysql:/var/lib/mysql
+      - {{ project_name }}-{{ service_name }}-data:/var/lib/mysql
       - {{ repo_root }}/.effigy/runtime/compose/{{ service_name }}.conf:/docker-entrypoint-initdb.d/10-extra-databases.sql:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]

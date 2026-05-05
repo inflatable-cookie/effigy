@@ -187,6 +187,24 @@ pub fn run_container_status_all(output_json: bool) -> Result<String, EffigyRunti
     ))
 }
 
+pub fn run_container_status_under_path(
+    scope_root: &Path,
+    name: Option<&str>,
+    output_json: bool,
+) -> Result<String, EffigyRuntimeError> {
+    let environments =
+        filter_running_environments_for_scope(discover_running_environments()?, scope_root, name);
+    Ok(render_container_report(
+        status_all_report(
+            &environments
+                .iter()
+                .map(environment_status_entry)
+                .collect::<Vec<_>>(),
+        ),
+        output_json,
+    ))
+}
+
 pub fn run_container_stats_all(output_json: bool) -> Result<String, EffigyRuntimeError> {
     let environments = discover_running_environments()?;
     for environment in &environments {
@@ -373,6 +391,60 @@ pub(crate) fn discover_running_environments(
     Ok(environments)
 }
 
+pub(crate) fn filter_running_environments_for_scope(
+    environments: Vec<DiscoveredRunningEnvironment>,
+    scope_root: &Path,
+    name: Option<&str>,
+) -> Vec<DiscoveredRunningEnvironment> {
+    let canonical_scope = canonicalize_or_original(scope_root);
+    environments
+        .into_iter()
+        .filter(|environment| {
+            let repo_root = canonicalize_or_original(Path::new(&environment.repo_root));
+            repo_root.starts_with(&canonical_scope)
+                && name.is_none_or(|requested| environment.policy.name == requested)
+        })
+        .collect()
+}
+
+fn environment_status_entry(environment: &DiscoveredRunningEnvironment) -> ContainerStatusAllEntry {
+    let policy = &environment.policy;
+    ContainerStatusAllEntry {
+        repo_root: environment.repo_root.clone(),
+        container: policy.name.clone(),
+        project_name: policy.project_name.clone(),
+        profile: policy.profile.clone(),
+        primary_service: policy.primary_service.clone(),
+        dns_domain: policy.dns_domain.clone(),
+        dns_tls: policy.dns_tls,
+        declared_ports: policy.declared_ports.clone(),
+        allocated_ports: load_port_registry()
+            .as_ref()
+            .and_then(|value| value.port_map(&policy.project_name))
+            .map(|ports| AllocatedPortsSummary {
+                base: ports.base,
+                http: ports.http,
+                mysql: ports.mysql,
+                postgres: ports.postgres,
+                redis: ports.redis,
+                memcached: ports.memcached,
+            }),
+        services: environment
+            .services
+            .iter()
+            .map(|service| ContainerStatusService {
+                name: service
+                    .service
+                    .clone()
+                    .unwrap_or_else(|| service.container_name.clone()),
+                container_name: service.container_name.clone(),
+                status: service.status.clone(),
+                ports: service.ports.clone(),
+            })
+            .collect(),
+    }
+}
+
 /// Walk up from `start` looking for an `effigy.toml` marker.
 ///
 /// Returns the first ancestor directory (inclusive of `start`) that
@@ -407,6 +479,10 @@ pub fn working_dir_belongs_to_repo(working_dir: &str, repo_root: &Path) -> bool 
     }
 }
 
+fn canonicalize_or_original(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn load_port_registry() -> Option<PortRegistry> {
     let home = std::env::var_os("HOME")?;
     let path = Path::new(&home).join(".effigy/ports.json");
@@ -415,7 +491,16 @@ fn load_port_registry() -> Option<PortRegistry> {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_effigy_repo_root, MAX_REPO_ROOT_WALKUP};
+    use super::{
+        filter_running_environments_for_scope, resolve_effigy_repo_root,
+        DiscoveredRunningEnvironment, MAX_REPO_ROOT_WALKUP,
+    };
+    use effigy_containers::exec::RunningComposeContainer;
+    use effigy_containers::EffectiveContainerPolicy;
+    use effigy_manifest::{
+        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
+        ManifestContainerStartup,
+    };
     use std::fs;
     use tempfile::tempdir;
 
@@ -469,5 +554,100 @@ mod tests {
             resolved.is_none(),
             "expected None for excessive depth, got: {resolved:?}"
         );
+    }
+
+    #[test]
+    fn filter_running_environments_for_scope_matches_descendant_repos_only() {
+        let temp = tempdir().expect("tempdir");
+        let scope_root = temp.path().join("test");
+        let child_repo = scope_root.join("cbs");
+        let other_repo = temp.path().join("other");
+        fs::create_dir_all(&child_repo).expect("child repo");
+        fs::create_dir_all(&other_repo).expect("other repo");
+
+        let policy = stub_policy("web");
+        let filtered = filter_running_environments_for_scope(
+            vec![
+                stub_environment(child_repo.display().to_string(), policy.clone()),
+                stub_environment(other_repo.display().to_string(), policy),
+            ],
+            &scope_root,
+            None,
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].repo_root, child_repo.display().to_string());
+    }
+
+    #[test]
+    fn filter_running_environments_for_scope_honors_container_name() {
+        let temp = tempdir().expect("tempdir");
+        let scope_root = temp.path().join("test");
+        let child_repo = scope_root.join("cbs");
+        fs::create_dir_all(&child_repo).expect("child repo");
+
+        let filtered = filter_running_environments_for_scope(
+            vec![
+                stub_environment(child_repo.display().to_string(), stub_policy("web")),
+                stub_environment(child_repo.display().to_string(), stub_policy("db")),
+            ],
+            &scope_root,
+            Some("db"),
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].policy.name, "db");
+    }
+
+    fn stub_environment(
+        repo_root: String,
+        policy: EffectiveContainerPolicy,
+    ) -> DiscoveredRunningEnvironment {
+        DiscoveredRunningEnvironment {
+            repo_root,
+            policy,
+            services: vec![RunningComposeContainer {
+                container_name: "demo-app-1".to_owned(),
+                status: "Up".to_owned(),
+                ports: vec![],
+                project_name: Some("demo".to_owned()),
+                working_dir: None,
+                service: Some("app".to_owned()),
+            }],
+        }
+    }
+
+    fn stub_policy(name: &str) -> EffectiveContainerPolicy {
+        EffectiveContainerPolicy {
+            name: name.to_owned(),
+            driver: ManifestContainerDriver::Colima,
+            startup: ManifestContainerStartup::Detached,
+            profile: "effigy".to_owned(),
+            compose_source: effigy_containers::EffectiveComposeSource::Generated,
+            compose_files: vec![],
+            compose_file_display: String::new(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: format!("{name}-project"),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            service_aliases: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            workspace_user: None,
+            workspace_home: None,
+            on_task_exit: ManifestContainerOnTaskExit::Stop,
+            shutdown: ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+            host_processes: vec![],
+        }
     }
 }
