@@ -42,9 +42,14 @@ fn read_active_version_file_for(executable: &Path) -> Option<String> {
 fn infer_repo_local_version(executable: &Path) -> Option<String> {
     let repo_root = discover_repo_root_from_executable(executable)?;
     let hash = git_stdout(&repo_root, &["rev-parse", "--short=7", "HEAD"])?;
+    let dirty_suffix = if git_repo_is_dirty(&repo_root)? {
+        ".dirty"
+    } else {
+        ""
+    };
     Some(format!(
-        "{}+local.{hash}",
-        display_version_prefix(package_version())
+        "{}+local.{hash}{dirty_suffix}",
+        display_version_prefix(package_version()),
     ))
 }
 
@@ -77,6 +82,19 @@ fn git_stdout(repo_root: &Path, args: &[&str]) -> Option<String> {
     Some(value.to_owned())
 }
 
+fn git_repo_is_dirty(repo_root: &Path) -> Option<bool> {
+    let output = Command::new("git")
+        .args(["status", "--short", "--untracked-files=normal"])
+        .current_dir(repo_root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8(output.stdout).ok()?;
+    Some(!value.trim().is_empty())
+}
+
 fn display_version_prefix(version: &str) -> String {
     if version.starts_with('v') {
         version.to_owned()
@@ -89,7 +107,7 @@ fn display_version_prefix(version: &str) -> String {
 mod tests {
     use super::{
         active_version_file_for, discover_repo_root_from_executable, display_version_prefix,
-        infer_repo_local_version, read_active_version_file_for,
+        git_repo_is_dirty, infer_repo_local_version, read_active_version_file_for,
     };
 
     #[test]
@@ -146,6 +164,14 @@ mod tests {
         std::fs::write(&exe, "").expect("exe");
 
         assert!(infer_repo_local_version(&exe).is_none());
+    }
+
+    #[test]
+    fn git_repo_is_dirty_returns_none_without_git_commit() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("Cargo.toml"), "[package]\nname=\"x\"\n").expect("cargo");
+        std::fs::create_dir(temp.path().join(".git")).expect("git dir");
+        assert!(git_repo_is_dirty(temp.path()).is_none());
     }
 
     #[test]

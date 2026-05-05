@@ -234,7 +234,7 @@ fn ensure_generated_data_path(
 ) -> Result<(), EffigyRuntimeError> {
     if policy.compose_source != EffectiveComposeSource::Generated {
         return Err(EffigyRuntimeError::task_invocation(format!(
-            "container `{}` uses direct `compose_file` ownership; `data {action}` is only supported on the generated-compose path in this batch",
+            "container `{}` uses direct `compose_file` ownership; `data {action}` is supported only on the generated-compose path",
             policy.name
         )));
     }

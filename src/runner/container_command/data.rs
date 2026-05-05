@@ -185,7 +185,7 @@ fn ensure_import_prompt_target(
 ) -> Result<(), RunnerError> {
     if policy.compose_source != effigy_containers::EffectiveComposeSource::Generated {
         return Err(RunnerError::task_invocation(format!(
-            "container `{}` uses direct `compose_file` ownership; `data import` is only supported on the generated-compose path in this batch",
+            "container `{}` uses direct `compose_file` ownership; `data import` is supported only on the generated-compose path",
             policy.name
         )));
     }
@@ -197,7 +197,7 @@ fn ensure_pull_production_prompt_target(
 ) -> Result<(), RunnerError> {
     if policy.compose_source != effigy_containers::EffectiveComposeSource::Generated {
         return Err(RunnerError::task_invocation(format!(
-            "container `{}` uses direct `compose_file` ownership; `data pull-production` is only supported on the generated-compose path in this batch",
+            "container `{}` uses direct `compose_file` ownership; `data pull-production` is supported only on the generated-compose path",
             policy.name
         )));
     }
@@ -215,7 +215,7 @@ fn ensure_seed_prompt_target(
 ) -> Result<(), RunnerError> {
     if policy.compose_source != effigy_containers::EffectiveComposeSource::Generated {
         return Err(RunnerError::task_invocation(format!(
-            "container `{}` uses direct `compose_file` ownership; `data seed` is only supported on the generated-compose path in this batch",
+            "container `{}` uses direct `compose_file` ownership; `data seed` is supported only on the generated-compose path",
             policy.name
         )));
     }
@@ -619,7 +619,7 @@ primary_service = "app"
             .expect_err("should fail");
         assert!(error
             .to_string()
-            .contains("`data list` is only supported on the generated-compose path"));
+            .contains("`data list` is supported only on the generated-compose path"));
     }
 
     #[test]
@@ -651,7 +651,7 @@ primary_service = "app"
         .expect_err("should fail");
         assert!(error
             .to_string()
-            .contains("`data export` is only supported on the generated-compose path"));
+            .contains("`data export` is supported only on the generated-compose path"));
     }
 
     #[test]
@@ -685,7 +685,7 @@ primary_service = "app"
         .expect_err("should fail");
         assert!(error
             .to_string()
-            .contains("`data import` is only supported on the generated-compose path"));
+            .contains("`data import` is supported only on the generated-compose path"));
     }
 
     #[test]
@@ -713,7 +713,7 @@ pull_production = "scripts/pull-production.sh"
             run_container_data_pull_production(&root, None, false, false).expect_err("should fail");
         assert!(error
             .to_string()
-            .contains("`data pull-production` is only supported on the generated-compose path"));
+            .contains("`data pull-production` is supported only on the generated-compose path"));
     }
 
     #[test]
@@ -892,7 +892,7 @@ primary_service = "app"
         .expect_err("should fail");
         assert!(error
             .to_string()
-            .contains("`data seed` is only supported on the generated-compose path"));
+            .contains("`data seed` is supported only on the generated-compose path"));
     }
 
     #[test]

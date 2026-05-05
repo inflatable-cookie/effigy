@@ -80,6 +80,11 @@ fn local_active_version() {
         return "v" + base + "+local.unknown";
     }
 
+    let dirty = capture_process("git", ["status", "--short", "--untracked-files=normal"]);
+    if dirty != () && str::trim(dirty) != "" {
+        return "v" + base + "+local." + hash + ".dirty";
+    }
+
     "v" + base + "+local." + hash
 }
 
