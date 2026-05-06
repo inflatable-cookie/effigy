@@ -13,6 +13,26 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`415-plan-artifact-contract-and-acowtancy-boundary.md`](./415-plan-artifact-contract-and-acowtancy-boundary.md)
+  is complete. It opened `g03.036` as strict lane `042` and pinned the
+  Effigy/Farmyard artifact boundary.
+
+- [`416-scaffold-effigy-artifacts-crate.md`](./416-scaffold-effigy-artifacts-crate.md)
+  is complete. It added the first dependency-light `effigy-artifacts` crate and
+  core ref/metadata/report models.
+
+- [`417-local-artifact-staging-for-seed-inputs.md`](./417-local-artifact-staging-for-seed-inputs.md)
+  is complete. It added local SQL-like artifact staging through the new crate.
+
+- [`418-oci-pull-inspect-and-stage.md`](./418-oci-pull-inspect-and-stage.md)
+  is complete. It added the OCI adapter boundary, report models, redaction, and
+  fixture staging.
+
+- [`419-seed-dump-apply-capture-integration.md`](./419-seed-dump-apply-capture-integration.md)
+  is in progress. It started routing seed surfaces through the artifact model,
+  but focused runner validation is blocked by unrelated dirty container/cache
+  compile errors.
+
 - [`399-scaffold-dependability-proof-matrix-lane.md`](./399-scaffold-dependability-proof-matrix-lane.md)
   is complete. It opened `g03.034` as strict lane `040` and chose the first
   proof fixture slice.

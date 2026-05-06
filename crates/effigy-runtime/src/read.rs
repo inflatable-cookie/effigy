@@ -1,4 +1,5 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use effigy_container_manager::{ContainerAction, ContainerRuntimeState};
@@ -407,6 +408,42 @@ pub(crate) fn filter_running_environments_for_scope(
         .collect()
 }
 
+pub(crate) fn discover_effigy_repos_under(scope_root: &Path) -> Vec<PathBuf> {
+    let mut discovered = BTreeSet::new();
+    let mut stack = vec![canonicalize_or_original(scope_root)];
+
+    while let Some(dir) = stack.pop() {
+        if dir.join("effigy.toml").is_file() {
+            discovered.insert(dir.clone());
+        }
+
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() || file_type.is_symlink() {
+                continue;
+            }
+            if skip_effigy_repo_discovery_dir(&entry.file_name()) {
+                continue;
+            }
+            stack.push(entry.path());
+        }
+    }
+
+    discovered.into_iter().collect()
+}
+
+fn skip_effigy_repo_discovery_dir(name: &std::ffi::OsStr) -> bool {
+    matches!(
+        name.to_str(),
+        Some(".git") | Some(".effigy") | Some("node_modules") | Some("target") | Some("vendor")
+    )
+}
+
 fn environment_status_entry(environment: &DiscoveredRunningEnvironment) -> ContainerStatusAllEntry {
     let policy = &environment.policy;
     ContainerStatusAllEntry {
@@ -492,8 +529,8 @@ fn load_port_registry() -> Option<PortRegistry> {
 #[cfg(test)]
 mod tests {
     use super::{
-        filter_running_environments_for_scope, resolve_effigy_repo_root,
-        DiscoveredRunningEnvironment, MAX_REPO_ROOT_WALKUP,
+        discover_effigy_repos_under, filter_running_environments_for_scope,
+        resolve_effigy_repo_root, DiscoveredRunningEnvironment, MAX_REPO_ROOT_WALKUP,
     };
     use effigy_containers::exec::RunningComposeContainer;
     use effigy_containers::EffectiveContainerPolicy;
@@ -597,6 +634,42 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].policy.name, "db");
+    }
+
+    #[test]
+    fn discover_effigy_repos_under_finds_scope_and_descendants() {
+        let temp = tempdir().expect("tempdir");
+        let scope_root = temp.path().join("scope");
+        let nested_repo = scope_root.join("apps/demo");
+        fs::create_dir_all(&nested_repo).expect("mkdir nested repo");
+        fs::write(scope_root.join("effigy.toml"), "[manifest]\n").expect("write scope manifest");
+        fs::write(nested_repo.join("effigy.toml"), "[manifest]\n").expect("write nested manifest");
+
+        let discovered = discover_effigy_repos_under(&scope_root);
+
+        assert_eq!(discovered.len(), 2);
+        assert!(discovered.contains(&scope_root));
+        assert!(discovered.contains(&nested_repo));
+    }
+
+    #[test]
+    fn discover_effigy_repos_under_skips_heavy_runtime_dirs() {
+        let temp = tempdir().expect("tempdir");
+        let scope_root = temp.path().join("scope");
+        let target_repo = scope_root.join("target/not-a-real-repo");
+        let node_modules_repo = scope_root.join("node_modules/not-a-real-repo");
+        let real_repo = scope_root.join("apps/demo");
+        fs::create_dir_all(&target_repo).expect("mkdir target repo");
+        fs::create_dir_all(&node_modules_repo).expect("mkdir node_modules repo");
+        fs::create_dir_all(&real_repo).expect("mkdir real repo");
+        fs::write(target_repo.join("effigy.toml"), "[manifest]\n").expect("write target manifest");
+        fs::write(node_modules_repo.join("effigy.toml"), "[manifest]\n")
+            .expect("write node_modules manifest");
+        fs::write(real_repo.join("effigy.toml"), "[manifest]\n").expect("write real manifest");
+
+        let discovered = discover_effigy_repos_under(&scope_root);
+
+        assert_eq!(discovered, vec![real_repo]);
     }
 
     fn stub_environment(

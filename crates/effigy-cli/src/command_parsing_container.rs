@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use crate::{
-    Command, ContainerArgs, ContainerDataSubcommand, ContainerDbDumpInput, ContainerSubcommand,
-    HelpTopic,
+    Command, ContainerArgs, ContainerCacheSubcommand, ContainerDataSubcommand,
+    ContainerDbDumpInput, ContainerSubcommand, HelpTopic,
 };
 
 use crate::value_parsing::{next_required_value, parse_repo_path};
@@ -14,8 +14,8 @@ pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseErr
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 9] = [
-        "up", "down", "status", "stats", "logs", "shell", "reset", "data", "eject",
+    const ACTIONS: [&str; 10] = [
+        "up", "down", "status", "stats", "logs", "shell", "reset", "cache", "data", "eject",
     ];
 
     let mut args = args.into_iter();
@@ -44,6 +44,7 @@ where
         "logs" => parse_container_logs(name, args),
         "shell" => parse_container_shell(name, args),
         "reset" => parse_container_reset(name, args),
+        "cache" => parse_container_cache(name, args),
         "data" => parse_container_data(name, args),
         "eject" => parse_container_eject(name, args),
         other => Err(unknown_argument(other)),
@@ -252,6 +253,59 @@ where
         "seed" => parse_container_data_seed(name, args),
         other => Err(unknown_argument(other)),
     }
+}
+
+fn parse_container_cache<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container cache` requires a subcommand; use `list`".to_owned(),
+        ));
+    };
+
+    match subcmd.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Container)),
+        "list" => parse_container_cache_list(name, args),
+        other => Err(unknown_argument(other)),
+    }
+}
+
+fn parse_container_cache_list<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut all = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--all" => all = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    if all && name.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container <NAME> cache list` does not accept `--all`; use `effigy container cache list --all` for cross-project cache discovery".to_owned(),
+        ));
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Cache {
+            name,
+            subcommand: ContainerCacheSubcommand::List { all },
+        },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_container_data_list<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>

@@ -85,6 +85,7 @@ fn build_compose_document_with_volumes() {
         named: true,
         persist: true,
         service: "db".to_string(),
+        mount: Some("/var/lib/mysql".to_string()),
     }];
 
     let yaml = ComposeAssembler::build_compose_document(services, &volumes).unwrap();

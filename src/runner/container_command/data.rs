@@ -134,19 +134,34 @@ pub(super) fn run_container_data_seed(
     }
 }
 
+fn expand_tilde(path: &Path) -> PathBuf {
+    let s = path.as_os_str().to_string_lossy();
+    if let Some(rest) = s.strip_prefix('~') {
+        if rest.is_empty() || rest.starts_with('/') || rest.starts_with("\\") {
+            if let Ok(home) = std::env::var("HOME") {
+                return PathBuf::from(home + rest);
+            }
+        }
+    }
+    path.to_path_buf()
+}
+
 pub(super) fn resolve_db_dump_output_paths(
     cwd: &Path,
     db_dumps: &[ContainerDbDumpInput],
 ) -> Vec<ContainerDbDumpInput> {
     db_dumps
         .iter()
-        .map(|dump| ContainerDbDumpInput {
-            target: dump.target.clone(),
-            path: if dump.path.is_absolute() {
-                dump.path.clone()
-            } else {
-                cwd.join(&dump.path)
-            },
+        .map(|dump| {
+            let expanded = expand_tilde(&dump.path);
+            ContainerDbDumpInput {
+                target: dump.target.clone(),
+                path: if expanded.is_absolute() {
+                    expanded
+                } else {
+                    cwd.join(expanded)
+                },
+            }
         })
         .collect()
 }
@@ -1424,5 +1439,56 @@ primary_service = "app"
     fn test_policy_stays_constructible_for_data_tests() {
         let policy = test_policy();
         assert_eq!(policy.name, "web");
+    }
+
+    #[test]
+    fn resolve_db_dump_output_paths_expands_tilde() {
+        let Ok(home) = std::env::var("HOME") else {
+            return;
+        };
+        let cwd = PathBuf::from("/repo");
+        let resolved = resolve_db_dump_output_paths(
+            &cwd,
+            &[ContainerDbDumpInput {
+                target: Some("app".to_owned()),
+                path: PathBuf::from("~/Downloads/file.sql"),
+            }],
+        );
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved[0].path,
+            PathBuf::from(format!("{home}/Downloads/file.sql"))
+        );
+    }
+
+    #[test]
+    fn resolve_db_dump_output_paths_leaves_bare_tilde_as_home() {
+        let Ok(home) = std::env::var("HOME") else {
+            return;
+        };
+        let cwd = PathBuf::from("/repo");
+        let resolved = resolve_db_dump_output_paths(
+            &cwd,
+            &[ContainerDbDumpInput {
+                target: None,
+                path: PathBuf::from("~"),
+            }],
+        );
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].path, PathBuf::from(&home));
+    }
+
+    #[test]
+    fn resolve_db_dump_output_paths_still_joins_relative_paths() {
+        let cwd = PathBuf::from("/repo");
+        let resolved = resolve_db_dump_output_paths(
+            &cwd,
+            &[ContainerDbDumpInput {
+                target: None,
+                path: PathBuf::from("./dump.sql"),
+            }],
+        );
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].path, PathBuf::from("/repo/dump.sql"));
     }
 }

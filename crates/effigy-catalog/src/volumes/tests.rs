@@ -8,6 +8,7 @@ fn test_volumes() -> Vec<ManagedVolume> {
             persist: true,
             size_bytes: None,
             mount_point: Some("/var/lib/mysql".to_string()),
+            mount_target: Some("/var/lib/mysql".to_string()),
         },
         ManagedVolume {
             name: "proj-cache-data".to_string(),
@@ -15,6 +16,7 @@ fn test_volumes() -> Vec<ManagedVolume> {
             persist: false,
             size_bytes: None,
             mount_point: None,
+            mount_target: Some("/workspace-root/app/node_modules".to_string()),
         },
         ManagedVolume {
             name: "proj-search-data".to_string(),
@@ -22,6 +24,7 @@ fn test_volumes() -> Vec<ManagedVolume> {
             persist: true,
             size_bytes: None,
             mount_point: None,
+            mount_target: Some("/workspace-root/api/target".to_string()),
         },
     ]
 }
@@ -66,11 +69,33 @@ fn list_volumes_command_format() {
 }
 
 #[test]
+fn list_all_volumes_command_format() {
+    let cmd = list_all_volumes_command();
+    assert_eq!(cmd.program, "docker");
+    assert_eq!(
+        cmd.args,
+        vec![
+            "volume",
+            "ls",
+            "--format",
+            "{{.Name}}\t{{.Driver}}\t{{.Labels}}"
+        ]
+    );
+}
+
+#[test]
 fn inspect_volume_command_format() {
     let cmd = inspect_volume_command("my-project-db-data");
     assert_eq!(cmd.program, "docker");
     assert!(cmd.args.contains(&"inspect".to_string()));
     assert!(cmd.args.contains(&"my-project-db-data".to_string()));
+}
+
+#[test]
+fn volume_usage_command_format() {
+    let cmd = volume_usage_command("/var/lib/docker/volumes/my-project/_data");
+    assert_eq!(cmd.program, "__effigy_volume_usage");
+    assert_eq!(cmd.args, vec!["/var/lib/docker/volumes/my-project/_data"]);
 }
 
 #[test]
@@ -143,12 +168,22 @@ fn from_volume_info() {
         named: true,
         persist: true,
         service: "db".to_string(),
+        mount: Some("/var/lib/mysql".to_string()),
     };
     let managed = ManagedVolume::from_volume_info(&info);
     assert_eq!(managed.name, "proj-db-data");
     assert!(managed.persist);
     assert_eq!(managed.service, "db");
     assert!(managed.size_bytes.is_none());
+    assert_eq!(managed.mount_target.as_deref(), Some("/var/lib/mysql"));
+}
+
+#[test]
+fn managed_volume_classifies_cache_kinds_from_mount_target() {
+    let volumes = test_volumes();
+    assert_eq!(volumes[0].cache_kind(), None);
+    assert_eq!(volumes[1].cache_kind(), Some(CacheVolumeKind::NodeModules));
+    assert_eq!(volumes[2].cache_kind(), Some(CacheVolumeKind::RustTarget));
 }
 
 #[test]
@@ -177,6 +212,12 @@ fn parse_inspect_volume_metadata_reads_mount_and_size() {
         Some("/var/lib/docker/volumes/proj-db-data/_data")
     );
     assert_eq!(metadata.size_bytes, Some(4096));
+}
+
+#[test]
+fn parse_volume_usage_bytes_reads_kibibytes_output() {
+    let parsed = parse_volume_usage_bytes("2048\t/var/lib/docker/volumes/demo/_data\n");
+    assert_eq!(parsed, Some(2_097_152));
 }
 
 #[test]

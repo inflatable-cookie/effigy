@@ -12,9 +12,10 @@ During v0.x, MINOR bumps may include breaking changes.
   **`effigy container data dump`** address sidecar databases without overloading
   **`[bundle].databases`**.
 - **`effigy container cache list`** inventories purge-safe isolated build
-  cache volumes from repo scope or across running environments with **`--all`**.
-  The first supported kinds are Rust **`target`** and package-manager
-  **`node_modules`** isolates.
+  cache volumes from repo scope or from the Effigy Colima profile's named-volume
+  inventory with **`--all`**, including stopped projects. The first supported
+  kinds are Rust **`target`**, package-manager **`node_modules`**, and shared
+  Cargo cache volumes.
 
 ## [0.4.0] - 2026-05-06
 

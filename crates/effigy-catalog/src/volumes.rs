@@ -38,6 +38,16 @@ pub struct ManagedVolume {
 
     /// Mount point inside the container.
     pub mount_point: Option<String>,
+
+    /// Declared target path inside the container, when known.
+    pub mount_target: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CacheVolumeKind {
+    RustTarget,
+    NodeModules,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,7 +66,19 @@ impl ManagedVolume {
             persist: info.persist,
             size_bytes: None,
             mount_point: None,
+            mount_target: info.mount.clone(),
         }
+    }
+
+    pub fn cache_kind(&self) -> Option<CacheVolumeKind> {
+        let target = self.mount_target.as_deref()?.trim_end_matches('/');
+        if target.ends_with("/target") || target == "target" {
+            return Some(CacheVolumeKind::RustTarget);
+        }
+        if target.ends_with("/node_modules") || target == "node_modules" {
+            return Some(CacheVolumeKind::NodeModules);
+        }
+        None
     }
 }
 
@@ -115,6 +137,8 @@ impl DockerCommand {
     }
 }
 
+const VOLUME_USAGE_PROGRAM: &str = "__effigy_volume_usage";
+
 /// Build the command to list Docker volumes matching a project prefix.
 pub fn list_volumes_command(project_name: &str) -> DockerCommand {
     DockerCommand::docker(
@@ -130,6 +154,19 @@ pub fn list_volumes_command(project_name: &str) -> DockerCommand {
     )
 }
 
+/// Build the command to list all Docker volumes.
+pub fn list_all_volumes_command() -> DockerCommand {
+    DockerCommand::docker(
+        vec![
+            "volume".to_string(),
+            "ls".to_string(),
+            "--format".to_string(),
+            "{{.Name}}\t{{.Driver}}\t{{.Labels}}".to_string(),
+        ],
+        "List all Docker volumes",
+    )
+}
+
 /// Build the command to inspect a Docker volume (for size and metadata).
 pub fn inspect_volume_command(volume_name: &str) -> DockerCommand {
     DockerCommand::docker(
@@ -140,6 +177,14 @@ pub fn inspect_volume_command(volume_name: &str) -> DockerCommand {
         ],
         format!("Inspect volume '{volume_name}'"),
     )
+}
+
+pub fn volume_usage_command(mount_point: &str) -> DockerCommand {
+    DockerCommand {
+        program: VOLUME_USAGE_PROGRAM.to_owned(),
+        args: vec![mount_point.to_owned()],
+        description: format!("Measure volume usage under '{mount_point}'"),
+    }
 }
 
 /// Build the command to export a Docker volume to a tar file.
@@ -262,6 +307,12 @@ pub fn parse_inspect_volume_metadata(output: &str) -> Option<RuntimeVolumeMetada
         mount_point,
         size_bytes,
     })
+}
+
+pub fn parse_volume_usage_bytes(output: &str) -> Option<u64> {
+    let raw = output.lines().next()?.split_whitespace().next()?;
+    let kibibytes = raw.parse::<u64>().ok()?;
+    Some(kibibytes.saturating_mul(1024))
 }
 
 pub fn merge_runtime_volume_metadata(

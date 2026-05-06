@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/effigy-bootstrap",
+    "crates/effigy-artifacts",
     "crates/effigy-builtin",
     "crates/effigy-changelog",
     "crates/effigy-catalog",
@@ -45,6 +46,7 @@ description = "Unified task runner with nested catalog resolution"
 
 [dependencies]
 effigy-bootstrap = { path = "crates/effigy-bootstrap" }
+effigy-artifacts = { path = "crates/effigy-artifacts" }
 effigy-builtin = { path = "crates/effigy-builtin" }
 effigy-catalog = { path = "crates/effigy-catalog" }
 effigy-changelog = { path = "crates/effigy-changelog" }

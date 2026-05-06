@@ -70,6 +70,9 @@ pub struct VolumeInfo {
 
     /// Which service declared it.
     pub service: String,
+
+    /// Mount path inside the container, when known.
+    pub mount: Option<String>,
 }
 
 /// Assembles a complete docker-compose.yml from service declarations.
@@ -191,6 +194,7 @@ impl ComposeAssembler {
                     named: true,
                     persist: vol_schema.persist,
                     service: name.clone(),
+                    mount: Some(vol_schema.mount.clone()),
                 });
             }
 
@@ -202,10 +206,11 @@ impl ComposeAssembler {
             for discovered in Self::discover_named_volume_references(&service_def, &declared_names)
             {
                 all_volumes.push(VolumeInfo {
-                    name: discovered,
+                    name: discovered.name,
                     named: true,
                     persist: true,
                     service: name.clone(),
+                    mount: Some(discovered.mount),
                 });
             }
         }
@@ -271,11 +276,11 @@ impl ComposeAssembler {
     fn discover_named_volume_references(
         service_def: &YamlValue,
         declared_names: &std::collections::BTreeSet<String>,
-    ) -> Vec<String> {
+    ) -> Vec<DiscoveredNamedVolume> {
         let Some(volumes) = service_def.get("volumes").and_then(YamlValue::as_sequence) else {
             return Vec::new();
         };
-        let mut discovered: Vec<String> = Vec::new();
+        let mut discovered = Vec::new();
         let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for entry in volumes {
             let Some(raw) = entry.as_str() else {
@@ -296,7 +301,10 @@ impl ComposeAssembler {
             if declared_names.contains(source) || !seen.insert(source.to_owned()) {
                 continue;
             }
-            discovered.push(source.to_owned());
+            discovered.push(DiscoveredNamedVolume {
+                name: source.to_owned(),
+                mount: target.to_owned(),
+            });
         }
         discovered
     }
@@ -503,6 +511,12 @@ impl ComposeAssembler {
             );
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiscoveredNamedVolume {
+    name: String,
+    mount: String,
 }
 
 #[cfg(test)]

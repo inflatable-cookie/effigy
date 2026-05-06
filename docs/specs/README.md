@@ -27,6 +27,7 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
+- [`042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md`](./042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md)
 
 Paused but still useful:
 
@@ -67,4 +68,6 @@ Recently completed:
 
 ## Next Task
 
-Planning stop. Choose the next roadmap or request release work explicitly.
+Continue card
+[`419-seed-dump-apply-capture-integration.md`](./batch-cards/419-seed-dump-apply-capture-integration.md)
+after the unrelated container/cache compile blockers are resolved or isolated.

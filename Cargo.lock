@@ -608,6 +608,7 @@ dependencies = [
  "anstyle",
  "chrono",
  "crossterm",
+ "effigy-artifacts",
  "effigy-bootstrap",
  "effigy-builtin",
  "effigy-catalog",
@@ -654,6 +655,14 @@ dependencies = [
  "toml_edit",
  "vt100",
  "walkdir",
+]
+
+[[package]]
+name = "effigy-artifacts"
+version = "0.4.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

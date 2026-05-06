@@ -73,10 +73,11 @@ Rules:
 - `g03.033` is complete
 - `g03.034` is complete
 - `g03.035` is complete
-- `g03.036` is planned with ready card `376-plan-artifact-contract-and-acowtancy-boundary`
+- `g03.036` is active; card `419-seed-dump-apply-capture-integration` is in progress
 
 ## Next Task
 
-Start
+Continue
 [`036-artifact-substrate-for-seed-apply-and-capture-workflows.md`](./036-artifact-substrate-for-seed-apply-and-capture-workflows.md)
-card `376-plan-artifact-contract-and-acowtancy-boundary`.
+card `419-seed-dump-apply-capture-integration` after the unrelated
+container/cache compile blockers are resolved or isolated.

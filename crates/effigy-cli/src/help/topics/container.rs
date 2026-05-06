@@ -11,6 +11,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "Generated compose also supports bounded `shared = true` backing services for standalone shared databases and caches on the product-owned path.",
             "Mounted sibling repos listed in `systems.<name>.mounts` auto-adopt producer `[isolation].paths` into workspace containers, and Colima/nerdctl now preflights oversized mount payloads before compose-up.",
             "`container data seed` currently targets the repo default container only and stays on the generated-compose path, while `container data dump` exports logical SQL dumps from generated-compose database services.",
+            "`container cache list` inventories purge-safe isolated build caches like Rust `target` and package-manager `node_modules` volumes without touching persistent app data, and `--all` reads the Effigy Colima profile's named-volume inventory instead of walking the filesystem.",
         ],
         &[
             "effigy container up [--repo <PATH>] [--attach|--detach] [--json]",
@@ -22,6 +23,8 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container status --all [--json]",
             "effigy container stats --all [--json]",
             "effigy container <NAME> status [--repo <PATH>] [--json]",
+            "effigy container cache list [--repo <PATH>] [--all] [--json]",
+            "effigy container <NAME> cache list [--repo <PATH>] [--json]",
             "effigy container data list [--repo <PATH>] [--json]",
             "effigy container <NAME> data list [--repo <PATH>] [--json]",
             "effigy container data export <VOLUME> <PATH> [--repo <PATH>] [--json]",
@@ -54,7 +57,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--all",
-                "For `down`, `status`, or `stats`, discover running Effigy-managed environments across repos instead of one manifest target",
+                "For `down`, `status`, or `stats`, discover running Effigy-managed environments across repos. For `cache list`, inspect the Effigy Colima profile's named-volume inventory, including stopped projects.",
             ),
             (
                 "--command <CMD>",
@@ -94,6 +97,8 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container down --all",
             "effigy container status --all",
             "effigy container stats --all",
+            "effigy container cache list",
+            "effigy container cache list --all",
             "effigy container web data list",
             "effigy container web data export fixture-web-dev-db-data ./backup.tar.gz",
             "effigy container data dump legacy_mysql",

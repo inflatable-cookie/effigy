@@ -7050,6 +7050,49 @@ fn cli_container_data_list_json_reports_managed_volumes() {
 }
 
 #[test]
+fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
+    let root = temp_workspace("container-cache-list");
+    write_generated_container_volume_fixture(&root);
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let docker_args = root.join("docker-args.log");
+    let colima_args = root.join("colima-args.log");
+    let log_follow = root.join("log-follow.marker");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+
+    fs::write(&colima_state, "running\n").expect("seed colima state");
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("container")
+        .arg("cache")
+        .arg("list")
+        .arg("--repo")
+        .arg(&root)
+        .arg("--json")
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+        .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+        .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
+        .output()
+        .expect("run effigy");
+
+    assert!(output.status.success(), "cache list failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["schema"], "effigy.container.cache-list.v1");
+    assert_eq!(parsed["result"]["container"], "web");
+    assert_eq!(parsed["result"]["cache_count"], 1);
+    assert_eq!(parsed["result"]["caches"][0]["kind"], "node-modules");
+    assert_eq!(
+        parsed["result"]["caches"][0]["name"],
+        "fixture-web-dev-app-node-modules"
+    );
+}
+
+#[test]
 fn cli_generated_container_status_json_reports_media_mounts() {
     let root = temp_workspace("container-generated-media-status");
     write_generated_container_media_fixture(&root);

@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Planned
+Status: Active
 Owner: Platform
 Created: 2026-05-06
 Depends on: [`035-contract-promotion-public-cleanup-breaks-and-closeout.md`](./035-contract-promotion-public-cleanup-breaks-and-closeout.md)
@@ -195,9 +195,9 @@ UAT proof implication:
 
 ## Milestone Cards
 
-### 376 - Plan Artifact Contract And Acowtancy Boundary
+### 415 - Plan Artifact Contract And Acowtancy Boundary
 
-Status: Ready
+Status: Complete
 
 Scope:
 
@@ -213,9 +213,17 @@ Exit condition:
 - Effigy/Acowtancy responsibility boundary is explicit enough to implement
   without moving app migration logic into Effigy.
 
-### 377 - Scaffold Effigy Artifacts Crate
+Closeout:
 
-Status: Blocked by 376
+- `014-artifact-substrate-contract.md` exists as the durable contract draft.
+- Acowtancy audit notes identify the current Farmyard seed-bundle build,
+  publish, install, local OCI, and `bundle-set.json` surfaces.
+- The first replacement boundary is transport/staging for seed-bundle install,
+  leaving Farmyard in charge of replay semantics.
+
+### 416 - Scaffold Effigy Artifacts Crate
+
+Status: Complete
 
 Scope:
 
@@ -225,9 +233,17 @@ Scope:
 - model staged artifact reports
 - add focused unit tests
 
-### 378 - Local Artifact Staging For Seed Inputs
+Closeout:
 
-Status: Blocked by 377
+- `crates/effigy-artifacts` is in the workspace.
+- local refs, explicit `oci://` refs, artifact kinds, metadata, staging
+  reports, and operation report shells are modeled.
+- focused crate tests cover local SQL, `.sql.gz`, `.dump`, explicit OCI refs,
+  and unprefixed registry-looking ref rejection.
+
+### 417 - Local Artifact Staging For Seed Inputs
+
+Status: Complete
 
 Scope:
 
@@ -236,9 +252,17 @@ Scope:
 - synthesize `effigy.artifact.v1` metadata
 - wire bootstrap seed staging through the artifact resolver
 
-### 379 - OCI Pull Inspect And Stage
+Closeout:
 
-Status: Blocked by 378
+- local SQL-like artifact staging exists in `effigy-artifacts`
+- staging writes deterministic roots under `.effigy/local/artifacts`
+- staging copies the primary payload and writes `effigy-artifact.json`
+- focused crate tests cover metadata output, deterministic roots, and missing
+  local source errors
+
+### 418 - OCI Pull Inspect And Stage
+
+Status: Complete
 
 Scope:
 
@@ -248,9 +272,19 @@ Scope:
 - stage OCI payloads into the same local artifact shape
 - add no-token-logging tests
 
-### 380 - Seed Dump Apply Capture Integration
+Closeout:
 
-Status: Blocked by 379
+- `effigy-artifacts` now has OCI inspect/pull request and report models.
+- OCI transport is behind an `OciArtifactAdapter` trait.
+- reportable refs redact userinfo.
+- digest-pinned refs populate descriptor digest fields.
+- pulled OCI-shaped fixture payloads stage into the same
+  `StagedArtifactReport` / `effigy.artifact.v1` metadata model as local
+  payloads.
+
+### 419 - Seed Dump Apply Capture Integration
+
+Status: In Progress
 
 Scope:
 
@@ -259,9 +293,9 @@ Scope:
 - add UAT-shaped apply/capture reports
 - add artifact operation ledger draft
 
-### 381 - Acowtancy Proof And Closeout
+### 420 - Acowtancy Proof And Closeout
 
-Status: Blocked by 380
+Status: Blocked by 419
 
 Scope:
 
@@ -282,4 +316,4 @@ Scope:
 
 ## Next Task
 
-Start card `376-plan-artifact-contract-and-acowtancy-boundary`.
+Start card `419-seed-dump-apply-capture-integration`.

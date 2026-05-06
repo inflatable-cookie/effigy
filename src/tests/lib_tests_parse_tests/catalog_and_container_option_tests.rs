@@ -4,8 +4,8 @@ use crate::tests::prelude::{
     WorkspaceArgs,
 };
 use effigy_cli::{
-    BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerDataSubcommand,
-    ContainerDbDumpInput,
+    BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerCacheSubcommand,
+    ContainerDataSubcommand, ContainerDbDumpInput,
 };
 
 #[test]
@@ -349,6 +349,50 @@ fn parse_container_data_list_is_supported() {
             },
             repo_override: None,
             output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_cache_list_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "cache".to_owned(),
+        "list".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Cache {
+                name: None,
+                subcommand: ContainerCacheSubcommand::List { all: false },
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_cache_list_all_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "cache".to_owned(),
+        "list".to_owned(),
+        "--all".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Cache {
+                name: None,
+                subcommand: ContainerCacheSubcommand::List { all: true },
+            },
+            repo_override: None,
+            output_json: false,
         })
     );
 }

@@ -195,6 +195,7 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("effigy container <NAME> up"));
     assert!(rendered.contains("effigy container status --all"));
     assert!(rendered.contains("effigy container stats --all"));
+    assert!(rendered.contains("effigy container cache list"));
     assert!(rendered.contains("effigy container data list"));
     assert!(rendered.contains("effigy container data export <VOLUME> <PATH>"));
     assert!(rendered.contains("effigy container [<NAME>] data dump"));
@@ -215,6 +216,7 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("--db-seed <FILE>|<TARGET>=<FILE>"));
     assert!(rendered.contains("--no-prompt"));
     assert!(rendered.contains("effigy container web data list"));
+    assert!(rendered.contains("effigy container cache list --all"));
     assert!(rendered.contains("effigy container web data export"));
     assert!(rendered.contains("effigy container web data import"));
     assert!(rendered.contains("effigy container data dump legacy_mysql"));

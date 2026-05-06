@@ -83,6 +83,26 @@ pub struct ContainerDataVolumeEntry {
     pub mount_point: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerCacheVolumeEntry {
+    pub name: String,
+    pub service: String,
+    pub kind: String,
+    pub size_bytes: Option<u64>,
+    pub mount_point: Option<String>,
+    pub mount_target: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerCacheGlobalEntry {
+    pub name: String,
+    pub kind: String,
+    pub size_bytes: Option<u64>,
+    pub mount_point: Option<String>,
+    pub project_name: Option<String>,
+    pub in_use: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerDataTransferAction {
     Export,
@@ -621,6 +641,149 @@ pub fn data_list_report(
         lines.push(format!(
             "- {} [{}] {} (size={}, mount_point={})",
             volume.name, volume.service, classification, size, mount_point
+        ));
+    }
+
+    ContainerCommandReport {
+        json,
+        success_text: lines.join("\n"),
+    }
+}
+
+pub fn cache_list_report(
+    policy: &EffectiveContainerPolicy,
+    colima_running: bool,
+    volumes: &[ContainerCacheVolumeEntry],
+) -> ContainerCommandReport {
+    let json = json!({
+        "schema": "effigy.container.cache-list.v1",
+        "schema_version": 1,
+        "ok": true,
+        "container": policy.name,
+        "profile": policy.profile,
+        "project_name": policy.project_name,
+        "compose_source": match policy.compose_source {
+            crate::EffectiveComposeSource::Direct => "direct",
+            crate::EffectiveComposeSource::Generated => "generated",
+        },
+        "colima_running": colima_running,
+        "cache_count": volumes.len(),
+        "caches": volumes.iter().map(|volume| {
+            json!({
+                "name": volume.name,
+                "service": volume.service,
+                "kind": volume.kind,
+                "size_bytes": volume.size_bytes,
+                "mount_point": volume.mount_point,
+                "mount_target": volume.mount_target,
+                "safe_to_purge": true,
+                "size_available": volume.size_bytes.is_some(),
+            })
+        }).collect::<Vec<_>>(),
+    });
+
+    if volumes.is_empty() {
+        return ContainerCommandReport {
+            json,
+            success_text: format!(
+                "[info] container `{}` has no purge-safe isolated cache volumes",
+                policy.name
+            ),
+        };
+    }
+
+    let mut lines = vec![
+        format!(
+            "[ok] {} purge-safe cache volume{} for `{}`",
+            volumes.len(),
+            if volumes.len() == 1 { "" } else { "s" },
+            policy.name
+        ),
+        format!("project_name: {}", policy.project_name),
+        format!(
+            "runtime_metadata: {}",
+            if colima_running {
+                "best-effort"
+            } else {
+                "unavailable (Colima profile is not running)"
+            }
+        ),
+    ];
+    for volume in volumes {
+        let size = volume
+            .size_bytes
+            .map(format_bytes)
+            .unwrap_or_else(|| "unavailable".to_owned());
+        let mount_target = volume.mount_target.as_deref().unwrap_or("unavailable");
+        lines.push(format!(
+            "- {} [{}] {} (size={}, target={})",
+            volume.name, volume.service, volume.kind, size, mount_target
+        ));
+    }
+
+    ContainerCommandReport {
+        json,
+        success_text: lines.join("\n"),
+    }
+}
+
+pub fn cache_list_all_report(
+    profile: &str,
+    volumes: &[ContainerCacheGlobalEntry],
+) -> ContainerCommandReport {
+    let in_use_count = volumes.iter().filter(|volume| volume.in_use).count();
+    let json = json!({
+        "schema": "effigy.container.cache-list-all.v1",
+        "schema_version": 1,
+        "ok": true,
+        "profile": profile,
+        "cache_count": volumes.len(),
+        "in_use_count": in_use_count,
+        "available_count": volumes.len().saturating_sub(in_use_count),
+        "caches": volumes.iter().map(|volume| {
+            json!({
+                "name": volume.name,
+                "kind": volume.kind,
+                "size_bytes": volume.size_bytes,
+                "mount_point": volume.mount_point,
+                "project_name": volume.project_name,
+                "in_use": volume.in_use,
+                "safe_to_purge": !volume.in_use,
+                "size_available": volume.size_bytes.is_some(),
+            })
+        }).collect::<Vec<_>>(),
+    });
+
+    if volumes.is_empty() {
+        return ContainerCommandReport {
+            json,
+            success_text: format!(
+                "[info] no purge-safe cache volumes found in Colima profile `{profile}`"
+            ),
+        };
+    }
+
+    let mut lines = vec![format!(
+        "[ok] {} purge-safe cache volume{} in Colima profile `{}` (in_use={}, purgeable={})",
+        volumes.len(),
+        if volumes.len() == 1 { "" } else { "s" },
+        profile,
+        in_use_count,
+        volumes.len().saturating_sub(in_use_count),
+    )];
+    for volume in volumes {
+        let size = volume
+            .size_bytes
+            .map(format_bytes)
+            .unwrap_or_else(|| "unavailable".to_owned());
+        let project = volume.project_name.as_deref().unwrap_or("unknown");
+        lines.push(format!(
+            "- {} {} (size={}, project={}, {})",
+            volume.name,
+            volume.kind,
+            size,
+            project,
+            if volume.in_use { "in-use" } else { "purgeable" },
         ));
     }
 

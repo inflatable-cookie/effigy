@@ -4,6 +4,10 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+use effigy_artifacts::{
+    default_local_artifact_root, stage_local_artifact, LocalArtifactRef,
+    LocalArtifactStagingRequest,
+};
 use effigy_bootstrap::BootstrapStagedDbSeed;
 use effigy_cli::BootstrapDbSeedInput;
 use effigy_execution::ExecutionSurface;
@@ -282,8 +286,30 @@ pub(in crate::runner) fn stage_db_seed_files(
                 "duplicate staged db seed file name `{staged_name}`; rename one input or use distinct seed targets"
             )));
         }
+        let artifact_report = stage_local_artifact(&LocalArtifactStagingRequest::new(
+            LocalArtifactRef::new(source.clone()),
+            repo_root.to_path_buf(),
+            default_local_artifact_root(repo_root),
+        ))
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to stage db seed artifact {}: {error}",
+                source.display()
+            ))
+        })?;
+        let staged_artifact_file =
+            artifact_report
+                .metadata
+                .primary_files
+                .first()
+                .ok_or_else(|| {
+                    RunnerError::task_invocation(format!(
+                        "db seed artifact produced no primary file: {}",
+                        source.display()
+                    ))
+                })?;
         let destination = staging_dir.join(&staged_name);
-        std::fs::copy(source, &destination).map_err(|error| {
+        std::fs::copy(staged_artifact_file, &destination).map_err(|error| {
             RunnerError::task_invocation(format!(
                 "failed to stage db seed {} -> {}: {error}",
                 source.display(),
@@ -891,10 +917,25 @@ impl Drop for ScopedDbSeedEnvOverride {
 
 #[cfg(test)]
 mod tests {
-    use super::{logical_database_targets, resolve_db_seed_targets};
+    use super::{logical_database_targets, resolve_db_seed_targets, stage_db_seed_files};
     use effigy_cli::BootstrapDbSeedInput;
     use effigy_manifest::TaskManifest;
-    use std::path::PathBuf;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn temp_repo(name: &str) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "effigy-db-seed-{name}-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).expect("create temp repo");
+        fs::write(root.join("effigy.toml"), "[bundle]\ndatabase = \"app\"\n")
+            .expect("write manifest");
+        root
+    }
 
     #[test]
     fn logical_database_targets_include_explicit_sidecar_targets() {
@@ -948,5 +989,55 @@ database = "acowtancy"
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].target.as_deref(), Some("legacy_mysql"));
+    }
+
+    #[test]
+    fn stage_db_seed_files_writes_artifact_metadata_and_preserves_seed_path() {
+        let repo = temp_repo("artifact-stage");
+        let source = repo.join("latest.sql");
+        fs::write(&source, b"select 1;").expect("write seed");
+
+        let staged = stage_db_seed_files(
+            &repo,
+            &[BootstrapDbSeedInput {
+                target: Some("app".to_owned()),
+                path: source.clone(),
+            }],
+        )
+        .expect("stage seeds");
+
+        assert_eq!(staged.len(), 1);
+        assert_eq!(staged[0].source_path, source);
+        assert_eq!(
+            staged[0].staged_path,
+            repo.join(".effigy/local/db-seeds/app--latest.sql")
+        );
+        assert_eq!(
+            fs::read(&staged[0].staged_path).expect("read staged seed"),
+            b"select 1;"
+        );
+
+        let artifact_metadata_files = find_artifact_metadata_files(&repo);
+        assert_eq!(artifact_metadata_files.len(), 1);
+        let metadata =
+            fs::read_to_string(&artifact_metadata_files[0]).expect("read artifact metadata");
+        assert!(metadata.contains("\"schema\": \"effigy.artifact.v1\""));
+        assert!(metadata.contains("\"kind\": \"sql-dump\""));
+    }
+
+    fn find_artifact_metadata_files(repo: &Path) -> Vec<PathBuf> {
+        let root = repo.join(".effigy/local/artifacts");
+        let mut found = Vec::new();
+        let Ok(entries) = fs::read_dir(root) else {
+            return found;
+        };
+        for entry in entries.flatten() {
+            let metadata = entry.path().join("effigy-artifact.json");
+            if metadata.is_file() {
+                found.push(metadata);
+            }
+        }
+        found.sort();
+        found
     }
 }

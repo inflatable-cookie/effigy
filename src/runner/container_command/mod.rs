@@ -2,6 +2,7 @@
 
 use effigy_containers::ContainerCommandReport;
 use effigy_runtime::data::{
+    run_container_cache_list, run_container_cache_list_all, run_container_cache_list_under_path,
     run_container_data_export, run_container_data_import, run_container_data_list,
 };
 use effigy_runtime::read::{
@@ -16,7 +17,9 @@ use effigy_runtime::EffigyRuntimeError;
 
 use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::db_seed::resolve_db_seed_input_paths;
-use effigy_cli::{ContainerArgs, ContainerDataSubcommand, ContainerSubcommand};
+use effigy_cli::{
+    ContainerArgs, ContainerCacheSubcommand, ContainerDataSubcommand, ContainerSubcommand,
+};
 
 use super::error::RunnerError;
 use data::{
@@ -76,6 +79,20 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             },
         )
         .map_err(Into::into);
+    }
+    if let ContainerSubcommand::Cache {
+        name: _,
+        subcommand: ContainerCacheSubcommand::List { all: true },
+    } = &args.subcommand
+    {
+        if args.repo_override.is_some() {
+            return Err(RunnerError::task_invocation(
+                "`effigy container cache list --all` does not accept `--repo`; it inspects the Effigy Colima profile's named-volume inventory",
+            ));
+        }
+        let cwd = crate::runner::command_context::active_invocation_cwd()?;
+        return run_container_cache_list_all(&cwd, None, args.output_json, runtime_volume_capture)
+            .map_err(Into::into);
     }
 
     match args.subcommand {
@@ -163,6 +180,18 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
                 args.output_json,
             )
         }
+        ContainerSubcommand::Cache {
+            name,
+            subcommand: ContainerCacheSubcommand::List { all: false },
+        } => run_container_cache_list_fallback(
+            args.repo_override.clone(),
+            name.as_deref(),
+            args.output_json,
+        ),
+        ContainerSubcommand::Cache {
+            subcommand: ContainerCacheSubcommand::List { all: true },
+            ..
+        } => unreachable!("handled above"),
         ContainerSubcommand::Data {
             name,
             subcommand: ContainerDataSubcommand::Export { volume, path },
@@ -405,6 +434,42 @@ fn run_container_data_list_adapter(
 ) -> Result<String, RunnerError> {
     run_container_data_list(repo_root, name, output_json, runtime_volume_capture)
         .map_err(Into::into)
+}
+
+fn run_container_cache_list_adapter(
+    repo_root: &std::path::Path,
+    name: Option<&str>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    run_container_cache_list(repo_root, name, output_json, runtime_volume_capture)
+        .map_err(Into::into)
+}
+
+fn run_container_cache_list_fallback(
+    repo_override: Option<std::path::PathBuf>,
+    name: Option<&str>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    match resolve_active_command_context(repo_override.clone()) {
+        Ok(context) if repo_root_has_effigy_manifest(&context.resolved.resolved_root) => {
+            run_container_cache_list_adapter(&context.resolved.resolved_root, name, output_json)
+        }
+        Ok(_) if repo_override.is_none() => {
+            let cwd = crate::runner::command_context::active_invocation_cwd()?;
+            run_container_cache_list_under_path(&cwd, name, output_json, runtime_volume_capture)
+                .map_err(Into::into)
+        }
+        Ok(context) => Err(RunnerError::task_invocation(format!(
+            "`--repo {}` does not point to an Effigy repo",
+            context.resolved.resolved_root.display()
+        ))),
+        Err(RunnerError::Resolve(_)) if repo_override.is_none() => {
+            let cwd = crate::runner::command_context::active_invocation_cwd()?;
+            run_container_cache_list_under_path(&cwd, name, output_json, runtime_volume_capture)
+                .map_err(Into::into)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn run_container_data_export_adapter(
