@@ -4033,6 +4033,9 @@ fn cli_release_verify_install_json_mode_installs_and_checks_tagged_binary() {
     assert_eq!(results.len(), 7);
     assert_eq!(results[0]["name"], "cargo install from git tag");
     assert_eq!(results[0]["passed"], true);
+    assert!(results[0]["command"]
+        .as_str()
+        .is_some_and(|command| command.contains("cargo install --locked --git")));
     assert!(results[0]["duration_ms"].as_u64().is_some());
     assert_eq!(
         results[6]["name"],
@@ -4073,6 +4076,9 @@ fn cli_release_verify_install_json_mode_fails_fast_when_install_step_fails() {
         .expect("results");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["name"], "cargo install from git tag");
+    assert!(results[0]["command"]
+        .as_str()
+        .is_some_and(|command| command.contains("cargo install --locked --git")));
     assert_eq!(results[0]["passed"], false);
     let blockers = parsed["error"]["details"]["blockers"]
         .as_array()

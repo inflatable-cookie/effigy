@@ -135,6 +135,7 @@ pub fn run_release_verify_install(
 
     let install_command = vec![
         "install".to_owned(),
+        "--locked".to_owned(),
         "--git".to_owned(),
         repo_url.clone(),
         "--tag".to_owned(),

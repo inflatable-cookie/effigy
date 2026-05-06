@@ -40,6 +40,7 @@ fn parse_bootstrap_plan_with_path_branch_and_start() {
                     path: PathBuf::from("./infra/bootstrap/latest.sql"),
                 }],
                 no_prompt: false,
+                reuse_path: false,
                 start: true,
                 plan: true,
             },
@@ -65,6 +66,7 @@ fn parse_bootstrap_defaults_to_start_when_unspecified() {
                 branch: None,
                 db_seeds: Vec::new(),
                 no_prompt: false,
+                reuse_path: false,
                 start: true,
                 plan: false,
             },
@@ -91,6 +93,7 @@ fn parse_bootstrap_no_start_disables_default_start() {
                 branch: None,
                 db_seeds: Vec::new(),
                 no_prompt: false,
+                reuse_path: false,
                 start: false,
                 plan: false,
             },
@@ -129,6 +132,7 @@ fn parse_bootstrap_accepts_repeated_db_seed_flags() {
                     },
                 ],
                 no_prompt: false,
+                reuse_path: false,
                 start: true,
                 plan: false,
             },
@@ -167,6 +171,7 @@ fn parse_bootstrap_accepts_named_db_seed_flags() {
                     },
                 ],
                 no_prompt: false,
+                reuse_path: false,
                 start: true,
                 plan: false,
             },
@@ -193,6 +198,34 @@ fn parse_bootstrap_accepts_no_prompt_flag() {
                 branch: None,
                 db_seeds: Vec::new(),
                 no_prompt: true,
+                reuse_path: false,
+                start: true,
+                plan: false,
+            },
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_bootstrap_accepts_reuse_path_flag() {
+    let cmd = parse_command(vec![
+        "bootstrap".to_owned(),
+        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+        "--reuse-path".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Bootstrap(BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+                path: None,
+                branch: None,
+                db_seeds: Vec::new(),
+                no_prompt: false,
+                reuse_path: true,
                 start: true,
                 plan: false,
             },

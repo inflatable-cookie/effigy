@@ -227,6 +227,8 @@ fn render_bootstrap_help_shows_planning_options() {
     assert!(rendered.contains("effigy bootstrap <GIT_URL>"));
     assert!(rendered.contains("--path <DIR>"));
     assert!(rendered.contains("--branch <NAME>"));
+    assert!(rendered.contains("--no-prompt"));
+    assert!(rendered.contains("--reuse-path"));
     assert!(rendered.contains("--start"));
     assert!(rendered.contains("--plan"));
     assert!(rendered.contains("--json"));

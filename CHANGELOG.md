@@ -27,6 +27,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - **`effigy container data seed`** matches the bootstrap DB-seed contract after
   bring-up (repeatable **`--db-seed`**, optional TTY prompts, staging under
   **`.effigy/local/db-seeds/`**, then **`bootstrap:db-seed`**).
+- **`effigy bootstrap`** now has explicit **`--reuse-path`** for reusing a
+  non-empty destination without an interactive confirmation.
 - **`effigy init`** with the **`minimal`** starter (the default) now also emits a
   root **`README.md`** next to **`effigy.toml`**: first commands, tasks vs
   built-ins, and stable links into the Effigy docs on GitHub.
@@ -41,6 +43,8 @@ During v0.x, MINOR bumps may include breaking changes.
   **`--wipe-data`**.
 - **`effigy bootstrap`** picks the default clone directory from **`[catalog].alias`**
   when the repo defines it and you did not pass **`--path`**.
+- **`effigy release verify-install`** installs with **`cargo install --locked`**
+  so release verification matches the locked dependency graph.
 - **`effigy container status`** and **`effigy container down`** can discover Effigy
   repos under the current directory when you are not at a repo root, so you
   often do not need **`--all`** for subtree checks.
@@ -67,6 +71,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Docs and bundled agent skill:** bootstrap default **`[bootstrap].start`**
   behavior matches the CLI; command matrix includes **`effigy defer`**; skill uses
   **`effigy doctor <selector> -- <args>`** for routing explain.
+- **`effigy bootstrap`** no longer treats **`--no-prompt`** as implicit approval
+  to reuse a non-empty destination; use **`--reuse-path`** for that explicit
+  destructive choice.
 - **`effigy qa`** exits cleanly with a clear message when **`cargo`** is not on
   **`PATH`** (instead of panicking).
 - **Fresh clones** of this repository are much smaller after a one-time history

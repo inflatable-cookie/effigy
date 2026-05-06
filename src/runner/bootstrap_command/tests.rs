@@ -541,6 +541,7 @@ fn run_bootstrap_with_cwd_starts_when_requested() {
                 branch: None,
                 db_seeds: Vec::new(),
                 no_prompt: false,
+                reuse_path: false,
                 start: true,
                 plan: false,
             },
@@ -575,6 +576,7 @@ fn run_bootstrap_with_cwd_stages_db_seed_before_root_run() {
                     path: dump.clone(),
                 }],
                 no_prompt: false,
+                reuse_path: false,
                 start: false,
                 plan: false,
             },
@@ -615,6 +617,7 @@ fn run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start() {
                     path: dump,
                 }],
                 no_prompt: false,
+                reuse_path: false,
                 start: true,
                 plan: false,
             },
@@ -654,6 +657,7 @@ fn run_bootstrap_with_cwd_auto_targets_single_database_bundle_seed_input() {
                     path: dump,
                 }],
                 no_prompt: false,
+                reuse_path: false,
                 start: false,
                 plan: false,
             },
@@ -706,6 +710,7 @@ fn run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases() 
                     },
                 ],
                 no_prompt: false,
+                reuse_path: false,
                 start: false,
                 plan: false,
             },
@@ -751,6 +756,7 @@ fn run_bootstrap_with_cwd_rejects_unnamed_db_seed_for_multi_database_bundle() {
                     path: dump,
                 }],
                 no_prompt: false,
+                reuse_path: false,
                 start: false,
                 plan: false,
             },
@@ -787,6 +793,7 @@ fn run_bootstrap_with_cwd_rejects_db_seed_when_standard_task_is_missing() {
                     path: dump,
                 }],
                 no_prompt: false,
+                reuse_path: false,
                 start: false,
                 plan: false,
             },
@@ -815,6 +822,7 @@ fn run_bootstrap_with_cwd_reports_optional_child_warning_in_text_output() {
                 branch: None,
                 db_seeds: Vec::new(),
                 no_prompt: false,
+                reuse_path: false,
                 start: false,
                 plan: false,
             },
@@ -916,6 +924,7 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
                 branch: None,
                 db_seeds: Vec::new(),
                 no_prompt: false,
+                reuse_path: false,
                 start: false,
                 plan: false,
             },
@@ -1053,6 +1062,7 @@ fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_without_tty_pro
                 branch: None,
                 db_seeds: Vec::new(),
                 no_prompt: false,
+                reuse_path: false,
                 start: false,
                 plan: false,
             },
@@ -1067,7 +1077,7 @@ fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_without_tty_pro
             .contains("bootstrap destination already exists and is non-empty"),
         "unexpected error: {err}"
     );
-    assert!(err.to_string().contains("--no-prompt"));
+    assert!(err.to_string().contains("--reuse-path"));
 }
 
 #[test]
@@ -1087,6 +1097,7 @@ fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_in_json_mode() 
                 branch: None,
                 db_seeds: Vec::new(),
                 no_prompt: false,
+                reuse_path: false,
                 start: false,
                 plan: false,
             },
@@ -1120,6 +1131,7 @@ fn run_bootstrap_with_cwd_plan_skips_existing_destination_prompt() {
                 branch: None,
                 db_seeds: Vec::new(),
                 no_prompt: false,
+                reuse_path: false,
                 start: false,
                 plan: true,
             },
@@ -1134,7 +1146,7 @@ fn run_bootstrap_with_cwd_plan_skips_existing_destination_prompt() {
 }
 
 #[test]
-fn run_bootstrap_with_cwd_no_prompt_bypasses_existing_checkout_confirmation() {
+fn run_bootstrap_with_cwd_no_prompt_rejects_existing_checkout_without_reuse_path() {
     let root_remote = create_plain_remote("root-path-reuse-bypass");
     let cwd = temp_dir("bootstrap-path-reuse-bypass");
     let destination = cwd.join("reuse-target");
@@ -1147,6 +1159,7 @@ fn run_bootstrap_with_cwd_no_prompt_bypasses_existing_checkout_confirmation() {
                 branch: None,
                 db_seeds: Vec::new(),
                 no_prompt: false,
+                reuse_path: false,
                 start: false,
                 plan: false,
             },
@@ -1164,6 +1177,7 @@ fn run_bootstrap_with_cwd_no_prompt_bypasses_existing_checkout_confirmation() {
                 branch: None,
                 db_seeds: Vec::new(),
                 no_prompt: true,
+                reuse_path: false,
                 start: false,
                 plan: false,
             },
@@ -1171,7 +1185,52 @@ fn run_bootstrap_with_cwd_no_prompt_bypasses_existing_checkout_confirmation() {
         },
         cwd,
     )
-    .expect("--no-prompt should bypass path reuse confirmation");
+    .expect_err("--no-prompt alone should not bypass path reuse confirmation");
+
+    assert!(out.to_string().contains("--reuse-path"));
+}
+
+#[test]
+fn run_bootstrap_with_cwd_reuse_path_bypasses_existing_checkout_confirmation() {
+    let root_remote = create_plain_remote("root-path-reuse-flag");
+    let cwd = temp_dir("bootstrap-path-reuse-flag");
+    let destination = cwd.join("reuse-target");
+
+    run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: Some(destination.clone()),
+                branch: None,
+                db_seeds: Vec::new(),
+                no_prompt: false,
+                reuse_path: false,
+                start: false,
+                plan: false,
+            },
+            output_json: false,
+        },
+        cwd.clone(),
+    )
+    .expect("initial clone");
+
+    let out = run_bootstrap_with_cwd(
+        BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: root_remote.display().to_string(),
+                path: Some(destination),
+                branch: None,
+                db_seeds: Vec::new(),
+                no_prompt: true,
+                reuse_path: true,
+                start: false,
+                plan: false,
+            },
+            output_json: false,
+        },
+        cwd,
+    )
+    .expect("--reuse-path should bypass path reuse confirmation");
 
     assert!(out.contains("[ok] bootstrap completed"));
 }

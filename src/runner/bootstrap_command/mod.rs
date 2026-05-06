@@ -38,14 +38,22 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
 ) -> Result<String, RunnerError> {
     match &args.subcommand {
         BootstrapSubcommand::Clone {
-            plan, no_prompt, ..
+            plan,
+            no_prompt,
+            reuse_path,
+            ..
         } => {
             let request = resolve_bootstrap_request(&cwd, &args)?;
             if *plan {
                 return Ok(crate_render_bootstrap_plan(&request, args.output_json));
             }
 
-            maybe_confirm_bootstrap_path_reuse(&request.destination, args.output_json, *no_prompt)?;
+            maybe_confirm_bootstrap_path_reuse(
+                &request.destination,
+                args.output_json,
+                *no_prompt,
+                *reuse_path,
+            )?;
             let result = execute_bootstrap_request(&request, &cwd, args.output_json, *no_prompt)?;
             Ok(crate_render_bootstrap_result(&result, args.output_json))
         }
@@ -95,8 +103,13 @@ fn maybe_confirm_bootstrap_path_reuse(
     destination: &Path,
     output_json: bool,
     no_prompt: bool,
+    reuse_path: bool,
 ) -> Result<(), RunnerError> {
     if !is_existing_non_empty_dir(destination)? {
+        return Ok(());
+    }
+
+    if reuse_path {
         return Ok(());
     }
 
@@ -113,11 +126,14 @@ fn maybe_confirm_bootstrap_path_reuse(
             let mut stdout = io::stdout().lock();
             confirm_bootstrap_path_reuse_from_io(destination, &mut stdin, &mut stdout)
         }
-        PromptDecision::SuppressedByExplicitNonInteractive => Ok(()),
+        PromptDecision::SuppressedByExplicitNonInteractive => Err(RunnerError::task_invocation(format!(
+            "bootstrap destination already exists and is non-empty: {}. Pass --reuse-path to reuse it non-interactively, rerun from an interactive terminal to confirm reuse, or choose a different --path.",
+            destination.display()
+        ))),
         PromptDecision::SuppressedByJson
         | PromptDecision::SuppressedByPlan
         | PromptDecision::SuppressedByNonTty => Err(RunnerError::task_invocation(format!(
-            "bootstrap destination already exists and is non-empty: {}. Rerun from an interactive terminal to confirm reuse, pass --no-prompt to use the existing path non-interactively, or choose a different --path.",
+            "bootstrap destination already exists and is non-empty: {}. Rerun from an interactive terminal to confirm reuse, pass --reuse-path to reuse it non-interactively, or choose a different --path.",
             destination.display()
         ))),
     }

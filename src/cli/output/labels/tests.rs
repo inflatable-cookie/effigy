@@ -109,6 +109,7 @@ fn command_kind_and_name_maps_command_variants() {
             branch: None,
             db_seeds: Vec::new(),
             no_prompt: false,
+            reuse_path: false,
             start: true,
             plan: true,
         },

@@ -447,6 +447,7 @@ pub enum BootstrapSubcommand {
         branch: Option<String>,
         db_seeds: Vec<BootstrapDbSeedInput>,
         no_prompt: bool,
+        reuse_path: bool,
         start: bool,
         plan: bool,
     },

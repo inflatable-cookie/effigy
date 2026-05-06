@@ -10,7 +10,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "Phase 1 ships root clone/update, optional submodule sync, child repo checkout, bootstrap-local `run` steps, and automatic `[bootstrap].start` execution unless `--no-start` is passed.",
         ],
         &[
-            "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--no-start] [--plan] [--json]",
+            "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]",
             "effigy --json bootstrap <GIT_URL> --plan",
         ],
         &[
@@ -28,7 +28,11 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--no-prompt",
-                "Disable interactive bootstrap prompts for destination reuse and missing database seed inputs even on a real TTY",
+                "Disable interactive bootstrap prompts for missing database seed inputs even on a real TTY; pair with --reuse-path to reuse a non-empty destination non-interactively",
+            ),
+            (
+                "--reuse-path",
+                "Reuse a non-empty bootstrap destination without interactive confirmation",
             ),
             (
                 "--start",
