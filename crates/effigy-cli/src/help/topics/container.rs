@@ -78,7 +78,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--db-seed <FILE>|<TARGET>=<FILE>",
-                "Stage one SQL dump for `data seed`; single-database bundles can omit the target, multi-database bundles must name one. `data seed` currently targets the repo default container only.",
+                "Stage one SQL dump for `data seed`; single-database bundles can omit the target, multi-database bundles must name one, and a bare target reads `./<target>.sql`. `data seed` currently targets the repo default container only.",
             ),
             (
                 "--no-prompt",
@@ -102,6 +102,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container data dump --db-dump app=./app.sql --db-dump app_test=./app_test.sql",
             "effigy container web data import fixture-web-dev-db-data ./backup.tar.gz",
             "effigy container web data pull-production",
+            "effigy container data seed --db-seed legacy_mysql",
             "effigy container data seed --db-seed ./latest.sql",
             "effigy container data seed --db-seed cbs=./cbs.sql --db-seed cbs-mortcalc=./mortcalc.sql",
             "effigy container web logs --follow",

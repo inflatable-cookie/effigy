@@ -26,7 +26,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--db-seed <FILE>|<TARGET>=<FILE>",
-                "Stage one or more SQL dumps into the cloned repo for bootstrap-owned database seeding; multi-database bundles require named targets",
+                "Stage one or more SQL dumps into the cloned repo for bootstrap-owned database seeding; multi-database bundles require named targets, and a bare target reads `./<target>.sql`",
             ),
             (
                 "--fresh",
@@ -64,6 +64,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy bootstrap https://github.com/inflatable-cookie/loophole.git --path ./loophole --plan",
             "effigy bootstrap git@github.com:inflatable-cookie/loophole.git --branch main --no-start --plan",
             "effigy bootstrap git@github.com:inflatable-cookie/legacy.git --db-seed ./backups/latest.sql --start",
+            "effigy bootstrap git@github.com:acowtancy/market.git --db-seed legacy_mysql --start",
             "effigy bootstrap git@github.com:Cumberland-BS/cbs.git --db-seed cbs=./backups/cbs.sql --db-seed cbs-mortcalc=./backups/cbs-mortcalc.sql --start",
             "effigy bootstrap git@github.com:acowtancy/market.git --fresh --no-start",
             "effigy bootstrap teardown --yes",

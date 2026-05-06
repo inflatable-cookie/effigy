@@ -786,6 +786,36 @@ fn parse_container_data_seed_accepts_named_targets_and_flags() {
 }
 
 #[test]
+fn parse_container_data_seed_accepts_bare_target_shorthand() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "data".to_owned(),
+        "seed".to_owned(),
+        "--db-seed".to_owned(),
+        "legacy_mysql".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: None,
+                subcommand: ContainerDataSubcommand::Seed {
+                    db_seeds: vec![BootstrapDbSeedInput {
+                        target: Some("legacy_mysql".to_owned()),
+                        path: PathBuf::from("legacy_mysql.sql"),
+                    }],
+                    no_prompt: false,
+                    yes: false,
+                },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
 fn parse_named_container_data_seed_is_rejected() {
     let err = parse_command(vec![
         "container".to_owned(),

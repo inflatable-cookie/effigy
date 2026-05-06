@@ -921,10 +921,28 @@ pub(super) fn parse_bootstrap_db_seed(
         });
     }
 
+    if looks_like_bare_db_target(&value) {
+        return Ok(BootstrapDbSeedInput {
+            target: Some(value.clone()),
+            path: PathBuf::from(format!("{value}.sql")),
+        });
+    }
+
     Ok(BootstrapDbSeedInput {
         target: None,
         path: PathBuf::from(value),
     })
+}
+
+fn looks_like_bare_db_target(value: &str) -> bool {
+    !value.is_empty()
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.starts_with('.')
+        && !value.contains('.')
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
 fn parse_bootstrap_deps<I>(args: I) -> Result<Command, CliParseError>

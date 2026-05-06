@@ -115,6 +115,7 @@ Bundle-backed repos do not need extra seed mapping config for the normal case:
   `--db-seed ./dump.sql` binds to that one target automatically
 - if `[bundle].databases` declares multiple databases, each `--db-seed` must
   use `<target>=<file>` and the target must match one declared bundle database
+- a bare target like `--db-seed legacy_mysql` reads `./legacy_mysql.sql`
 - repos with sidecar databases can add extra logical targets under
   `[data.targets.<name>]` without folding them into the main bundle database
   list; those targets then work in bootstrap DB seed, `container data seed`,
