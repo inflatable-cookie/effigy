@@ -42,13 +42,29 @@ pub fn run_cli(raw_args: Vec<String>) {
     let suppress_header = internal_suppress_header || command_requests_json(&cmd, global_json_mode);
     let emit_json_envelope = !internal_suppress_header && suppress_header;
     let (command_kind, command_name) = command_kind_and_name(&cmd);
-    let runtime_context = EffigyRuntimeContext::capture_lossy(
+    let runtime_context = match EffigyRuntimeContext::capture_lossy(
         Some(cwd.clone()),
         crate::runner::command_repo_override_for_context(&cmd),
-    )
-    .unwrap_or_else(|error| {
-        panic!("failed to capture runtime context after cwd was resolved: {error}")
-    });
+    ) {
+        Ok(context) => context,
+        Err(error) => {
+            let message =
+                format!("failed to capture runtime context after cwd was resolved: {error}");
+            if emit_json_envelope {
+                emit_json_envelope_error(
+                    1,
+                    command_kind,
+                    &command_name,
+                    "RuntimeContextError",
+                    &message,
+                    None,
+                );
+            }
+            let mut renderer = PlainRenderer::stderr(output_mode);
+            let _ = renderer.error_block(&MessageBlock::new("Task failed", message));
+            std::process::exit(1);
+        }
+    };
     let command_root = runtime_context.command_root().to_path_buf();
     let context = CliExecutionContext {
         output_mode,
