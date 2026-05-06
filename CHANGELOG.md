@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-06
+
 ### Breaking
 - **Rhai script steps:** host helpers are grouped into namespaces (`scan::…`,
   `fs::…`, `deploy::…`, and so on). Only `log`, `log_warn`, and `env` stay at the
