@@ -115,6 +115,10 @@ Bundle-backed repos do not need extra seed mapping config for the normal case:
   `--db-seed ./dump.sql` binds to that one target automatically
 - if `[bundle].databases` declares multiple databases, each `--db-seed` must
   use `<target>=<file>` and the target must match one declared bundle database
+- repos with sidecar databases can add extra logical targets under
+  `[data.targets.<name>]` without folding them into the main bundle database
+  list; those targets then work in bootstrap DB seed, `container data seed`,
+  and `container data dump`
 - if `--db-seed` is supplied for a non-bundle repo, the old unnamed staged-file
   contract still works
 

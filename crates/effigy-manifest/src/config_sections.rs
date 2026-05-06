@@ -726,6 +726,20 @@ pub struct ManifestContainerDataConfig {
     pub pull_production: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestDataConfig {
+    #[serde(default)]
+    pub targets: BTreeMap<String, ManifestDataTargetConfig>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestDataTargetConfig {
+    pub service: String,
+    pub database: String,
+}
+
 #[derive(Debug, serde::Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]

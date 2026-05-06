@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- **Logical database targets:** optional **`[data.targets.<name>]`** entries let
+  bootstrap DB seed, **`effigy container data seed`**, and
+  **`effigy container data dump`** address sidecar databases without overloading
+  **`[bundle].databases`**.
+
 ## [0.4.0] - 2026-05-06
 
 ### Breaking

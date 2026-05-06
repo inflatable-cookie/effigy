@@ -168,6 +168,8 @@ effigy workspace [<WORKSPACE>] [--system <NAME>]
 and stays on the generated-compose path.
 `effigy container data dump` exports logical SQL dumps from generated-compose
 database services; `data export` still exports raw named-volume archives.
+Use `[data.targets.<name>]` when a sidecar DB should participate in
+bootstrap/data seed/data dump without becoming part of `[bundle].databases`.
 
 ### Bundles, Bootstrap, and Demos
 

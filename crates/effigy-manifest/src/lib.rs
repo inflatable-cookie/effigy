@@ -36,14 +36,14 @@ pub use config_sections::{
     ManifestContainerHostConfig, ManifestContainerHostMount, ManifestContainerHostMountTable,
     ManifestContainerHostProcess, ManifestContainerHostProcessRestart, ManifestContainerOnTaskExit,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
-    ManifestContainersConfig, ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus,
-    ManifestDistributionConfig, ManifestDistributionMetadataConfig,
-    ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
-    ManifestDocsPolicyConfig, ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig,
-    ManifestIsolationAdoption, ManifestIsolationConfig, ManifestJsPackageManager,
-    ManifestPackageManagerConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestShellConfig,
-    ManifestSystemConfig, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
-    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig, ManifestDemoConfig,
+    ManifestDemoMode, ManifestDemoStatus, ManifestDistributionConfig,
+    ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,
+    ManifestDistributionPreflightConfig, ManifestDocsPolicyConfig, ManifestEnvSchemaConfig,
+    ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption, ManifestIsolationConfig,
+    ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestReleaseConfig,
+    ManifestScanConfig, ManifestShellConfig, ManifestSystemConfig, ManifestSystemsConfig,
+    ManifestTaskDefaultsConfig, ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,
@@ -118,6 +118,8 @@ pub struct TaskManifest {
     pub defer: Option<ManifestDefer>,
     #[serde(default)]
     pub env: BTreeMap<String, ManifestEnvEntry>,
+    #[serde(default)]
+    pub data: Option<ManifestDataConfig>,
     #[serde(default)]
     pub test: Option<ManifestTestConfig>,
     #[serde(default)]

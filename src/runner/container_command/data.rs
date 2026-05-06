@@ -18,7 +18,7 @@ use super::runtime_error_from_runner;
 use super::support::{ensure_shared_services_running, wait_for_container_ready};
 use super::RunnerError;
 use crate::runner::db_seed::{
-    bundle_database_targets, db_seed_env, maybe_prompt_db_seed_inputs, run_db_seed_task,
+    db_seed_env, logical_database_targets, maybe_prompt_db_seed_inputs, run_db_seed_task,
     stage_db_seed_files,
 };
 use crate::runner::manifest::load_task_manifest;
@@ -370,7 +370,7 @@ fn resolve_db_dump_plans(
         )));
     }
 
-    let declared_targets = manifest.bundle.as_ref().and_then(bundle_database_targets);
+    let declared_targets = logical_database_targets(manifest);
     let resolved_dumps = resolve_db_dump_targets(repo_root, manifest, db_dumps)?;
     let mut seen_paths = BTreeSet::new();
     let mut plans = Vec::with_capacity(resolved_dumps.len());
@@ -382,17 +382,36 @@ fn resolve_db_dump_plans(
                 dump.path.display()
             )));
         }
-        let database = dump.target.clone().or_else(|| {
+        let declared_target = dump.target.as_deref().and_then(|target| {
             declared_targets
-                .as_ref()
-                .and_then(|targets| (targets.len() == 1).then(|| targets[0].clone()))
+                .iter()
+                .find(|declared| declared.name == target)
+                .cloned()
         });
-        let database = database.or_else(|| services.first().and_then(|service| service.primary_database.clone())).ok_or_else(|| {
-            RunnerError::task_invocation(
-                "container data dump could not resolve a database target from the manifest",
-            )
-        })?;
-        let service = resolve_db_dump_service_for_database(&services, &database)?;
+        let database = declared_target
+            .as_ref()
+            .map(|target| target.database.clone())
+            .or_else(|| match declared_targets.as_slice() {
+                [declared] => Some(declared.database.clone()),
+                _ => None,
+            })
+            .or_else(|| {
+                services
+                    .first()
+                    .and_then(|service| service.primary_database.clone())
+            })
+            .ok_or_else(|| {
+                RunnerError::task_invocation(
+                    "container data dump could not resolve a database target from the manifest",
+                )
+            })?;
+        let service = resolve_db_dump_service_for_database(
+            &services,
+            declared_target
+                .as_ref()
+                .and_then(|target| target.service.as_deref()),
+            &database,
+        )?;
         let command = build_db_dump_command(service, &database);
         plans.push(DbDumpPlan {
             target: dump.target,
@@ -449,11 +468,29 @@ fn collect_db_dump_services(
 
 fn resolve_db_dump_service_for_database<'a>(
     services: &'a [DbDumpService],
+    requested_service: Option<&str>,
     database: &str,
 ) -> Result<&'a DbDumpService, RunnerError> {
+    if let Some(requested_service) = requested_service {
+        let service = services
+            .iter()
+            .find(|service| service.service_name == requested_service)
+            .ok_or_else(|| {
+                RunnerError::task_invocation(format!(
+                    "database dump target references unknown service `{requested_service}`"
+                ))
+            })?;
+        return Ok(service);
+    }
+
     let explicit_matches = services
         .iter()
-        .filter(|service| service.declared_databases.iter().any(|entry| entry == database))
+        .filter(|service| {
+            service
+                .declared_databases
+                .iter()
+                .any(|entry| entry == database)
+        })
         .collect::<Vec<_>>();
     if explicit_matches.len() == 1 {
         return Ok(explicit_matches[0]);
@@ -525,32 +562,40 @@ fn resolve_db_dump_targets(
     manifest: &effigy_manifest::TaskManifest,
     db_dumps: &[ContainerDbDumpInput],
 ) -> Result<Vec<ContainerDbDumpInput>, RunnerError> {
-    let declared_targets = manifest.bundle.as_ref().and_then(bundle_database_targets);
+    let declared_targets = logical_database_targets(manifest);
     let mut seen_targets = BTreeSet::new();
     let mut resolved = Vec::with_capacity(db_dumps.len());
     for dump in db_dumps {
         let effective_target = match dump.target.as_deref() {
             Some(target) => {
-                if let Some(declared_targets) = declared_targets.as_ref() {
-                    if !declared_targets.iter().any(|declared| declared == target) {
-                        return Err(RunnerError::task_invocation(format!(
-                            "db dump target `{target}` is not declared in `[bundle].databases` for {}; valid targets: {}",
-                            repo_root.join(TASK_MANIFEST_FILE).display(),
-                            declared_targets.join(", ")
-                        )));
-                    }
+                if !declared_targets.is_empty()
+                    && !declared_targets
+                        .iter()
+                        .any(|declared| declared.name == target)
+                {
+                    return Err(RunnerError::task_invocation(format!(
+                        "db dump target `{target}` is not declared in `[bundle].databases` or `[data.targets]` for {}; valid targets: {}",
+                        repo_root.join(TASK_MANIFEST_FILE).display(),
+                        declared_targets
+                            .iter()
+                            .map(|target| target.name.clone())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )));
                 }
                 Some(target.to_owned())
             }
-            None => match declared_targets.as_ref() {
-                Some(declared_targets) if declared_targets.len() == 1 => {
-                    Some(declared_targets[0].clone())
-                }
-                Some(declared_targets) if declared_targets.len() > 1 => {
+            None => match declared_targets.as_slice() {
+                [declared] => Some(declared.name.clone()),
+                targets if targets.len() > 1 => {
                     return Err(RunnerError::task_invocation(format!(
-                        "db dump output `{}` must name a target because `[bundle].databases` declares multiple databases: {}",
+                        "db dump output `{}` must name a target because multiple database targets are declared in `[bundle].databases` and `[data.targets]`: {}",
                         dump.path.display(),
-                        declared_targets.join(", ")
+                        targets
+                            .iter()
+                            .map(|target| target.name.clone())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )));
                 }
                 _ => None,
@@ -1085,6 +1130,54 @@ database = "acowtancy"
         assert_eq!(plans[0].catalog, "postgres");
         assert!(plans[0].command.iter().any(|arg| arg == "pg_dump"));
         assert_eq!(plans[1].service_name, "postgres");
+    }
+
+    #[test]
+    fn resolve_db_dump_plans_supports_explicit_data_targets() {
+        let manifest: TaskManifest = toml::from_str(
+            r#"
+[bundle]
+base = "underlay"
+databases = ["acowtancy", "acowtancy_test"]
+
+[data.targets.legacy_mysql]
+service = "mysql"
+database = "acowtancy"
+
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "workspace"
+
+[containers.stack.services.postgres]
+catalog = "postgres"
+database = "acowtancy"
+databases = ["acowtancy", "acowtancy_test"]
+
+[containers.stack.services.mysql]
+catalog = "mariadb"
+database = "acowtancy"
+"#,
+        )
+        .expect("manifest");
+        let root = temp_repo("data-dump-explicit-target");
+
+        let plans = resolve_db_dump_plans(
+            &root,
+            &manifest,
+            "stack",
+            &[ContainerDbDumpInput {
+                target: Some("legacy_mysql".to_owned()),
+                path: PathBuf::from("/tmp/legacy.sql"),
+            }],
+        )
+        .expect("plans");
+
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].service_name, "mysql");
+        assert_eq!(plans[0].database, "acowtancy");
+        assert_eq!(plans[0].target.as_deref(), Some("legacy_mysql"));
     }
 
     #[test]
