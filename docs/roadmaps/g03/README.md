@@ -50,6 +50,7 @@ Current milestones:
 - [`033-runtime-container-caller-migration-and-cleanup.md`](./033-runtime-container-caller-migration-and-cleanup.md) (complete)
 - [`034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md) (complete)
 - [`035-contract-promotion-public-cleanup-breaks-and-closeout.md`](./035-contract-promotion-public-cleanup-breaks-and-closeout.md) (complete)
+- [`036-artifact-substrate-for-seed-apply-and-capture-workflows.md`](./036-artifact-substrate-for-seed-apply-and-capture-workflows.md) (planned; standalone artifact substrate for local/OCI seed, apply, capture, and Acowtancy UAT workflows)
 
 Architecture anchor:
 
@@ -72,8 +73,10 @@ Rules:
 - `g03.033` is complete
 - `g03.034` is complete
 - `g03.035` is complete
-- no active `g03` ready card is advertised
+- `g03.036` is planned with ready card `376-plan-artifact-contract-and-acowtancy-boundary`
 
 ## Next Task
 
-Planning stop. Choose the next roadmap or request release work explicitly.
+Start
+[`036-artifact-substrate-for-seed-apply-and-capture-workflows.md`](./036-artifact-substrate-for-seed-apply-and-capture-workflows.md)
+card `376-plan-artifact-contract-and-acowtancy-boundary`.
