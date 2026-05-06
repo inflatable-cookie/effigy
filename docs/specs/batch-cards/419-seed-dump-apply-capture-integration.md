@@ -2,9 +2,10 @@
 
 Lane: [`042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md`](../042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md)
 
-Status: In Progress
+Status: Complete
 Owner: Platform
 Created: 2026-05-06
+Completed: 2026-05-06
 
 ## Goal
 
@@ -35,9 +36,9 @@ This card is complete when at least one seed path resolves through
 `effigy-artifacts` with behavior preserved for existing local SQL inputs, and
 the remaining seed/dump surfaces have precise follow-up hooks.
 
-## Progress
+## Closeout
 
-Started the first seed integration:
+Completed the first seed integration:
 
 - root crate depends on `effigy-artifacts`
 - `stage_db_seed_files(...)` now stages each local seed through
@@ -47,15 +48,11 @@ Started the first seed integration:
 - a focused unit test asserts both the legacy staged seed path and the new
   `effigy-artifact.json` metadata
 
-Validation status:
+Validation passed:
 
 - `cargo test -p effigy-artifacts` passes
-- `cargo test -p effigy db_seed` is blocked by unrelated dirty
-  container/cache changes in this worktree:
-  - unresolved `effigy_runtime::data::run_container_cache_list*` imports
-  - `resolve_db_dump_output_paths` test references in
-    `src/runner/container_command/data.rs`
+- `cargo test -p effigy --lib db_seed` passes
 
 ## Next Task
 
-Card `420-acowtancy-proof-and-closeout`.
+Card [`420-acowtancy-proof-and-closeout.md`](./420-acowtancy-proof-and-closeout.md).

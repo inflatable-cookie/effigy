@@ -36,7 +36,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container <NAME> data import <VOLUME> <PATH> [--repo <PATH>] [--yes] [--json]",
             "effigy container data pull-production [--repo <PATH>] [--yes] [--json]",
             "effigy container <NAME> data pull-production [--repo <PATH>] [--yes] [--json]",
-            "effigy container data seed [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--yes] [--repo <PATH>] [--json]",
+            "effigy container data seed [--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>]... [--no-prompt] [--yes] [--repo <PATH>] [--json]",
             "effigy container <NAME> logs [--repo <PATH>] [--service <NAME>] [--follow] [--json]",
             "effigy container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>]",
             "effigy container <NAME> reset [--repo <PATH>] [--keep-data] [--json]",
@@ -82,8 +82,8 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
                 "Compatibility alias for positional `data dump` specs. A bare target writes `./<target>.sql`. Output paths are relative to the invocation cwd unless absolute.",
             ),
             (
-                "--db-seed <FILE>|<TARGET>=<FILE>",
-                "Stage one SQL dump for `data seed`; single-database bundles can omit the target, multi-database bundles must name one, and a bare target reads `./<target>.sql`. `data seed` currently targets the repo default container only.",
+                "--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>",
+                "Stage one SQL dump or explicit `oci://` artifact for `data seed`; single-database bundles can omit the target, multi-database bundles must name one, and a bare target reads `./<target>.sql`. `data seed` currently targets the repo default container only.",
             ),
             (
                 "--no-prompt",
@@ -113,6 +113,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container web data pull-production",
             "effigy container data seed --db-seed legacy_mysql",
             "effigy container data seed --db-seed ./latest.sql",
+            "effigy container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat",
             "effigy container data seed --db-seed cbs=./cbs.sql --db-seed cbs-mortcalc=./mortcalc.sql",
             "effigy container web logs --follow",
             "effigy container web shell --command \"php artisan tinker\"",

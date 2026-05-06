@@ -17,6 +17,7 @@ use super::lifecycle::run_container_exec_capture;
 use super::runtime_error_from_runner;
 use super::support::{ensure_shared_services_running, wait_for_container_ready};
 use super::RunnerError;
+use crate::runner::artifact_command::capture_artifact_report;
 use crate::runner::db_seed::{
     db_seed_env, logical_database_targets, maybe_prompt_db_seed_inputs, run_db_seed_task,
     stage_db_seed_files,
@@ -156,7 +157,7 @@ pub(super) fn resolve_db_dump_output_paths(
             let expanded = expand_tilde(&dump.path);
             ContainerDbDumpInput {
                 target: dump.target.clone(),
-                path: if expanded.is_absolute() {
+                path: if is_oci_artifact_path(&expanded) || expanded.is_absolute() {
                     expanded
                 } else {
                     cwd.join(expanded)
@@ -183,8 +184,15 @@ pub(super) fn run_container_data_dump(
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     let plans = resolve_db_dump_plans(repo_root, &manifest, &policy.name, db_dumps)?;
 
+    let mut dump_reports = Vec::with_capacity(plans.len());
     for plan in &plans {
-        if let Some(parent) = plan.output_path.parent() {
+        let artifact_destination = is_oci_artifact_path(&plan.output_path);
+        let write_path = if artifact_destination {
+            planned_capture_dump_source_path(repo_root, plan)
+        } else {
+            plan.output_path.clone()
+        };
+        if let Some(parent) = write_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 RunnerError::task_invocation(format!(
                     "failed to create dump output directory {}: {error}",
@@ -199,12 +207,27 @@ pub(super) fn run_container_data_dump(
             Some(&plan.service_name),
             &plan.command,
         )?;
-        fs::write(&plan.output_path, &output.stdout).map_err(|error| {
+        fs::write(&write_path, &output.stdout).map_err(|error| {
             RunnerError::task_invocation(format!(
                 "failed to write SQL dump {}: {error}",
-                plan.output_path.display()
+                write_path.display()
             ))
         })?;
+        let artifact_capture = if artifact_destination {
+            Some(capture_artifact_report(
+                &write_path.display().to_string(),
+                &plan.output_path.display().to_string(),
+                Some("sql-dump"),
+                None,
+                repo_root,
+                repo_root,
+                false,
+                false,
+            )?)
+        } else {
+            None
+        };
+        dump_reports.push((plan, write_path, artifact_capture));
     }
 
     if output_json {
@@ -213,29 +236,66 @@ pub(super) fn run_container_data_dump(
             "ok": true,
             "container": policy.name,
             "count": plans.len(),
-            "dumps": plans
+            "dumps": dump_reports
                 .iter()
-                .map(|plan| serde_json::json!({
+                .map(|(plan, write_path, artifact_capture)| serde_json::json!({
                     "target": plan.target,
                     "database": plan.database,
                     "service": plan.service_name,
                     "catalog": plan.catalog,
                     "path": plan.output_path.display().to_string(),
+                    "local_path": write_path.display().to_string(),
+                    "artifact_capture": artifact_capture,
                 }))
                 .collect::<Vec<_>>(),
         })
         .to_string())
     } else {
-        let detail = plans
+        let detail = dump_reports
             .iter()
-            .map(|plan| match plan.target.as_deref() {
-                Some(target) => format!("{target}={}", plan.output_path.display()),
-                None => plan.output_path.display().to_string(),
-            })
+            .map(
+                |(plan, write_path, artifact_capture)| match plan.target.as_deref() {
+                    Some(target) if artifact_capture.is_some() => format!(
+                        "{target}={} (planned artifact from {})",
+                        plan.output_path.display(),
+                        write_path.display()
+                    ),
+                    Some(target) => format!("{target}={}", plan.output_path.display()),
+                    None if artifact_capture.is_some() => format!(
+                        "{} (planned artifact from {})",
+                        plan.output_path.display(),
+                        write_path.display()
+                    ),
+                    None => plan.output_path.display().to_string(),
+                },
+            )
             .collect::<Vec<_>>()
             .join(", ");
         Ok(format!("[ok] dumped local databases to {detail}"))
     }
+}
+
+fn is_oci_artifact_path(path: &Path) -> bool {
+    path.as_os_str().to_string_lossy().starts_with("oci://")
+}
+
+fn planned_capture_dump_source_path(repo_root: &Path, plan: &DbDumpPlan) -> PathBuf {
+    let target = plan
+        .target
+        .as_deref()
+        .unwrap_or(plan.database.as_str())
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    repo_root
+        .join(".effigy/local/data-dumps")
+        .join(format!("{target}.sql"))
 }
 
 pub(super) fn maybe_confirm_container_data_import(
@@ -941,8 +1001,8 @@ mod tests {
         confirm_container_data_import_from_io, confirm_container_data_pull_production_from_io,
         confirm_container_data_seed_from_io, container_data_import_prompt_required,
         container_data_pull_production_prompt_required, container_data_seed_prompt_required,
-        resolve_db_dump_plans, run_container_data_dump, run_container_data_pull_production,
-        run_container_data_seed,
+        resolve_db_dump_output_paths, resolve_db_dump_plans, run_container_data_dump,
+        run_container_data_pull_production, run_container_data_seed,
     };
     use effigy_bootstrap::BootstrapStagedDbSeed;
     use effigy_cli::{BootstrapDbSeedInput, ContainerDbDumpInput};
@@ -1490,5 +1550,22 @@ primary_service = "app"
         );
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, PathBuf::from("/repo/dump.sql"));
+    }
+
+    #[test]
+    fn resolve_db_dump_output_paths_preserves_oci_refs() {
+        let cwd = PathBuf::from("/repo");
+        let resolved = resolve_db_dump_output_paths(
+            &cwd,
+            &[ContainerDbDumpInput {
+                target: Some("app".to_owned()),
+                path: PathBuf::from("oci://ghcr.io/acme/uat-content:2026-05-06"),
+            }],
+        );
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved[0].path,
+            PathBuf::from("oci://ghcr.io/acme/uat-content:2026-05-06")
+        );
     }
 }

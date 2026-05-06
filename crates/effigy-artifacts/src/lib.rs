@@ -49,7 +49,7 @@ impl ArtifactSourceRef {
     pub fn display_ref(&self) -> String {
         match self {
             Self::Local(local) => local.path.display().to_string(),
-            Self::Oci(oci) => format!("oci://{}", oci.reference),
+            Self::Oci(oci) => format!("oci://{}", oci.redacted()),
         }
     }
 }
@@ -307,9 +307,10 @@ pub struct OciArtifactDescriptor {
 
 impl OciArtifactDescriptor {
     pub fn new(reference: &OciArtifactRef) -> Self {
+        let redacted_reference = reference.redacted();
         Self {
-            reference: reference.reference().to_owned(),
-            redacted_reference: reference.redacted(),
+            reference: redacted_reference.clone(),
+            redacted_reference,
             digest: digest_from_ref(reference.reference()),
             media_type: None,
             size: None,
@@ -336,6 +337,7 @@ impl OciArtifactDescriptor {
 pub struct OciArtifactPullReport {
     pub descriptor: OciArtifactDescriptor,
     pub pulled_root: PathBuf,
+    pub primary_files: Vec<PathBuf>,
 }
 
 pub trait OciArtifactAdapter {
@@ -873,6 +875,12 @@ mod tests {
         };
 
         assert_eq!(oci.redacted(), "***@ghcr.io/acowtancy/private:latest");
+        assert_eq!(
+            ArtifactSourceRef::Oci(oci.clone()).display_ref(),
+            "oci://***@ghcr.io/acowtancy/private:latest"
+        );
+        let descriptor = OciArtifactDescriptor::new(&oci);
+        assert_eq!(descriptor.reference, "***@ghcr.io/acowtancy/private:latest");
     }
 
     #[test]

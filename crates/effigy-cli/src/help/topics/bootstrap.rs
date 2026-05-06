@@ -11,7 +11,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "Use `--fresh` when you need an isolated throwaway runtime namespace for bootstrap testing. Pair it with `effigy bootstrap teardown` afterward to clean up the session-scoped volumes and runtime.",
         ],
         &[
-            "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]",
+            "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]",
             "effigy bootstrap children status [--json]",
             "effigy bootstrap children sync [--fetch-only] [--checkout] [--json]",
             "effigy bootstrap teardown [--yes] [--json]",
@@ -27,8 +27,8 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
                 "Override the initial branch/ref target for clone/update",
             ),
             (
-                "--db-seed <FILE>|<TARGET>=<FILE>",
-                "Stage one or more SQL dumps into the cloned repo for bootstrap-owned database seeding; multi-database bundles require named targets, and a bare target reads `./<target>.sql`",
+                "--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>",
+                "Stage one or more SQL dumps or explicit `oci://` artifacts into the cloned repo for bootstrap-owned database seeding; multi-database bundles require named targets, and a bare target reads `./<target>.sql`",
             ),
             (
                 "--fresh",
@@ -74,6 +74,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy bootstrap https://github.com/inflatable-cookie/loophole.git --path ./loophole --plan",
             "effigy bootstrap git@github.com:inflatable-cookie/loophole.git --branch main --no-start --plan",
             "effigy bootstrap git@github.com:inflatable-cookie/legacy.git --db-seed ./backups/latest.sql --start",
+            "effigy bootstrap git@github.com:inflatable-cookie/legacy.git --db-seed app=oci://ghcr.io/acme/private-data:uat --start",
             "effigy bootstrap git@github.com:acowtancy/market.git --db-seed legacy_mysql --start",
             "effigy bootstrap git@github.com:Cumberland-BS/cbs.git --db-seed cbs=./backups/cbs.sql --db-seed cbs-mortcalc=./backups/cbs-mortcalc.sql --start",
             "effigy bootstrap git@github.com:acowtancy/market.git --fresh --no-start",

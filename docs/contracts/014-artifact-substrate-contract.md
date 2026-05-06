@@ -98,6 +98,23 @@ Examples:
 Local paths stay useful. OCI is a transport and storage wrapper, not a
 replacement for SQL payloads.
 
+## OCI Transport Rules
+
+Live OCI inspect and pull use the local `oras` CLI behind Effigy's
+`OciArtifactAdapter` boundary.
+
+Authentication is operator-owned:
+
+- use the registry client auth store, for example `oras login ghcr.io`
+- UAT should provision auth before running Effigy artifact commands
+- seed config should pass explicit artifact refs, not tokens
+- env files must not be used as the artifact-source selection mechanism
+
+Effigy may pass a private ref to the transport process, but command output,
+JSON reports, metadata, and errors must not expose registry credentials or
+userinfo. Reportable OCI refs are redacted before they leave the artifact
+boundary.
+
 ## Metadata Rules
 
 Every resolved artifact must have metadata shaped like
@@ -151,9 +168,9 @@ Required integrations:
 For seed operations, local files and OCI artifacts must resolve to the same
 staged artifact shape before app-specific seed logic runs.
 
-For dump operations, local destinations write local SQL payloads. OCI
-destinations must stage a dump, package metadata, push the artifact, and report
-the immutable digest.
+For dump operations, local destinations write local SQL payloads today. OCI
+destinations require the later capture/push surface: stage the dump, package
+metadata, push the artifact, and report the immutable digest.
 
 ## UAT and Deployment Rules
 
@@ -182,6 +199,60 @@ An apply record should include:
 
 The app should own DB-level idempotency and migration history. Effigy owns the
 outer artifact operation record.
+
+## Capture and Push Rules
+
+Write-side OCI behavior must be explicit and two-phase by default.
+
+Command shape:
+
+```sh
+effigy artifact capture <SOURCE_PATH> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--push]
+effigy container data dump <TARGET>=oci://<REF> [--environment <LABEL>] [--push]
+```
+
+First implementation rule:
+
+- capture always stages a local artifact first
+- push is a separate explicit step unless `--push` is supplied
+- `container data dump <target>=oci://...` should dump to a local staged
+  artifact, then push only when `--push` is explicit
+- without `--push`, dump-to-OCI should report the staged artifact and planned
+  target ref, not mutate the registry
+
+Metadata packaged for push:
+
+- `effigy-artifact.json`
+- primary payload files
+- environment label when supplied
+- source command or source path
+- artifact kind
+- capture timestamp when available
+
+Tag and digest rules:
+
+- digest-pinned refs are invalid push destinations
+- mutable tags are allowed only as explicit operator input
+- pushing to a tag should report the immutable pushed digest
+- overwriting an existing tag requires an explicit future `--overwrite` flag;
+  first implementation should fail or rely on the registry/client refusal
+- UAT snapshot refs should include a meaningful timestamp or release-candidate
+  label, not `latest`
+
+Authentication and authorization:
+
+- use the existing registry-client auth store, for example `oras login`
+- do not accept registry tokens in artifact refs
+- do not put push credentials in seed/dump env files
+- UAT deployment must provision auth before running capture/push commands
+
+Acowtancy/Farmyard ownership:
+
+- Effigy captures, stages, pushes, and reports outer artifact facts
+- Farmyard decides which app-local snapshot or content payload is valid to
+  capture
+- Farmyard records app-level migration/content layering state
+- Effigy records artifact-level operation state
 
 ## Security Rules
 

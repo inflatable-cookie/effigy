@@ -1,3 +1,5 @@
+#[path = "lib_tests_parse_tests/artifact_option_tests.rs"]
+mod artifact_option_tests;
 #[path = "lib_tests_parse_tests/bootstrap_option_tests.rs"]
 mod bootstrap_option_tests;
 #[path = "lib_tests_parse_tests/catalog_and_container_option_tests.rs"]

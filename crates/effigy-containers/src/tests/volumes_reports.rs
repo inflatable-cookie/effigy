@@ -587,8 +587,10 @@ fn cache_list_all_report_groups_by_project_in_text() {
 
     assert_eq!(report.json["schema"], "effigy.container.cache-list-all.v1");
     assert_eq!(report.json["projects"].as_array().map(Vec::len), Some(2));
-    assert!(report.success_text.contains("contact-patch-dev:"));
-    assert!(report.success_text.contains("underlay-reference-dev:"));
+    assert!(report.success_text.contains("contact-patch-dev:\n- "));
+    assert!(report
+        .success_text
+        .contains("\n\nunderlay-reference-dev:\n- "));
     assert!(!report.success_text.contains("project="));
 }
 

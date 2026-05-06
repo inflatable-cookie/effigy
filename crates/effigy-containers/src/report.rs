@@ -813,7 +813,10 @@ pub fn cache_list_all_report(
         in_use_count,
         volumes.len().saturating_sub(in_use_count),
     )];
-    for (project, caches) in grouped {
+    for (index, (project, caches)) in grouped.into_iter().enumerate() {
+        if index > 0 {
+            lines.push(String::new());
+        }
         lines.push(format!("{project}:"));
         for volume in caches {
             let size = volume

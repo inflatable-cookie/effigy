@@ -68,6 +68,5 @@ Recently completed:
 
 ## Next Task
 
-Continue card
-[`419-seed-dump-apply-capture-integration.md`](./batch-cards/419-seed-dump-apply-capture-integration.md)
-after the unrelated container/cache compile blockers are resolved or isolated.
+Card
+[`427-implement-live-oci-push-through-artifact-adapter.md`](./batch-cards/427-implement-live-oci-push-through-artifact-adapter.md).

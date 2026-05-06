@@ -884,6 +884,37 @@ fn parse_container_data_seed_accepts_named_targets_and_flags() {
 }
 
 #[test]
+fn parse_container_data_seed_accepts_named_oci_artifact_ref() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "data".to_owned(),
+        "seed".to_owned(),
+        "--db-seed".to_owned(),
+        "app=oci://ghcr.io/acme/private-data:uat".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: None,
+                subcommand: ContainerDataSubcommand::Seed {
+                    db_seeds: vec![BootstrapDbSeedInput {
+                        target: Some("app".to_owned()),
+                        path: PathBuf::from("oci://ghcr.io/acme/private-data:uat"),
+                    }],
+                    no_prompt: false,
+                    yes: false,
+                },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
 fn parse_container_data_seed_accepts_bare_target_shorthand() {
     let cmd = parse_command(vec![
         "container".to_owned(),

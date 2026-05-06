@@ -423,6 +423,14 @@ pub enum ArtifactSubcommand {
         source: String,
         farmyard_handoff: bool,
     },
+    Capture {
+        source: String,
+        destination: String,
+        kind: Option<String>,
+        environment_label: Option<String>,
+        farmyard_handoff: bool,
+        push: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

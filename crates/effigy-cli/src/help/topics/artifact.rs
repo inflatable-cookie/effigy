@@ -1,0 +1,42 @@
+use super::super::{HelpRenderer, HelpResult};
+use super::shared::render_standard_topic_help;
+
+pub(crate) fn render_artifact_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
+    render_standard_topic_help(
+        renderer,
+        "artifact",
+        &[
+            "Inspect and stage standalone data artifacts for seed, apply, and capture workflows.",
+            "Local files are staged into the repo-owned Effigy artifact cache. OCI references are explicit with `oci://` and use the local `oras` CLI plus its normal registry auth config.",
+        ],
+        &[
+            "effigy artifact inspect <REF|PATH> [--repo <PATH>] [--farmyard-handoff] [--json]",
+            "effigy artifact stage <REF|PATH> [--repo <PATH>] [--farmyard-handoff] [--json]",
+            "effigy artifact capture <SOURCE_PATH> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--farmyard-handoff] [--json]",
+        ],
+        &[
+            ("--repo <PATH>", "Override target repository path"),
+            ("--ref oci://<REF>", "Record the planned OCI destination for `capture`"),
+            (
+                "--kind <KIND>",
+                "Override captured artifact kind such as `sql-dump` or `content-overlay`",
+            ),
+            (
+                "--environment <LABEL>",
+                "Attach an environment label such as `uat` to captured metadata",
+            ),
+            (
+                "--farmyard-handoff",
+                "Include a stable Farmyard handoff block for app-local migration tools",
+            ),
+            ("--json", "Render machine-readable artifact payloads"),
+            ("-h, --help", "Print command help"),
+        ],
+        &[
+            "effigy artifact inspect seed.sql --json",
+            "effigy artifact stage ./data/legacy.sql.gz --farmyard-handoff --json",
+            "effigy artifact capture ./dumps/uat.sql.gz --ref oci://ghcr.io/acme/uat-content:2026-05-06 --environment uat --json",
+            "effigy artifact inspect oci://ghcr.io/acme/private-data:uat",
+        ],
+    )
+}

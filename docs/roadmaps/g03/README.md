@@ -50,7 +50,7 @@ Current milestones:
 - [`033-runtime-container-caller-migration-and-cleanup.md`](./033-runtime-container-caller-migration-and-cleanup.md) (complete)
 - [`034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md`](./034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md) (complete)
 - [`035-contract-promotion-public-cleanup-breaks-and-closeout.md`](./035-contract-promotion-public-cleanup-breaks-and-closeout.md) (complete)
-- [`036-artifact-substrate-for-seed-apply-and-capture-workflows.md`](./036-artifact-substrate-for-seed-apply-and-capture-workflows.md) (planned; standalone artifact substrate for local/OCI seed, apply, capture, and Acowtancy UAT workflows)
+- [`036-artifact-substrate-for-seed-apply-and-capture-workflows.md`](./036-artifact-substrate-for-seed-apply-and-capture-workflows.md) (active; next card implements live OCI push through artifact adapter)
 
 Architecture anchor:
 
@@ -73,11 +73,8 @@ Rules:
 - `g03.033` is complete
 - `g03.034` is complete
 - `g03.035` is complete
-- `g03.036` is active; card `419-seed-dump-apply-capture-integration` is in progress
+- `g03.036` is active with ready card `421-implement-artifact-inspect-stage-and-farmyard-handoff`
 
 ## Next Task
 
-Continue
-[`036-artifact-substrate-for-seed-apply-and-capture-workflows.md`](./036-artifact-substrate-for-seed-apply-and-capture-workflows.md)
-card `419-seed-dump-apply-capture-integration` after the unrelated
-container/cache compile blockers are resolved or isolated.
+Start card `421-implement-artifact-inspect-stage-and-farmyard-handoff`.

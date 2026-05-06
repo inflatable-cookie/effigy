@@ -89,6 +89,11 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
             Some("distribution"),
         ),
         (
+            "effigy artifact",
+            "Inspect and stage standalone seed/apply/capture data artifacts",
+            Some("artifact"),
+        ),
+        (
             "effigy container",
             "Operate manifest-defined Colima-backed container environments",
             Some("container"),

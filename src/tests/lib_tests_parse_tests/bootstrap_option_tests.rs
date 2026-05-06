@@ -218,6 +218,38 @@ fn parse_bootstrap_accepts_named_db_seed_flags() {
 }
 
 #[test]
+fn parse_bootstrap_accepts_named_oci_db_seed_flags() {
+    let cmd = parse_command(vec![
+        "bootstrap".to_owned(),
+        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+        "--db-seed".to_owned(),
+        "app=oci://ghcr.io/acme/private-data:uat".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Bootstrap(BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+                path: None,
+                branch: None,
+                db_seeds: vec![BootstrapDbSeedInput {
+                    target: Some("app".to_owned()),
+                    path: PathBuf::from("oci://ghcr.io/acme/private-data:uat"),
+                }],
+                fresh: false,
+                no_prompt: false,
+                reuse_path: false,
+                start: true,
+                plan: false,
+            },
+            output_json: false,
+        })
+    );
+}
+
+#[test]
 fn parse_bootstrap_accepts_no_prompt_flag() {
     let cmd = parse_command(vec![
         "bootstrap".to_owned(),

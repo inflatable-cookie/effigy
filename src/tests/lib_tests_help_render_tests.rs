@@ -43,6 +43,8 @@ fn render_artifact_help_shows_stage_and_handoff_options() {
     assert!(rendered.contains("artifact Help"));
     assert!(rendered.contains("effigy artifact inspect <REF|PATH>"));
     assert!(rendered.contains("effigy artifact stage <REF|PATH>"));
+    assert!(rendered.contains("effigy artifact capture <SOURCE_PATH> --ref oci://<REF>"));
+    assert!(rendered.contains("--environment <LABEL>"));
     assert!(rendered.contains("--farmyard-handoff"));
     assert!(rendered.contains("oci://ghcr.io/acme/private-data:uat"));
 }
@@ -225,7 +227,7 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("--follow"));
     assert!(rendered.contains("--keep-data"));
     assert!(rendered.contains("--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>"));
-    assert!(rendered.contains("--db-seed <FILE>|<TARGET>=<FILE>"));
+    assert!(rendered.contains("--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>"));
     assert!(rendered.contains("--no-prompt"));
     assert!(rendered.contains("effigy container web data list"));
     assert!(rendered.contains("effigy container cache list --all"));
@@ -236,6 +238,8 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("effigy container data dump --db-dump legacy_mysql"));
     assert!(rendered.contains("effigy container data dump --db-dump ./latest.sql"));
     assert!(rendered.contains("effigy container data seed --db-seed ./latest.sql"));
+    assert!(rendered
+        .contains("effigy container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat"));
     assert!(rendered.contains("effigy container web reset --keep-data"));
     assert!(rendered.contains("attached sessions shut the environment down on owner exit"));
 }

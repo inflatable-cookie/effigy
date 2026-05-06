@@ -344,7 +344,7 @@ fn cli_container_help_is_command_specific() {
         "effigy container <NAME> data import <VOLUME> <PATH> [--repo <PATH>] [--yes] [--json]"
     ));
     assert!(stdout.contains(
-        "effigy container data seed [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--yes] [--repo <PATH>] [--json]"
+        "effigy container data seed [--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>]... [--no-prompt] [--yes] [--repo <PATH>] [--json]"
     ));
     assert!(!stdout.contains("distribution Help"));
 }

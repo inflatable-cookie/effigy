@@ -29,9 +29,36 @@ Batch cards are the execution units for active Effigy strict-lane work.
   fixture staging.
 
 - [`419-seed-dump-apply-capture-integration.md`](./419-seed-dump-apply-capture-integration.md)
-  is in progress. It started routing seed surfaces through the artifact model,
-  but focused runner validation is blocked by unrelated dirty container/cache
-  compile errors.
+  is complete. It routed local seed staging through the artifact model while
+  preserving the legacy `.effigy/local/db-seeds` handoff.
+
+- [`420-acowtancy-proof-and-closeout.md`](./420-acowtancy-proof-and-closeout.md)
+  is complete. It documented the Acowtancy proof boundary and handed off the
+  next artifact implementation card.
+
+- [`421-implement-artifact-inspect-stage-and-farmyard-handoff.md`](./421-implement-artifact-inspect-stage-and-farmyard-handoff.md)
+  is complete. It exposes local artifact inspect/stage and a Farmyard-compatible
+  handoff output.
+
+- [`422-live-oci-transport-and-private-registry-proof.md`](./422-live-oci-transport-and-private-registry-proof.md)
+  is complete. It adds live OCI transport behind the artifact adapter boundary
+  and proves private-registry redaction.
+
+- [`423-wire-oci-artifact-refs-into-seed-and-dump-surfaces.md`](./423-wire-oci-artifact-refs-into-seed-and-dump-surfaces.md)
+  is complete. It wires OCI artifact refs into seed surfaces and parks dump
+  push behind capture planning.
+
+- [`424-plan-oci-capture-push-for-uat-snapshots.md`](./424-plan-oci-capture-push-for-uat-snapshots.md)
+  is complete. It defines the safe write-side OCI boundary for UAT snapshots.
+
+- [`425-implement-local-artifact-capture-with-planned-oci-push.md`](./425-implement-local-artifact-capture-with-planned-oci-push.md)
+  is complete. It adds local capture with a planned OCI destination report.
+
+- [`426-wire-planned-artifact-capture-into-container-data-dump.md`](./426-wire-planned-artifact-capture-into-container-data-dump.md)
+  is complete. It wires planned capture into container data dump.
+
+- [`427-implement-live-oci-push-through-artifact-adapter.md`](./427-implement-live-oci-push-through-artifact-adapter.md)
+  is ready. It adds explicit live OCI push through the artifact adapter.
 
 - [`399-scaffold-dependability-proof-matrix-lane.md`](./399-scaffold-dependability-proof-matrix-lane.md)
   is complete. It opened `g03.034` as strict lane `040` and chose the first

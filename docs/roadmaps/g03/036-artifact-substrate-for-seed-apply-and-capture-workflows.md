@@ -284,7 +284,7 @@ Closeout:
 
 ### 419 - Seed Dump Apply Capture Integration
 
-Status: In Progress
+Status: Complete
 
 Scope:
 
@@ -293,9 +293,15 @@ Scope:
 - add UAT-shaped apply/capture reports
 - add artifact operation ledger draft
 
+Closeout:
+
+- local seed staging routes through `effigy-artifacts`
+- the legacy `.effigy/local/db-seeds` handoff stays intact
+- focused seed tests prove existing local SQL behavior still works
+
 ### 420 - Acowtancy Proof And Closeout
 
-Status: Blocked by 419
+Status: Complete
 
 Scope:
 
@@ -303,6 +309,189 @@ Scope:
 - document UAT operator flow
 - document remaining app-owned migration surfaces
 - update docs and changelog for user-facing behavior
+
+Closeout:
+
+- Acowtancy/Farmyard proof confirms Effigy should replace only the
+  transport/staging half of `seed-bundle-install.sh` first.
+- Farmyard keeps `bundle-set.json`, family ordering, hook artifacts, patch
+  overlays, residual queues, and migration idempotency.
+- UAT apply/capture should use explicit refs, digest-pinned where possible,
+  with Effigy recording outer artifact metadata and Farmyard recording
+  app-level migration state.
+- The next implementation round should add public `artifact inspect/stage` and
+  Farmyard handoff output before live private-registry proof.
+
+### 421 - Implement Artifact Inspect Stage And Farmyard Handoff
+
+Status: Complete
+
+Scope:
+
+- add `effigy artifact inspect <REF|PATH>`
+- add `effigy artifact stage <REF|PATH>`
+- support local files and explicit `oci://` refs at the parsing/report layer
+- stage local SQL-like payloads through `effigy-artifacts`
+- emit JSON/text reports with metadata path, source, kind, staged root, primary
+  files, and digest when known
+- add optional Farmyard handoff output
+
+Closeout:
+
+- `effigy artifact inspect/stage` is wired through the public CLI, help,
+  command envelope labels, and runner dispatch.
+- local staging uses `effigy-artifacts` and writes `effigy-artifact.json`.
+- explicit `oci://` refs inspect through the report layer while live transport
+  remains behind the adapter boundary.
+- Farmyard handoff JSON is stable enough for app-local adoption work.
+
+### 422 - Live OCI Transport And Private Registry Proof
+
+Status: Complete
+
+Scope:
+
+- choose and wire live authenticated OCI inspect/pull transport
+- keep credentials redacted from logs and reports
+- wire `effigy artifact inspect/stage oci://...` through the adapter boundary
+- prove command behavior with fake transport fixtures before any real registry
+  proof
+
+Exit condition:
+
+- OCI inspect/stage can use live authenticated transport, reports redact
+  private-registry details, and fake-transport tests cover the command layer.
+
+Closeout:
+
+- live OCI inspect/pull uses the local `oras` CLI behind `OciArtifactAdapter`
+- `artifact inspect/stage oci://...` is wired through the adapter boundary
+- fake adapter tests cover command-layer inspect, pull, staging, metadata, and
+  Farmyard handoff
+- OCI userinfo is redacted from reportable refs, descriptors, staged metadata,
+  and process errors
+- the artifact contract documents UAT/private registry auth through `oras login`
+  or equivalent registry-client auth
+
+### 423 - Wire OCI Artifact Refs Into Seed And Dump Surfaces
+
+Status: Complete
+
+Scope:
+
+- allow `bootstrap --db-seed <target>=oci://...`
+- allow `container data seed --db-seed <target>=oci://...`
+- preserve current local SQL seed behavior and legacy staged seed handoff
+- decide the first bounded behavior for `container data dump <target>=oci://...`
+- keep app migration semantics outside Effigy
+
+Exit condition:
+
+- seed flows can resolve OCI artifact refs through the same staged primary-file
+  model as local SQL files, and dump behavior is either implemented for local
+  artifact output or explicitly parked behind capture/push.
+
+Closeout:
+
+- bootstrap and container data seed preserve explicit `oci://` refs through path
+  resolution
+- shared seed staging pulls OCI artifacts through the adapter and copies the
+  staged primary file into the legacy `.effigy/local/db-seeds` handoff
+- local SQL seed behavior is unchanged
+- dump-to-OCI is parked behind capture/push planning
+
+### 424 - Plan OCI Capture Push For UAT Snapshots
+
+Status: Complete
+
+Scope:
+
+- decide command shape for artifact capture and dump-to-OCI destinations
+- define metadata, digest, tag, overwrite, and immutability rules
+- decide UAT push authentication and authorization expectations
+- decide whether dump-to-OCI writes directly or produces a local staged artifact
+  first
+
+Exit condition:
+
+- capture/push behavior is specified tightly enough to implement without
+  guessing about UAT safety, tag mutability, or app ownership.
+
+Closeout:
+
+- write-side command shape is defined for artifact capture and dump-to-OCI
+- capture is two-phase by default: stage locally, push only with explicit intent
+- digest-pinned refs are invalid push destinations
+- pushed tags must report immutable digests
+- UAT auth stays in registry-client auth stores
+- Effigy owns outer artifact reports; Farmyard owns app-level snapshot validity
+
+### 425 - Implement Local Artifact Capture With Planned OCI Push
+
+Status: Complete
+
+Scope:
+
+- add `effigy artifact capture <SOURCE_PATH> --ref oci://<REF>`
+- stage local source through the artifact metadata model
+- report planned OCI destination without live push
+- reject digest-pinned destination refs
+- keep container dump integration and live push for later cards
+
+Exit condition:
+
+- local capture produces staged artifact metadata plus a planned OCI destination
+  report and gives Farmyard enough output for a local snapshot handoff.
+
+Closeout:
+
+- `effigy artifact capture <SOURCE_PATH> --ref oci://<REF>` is available
+- capture stages local payloads and reports planned OCI destination metadata
+- `--kind`, `--environment`, and `--farmyard-handoff` are supported
+- digest-pinned destination refs are rejected
+- `--push` is rejected until live push lands
+
+### 426 - Wire Planned Artifact Capture Into Container Data Dump
+
+Status: Complete
+
+Scope:
+
+- accept `container data dump <TARGET>=oci://<REF>`
+- write the SQL dump to a local staged source
+- pass that source through artifact capture
+- keep local file dump behavior unchanged
+- do not mutate registries
+
+Exit condition:
+
+- dump-to-OCI produces the same planned capture report as artifact capture,
+  local dump behavior still passes, and no registry mutation occurs.
+
+Closeout:
+
+- `container data dump <TARGET>=oci://<REF>` preserves OCI refs through output
+  path resolution
+- dump-to-OCI writes local SQL under `.effigy/local/data-dumps`
+- JSON reports include the local dump path and planned artifact capture payload
+- no registry push occurs
+
+### 427 - Implement Live OCI Push Through Artifact Adapter
+
+Status: Ready
+
+Scope:
+
+- extend `OciArtifactAdapter` with push
+- implement explicit push through local `oras`
+- wire `artifact capture --push`
+- report immutable pushed digest
+- keep credentials redacted
+
+Exit condition:
+
+- `artifact capture --push` publishes through the adapter boundary and fake
+  transport tests prove no credentials leak.
 
 ## Acceptance Criteria
 
@@ -316,4 +505,4 @@ Scope:
 
 ## Next Task
 
-Start card `419-seed-dump-apply-capture-integration`.
+Start card `427-implement-live-oci-push-through-artifact-adapter`.

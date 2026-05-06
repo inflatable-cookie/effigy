@@ -1,3 +1,5 @@
+mod artifact_command;
+mod artifact_transport;
 mod bootstrap_command;
 mod builtin_ports;
 mod bundle_command;
@@ -36,6 +38,7 @@ mod system_command;
 mod tasks_command;
 mod util;
 
+pub(in crate::runner) use artifact_command::run_artifact;
 pub(in crate::runner) use bundle_command::run_bundle;
 pub(in crate::runner) use changelog_command::run_changelog;
 pub use command_context::command_repo_override_for_context;

@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use effigy_artifacts::{
-    default_local_artifact_root, stage_local_artifact, LocalArtifactRef,
-    LocalArtifactStagingRequest,
+    default_local_artifact_root, stage_local_artifact, stage_oci_artifact, ArtifactSourceRef,
+    LocalArtifactRef, LocalArtifactStagingRequest, OciArtifactAdapter, OciArtifactPullRequest,
+    OciArtifactStagingRequest,
 };
 use effigy_bootstrap::BootstrapStagedDbSeed;
 use effigy_cli::BootstrapDbSeedInput;
@@ -14,6 +15,7 @@ use effigy_execution::ExecutionSurface;
 use effigy_manifest::TASK_MANIFEST_FILE;
 use serde_json::json;
 
+use crate::runner::artifact_transport::{infer_kind_from_primary_files, OrasCliArtifactAdapter};
 use crate::runner::container_command::run_container_exec_capture_with_options;
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, ActivationRequest,
@@ -76,7 +78,7 @@ pub(in crate::runner) fn resolve_db_seed_input_paths(
         .iter()
         .map(|seed| BootstrapDbSeedInput {
             target: seed.target.clone(),
-            path: if seed.path.is_absolute() {
+            path: if is_oci_artifact_path(&seed.path) || seed.path.is_absolute() {
                 seed.path.clone()
             } else {
                 cwd.join(&seed.path)
@@ -250,6 +252,15 @@ pub(in crate::runner) fn stage_db_seed_files(
     repo_root: &Path,
     db_seeds: &[BootstrapDbSeedInput],
 ) -> Result<Vec<BootstrapStagedDbSeed>, RunnerError> {
+    let adapter = OrasCliArtifactAdapter::default();
+    stage_db_seed_files_with_adapter(repo_root, db_seeds, &adapter)
+}
+
+fn stage_db_seed_files_with_adapter(
+    repo_root: &Path,
+    db_seeds: &[BootstrapDbSeedInput],
+    adapter: &dyn OciArtifactAdapter,
+) -> Result<Vec<BootstrapStagedDbSeed>, RunnerError> {
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     let resolved_seeds = resolve_db_seed_targets(repo_root, &manifest, db_seeds)?;
     let staging_dir = repo_root.join(DB_SEEDS_DIR);
@@ -263,17 +274,22 @@ pub(in crate::runner) fn stage_db_seed_files(
     let mut seen_names = BTreeSet::new();
     let mut staged = Vec::with_capacity(resolved_seeds.len());
     for seed in &resolved_seeds {
-        let source = &seed.path;
-        if !source.is_file() {
+        let source = seed.path.as_os_str().to_string_lossy().to_string();
+        let artifact_report = stage_seed_artifact(repo_root, &source, adapter)?;
+        let staged_artifact_file =
+            artifact_report
+                .metadata
+                .primary_files
+                .first()
+                .ok_or_else(|| {
+                    RunnerError::task_invocation(format!(
+                        "db seed artifact produced no primary file: {source}"
+                    ))
+                })?;
+        let Some(file_name) = staged_artifact_file.file_name() else {
             return Err(RunnerError::task_invocation(format!(
-                "db seed is not a readable file: {}",
-                source.display()
-            )));
-        }
-        let Some(file_name) = source.file_name() else {
-            return Err(RunnerError::task_invocation(format!(
-                "db seed path has no file name: {}",
-                source.display()
+                "db seed artifact primary file has no file name: {}",
+                staged_artifact_file.display()
             )));
         };
         let base_name = file_name.to_string_lossy().to_string();
@@ -286,39 +302,16 @@ pub(in crate::runner) fn stage_db_seed_files(
                 "duplicate staged db seed file name `{staged_name}`; rename one input or use distinct seed targets"
             )));
         }
-        let artifact_report = stage_local_artifact(&LocalArtifactStagingRequest::new(
-            LocalArtifactRef::new(source.clone()),
-            repo_root.to_path_buf(),
-            default_local_artifact_root(repo_root),
-        ))
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to stage db seed artifact {}: {error}",
-                source.display()
-            ))
-        })?;
-        let staged_artifact_file =
-            artifact_report
-                .metadata
-                .primary_files
-                .first()
-                .ok_or_else(|| {
-                    RunnerError::task_invocation(format!(
-                        "db seed artifact produced no primary file: {}",
-                        source.display()
-                    ))
-                })?;
         let destination = staging_dir.join(&staged_name);
         std::fs::copy(staged_artifact_file, &destination).map_err(|error| {
             RunnerError::task_invocation(format!(
-                "failed to stage db seed {} -> {}: {error}",
-                source.display(),
-                destination.display()
+                "failed to stage db seed {source} -> {}: {error}",
+                destination.display(),
             ))
         })?;
         staged.push(BootstrapStagedDbSeed {
             target: seed.target.clone(),
-            source_path: source.clone(),
+            source_path: PathBuf::from(artifact_report.metadata.source),
             staged_path: destination,
         });
     }
@@ -356,6 +349,69 @@ pub(in crate::runner) fn stage_db_seed_files(
         })?;
     }
     Ok(staged)
+}
+
+fn stage_seed_artifact(
+    repo_root: &Path,
+    source: &str,
+    adapter: &dyn OciArtifactAdapter,
+) -> Result<effigy_artifacts::StagedArtifactReport, RunnerError> {
+    match ArtifactSourceRef::parse(source)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+    {
+        ArtifactSourceRef::Local(local) => {
+            let path = if local.path().is_absolute() {
+                local.path().to_path_buf()
+            } else {
+                repo_root.join(local.path())
+            };
+            if !path.is_file() {
+                return Err(RunnerError::task_invocation(format!(
+                    "db seed is not a readable file: {}",
+                    path.display()
+                )));
+            }
+            stage_local_artifact(&LocalArtifactStagingRequest::new(
+                LocalArtifactRef::new(path.clone()),
+                repo_root.to_path_buf(),
+                default_local_artifact_root(repo_root),
+            ))
+            .map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "failed to stage db seed artifact {}: {error}",
+                    path.display()
+                ))
+            })
+        }
+        ArtifactSourceRef::Oci(oci) => {
+            let pull = adapter
+                .pull(&OciArtifactPullRequest {
+                    reference: oci.clone(),
+                    destination_root: default_local_artifact_root(repo_root).join(".oci-pulls"),
+                })
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            let kind = infer_kind_from_primary_files(&pull.primary_files);
+            let mut request = OciArtifactStagingRequest::new(
+                oci,
+                pull.pulled_root,
+                default_local_artifact_root(repo_root),
+                pull.primary_files,
+                kind,
+            );
+            if let Some(digest) = pull.descriptor.digest {
+                request = request.with_digest(digest);
+            }
+            stage_oci_artifact(&request).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "failed to stage OCI db seed artifact {source}: {error}"
+                ))
+            })
+        }
+    }
+}
+
+fn is_oci_artifact_path(path: &Path) -> bool {
+    path.as_os_str().to_string_lossy().starts_with("oci://")
 }
 
 pub(in crate::runner) fn db_seed_env(
@@ -917,7 +973,14 @@ impl Drop for ScopedDbSeedEnvOverride {
 
 #[cfg(test)]
 mod tests {
-    use super::{logical_database_targets, resolve_db_seed_targets, stage_db_seed_files};
+    use super::{
+        logical_database_targets, resolve_db_seed_input_paths, resolve_db_seed_targets,
+        stage_db_seed_files, stage_db_seed_files_with_adapter,
+    };
+    use effigy_artifacts::{
+        OciArtifactAdapter, OciArtifactDescriptor, OciArtifactError, OciArtifactInspectRequest,
+        OciArtifactPullReport, OciArtifactPullRequest,
+    };
     use effigy_cli::BootstrapDbSeedInput;
     use effigy_manifest::TaskManifest;
     use std::fs;
@@ -932,8 +995,11 @@ mod tests {
             COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&root).expect("create temp repo");
-        fs::write(root.join("effigy.toml"), "[bundle]\ndatabase = \"app\"\n")
-            .expect("write manifest");
+        fs::write(
+            root.join("effigy.toml"),
+            "[data.targets.app]\nservice = \"db\"\ndatabase = \"app\"\n",
+        )
+        .expect("write manifest");
         root
     }
 
@@ -1023,6 +1089,86 @@ database = "acowtancy"
             fs::read_to_string(&artifact_metadata_files[0]).expect("read artifact metadata");
         assert!(metadata.contains("\"schema\": \"effigy.artifact.v1\""));
         assert!(metadata.contains("\"kind\": \"sql-dump\""));
+    }
+
+    #[test]
+    fn resolve_db_seed_input_paths_preserves_oci_refs() {
+        let resolved = resolve_db_seed_input_paths(
+            Path::new("/tmp/repo"),
+            &[BootstrapDbSeedInput {
+                target: Some("app".to_owned()),
+                path: PathBuf::from("oci://ghcr.io/acowtancy/private:uat"),
+            }],
+        );
+
+        assert_eq!(
+            resolved[0].path,
+            PathBuf::from("oci://ghcr.io/acowtancy/private:uat")
+        );
+    }
+
+    #[test]
+    fn stage_db_seed_files_accepts_oci_artifact_refs() {
+        let repo = temp_repo("oci-stage");
+        let adapter = FakeOciArtifactAdapter;
+
+        let staged = stage_db_seed_files_with_adapter(
+            &repo,
+            &[BootstrapDbSeedInput {
+                target: Some("app".to_owned()),
+                path: PathBuf::from("oci://ghcr.io/acowtancy/private:uat"),
+            }],
+            &adapter,
+        )
+        .expect("stage seeds");
+
+        assert_eq!(staged.len(), 1);
+        assert_eq!(
+            staged[0].source_path,
+            PathBuf::from("oci://ghcr.io/acowtancy/private:uat")
+        );
+        assert_eq!(
+            staged[0].staged_path,
+            repo.join(".effigy/local/db-seeds/app--legacy.sql")
+        );
+        assert_eq!(
+            fs::read(&staged[0].staged_path).expect("read staged seed"),
+            b"select 1;"
+        );
+
+        let artifact_metadata_files = find_artifact_metadata_files(&repo);
+        assert_eq!(artifact_metadata_files.len(), 1);
+        let metadata =
+            fs::read_to_string(&artifact_metadata_files[0]).expect("read artifact metadata");
+        assert!(metadata.contains("\"source_type\": \"oci\""));
+        assert!(metadata.contains("\"digest\": \"sha256:fakedigest\""));
+    }
+
+    struct FakeOciArtifactAdapter;
+
+    impl OciArtifactAdapter for FakeOciArtifactAdapter {
+        fn inspect(
+            &self,
+            request: &OciArtifactInspectRequest,
+        ) -> Result<OciArtifactDescriptor, OciArtifactError> {
+            Ok(OciArtifactDescriptor::new(&request.reference).with_digest("sha256:fakedigest"))
+        }
+
+        fn pull(
+            &self,
+            request: &OciArtifactPullRequest,
+        ) -> Result<OciArtifactPullReport, OciArtifactError> {
+            let pulled_root = request.destination_root.join("fake-pull");
+            fs::create_dir_all(&pulled_root).expect("create pulled root");
+            fs::write(pulled_root.join("legacy.sql"), b"select 1;").expect("write pulled file");
+            Ok(OciArtifactPullReport {
+                descriptor: self.inspect(&OciArtifactInspectRequest {
+                    reference: request.reference.clone(),
+                })?,
+                pulled_root,
+                primary_files: vec![PathBuf::from("legacy.sql")],
+            })
+        }
     }
 
     fn find_artifact_metadata_files(repo: &Path) -> Vec<PathBuf> {

@@ -29,9 +29,7 @@ semantics.
 
 ## Current Ready Card
 
-None. Card
-[`419-seed-dump-apply-capture-integration.md`](./batch-cards/419-seed-dump-apply-capture-integration.md)
-is in progress.
+[`427-implement-live-oci-push-through-artifact-adapter.md`](./batch-cards/427-implement-live-oci-push-through-artifact-adapter.md)
 
 ## Execution Chain
 
@@ -39,8 +37,15 @@ is in progress.
 - `416` complete: scaffold `effigy-artifacts`
 - `417` complete: local artifact staging for seed inputs
 - `418` complete: OCI pull/inspect/stage core
-- `419` in progress: seed/dump apply/capture integration
-- `420` blocked by `419`: Acowtancy proof and closeout
+- `419` complete: seed/dump apply/capture integration
+- `420` complete: Acowtancy proof and closeout
+- `421` complete: public artifact inspect/stage and Farmyard handoff output
+- `422` complete: live OCI transport and private-registry proof
+- `423` complete: wire OCI artifact refs into seed surfaces and park dump push
+- `424` complete: plan OCI capture/push for UAT snapshots
+- `425` complete: implement local artifact capture with planned OCI push
+- `426` complete: wire planned artifact capture into container data dump
+- `427` ready: implement live OCI push through artifact adapter
 
 ## Exit Condition
 
@@ -51,6 +56,5 @@ migration logic outside Effigy.
 
 ## Next Task
 
-Continue card
-[`419-seed-dump-apply-capture-integration.md`](./batch-cards/419-seed-dump-apply-capture-integration.md)
-after the unrelated container/cache compile blockers are resolved or isolated.
+Card
+[`427-implement-live-oci-push-through-artifact-adapter.md`](./batch-cards/427-implement-live-oci-push-through-artifact-adapter.md).
