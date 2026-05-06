@@ -427,7 +427,7 @@ fn candidate_host_mount_paths(
         return Vec::new();
     };
     let target_path = Path::new(target);
-    let Some((bind_source, bind_target)) = bind_roots
+    let Some((bind_source, _bind_target, suffix)) = bind_roots
         .iter()
         .filter_map(|(source, mounted_target)| {
             target_path
@@ -443,10 +443,6 @@ fn candidate_host_mount_paths(
     if !bind_source.starts_with(repo_root) {
         return Vec::new();
     }
-    let suffix = target_path
-        .strip_prefix(Path::new(bind_target))
-        .ok()
-        .unwrap_or_else(|| Path::new(""));
     vec![bind_source.join(suffix)]
 }
 
