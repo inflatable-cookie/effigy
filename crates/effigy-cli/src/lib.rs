@@ -22,6 +22,7 @@ pub enum Command {
     Docs(DocsArgs),
     Contracts(ContractsArgs),
     Distribution(DistributionArgs),
+    Artifact(ArtifactArgs),
     Container(ContainerArgs),
     Bootstrap(BootstrapArgs),
     Release(ReleaseArgs),
@@ -97,6 +98,7 @@ pub enum HelpTopic {
     Docs,
     Contracts,
     Distribution,
+    Artifact,
     Container,
     Bootstrap,
     Release,
@@ -405,6 +407,25 @@ pub struct DistributionArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactArgs {
+    pub subcommand: ArtifactSubcommand,
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArtifactSubcommand {
+    Inspect {
+        source: String,
+        farmyard_handoff: bool,
+    },
+    Stage {
+        source: String,
+        farmyard_handoff: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerArgs {
     pub subcommand: ContainerSubcommand,
     pub repo_override: Option<PathBuf>,
@@ -612,6 +633,7 @@ pub enum SystemSubcommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerCacheSubcommand {
     List { all: bool },
+    Prune { all: bool, yes: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

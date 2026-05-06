@@ -7,6 +7,7 @@
 
 use effigy_catalog::volumes::VolumeClassification;
 use serde_json::{json, Value as JsonValue};
+use std::collections::BTreeMap;
 
 use crate::compose::shutdown_label;
 use crate::{driver_label, ContainerEjectResult, EffectiveContainerPolicy};
@@ -100,6 +101,16 @@ pub struct ContainerCacheGlobalEntry {
     pub size_bytes: Option<u64>,
     pub mount_point: Option<String>,
     pub project_name: Option<String>,
+    pub in_use: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerCachePruneEntry {
+    pub name: String,
+    pub kind: String,
+    pub size_bytes: Option<u64>,
+    pub project_name: Option<String>,
+    pub removed: bool,
     pub in_use: bool,
 }
 
@@ -732,6 +743,18 @@ pub fn cache_list_all_report(
     volumes: &[ContainerCacheGlobalEntry],
 ) -> ContainerCommandReport {
     let in_use_count = volumes.iter().filter(|volume| volume.in_use).count();
+    let mut grouped = BTreeMap::<String, Vec<&ContainerCacheGlobalEntry>>::new();
+    for volume in volumes {
+        grouped
+            .entry(
+                volume
+                    .project_name
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_owned()),
+            )
+            .or_default()
+            .push(volume);
+    }
     let json = json!({
         "schema": "effigy.container.cache-list-all.v1",
         "schema_version": 1,
@@ -740,6 +763,25 @@ pub fn cache_list_all_report(
         "cache_count": volumes.len(),
         "in_use_count": in_use_count,
         "available_count": volumes.len().saturating_sub(in_use_count),
+        "projects": grouped.iter().map(|(project, caches)| {
+            json!({
+                "project_name": project,
+                "cache_count": caches.len(),
+                "in_use_count": caches.iter().filter(|cache| cache.in_use).count(),
+                "caches": caches.iter().map(|volume| {
+                    json!({
+                        "name": volume.name,
+                        "kind": volume.kind,
+                        "size_bytes": volume.size_bytes,
+                        "mount_point": volume.mount_point,
+                        "project_name": volume.project_name,
+                        "in_use": volume.in_use,
+                        "safe_to_purge": !volume.in_use,
+                        "size_available": volume.size_bytes.is_some(),
+                    })
+                }).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
         "caches": volumes.iter().map(|volume| {
             json!({
                 "name": volume.name,
@@ -771,19 +813,87 @@ pub fn cache_list_all_report(
         in_use_count,
         volumes.len().saturating_sub(in_use_count),
     )];
-    for volume in volumes {
-        let size = volume
+    for (project, caches) in grouped {
+        lines.push(format!("{project}:"));
+        for volume in caches {
+            let size = volume
+                .size_bytes
+                .map(format_bytes)
+                .unwrap_or_else(|| "unavailable".to_owned());
+            lines.push(format!(
+                "- {} {} (size={}, {})",
+                volume.name,
+                volume.kind,
+                size,
+                if volume.in_use { "in-use" } else { "purgeable" },
+            ));
+        }
+    }
+
+    ContainerCommandReport {
+        json,
+        success_text: lines.join("\n"),
+    }
+}
+
+pub fn cache_prune_report(
+    scope_label: &str,
+    entries: &[ContainerCachePruneEntry],
+) -> ContainerCommandReport {
+    let removed_count = entries.iter().filter(|entry| entry.removed).count();
+    let skipped_count = entries.len().saturating_sub(removed_count);
+    let json = json!({
+        "schema": "effigy.container.cache-prune.v1",
+        "schema_version": 1,
+        "ok": true,
+        "scope": scope_label,
+        "removed_count": removed_count,
+        "skipped_count": skipped_count,
+        "caches": entries.iter().map(|entry| {
+            json!({
+                "name": entry.name,
+                "kind": entry.kind,
+                "size_bytes": entry.size_bytes,
+                "project_name": entry.project_name,
+                "removed": entry.removed,
+                "in_use": entry.in_use,
+            })
+        }).collect::<Vec<_>>(),
+    });
+
+    if entries.is_empty() {
+        return ContainerCommandReport {
+            json,
+            success_text: format!("[info] no purge-safe cache volumes matched {scope_label}"),
+        };
+    }
+
+    let mut lines = vec![format!(
+        "[ok] removed {} cache volume{} and skipped {} for {}",
+        removed_count,
+        if removed_count == 1 { "" } else { "s" },
+        skipped_count,
+        scope_label
+    )];
+    for entry in entries {
+        let size = entry
             .size_bytes
             .map(format_bytes)
             .unwrap_or_else(|| "unavailable".to_owned());
-        let project = volume.project_name.as_deref().unwrap_or("unknown");
+        let project = entry.project_name.as_deref().unwrap_or("unknown");
         lines.push(format!(
             "- {} {} (size={}, project={}, {})",
-            volume.name,
-            volume.kind,
+            entry.name,
+            entry.kind,
             size,
             project,
-            if volume.in_use { "in-use" } else { "purgeable" },
+            if entry.removed {
+                "removed"
+            } else if entry.in_use {
+                "skipped: in-use"
+            } else {
+                "skipped"
+            }
         ));
     }
 

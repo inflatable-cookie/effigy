@@ -562,6 +562,37 @@ primary_service = "app"
 }
 
 #[test]
+fn cache_list_all_report_groups_by_project_in_text() {
+    let report = crate::cache_list_all_report(
+        "effigy",
+        &[
+            crate::ContainerCacheGlobalEntry {
+                name: "underlay-reference-dev-workspace-acme-api-target".to_owned(),
+                kind: "rust-target".to_owned(),
+                size_bytes: Some(2048),
+                mount_point: Some("/var/lib/mock/acme-api-target".to_owned()),
+                project_name: Some("underlay-reference-dev".to_owned()),
+                in_use: true,
+            },
+            crate::ContainerCacheGlobalEntry {
+                name: "contact-patch-dev-workspace-cargo-git".to_owned(),
+                kind: "cargo-git".to_owned(),
+                size_bytes: Some(4096),
+                mount_point: Some("/var/lib/mock/cargo-git".to_owned()),
+                project_name: Some("contact-patch-dev".to_owned()),
+                in_use: false,
+            },
+        ],
+    );
+
+    assert_eq!(report.json["schema"], "effigy.container.cache-list-all.v1");
+    assert_eq!(report.json["projects"].as_array().map(Vec::len), Some(2));
+    assert!(report.success_text.contains("contact-patch-dev:"));
+    assert!(report.success_text.contains("underlay-reference-dev:"));
+    assert!(!report.success_text.contains("project="));
+}
+
+#[test]
 fn data_transfer_report_renders_export_contract() {
     let root = temp_repo("data-transfer-report");
     fs::write(

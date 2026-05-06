@@ -3,7 +3,8 @@
 use effigy_containers::ContainerCommandReport;
 use effigy_runtime::data::{
     run_container_cache_list, run_container_cache_list_all, run_container_cache_list_under_path,
-    run_container_data_export, run_container_data_import, run_container_data_list,
+    run_container_cache_prune, run_container_cache_prune_all, run_container_data_export,
+    run_container_data_import, run_container_data_list,
 };
 use effigy_runtime::read::{
     run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
@@ -94,7 +95,26 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         return run_container_cache_list_all(&cwd, None, args.output_json, runtime_volume_capture)
             .map_err(Into::into);
     }
-
+    if let ContainerSubcommand::Cache {
+        name: _,
+        subcommand: ContainerCacheSubcommand::Prune { all: true, yes },
+    } = &args.subcommand
+    {
+        if args.repo_override.is_some() {
+            return Err(RunnerError::task_invocation(
+                "`effigy container cache prune --all` does not accept `--repo`; it prunes cache volumes from the Effigy Colima profile inventory",
+            ));
+        }
+        data::maybe_confirm_destructive_container_action(
+            "`effigy container cache prune --all`",
+            "Purge safe cache volumes across the Effigy Colima profile. Running projects will be skipped.",
+            args.output_json,
+            *yes,
+        )?;
+        let cwd = crate::runner::command_context::active_invocation_cwd()?;
+        return run_container_cache_prune_all(&cwd, None, args.output_json, runtime_volume_capture)
+            .map_err(Into::into);
+    }
     match args.subcommand {
         ContainerSubcommand::Up {
             name,
@@ -190,6 +210,34 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         ),
         ContainerSubcommand::Cache {
             subcommand: ContainerCacheSubcommand::List { all: true },
+            ..
+        } => unreachable!("handled above"),
+        ContainerSubcommand::Cache {
+            name,
+            subcommand: ContainerCacheSubcommand::Prune { all: false, yes },
+        } => {
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            let repo_root = &context.resolved.resolved_root;
+            let policy = effigy_containers::load_container_policy(repo_root, name.as_deref())?;
+            data::maybe_confirm_destructive_container_action(
+                &format!("`effigy container {} cache prune`", policy.name),
+                &format!(
+                    "Purge safe cache volumes for container `{}`. The container must be stopped first.",
+                    policy.name
+                ),
+                args.output_json,
+                yes,
+            )?;
+            run_container_cache_prune(
+                repo_root,
+                name.as_deref(),
+                args.output_json,
+                runtime_volume_capture,
+            )
+            .map_err(Into::into)
+        }
+        ContainerSubcommand::Cache {
+            subcommand: ContainerCacheSubcommand::Prune { all: true, .. },
             ..
         } => unreachable!("handled above"),
         ContainerSubcommand::Data {

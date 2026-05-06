@@ -3,17 +3,21 @@ use std::path::Path;
 use std::process::Output;
 
 use effigy_catalog::volumes::{
-    export_volume_command, import_volume_command, inspect_volume_command, list_volumes_command,
-    merge_runtime_volume_metadata, parse_inspect_volume_metadata, parse_listed_volume_names,
-    DockerCommand, ManagedVolume,
+    export_volume_command, import_volume_command, inspect_volume_command, list_all_volumes_command,
+    list_volumes_command, merge_runtime_volume_metadata, parse_inspect_volume_metadata,
+    parse_listed_volume_names, parse_volume_usage_bytes, remove_volume_command,
+    volume_usage_command, DockerCommand, ManagedVolume,
 };
 use effigy_containers::{
-    data_list_report, data_transfer_report, exec::colima_is_running, load_container_policy,
-    validate_compose_backend_runtime, validate_container_policy, ContainerCommandReport,
+    cache_list_all_report, cache_list_report, cache_prune_report, data_list_report,
+    data_transfer_report, exec::colima_is_running, load_container_policy,
+    validate_compose_backend_runtime, validate_container_policy, ContainerCacheGlobalEntry,
+    ContainerCachePruneEntry, ContainerCacheVolumeEntry, ContainerCommandReport,
     ContainerDataTransferAction, ContainerDataVolumeEntry, EffectiveComposeSource,
     EffectiveContainerPolicy,
 };
 
+use crate::read::discover_running_environments;
 use crate::EffigyRuntimeError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +65,170 @@ where
 
     Ok(render_container_report(
         data_list_report(&policy, colima_running, &volumes),
+        output_json,
+    ))
+}
+
+pub fn run_container_cache_list<F>(
+    repo_root: &Path,
+    name: Option<&str>,
+    output_json: bool,
+    run_runtime_volume_capture: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let policy = load_container_policy(repo_root, name)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    ensure_generated_data_path(&policy, "cache list")?;
+    validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+
+    let colima_running = colima_is_running(&policy, repo_root)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let caches = hydrate_managed_volumes(
+        repo_root,
+        &policy,
+        colima_running,
+        &run_runtime_volume_capture,
+    )?
+    .into_iter()
+    .filter_map(cache_volume_entry)
+    .collect::<Vec<_>>();
+
+    Ok(render_container_report(
+        cache_list_report(&policy, colima_running, &caches),
+        output_json,
+    ))
+}
+
+pub fn run_container_cache_list_under_path<F>(
+    scope_root: &Path,
+    name: Option<&str>,
+    output_json: bool,
+    run_runtime_volume_capture: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError> + Copy,
+{
+    let mut rendered = Vec::new();
+    for repo_root in crate::read::discover_effigy_repos_under(scope_root) {
+        match run_container_cache_list(&repo_root, name, output_json, run_runtime_volume_capture) {
+            Ok(output) => rendered.push(output),
+            Err(error) => {
+                rendered.push(format!("[warn] skipped `{}`: {error}", repo_root.display()))
+            }
+        }
+    }
+    if rendered.is_empty() {
+        return Ok(format!(
+            "[info] no Effigy repos found under {}",
+            scope_root.display()
+        ));
+    }
+    Ok(rendered.join("\n"))
+}
+
+pub fn run_container_cache_list_all<F>(
+    cwd: &Path,
+    profile: Option<&str>,
+    output_json: bool,
+    run_runtime_volume_capture: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let profile = profile.unwrap_or("effigy");
+    let caches = collect_global_cache_entries(cwd, profile, &run_runtime_volume_capture)?;
+
+    Ok(render_container_report(
+        cache_list_all_report(profile, &caches),
+        output_json,
+    ))
+}
+
+pub fn run_container_cache_prune<F>(
+    repo_root: &Path,
+    name: Option<&str>,
+    output_json: bool,
+    run_runtime_volume_capture: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let policy = load_container_policy(repo_root, name)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    ensure_generated_data_path(&policy, "cache prune")?;
+    validate_container_policy(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    validate_compose_backend_runtime(repo_root, &policy)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+
+    ensure_cache_prune_target_is_stopped(
+        &policy.name,
+        project_is_running(repo_root, &policy.project_name)?,
+    )?;
+
+    let volumes = hydrate_managed_volumes(repo_root, &policy, false, &run_runtime_volume_capture)?;
+    let mut entries = Vec::new();
+    for volume in volumes {
+        let Some(kind) = volume.cache_kind() else {
+            continue;
+        };
+        run_runtime_volume_capture(
+            repo_root,
+            &policy.profile,
+            &remove_volume_command(&volume.name),
+        )?;
+        entries.push(ContainerCachePruneEntry {
+            name: volume.name,
+            kind: cache_kind_label(kind).to_owned(),
+            size_bytes: volume.size_bytes,
+            project_name: Some(policy.project_name.clone()),
+            removed: true,
+            in_use: false,
+        });
+    }
+
+    Ok(render_container_report(
+        cache_prune_report(&format!("container `{}`", policy.name), &entries),
+        output_json,
+    ))
+}
+
+pub fn run_container_cache_prune_all<F>(
+    cwd: &Path,
+    profile: Option<&str>,
+    output_json: bool,
+    run_runtime_volume_capture: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let profile = profile.unwrap_or("effigy");
+    let caches = collect_global_cache_entries(cwd, profile, &run_runtime_volume_capture)?;
+    let mut entries = Vec::new();
+    for cache in caches {
+        let removed = if cache.in_use {
+            false
+        } else {
+            run_runtime_volume_capture(cwd, profile, &remove_volume_command(&cache.name))?;
+            true
+        };
+        entries.push(ContainerCachePruneEntry {
+            name: cache.name,
+            kind: cache.kind,
+            size_bytes: cache.size_bytes,
+            project_name: cache.project_name,
+            removed,
+            in_use: cache.in_use,
+        });
+    }
+
+    Ok(render_container_report(
+        cache_prune_report("profile-wide cache inventory", &entries),
         output_json,
     ))
 }
@@ -302,6 +470,274 @@ where
     }
 
     Ok(merge_runtime_volume_metadata(&volumes, &runtime))
+}
+
+fn cache_volume_entry(volume: ManagedVolume) -> Option<ContainerCacheVolumeEntry> {
+    let kind = volume.cache_kind()?;
+    Some(ContainerCacheVolumeEntry {
+        name: volume.name,
+        service: volume.service,
+        kind: cache_kind_label(kind).to_owned(),
+        size_bytes: volume.size_bytes,
+        mount_point: volume.mount_point,
+        mount_target: volume.mount_target,
+    })
+}
+
+fn cache_kind_label(kind: effigy_catalog::volumes::CacheVolumeKind) -> &'static str {
+    match kind {
+        effigy_catalog::volumes::CacheVolumeKind::RustTarget => "rust-target",
+        effigy_catalog::volumes::CacheVolumeKind::NodeModules => "node-modules",
+    }
+}
+
+fn cache_kind_from_volume_name(name: &str) -> Option<String> {
+    if name.contains("node_modules") || name.contains("node-modules") {
+        return Some("node-modules".to_owned());
+    }
+    if name.contains("cargo-registry") {
+        return Some("cargo-registry".to_owned());
+    }
+    if name.contains("cargo-git") {
+        return Some("cargo-git".to_owned());
+    }
+    if name.contains("target") {
+        return Some("rust-target".to_owned());
+    }
+    None
+}
+
+fn collect_global_cache_entries<F>(
+    cwd: &Path,
+    profile: &str,
+    run_runtime_volume_capture: &F,
+) -> Result<Vec<ContainerCacheGlobalEntry>, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let running_projects = discover_running_environments()?
+        .into_iter()
+        .map(|environment| environment.policy.project_name)
+        .collect::<BTreeSet<_>>();
+    let listed = run_runtime_volume_capture(cwd, profile, &list_all_volumes_command())?;
+    let names = parse_listed_volume_names(String::from_utf8_lossy(&listed.stdout).as_ref());
+    let metadata = names
+        .iter()
+        .filter_map(|name| {
+            inspect_runtime_volume_metadata(cwd, profile, name, run_runtime_volume_capture)
+                .ok()
+                .flatten()
+        })
+        .map(|entry| (entry.name.clone(), entry))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    Ok(collect_global_cache_entries_from_names(
+        names,
+        &running_projects,
+        &metadata,
+    ))
+}
+
+fn inspect_runtime_volume_metadata<F>(
+    cwd: &Path,
+    profile: &str,
+    name: &str,
+    run_runtime_volume_capture: &F,
+) -> Result<Option<effigy_catalog::volumes::RuntimeVolumeMetadata>, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let Some(mut metadata) =
+        run_runtime_volume_capture(cwd, profile, &inspect_volume_command(name))
+            .ok()
+            .and_then(|output| {
+                parse_inspect_volume_metadata(String::from_utf8_lossy(&output.stdout).as_ref())
+            })
+    else {
+        return Ok(None);
+    };
+    if metadata.size_bytes.is_none() {
+        if let Some(mount_point) = metadata.mount_point.as_deref() {
+            metadata.size_bytes =
+                run_runtime_volume_capture(cwd, profile, &volume_usage_command(mount_point))
+                    .ok()
+                    .and_then(|output| {
+                        parse_volume_usage_bytes(String::from_utf8_lossy(&output.stdout).as_ref())
+                    });
+        }
+    }
+    Ok(Some(metadata))
+}
+
+fn project_name_from_volume_name(name: &str) -> Option<String> {
+    for marker in ["-workspace-", "_stack-iso-", "-app-", "_app-"] {
+        if let Some((project, _)) = name.split_once(marker) {
+            if !project.is_empty() {
+                return Some(project.to_owned());
+            }
+        }
+    }
+    if let Some((project, rest)) = name.split_once('_') {
+        if !project.is_empty() && rest.starts_with(project) {
+            return Some(project.to_owned());
+        }
+    }
+    None
+}
+
+fn ensure_cache_prune_target_is_stopped(
+    container_name: &str,
+    is_running: bool,
+) -> Result<(), EffigyRuntimeError> {
+    if is_running {
+        return Err(EffigyRuntimeError::task_invocation(format!(
+            "container `{}` is still running; stop it before purging cache volumes",
+            container_name
+        )));
+    }
+    Ok(())
+}
+
+fn collect_global_cache_entries_from_names(
+    names: Vec<String>,
+    running_projects: &BTreeSet<String>,
+    metadata_by_name: &std::collections::BTreeMap<
+        String,
+        effigy_catalog::volumes::RuntimeVolumeMetadata,
+    >,
+) -> Vec<ContainerCacheGlobalEntry> {
+    let mut caches = Vec::new();
+    for name in names {
+        let Some(kind) = cache_kind_from_volume_name(&name) else {
+            continue;
+        };
+        let project_name = project_name_from_volume_name(&name);
+        let metadata = metadata_by_name.get(&name);
+        let in_use = project_name
+            .as_ref()
+            .is_some_and(|project| running_projects.contains(project));
+        caches.push(ContainerCacheGlobalEntry {
+            project_name,
+            in_use,
+            name,
+            kind,
+            size_bytes: metadata.and_then(|entry| entry.size_bytes),
+            mount_point: metadata.and_then(|entry| entry.mount_point.clone()),
+        });
+    }
+    caches.sort_by(|left, right| left.name.cmp(&right.name));
+    caches
+}
+
+fn project_is_running(repo_root: &Path, project_name: &str) -> Result<bool, EffigyRuntimeError> {
+    let target_root = canonicalize_or_original(repo_root);
+    Ok(discover_running_environments()?
+        .into_iter()
+        .any(|environment| {
+            canonicalize_or_original(Path::new(&environment.repo_root)) == target_root
+                && environment.policy.project_name == project_name
+        }))
+}
+
+fn canonicalize_or_original(path: &Path) -> std::path::PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use effigy_catalog::volumes::RuntimeVolumeMetadata;
+
+    use super::{
+        collect_global_cache_entries_from_names, ensure_cache_prune_target_is_stopped,
+        project_name_from_volume_name,
+    };
+
+    #[test]
+    fn project_name_inference_handles_workspace_cache_volumes() {
+        assert_eq!(
+            project_name_from_volume_name("underlay-reference-dev-workspace-acme-api-target"),
+            Some("underlay-reference-dev".to_owned())
+        );
+        assert_eq!(
+            project_name_from_volume_name("acowtancy-dev-workspace-cargo-git"),
+            Some("acowtancy-dev".to_owned())
+        );
+    }
+
+    #[test]
+    fn project_name_inference_handles_stack_iso_cache_volumes() {
+        assert_eq!(
+            project_name_from_volume_name("underlay-reference-dev_stack-iso-poodle-node-modules"),
+            Some("underlay-reference-dev".to_owned())
+        );
+    }
+
+    #[test]
+    fn project_name_inference_handles_duplicated_project_prefix_volumes() {
+        assert_eq!(
+            project_name_from_volume_name(
+                "underlay-reference-dev_underlay-reference-dev-cargo-registry"
+            ),
+            Some("underlay-reference-dev".to_owned())
+        );
+        assert_eq!(
+            project_name_from_volume_name("compli-me-dev_compli-me-dev-api-target"),
+            Some("compli-me-dev".to_owned())
+        );
+    }
+
+    #[test]
+    fn cache_prune_rejects_running_targets() {
+        let error = ensure_cache_prune_target_is_stopped("stack", true).expect_err("should fail");
+        assert!(error
+            .to_string()
+            .contains("container `stack` is still running"));
+    }
+
+    #[test]
+    fn global_cache_entries_mark_running_projects_in_use() {
+        let mut running_projects = BTreeSet::new();
+        running_projects.insert("underlay-reference-dev".to_owned());
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "underlay-reference-dev-workspace-acme-api-target".to_owned(),
+            RuntimeVolumeMetadata {
+                name: "underlay-reference-dev-workspace-acme-api-target".to_owned(),
+                mount_point: Some("/var/lib/mock/target".to_owned()),
+                size_bytes: Some(1024),
+            },
+        );
+        metadata.insert(
+            "contact-patch-dev-workspace-cargo-git".to_owned(),
+            RuntimeVolumeMetadata {
+                name: "contact-patch-dev-workspace-cargo-git".to_owned(),
+                mount_point: Some("/var/lib/mock/cargo-git".to_owned()),
+                size_bytes: Some(2048),
+            },
+        );
+
+        let entries = collect_global_cache_entries_from_names(
+            vec![
+                "underlay-reference-dev-workspace-acme-api-target".to_owned(),
+                "contact-patch-dev-workspace-cargo-git".to_owned(),
+                "contact-patch-dev-db-data".to_owned(),
+            ],
+            &running_projects,
+            &metadata,
+        );
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "contact-patch-dev-workspace-cargo-git");
+        assert!(!entries[0].in_use);
+        assert_eq!(
+            entries[1].name,
+            "underlay-reference-dev-workspace-acme-api-target"
+        );
+        assert!(entries[1].in_use);
+        assert_eq!(entries[1].kind, "rust-target");
+    }
 }
 
 fn resolve_managed_volume(

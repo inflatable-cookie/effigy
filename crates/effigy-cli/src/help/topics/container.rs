@@ -11,7 +11,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "Generated compose also supports bounded `shared = true` backing services for standalone shared databases and caches on the product-owned path.",
             "Mounted sibling repos listed in `systems.<name>.mounts` auto-adopt producer `[isolation].paths` into workspace containers, and Colima/nerdctl now preflights oversized mount payloads before compose-up.",
             "`container data seed` currently targets the repo default container only and stays on the generated-compose path, while `container data dump` exports logical SQL dumps from generated-compose database services.",
-            "`container cache list` inventories purge-safe isolated build caches like Rust `target` and package-manager `node_modules` volumes without touching persistent app data, and `--all` reads the Effigy Colima profile's named-volume inventory instead of walking the filesystem.",
+            "`container cache list` inventories purge-safe isolated build caches like Rust `target` and package-manager `node_modules` volumes without touching persistent app data, and `cache prune` removes only those disposable volumes.",
         ],
         &[
             "effigy container up [--repo <PATH>] [--attach|--detach] [--json]",
@@ -24,7 +24,9 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container stats --all [--json]",
             "effigy container <NAME> status [--repo <PATH>] [--json]",
             "effigy container cache list [--repo <PATH>] [--all] [--json]",
+            "effigy container cache prune [--repo <PATH>] [--all] [--yes] [--json]",
             "effigy container <NAME> cache list [--repo <PATH>] [--json]",
+            "effigy container <NAME> cache prune [--repo <PATH>] [--yes] [--json]",
             "effigy container data list [--repo <PATH>] [--json]",
             "effigy container <NAME> data list [--repo <PATH>] [--json]",
             "effigy container data export <VOLUME> <PATH> [--repo <PATH>] [--json]",
@@ -73,7 +75,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--yes",
-                "Confirm destructive data operations without an interactive prompt",
+                "Confirm destructive data or cache cleanup operations without an interactive prompt",
             ),
             (
                 "--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>",
@@ -99,6 +101,8 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container stats --all",
             "effigy container cache list",
             "effigy container cache list --all",
+            "effigy container cache prune",
+            "effigy container cache prune --all --yes",
             "effigy container web data list",
             "effigy container web data export fixture-web-dev-db-data ./backup.tar.gz",
             "effigy container data dump legacy_mysql",

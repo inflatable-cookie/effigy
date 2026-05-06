@@ -398,6 +398,60 @@ fn parse_container_cache_list_all_is_supported() {
 }
 
 #[test]
+fn parse_container_cache_prune_is_supported() {
+    let parsed = parse_command(vec![
+        "container".to_owned(),
+        "cache".to_owned(),
+        "prune".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Cache {
+                name: None,
+                subcommand: ContainerCacheSubcommand::Prune {
+                    all: false,
+                    yes: true
+                },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_container_cache_prune_all_is_supported() {
+    let parsed = parse_command(vec![
+        "container".to_owned(),
+        "cache".to_owned(),
+        "prune".to_owned(),
+        "--all".to_owned(),
+        "--yes".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Cache {
+                name: None,
+                subcommand: ContainerCacheSubcommand::Prune {
+                    all: true,
+                    yes: true
+                },
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_container_data_export_is_supported() {
     let cmd = parse_command(vec![
         "container".to_owned(),

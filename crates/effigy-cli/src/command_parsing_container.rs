@@ -262,13 +262,14 @@ where
     let mut args = args.into_iter();
     let Some(subcmd) = args.next() else {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container cache` requires a subcommand; use `list`".to_owned(),
+            "`effigy container cache` requires a subcommand; use `list` or `prune`".to_owned(),
         ));
     };
 
     match subcmd.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Container)),
         "list" => parse_container_cache_list(name, args),
+        "prune" => parse_container_cache_prune(name, args),
         other => Err(unknown_argument(other)),
     }
 }
@@ -302,6 +303,43 @@ where
         subcommand: ContainerSubcommand::Cache {
             name,
             subcommand: ContainerCacheSubcommand::List { all },
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_container_cache_prune<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut all = false;
+    let mut yes = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--all" => all = true,
+            "--yes" => yes = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    if all && name.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container <NAME> cache prune` does not accept `--all`; use `effigy container cache prune --all` for profile-wide cache cleanup".to_owned(),
+        ));
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Cache {
+            name,
+            subcommand: ContainerCacheSubcommand::Prune { all, yes },
         },
         repo_override,
         output_json,

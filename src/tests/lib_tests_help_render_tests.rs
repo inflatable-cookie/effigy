@@ -16,6 +16,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy docs"));
     assert!(rendered.contains("effigy contracts"));
     assert!(rendered.contains("effigy distribution"));
+    assert!(rendered.contains("effigy artifact"));
     assert!(rendered.contains("effigy container"));
     assert!(rendered.contains("effigy bootstrap"));
     assert!(rendered.contains("effigy release"));
@@ -34,6 +35,16 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("--version"));
     assert!(!rendered.contains("Quick Start"));
     assert!(!rendered.contains("effigy Help"));
+}
+
+#[test]
+fn render_artifact_help_shows_stage_and_handoff_options() {
+    let rendered = render_help_text(HelpTopic::Artifact);
+    assert!(rendered.contains("artifact Help"));
+    assert!(rendered.contains("effigy artifact inspect <REF|PATH>"));
+    assert!(rendered.contains("effigy artifact stage <REF|PATH>"));
+    assert!(rendered.contains("--farmyard-handoff"));
+    assert!(rendered.contains("oci://ghcr.io/acme/private-data:uat"));
 }
 
 #[test]
@@ -196,6 +207,7 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("effigy container status --all"));
     assert!(rendered.contains("effigy container stats --all"));
     assert!(rendered.contains("effigy container cache list"));
+    assert!(rendered.contains("effigy container cache prune"));
     assert!(rendered.contains("effigy container data list"));
     assert!(rendered.contains("effigy container data export <VOLUME> <PATH>"));
     assert!(rendered.contains("effigy container [<NAME>] data dump"));
@@ -217,6 +229,7 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("--no-prompt"));
     assert!(rendered.contains("effigy container web data list"));
     assert!(rendered.contains("effigy container cache list --all"));
+    assert!(rendered.contains("effigy container cache prune --all --yes"));
     assert!(rendered.contains("effigy container web data export"));
     assert!(rendered.contains("effigy container web data import"));
     assert!(rendered.contains("effigy container data dump legacy_mysql"));
