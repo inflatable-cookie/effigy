@@ -122,9 +122,8 @@ fn run_emit(
 
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(|error| {
-                    BuiltinError::task_invocation_failed_write(parent, error)
-                })?;
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| BuiltinError::task_invocation_failed_write(parent, error))?;
             }
         }
         std::fs::write(path, file.contents.as_bytes())

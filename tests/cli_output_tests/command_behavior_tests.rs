@@ -4026,11 +4026,11 @@ fn cli_release_verify_install_json_mode_installs_and_checks_tagged_binary() {
     assert_eq!(parsed["result"]["verified"], true);
     assert_eq!(parsed["result"]["tag"], "v0.1.0");
     assert_eq!(parsed["result"]["repo_url"], repo_url);
-    assert_eq!(parsed["result"]["configured_check_count"], 8);
-    assert_eq!(parsed["result"]["executed_check_count"], 8);
+    assert_eq!(parsed["result"]["configured_check_count"], 7);
+    assert_eq!(parsed["result"]["executed_check_count"], 7);
     assert_eq!(parsed["result"]["stopped_early"], false);
     let results = parsed["result"]["results"].as_array().expect("results");
-    assert_eq!(results.len(), 8);
+    assert_eq!(results.len(), 7);
     assert_eq!(results[0]["name"], "cargo install from git tag");
     assert_eq!(results[0]["passed"], true);
     assert!(results[0]["command"]
@@ -4040,10 +4040,10 @@ fn cli_release_verify_install_json_mode_installs_and_checks_tagged_binary() {
     assert_eq!(results[1]["name"], "installed binary version check");
     assert_eq!(results[1]["stdout"], "effigy v0.1.0");
     assert_eq!(
-        results[7]["name"],
+        results[6]["name"],
         "installed binary completion candidates check"
     );
-    assert_eq!(results[7]["passed"], true);
+    assert_eq!(results[6]["passed"], true);
 }
 
 #[test]

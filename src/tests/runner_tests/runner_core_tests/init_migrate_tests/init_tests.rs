@@ -43,7 +43,10 @@ fn run_manifest_task_builtin_init_refuses_overwrite_without_force() {
     let err = run_builtin_err(root.to_path_buf(), "init", &[]);
     assert_task_invocation_error_contains(err, &["already exists", "`effigy init --force`"]);
     assert_file_text_contains_all(&root.join("effigy.toml"), &["old = \"printf old\""]);
-    assert_path_missing(&root.join("README.md"), "refuse-overwrite must not add README");
+    assert_path_missing(
+        &root.join("README.md"),
+        "refuse-overwrite must not add README",
+    );
 }
 
 #[test]
@@ -84,11 +87,8 @@ fn run_manifest_task_builtin_init_dry_run_notes_skip_for_existing_readme() {
 #[test]
 fn run_manifest_task_builtin_init_skips_existing_readme_without_force() {
     let root = temp_workspace("builtin-init-skip-readme");
-    std::fs::write(
-        root.join("README.md"),
-        "# My project\n\nkeep this body\n",
-    )
-    .expect("write pre-existing readme");
+    std::fs::write(root.join("README.md"), "# My project\n\nkeep this body\n")
+        .expect("write pre-existing readme");
 
     let out = run_builtin_ok(root.to_path_buf(), "init", &[]);
     assert_output_contains_all(
@@ -103,10 +103,7 @@ fn run_manifest_task_builtin_init_skips_existing_readme_without_force() {
         &root.join("effigy.toml"),
         &["[tasks]", "ping = \"printf ok\""],
     );
-    assert_file_text_contains_all(
-        &root.join("README.md"),
-        &["# My project", "keep this body"],
-    );
+    assert_file_text_contains_all(&root.join("README.md"), &["# My project", "keep this body"]);
 }
 
 #[test]

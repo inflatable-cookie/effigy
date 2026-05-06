@@ -165,7 +165,11 @@ fn builtin_init_json_contract_has_versioned_shape() {
     let files = parsed["files"]
         .as_array()
         .expect("files array is required in effigy.init.v1 payloads");
-    assert_eq!(files.len(), 2, "minimal starter emits effigy.toml + README.md");
+    assert_eq!(
+        files.len(),
+        2,
+        "minimal starter emits effigy.toml + README.md"
+    );
     let effigy = files
         .iter()
         .find(|f| f["target"] == "effigy.toml")

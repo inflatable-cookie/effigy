@@ -282,7 +282,12 @@ fn normalize_role(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("process");
-    match entry.role.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    match entry
+        .role
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         None => {
             if entry.service.is_some() {
                 return Err(invalid_managed_process_definition(
@@ -301,10 +306,7 @@ fn normalize_role(
                     "`role = \"lifecycle\"` does not accept `service`",
                 ));
             }
-            if !task
-                .container_lifecycle
-                .unwrap_or(false)
-            {
+            if !task.container_lifecycle.unwrap_or(false) {
                 return Err(invalid_managed_process_definition(
                     selector,
                     process,
@@ -347,9 +349,7 @@ fn normalize_role(
         Some(role) => Err(invalid_managed_process_definition(
             selector,
             process,
-            &format!(
-                "unsupported `role = \"{role}\"`; supported roles: `lifecycle`, `shell`"
-            ),
+            &format!("unsupported `role = \"{role}\"`; supported roles: `lifecycle`, `shell`"),
         )),
     }
 }

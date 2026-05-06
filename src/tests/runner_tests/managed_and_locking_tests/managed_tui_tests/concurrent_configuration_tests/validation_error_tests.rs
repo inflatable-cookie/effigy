@@ -138,9 +138,7 @@ concurrent = [{ role = "shell" }]
             ),
             expected_task: "dev",
             expected_process: "process",
-            expected_detail_substring: Some(
-                "owns the container shell; omit `run` and `task`",
-            ),
+            expected_detail_substring: Some("owns the container shell; omit `run` and `task`"),
         },
         ManagedInvalidDefinitionCase {
             workspace: "managed-lifecycle-rejects-setup",

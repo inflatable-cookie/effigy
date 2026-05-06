@@ -20,7 +20,7 @@ Built-in Tasks
 - unlock : Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)
 - cache : Inspect and invalidate phase-1 task cache metadata (`inspect`, `invalidate`)
 - completion : Generate shell completion scripts (`bash`, `zsh`, `fish`)
-- scan : Run built-in repository scanners such as `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-in-src`, `attention-markers`, and `stale-suppressions`
+- scan : Run built-in repository scanners such as `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, and `stale-suppressions`
 
 ";
 
