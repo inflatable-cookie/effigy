@@ -3,6 +3,7 @@ use std::process::Command as ProcessCommand;
 use std::time::Instant;
 
 use super::{ReleaseError, ReleaseVerifyInstall, VerificationStepResult};
+use serde_json::Value;
 
 pub fn resolve_verify_install_tag(
     tag: Option<String>,
@@ -110,6 +111,92 @@ fn run_verification_step(
     }
 }
 
+#[derive(Clone, Copy)]
+enum VerificationExpectation<'a> {
+    ContainsStdout(&'a str),
+    JsonHelpEnvelope,
+    VersionMatchesTag(&'a str),
+}
+
+fn normalize_release_tag_version(tag: &str) -> &str {
+    tag.strip_prefix('v').unwrap_or(tag)
+}
+
+fn validate_verification_step(
+    mut result: VerificationStepResult,
+    expectation: VerificationExpectation<'_>,
+) -> VerificationStepResult {
+    if !result.passed {
+        return result;
+    }
+
+    let validation_error = match expectation {
+        VerificationExpectation::ContainsStdout(expected) => {
+            if result.stdout.contains(expected) {
+                None
+            } else if result.stdout.is_empty() {
+                Some(format!(
+                    "expected stdout to contain `{expected}`, but it was empty"
+                ))
+            } else {
+                Some(format!(
+                    "expected stdout to contain `{expected}`, got `{}`",
+                    result.stdout
+                ))
+            }
+        }
+        VerificationExpectation::JsonHelpEnvelope => {
+            match serde_json::from_str::<Value>(&result.stdout) {
+                Ok(parsed) => {
+                    let schema = parsed.get("schema").and_then(Value::as_str);
+                    let result_schema = parsed
+                        .get("result")
+                        .and_then(|value| value.get("schema"))
+                        .and_then(Value::as_str);
+                    if schema == Some("effigy.command.v1")
+                        && result_schema == Some("effigy.help.v1")
+                    {
+                        None
+                    } else {
+                        Some(format!(
+                        "expected effigy help JSON envelope, got schema={schema:?} result.schema={result_schema:?}"
+                    ))
+                    }
+                }
+                Err(error) => Some(format!(
+                    "expected JSON help output, got parse error: {error}"
+                )),
+            }
+        }
+        VerificationExpectation::VersionMatchesTag(tag) => {
+            let expected = format!("v{}", normalize_release_tag_version(tag));
+            if result.stdout.contains(&expected) {
+                None
+            } else if result.stdout.is_empty() {
+                Some(format!(
+                    "expected version output to contain `{expected}`, but it was empty"
+                ))
+            } else {
+                Some(format!(
+                    "expected version output to contain `{expected}`, got `{}`",
+                    result.stdout
+                ))
+            }
+        }
+    };
+
+    if let Some(error) = validation_error {
+        result.passed = false;
+        if result.stderr.is_empty() {
+            result.stderr = error;
+        } else {
+            result.stderr = format!("{}\n{error}", result.stderr);
+        }
+    }
+
+    result
+}
+
 fn format_command(program: &str, args: &[String]) -> String {
     if args.is_empty() {
         return program.to_owned();
@@ -163,7 +250,7 @@ pub fn run_release_verify_install(
             tag,
             repo_url,
             installed_bin: None,
-            configured_check_count: 7,
+            configured_check_count: 8,
             executed_check_count: results.len(),
             stopped_early: true,
             results,
@@ -183,7 +270,7 @@ pub fn run_release_verify_install(
             tag,
             repo_url,
             installed_bin: Some(installed_bin),
-            configured_check_count: 7,
+            configured_check_count: 8,
             executed_check_count: results.len(),
             stopped_early: true,
             results,
@@ -194,9 +281,16 @@ pub fn run_release_verify_install(
 
     let verification_checks = vec![
         (
+            "installed binary version check",
+            installed_bin.clone(),
+            vec!["version".to_owned()],
+            VerificationExpectation::VersionMatchesTag(&tag),
+        ),
+        (
             "installed binary help",
             installed_bin.clone(),
             vec!["help".to_owned()],
+            VerificationExpectation::ContainsStdout("Help"),
         ),
         (
             "installed binary tasks fixture check",
@@ -206,6 +300,7 @@ pub fn run_release_verify_install(
                 "--repo".to_owned(),
                 fixture_dir.display().to_string(),
             ],
+            VerificationExpectation::ContainsStdout("noop"),
         ),
         (
             "installed binary prefixed builtin tasks check",
@@ -215,16 +310,19 @@ pub fn run_release_verify_install(
                 "--repo".to_owned(),
                 fixture_dir.display().to_string(),
             ],
+            VerificationExpectation::ContainsStdout("noop"),
         ),
         (
             "installed binary json help check",
             installed_bin.clone(),
             vec!["--json".to_owned(), "help".to_owned()],
+            VerificationExpectation::JsonHelpEnvelope,
         ),
         (
             "installed binary completion check",
             installed_bin.clone(),
             vec!["completion".to_owned(), "bash".to_owned()],
+            VerificationExpectation::ContainsStdout("complete"),
         ),
         (
             "installed binary completion candidates check",
@@ -235,12 +333,16 @@ pub fn run_release_verify_install(
                 "--repo".to_owned(),
                 fixture_dir.display().to_string(),
             ],
+            VerificationExpectation::ContainsStdout("noop"),
         ),
     ];
 
     let mut stopped_early = false;
-    for (name, program, args) in verification_checks {
-        let result = run_verification_step(name, &program.display().to_string(), &args, None);
+    for (name, program, args, expectation) in verification_checks {
+        let result = validate_verification_step(
+            run_verification_step(name, &program.display().to_string(), &args, None),
+            expectation,
+        );
         let passed = result.passed;
         results.push(result);
         if !passed {
@@ -261,7 +363,7 @@ pub fn run_release_verify_install(
         tag,
         repo_url,
         installed_bin: Some(installed_bin),
-        configured_check_count: 7,
+        configured_check_count: 8,
         executed_check_count: results.len(),
         stopped_early,
         blockers: blockers.clone(),

@@ -45,6 +45,8 @@ During v0.x, MINOR bumps may include breaking changes.
   when the repo defines it and you did not pass **`--path`**.
 - **`effigy release verify-install`** installs with **`cargo install --locked`**
   so release verification matches the locked dependency graph.
+- **`effigy release verify-install`** now checks the installed binary's reported
+  version and command output contract instead of trusting zero exit codes alone.
 - **`effigy container status`** and **`effigy container down`** can discover Effigy
   repos under the current directory when you are not at a repo root, so you
   often do not need **`--all`** for subtree checks.

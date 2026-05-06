@@ -193,7 +193,41 @@ pub(super) fn write_fake_effigy_install_repo(root: &Path, version: &str, tag: &s
         ),
     )
     .expect("write cargo manifest");
-    fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("write main");
+    fs::write(
+        root.join("src/main.rs"),
+        format!(
+            r###"use std::env;
+
+fn main() {{
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    match args.as_slice() {{
+        [flag, cmd] if flag == "--json" && cmd == "help" => {{
+            println!(
+                "{{}}",
+                r##"{{"schema":"effigy.command.v1","ok":true,"result":{{"schema":"effigy.help.v1"}}}}"##
+            );
+        }}
+        [cmd] if cmd == "version" => println!("effigy v{version}"),
+        [cmd] if cmd == "help" => println!("Effigy Help"),
+        [cmd, shell] if cmd == "completion" && shell == "bash" => {{
+            println!("complete -F _effigy effigy");
+        }}
+        [cmd, action, ..] if cmd == "completion" && action == "candidates" => {{
+            println!("noop");
+        }}
+        [cmd, ..] if cmd == "tasks" || cmd == "catalog_a/tasks" => {{
+            println!("noop");
+        }}
+        other => {{
+            eprintln!("unexpected args: {{:?}}", other);
+            std::process::exit(1);
+        }}
+    }}
+}}
+"###,
+        ),
+    )
+    .expect("write main");
     init_git_repo_with_commit(root, "initial");
     let tag_output = Command::new("git")
         .arg("-C")
