@@ -138,6 +138,7 @@ impl DockerCommand {
 }
 
 const VOLUME_USAGE_PROGRAM: &str = "__effigy_volume_usage";
+const VOLUME_USAGE_BATCH_PROGRAM: &str = "__effigy_volume_usage_batch";
 
 /// Build the command to list Docker volumes matching a project prefix.
 pub fn list_volumes_command(project_name: &str) -> DockerCommand {
@@ -184,6 +185,14 @@ pub fn volume_usage_command(mount_point: &str) -> DockerCommand {
         program: VOLUME_USAGE_PROGRAM.to_owned(),
         args: vec![mount_point.to_owned()],
         description: format!("Measure volume usage under '{mount_point}'"),
+    }
+}
+
+pub fn volume_usage_batch_command(mount_points: &[String]) -> DockerCommand {
+    DockerCommand {
+        program: VOLUME_USAGE_BATCH_PROGRAM.to_owned(),
+        args: mount_points.to_vec(),
+        description: "Measure volume usage for multiple mount points".to_owned(),
     }
 }
 
@@ -313,6 +322,18 @@ pub fn parse_volume_usage_bytes(output: &str) -> Option<u64> {
     let raw = output.lines().next()?.split_whitespace().next()?;
     let kibibytes = raw.parse::<u64>().ok()?;
     Some(kibibytes.saturating_mul(1024))
+}
+
+pub fn parse_volume_usage_bytes_map(output: &str) -> BTreeMap<String, u64> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let kibibytes = parts.next()?.parse::<u64>().ok()?;
+            let mount_point = parts.next()?.to_owned();
+            Some((mount_point, kibibytes.saturating_mul(1024)))
+        })
+        .collect()
 }
 
 pub fn merge_runtime_volume_metadata(

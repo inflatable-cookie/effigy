@@ -481,6 +481,9 @@ pub(super) fn run_runtime_volume_capture(
     if command.program == "__effigy_volume_usage" {
         return run_runtime_volume_usage_capture(repo_root, profile, command);
     }
+    if command.program == "__effigy_volume_usage_batch" {
+        return run_runtime_volume_usage_batch_capture(repo_root, profile, command);
+    }
     let docker_args = runtime_args(&command.args);
     let (program, args) =
         runtime_process_invocation(profile, command.program.as_str(), &docker_args)?;
@@ -541,6 +544,66 @@ fn run_runtime_volume_usage_capture(
                 OsString::from("-sk"),
                 OsString::from(mount_point),
             ],
+        )
+    };
+
+    std::process::Command::new(&program)
+        .current_dir(repo_root)
+        .args(&args)
+        .output()
+        .map_err(|error| RunnerError::TaskCommandLaunch {
+            command: format!(
+                "{} ({} {})",
+                command.description,
+                program.to_string_lossy(),
+                format_args(&args)
+            ),
+            error,
+        })
+        .and_then(|output| {
+            if output.status.success() {
+                Ok(output)
+            } else {
+                Err(RunnerError::task_invocation(format!(
+                    "{} failed (code {:?})\nstdout:\n{}\nstderr:\n{}",
+                    command.description,
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                )))
+            }
+        })
+}
+
+fn run_runtime_volume_usage_batch_capture(
+    repo_root: &Path,
+    profile: &str,
+    command: &DockerCommand,
+) -> Result<Output, RunnerError> {
+    if command.args.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "runtime volume usage batch command requires one or more mount-point arguments",
+        ));
+    }
+    let detection = ContainerBackendDetection::from_env_and_path();
+    let (program, args) = if detection.docker_cli_available {
+        let mut args = vec![OsString::from("-sk")];
+        args.extend(command.args.iter().map(OsString::from));
+        (OsString::from("du"), args)
+    } else {
+        let mut args = vec![
+            OsString::from("ssh"),
+            OsString::from("--profile"),
+            OsString::from(profile),
+            OsString::from("--"),
+            OsString::from("sudo"),
+            OsString::from("du"),
+            OsString::from("-sk"),
+        ];
+        args.extend(command.args.iter().map(OsString::from));
+        (
+            effigy_containers::compose::resolve_host_cli_program("colima"),
+            args,
         )
     };
 

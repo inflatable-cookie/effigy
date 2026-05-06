@@ -5,8 +5,8 @@ use std::process::Output;
 use effigy_catalog::volumes::{
     export_volume_command, import_volume_command, inspect_volume_command, list_all_volumes_command,
     list_volumes_command, merge_runtime_volume_metadata, parse_inspect_volume_metadata,
-    parse_listed_volume_names, parse_volume_usage_bytes, remove_volume_command,
-    volume_usage_command, DockerCommand, ManagedVolume,
+    parse_listed_volume_names, parse_volume_usage_bytes_map, remove_volume_command,
+    volume_usage_batch_command, DockerCommand, ManagedVolume,
 };
 use effigy_containers::{
     cache_list_all_report, cache_list_report, cache_prune_report, data_list_report,
@@ -520,7 +520,10 @@ where
         .map(|environment| environment.policy.project_name)
         .collect::<BTreeSet<_>>();
     let listed = run_runtime_volume_capture(cwd, profile, &list_all_volumes_command())?;
-    let names = parse_listed_volume_names(String::from_utf8_lossy(&listed.stdout).as_ref());
+    let names = parse_listed_volume_names(String::from_utf8_lossy(&listed.stdout).as_ref())
+        .into_iter()
+        .filter(|name| cache_kind_from_volume_name(name).is_some())
+        .collect::<Vec<_>>();
     let metadata = names
         .iter()
         .filter_map(|name| {
@@ -530,10 +533,30 @@ where
         })
         .map(|entry| (entry.name.clone(), entry))
         .collect::<std::collections::BTreeMap<_, _>>();
+    let missing_mount_points = metadata
+        .values()
+        .filter(|entry| entry.size_bytes.is_none())
+        .filter_map(|entry| entry.mount_point.clone())
+        .collect::<Vec<_>>();
+    let usage_by_mount_point = if missing_mount_points.is_empty() {
+        std::collections::BTreeMap::new()
+    } else {
+        run_runtime_volume_capture(
+            cwd,
+            profile,
+            &volume_usage_batch_command(&missing_mount_points),
+        )
+        .ok()
+        .map(|output| {
+            parse_volume_usage_bytes_map(String::from_utf8_lossy(&output.stdout).as_ref())
+        })
+        .unwrap_or_default()
+    };
     Ok(collect_global_cache_entries_from_names(
         names,
         &running_projects,
         &metadata,
+        &usage_by_mount_point,
     ))
 }
 
@@ -546,25 +569,14 @@ fn inspect_runtime_volume_metadata<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let Some(mut metadata) =
-        run_runtime_volume_capture(cwd, profile, &inspect_volume_command(name))
-            .ok()
-            .and_then(|output| {
-                parse_inspect_volume_metadata(String::from_utf8_lossy(&output.stdout).as_ref())
-            })
+    let Some(metadata) = run_runtime_volume_capture(cwd, profile, &inspect_volume_command(name))
+        .ok()
+        .and_then(|output| {
+            parse_inspect_volume_metadata(String::from_utf8_lossy(&output.stdout).as_ref())
+        })
     else {
         return Ok(None);
     };
-    if metadata.size_bytes.is_none() {
-        if let Some(mount_point) = metadata.mount_point.as_deref() {
-            metadata.size_bytes =
-                run_runtime_volume_capture(cwd, profile, &volume_usage_command(mount_point))
-                    .ok()
-                    .and_then(|output| {
-                        parse_volume_usage_bytes(String::from_utf8_lossy(&output.stdout).as_ref())
-                    });
-        }
-    }
     Ok(Some(metadata))
 }
 
@@ -604,6 +616,7 @@ fn collect_global_cache_entries_from_names(
         String,
         effigy_catalog::volumes::RuntimeVolumeMetadata,
     >,
+    usage_by_mount_point: &std::collections::BTreeMap<String, u64>,
 ) -> Vec<ContainerCacheGlobalEntry> {
     let mut caches = Vec::new();
     for name in names {
@@ -620,7 +633,14 @@ fn collect_global_cache_entries_from_names(
             in_use,
             name,
             kind,
-            size_bytes: metadata.and_then(|entry| entry.size_bytes),
+            size_bytes: metadata.and_then(|entry| {
+                entry.size_bytes.or_else(|| {
+                    entry
+                        .mount_point
+                        .as_ref()
+                        .and_then(|mount| usage_by_mount_point.get(mount).copied())
+                })
+            }),
             mount_point: metadata.and_then(|entry| entry.mount_point.clone()),
         });
     }
@@ -726,6 +746,7 @@ mod tests {
             ],
             &running_projects,
             &metadata,
+            &BTreeMap::new(),
         );
 
         assert_eq!(entries.len(), 2);
@@ -737,6 +758,32 @@ mod tests {
         );
         assert!(entries[1].in_use);
         assert_eq!(entries[1].kind, "rust-target");
+    }
+
+    #[test]
+    fn global_cache_entries_use_batched_usage_fallback_for_missing_sizes() {
+        let running_projects = BTreeSet::new();
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "contact-patch-dev-workspace-cargo-git".to_owned(),
+            RuntimeVolumeMetadata {
+                name: "contact-patch-dev-workspace-cargo-git".to_owned(),
+                mount_point: Some("/var/lib/mock/cargo-git".to_owned()),
+                size_bytes: None,
+            },
+        );
+        let mut usage = BTreeMap::new();
+        usage.insert("/var/lib/mock/cargo-git".to_owned(), 4096);
+
+        let entries = collect_global_cache_entries_from_names(
+            vec!["contact-patch-dev-workspace-cargo-git".to_owned()],
+            &running_projects,
+            &metadata,
+            &usage,
+        );
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].size_bytes, Some(4096));
     }
 }
 

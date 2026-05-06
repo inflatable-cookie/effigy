@@ -99,6 +99,22 @@ fn volume_usage_command_format() {
 }
 
 #[test]
+fn volume_usage_batch_command_format() {
+    let cmd = volume_usage_batch_command(&[
+        "/var/lib/docker/volumes/one/_data".to_string(),
+        "/var/lib/docker/volumes/two/_data".to_string(),
+    ]);
+    assert_eq!(cmd.program, "__effigy_volume_usage_batch");
+    assert_eq!(
+        cmd.args,
+        vec![
+            "/var/lib/docker/volumes/one/_data",
+            "/var/lib/docker/volumes/two/_data"
+        ]
+    );
+}
+
+#[test]
 fn export_volume_command_format() {
     let cmd = export_volume_command("my-project-db-data", Path::new("/tmp/backup.tar.gz"));
     assert_eq!(cmd.program, "docker");
@@ -218,6 +234,21 @@ fn parse_inspect_volume_metadata_reads_mount_and_size() {
 fn parse_volume_usage_bytes_reads_kibibytes_output() {
     let parsed = parse_volume_usage_bytes("2048\t/var/lib/docker/volumes/demo/_data\n");
     assert_eq!(parsed, Some(2_097_152));
+}
+
+#[test]
+fn parse_volume_usage_bytes_map_reads_multiple_lines() {
+    let parsed = parse_volume_usage_bytes_map(
+        "2048\t/var/lib/docker/volumes/one/_data\n1024\t/var/lib/docker/volumes/two/_data\n",
+    );
+    assert_eq!(
+        parsed.get("/var/lib/docker/volumes/one/_data"),
+        Some(&2_097_152)
+    );
+    assert_eq!(
+        parsed.get("/var/lib/docker/volumes/two/_data"),
+        Some(&1_048_576)
+    );
 }
 
 #[test]

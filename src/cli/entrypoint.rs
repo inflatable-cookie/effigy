@@ -9,6 +9,7 @@ use effigy_cli::{
 use effigy_context::EffigyRuntimeContext;
 use effigy_core::widgets::MessageBlock;
 use effigy_ui::{OutputMode, PlainRenderer, Renderer};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 pub fn run_cli(raw_args: Vec<String>) {
@@ -112,8 +113,16 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
     if !context.suppress_header {
         let _ = render_cli_header(&mut renderer, context.command_root);
     }
+    let spinner = if should_show_transient_spinner(context, &command) {
+        renderer.spinner("Inspecting cache volumes...").ok()
+    } else {
+        None
+    };
     match crate::runner::run_command_with_context(command, context.runtime_context) {
         Ok(output) => {
+            if let Some(spinner) = spinner.as_ref() {
+                spinner.finish_clear();
+            }
             if context.emit_json_envelope {
                 emit_json_envelope_success(context.command_kind, context.command_name, &output);
                 return;
@@ -124,6 +133,9 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             let _ = renderer.text("");
         }
         Err(err) => {
+            if let Some(spinner) = spinner.as_ref() {
+                spinner.finish_clear();
+            }
             if context.emit_json_envelope {
                 emit_json_envelope_error(
                     1,
@@ -155,6 +167,26 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             std::process::exit(1);
         }
     }
+}
+
+fn should_show_transient_spinner(context: &CliExecutionContext<'_>, command: &Command) -> bool {
+    if context.emit_json_envelope || context.suppress_header {
+        return false;
+    }
+    if !std::io::stdout().is_terminal() || std::env::var_os("CI").is_some() {
+        return false;
+    }
+    matches!(
+        command,
+        Command::Container(effigy_cli::ContainerArgs {
+            subcommand:
+                effigy_cli::ContainerSubcommand::Cache {
+                    name: _,
+                    subcommand: effigy_cli::ContainerCacheSubcommand::List { all: true },
+                },
+            ..
+        })
+    )
 }
 
 fn parse_command_with_builtin_deferral(
