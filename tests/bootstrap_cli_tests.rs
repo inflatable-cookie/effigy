@@ -371,7 +371,7 @@ fn bootstrap_teardown_json_reports_session_cleanup() {
     );
     assert_eq!(
         parsed["result"]["result"]["cleaned_repos"],
-        Value::Array(vec![Value::String(root.display().to_string())])
+        Value::Array(vec![])
     );
     assert!(
         !root

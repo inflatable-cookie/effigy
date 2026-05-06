@@ -826,7 +826,7 @@ where
     if first == "teardown" {
         let mut yes = false;
         let mut output_json = false;
-        while let Some(arg) = args.next() {
+        for arg in args.by_ref() {
             match arg.as_str() {
                 "--json" => output_json = true,
                 "--yes" => yes = true,
