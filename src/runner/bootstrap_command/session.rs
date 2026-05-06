@@ -225,14 +225,7 @@ pub(super) fn run_bootstrap_teardown_with_cwd(
     output_json: bool,
     yes: bool,
 ) -> Result<String, RunnerError> {
-    let context = resolve_command_context_from_cwd(cwd, None)?;
-    let repo_root = context.resolved.resolved_root;
-    let record = load_bootstrap_fresh_session_record(&repo_root)?.ok_or_else(|| {
-        RunnerError::task_invocation(format!(
-            "no active bootstrap fresh session record found in {}",
-            repo_root.display()
-        ))
-    })?;
+    let record = resolve_bootstrap_teardown_record(&cwd)?;
     maybe_confirm_bootstrap_teardown(&record, output_json, yes)?;
 
     let _guard = ScopedBootstrapFreshSessionEnvOverride::set(&record.session_id);
@@ -309,6 +302,105 @@ pub(super) fn run_bootstrap_teardown_with_cwd(
     ))
 }
 
+fn resolve_bootstrap_teardown_record(
+    cwd: &Path,
+) -> Result<BootstrapFreshSessionRecord, RunnerError> {
+    if let Ok(context) = resolve_command_context_from_cwd(cwd.to_path_buf(), None) {
+        if let Some(record) = load_bootstrap_fresh_session_record(&context.resolved.resolved_root)?
+        {
+            return Ok(record);
+        }
+    }
+
+    let matches = find_bootstrap_fresh_sessions_under(cwd)?;
+    match matches.len() {
+        0 => Err(RunnerError::task_invocation(format!(
+            "no active bootstrap fresh session record found in {}",
+            cwd.display()
+        ))),
+        1 => Ok(matches.into_iter().next().expect("single session match")),
+        _ => Err(RunnerError::task_invocation(format!(
+            "multiple active bootstrap fresh sessions found under {}: {}. Rerun from the target repo root.",
+            cwd.display(),
+            matches
+                .iter()
+                .map(|record| format!("{} ({})", record.root_repo.display(), record.session_id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
+}
+
+fn find_bootstrap_fresh_sessions_under(
+    scope_root: &Path,
+) -> Result<Vec<BootstrapFreshSessionRecord>, RunnerError> {
+    let canonical_scope = scope_root
+        .canonicalize()
+        .unwrap_or_else(|_| scope_root.to_path_buf());
+    let mut session_files = Vec::new();
+    collect_bootstrap_fresh_session_files(&canonical_scope, &mut session_files)?;
+
+    let mut unique =
+        std::collections::BTreeMap::<(PathBuf, String), BootstrapFreshSessionRecord>::new();
+    for path in session_files {
+        let Some(repo_root) = path.parent().and_then(Path::parent).and_then(Path::parent) else {
+            continue;
+        };
+        let Some(record) = load_bootstrap_fresh_session_record(repo_root)? else {
+            continue;
+        };
+        if !record.active {
+            continue;
+        }
+        unique
+            .entry((record.root_repo.clone(), record.session_id.clone()))
+            .or_insert(record);
+    }
+
+    Ok(unique.into_values().collect())
+}
+
+fn collect_bootstrap_fresh_session_files(
+    root: &Path,
+    results: &mut Vec<PathBuf>,
+) -> Result<(), RunnerError> {
+    let entries = fs::read_dir(root).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to inspect bootstrap teardown scope {}: {error}",
+            root.display()
+        ))
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to inspect bootstrap teardown scope {}: {error}",
+                root.display()
+            ))
+        })?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to inspect bootstrap teardown scope {}: {error}",
+                path.display()
+            ))
+        })?;
+        if file_type.is_dir() {
+            collect_bootstrap_fresh_session_files(&path, results)?;
+            continue;
+        }
+        if file_type.is_file()
+            && path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value == "bootstrap-fresh-session.json")
+        {
+            results.push(path);
+        }
+    }
+    Ok(())
+}
+
 pub(super) struct ScopedBootstrapFreshSessionEnvOverride {
     original: Option<String>,
 }
@@ -381,5 +473,24 @@ mod tests {
             assert!(record.active);
             assert_eq!(record.repos, vec![root.clone(), child.clone()]);
         }
+    }
+
+    #[test]
+    fn teardown_record_resolution_falls_back_to_scope_descendants() {
+        let scope = temp_repo("scope");
+        let root = scope.join("app");
+        let child = root.join("child-app");
+        fs::create_dir_all(&child).expect("create child repo");
+        let record = BootstrapFreshSessionRecord {
+            session_id: "fresh-test-session".to_owned(),
+            root_repo: root.clone(),
+            repos: vec![root.clone(), child],
+            active: true,
+        };
+        write_bootstrap_fresh_session_record(&root, &record).expect("write root record");
+
+        let resolved = resolve_bootstrap_teardown_record(&scope).expect("resolve subtree session");
+
+        assert_eq!(resolved, record);
     }
 }
