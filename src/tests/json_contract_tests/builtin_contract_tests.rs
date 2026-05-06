@@ -165,17 +165,58 @@ fn builtin_init_json_contract_has_versioned_shape() {
     let files = parsed["files"]
         .as_array()
         .expect("files array is required in effigy.init.v1 payloads");
-    assert_eq!(files.len(), 1, "minimal starter emits exactly one file");
-    let first = &files[0];
-    assert_eq!(first["target"], "effigy.toml");
-    assert!(first["path"]
+    assert_eq!(files.len(), 2, "minimal starter emits effigy.toml + README.md");
+    let effigy = files
+        .iter()
+        .find(|f| f["target"] == "effigy.toml")
+        .expect("effigy.toml entry");
+    assert!(effigy["path"]
         .as_str()
         .is_some_and(|path| path.ends_with("effigy.toml")));
-    assert!(first["contents"]
+    assert!(effigy["contents"]
         .as_str()
         .is_some_and(|text| text.contains("[tasks]")));
-    assert_eq!(first["written"], true);
-    assert_eq!(first["existed"], false);
+    assert_eq!(effigy["written"], true);
+    assert_eq!(effigy["existed"], false);
+
+    let readme = files
+        .iter()
+        .find(|f| f["target"] == "README.md")
+        .expect("README.md entry");
+    assert!(readme["path"]
+        .as_str()
+        .is_some_and(|path| path.ends_with("README.md")));
+    assert!(readme["contents"]
+        .as_str()
+        .is_some_and(|text| text.contains("inflatable-cookie/effigy")));
+    assert_eq!(readme["written"], true);
+    assert_eq!(readme["existed"], false);
+}
+
+#[test]
+fn builtin_init_json_marks_readme_skipped_when_readme_already_exists() {
+    let root = temp_workspace("init-json-readme-skip");
+    fs::write(root.join("README.md"), "# mine\n").expect("readme");
+
+    let parsed = run_invocation_json(root, "init", &["--json"]);
+    assert_schema_v1(&parsed, "effigy.init.v1");
+    assert_eq!(parsed["ok"], true);
+    let files = parsed["files"]
+        .as_array()
+        .expect("files array is required in effigy.init.v1 payloads");
+    let readme = files
+        .iter()
+        .find(|f| f["target"] == "README.md")
+        .expect("README.md entry");
+    assert_eq!(readme["written"], false);
+    assert_eq!(readme["existed"], true);
+    assert_eq!(readme["skipped"], true);
+    let effigy = files
+        .iter()
+        .find(|f| f["target"] == "effigy.toml")
+        .expect("effigy.toml entry");
+    assert_eq!(effigy["written"], true);
+    assert_eq!(effigy["existed"], false);
 }
 
 #[test]

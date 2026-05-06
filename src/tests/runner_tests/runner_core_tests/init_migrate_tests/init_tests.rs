@@ -9,7 +9,7 @@ fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
     let root = temp_workspace("builtin-init-create");
 
     let out = run_builtin_ok(root.to_path_buf(), "init", &[]);
-    assert_output_contains_all(&out, &["Created effigy.toml"]);
+    assert_output_contains_all(&out, &["Created effigy.toml", "Created README.md"]);
     assert_file_text_contains_all(
         &root.join("effigy.toml"),
         &[
@@ -18,6 +18,10 @@ fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
             "# [tasks.dev]",
             "# [tasks.validate]",
         ],
+    );
+    assert_file_text_contains_all(
+        &root.join("README.md"),
+        &["inflatable-cookie/effigy", "Built-ins"],
     );
 
     let listed = run_tasks(TasksArgs {
@@ -39,17 +43,21 @@ fn run_manifest_task_builtin_init_refuses_overwrite_without_force() {
     let err = run_builtin_err(root.to_path_buf(), "init", &[]);
     assert_task_invocation_error_contains(err, &["already exists", "`effigy init --force`"]);
     assert_file_text_contains_all(&root.join("effigy.toml"), &["old = \"printf old\""]);
+    assert_path_missing(&root.join("README.md"), "refuse-overwrite must not add README");
 }
 
 #[test]
 fn run_manifest_task_builtin_init_force_overwrites_existing_manifest() {
     let root = temp_workspace("builtin-init-force-overwrite");
     write_root_manifest(&root, "[tasks]\nold = \"printf old\"\n");
+    std::fs::write(root.join("README.md"), "# old readme\n").expect("readme");
 
     let out = run_builtin_ok(root.to_path_buf(), "init", &["--force"]);
-    assert_output_contains_all(&out, &["Overwrote effigy.toml"]);
+    assert_output_contains_all(&out, &["Overwrote effigy.toml", "Overwrote README.md"]);
     assert_file_text_contains_all(&root.join("effigy.toml"), &["ping = \"printf ok\""]);
     assert_file_text_excludes_all(&root.join("effigy.toml"), &["old = \"printf old\""]);
+    assert_file_text_contains_all(&root.join("README.md"), &["inflatable-cookie/effigy"]);
+    assert_file_text_excludes_all(&root.join("README.md"), &["# old readme"]);
 }
 
 #[test]
@@ -57,8 +65,48 @@ fn run_manifest_task_builtin_init_dry_run_prints_scaffold_without_writing() {
     let root = temp_workspace("builtin-init-dry-run");
 
     let out = run_builtin_ok(root.to_path_buf(), "init", &["--dry-run"]);
-    assert_output_contains_all(&out, &["[tasks]", "# [tasks.dev]"]);
+    assert_output_contains_all(&out, &["=== effigy.toml ===", "[tasks]", "# [tasks.dev]"]);
+    assert_output_contains_all(&out, &["=== README.md ===", "inflatable-cookie/effigy"]);
     assert_path_missing(&root.join("effigy.toml"), "dry-run manifest");
+    assert_path_missing(&root.join("README.md"), "dry-run readme");
+}
+
+#[test]
+fn run_manifest_task_builtin_init_dry_run_notes_skip_for_existing_readme() {
+    let root = temp_workspace("builtin-init-dry-run-readme-skip");
+    std::fs::write(root.join("README.md"), "# exists\n").expect("readme");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["--dry-run"]);
+    assert_output_contains_all(&out, &["=== README.md ===", "would skip"]);
+    assert_path_missing(&root.join("effigy.toml"), "dry-run manifest");
+}
+
+#[test]
+fn run_manifest_task_builtin_init_skips_existing_readme_without_force() {
+    let root = temp_workspace("builtin-init-skip-readme");
+    std::fs::write(
+        root.join("README.md"),
+        "# My project\n\nkeep this body\n",
+    )
+    .expect("write pre-existing readme");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &[]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "Created effigy.toml",
+            "Skipped README.md",
+            "Pass --force to replace",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join("effigy.toml"),
+        &["[tasks]", "ping = \"printf ok\""],
+    );
+    assert_file_text_contains_all(
+        &root.join("README.md"),
+        &["# My project", "keep this body"],
+    );
 }
 
 #[test]
@@ -76,11 +124,13 @@ fn run_manifest_task_builtin_init_json_reports_write_status() {
             "\"overwritten\": false",
             "\"files\":",
             "\"target\": \"effigy.toml\"",
+            "\"target\": \"README.md\"",
             "\"contents\":",
             "\"existed\": false",
         ],
     );
     assert_path_exists(&root.join("effigy.toml"), "init json manifest");
+    assert_path_exists(&root.join("README.md"), "init json readme");
 }
 
 #[test]
@@ -88,11 +138,12 @@ fn run_manifest_task_builtin_init_positional_minimal_matches_default() {
     let root = temp_workspace("builtin-init-positional-minimal");
 
     let out = run_builtin_ok(root.to_path_buf(), "init", &["minimal"]);
-    assert_output_contains_all(&out, &["Created effigy.toml"]);
+    assert_output_contains_all(&out, &["Created effigy.toml", "Created README.md"]);
     assert_file_text_contains_all(
         &root.join("effigy.toml"),
         &["[tasks]", "ping = \"printf ok\""],
     );
+    assert_path_exists(&root.join("README.md"), "positional minimal readme");
 }
 
 #[test]

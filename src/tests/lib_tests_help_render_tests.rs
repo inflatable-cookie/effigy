@@ -382,6 +382,7 @@ fn render_init_help_shows_phase_scope() {
     assert!(rendered.contains("--list"));
     assert!(rendered.contains("--dry-run"));
     assert!(rendered.contains("--force"));
+    assert!(rendered.contains("An existing root `README.md` is never overwritten"));
 }
 
 #[test]

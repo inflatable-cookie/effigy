@@ -215,7 +215,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn minimal_starter_loads_with_expected_single_file() {
+    fn minimal_starter_loads_with_expected_files() {
         let resolver = StarterResolver::new();
         let starter = resolver
             .resolve("minimal")
@@ -223,8 +223,10 @@ mod tests {
 
         assert_eq!(starter.name, "minimal");
         assert!(!starter.description.is_empty());
-        assert_eq!(starter.files.len(), 1);
-        assert_eq!(starter.files[0].target, "effigy.toml");
+        assert_eq!(starter.files.len(), 2);
+        let targets: Vec<&str> = starter.files.iter().map(|f| f.target.as_str()).collect();
+        assert!(targets.contains(&"effigy.toml"));
+        assert!(targets.contains(&"README.md"));
         assert!(starter.guidance.is_none());
     }
 

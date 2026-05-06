@@ -27,6 +27,8 @@ pub(super) struct EmittedFile {
     pub(super) existed: bool,
     /// True when we actually wrote the file in this run.
     pub(super) written: bool,
+    /// True when an existing root `README.md` was left untouched (no `--force`).
+    pub(super) skipped: bool,
 }
 
 pub(super) fn render_init_response(
@@ -44,13 +46,20 @@ pub(super) fn render_init_response(
             let entries: Vec<serde_json::Value> = files
                 .iter()
                 .map(|f| {
-                    json!({
+                    let mut entry = json!({
                         "target": f.target,
                         "path": f.path.display().to_string(),
                         "contents": f.contents,
                         "existed": f.existed,
                         "written": f.written,
-                    })
+                    });
+                    if f.skipped {
+                        entry
+                            .as_object_mut()
+                            .expect("object")
+                            .insert("skipped".to_string(), json!(true));
+                    }
+                    entry
                 })
                 .collect();
             json!({
@@ -96,6 +105,14 @@ fn render_init_text(starter: &Starter, files: &[EmittedFile], outcome: &InitOutc
 
     let mut out = String::new();
     for file in files {
+        if file.skipped {
+            out.push_str(&format!(
+                "Skipped {} at {} (already exists). Pass --force to replace it.\n",
+                file.target,
+                file.path.display()
+            ));
+            continue;
+        }
         let verb = if file.existed { "Overwrote" } else { "Created" };
         out.push_str(&format!(
             "{} {} at {}.\n",
@@ -117,7 +134,7 @@ fn render_dry_run_text(files: &[EmittedFile]) -> String {
     // Single-file dry-runs echo the raw scaffold so existing callers that
     // scrape the content continue to work; multi-file dry-runs fence each
     // file with a header so the output is parseable.
-    if files.len() == 1 {
+    if files.len() == 1 && !files[0].skipped {
         return files[0].contents.clone();
     }
     let mut out = String::new();
@@ -126,6 +143,9 @@ fn render_dry_run_text(files: &[EmittedFile]) -> String {
             out.push('\n');
         }
         out.push_str(&format!("=== {} ===\n", file.target));
+        if file.skipped {
+            out.push_str("(exists — would skip; pass --force to replace)\n\n");
+        }
         out.push_str(&file.contents);
         if !file.contents.ends_with('\n') {
             out.push('\n');

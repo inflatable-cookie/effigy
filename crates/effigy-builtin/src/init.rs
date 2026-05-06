@@ -67,13 +67,21 @@ fn run_emit(
         .collect();
 
     let mut probe = PathPresenceCache::new();
-    let existing: Vec<&PathBuf> = planned
+    let blockers: Vec<&PathBuf> = planned
         .iter()
-        .filter_map(|(path, _)| probe.exists(path).then_some(path))
+        .filter_map(|(path, file)| {
+            if !probe.exists(path) {
+                return None;
+            }
+            if skip_existing_readme(file, true, force) {
+                return None;
+            }
+            Some(path)
+        })
         .collect();
 
-    if !existing.is_empty() && !force && !dry_run {
-        let listing = existing
+    if !blockers.is_empty() && !force && !dry_run {
+        let listing = blockers
             .iter()
             .map(|p| p.display().to_string())
             .collect::<Vec<_>>()
@@ -87,25 +95,47 @@ fn run_emit(
     let mut emitted = Vec::with_capacity(planned.len());
     for (path, file) in &planned {
         let existed = probe.exists(path);
-        let mut wrote = false;
-        if !dry_run {
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent).map_err(|error| {
-                        BuiltinError::task_invocation_failed_write(parent, error)
-                    })?;
-                }
-            }
-            std::fs::write(path, file.contents.as_bytes())
-                .map_err(|error| BuiltinError::task_invocation_failed_write(path, error))?;
-            wrote = true;
+        let skip_readme = skip_existing_readme(file, existed, force);
+        if dry_run {
+            emitted.push(output::EmittedFile {
+                target: file.target.clone(),
+                path: path.clone(),
+                contents: file.contents.clone(),
+                existed,
+                written: false,
+                skipped: skip_readme,
+            });
+            continue;
         }
+
+        if skip_readme {
+            emitted.push(output::EmittedFile {
+                target: file.target.clone(),
+                path: path.clone(),
+                contents: file.contents.clone(),
+                existed,
+                written: false,
+                skipped: true,
+            });
+            continue;
+        }
+
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    BuiltinError::task_invocation_failed_write(parent, error)
+                })?;
+            }
+        }
+        std::fs::write(path, file.contents.as_bytes())
+            .map_err(|error| BuiltinError::task_invocation_failed_write(path, error))?;
         emitted.push(output::EmittedFile {
             target: file.target.clone(),
             path: path.clone(),
             contents: file.contents.clone(),
             existed,
-            written: wrote,
+            written: true,
+            skipped: false,
         });
     }
 
@@ -118,4 +148,10 @@ fn run_emit(
             dry_run,
         },
     )
+}
+
+/// Root `README.md` from a starter is optional: never clobber an existing project
+/// README unless `--force` is set.
+fn skip_existing_readme(file: &StarterFile, path_exists: bool, force: bool) -> bool {
+    file.target == "README.md" && path_exists && !force
 }

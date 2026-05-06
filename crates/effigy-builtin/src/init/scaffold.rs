@@ -5,8 +5,8 @@ use crate::BuiltinError;
 /// Load a starter from the bundled catalog by name.
 ///
 /// Batch 3 of roadmap `g02.021` generalizes init emission to multi-file
-/// starters. Single-file starters (`minimal`) and multi-file starters
-/// (`underlay`) share the same load path; the emitter in `init.rs`
+/// starters. Starters such as `minimal` (manifest + README) and `underlay`
+/// share the same load path; the emitter in `init.rs`
 /// handles per-file existence checks and write semantics.
 pub(super) fn load_starter(starter_name: &str) -> Result<Starter, BuiltinError> {
     let resolver = StarterResolver::new();

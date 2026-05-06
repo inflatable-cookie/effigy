@@ -7,8 +7,11 @@
 
 [starter]
 name = "minimal"
-description = "Baseline effigy.toml scaffold with commented managed dev and DAG examples."
+description = "Baseline effigy.toml + README with first-run hints; commented managed dev and DAG examples."
 
 [[files]]
 target = "effigy.toml"
 # `source` defaults to `target` when omitted.
+
+[[files]]
+target = "README.md"
