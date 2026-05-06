@@ -313,7 +313,8 @@ where
                 db_dumps.push(parse_container_db_dump(value)?);
             }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            other => db_dumps.push(parse_container_db_dump(other.to_owned())?),
         }
     }
 

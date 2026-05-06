@@ -217,6 +217,7 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("effigy container web data list"));
     assert!(rendered.contains("effigy container web data export"));
     assert!(rendered.contains("effigy container web data import"));
+    assert!(rendered.contains("effigy container data dump legacy_mysql"));
     assert!(rendered.contains("effigy container data dump --db-dump legacy_mysql"));
     assert!(rendered.contains("effigy container data dump --db-dump ./latest.sql"));
     assert!(rendered.contains("effigy container data seed --db-seed ./latest.sql"));

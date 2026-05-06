@@ -26,7 +26,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container <NAME> data list [--repo <PATH>] [--json]",
             "effigy container data export <VOLUME> <PATH> [--repo <PATH>] [--json]",
             "effigy container <NAME> data export <VOLUME> <PATH> [--repo <PATH>] [--json]",
-            "effigy container [<NAME>] data dump [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>]... [--repo <PATH>] [--json]",
+            "effigy container [<NAME>] data dump [<FILE>|<TARGET>|<TARGET>=<FILE>]... [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>]... [--repo <PATH>] [--json]",
             "effigy container data import <VOLUME> <PATH> [--repo <PATH>] [--yes] [--json]",
             "effigy container <NAME> data import <VOLUME> <PATH> [--repo <PATH>] [--yes] [--json]",
             "effigy container data pull-production [--repo <PATH>] [--yes] [--json]",
@@ -74,7 +74,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>",
-                "Write one SQL dump for `data dump`; single-database bundles can omit the target, multi-database bundles must name one. A bare target writes `./<target>.sql`. Output paths are relative to the invocation cwd unless absolute.",
+                "Compatibility alias for positional `data dump` specs. A bare target writes `./<target>.sql`. Output paths are relative to the invocation cwd unless absolute.",
             ),
             (
                 "--db-seed <FILE>|<TARGET>=<FILE>",
@@ -96,6 +96,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container stats --all",
             "effigy container web data list",
             "effigy container web data export fixture-web-dev-db-data ./backup.tar.gz",
+            "effigy container data dump legacy_mysql",
             "effigy container data dump --db-dump legacy_mysql",
             "effigy container data dump --db-dump ./latest.sql",
             "effigy container data dump --db-dump app=./app.sql --db-dump app_test=./app_test.sql",
