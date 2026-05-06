@@ -484,6 +484,33 @@ mounts = ["../../underlay", "../../poodle"]
 }
 
 #[test]
+fn underlay_bundle_merges_repo_bootstrap_children_with_bundle_children() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "underlay-reference-dev"
+workspace_subdir = "underlay-reference"
+databases = ["acme"]
+
+[[bootstrap.children]]
+path = "../ledger"
+repo = "git@github.com:acme/ledger.git"
+"#,
+    )
+    .expect("write manifest");
+
+    let manifest = load_task_manifest(&manifest_path).expect("load manifest");
+    let children = &manifest.bootstrap.as_ref().expect("bootstrap").children;
+    let child_paths: Vec<&str> = children.iter().map(|child| child.path.as_str()).collect();
+    assert_eq!(child_paths, vec!["../underlay", "../poodle", "../ledger"]);
+}
+
+#[test]
 fn underlay_bundle_hydrates_primary_database_from_databases_list() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("effigy.toml");

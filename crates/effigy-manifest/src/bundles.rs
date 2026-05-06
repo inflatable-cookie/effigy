@@ -77,7 +77,7 @@ pub(crate) fn apply_bundle_defaults(
         normalize_database_bundle_inputs(manifest_path, bundle_name, &mut normalized_inputs)?;
         normalize_bundle_specific_inputs(manifest_path, bundle_name, &mut normalized_inputs)?;
     }
-    let (defaults, source_path) = match &selection {
+    let (mut defaults, source_path) = match &selection {
         BundleSelection::Shipped { name } => (
             resolve_bundle_defaults(manifest_path, current, name, &normalized_inputs)?,
             bundle_source_path(name),
@@ -86,6 +86,12 @@ pub(crate) fn apply_bundle_defaults(
             resolve_local_bundle_defaults(manifest_path, path, &normalized_inputs)?
         }
     };
+    let bundle_extend_paths = take_bundle_extend_paths(manifest_path, &mut defaults)?;
+    let existing_extend_paths = combined_bundle_extend_paths(extend_paths, &bundle_extend_paths);
+    let existing_bundle_values = existing_extend_paths
+        .iter()
+        .map(|path| (path.clone(), lookup_value_at_path(current, path).is_some()))
+        .collect::<BTreeMap<_, _>>();
     let bundle_root = match &selection {
         BundleSelection::Shipped { name } => {
             materialize_shipped_bundle_assets(manifest_path, name)?
@@ -93,7 +99,13 @@ pub(crate) fn apply_bundle_defaults(
         BundleSelection::Local { path } => path.clone(),
     };
     merge_missing_values(current, &defaults);
-    apply_bundle_extend_paths(manifest_path, current, &defaults, extend_paths)?;
+    apply_bundle_extend_paths(
+        manifest_path,
+        current,
+        &defaults,
+        &existing_extend_paths,
+        &existing_bundle_values,
+    )?;
     Ok(Some(AppliedBundleDefaults {
         source_path,
         bundle_root,
@@ -299,6 +311,13 @@ pub(super) struct LocalBundleInputDescriptor {
 
 fn default_local_bundle_defaults_file() -> String {
     "effigy.toml".to_owned()
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct BundleManifestSectionConfig {
+    #[serde(default)]
+    extend: Vec<String>,
 }
 
 pub(super) fn parse_bundle_descriptor_source(
@@ -965,11 +984,30 @@ pub(super) fn merge_missing_values(current: &mut Value, defaults: &Value) {
     }
 }
 
+fn take_bundle_extend_paths(
+    manifest_path: &Path,
+    defaults: &mut Value,
+) -> Result<Vec<String>, ManifestError> {
+    let Some(defaults_table) = defaults.as_table_mut() else {
+        return Ok(Vec::new());
+    };
+    let Some(section) = defaults_table.remove("manifest") else {
+        return Ok(Vec::new());
+    };
+    let config: BundleManifestSectionConfig =
+        section.try_into().map_err(|error| ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!("invalid bundle `[manifest]` section: {error}"),
+        })?;
+    Ok(config.extend)
+}
+
 pub(super) fn apply_bundle_extend_paths(
     manifest_path: &Path,
     current: &mut Value,
     defaults: &Value,
     extend_paths: &[String],
+    existing_values: &BTreeMap<String, bool>,
 ) -> Result<(), ManifestError> {
     for path in extend_paths {
         let trimmed = path.trim();
@@ -980,9 +1018,22 @@ pub(super) fn apply_bundle_extend_paths(
                     .to_owned(),
             });
         }
+        if !existing_values.get(trimmed).copied().unwrap_or(false) {
+            continue;
+        }
         apply_bundle_extend_path(manifest_path, current, defaults, trimmed)?;
     }
     Ok(())
+}
+
+fn combined_bundle_extend_paths(base: &[String], incoming: &[String]) -> Vec<String> {
+    let mut combined = base.to_vec();
+    for path in incoming {
+        if !combined.contains(path) {
+            combined.push(path.clone());
+        }
+    }
+    combined
 }
 
 fn apply_bundle_extend_path(

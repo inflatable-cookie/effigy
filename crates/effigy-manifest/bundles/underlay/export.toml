@@ -1,3 +1,6 @@
+[manifest]
+extend = ["bootstrap.children"]
+
 [package_manager]
 js = "bun"
 

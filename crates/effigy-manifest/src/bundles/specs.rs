@@ -319,6 +319,16 @@ pub(super) fn resolve_underlay_bundle(
         "default_workspace".to_owned(),
         Value::String(default_workspace),
     );
+    insert_bundle_input_value(
+        &mut render_inputs,
+        "sources.underlay",
+        Value::String(underlay_source.clone()),
+    );
+    insert_bundle_input_value(
+        &mut render_inputs,
+        "sources.poodle",
+        Value::String(poodle_source.clone()),
+    );
     let rendered = render_shipped_bundle_template_with_inputs(
         manifest_path,
         "underlay",
