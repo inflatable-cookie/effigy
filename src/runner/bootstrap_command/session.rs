@@ -534,11 +534,11 @@ pull_production = "scripts/tasks/pull-production.sh"
             serde_json::from_str(&rendered).expect("parse teardown json");
 
         assert_eq!(
-            payload["result"]["result"]["cleaned_repos"],
+            payload["result"]["cleaned_repos"],
             serde_json::json!([repo.display().to_string()])
         );
         assert_eq!(
-            payload["result"]["result"]["removed_session_files"],
+            payload["result"]["removed_session_files"],
             serde_json::json!([bootstrap_fresh_session_path(&repo).display().to_string()])
         );
         assert!(
