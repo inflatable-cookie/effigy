@@ -773,15 +773,13 @@ fn run_bootstrap_with_cwd_rejects_unnamed_db_seed_for_multi_database_bundle() {
     .expect_err("bootstrap should reject unnamed db seed for multi-db bundle");
 
     assert!(
-        err.to_string().contains(
-            "must name a target because `[bundle].databases` declares multiple databases: cbs, cbs-mortcalc"
-        ),
+        err.to_string().contains("must name a target because multiple database targets are declared in `[bundle].databases` and `[data.targets]`: cbs, cbs-mortcalc"),
         "unexpected error: {err}"
     );
 }
 
 #[test]
-fn run_bootstrap_with_cwd_rejects_db_seed_when_standard_task_is_missing() {
+fn run_bootstrap_with_cwd_requires_container_registry_for_builtin_db_seed_fallback() {
     let child_remote = create_child_remote("child-app-db-seed-missing");
     let root_remote = create_root_remote_with_bootstrap(&child_remote);
     let cwd = temp_dir("bootstrap-db-seed-missing-task");
@@ -808,11 +806,11 @@ fn run_bootstrap_with_cwd_rejects_db_seed_when_standard_task_is_missing() {
         },
         cwd,
     )
-    .expect_err("bootstrap should reject missing standard db seed task");
+    .expect_err("bootstrap should reject missing container registry for builtin db seed fallback");
 
     assert!(
         err.to_string()
-            .contains("does not define task `bootstrap:db-seed`"),
+            .contains("manifest does not define a `[containers]` registry"),
         "unexpected error: {err}"
     );
 }

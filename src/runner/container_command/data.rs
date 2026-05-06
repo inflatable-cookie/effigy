@@ -431,37 +431,36 @@ fn collect_db_dump_services(
 ) -> Vec<DbDumpService> {
     services
         .iter()
-        .filter_map(|(service_name, service)| {
-            matches!(service.catalog.as_str(), "postgres" | "mariadb").then(|| DbDumpService {
-                service_name: service_name.clone(),
-                catalog: service.catalog.clone(),
-                password: service
-                    .params
-                    .get("password")
-                    .and_then(toml::Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or("secret")
-                    .to_owned(),
-                declared_databases: service
-                    .params
-                    .get("databases")
-                    .and_then(toml::Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(toml::Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned)
-                    .collect(),
-                primary_database: service
-                    .params
-                    .get("database")
-                    .and_then(toml::Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned),
-            })
+        .filter(|(_, service)| matches!(service.catalog.as_str(), "postgres" | "mariadb"))
+        .map(|(service_name, service)| DbDumpService {
+            service_name: service_name.clone(),
+            catalog: service.catalog.clone(),
+            password: service
+                .params
+                .get("password")
+                .and_then(toml::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("secret")
+                .to_owned(),
+            declared_databases: service
+                .params
+                .get("databases")
+                .and_then(toml::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(toml::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            primary_database: service
+                .params
+                .get("database")
+                .and_then(toml::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
         })
         .collect()
 }
