@@ -465,6 +465,7 @@ pub enum BootstrapSubcommand {
         mode: BootstrapDepsSyncMode,
         paths: Vec<String>,
     },
+    ChildrenStatus,
     ChildrenSync {
         fetch_only: bool,
         checkout: bool,
@@ -585,6 +586,10 @@ pub enum ContainerSubcommand {
         wipe_data: bool,
         yes: bool,
     },
+    Cache {
+        name: Option<String>,
+        subcommand: ContainerCacheSubcommand,
+    },
     Data {
         name: Option<String>,
         subcommand: ContainerDataSubcommand,
@@ -602,6 +607,11 @@ pub enum SystemSubcommand {
     Logs { follow: bool },
     Repair,
     ResetRuntime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContainerCacheSubcommand {
+    List { all: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

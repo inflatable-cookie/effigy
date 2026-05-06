@@ -919,9 +919,32 @@ where
     };
     match subcommand.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Bootstrap)),
+        "status" => parse_bootstrap_children_status(args),
         "sync" => parse_bootstrap_children_sync(args),
         other => Err(CliParseError::UnknownArgument(other.to_owned())),
     }
+}
+
+fn parse_bootstrap_children_status<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let args = args.into_iter();
+    let mut output_json = false;
+
+    for arg in args {
+        match arg.as_str() {
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bootstrap)),
+            "--json" => output_json = true,
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+
+    Ok(Command::Bootstrap(BootstrapArgs {
+        subcommand: BootstrapSubcommand::ChildrenStatus,
+        output_json,
+    }))
 }
 
 fn parse_bootstrap_children_sync<I>(args: I) -> Result<Command, CliParseError>

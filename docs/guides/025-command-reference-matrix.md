@@ -82,7 +82,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
 | `effigy bundle` | Discover, inspect, and export shipped top-level bundles referenced from `[bundle]` in `effigy.toml` | `list`, `inspect`, `export`, `--path`, `--json` | `effigy.bundle.list.v1`, `effigy.bundle.inspect.v1`, `effigy.bundle.export.v1` | `065-underlay-starter.md` |
 | `effigy deploy` | Derive a provider-neutral production deployment model and export the first bounded provider files from the effective manifest and bundle | `model`, `export render`, `export railway`, `--repo`, `--path`, `--plan`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1` | [`../contracts/002-production-deployment-model.md`](../contracts/002-production-deployment-model.md) |
-| `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, optionally stage DB seed dumps and run the standard `bootstrap:db-seed` task, optionally prompt for missing bundle DB dumps on a real TTY, optionally isolate generated-compose runtime state with `--fresh`, run `[bootstrap].start` after setup by default (`--no-start` to skip), and expose `bootstrap deps sync`, `bootstrap children sync`, and `bootstrap teardown` for typed dependency hydration, child checkout refresh, and fresh-session cleanup | `<git-url>`, `teardown`, `deps sync`, `children sync`, `--path`, `--branch`, `--db-seed <FILE>|<TARGET>=<FILE>`, `--fresh`, `--no-prompt`, `--reuse-path`, `--no-start`, `--start`, `--plan`, `--yes`, `--js-only`, `--rust-only`, `--fetch-only`, `--checkout`, `--json` | `effigy.bootstrap.v1`, `effigy.bootstrap.deps.v1`, `effigy.bootstrap.children-sync.v1`, `effigy.bootstrap-teardown.v1` | `057-bootstrap-repo-bringup.md` |
+| `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, optionally stage DB seed dumps and run the standard `bootstrap:db-seed` task, optionally prompt for missing bundle DB dumps on a real TTY, optionally isolate generated-compose runtime state with `--fresh`, run `[bootstrap].start` after setup by default (`--no-start` to skip), and expose `bootstrap deps sync`, `bootstrap children status/sync`, and `bootstrap teardown` for typed dependency hydration, child checkout inspection/refresh, and fresh-session cleanup | `<git-url>`, `teardown`, `deps sync`, `children status`, `children sync`, `--path`, `--branch`, `--db-seed <FILE>|<TARGET>=<FILE>`, `--fresh`, `--no-prompt`, `--reuse-path`, `--no-start`, `--start`, `--plan`, `--yes`, `--js-only`, `--rust-only`, `--fetch-only`, `--checkout`, `--json` | `effigy.bootstrap.v1`, `effigy.bootstrap.deps.v1`, `effigy.bootstrap.children-status.v1`, `effigy.bootstrap.children-sync.v1`, `effigy.bootstrap-teardown.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Run built-in or explicit `tasks.test` test orchestration | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
@@ -156,6 +156,7 @@ effigy service extract <SERVICE> [--dir <PATH>] [--json]
 effigy exec [--service <NAME>] [--json] <COMMAND> [ARGS...]
 effigy gateway <up|down|status|setup-tls> [--json]
 effigy container [<NAME>] <up|down|status|logs|shell|reset|eject> [FLAGS...]
+effigy container [<NAME>] cache list [--repo <PATH>] [--all] [--json]
 effigy container [<NAME>] data <list|export> [ARGS...] [--json]
 effigy container [<NAME>] data dump [<FILE>|<TARGET>|<TARGET>=<FILE>]... [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>]... [--repo <PATH>] [--json]
 effigy container [<NAME>] data <import|pull-production> [ARGS...] [--yes] [--json]
@@ -166,6 +167,9 @@ effigy workspace [<WORKSPACE>] [--system <NAME>]
 
 `effigy container data seed` currently targets the repo default container only
 and stays on the generated-compose path.
+`effigy container cache list` inventories purge-safe isolated build caches such
+as Rust `target` and `node_modules` named volumes. `--all` follows the same
+cross-project running-environment discovery boundary as `container status --all`.
 `effigy container data dump` exports logical SQL dumps from generated-compose
 database services; `data export` still exports raw named-volume archives.
 Use `[data.targets.<name>]` when a sidecar DB should participate in
@@ -181,6 +185,7 @@ effigy deploy export railway [--repo <PATH>] --path <DIR> [--plan] [--json]
 effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--start] [--plan] [--json]
 effigy bootstrap teardown [--yes] [--json]
 effigy bootstrap deps sync [<path>...] [--js-only|--rust-only] [--json]
+effigy bootstrap children status [--json]
 effigy bootstrap children sync [--fetch-only] [--checkout] [--json]
 effigy demo <list|browser|inspect|history|run|stop|input|resize|rerun> [ARGS...] [--json]
 ```

@@ -12,6 +12,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
         ],
         &[
             "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]",
+            "effigy bootstrap children status [--json]",
             "effigy bootstrap children sync [--fetch-only] [--checkout] [--json]",
             "effigy bootstrap teardown [--yes] [--json]",
             "effigy --json bootstrap <GIT_URL> --plan",
@@ -76,6 +77,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy bootstrap git@github.com:acowtancy/market.git --db-seed legacy_mysql --start",
             "effigy bootstrap git@github.com:Cumberland-BS/cbs.git --db-seed cbs=./backups/cbs.sql --db-seed cbs-mortcalc=./backups/cbs-mortcalc.sql --start",
             "effigy bootstrap git@github.com:acowtancy/market.git --fresh --no-start",
+            "effigy bootstrap children status",
             "effigy bootstrap children sync",
             "effigy bootstrap children sync --fetch-only --json",
             "effigy bootstrap teardown --yes",

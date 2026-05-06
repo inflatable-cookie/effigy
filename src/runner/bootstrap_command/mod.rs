@@ -4,10 +4,12 @@ use std::path::{Path, PathBuf};
 
 use effigy_bootstrap::{
     execute_bootstrap_request_with_progress as crate_execute_bootstrap,
+    render_bootstrap_children_status_result as crate_render_bootstrap_children_status_result,
     render_bootstrap_children_sync_result as crate_render_bootstrap_children_sync_result,
     render_bootstrap_plan as crate_render_bootstrap_plan,
     render_bootstrap_result as crate_render_bootstrap_result,
     resolve_bootstrap_request as crate_resolve_bootstrap,
+    status_bootstrap_children as crate_status_bootstrap_children,
     sync_bootstrap_children as crate_sync_bootstrap_children,
     BootstrapDbSeedInput as BootstrapSeedArg, BootstrapError, BootstrapExecutionResult,
     BootstrapProgressEvent, BootstrapResolution, BootstrapStagedDbSeed,
@@ -68,11 +70,25 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
         BootstrapSubcommand::DepsSync { mode, paths } => {
             deps::run_bootstrap_deps_sync(&cwd, *mode, paths, args.output_json)
         }
+        BootstrapSubcommand::ChildrenStatus => {
+            run_bootstrap_children_status(&cwd, args.output_json)
+        }
         BootstrapSubcommand::ChildrenSync {
             fetch_only,
             checkout,
         } => run_bootstrap_children_sync(&cwd, *fetch_only, *checkout, args.output_json),
     }
+}
+
+fn run_bootstrap_children_status(cwd: &Path, output_json: bool) -> Result<String, RunnerError> {
+    let context =
+        crate::runner::command_context::resolve_command_context_from_cwd(cwd.to_path_buf(), None)?;
+    let result = crate_status_bootstrap_children(&context.resolved.resolved_root)
+        .map_err(map_bootstrap_error)?;
+    Ok(crate_render_bootstrap_children_status_result(
+        &result,
+        output_json,
+    ))
 }
 
 fn run_bootstrap_children_sync(

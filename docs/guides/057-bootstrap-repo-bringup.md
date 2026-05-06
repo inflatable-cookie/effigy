@@ -312,14 +312,18 @@ Rules:
 After bootstrap, refresh declared child repos from the root repo with:
 
 ```sh
+effigy bootstrap children status
 effigy bootstrap children sync
 ```
 
 The sync command reads the composed manifest, including bundle-provided
-children. Existing child checkouts must have a matching `origin` remote and a
-clean worktree. By default Effigy fetches and fast-forwards the current
-configured branch; it skips branch switching unless `--checkout` is passed.
-Use `--fetch-only` when you only want remote refs refreshed.
+children. `status` is read-only and reports missing paths, remote mismatches,
+branch mismatches, dirty worktrees, and local ahead/behind counts from existing
+refs. Existing child checkouts must have a matching `origin` remote and a clean
+worktree before `sync` mutates them. By default Effigy fetches and
+fast-forwards the current configured branch; it skips branch switching unless
+`--checkout` is passed. Use `--fetch-only` when you only want remote refs
+refreshed.
 - optional children (`required = false`) report warnings instead of failing the
   whole bootstrap
 - `bootstrap deps sync` is the typed bootstrap dependency surface for repo-owned

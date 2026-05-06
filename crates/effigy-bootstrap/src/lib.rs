@@ -85,6 +85,30 @@ pub struct BootstrapChildSyncResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapChildrenStatusResult {
+    pub repo_root: PathBuf,
+    pub children: Vec<BootstrapChildStatusResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapChildStatusResult {
+    pub path: String,
+    pub repo: String,
+    pub destination: PathBuf,
+    pub branch: Option<String>,
+    pub required: bool,
+    pub exists: bool,
+    pub git_checkout: bool,
+    pub remote_status: &'static str,
+    pub current_branch: Option<String>,
+    pub dirty: bool,
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
+    pub state: &'static str,
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootstrapProgressEvent {
     RootCheckoutStarted {
         repo_url: String,
@@ -868,6 +892,101 @@ pub fn sync_bootstrap_children(
     })
 }
 
+pub fn status_bootstrap_children(
+    repo_root: &Path,
+) -> Result<BootstrapChildrenStatusResult, BootstrapError> {
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
+    let manifest = load_task_manifest(&manifest_path).map_err(|error| BootstrapError::Read {
+        path: manifest_path.clone(),
+        error: std::io::Error::other(error.to_string()),
+    })?;
+    let bootstrap = manifest.bootstrap.unwrap_or_default();
+    let mut children = Vec::new();
+
+    for child in &bootstrap.children {
+        let destination = resolve_child_destination(repo_root, &child.path)?;
+        children.push(status_child_checkout(child, destination)?);
+    }
+
+    Ok(BootstrapChildrenStatusResult {
+        repo_root: repo_root.to_path_buf(),
+        children,
+    })
+}
+
+pub fn render_bootstrap_children_status_result(
+    result: &BootstrapChildrenStatusResult,
+    output_json: bool,
+) -> String {
+    if output_json {
+        return json!({
+            "schema": "effigy.bootstrap.children-status.v1",
+            "schema_version": 1,
+            "repo_root": result.repo_root.display().to_string(),
+            "children": result.children.iter().map(|child| json!({
+                "path": child.path,
+                "destination": child.destination.display().to_string(),
+                "repo": child.repo,
+                "required": child.required,
+                "configured_branch": child.branch,
+                "exists": child.exists,
+                "git_checkout": child.git_checkout,
+                "remote_status": child.remote_status,
+                "current_branch": child.current_branch,
+                "dirty": child.dirty,
+                "ahead": child.ahead,
+                "behind": child.behind,
+                "state": child.state,
+                "warning": child.warning,
+            })).collect::<Vec<_>>(),
+        })
+        .to_string();
+    }
+
+    if result.children.is_empty() {
+        return "bootstrap children status completed (0)\nchildren: none".to_owned();
+    }
+
+    let mut lines = vec![format!(
+        "bootstrap children status completed ({})",
+        result.children.len()
+    )];
+    for child in &result.children {
+        let configured = child
+            .branch
+            .as_deref()
+            .map_or("configured=default".to_owned(), |branch| {
+                format!("configured={branch}")
+            });
+        let current = child
+            .current_branch
+            .as_deref()
+            .map_or("current=none".to_owned(), |branch| {
+                format!("current={branch}")
+            });
+        let divergence = match (child.ahead, child.behind) {
+            (Some(ahead), Some(behind)) => format!("ahead={ahead} behind={behind}"),
+            _ => "ahead=? behind=?".to_owned(),
+        };
+        let mut line = format!(
+            "- {}: {} ({}, {}, remote={}, dirty={}, {}) -> {}",
+            child.path,
+            child.state,
+            configured,
+            current,
+            child.remote_status,
+            child.dirty,
+            divergence,
+            child.destination.display()
+        );
+        if let Some(warning) = &child.warning {
+            line.push_str(&format!(" [{warning}]"));
+        }
+        lines.push(line);
+    }
+    lines.join("\n")
+}
+
 pub fn render_bootstrap_children_sync_result(
     result: &BootstrapChildrenSyncResult,
     output_json: bool,
@@ -1117,6 +1236,113 @@ fn sync_child_checkout(
 
     run_git(destination, &["pull", "--ff-only"])?;
     Ok("updated")
+}
+
+fn status_child_checkout(
+    child: &ManifestBootstrapChildConfig,
+    destination: PathBuf,
+) -> Result<BootstrapChildStatusResult, BootstrapError> {
+    if !destination.exists() {
+        return Ok(BootstrapChildStatusResult {
+            path: child.path.clone(),
+            repo: child.repo.clone(),
+            destination,
+            branch: child.branch.clone(),
+            required: child.required,
+            exists: false,
+            git_checkout: false,
+            remote_status: "missing",
+            current_branch: None,
+            dirty: false,
+            ahead: None,
+            behind: None,
+            state: "missing",
+            warning: None,
+        });
+    }
+
+    if !destination.is_dir() || !destination.join(".git").exists() {
+        return Ok(BootstrapChildStatusResult {
+            path: child.path.clone(),
+            repo: child.repo.clone(),
+            destination,
+            branch: child.branch.clone(),
+            required: child.required,
+            exists: true,
+            git_checkout: false,
+            remote_status: "unknown",
+            current_branch: None,
+            dirty: false,
+            ahead: None,
+            behind: None,
+            state: "not-git",
+            warning: Some("destination is not a git checkout".to_owned()),
+        });
+    }
+
+    let actual_remote = git_stdout(&destination, &["remote", "get-url", "origin"]).ok();
+    let remote_status = match actual_remote.as_deref() {
+        Some(remote)
+            if normalize_bootstrap_repo_url(remote)
+                == normalize_bootstrap_repo_url(&child.repo) =>
+        {
+            "match"
+        }
+        Some(_) => "mismatch",
+        None => "missing",
+    };
+    let current_branch = current_branch(&destination)?;
+    let dirty = repo_has_uncommitted_changes(&destination)?;
+    let (ahead, behind) = local_ahead_behind(&destination).unwrap_or((None, None));
+    let branch_mismatch = child
+        .branch
+        .as_deref()
+        .is_some_and(|branch| current_branch.as_deref() != Some(branch));
+    let state = if remote_status == "mismatch" {
+        "remote-mismatch"
+    } else if dirty {
+        "dirty"
+    } else if branch_mismatch {
+        "branch-mismatch"
+    } else {
+        "clean"
+    };
+    let warning = match (remote_status, actual_remote.as_deref()) {
+        ("mismatch", Some(remote)) => Some(format!(
+            "expected remote `{}`, found `{remote}`",
+            child.repo
+        )),
+        ("missing", _) => Some("origin remote is missing".to_owned()),
+        _ => None,
+    };
+
+    Ok(BootstrapChildStatusResult {
+        path: child.path.clone(),
+        repo: child.repo.clone(),
+        destination,
+        branch: child.branch.clone(),
+        required: child.required,
+        exists: true,
+        git_checkout: true,
+        remote_status,
+        current_branch,
+        dirty,
+        ahead,
+        behind,
+        state,
+        warning,
+    })
+}
+
+fn local_ahead_behind(repo_root: &Path) -> Result<(Option<u32>, Option<u32>), BootstrapError> {
+    let output = git_stdout(
+        repo_root,
+        &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+    )?;
+    let mut parts = output.split_whitespace();
+    let ahead = parts.next().and_then(|value| value.parse::<u32>().ok());
+    let behind = parts.next().and_then(|value| value.parse::<u32>().ok());
+    Ok((ahead, behind))
 }
 
 fn current_branch(repo_root: &Path) -> Result<Option<String>, BootstrapError> {

@@ -15,7 +15,7 @@ use std::process::Command as ProcessCommand;
 
 use effigy_bootstrap::{
     execute_bootstrap_request, render_bootstrap_result, resolve_bootstrap_request,
-    sync_bootstrap_children, BootstrapError, BootstrapResolution,
+    status_bootstrap_children, sync_bootstrap_children, BootstrapError, BootstrapResolution,
 };
 use effigy_manifest::{
     load_task_manifest, ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy,
@@ -405,6 +405,41 @@ fn sync_bootstrap_children_fast_forwards_existing_child() {
         .join("child-app")
         .join("SYNCED.md")
         .is_file());
+}
+
+#[test]
+fn status_bootstrap_children_reports_clean_existing_child() {
+    let child_remote = create_child_remote("child-status");
+    let root_remote = create_root_remote_with_bootstrap(&child_remote);
+    let cwd = temp_dir("bootstrap-children-status");
+    let request = resolve_bootstrap_request(
+        &cwd,
+        &root_remote.display().to_string(),
+        None,
+        None,
+        &[],
+        false,
+        false,
+    )
+    .expect("resolve request");
+    let result = execute_bootstrap_request(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+    )
+    .expect("execute bootstrap");
+    commit_all(
+        &result.request.destination.join("child-app"),
+        "record child setup",
+    );
+
+    let status = status_bootstrap_children(&result.request.destination).expect("status children");
+    assert_eq!(status.children.len(), 1);
+    assert_eq!(status.children[0].state, "clean");
+    assert_eq!(status.children[0].remote_status, "match");
+    assert!(status.children[0].git_checkout);
+    assert!(!status.children[0].dirty);
 }
 
 #[test]

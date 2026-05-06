@@ -11,6 +11,10 @@ During v0.x, MINOR bumps may include breaking changes.
   bootstrap DB seed, **`effigy container data seed`**, and
   **`effigy container data dump`** address sidecar databases without overloading
   **`[bundle].databases`**.
+- **`effigy container cache list`** inventories purge-safe isolated build
+  cache volumes from repo scope or across running environments with **`--all`**.
+  The first supported kinds are Rust **`target`** and package-manager
+  **`node_modules`** isolates.
 
 ## [0.4.0] - 2026-05-06
 
@@ -45,6 +49,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - **`effigy bootstrap children sync`** refreshes the composed
   **`bootstrap.children`** checkouts for the active repo, with safe
   fast-forward defaults plus **`--fetch-only`** and **`--checkout`** modes.
+- **`effigy bootstrap children status`** reports the composed child checkout
+  state without network calls.
 - **`effigy bootstrap`** now has explicit **`--reuse-path`** for reusing a
   non-empty destination without an interactive confirmation.
 - **`effigy init`** with the **`minimal`** starter (the default) now also emits a
