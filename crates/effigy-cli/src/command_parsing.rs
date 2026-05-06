@@ -823,10 +823,27 @@ where
     if first == "deps" {
         return parse_bootstrap_deps(args);
     }
+    if first == "teardown" {
+        let mut yes = false;
+        let mut output_json = false;
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--json" => output_json = true,
+                "--yes" => yes = true,
+                other if other.starts_with('-') => return Err(unknown_argument(other)),
+                _ => return Err(unknown_argument(arg)),
+            }
+        }
+        return Ok(Command::Bootstrap(BootstrapArgs {
+            subcommand: BootstrapSubcommand::Teardown { yes },
+            output_json,
+        }));
+    }
 
     let mut path: Option<PathBuf> = None;
     let mut branch: Option<String> = None;
     let mut db_seeds = Vec::<BootstrapDbSeedInput>::new();
+    let mut fresh = false;
     let mut no_prompt = false;
     let mut reuse_path = false;
     let mut start = true;
@@ -837,6 +854,7 @@ where
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => output_json = true,
+            "--fresh" => fresh = true,
             "--no-prompt" => no_prompt = true,
             "--reuse-path" => reuse_path = true,
             "--start" => start = true,
@@ -878,6 +896,7 @@ where
             path,
             branch,
             db_seeds,
+            fresh,
             no_prompt,
             reuse_path,
             start,

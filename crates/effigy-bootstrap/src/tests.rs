@@ -43,6 +43,7 @@ fn resolve_bootstrap_request_defaults_destination_under_cwd() {
         None,
         &[],
         false,
+        false,
     )
     .expect("resolve bootstrap");
     assert_eq!(resolved.repo_name, "effigy");
@@ -63,6 +64,7 @@ fn resolve_bootstrap_request_honors_explicit_relative_path() {
             path: PathBuf::from("./dumps/latest.sql"),
         }],
         true,
+        true,
     )
     .expect("resolve bootstrap");
     assert_eq!(
@@ -78,6 +80,7 @@ fn resolve_bootstrap_request_honors_explicit_relative_path() {
             path: cwd.join("dumps/latest.sql"),
         }]
     );
+    assert!(resolved.fresh);
     assert!(resolved.start_requested);
 }
 

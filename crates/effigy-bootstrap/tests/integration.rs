@@ -317,6 +317,7 @@ fn execute_bootstrap_request_clones_root_and_runs_setup_and_children() {
         None,
         &[],
         false,
+        false,
     )
     .expect("resolve request");
 
@@ -361,6 +362,7 @@ fn execute_bootstrap_request_fails_for_existing_remote_mismatch() {
         destination_source: "explicit-path",
         branch: None,
         db_seeds: Vec::new(),
+        fresh: false,
         start_requested: false,
     };
 
@@ -388,6 +390,7 @@ fn execute_bootstrap_request_fails_for_existing_dirty_checkout() {
         destination_source: "explicit-path",
         branch: None,
         db_seeds: Vec::new(),
+        fresh: false,
         start_requested: false,
     };
 
@@ -412,6 +415,7 @@ fn execute_bootstrap_request_warns_for_optional_child_failures() {
         None,
         None,
         &[],
+        false,
         false,
     )
     .expect("resolve request");
@@ -447,6 +451,7 @@ fn execute_bootstrap_request_allows_sibling_child_paths_under_root_parent() {
         None,
         &[],
         false,
+        false,
     )
     .expect("resolve request");
 
@@ -477,6 +482,7 @@ fn execute_bootstrap_request_reports_missing_bootstrap_contract_cleanly() {
         None,
         &[],
         false,
+        false,
     )
     .expect("resolve request");
 
@@ -504,9 +510,16 @@ fn execute_bootstrap_request_reports_missing_bootstrap_contract_cleanly() {
 fn execute_bootstrap_request_uses_catalog_alias_for_default_destination() {
     let remote = create_catalog_alias_root_remote();
     let cwd = temp_dir("bootstrap-catalog-alias");
-    let request =
-        resolve_bootstrap_request(&cwd, &remote.display().to_string(), None, None, &[], false)
-            .expect("resolve request");
+    let request = resolve_bootstrap_request(
+        &cwd,
+        &remote.display().to_string(),
+        None,
+        None,
+        &[],
+        false,
+        false,
+    )
+    .expect("resolve request");
 
     let result = execute_bootstrap_request(
         &request,

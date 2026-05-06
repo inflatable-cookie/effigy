@@ -49,7 +49,8 @@ effigy bootstrap <git-url> --no-start
 ## Command Shape
 
 ```sh
-effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--no-start] [--start] [--plan] [--json]
+effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--start] [--plan] [--json]
+effigy bootstrap teardown [--yes] [--json]
 ```
 
 What each flag means:
@@ -59,14 +60,22 @@ What each flag means:
 - `--branch <NAME>`: target a specific branch during clone or update
 - `--db-seed <FILE>|<TARGET>=<FILE>`: stage one or more SQL dumps into the
   cloned repo before bootstrap-owned setup runs
+- `--fresh`: append a session-scoped suffix to generated-compose project names
+  during this bootstrap so named volumes and runtime state stay isolated from
+  earlier local runs
 - `--no-prompt`: suppress interactive bootstrap prompts for destination reuse
   and missing database seed inputs even on a real TTY
+- `--reuse-path`: reuse a non-empty destination without an interactive
+  confirmation
 - `--no-start`: skip the repo's configured `[bootstrap].start` task after
   setup completes
 - `--start`: force `[bootstrap].start` to run after setup (this is already the
   default when `--no-start` is not passed)
 - `--plan`: preview destination, branch, and intent without mutating anything
 - `--json`: return `effigy.bootstrap.v1` inside the normal command envelope
+
+Use `effigy bootstrap teardown --yes` afterward to remove the fresh-session
+runtime and generated-compose volumes recorded during a `--fresh` bootstrap.
 
 ## Bootstrap DB Seeds
 
@@ -155,8 +164,33 @@ Bootstrap prompts only run for real interactive terminal use:
 
 When the resolved destination already exists and is non-empty, bootstrap asks
 for confirmation before clone/update work proceeds. Non-interactive execution
-fails clearly instead of waiting for input. Use `--no-prompt` only when reuse
-of that existing path is intentional in automation.
+fails clearly instead of waiting for input. Use `--reuse-path` when reuse of
+that existing path is intentional in automation; `--no-prompt` on its own does
+not bypass the safety check.
+
+## Fresh Bootstrap Sessions
+
+Use `--fresh` when you need a clean generated-compose namespace for bootstrap
+testing without reusing named volumes from a previous local run:
+
+```sh
+effigy bootstrap git@github.com:acowtancy/market.git --fresh
+```
+
+Effigy records the fresh session under `.effigy/runtime/` for the root repo and
+any child repos bootstrapped as part of the same run. Generated-compose project
+names pick up a session suffix for that bootstrap, so local runtime state stays
+isolated across retries and parallel bring-up tests.
+
+When you are done with that throwaway runtime, run:
+
+```sh
+effigy bootstrap teardown --yes
+```
+
+That cleanup path reads the recorded session, resets each touched repo on the
+generated-compose path, removes the matching fresh-session data, and deletes the
+session record files.
 
 ## Minimal Manifest Contract
 

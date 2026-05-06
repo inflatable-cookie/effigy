@@ -26,6 +26,47 @@ Shortest path:
 3. use `effigy container shell` or a task such as `effigy dev`
 4. run `effigy container down` when you want the environment gone
 
+## Host prerequisites (macOS)
+
+Container features are host-dependent. Install only what the features you use
+require.
+
+### Containers (required)
+
+Effigy’s v1 container driver is **Colima**.
+
+```bash
+brew install colima
+```
+
+Effigy starts the configured Colima **profile** on demand (from
+`[containers.<name>].profile`). You can still manage it directly when needed:
+
+```bash
+colima list
+colima stop --profile <profile>
+```
+
+Docker is optional. If you want `docker` available on your host (or your team
+standardizes on it), install it via Homebrew:
+
+```bash
+brew install docker docker-compose
+```
+
+### HTTPS gateway routes (optional)
+
+If you use local domains with `tls = true`, install `mkcert` and run the
+one-time trust-store install:
+
+```bash
+brew install mkcert
+mkcert -install
+```
+
+Effigy also provides `effigy gateway setup-tls` as the “do the right thing”
+helper for mkcert-backed TLS.
+
 Common commands:
 
 ```sh

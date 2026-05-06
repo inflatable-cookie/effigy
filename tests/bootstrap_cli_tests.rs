@@ -285,8 +285,9 @@ fn bootstrap_help_is_command_specific() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("bootstrap Help"));
     assert!(stdout.contains(
-        "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]"
+        "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]"
     ));
+    assert!(stdout.contains("effigy bootstrap teardown [--yes] [--json]"));
     assert!(stdout.contains("child repo checkout"));
     assert!(!stdout.contains("release Help"));
 }
@@ -301,6 +302,7 @@ fn bootstrap_plan_json_reports_resolved_destination() {
         .arg("git@github.com:inflatable-cookie/loophole.git")
         .arg("--branch")
         .arg("main")
+        .arg("--fresh")
         .arg("--start")
         .arg("--plan")
         .env("NO_COLOR", "1")
@@ -315,10 +317,67 @@ fn bootstrap_plan_json_reports_resolved_destination() {
     assert_eq!(parsed["result"]["schema"], "effigy.bootstrap.v1");
     assert_eq!(parsed["result"]["phase"], "plan");
     assert_eq!(parsed["result"]["repo_name"], "loophole");
+    assert_eq!(parsed["result"]["fresh"], true);
     let canonical_root = fs::canonicalize(&root).expect("canonicalize temp root");
     assert_eq!(
         parsed["result"]["destination"],
         canonical_root.join("loophole").display().to_string()
+    );
+}
+
+#[test]
+fn bootstrap_teardown_json_reports_session_cleanup() {
+    let root = temp_workspace("effigy-bootstrap-cli", "teardown-json");
+    fs::write(root.join("effigy.toml"), "").expect("write manifest");
+    fs::create_dir_all(root.join(".effigy/runtime")).expect("mkdir session dir");
+    fs::write(
+        root.join(".effigy/runtime/bootstrap-fresh-session.json"),
+        format!(
+            r#"{{
+  "session_id": "fresh-test-session",
+  "root_repo": "{}",
+  "repos": ["{}"],
+  "active": true
+}}
+"#,
+            root.display(),
+            root.display()
+        ),
+    )
+    .expect("write session record");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("bootstrap")
+        .arg("teardown")
+        .arg("--yes")
+        .env("NO_COLOR", "1")
+        .current_dir(&root)
+        .output()
+        .expect("run effigy bootstrap teardown");
+
+    assert!(
+        output.status.success(),
+        "bootstrap teardown failed: {output:?}"
+    );
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["schema"], "effigy.command.v1");
+    assert_eq!(parsed["command"]["kind"], "bootstrap");
+    assert_eq!(parsed["result"]["schema"], "effigy.bootstrap-teardown.v1");
+    assert_eq!(parsed["result"]["ok"], true);
+    assert_eq!(
+        parsed["result"]["result"]["session_id"],
+        "fresh-test-session"
+    );
+    assert_eq!(
+        parsed["result"]["result"]["cleaned_repos"],
+        Value::Array(vec![Value::String(root.display().to_string())])
+    );
+    assert!(
+        !root
+            .join(".effigy/runtime/bootstrap-fresh-session.json")
+            .exists(),
+        "session record should be removed"
     );
 }
 

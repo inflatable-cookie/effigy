@@ -331,7 +331,7 @@ pub fn load_container_policy_with_workspace(
         )
     })?;
     let default_project_name_base = default_project_name_base(&loaded.manifest, repo_root);
-    validate_unique_project_names(containers, &default_project_name_base)?;
+    validate_unique_project_names(containers, &default_project_name_base, repo_root)?;
     let name = resolve_container_name(containers, requested_name)?;
     let config = containers.environments.get(&name).ok_or_else(|| {
         let available = containers
@@ -368,7 +368,7 @@ pub fn load_all_container_policies(
         )
     })?;
     let default_project_name_base = default_project_name_base(&loaded.manifest, repo_root);
-    validate_unique_project_names(containers, &default_project_name_base)?;
+    validate_unique_project_names(containers, &default_project_name_base, repo_root)?;
     let library_mounts = resolve_library_mounts(&loaded.manifest)?;
 
     let mut policies = containers
@@ -615,6 +615,7 @@ fn build_effective_policy(
         default_project_name_base,
         name,
         containers.environments.len(),
+        repo_root,
     );
     let (
         mut compose_files,
@@ -985,11 +986,13 @@ fn resolve_project_name(
     default_project_name_base: &str,
     name: &str,
     container_count: usize,
+    repo_root: &Path,
 ) -> String {
-    config
+    let project_name = config
         .project_name
         .clone()
-        .unwrap_or_else(|| default_project_name(default_project_name_base, name, container_count))
+        .unwrap_or_else(|| default_project_name(default_project_name_base, name, container_count));
+    apply_bootstrap_fresh_session_suffix(repo_root, project_name)
 }
 
 fn default_project_name(
@@ -1006,6 +1009,7 @@ fn default_project_name(
 fn validate_unique_project_names(
     containers: &ManifestContainersConfig,
     default_project_name_base: &str,
+    repo_root: &Path,
 ) -> Result<(), ContainerPolicyError> {
     if containers.environments.len() <= 1 {
         return Ok(());
@@ -1019,6 +1023,7 @@ fn validate_unique_project_names(
                 default_project_name_base,
                 name,
                 containers.environments.len(),
+                repo_root,
             ))
             .or_default()
             .push(name.clone());
@@ -1047,6 +1052,39 @@ fn validate_unique_project_names(
         "containers must resolve to unique `project_name` values when more than one container is declared; duplicate effective project names: {}",
         duplicates.join("; ")
     )))
+}
+
+fn apply_bootstrap_fresh_session_suffix(repo_root: &Path, project_name: String) -> String {
+    let Some(session_id) = bootstrap_fresh_session_id(repo_root) else {
+        return project_name;
+    };
+    format!("{project_name}-{session_id}")
+}
+
+fn bootstrap_fresh_session_id(repo_root: &Path) -> Option<String> {
+    if let Some(value) = std::env::var("EFFIGY_BOOTSTRAP_FRESH_SESSION_ID")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    {
+        return Some(value);
+    }
+
+    let session_file = repo_root
+        .join(".effigy")
+        .join("runtime")
+        .join("bootstrap-fresh-session.json");
+    let source = std::fs::read_to_string(session_file).ok()?;
+    let parsed = serde_json::from_str::<serde_json::Value>(&source).ok()?;
+    if parsed.get("active").and_then(serde_json::Value::as_bool) != Some(true) {
+        return None;
+    }
+    parsed
+        .get("session_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn infer_default_workspace_for_container(

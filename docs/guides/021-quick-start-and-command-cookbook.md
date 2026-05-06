@@ -120,6 +120,20 @@ Use `--help` (or `-h`) when you need the exact flags for a specific command.
 If the repo includes databases, caches, or language workspaces, use containers
 to keep them off your host machine:
 
+macOS prerequisites (Homebrew):
+
+```sh
+brew install colima
+```
+
+If the repo uses local HTTPS routes (`tls = true`), also install `mkcert` and
+run the one-time trust-store install:
+
+```sh
+brew install mkcert
+mkcert -install
+```
+
 ```sh
 effigy container up      # Start the local environment
 effigy dev               # Run the repo's dev task inside it

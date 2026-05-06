@@ -446,10 +446,14 @@ pub enum BootstrapSubcommand {
         path: Option<PathBuf>,
         branch: Option<String>,
         db_seeds: Vec<BootstrapDbSeedInput>,
+        fresh: bool,
         no_prompt: bool,
         reuse_path: bool,
         start: bool,
         plan: bool,
+    },
+    Teardown {
+        yes: bool,
     },
     DepsSync {
         mode: BootstrapDepsSyncMode,

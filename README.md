@@ -161,6 +161,20 @@ Read next:
 Use containers when a repo needs databases, queues, or language workspaces
 without installing that full stack directly on your machine.
 
+macOS prerequisites (Homebrew):
+
+```bash
+brew install colima
+brew install mkcert   # only needed when using HTTPS gateway routes
+mkcert -install       # one-time host trust-store install (may prompt)
+```
+
+Docker is optional. If you want `docker` available on your host too:
+
+```bash
+brew install docker docker-compose
+```
+
 ```bash
 effigy container up
 effigy gateway status

@@ -30,6 +30,7 @@ pub struct BootstrapResolution {
     pub destination_source: &'static str,
     pub branch: Option<String>,
     pub db_seeds: Vec<BootstrapDbSeedInput>,
+    pub fresh: bool,
     pub start_requested: bool,
 }
 
@@ -71,6 +72,9 @@ pub enum BootstrapProgressEvent {
     },
     RootCheckoutFinished {
         repo_state: &'static str,
+        destination: PathBuf,
+    },
+    DestinationPrepared {
         destination: PathBuf,
     },
     SubmodulesStarted {
@@ -162,6 +166,7 @@ pub fn resolve_bootstrap_request(
     path: Option<&Path>,
     branch: Option<&str>,
     db_seeds: &[BootstrapDbSeedInput],
+    fresh: bool,
     start_requested: bool,
 ) -> Result<BootstrapResolution, BootstrapError> {
     let repo_name = derive_repo_name(repo_url).ok_or_else(|| {
@@ -190,6 +195,7 @@ pub fn resolve_bootstrap_request(
                 },
             })
             .collect(),
+        fresh,
         start_requested,
     })
 }
@@ -210,7 +216,7 @@ where
         load_bootstrap,
         run_bootstrap_run,
         run_task,
-        |_event| {},
+        |_event| Ok(()),
     )
 }
 
@@ -230,13 +236,13 @@ where
     LoadBootstrap: FnMut(&Path) -> Result<Option<ManifestBootstrapConfig>, BootstrapError>,
     RunBootstrapRun: FnMut(&Path, &ManifestManagedRun, &str) -> Result<(), BootstrapError>,
     RunTask: FnMut(&Path, &str, &str) -> Result<(), BootstrapError>,
-    ReportProgress: FnMut(BootstrapProgressEvent),
+    ReportProgress: FnMut(BootstrapProgressEvent) -> Result<(), BootstrapError>,
 {
     let mut effective_destination = request.destination.clone();
     report_progress(BootstrapProgressEvent::RootCheckoutStarted {
         repo_url: request.repo_url.clone(),
         destination: effective_destination.clone(),
-    });
+    })?;
     let root_repo_state = sync_repo_checkout(
         &request.repo_url,
         &effective_destination,
@@ -245,7 +251,7 @@ where
     report_progress(BootstrapProgressEvent::RootCheckoutFinished {
         repo_state: root_repo_state,
         destination: effective_destination.clone(),
-    });
+    })?;
     let mut manifest_path = effective_destination.join(TASK_MANIFEST_FILE);
     let manifest_found = manifest_path.is_file();
     if manifest_found && request.destination_source == "cwd-default" {
@@ -274,8 +280,14 @@ where
         }
     }
     let bootstrap = if manifest_found {
+        report_progress(BootstrapProgressEvent::DestinationPrepared {
+            destination: effective_destination.clone(),
+        })?;
         load_bootstrap(&manifest_path)?
     } else {
+        report_progress(BootstrapProgressEvent::DestinationPrepared {
+            destination: effective_destination.clone(),
+        })?;
         None
     };
     let bootstrap_contract_found = bootstrap.is_some();
@@ -286,13 +298,13 @@ where
     report_progress(BootstrapProgressEvent::SubmodulesStarted {
         destination: effective_destination.clone(),
         policy: submodules_policy,
-    });
+    })?;
     let submodules_applied = apply_submodule_policy(&effective_destination, submodules_policy)?;
     report_progress(BootstrapProgressEvent::SubmodulesFinished {
         destination: effective_destination.clone(),
         policy: submodules_policy,
         applied: submodules_applied,
-    });
+    })?;
 
     let mut warnings = Vec::new();
     let mut child_results = Vec::new();
@@ -302,19 +314,19 @@ where
             path: child.path.clone(),
             repo: child.repo.clone(),
             destination: child_destination.clone(),
-        });
+        })?;
         match sync_repo_checkout(&child.repo, &child_destination, child.branch.as_deref()) {
             Ok(repo_state) => {
                 report_progress(BootstrapProgressEvent::ChildCheckoutFinished {
                     path: child.path.clone(),
                     repo_state,
                     destination: child_destination.clone(),
-                });
+                })?;
                 if child.run.is_some() {
                     report_progress(BootstrapProgressEvent::ChildRunStarted {
                         path: child.path.clone(),
                         destination: child_destination.clone(),
-                    });
+                    })?;
                 }
                 let run = run_bootstrap_run_if_present(
                     &mut run_bootstrap_run,
@@ -327,7 +339,7 @@ where
                         path: child.path.clone(),
                         destination: child_destination.clone(),
                         run: run.clone(),
-                    });
+                    })?;
                 }
                 child_results.push(BootstrapChildResult {
                     path: child.path.clone(),
@@ -347,7 +359,7 @@ where
                     path: child.path.clone(),
                     warning: warning.clone(),
                     destination: child_destination.clone(),
-                });
+                })?;
                 child_results.push(BootstrapChildResult {
                     path: child.path.clone(),
                     repo: child.repo.clone(),
@@ -371,7 +383,7 @@ where
     if bootstrap.run.is_some() {
         report_progress(BootstrapProgressEvent::RootRunStarted {
             destination: effective_destination.clone(),
-        });
+        })?;
     }
     let root_run = run_bootstrap_run_if_present(
         &mut run_bootstrap_run,
@@ -383,7 +395,7 @@ where
         report_progress(BootstrapProgressEvent::RootRunFinished {
             destination: effective_destination.clone(),
             run: run.clone(),
-        });
+        })?;
     }
 
     let mut start_ran = false;
@@ -402,12 +414,12 @@ where
             report_progress(BootstrapProgressEvent::StartTaskStarted {
                 destination: effective_destination.clone(),
                 selector: selector.clone(),
-            });
+            })?;
             run_task(&effective_destination, selector, "bootstrap start")?;
             report_progress(BootstrapProgressEvent::StartTaskFinished {
                 destination: effective_destination.clone(),
                 selector: selector.clone(),
-            });
+            })?;
         }
         start_ran = true;
     }
@@ -524,6 +536,7 @@ pub fn render_bootstrap_plan(request: &BootstrapResolution, output_json: bool) -
         "destination": request.destination.display().to_string(),
         "destination_source": request.destination_source,
         "branch": request.branch,
+        "fresh": request.fresh,
         "db_seed_files": request
             .db_seeds
             .iter()
@@ -547,6 +560,7 @@ pub fn render_bootstrap_plan(request: &BootstrapResolution, output_json: bool) -
         .branch
         .as_deref()
         .map_or("default remote HEAD".to_owned(), |branch| branch.to_owned());
+    let fresh_line = if request.fresh { "yes" } else { "no" };
     let start_line = if request.start_requested { "yes" } else { "no" };
     let db_seed_line = if request.db_seeds.is_empty() {
         "none".to_owned()
@@ -562,10 +576,11 @@ pub fn render_bootstrap_plan(request: &BootstrapResolution, output_json: bool) -
             .join(", ")
     };
     format!(
-        "[planned] bootstrap request resolved\nrepo: {}\ndestination: {}\nbranch: {}\ndb seed files: {}\nstart after bootstrap run: {}",
+        "[planned] bootstrap request resolved\nrepo: {}\ndestination: {}\nbranch: {}\nfresh session: {}\ndb seed files: {}\nstart after bootstrap run: {}",
         request.repo_url,
         request.destination.display(),
         branch_line,
+        fresh_line,
         db_seed_line,
         start_line,
     )
@@ -582,6 +597,7 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
         "destination": result.request.destination.display().to_string(),
         "destination_source": result.request.destination_source,
         "branch": result.request.branch,
+        "fresh": result.request.fresh,
         "db_seeds": {
             "requested": result
                 .request
@@ -689,6 +705,10 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
     } else {
         lines.push("manifest: no effigy.toml bootstrap contract found".to_owned());
     }
+    lines.push(format!(
+        "fresh session: {}",
+        if result.request.fresh { "yes" } else { "no" }
+    ));
     if !result.request.db_seeds.is_empty() {
         let requested = result
             .request

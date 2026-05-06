@@ -35,6 +35,28 @@ Short answer:
 - `workspace` is the Linux-native maintenance command
 - `container` remains the direct compose and data-lifecycle command
 
+## Prereqs and feature-scoped dependencies (macOS)
+
+- **Containers / systems** require **Colima**:
+
+```bash
+brew install colima
+```
+
+- **Local HTTPS** (when a repo uses `tls = true` for gateway routes) requires
+  **mkcert** plus the one-time trust install:
+
+```bash
+brew install mkcert
+mkcert -install
+```
+
+Docker is optional; install it only when you want the `docker` CLI on the host:
+
+```bash
+brew install docker docker-compose
+```
+
 ## The Model
 
 Effigy local dev has three layers:

@@ -213,6 +213,44 @@ primary_service = "jobs"
 }
 
 #[test]
+fn load_container_policy_appends_bootstrap_fresh_session_suffix() {
+    let root = temp_repo("fresh-session-project-name");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[catalog]
+alias = "contact-patch"
+
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join(".effigy/runtime")).expect("mkdir session dir");
+    fs::write(
+        root.join(".effigy/runtime/bootstrap-fresh-session.json"),
+        r#"{
+  "session_id": "fresh-abcd1234",
+  "root_repo": "/tmp/contact-patch",
+  "repos": ["/tmp/contact-patch"],
+  "active": true
+}
+"#,
+    )
+    .expect("write session record");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert_eq!(policy.project_name, "contact-patch-dev-fresh-abcd1234");
+}
+
+#[test]
 fn load_container_policy_infers_direct_compose_ports_when_manifest_ports_are_omitted() {
     let root = temp_repo("direct-compose-inferred-ports");
     fs::write(

@@ -225,8 +225,10 @@ fn render_bootstrap_help_shows_planning_options() {
     let rendered = render_help_text(HelpTopic::Bootstrap);
     assert!(rendered.contains("bootstrap Help"));
     assert!(rendered.contains("effigy bootstrap <GIT_URL>"));
+    assert!(rendered.contains("effigy bootstrap teardown [--yes] [--json]"));
     assert!(rendered.contains("--path <DIR>"));
     assert!(rendered.contains("--branch <NAME>"));
+    assert!(rendered.contains("--fresh"));
     assert!(rendered.contains("--no-prompt"));
     assert!(rendered.contains("--reuse-path"));
     assert!(rendered.contains("--start"));

@@ -8,9 +8,11 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
         &[
             "Bootstrap a repo into the current working tree from a git URL, then follow the repo-owned `[bootstrap]` contract.",
             "Phase 1 ships root clone/update, optional submodule sync, child repo checkout, bootstrap-local `run` steps, and automatic `[bootstrap].start` execution unless `--no-start` is passed.",
+            "Use `--fresh` when you need an isolated throwaway runtime namespace for bootstrap testing. Pair it with `effigy bootstrap teardown` afterward to clean up the session-scoped volumes and runtime.",
         ],
         &[
-            "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]",
+            "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]",
+            "effigy bootstrap teardown [--yes] [--json]",
             "effigy --json bootstrap <GIT_URL> --plan",
         ],
         &[
@@ -25,6 +27,10 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             (
                 "--db-seed <FILE>|<TARGET>=<FILE>",
                 "Stage one or more SQL dumps into the cloned repo for bootstrap-owned database seeding; multi-database bundles require named targets",
+            ),
+            (
+                "--fresh",
+                "Append a session-scoped suffix to generated-compose project names during bootstrap so volumes and runtime state stay isolated from prior local runs",
             ),
             (
                 "--no-prompt",
@@ -46,6 +52,10 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
                 "--plan",
                 "Preview the resolved bootstrap request without clone/update execution",
             ),
+            (
+                "--yes",
+                "Confirm bootstrap session teardown non-interactively",
+            ),
             ("--json", "Render machine-readable bootstrap payloads"),
             ("-h, --help", "Print command help"),
         ],
@@ -55,6 +65,8 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy bootstrap git@github.com:inflatable-cookie/loophole.git --branch main --no-start --plan",
             "effigy bootstrap git@github.com:inflatable-cookie/legacy.git --db-seed ./backups/latest.sql --start",
             "effigy bootstrap git@github.com:Cumberland-BS/cbs.git --db-seed cbs=./backups/cbs.sql --db-seed cbs-mortcalc=./backups/cbs-mortcalc.sql --start",
+            "effigy bootstrap git@github.com:acowtancy/market.git --fresh --no-start",
+            "effigy bootstrap teardown --yes",
         ],
     )
 }

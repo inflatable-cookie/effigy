@@ -31,6 +31,7 @@ use effigy_builtin::{PromptDecision, PromptPolicy};
 use super::error::RunnerError;
 
 mod deps;
+mod session;
 
 pub(in crate::runner) fn run_bootstrap_with_cwd(
     args: BootstrapArgs,
@@ -39,6 +40,7 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
     match &args.subcommand {
         BootstrapSubcommand::Clone {
             plan,
+            fresh,
             no_prompt,
             reuse_path,
             ..
@@ -54,8 +56,12 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
                 *no_prompt,
                 *reuse_path,
             )?;
-            let result = execute_bootstrap_request(&request, &cwd, args.output_json, *no_prompt)?;
+            let result =
+                execute_bootstrap_request(&request, &cwd, args.output_json, *no_prompt, *fresh)?;
             Ok(crate_render_bootstrap_result(&result, args.output_json))
+        }
+        BootstrapSubcommand::Teardown { yes } => {
+            session::run_bootstrap_teardown_with_cwd(cwd, args.output_json, *yes)
         }
         BootstrapSubcommand::DepsSync { mode, paths } => {
             deps::run_bootstrap_deps_sync(&cwd, *mode, paths, args.output_json)
@@ -72,6 +78,7 @@ fn resolve_bootstrap_request(
         path,
         branch,
         db_seeds,
+        fresh,
         no_prompt: _,
         start,
         ..
@@ -94,6 +101,7 @@ fn resolve_bootstrap_request(
                 path: seed.path.clone(),
             })
             .collect::<Vec<_>>(),
+        *fresh,
         *start,
     )
     .map_err(map_bootstrap_error)
@@ -195,8 +203,15 @@ fn execute_bootstrap_request(
     invocation_cwd: &Path,
     output_json: bool,
     no_prompt: bool,
+    fresh: bool,
 ) -> Result<BootstrapExecutionResult, RunnerError> {
     let progress = RefCell::new(BootstrapProgressReporter::new(output_json));
+    let mut fresh_session = fresh.then(|| {
+        session::BootstrapFreshSessionTracker::new(session::generate_bootstrap_fresh_session_id())
+    });
+    let _fresh_guard = fresh_session
+        .as_ref()
+        .map(|tracker| session::ScopedBootstrapFreshSessionEnvOverride::set(tracker.session_id()));
     let mut staged_db_seeds = None::<Vec<BootstrapStagedDbSeed>>;
     let mut db_seed_env_guard = None::<ScopedDbSeedEnvOverride>;
     let request_db_seeds = request
@@ -247,7 +262,15 @@ fn execute_bootstrap_request(
             run_bootstrap_task(repo_root, selector, phase)
                 .map_err(|e| BootstrapError::task_invocation(e.to_string()))
         },
-        |event| progress.borrow_mut().handle(event),
+        |event| {
+            if let Some(tracker) = fresh_session.as_mut() {
+                tracker
+                    .handle(&event)
+                    .map_err(|error| BootstrapError::task_invocation(error.to_string()))?;
+            }
+            progress.borrow_mut().handle(event);
+            Ok::<(), BootstrapError>(())
+        },
     )
     .map_err(map_bootstrap_error)?;
 
@@ -432,6 +455,7 @@ impl BootstrapProgressReporter {
                     destination.display()
                 ));
             }
+            BootstrapProgressEvent::DestinationPrepared { .. } => {}
             BootstrapProgressEvent::SubmodulesStarted {
                 destination,
                 policy,

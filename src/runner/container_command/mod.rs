@@ -330,7 +330,7 @@ fn repo_root_has_effigy_manifest(repo_root: &std::path::Path) -> bool {
     repo_root.join("effigy.toml").is_file()
 }
 
-fn run_container_reset_adapter(
+pub(in crate::runner) fn run_container_reset_adapter(
     repo_root: &std::path::Path,
     name: Option<&str>,
     keep_data: bool,

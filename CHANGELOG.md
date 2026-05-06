@@ -20,6 +20,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - **`effigy bootstrap`:** on a real TTY, optional prompts for missing DB seed
   paths and before reusing a non-empty clone destination. No prompts for
   **`--json`**, **`--plan`**, non-interactive I/O, or **`--no-prompt`**.
+- **`effigy bootstrap --fresh`** isolates generated-compose runtime state with
+  a session-scoped project-name suffix, and **`effigy bootstrap teardown`**
+  tears that recorded fresh session back down afterward.
 - **`effigy container data pull-production`**, **`data import`**, and broad
   **`effigy unlock`** use the same confirmation pattern: TTY asks (default no);
   JSON or non-interactive runs need **`--yes`** where applicable or they fail
