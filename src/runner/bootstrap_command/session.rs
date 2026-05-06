@@ -246,18 +246,30 @@ pub(super) fn run_bootstrap_teardown_with_cwd(
             removed_session_files.push(bootstrap_fresh_session_path(repo));
             continue;
         }
-        let policies = effigy_containers::load_all_container_policies(repo)
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        for policy in &policies {
+        let resettable_containers = manifest
+            .containers
+            .as_ref()
+            .map(|containers| {
+                containers
+                    .environments
+                    .iter()
+                    .filter(|(_, config)| {
+                        config.compose_file.is_some() || !config.services.is_empty()
+                    })
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for container_name in &resettable_containers {
             run_container_reset_adapter(
                 repo,
-                Some(policy.name.as_str()),
+                Some(container_name.as_str()),
                 false,
                 true,
                 true,
                 false,
             )?;
-            reset_containers.push(format!("{}:{}", repo.display(), policy.name));
+            reset_containers.push(format!("{}:{}", repo.display(), container_name));
         }
         cleaned_repos.push(repo.clone());
         remove_bootstrap_fresh_session_record(repo)?;
@@ -492,5 +504,46 @@ mod tests {
         let resolved = resolve_bootstrap_teardown_record(&scope).expect("resolve subtree session");
 
         assert_eq!(resolved, record);
+    }
+
+    #[test]
+    fn bootstrap_teardown_skips_non_runnable_container_entries() {
+        let repo = temp_repo("data-only-container");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[catalog]
+alias = "data-only"
+
+[containers.services.data]
+pull_production = "scripts/tasks/pull-production.sh"
+"#,
+        )
+        .expect("write manifest");
+        let record = BootstrapFreshSessionRecord {
+            session_id: "fresh-test-session".to_owned(),
+            root_repo: repo.clone(),
+            repos: vec![repo.clone()],
+            active: true,
+        };
+        write_bootstrap_fresh_session_record(&repo, &record).expect("write session record");
+
+        let rendered = run_bootstrap_teardown_with_cwd(repo.clone(), true, true)
+            .expect("teardown should skip non-runnable containers");
+        let payload: serde_json::Value =
+            serde_json::from_str(&rendered).expect("parse teardown json");
+
+        assert_eq!(
+            payload["result"]["result"]["cleaned_repos"],
+            serde_json::json!([repo.display().to_string()])
+        );
+        assert_eq!(
+            payload["result"]["result"]["removed_session_files"],
+            serde_json::json!([bootstrap_fresh_session_path(&repo).display().to_string()])
+        );
+        assert!(
+            !bootstrap_fresh_session_path(&repo).exists(),
+            "session file should be removed"
+        );
     }
 }
