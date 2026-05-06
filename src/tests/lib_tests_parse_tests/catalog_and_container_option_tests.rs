@@ -411,6 +411,34 @@ fn parse_container_data_dump_is_supported() {
 }
 
 #[test]
+fn parse_container_data_dump_accepts_bare_target_shorthand() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "data".to_owned(),
+        "dump".to_owned(),
+        "--db-dump".to_owned(),
+        "legacy_mysql".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: None,
+                subcommand: ContainerDataSubcommand::Dump {
+                    db_dumps: vec![ContainerDbDumpInput {
+                        target: Some("legacy_mysql".to_owned()),
+                        path: PathBuf::from("legacy_mysql.sql"),
+                    }],
+                },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
 fn parse_named_container_data_dump_accepts_named_targets() {
     let cmd = parse_command(vec![
         "container".to_owned(),

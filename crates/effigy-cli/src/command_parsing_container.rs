@@ -310,11 +310,7 @@ where
                         flag: "--db-dump".to_owned(),
                     },
                 )?;
-                let parsed = parse_bootstrap_db_seed(value)?;
-                db_dumps.push(ContainerDbDumpInput {
-                    target: parsed.target,
-                    path: parsed.path,
-                });
+                db_dumps.push(parse_container_db_dump(value)?);
             }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
@@ -329,6 +325,33 @@ where
         repo_override,
         output_json,
     }))
+}
+
+fn parse_container_db_dump(value: String) -> Result<ContainerDbDumpInput, CliParseError> {
+    if looks_like_bare_db_dump_target(&value) {
+        return Ok(ContainerDbDumpInput {
+            target: Some(value.clone()),
+            path: PathBuf::from(format!("{value}.sql")),
+        });
+    }
+
+    let parsed = parse_bootstrap_db_seed(value)?;
+    Ok(ContainerDbDumpInput {
+        target: parsed.target,
+        path: parsed.path,
+    })
+}
+
+fn looks_like_bare_db_dump_target(value: &str) -> bool {
+    !value.is_empty()
+        && !value.contains('=')
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.starts_with('.')
+        && !value.contains('.')
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
 fn parse_container_data_import<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
