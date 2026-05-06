@@ -344,3 +344,27 @@ fn parse_bootstrap_deps_sync_subcommand() {
         })
     );
 }
+
+#[test]
+fn parse_bootstrap_children_sync_subcommand() {
+    let cmd = parse_command(vec![
+        "bootstrap".to_owned(),
+        "children".to_owned(),
+        "sync".to_owned(),
+        "--fetch-only".to_owned(),
+        "--checkout".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Bootstrap(BootstrapArgs {
+            subcommand: BootstrapSubcommand::ChildrenSync {
+                fetch_only: true,
+                checkout: true,
+            },
+            output_json: true,
+        })
+    );
+}

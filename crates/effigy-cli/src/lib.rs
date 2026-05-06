@@ -465,6 +465,10 @@ pub enum BootstrapSubcommand {
         mode: BootstrapDepsSyncMode,
         paths: Vec<String>,
     },
+    ChildrenSync {
+        fetch_only: bool,
+        checkout: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

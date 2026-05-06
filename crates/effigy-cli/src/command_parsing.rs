@@ -823,6 +823,9 @@ where
     if first == "deps" {
         return parse_bootstrap_deps(args);
     }
+    if first == "children" {
+        return parse_bootstrap_children(args);
+    }
     if first == "teardown" {
         let mut yes = false;
         let mut output_json = false;
@@ -901,6 +904,50 @@ where
             reuse_path,
             start,
             plan,
+        },
+        output_json,
+    }))
+}
+
+fn parse_bootstrap_children<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcommand) = args.next() else {
+        return Ok(Command::Help(HelpTopic::Bootstrap));
+    };
+    match subcommand.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Bootstrap)),
+        "sync" => parse_bootstrap_children_sync(args),
+        other => Err(CliParseError::UnknownArgument(other.to_owned())),
+    }
+}
+
+fn parse_bootstrap_children_sync<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let args = args.into_iter();
+    let mut output_json = false;
+    let mut fetch_only = false;
+    let mut checkout = false;
+
+    for arg in args {
+        match arg.as_str() {
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bootstrap)),
+            "--json" => output_json = true,
+            "--fetch-only" => fetch_only = true,
+            "--checkout" => checkout = true,
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => return Err(unknown_argument(arg)),
+        }
+    }
+
+    Ok(Command::Bootstrap(BootstrapArgs {
+        subcommand: BootstrapSubcommand::ChildrenSync {
+            fetch_only,
+            checkout,
         },
         output_json,
     }))

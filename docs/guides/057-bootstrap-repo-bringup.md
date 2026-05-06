@@ -308,6 +308,18 @@ Rules:
 - sibling repos via `../underlay`-style paths are allowed when they stay under
   the root repo's parent directory
 - child `run` executes inside the child repo after clone or update
+
+After bootstrap, refresh declared child repos from the root repo with:
+
+```sh
+effigy bootstrap children sync
+```
+
+The sync command reads the composed manifest, including bundle-provided
+children. Existing child checkouts must have a matching `origin` remote and a
+clean worktree. By default Effigy fetches and fast-forwards the current
+configured branch; it skips branch switching unless `--checkout` is passed.
+Use `--fetch-only` when you only want remote refs refreshed.
 - optional children (`required = false`) report warnings instead of failing the
   whole bootstrap
 - `bootstrap deps sync` is the typed bootstrap dependency surface for repo-owned

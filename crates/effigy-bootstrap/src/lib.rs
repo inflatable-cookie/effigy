@@ -2,8 +2,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use effigy_manifest::{
-    load_task_manifest, ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy,
-    ManifestManagedRun,
+    config_sections::ManifestBootstrapChildConfig, load_task_manifest, ManifestBootstrapConfig,
+    ManifestBootstrapSubmodulesPolicy, ManifestManagedRun,
 };
 use serde_json::json;
 
@@ -61,6 +61,26 @@ pub struct BootstrapChildResult {
     pub required: bool,
     pub repo_state: &'static str,
     pub run: Option<String>,
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapChildrenSyncResult {
+    pub repo_root: PathBuf,
+    pub fetch_only: bool,
+    pub checkout: bool,
+    pub children: Vec<BootstrapChildSyncResult>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapChildSyncResult {
+    pub path: String,
+    pub repo: String,
+    pub destination: PathBuf,
+    pub branch: Option<String>,
+    pub required: bool,
+    pub state: &'static str,
     pub warning: Option<String>,
 }
 
@@ -783,6 +803,124 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
     lines.join("\n")
 }
 
+pub fn sync_bootstrap_children(
+    repo_root: &Path,
+    fetch_only: bool,
+    checkout: bool,
+) -> Result<BootstrapChildrenSyncResult, BootstrapError> {
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
+    let manifest = load_task_manifest(&manifest_path).map_err(|error| BootstrapError::Read {
+        path: manifest_path.clone(),
+        error: std::io::Error::other(error.to_string()),
+    })?;
+    let bootstrap = manifest.bootstrap.unwrap_or_default();
+    let mut children = Vec::new();
+    let mut warnings = Vec::new();
+
+    for child in &bootstrap.children {
+        let destination = resolve_child_destination(repo_root, &child.path)?;
+        match sync_child_checkout(child, &destination, fetch_only, checkout) {
+            Ok(state) => children.push(BootstrapChildSyncResult {
+                path: child.path.clone(),
+                repo: child.repo.clone(),
+                destination,
+                branch: child.branch.clone(),
+                required: child.required,
+                state,
+                warning: None,
+            }),
+            Err(error) if error.to_string().contains("uncommitted changes") => {
+                let warning = error.to_string();
+                warnings.push(format!("{}: {warning}", child.path));
+                children.push(BootstrapChildSyncResult {
+                    path: child.path.clone(),
+                    repo: child.repo.clone(),
+                    destination,
+                    branch: child.branch.clone(),
+                    required: child.required,
+                    state: "skipped-dirty",
+                    warning: Some(warning),
+                });
+            }
+            Err(error) if !child.required => {
+                let warning = error.to_string();
+                warnings.push(format!("{}: {warning}", child.path));
+                children.push(BootstrapChildSyncResult {
+                    path: child.path.clone(),
+                    repo: child.repo.clone(),
+                    destination,
+                    branch: child.branch.clone(),
+                    required: child.required,
+                    state: "warning",
+                    warning: Some(warning),
+                });
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok(BootstrapChildrenSyncResult {
+        repo_root: repo_root.to_path_buf(),
+        fetch_only,
+        checkout,
+        children,
+        warnings,
+    })
+}
+
+pub fn render_bootstrap_children_sync_result(
+    result: &BootstrapChildrenSyncResult,
+    output_json: bool,
+) -> String {
+    if output_json {
+        return json!({
+            "schema": "effigy.bootstrap.children-sync.v1",
+            "schema_version": 1,
+            "repo_root": result.repo_root.display().to_string(),
+            "fetch_only": result.fetch_only,
+            "checkout": result.checkout,
+            "children": result.children.iter().map(|child| json!({
+                "path": child.path,
+                "destination": child.destination.display().to_string(),
+                "repo": child.repo,
+                "requested_branch": child.branch,
+                "required": child.required,
+                "state": child.state,
+                "warning": child.warning,
+            })).collect::<Vec<_>>(),
+            "warnings": result.warnings,
+        })
+        .to_string();
+    }
+
+    if result.children.is_empty() {
+        return "bootstrap children sync completed (0)\nchildren: none".to_owned();
+    }
+
+    let mut lines = vec![format!(
+        "bootstrap children sync completed ({})",
+        result.children.len()
+    )];
+    for child in &result.children {
+        let branch = child
+            .branch
+            .as_deref()
+            .map_or("default".to_owned(), |branch| format!("branch={branch}"));
+        let mut line = format!(
+            "- {}: {} ({}) -> {}",
+            child.path,
+            child.state,
+            branch,
+            child.destination.display()
+        );
+        if let Some(warning) = &child.warning {
+            line.push_str(&format!(" [{warning}]"));
+        }
+        lines.push(line);
+    }
+    lines.join("\n")
+}
+
 fn run_bootstrap_run_if_present<RunBootstrapRun>(
     run_bootstrap_run: &mut RunBootstrapRun,
     repo_root: &Path,
@@ -921,6 +1059,73 @@ fn sync_repo_checkout(
         run_git(destination, &["pull", "--ff-only"])?;
     }
     Ok("updated")
+}
+
+fn sync_child_checkout(
+    child: &ManifestBootstrapChildConfig,
+    destination: &Path,
+    fetch_only: bool,
+    checkout: bool,
+) -> Result<&'static str, BootstrapError> {
+    if !destination.exists() {
+        return sync_repo_checkout(&child.repo, destination, child.branch.as_deref());
+    }
+
+    if !destination.is_dir() {
+        return Err(BootstrapError::task_invocation(format!(
+            "bootstrap child destination exists but is not a directory: {}",
+            destination.display()
+        )));
+    }
+    if !destination.join(".git").exists() {
+        return Err(BootstrapError::task_invocation(format!(
+            "bootstrap child destination exists but is not a git checkout: {}",
+            destination.display()
+        )));
+    }
+
+    let actual_remote = git_stdout(destination, &["remote", "get-url", "origin"])?;
+    if normalize_bootstrap_repo_url(&actual_remote) != normalize_bootstrap_repo_url(&child.repo) {
+        return Err(BootstrapError::task_invocation(format!(
+            "bootstrap child remote mismatch for `{}`: expected `{}`, found `{}`",
+            child.path, child.repo, actual_remote
+        )));
+    }
+    if repo_has_uncommitted_changes(destination)? {
+        return Err(BootstrapError::task_invocation(format!(
+            "bootstrap child has uncommitted changes: {}",
+            destination.display()
+        )));
+    }
+
+    run_git(destination, &["fetch", "origin"])?;
+    if fetch_only {
+        return Ok("fetched");
+    }
+
+    if let Some(branch) = child.branch.as_deref() {
+        let current = current_branch(destination)?;
+        if current.as_deref() != Some(branch) {
+            if !checkout {
+                return Ok("skipped-branch");
+            }
+            run_git(destination, &["checkout", branch])?;
+        }
+        run_git(destination, &["pull", "--ff-only", "origin", branch])?;
+        return Ok("updated");
+    }
+
+    run_git(destination, &["pull", "--ff-only"])?;
+    Ok("updated")
+}
+
+fn current_branch(repo_root: &Path) -> Result<Option<String>, BootstrapError> {
+    let branch = git_stdout(repo_root, &["branch", "--show-current"])?;
+    if branch.trim().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(branch))
+    }
 }
 
 fn repo_has_uncommitted_changes(repo_root: &Path) -> Result<bool, BootstrapError> {

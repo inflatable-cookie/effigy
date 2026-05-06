@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use effigy_bootstrap::{
-    execute_bootstrap_request, render_bootstrap_result, resolve_bootstrap_request, BootstrapError,
-    BootstrapResolution,
+    execute_bootstrap_request, render_bootstrap_result, resolve_bootstrap_request,
+    sync_bootstrap_children, BootstrapError, BootstrapResolution,
 };
 use effigy_manifest::{
     load_task_manifest, ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy,
@@ -347,6 +347,64 @@ fn execute_bootstrap_request_clones_root_and_runs_setup_and_children() {
             .expect("child setup file"),
         "child-setup"
     );
+}
+
+#[test]
+fn sync_bootstrap_children_fast_forwards_existing_child() {
+    let child_remote = create_child_remote("child-sync");
+    let root_remote = create_root_remote_with_bootstrap(&child_remote);
+    let cwd = temp_dir("bootstrap-children-sync");
+    let request = resolve_bootstrap_request(
+        &cwd,
+        &root_remote.display().to_string(),
+        None,
+        None,
+        &[],
+        false,
+        false,
+    )
+    .expect("resolve request");
+    let result = execute_bootstrap_request(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+    )
+    .expect("execute bootstrap");
+    let child_checkout = result.request.destination.join("child-app");
+    commit_all(&child_checkout, "record child setup");
+    let push_setup = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(&child_checkout)
+        .args(["push"])
+        .output()
+        .expect("git push child setup");
+    assert!(
+        push_setup.status.success(),
+        "git push child setup failed: {push_setup:?}"
+    );
+
+    let child_worktree = clone_remote(&child_remote, "child-sync-update");
+    fs::write(child_worktree.join("SYNCED.md"), "# synced\n").expect("write synced");
+    commit_all(&child_worktree, "sync update");
+    let push = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(&child_worktree)
+        .args(["push"])
+        .output()
+        .expect("git push");
+    assert!(push.status.success(), "git push failed: {push:?}");
+
+    let sync =
+        sync_bootstrap_children(&result.request.destination, false, false).expect("sync children");
+    assert_eq!(sync.children.len(), 1);
+    assert_eq!(sync.children[0].state, "updated");
+    assert!(result
+        .request
+        .destination
+        .join("child-app")
+        .join("SYNCED.md")
+        .is_file());
 }
 
 #[test]
