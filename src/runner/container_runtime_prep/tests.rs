@@ -1,5 +1,5 @@
 use super::{
-    activate_container_runtime_for_task_using,
+    activate_container_runtime_for_task_using, candidate_host_mount_paths,
     ensure_primary_service_exec_ready_with_recovery_using, parse_bind_mount_host_path,
     prepare_host_bind_mount_dirs, restart_primary_service_using, run_runtime_prep_steps,
     service_depends_on_primary, validate_policy_runtime, ActivationRequest,
@@ -132,6 +132,54 @@ services:
 
     let _ = fs::remove_dir_all(&repo_root);
     let _ = fs::remove_dir_all(&outside_dir);
+}
+
+#[test]
+fn prepare_host_bind_mount_dirs_creates_named_volume_targets_under_repo_binds() {
+    let repo_root = temp_test_dir("named-volume-targets");
+    let api_target = repo_root.join("acme-api/target");
+    let compose_file = repo_root.join("docker-compose.yml");
+
+    fs::write(
+        &compose_file,
+        format!(
+            r#"
+services:
+  workspace:
+    volumes:
+      - "{}:/workspace-root/demo"
+      - "named-api-target:/workspace-root/demo/acme-api/target"
+"#,
+            repo_root.display(),
+        ),
+    )
+    .expect("write compose file");
+
+    let policy = test_policy(compose_file);
+    prepare_host_bind_mount_dirs(&repo_root, &policy).expect("prepare bind mounts");
+
+    assert!(
+        api_target.is_dir(),
+        "expected named-volume target under repo bind to be created"
+    );
+
+    let _ = fs::remove_dir_all(&repo_root);
+}
+
+#[test]
+fn candidate_host_mount_paths_maps_named_volume_targets_through_repo_bind() {
+    let repo_root = temp_test_dir("candidate-targets");
+    let bind_roots = vec![(repo_root.clone(), "/workspace-root/demo".to_owned())];
+
+    let candidates = candidate_host_mount_paths(
+        &repo_root,
+        "named-api-target:/workspace-root/demo/acme-api/target",
+        &bind_roots,
+    );
+
+    assert_eq!(candidates, vec![repo_root.join("acme-api/target")]);
+
+    let _ = fs::remove_dir_all(&repo_root);
 }
 
 #[cfg(unix)]
