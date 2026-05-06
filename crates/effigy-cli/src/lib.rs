@@ -440,6 +440,12 @@ pub struct BootstrapDbSeedInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerDbDumpInput {
+    pub target: Option<String>,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootstrapSubcommand {
     Clone {
         repo_url: String,
@@ -600,6 +606,9 @@ pub enum ContainerDataSubcommand {
     Export {
         volume: String,
         path: PathBuf,
+    },
+    Dump {
+        db_dumps: Vec<ContainerDbDumpInput>,
     },
     Import {
         volume: String,

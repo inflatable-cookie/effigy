@@ -3,7 +3,10 @@ use crate::tests::prelude::{
     PathBuf, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand, TaskInvocation,
     WorkspaceArgs,
 };
-use effigy_cli::{BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerDataSubcommand};
+use effigy_cli::{
+    BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerDataSubcommand,
+    ContainerDbDumpInput,
+};
 
 #[test]
 fn parse_service_help_is_scoped() {
@@ -374,6 +377,64 @@ fn parse_container_data_export_is_supported() {
             },
             repo_override: None,
             output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_data_dump_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "data".to_owned(),
+        "dump".to_owned(),
+        "--db-dump".to_owned(),
+        "./latest.sql".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: None,
+                subcommand: ContainerDataSubcommand::Dump {
+                    db_dumps: vec![ContainerDbDumpInput {
+                        target: None,
+                        path: PathBuf::from("./latest.sql"),
+                    }],
+                },
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_named_container_data_dump_accepts_named_targets() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "stack".to_owned(),
+        "data".to_owned(),
+        "dump".to_owned(),
+        "--db-dump".to_owned(),
+        "app=./app.sql".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: Some("stack".to_owned()),
+                subcommand: ContainerDataSubcommand::Dump {
+                    db_dumps: vec![ContainerDbDumpInput {
+                        target: Some("app".to_owned()),
+                        path: PathBuf::from("./app.sql"),
+                    }],
+                },
+            },
+            repo_override: None,
+            output_json: false,
         })
     );
 }

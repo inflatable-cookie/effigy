@@ -32,6 +32,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - **`effigy container data seed`** matches the bootstrap DB-seed contract after
   bring-up (repeatable **`--db-seed`**, optional TTY prompts, staging under
   **`.effigy/local/db-seeds/`**, then **`bootstrap:db-seed`**).
+- **`effigy container data dump`** exports logical SQL dumps from generated-compose
+  Postgres or MariaDB services using repeatable **`--db-dump <FILE>|<TARGET>=<FILE>`**
+  inputs. Single-database bundles can omit the target; multi-database bundles
+  must name one, mirroring the `data seed` target contract.
 - **`effigy bootstrap`** now has explicit **`--reuse-path`** for reusing a
   non-empty destination without an interactive confirmation.
 - **`effigy init`** with the **`minimal`** starter (the default) now also emits a

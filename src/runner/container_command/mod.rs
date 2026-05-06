@@ -20,8 +20,8 @@ use effigy_cli::{ContainerArgs, ContainerDataSubcommand, ContainerSubcommand};
 
 use super::error::RunnerError;
 use data::{
-    maybe_confirm_container_data_import, run_container_data_pull_production,
-    run_container_data_seed,
+    maybe_confirm_container_data_import, resolve_db_dump_output_paths, run_container_data_dump,
+    run_container_data_pull_production, run_container_data_seed,
 };
 use lifecycle::{run_container_eject, run_container_shell, run_container_up};
 
@@ -173,6 +173,18 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
                 name.as_deref(),
                 &volume,
                 &resolve_archive_path(&context.invocation_cwd, &path),
+                args.output_json,
+            )
+        }
+        ContainerSubcommand::Data {
+            name,
+            subcommand: ContainerDataSubcommand::Dump { db_dumps },
+        } => {
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            run_container_data_dump(
+                &context.resolved.resolved_root,
+                name.as_deref(),
+                &resolve_db_dump_output_paths(&context.invocation_cwd, &db_dumps),
                 args.output_json,
             )
         }

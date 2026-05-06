@@ -10,7 +10,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "V1 stays explicit: host-facing ports and repo-relative mounts are declared in `[containers.*.host]`, and attached sessions shut the environment down on owner exit by default.",
             "Generated compose also supports bounded `shared = true` backing services for standalone shared databases and caches on the product-owned path.",
             "Mounted sibling repos listed in `systems.<name>.mounts` auto-adopt producer `[isolation].paths` into workspace containers, and Colima/nerdctl now preflights oversized mount payloads before compose-up.",
-            "`container data seed` currently targets the repo default container only and stays on the generated-compose path, just like the other built-in data lifecycle commands.",
+            "`container data seed` currently targets the repo default container only and stays on the generated-compose path, while `container data dump` exports logical SQL dumps from generated-compose database services.",
         ],
         &[
             "effigy container up [--repo <PATH>] [--attach|--detach] [--json]",
@@ -26,6 +26,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container <NAME> data list [--repo <PATH>] [--json]",
             "effigy container data export <VOLUME> <PATH> [--repo <PATH>] [--json]",
             "effigy container <NAME> data export <VOLUME> <PATH> [--repo <PATH>] [--json]",
+            "effigy container [<NAME>] data dump [--db-dump <FILE>|<TARGET>=<FILE>]... [--repo <PATH>] [--json]",
             "effigy container data import <VOLUME> <PATH> [--repo <PATH>] [--yes] [--json]",
             "effigy container <NAME> data import <VOLUME> <PATH> [--repo <PATH>] [--yes] [--json]",
             "effigy container data pull-production [--repo <PATH>] [--yes] [--json]",
@@ -72,6 +73,10 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
                 "Confirm destructive data operations without an interactive prompt",
             ),
             (
+                "--db-dump <FILE>|<TARGET>=<FILE>",
+                "Write one SQL dump for `data dump`; single-database bundles can omit the target, multi-database bundles must name one. Output paths are relative to the invocation cwd unless absolute.",
+            ),
+            (
                 "--db-seed <FILE>|<TARGET>=<FILE>",
                 "Stage one SQL dump for `data seed`; single-database bundles can omit the target, multi-database bundles must name one. `data seed` currently targets the repo default container only.",
             ),
@@ -91,6 +96,8 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container stats --all",
             "effigy container web data list",
             "effigy container web data export fixture-web-dev-db-data ./backup.tar.gz",
+            "effigy container data dump --db-dump ./latest.sql",
+            "effigy container data dump --db-dump app=./app.sql --db-dump app_test=./app_test.sql",
             "effigy container web data import fixture-web-dev-db-data ./backup.tar.gz",
             "effigy container web data pull-production",
             "effigy container data seed --db-seed ./latest.sql",

@@ -197,6 +197,7 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("effigy container stats --all"));
     assert!(rendered.contains("effigy container data list"));
     assert!(rendered.contains("effigy container data export <VOLUME> <PATH>"));
+    assert!(rendered.contains("effigy container [<NAME>] data dump"));
     assert!(rendered.contains("effigy container data import <VOLUME> <PATH>"));
     assert!(rendered.contains("effigy container data seed"));
     assert!(rendered.contains("effigy container <NAME> logs"));
@@ -210,11 +211,13 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("--command <CMD>"));
     assert!(rendered.contains("--follow"));
     assert!(rendered.contains("--keep-data"));
+    assert!(rendered.contains("--db-dump <FILE>|<TARGET>=<FILE>"));
     assert!(rendered.contains("--db-seed <FILE>|<TARGET>=<FILE>"));
     assert!(rendered.contains("--no-prompt"));
     assert!(rendered.contains("effigy container web data list"));
     assert!(rendered.contains("effigy container web data export"));
     assert!(rendered.contains("effigy container web data import"));
+    assert!(rendered.contains("effigy container data dump --db-dump ./latest.sql"));
     assert!(rendered.contains("effigy container data seed --db-seed ./latest.sql"));
     assert!(rendered.contains("effigy container web reset --keep-data"));
     assert!(rendered.contains("attached sessions shut the environment down on owner exit"));

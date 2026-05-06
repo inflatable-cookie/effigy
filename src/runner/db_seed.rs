@@ -507,7 +507,9 @@ fn resolve_db_seed_targets(
     Ok(resolved)
 }
 
-fn bundle_database_targets(bundle: &effigy_manifest::ManifestBundleConfig) -> Option<Vec<String>> {
+pub(in crate::runner) fn bundle_database_targets(
+    bundle: &effigy_manifest::ManifestBundleConfig,
+) -> Option<Vec<String>> {
     let value = bundle
         .inputs
         .get("databases")

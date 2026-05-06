@@ -2,20 +2,26 @@ use effigy_runtime::data::{
     run_container_data_pull_production as run_runtime_container_data_pull_production,
     RegisteredGatewayRoute,
 };
+use std::collections::BTreeSet;
+use std::fs;
 use std::io::{self, BufRead, IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use effigy_bootstrap::BootstrapStagedDbSeed;
 use effigy_builtin::{PromptDecision, PromptPolicy};
-use effigy_cli::BootstrapDbSeedInput;
+use effigy_cli::{BootstrapDbSeedInput, ContainerDbDumpInput};
+use effigy_manifest::{ManifestContainerServiceConfig, TASK_MANIFEST_FILE};
 
 use super::gateway_registration::register_gateway_routes_for_container;
+use super::lifecycle::run_container_exec_capture;
 use super::runtime_error_from_runner;
 use super::support::{ensure_shared_services_running, wait_for_container_ready};
 use super::RunnerError;
 use crate::runner::db_seed::{
-    db_seed_env, maybe_prompt_db_seed_inputs, run_db_seed_task, stage_db_seed_files,
+    bundle_database_targets, db_seed_env, maybe_prompt_db_seed_inputs, run_db_seed_task,
+    stage_db_seed_files,
 };
+use crate::runner::manifest::load_task_manifest;
 
 #[path = "data/hooks.rs"]
 mod hooks;
@@ -128,6 +134,95 @@ pub(super) fn run_container_data_seed(
     }
 }
 
+pub(super) fn resolve_db_dump_output_paths(
+    cwd: &Path,
+    db_dumps: &[ContainerDbDumpInput],
+) -> Vec<ContainerDbDumpInput> {
+    db_dumps
+        .iter()
+        .map(|dump| ContainerDbDumpInput {
+            target: dump.target.clone(),
+            path: if dump.path.is_absolute() {
+                dump.path.clone()
+            } else {
+                cwd.join(&dump.path)
+            },
+        })
+        .collect()
+}
+
+pub(super) fn run_container_data_dump(
+    repo_root: &Path,
+    name: Option<&str>,
+    db_dumps: &[ContainerDbDumpInput],
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let policy = effigy_containers::load_container_policy(repo_root, name)?;
+    ensure_dump_target(&policy)?;
+    if db_dumps.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "container data dump requires one or more `--db-dump` values",
+        ));
+    }
+
+    let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
+    let plans = resolve_db_dump_plans(repo_root, &manifest, &policy.name, db_dumps)?;
+
+    for plan in &plans {
+        if let Some(parent) = plan.output_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "failed to create dump output directory {}: {error}",
+                    parent.display()
+                ))
+            })?;
+        }
+
+        let output = run_container_exec_capture(
+            repo_root,
+            Some(&policy.name),
+            Some(&plan.service_name),
+            &plan.command,
+        )?;
+        fs::write(&plan.output_path, &output.stdout).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to write SQL dump {}: {error}",
+                plan.output_path.display()
+            ))
+        })?;
+    }
+
+    if output_json {
+        Ok(serde_json::json!({
+            "schema": "effigy.container.data-dump.v1",
+            "ok": true,
+            "container": policy.name,
+            "count": plans.len(),
+            "dumps": plans
+                .iter()
+                .map(|plan| serde_json::json!({
+                    "target": plan.target,
+                    "database": plan.database,
+                    "service": plan.service_name,
+                    "catalog": plan.catalog,
+                    "path": plan.output_path.display().to_string(),
+                }))
+                .collect::<Vec<_>>(),
+        })
+        .to_string())
+    } else {
+        let detail = plans
+            .iter()
+            .map(|plan| match plan.target.as_deref() {
+                Some(target) => format!("{target}={}", plan.output_path.display()),
+                None => plan.output_path.display().to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        Ok(format!("[ok] dumped local databases to {detail}"))
+    }
+}
+
 pub(super) fn maybe_confirm_container_data_import(
     repo_root: &Path,
     name: Option<&str>,
@@ -220,6 +315,260 @@ fn ensure_seed_prompt_target(
         )));
     }
     Ok(())
+}
+
+fn ensure_dump_target(
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    if policy.compose_source != effigy_containers::EffectiveComposeSource::Generated {
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` uses direct `compose_file` ownership; `data dump` is supported only on the generated-compose path",
+            policy.name
+        )));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DbDumpService {
+    service_name: String,
+    catalog: String,
+    password: String,
+    declared_databases: Vec<String>,
+    primary_database: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DbDumpPlan {
+    target: Option<String>,
+    database: String,
+    service_name: String,
+    catalog: String,
+    output_path: PathBuf,
+    command: Vec<String>,
+}
+
+fn resolve_db_dump_plans(
+    repo_root: &Path,
+    manifest: &effigy_manifest::TaskManifest,
+    container_name: &str,
+    db_dumps: &[ContainerDbDumpInput],
+) -> Result<Vec<DbDumpPlan>, RunnerError> {
+    let containers = manifest.containers.as_ref().ok_or_else(|| {
+        RunnerError::task_invocation("manifest does not define a `[containers]` registry")
+    })?;
+    let container = containers.environments.get(container_name).ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "container `{container_name}` is not defined in `{}`",
+            repo_root.join(TASK_MANIFEST_FILE).display()
+        ))
+    })?;
+    let services = collect_db_dump_services(&container.services);
+    if services.is_empty() {
+        return Err(RunnerError::task_invocation(format!(
+            "container `{container_name}` does not declare any supported database service for `data dump`"
+        )));
+    }
+
+    let declared_targets = manifest.bundle.as_ref().and_then(bundle_database_targets);
+    let resolved_dumps = resolve_db_dump_targets(repo_root, manifest, db_dumps)?;
+    let mut seen_paths = BTreeSet::new();
+    let mut plans = Vec::with_capacity(resolved_dumps.len());
+
+    for dump in resolved_dumps {
+        if !seen_paths.insert(dump.path.clone()) {
+            return Err(RunnerError::task_invocation(format!(
+                "duplicate db dump output path `{}`",
+                dump.path.display()
+            )));
+        }
+        let database = dump.target.clone().or_else(|| {
+            declared_targets
+                .as_ref()
+                .and_then(|targets| (targets.len() == 1).then(|| targets[0].clone()))
+        });
+        let database = database.or_else(|| services.first().and_then(|service| service.primary_database.clone())).ok_or_else(|| {
+            RunnerError::task_invocation(
+                "container data dump could not resolve a database target from the manifest",
+            )
+        })?;
+        let service = resolve_db_dump_service_for_database(&services, &database)?;
+        let command = build_db_dump_command(service, &database);
+        plans.push(DbDumpPlan {
+            target: dump.target,
+            database,
+            service_name: service.service_name.clone(),
+            catalog: service.catalog.clone(),
+            output_path: dump.path,
+            command,
+        });
+    }
+
+    Ok(plans)
+}
+
+fn collect_db_dump_services(
+    services: &std::collections::BTreeMap<String, ManifestContainerServiceConfig>,
+) -> Vec<DbDumpService> {
+    services
+        .iter()
+        .filter_map(|(service_name, service)| {
+            matches!(service.catalog.as_str(), "postgres" | "mariadb").then(|| DbDumpService {
+                service_name: service_name.clone(),
+                catalog: service.catalog.clone(),
+                password: service
+                    .params
+                    .get("password")
+                    .and_then(toml::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("secret")
+                    .to_owned(),
+                declared_databases: service
+                    .params
+                    .get("databases")
+                    .and_then(toml::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(toml::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+                primary_database: service
+                    .params
+                    .get("database")
+                    .and_then(toml::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned),
+            })
+        })
+        .collect()
+}
+
+fn resolve_db_dump_service_for_database<'a>(
+    services: &'a [DbDumpService],
+    database: &str,
+) -> Result<&'a DbDumpService, RunnerError> {
+    let explicit_matches = services
+        .iter()
+        .filter(|service| service.declared_databases.iter().any(|entry| entry == database))
+        .collect::<Vec<_>>();
+    if explicit_matches.len() == 1 {
+        return Ok(explicit_matches[0]);
+    }
+    if explicit_matches.len() > 1 {
+        return Err(RunnerError::task_invocation(format!(
+            "multiple database services can dump `{database}`: {}",
+            explicit_matches
+                .iter()
+                .map(|service| format!("{} ({})", service.service_name, service.catalog))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+
+    let primary_matches = services
+        .iter()
+        .filter(|service| service.primary_database.as_deref() == Some(database))
+        .collect::<Vec<_>>();
+    if primary_matches.len() == 1 {
+        return Ok(primary_matches[0]);
+    }
+    if primary_matches.len() > 1 {
+        return Err(RunnerError::task_invocation(format!(
+            "multiple database services use `{database}` as their primary database: {}",
+            primary_matches
+                .iter()
+                .map(|service| format!("{} ({})", service.service_name, service.catalog))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+
+    Err(RunnerError::task_invocation(format!(
+        "no database service in the selected container can dump `{database}`"
+    )))
+}
+
+fn build_db_dump_command(service: &DbDumpService, database: &str) -> Vec<String> {
+    match service.catalog.as_str() {
+        "postgres" => vec![
+            "env".to_owned(),
+            format!("PGPASSWORD={}", service.password),
+            "pg_dump".to_owned(),
+            "-U".to_owned(),
+            "postgres".to_owned(),
+            "-d".to_owned(),
+            database.to_owned(),
+            "--no-owner".to_owned(),
+            "--no-privileges".to_owned(),
+        ],
+        "mariadb" => vec![
+            "env".to_owned(),
+            format!("MYSQL_PWD={}", service.password),
+            "mysqldump".to_owned(),
+            "-uroot".to_owned(),
+            "--single-transaction".to_owned(),
+            "--skip-comments".to_owned(),
+            "--routines".to_owned(),
+            "--triggers".to_owned(),
+            database.to_owned(),
+        ],
+        _ => unreachable!("unsupported db dump catalog"),
+    }
+}
+
+fn resolve_db_dump_targets(
+    repo_root: &Path,
+    manifest: &effigy_manifest::TaskManifest,
+    db_dumps: &[ContainerDbDumpInput],
+) -> Result<Vec<ContainerDbDumpInput>, RunnerError> {
+    let declared_targets = manifest.bundle.as_ref().and_then(bundle_database_targets);
+    let mut seen_targets = BTreeSet::new();
+    let mut resolved = Vec::with_capacity(db_dumps.len());
+    for dump in db_dumps {
+        let effective_target = match dump.target.as_deref() {
+            Some(target) => {
+                if let Some(declared_targets) = declared_targets.as_ref() {
+                    if !declared_targets.iter().any(|declared| declared == target) {
+                        return Err(RunnerError::task_invocation(format!(
+                            "db dump target `{target}` is not declared in `[bundle].databases` for {}; valid targets: {}",
+                            repo_root.join(TASK_MANIFEST_FILE).display(),
+                            declared_targets.join(", ")
+                        )));
+                    }
+                }
+                Some(target.to_owned())
+            }
+            None => match declared_targets.as_ref() {
+                Some(declared_targets) if declared_targets.len() == 1 => {
+                    Some(declared_targets[0].clone())
+                }
+                Some(declared_targets) if declared_targets.len() > 1 => {
+                    return Err(RunnerError::task_invocation(format!(
+                        "db dump output `{}` must name a target because `[bundle].databases` declares multiple databases: {}",
+                        dump.path.display(),
+                        declared_targets.join(", ")
+                    )));
+                }
+                _ => None,
+            },
+        };
+        if let Some(target) = effective_target.as_deref() {
+            if !seen_targets.insert(target.to_owned()) {
+                return Err(RunnerError::task_invocation(format!(
+                    "duplicate db dump target `{target}`"
+                )));
+            }
+        }
+        resolved.push(ContainerDbDumpInput {
+            target: effective_target,
+            path: dump.path.clone(),
+        });
+    }
+    Ok(resolved)
 }
 
 fn maybe_confirm_container_data_pull_production(
@@ -533,16 +882,17 @@ mod tests {
         confirm_container_data_import_from_io, confirm_container_data_pull_production_from_io,
         confirm_container_data_seed_from_io, container_data_import_prompt_required,
         container_data_pull_production_prompt_required, container_data_seed_prompt_required,
-        run_container_data_pull_production, run_container_data_seed,
+        resolve_db_dump_plans, run_container_data_dump, run_container_data_pull_production,
+        run_container_data_seed,
     };
     use effigy_bootstrap::BootstrapStagedDbSeed;
-    use effigy_cli::BootstrapDbSeedInput;
+    use effigy_cli::{BootstrapDbSeedInput, ContainerDbDumpInput};
     use effigy_containers::{
         EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
     };
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-        ManifestContainerStartup,
+        ManifestContainerStartup, TaskManifest,
     };
     use effigy_runtime::data::{
         run_container_data_export, run_container_data_import, run_container_data_list,
@@ -652,6 +1002,89 @@ primary_service = "app"
         assert!(error
             .to_string()
             .contains("`data export` is supported only on the generated-compose path"));
+    }
+
+    #[test]
+    fn run_container_data_dump_rejects_direct_compose_ownership() {
+        let root = temp_repo("data-dump-direct");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+        )
+        .expect("write manifest");
+        fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+        fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+        let error = run_container_data_dump(
+            &root,
+            None,
+            &[ContainerDbDumpInput {
+                target: None,
+                path: PathBuf::from("/tmp/latest.sql"),
+            }],
+            false,
+        )
+        .expect_err("should fail");
+        let message = error.to_string();
+        assert!(message.contains("`data dump` is supported only on the generated-compose path"));
+    }
+
+    #[test]
+    fn resolve_db_dump_plans_prefers_service_with_declared_databases() {
+        let manifest: TaskManifest = toml::from_str(
+            r#"
+[bundle]
+base = "underlay"
+databases = ["acowtancy", "acowtancy_test"]
+
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "workspace"
+
+[containers.stack.services.postgres]
+catalog = "postgres"
+database = "acowtancy"
+databases = ["acowtancy", "acowtancy_test"]
+
+[containers.stack.services.mysql]
+catalog = "mariadb"
+database = "acowtancy"
+"#,
+        )
+        .expect("manifest");
+        let root = temp_repo("data-dump-plan");
+
+        let plans = resolve_db_dump_plans(
+            &root,
+            &manifest,
+            "stack",
+            &[
+                ContainerDbDumpInput {
+                    target: Some("acowtancy".to_owned()),
+                    path: PathBuf::from("/tmp/acowtancy.sql"),
+                },
+                ContainerDbDumpInput {
+                    target: Some("acowtancy_test".to_owned()),
+                    path: PathBuf::from("/tmp/acowtancy_test.sql"),
+                },
+            ],
+        )
+        .expect("plans");
+
+        assert_eq!(plans.len(), 2);
+        assert_eq!(plans[0].service_name, "postgres");
+        assert_eq!(plans[0].catalog, "postgres");
+        assert!(plans[0].command.iter().any(|arg| arg == "pg_dump"));
+        assert_eq!(plans[1].service_name, "postgres");
     }
 
     #[test]

@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use crate::{Command, ContainerArgs, ContainerDataSubcommand, ContainerSubcommand, HelpTopic};
+use crate::{
+    Command, ContainerArgs, ContainerDataSubcommand, ContainerDbDumpInput,
+    ContainerSubcommand, HelpTopic,
+};
 
 use crate::value_parsing::{next_required_value, parse_repo_path};
 
@@ -235,7 +238,7 @@ where
     let mut args = args.into_iter();
     let Some(subcmd) = args.next() else {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container data` requires a subcommand; use `list`, `export`, `import`, `pull-production`, or `seed`".to_owned(),
+            "`effigy container data` requires a subcommand; use `list`, `export`, `dump`, `import`, `pull-production`, or `seed`".to_owned(),
         ));
     };
 
@@ -243,6 +246,7 @@ where
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Container)),
         "list" => parse_container_data_list(name, args),
         "export" => parse_container_data_export(name, args),
+        "dump" => parse_container_data_dump(name, args),
         "import" => parse_container_data_import(name, args),
         "pull-production" => parse_container_data_pull_production(name, args),
         "seed" => parse_container_data_seed(name, args),
@@ -284,6 +288,47 @@ where
     parse_container_data_transfer(name, args, "export", |volume, path| {
         ContainerDataSubcommand::Export { volume, path }
     })
+}
+
+fn parse_container_data_dump<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut db_dumps = Vec::new();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--db-dump" => {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--db-dump".to_owned(),
+                    },
+                )?;
+                let parsed = parse_bootstrap_db_seed(value)?;
+                db_dumps.push(ContainerDbDumpInput {
+                    target: parsed.target,
+                    path: parsed.path,
+                });
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Data {
+            name,
+            subcommand: ContainerDataSubcommand::Dump { db_dumps },
+        },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_container_data_import<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
