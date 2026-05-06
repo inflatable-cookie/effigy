@@ -1,14 +1,18 @@
 # Effigy Docs
 
-This is the docs front door.
+This is the docs front door: **goal-based links** into the guides (not the full
+guide inventory—that lives in [`guides/README.md`](./guides/README.md)).
 
 If you are new here, do not start by reading everything. Pick the job you are
 trying to do, then follow one path.
 
+**Need the binary first?** Install options (Homebrew, curl, `cargo install`) are
+in the root [`README.md`](../README.md) under **Install**.
+
 ## Start Here
 
-1. Read [`../README.md`](../README.md) for install and the shortest first-run
-   path.
+1. Use the root [`README.md`](../README.md) **Install** and **Start Fast** for
+   the binary and the shortest first-run path.
 2. Read [`guides/021-quick-start-and-command-cookbook.md`](./guides/021-quick-start-and-command-cookbook.md)
    for the first ten minutes.
 3. Read [`guides/055-everyday-workflows.md`](./guides/055-everyday-workflows.md)

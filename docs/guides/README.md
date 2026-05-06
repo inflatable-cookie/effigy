@@ -1,6 +1,9 @@
 # Effigy Guides
 
-This page is the practical guide map.
+This page is the **practical guide map**: ordered journeys plus the full guide
+inventory. For a shorter goal-based front door first, see
+[`docs/README.md`](../README.md). For install and the shortest first-run path on
+the project itself, see the repository [`README.md`](../../README.md).
 
 The old problem here was simple: too many guides were presented at the same
 level. This version narrows the front door down to a few real user journeys.

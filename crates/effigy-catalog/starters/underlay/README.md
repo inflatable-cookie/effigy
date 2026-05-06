@@ -1,6 +1,12 @@
 # Underlay starter
 
-Reusable manifest shape for Underlay-style repos. The stable
+Reusable manifest shape for Underlay-style repos. Effigy resolves what you type
+(**`effigy dev`**, **`effigy health`**, …) to **tasks** declared in your root
+**`effigy.toml`** and the shipped **`underlay` bundle**, plus a small set of
+**built-ins** (`test`, `init`, `doctor`, … — see **`effigy --help`**). A bundle
+default **`dev`** is still a **task**, not a special CLI verb.
+
+The stable
 system/container layer comes from the shipped `underlay` bundle: one
 long-running Rust + Bun workspace container, bundled postgres, dbgate,
 mailpit, and minio services, managed gateway routes, and loopback alias
@@ -60,13 +66,9 @@ After emission, edit:
    (`front`, `admin`, `api`).
 2. Add `systems.dev.mounts` in `effigy.toml` when sibling checkouts
    must be visible inside the workspace container.
-3. The bundle owns the default root `dev` task as well as the standard
-   `health`, `validate`, and `qa` aggregators.
-   Only add explicit root overrides when the repo really diverges from
-   the standard docs/api/client/ui/front/admin shape.
-   The bundle owns the default root `health`, `validate`, and `qa`
-   aggregators; only add explicit root overrides when the repo really
-   diverges from the standard docs/api/client/ui/front/admin shape.
+3. The bundle owns the default root **`dev`** task and the standard **`health`**,
+   **`validate`**, and **`qa`** aggregators. Add explicit root overrides only when
+   the repo diverges from the usual docs / api / client / ui / front / admin layout.
 4. Keep bundled setup helpers referenced through `{{ bundle.root }}`
    unless the repo intentionally needs to own a forked script.
 5. Only add an explicit `[bootstrap]` block when the repo truly needs to

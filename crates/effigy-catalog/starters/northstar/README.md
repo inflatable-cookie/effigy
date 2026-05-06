@@ -9,13 +9,19 @@ This repo uses the Northstar + Effigy consumer contract:
 - Northstar owns the docs and planning shape (vision / roadmaps / logs)
 - Effigy owns the executable validation and operator surface
 
+**Selectors:** names like **`qa`** or **`validate`** are **tasks** (or task
+chains) defined in **`effigy.toml`** for this repo. **`effigy test`** is usually
+the **built-in** test orchestration unless you set **`[tasks].test`** to override
+it. See Effigy’s quick start:
+[`021-quick-start-and-command-cookbook.md`](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/021-quick-start-and-command-cookbook.md).
+
 Start here:
 
 ```sh
 effigy tasks            # discover repo work
 effigy doctor           # health / routing surface
 effigy test --plan      # inspect the test plan
-effigy qa               # full validation bundle
+effigy qa               # full validation bundle (repo-defined aggregator)
 ```
 
 ## Docs

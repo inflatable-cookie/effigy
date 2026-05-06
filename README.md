@@ -1,9 +1,13 @@
 # Effigy
 
-Effigy is a repo runtime for developer work.
+Effigy is a **unified task runner** and **repo runtime** for developer work: one
+CLI discovers and runs what each repo declares, instead of you memorizing whether
+something lives in `package.json`, Cargo, a shell script, a nested workspace,
+or a local container stack.
 
-Instead of remembering whether something lives in `package.json`, Cargo, a
-shell script, a nested workspace, or a local container stack, you ask Effigy.
+Each repo opts in with **`effigy.toml`** (often split across included files).
+Effigy loads that manifest, merges composition, and routes `effigy <selector>` to
+the right task or built-in.
 
 **One command to run anything in your repo:**
 
@@ -11,10 +15,10 @@ shell script, a nested workspace, or a local container stack, you ask Effigy.
 # See what this repo can do
 effigy tasks
 
-# Run the dev server (from any directory)
+# Run this repo's dev task (name is defined in effigy.toml — not a special CLI verb)
 effigy dev
 
-# Run all tests, across all languages
+# Run all tests, across all languages (built-in test runner unless tasks.test overrides)
 effigy test
 ```
 
@@ -26,8 +30,10 @@ No more hunting through `package.json`, Makefiles, or shell scripts.
 web directory, `cargo test` in the api directory, and `./scripts/e2e.sh` from
 the repo root — and that the database needs to be running first.
 
-**After:** `effigy test` runs everything. `effigy dev` starts the whole stack.
-One command from any directory.
+**After:** `effigy test` runs everything (via the built-in test orchestration
+unless the manifest defines `tasks.test`). `effigy dev` runs whatever **dev**
+task the repo declared—often your whole local stack. One command from any
+directory.
 
 Effigy gives you:
 
@@ -158,7 +164,7 @@ without installing that full stack directly on your machine.
 ```bash
 effigy container up
 effigy gateway status
-effigy dev
+effigy dev   # still the repo's dev task; containers are started separately
 ```
 
 Read next:
@@ -183,16 +189,19 @@ Drop `-g` for project-local install. Source: [`skills/effigy/`](./skills/effigy/
 
 ## Documentation
 
-- Start here: [`docs/README.md`](./docs/README.md)
-- Quick start: [`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md)
-- Everyday workflows: [`055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md)
-- Docs front door: [`docs/guides/README.md`](./docs/guides/README.md)
-- Full command reference: [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
-- Release history: [`CHANGELOG.md`](./CHANGELOG.md)
+- **Goal paths (read this next):** [`docs/README.md`](./docs/README.md) — short
+  “choose your job” links into the guides.
+- **Quick start:** [`021-quick-start-and-command-cookbook.md`](./docs/guides/021-quick-start-and-command-cookbook.md)
+- **Everyday workflows:** [`055-everyday-workflows.md`](./docs/guides/055-everyday-workflows.md)
+- **Full practical guide map** (inventory + journeys): [`docs/guides/README.md`](./docs/guides/README.md)
+- **Command lookup:** [`025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
+- **Release history:** [`CHANGELOG.md`](./CHANGELOG.md)
 
-## Working On Effigy Itself
+## Contributing to this repository
 
-This repo uses Effigy itself. Common local checks:
+The **Effigy** source tree uses its own `effigy.toml` tasks (names like `qa:…`
+exist only here). For day-to-day work on the project, not for consumers of the
+tool in other repos:
 
 ```bash
 effigy qa:ci:fast

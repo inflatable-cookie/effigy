@@ -19,7 +19,7 @@ The built-in `test` prefers `cargo-nextest` when available, falling back to
 ```bash
 effigy container up          # start containers declared in catalog
 effigy gateway status        # confirm gateway routing reachable
-effigy dev                   # start dev process orchestration
+effigy dev                   # repo task (commonly named dev); not a built-in verb
 ```
 
 To tear down:
@@ -28,19 +28,23 @@ To tear down:
 effigy container down
 ```
 
-For deeper container ops: `docs/guides/063-container-commands.md` and
-`docs/guides/064-system-and-workspace.md`.
+For deeper container ops: `docs/guides/063-container-system-guide.md` and
+`docs/guides/064-system-workspace-and-dev-contract.md`.
 
 ## Pre-push validation
 
 ```bash
-effigy qa:ci:fast            # fast subset (test, doc, json contracts)
-effigy qa:ci:local           # full local CI mirror (fmt, clippy, test, doc, docs-links, json)
-effigy qa                    # full QA: test + docs + json contracts
+effigy qa:ci:fast            # example aggregator (Effigy repo defines qa:*)
+effigy qa:ci:local           # fuller mirror when this repo defines it
+effigy qa                    # full QA when this repo defines it
 ```
 
-Use `qa:ci:fast` when iterating; `qa:ci:local` before pushing to a branch CI
-will run.
+These **`qa:*`** selectors exist only in repos that declare them (the Effigy
+source tree is the reference shape). Use `effigy tasks` to see what the current
+repo actually exposes.
+
+Use `qa:ci:fast` when iterating; `qa:ci:local` before pushing when your repo
+mirrors branch CI that way.
 
 ## Manifest scaffolding
 

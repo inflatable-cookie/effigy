@@ -13,12 +13,16 @@ description: >
 
 ## What Effigy is
 
-Effigy is a unified task runner for monorepos. One CLI (`effigy`) drives tests,
-containers, dev loops, JSON contracts, releases. A repo opts in by adding
-`effigy.toml` (and usually `tasks/effigy.tasks.toml`). Treat `effigy <task>` as
-the canonical surface for that repo's project work — prefer it over raw
-`cargo`, `npm`, `bun`, `docker compose`, etc., when an Effigy task covers the
-path.
+Effigy is a unified **task runner** and **repo runtime** for monorepos. One CLI
+(`effigy`) loads each repo's **`effigy.toml`** (often composed from included
+files), then routes **selectors** (`dev`, `api/test`, `qa:ci:fast`, …) to
+manifest tasks or **built-ins** (`test`, `init`, `doctor`, …).
+
+Names like **`dev`** are normal **task names** the repo defines unless they
+collide with a built-in. **`test`** is usually the **built-in** test orchestration
+unless `tasks.test` overrides it. Treat `effigy <selector>` as the canonical
+surface for that repo's project work — prefer it over raw `cargo`, `npm`,
+`bun`, `docker compose`, etc., when an Effigy task covers the path.
 
 ## Footguns (read first)
 
@@ -61,8 +65,8 @@ Details: `references/first-five-commands.md`.
 |------|---------|
 | Run tests | `effigy test` |
 | Inspect test plan | `effigy test --plan` |
-| Bring local dev up | `effigy container up` then `effigy dev` |
-| Pre-push validation (fast) | `effigy qa:ci:fast` |
+| Bring local dev up | `effigy container up` then `effigy dev` ( **`dev`** is the repo's task name) |
+| Pre-push validation (fast) | `effigy qa:ci:fast` (example; **Effigy repo** and similar stacks define `qa:*`) |
 | Pre-push validation (full local) | `effigy qa:ci:local` |
 | Full QA | `effigy qa` |
 | Scaffold manifest | `effigy init` then `effigy migrate` |

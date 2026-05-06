@@ -87,7 +87,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Run built-in or explicit `tasks.test` test orchestration | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
-| `effigy init` | Scaffold baseline `effigy.toml` from a named starter (e.g. `minimal`, `underlay`, `northstar`) or list available starters | `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-foundation.md` |
+| `effigy init` | Scaffold baseline `effigy.toml` (and any extra starter files such as root `README.md`) from a named starter (e.g. `minimal`, `underlay`, `northstar`) or list available starters | `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy config` | Render config reference/schema snippets or inspect the effective composed manifest | `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy unlock` | Clear lock scopes manually | `--all`, `--yes`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
@@ -262,6 +262,8 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   indirection rules
 - completion candidates are cached and include both built-ins and discovered
   task selectors
+- `init` never replaces an existing **root** `README.md` unless `--force`; other
+  declared paths still fail fast when present without `--force`
 
 ## Common Recipes
 

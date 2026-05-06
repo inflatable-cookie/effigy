@@ -1,6 +1,9 @@
 # Catalog Source Layout
 
-This directory is the source of truth for the shipped service catalog.
+This directory is the source of truth for the **shipped service catalog**
+(maintainer-facing layout). Consumers normally interact through **`effigy service`**
+and the guides — start at
+[`067-catalog-services-reference.md`](../../../docs/guides/067-catalog-services-reference.md).
 
 Each service lives in its own directory and can own:
 

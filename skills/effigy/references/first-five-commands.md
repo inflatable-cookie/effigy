@@ -3,6 +3,11 @@
 When you arrive in an unfamiliar repo that has `effigy.toml`, run these in
 order. Each one tells you something distinct; together they map the surface.
 
+**Selector reminder:** most names in `effigy tasks` are **manifest tasks**.
+Built-ins include `test`, `init`, `doctor`, `tasks`, `scan`, and a few others
+(see `effigy --help`). A repo's **`dev`** is almost always a **task**, not a
+special CLI verb.
+
 ## 1. `effigy doctor`
 
 Health check + routing diagnostic. Reports manifest validity, missing
@@ -38,7 +43,8 @@ qa:ci:fast
 ```
 
 If the list is empty, the repo doesn't define tasks — it may rely entirely on
-built-ins (`test`, `fmt`, `build`).
+built-ins (`test`, `init`, `doctor`, …) or only nested-catalog tasks you have
+not opened yet.
 
 ## 3. `effigy test --plan`
 

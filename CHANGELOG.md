@@ -27,8 +27,15 @@ During v0.x, MINOR bumps may include breaking changes.
 - **`effigy container data seed`** matches the bootstrap DB-seed contract after
   bring-up (repeatable **`--db-seed`**, optional TTY prompts, staging under
   **`.effigy/local/db-seeds/`**, then **`bootstrap:db-seed`**).
+- **`effigy init`** with the **`minimal`** starter (the default) now also emits a
+  root **`README.md`** next to **`effigy.toml`**: first commands, tasks vs
+  built-ins, and stable links into the Effigy docs on GitHub.
 
 ### Changed
+- **`effigy init`** leaves an existing root **`README.md`** untouched by default
+  (JSON: per-file **`skipped: true`** on that entry); use **`--force`** to replace
+  it like any other starter target. Documented in **`019`**, **`021`**, **`025`**,
+  **`effigy init --help`**, and the **`minimal`** starter README.
 - **Shipped catalog Postgres/MariaDB** services use **named volumes** for DB
   data. **`effigy container reset`** keeps that data unless you pass
   **`--wipe-data`**.
@@ -44,6 +51,17 @@ During v0.x, MINOR bumps may include breaking changes.
   template exists (otherwise it logs a skip).
 - Fewer unused dependencies on the main **`effigy`** crate (no expected impact
   for normal installs).
+- **First-read docs:** root **`README`**, **`docs/README`**, **`docs/guides/README`**,
+  **`021`**, and **`055`** now spell out manifest-driven behavior, **`dev`** as a
+  normal task name, built-in **`test`** vs overrides, contributor-only **`qa:`**
+  tasks, and the split between the short docs front door and the full guides map.
+- **Agent surfaces:** **`AGENTS.md`**, **`skills/README.md`**, **`skills/effigy/`**
+  (including **`references/workflow-shortcuts.md`** link fixes to **`063`**/**`064`**
+  guides), and **`references/config-shapes.md`** carry the same mental model for
+  cross-repo use.
+- **Starters:** **`underlay`** and **`northstar`** starter readmes and
+  **`northstar/AGENTS.md`** clarify selectors vs built-ins;
+  **`crates/effigy-catalog/catalog/README.md`** points consumers at **`067`**.
 
 ### Fixed
 - **Docs and bundled agent skill:** bootstrap default **`[bootstrap].start`**

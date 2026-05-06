@@ -80,6 +80,9 @@ effigy init --json
 ### Safety
 
 - If `effigy.toml` already exists, `init` fails unless `--force` is set.
+- If a root **`README.md`** already exists, starters that ship one **skip** that
+  path by default so your project README is not replaced; pass **`--force`** to
+  overwrite it like any other starter file.
 - `--dry-run` never writes files.
 
 ## `effigy migrate`

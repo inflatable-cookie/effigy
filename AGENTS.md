@@ -1,6 +1,10 @@
 # Agent Instructions for Effigy
 
-Effigy is a Rust-based unified task runner for monorepos.
+Effigy is a Rust-based unified task runner for monorepos. Behavior is
+**manifest-driven** (`effigy.toml`, often split across included files): most
+`effigy <name>` invocations are **repo tasks**; built-ins include `test`, `init`,
+`doctor`, and a short list from `effigy --help`. Names like **`dev`** are
+usually tasks the repo defines.
 
 ## Build & Test
 
@@ -13,7 +17,8 @@ cargo clippy --all-targets -- -D warnings \
   -A clippy::type_complexity   # lint check
 ```
 
-If `effigy` is on PATH, self-hosted QA tasks are available:
+If `effigy` is on PATH, this repository's own Effigy tasks are available
+(including **`qa:*`** aggregators defined only here):
 
 ```bash
 effigy test --plan   # show test plan

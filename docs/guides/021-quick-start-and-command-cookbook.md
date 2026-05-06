@@ -17,6 +17,10 @@ effigy init
 effigy tasks
 ```
 
+The default **`minimal`** `init` also drops a root **`README.md`** when that path
+is empty; if you already have a project README there, Effigy **skips** it unless
+you pass **`--force`**.
+
 `--version` shows the installed version (for example `v0.3.3`). Use it to confirm
 you have a recent binary or when reporting issues.
 
@@ -34,6 +38,9 @@ Then run something small and obvious:
 effigy test
 effigy doctor --verbose
 ```
+
+`dev`, `build`, and similar names are **tasks your manifest defines** (unless
+the guide names a built-in explicitly). They are not magic Effigy verbs.
 
 If you are not sure which task will run, stop and use
 `effigy tasks --resolve <task-name>` before guessing.

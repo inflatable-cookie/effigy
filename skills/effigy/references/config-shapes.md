@@ -10,6 +10,10 @@ Effigy splits config across:
 - `tasks/effigy.tasks.toml` — task definitions (kept separate so task
   changes don't churn the project manifest).
 
+**Tasks vs built-ins:** `[tasks]` defines ordinary selectors such as **`dev`** or
+**`qa:ci:fast`**. Built-in commands (`test`, `init`, `doctor`, …) come from Effigy
+itself; see `effigy --help` for the list.
+
 ## `[tasks]`
 
 Tasks can be shell strings, refs to other tasks, or Rhai scripts. Examples:

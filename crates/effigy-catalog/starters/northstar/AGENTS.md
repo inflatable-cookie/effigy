@@ -5,6 +5,10 @@ planning shape, and validation surface are documented in
 [`docs/guides/056-northstar-effigy-consumer-repo-contract.md`](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/056-northstar-effigy-consumer-repo-contract.md)
 (Effigy upstream).
 
+Effigy is **manifest-driven** (`effigy.toml`, often split across includes): most
+`effigy <name>` calls are **repo tasks** (`qa`, `validate`, …). Built-ins include
+`test`, `init`, `doctor`, and the short list from **`effigy --help`**.
+
 ## Operating Loop
 
 1. Start with `effigy tasks` to discover supported repo work.
