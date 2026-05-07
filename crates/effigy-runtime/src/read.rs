@@ -401,27 +401,17 @@ pub(crate) fn discover_running_environments(
         let Some(project_name) = row.project_name.clone() else {
             continue;
         };
-        let Some(working_dir) = row.working_dir.clone().or_else(|| {
-            infer_host_working_dir_for_container(&profiled.profile, &row.container_name)
-                .ok()
-                .flatten()
-        }) else {
-            continue;
-        };
-        let Some(repo_path) =
-            resolve_effigy_repo_root(Path::new(&working_dir), MAX_REPO_ROOT_WALKUP)
-        else {
-            continue;
-        };
-        let repo_root = repo_path.display().to_string();
         grouped
-            .entry((repo_root, project_name))
+            .entry((profiled.profile, project_name))
             .or_default()
             .push(row);
     }
 
     let mut environments = Vec::new();
-    for ((repo_root, project_name), mut services) in grouped {
+    for ((profile, project_name), mut services) in grouped {
+        let Some(repo_root) = resolve_repo_root_for_project_rows(&profile, &services) else {
+            continue;
+        };
         let repo_path = Path::new(&repo_root);
         let Ok(policies) = load_all_container_policies(repo_path) else {
             continue;
@@ -456,6 +446,21 @@ pub(crate) fn discover_running_environments(
             .then(left.policy.name.cmp(&right.policy.name))
     });
     Ok(environments)
+}
+
+fn resolve_repo_root_for_project_rows(
+    profile: &str,
+    rows: &[RunningComposeContainer],
+) -> Option<String> {
+    rows.iter().find_map(|row| {
+        let working_dir = row.working_dir.clone().or_else(|| {
+            infer_host_working_dir_for_container(profile, &row.container_name)
+                .ok()
+                .flatten()
+        })?;
+        let repo_path = resolve_effigy_repo_root(Path::new(&working_dir), MAX_REPO_ROOT_WALKUP)?;
+        Some(repo_path.display().to_string())
+    })
 }
 
 pub(crate) fn filter_running_environments_for_scope(
@@ -806,6 +811,39 @@ mod tests {
         let discovered = discover_effigy_repos_under(&scope_root);
 
         assert_eq!(discovered, vec![real_repo]);
+    }
+
+    #[test]
+    fn resolve_repo_root_for_project_rows_anchors_from_any_service_row() {
+        let temp = tempdir().expect("tempdir");
+        let repo_root = temp.path().join("demo");
+        let compose_dir = repo_root.join(".effigy/runtime/compose");
+        fs::create_dir_all(&compose_dir).expect("mkdir compose dir");
+        fs::write(repo_root.join("effigy.toml"), "[manifest]\n").expect("write manifest");
+
+        let rows = vec![
+            RunningComposeContainer {
+                container_name: "demo-db-1".to_owned(),
+                status: "Up".to_owned(),
+                ports: vec![],
+                project_name: Some("demo".to_owned()),
+                working_dir: None,
+                service: Some("db".to_owned()),
+            },
+            RunningComposeContainer {
+                container_name: "demo-app-1".to_owned(),
+                status: "Up".to_owned(),
+                ports: vec![],
+                project_name: Some("demo".to_owned()),
+                working_dir: Some(compose_dir.display().to_string()),
+                service: Some("app".to_owned()),
+            },
+        ];
+
+        let resolved =
+            resolve_repo_root_for_project_rows("effigy", &rows).expect("resolved repo root");
+
+        assert_eq!(resolved, repo_root.display().to_string());
     }
 
     fn stub_environment(
