@@ -268,9 +268,83 @@ The active batch-card tree now starts with `g04` rollover card `431`.
   is complete. It moves dump destination normalization into `effigy-data`.
 
 - [`509-add-data-artifact-handoff-plan-foundation.md`](./509-add-data-artifact-handoff-plan-foundation.md)
-  is ready. It adds pure data artifact handoff planning.
+  is complete. It adds pure data artifact handoff planning.
+
+- [`510-wire-data-artifact-handoff-plans-into-runner-glue.md`](./510-wire-data-artifact-handoff-plans-into-runner-glue.md)
+  is complete. It wires data artifact handoff plans into runner glue.
+
+- [`511-select-artifact-staging-migration-or-foundation-closeout.md`](./511-select-artifact-staging-migration-or-foundation-closeout.md)
+  is complete. It selects artifact staging migration or foundation closeout.
+
+- [`512-add-seed-artifact-staging-plan-foundation.md`](./512-add-seed-artifact-staging-plan-foundation.md)
+  is complete. It adds pure seed artifact staging planning.
+
+- [`513-close-data-pipeline-foundation-pass.md`](./513-close-data-pipeline-foundation-pass.md)
+  is complete. It closes the first data pipeline foundation pass.
+
+- [`514-add-data-target-manifest-adapter-foundation.md`](./514-add-data-target-manifest-adapter-foundation.md)
+  is complete. It adds the data target manifest adapter foundation.
+
+- [`515-add-data-target-selection-plan.md`](./515-add-data-target-selection-plan.md)
+  is complete. It adds shared data target selection planning.
+
+- [`516-add-data-service-selection-plan-foundation.md`](./516-add-data-service-selection-plan-foundation.md)
+  is complete. It adds shared database service selection planning.
+
+- [`517-select-data-pipeline-closeout-or-runner-module-split.md`](./517-select-data-pipeline-closeout-or-runner-module-split.md)
+  is complete. It selected one bounded runner module split before data
+  closeout.
+
+- [`518-split-container-data-prompt-module.md`](./518-split-container-data-prompt-module.md)
+  is complete. It split container data prompt policy and rendering out of the
+  main data command module.
+
+- [`519-close-data-seed-dump-pipeline-and-open-rhai-lane.md`](./519-close-data-seed-dump-pipeline-and-open-rhai-lane.md)
+  is complete. It closed `g04.005` and opened the Rhai host lane.
+
+- [`520-audit-rhai-host-surface-and-scaffold-lane.md`](./520-audit-rhai-host-surface-and-scaffold-lane.md)
+  is complete. It audits Rhai host surfaces and selects the first split.
+
+- [`521-split-rhai-pure-utility-host-modules.md`](./521-split-rhai-pure-utility-host-modules.md)
+  is complete. It splits pure utility module builders out of `host_api.rs`.
+
+- [`522-split-rhai-filesystem-host-module.md`](./522-split-rhai-filesystem-host-module.md)
+  is complete. It splits filesystem helpers out of `host_api.rs`.
+
+- [`523-split-rhai-process-http-search-host-modules.md`](./523-split-rhai-process-http-search-host-modules.md)
+  is complete. It splits process, HTTP, and search helpers out of
+  `host_api.rs`.
+
+- [`524-split-rhai-feature-callback-host-modules.md`](./524-split-rhai-feature-callback-host-modules.md)
+  is complete. It splits non-container callback feature modules out of
+  `host_api.rs`.
+
+- [`525-split-rhai-container-host-module.md`](./525-split-rhai-container-host-module.md)
+  is complete. It splits the container module builder out of `host_api.rs`.
+
+- [`526-split-rhai-exec-host-module-and-review-callback-purity.md`](./526-split-rhai-exec-host-module-and-review-callback-purity.md)
+  is complete. It splits the exec module builder and reviews callback purity.
+
+- [`527-route-rhai-container-exec-callback-through-operation-surface.md`](./527-route-rhai-container-exec-callback-through-operation-surface.md)
+  is complete. It routes Rhai container exec callbacks through the operation
+  surface.
+
+- [`528-close-rhai-host-api-split-and-callback-purity.md`](./528-close-rhai-host-api-split-and-callback-purity.md)
+  is complete. It closes the Rhai host split lane.
+
+- [`529-scaffold-effective-container-policy-decomposition-lane.md`](./529-scaffold-effective-container-policy-decomposition-lane.md)
+  is complete. It opens the effective container policy decomposition lane.
+
+- [`530-extract-effective-container-policy-model-module.md`](./530-extract-effective-container-policy-model-module.md)
+  is complete. It extracts the effective container policy model module.
+
+- [`531-extract-effective-container-policy-project-module.md`](./531-extract-effective-container-policy-project-module.md)
+  is complete. It extracts policy project-name helpers.
+
+- [`532-extract-effective-container-policy-validation-module.md`](./532-extract-effective-container-policy-validation-module.md)
+  is ready. It extracts policy validation helpers.
 
 ## Next Task
 
 Start card
-[`509-add-data-artifact-handoff-plan-foundation.md`](./509-add-data-artifact-handoff-plan-foundation.md).
+[`532-extract-effective-container-policy-validation-module.md`](./532-extract-effective-container-policy-validation-module.md).

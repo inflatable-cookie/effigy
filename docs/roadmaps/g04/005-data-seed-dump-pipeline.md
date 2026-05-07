@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`004-container-operation-pipeline.md`](./004-container-operation-pipeline.md)
@@ -47,5 +47,5 @@ glue.
 
 ## Next Task
 
-Start card
-[`509-add-data-artifact-handoff-plan-foundation.md`](../../specs/batch-cards/509-add-data-artifact-handoff-plan-foundation.md).
+Continue with
+[`006-rhai-host-api-split-and-callback-purity.md`](./006-rhai-host-api-split-and-callback-purity.md).

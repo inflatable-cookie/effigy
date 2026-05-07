@@ -2,7 +2,7 @@
 
 Lane: [`047-data-seed-dump-pipeline-strict-lane.md`](../047-data-seed-dump-pipeline-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -33,11 +33,19 @@ Add pure artifact handoff planning for data seed and dump flows.
 This card is complete when data artifact staging/capture intent can be tested
 without runner command modules.
 
+## Closeout
+
+Added pure artifact handoff planning in `effigy-data` for local seed sources,
+OCI seed sources, local dump destinations, planned OCI dump destinations, and
+pushed OCI dump destinations. No artifact transport or file IO moved into the
+data crate.
+
 ## Validation
 
-- `cargo test -p effigy-data`
-- `git diff --check`
+- `cargo test -p effigy-data` passed
+- `git diff --check` passed
 
 ## Next Task
 
-Wire artifact handoff plans into DB seed and container data dump runner glue.
+Start card
+[`510-wire-data-artifact-handoff-plans-into-runner-glue.md`](./510-wire-data-artifact-handoff-plans-into-runner-glue.md).

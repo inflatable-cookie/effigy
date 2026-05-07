@@ -7,6 +7,12 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+
+- `effigy config` can now inspect and manage user-global container defaults with
+  `config path|get|set|unset`, so Docker vs Colima preferences no longer
+  require manual edits to `~/.effigy/config.toml`.
+
+### Added
 - **User-global container runtime preferences:** `~/.effigy/config.toml` now
   accepts `[containers] backend = "containerd"|"docker"` and `profile = "..."`
   so Docker Desktop can coexist with Colima without ambient Docker CLI context
@@ -43,6 +49,15 @@ During v0.x, MINOR bumps may include breaking changes.
   **`/var/www/html`** to **`/var/www/inventors`** gets a fresh
   **`node_modules`** or similar cache volume instead of reusing one with stale
   absolute-path metadata.
+- **Shipped PHP workspaces** now install a sendmail-compatible `msmtp` shim and
+  point PHP `mail()` at the local Mailpit SMTP service by default, so legacy
+  mail code is captured in development instead of disappearing into an
+  unconfigured container mail path.
+- **Shipped PHP workspaces** now keep pnpm's content-addressable store on a
+  dedicated named volume at **`/home/dev/.local/share/pnpm/store`** instead of
+  under the repo bind mount, so local projects stop accumulating
+  **`.pnpm-store`** and repo-local store state. The cache inventory/prune
+  surface now reports that volume as **`pnpm-store`**.
 
 ## [0.4.0] - 2026-05-06
 

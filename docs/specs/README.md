@@ -27,7 +27,7 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
-- [`047-data-seed-dump-pipeline-strict-lane.md`](./047-data-seed-dump-pipeline-strict-lane.md)
+- [`049-effective-container-policy-decomposition-strict-lane.md`](./049-effective-container-policy-decomposition-strict-lane.md)
 
 Paused but still useful:
 
@@ -35,6 +35,8 @@ Paused but still useful:
 
 Recently completed:
 
+- [`048-rhai-host-api-split-and-callback-purity-strict-lane.md`](./048-rhai-host-api-split-and-callback-purity-strict-lane.md)
+- [`047-data-seed-dump-pipeline-strict-lane.md`](./047-data-seed-dump-pipeline-strict-lane.md)
 - [`046-container-operation-pipeline-strict-lane.md`](./046-container-operation-pipeline-strict-lane.md)
 - [`045-runtime-activation-pipeline-strict-lane.md`](./045-runtime-activation-pipeline-strict-lane.md)
 - [`044-execution-pipeline-ownership-strict-lane.md`](./044-execution-pipeline-ownership-strict-lane.md)
@@ -74,4 +76,4 @@ Recently completed:
 ## Next Task
 
 Card
-[`509-add-data-artifact-handoff-plan-foundation.md`](./batch-cards/509-add-data-artifact-handoff-plan-foundation.md).
+[`532-extract-effective-container-policy-validation-module.md`](./batch-cards/532-extract-effective-container-policy-validation-module.md).

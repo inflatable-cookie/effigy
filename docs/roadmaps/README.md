@@ -38,10 +38,10 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-- [`g04.005`](./g04/005-data-seed-dump-pipeline.md)
-- [`../specs/047-data-seed-dump-pipeline-strict-lane.md`](../specs/047-data-seed-dump-pipeline-strict-lane.md)
+- [`g04.007`](./g04/007-effective-container-policy-decomposition.md)
+- [`../specs/049-effective-container-policy-decomposition-strict-lane.md`](../specs/049-effective-container-policy-decomposition-strict-lane.md)
 - Ready card:
-  [`509-add-data-artifact-handoff-plan-foundation.md`](../specs/batch-cards/509-add-data-artifact-handoff-plan-foundation.md)
+  [`532-extract-effective-container-policy-validation-module.md`](../specs/batch-cards/532-extract-effective-container-policy-validation-module.md)
 
 ## Research Program
 
@@ -78,7 +78,7 @@ Before rollover:
 ## Next Task
 
 Start card
-[`509-add-data-artifact-handoff-plan-foundation.md`](../specs/batch-cards/509-add-data-artifact-handoff-plan-foundation.md).
+[`532-extract-effective-container-policy-validation-module.md`](../specs/batch-cards/532-extract-effective-container-policy-validation-module.md).
 
 ## Historical language boundary
 

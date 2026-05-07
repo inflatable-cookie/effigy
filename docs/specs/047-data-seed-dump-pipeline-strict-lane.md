@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.005`](../roadmaps/g04/005-data-seed-dump-pipeline.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -28,7 +28,7 @@ inside runner command modules.
 
 ## Current Ready Card
 
-[`509-add-data-artifact-handoff-plan-foundation.md`](./batch-cards/509-add-data-artifact-handoff-plan-foundation.md)
+None. This lane is complete.
 
 ## Execution Chain
 
@@ -40,7 +40,17 @@ inside runner command modules.
 - `506` complete: move logical data target model into `effigy-data`
 - `507` complete: move seed source normalization into `effigy-data`
 - `508` complete: move dump destination normalization into `effigy-data`
-- `509` ready: add data artifact handoff plan foundation
+- `509` complete: add data artifact handoff plan foundation
+- `510` complete: wire data artifact handoff plans into runner glue
+- `511` complete: select artifact staging migration or foundation closeout
+- `512` complete: add seed artifact staging plan foundation
+- `513` complete: close data pipeline foundation pass
+- `514` complete: add data target manifest adapter foundation
+- `515` complete: add data target selection plan
+- `516` complete: add data service selection plan foundation
+- `517` complete: select data pipeline closeout or runner module split
+- `518` complete: split container data prompt module
+- `519` complete: close data seed/dump pipeline and open Rhai lane
 
 ## Exit Condition
 
@@ -50,5 +60,5 @@ resolution or database command rendering.
 
 ## Next Task
 
-Card
-[`509-add-data-artifact-handoff-plan-foundation.md`](./batch-cards/509-add-data-artifact-handoff-plan-foundation.md).
+Continue with
+[`048-rhai-host-api-split-and-callback-purity-strict-lane.md`](./048-rhai-host-api-split-and-callback-purity-strict-lane.md).
