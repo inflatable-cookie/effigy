@@ -5,18 +5,22 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use effigy_artifacts::{
-    default_local_artifact_root, stage_local_artifact, stage_oci_artifact, ArtifactSourceRef,
-    LocalArtifactRef, LocalArtifactStagingRequest, OciArtifactAdapter, OciArtifactPullRequest,
+    stage_local_artifact, stage_oci_artifact, ArtifactSourceRef, LocalArtifactRef,
+    LocalArtifactStagingRequest, OciArtifactAdapter, OciArtifactPullRequest,
     OciArtifactStagingRequest,
 };
 use effigy_bootstrap::BootstrapStagedDbSeed;
 use effigy_cli::BootstrapDbSeedInput;
 use effigy_data::{
-    database_seed_import_command, database_seed_reset_command, normalize_seed_source_path,
-    DatabaseServiceKind, ResolvedDataTarget,
+    collect_manifest_data_targets, database_seed_import_command, database_seed_reset_command,
+    normalize_seed_source_path, seed_artifact_handoff, seed_artifact_staging_plan,
+    select_data_targets, select_database_service, ArtifactDataHandoff, DataSeedSource,
+    DataTargetManifestEntry, DataTargetManifestInput, DataTargetSelectionError, DatabaseService,
+    DatabaseServiceKind, DatabaseServiceSelectionError, ResolvedDataTarget,
+    SeedArtifactStagingPlan,
 };
 use effigy_execution::ExecutionSurface;
-use effigy_manifest::TASK_MANIFEST_FILE;
+use effigy_manifest::{ManifestContainerServiceConfig, TASK_MANIFEST_FILE};
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
 use serde_json::json;
 
@@ -352,56 +356,74 @@ fn stage_seed_artifact(
     source: &str,
     adapter: &dyn OciArtifactAdapter,
 ) -> Result<effigy_artifacts::StagedArtifactReport, RunnerError> {
-    match ArtifactSourceRef::parse(source)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-    {
-        ArtifactSourceRef::Local(local) => {
-            let path = if local.path().is_absolute() {
-                local.path().to_path_buf()
-            } else {
-                repo_root.join(local.path())
-            };
-            if !path.is_file() {
-                return Err(RunnerError::task_invocation(format!(
-                    "db seed is not a readable file: {}",
-                    path.display()
-                )));
+    let handoff = seed_artifact_handoff(&DataSeedSource::from_raw_path(PathBuf::from(source)));
+    match handoff {
+        ArtifactDataHandoff::StageSource { ref source, .. } => {
+            match ArtifactSourceRef::parse(source)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+            {
+                ArtifactSourceRef::Local(_) => {
+                    let Some(SeedArtifactStagingPlan::Local {
+                        source_path: path,
+                        artifact_root,
+                    }) = seed_artifact_staging_plan(repo_root, &handoff)
+                    else {
+                        unreachable!("local seed handoff should produce local staging plan")
+                    };
+                    if !path.is_file() {
+                        return Err(RunnerError::task_invocation(format!(
+                            "db seed is not a readable file: {}",
+                            path.display()
+                        )));
+                    }
+                    stage_local_artifact(&LocalArtifactStagingRequest::new(
+                        LocalArtifactRef::new(path.clone()),
+                        repo_root.to_path_buf(),
+                        artifact_root,
+                    ))
+                    .map_err(|error| {
+                        RunnerError::task_invocation(format!(
+                            "failed to stage db seed artifact {}: {error}",
+                            path.display()
+                        ))
+                    })
+                }
+                ArtifactSourceRef::Oci(oci) => {
+                    let Some(SeedArtifactStagingPlan::Oci {
+                        artifact_root,
+                        pull_destination_root,
+                        ..
+                    }) = seed_artifact_staging_plan(repo_root, &handoff)
+                    else {
+                        unreachable!("OCI seed handoff should produce OCI staging plan")
+                    };
+                    let pull = adapter
+                        .pull(&OciArtifactPullRequest {
+                            reference: oci.clone(),
+                            destination_root: pull_destination_root,
+                        })
+                        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+                    let kind = infer_kind_from_primary_files(&pull.primary_files);
+                    let mut request = OciArtifactStagingRequest::new(
+                        oci,
+                        pull.pulled_root,
+                        artifact_root,
+                        pull.primary_files,
+                        kind,
+                    );
+                    if let Some(digest) = pull.descriptor.digest {
+                        request = request.with_digest(digest);
+                    }
+                    stage_oci_artifact(&request).map_err(|error| {
+                        RunnerError::task_invocation(format!(
+                            "failed to stage OCI db seed artifact {source}: {error}"
+                        ))
+                    })
+                }
             }
-            stage_local_artifact(&LocalArtifactStagingRequest::new(
-                LocalArtifactRef::new(path.clone()),
-                repo_root.to_path_buf(),
-                default_local_artifact_root(repo_root),
-            ))
-            .map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "failed to stage db seed artifact {}: {error}",
-                    path.display()
-                ))
-            })
         }
-        ArtifactSourceRef::Oci(oci) => {
-            let pull = adapter
-                .pull(&OciArtifactPullRequest {
-                    reference: oci.clone(),
-                    destination_root: default_local_artifact_root(repo_root).join(".oci-pulls"),
-                })
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            let kind = infer_kind_from_primary_files(&pull.primary_files);
-            let mut request = OciArtifactStagingRequest::new(
-                oci,
-                pull.pulled_root,
-                default_local_artifact_root(repo_root),
-                pull.primary_files,
-                kind,
-            );
-            if let Some(digest) = pull.descriptor.digest {
-                request = request.with_digest(digest);
-            }
-            stage_oci_artifact(&request).map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "failed to stage OCI db seed artifact {source}: {error}"
-                ))
-            })
+        ArtifactDataHandoff::CaptureDestination { .. } => {
+            unreachable!("seed handoff cannot capture")
         }
     }
 }
@@ -579,58 +601,52 @@ fn resolve_db_seed_targets(
     db_seeds: &[BootstrapDbSeedInput],
 ) -> Result<Vec<BootstrapDbSeedInput>, RunnerError> {
     let declared_targets = logical_database_targets(manifest);
+    let selected = select_data_targets(
+        &declared_targets,
+        &db_seeds
+            .iter()
+            .map(|seed| seed.target.clone())
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|error| db_seed_target_selection_error(repo_root, db_seeds, error))?;
 
-    let mut seen_targets = BTreeSet::new();
-    let mut resolved = Vec::with_capacity(db_seeds.len());
-    for seed in db_seeds {
-        let effective_target = match seed.target.as_deref() {
-            Some(target) => {
-                if !declared_targets.is_empty()
-                    && !declared_targets
-                        .iter()
-                        .any(|declared| declared.name.as_str() == target)
-                {
-                    return Err(RunnerError::task_invocation(format!(
-                        "db seed target `{target}` is not declared in `[bundle].databases` or `[data.targets]` for {}; valid targets: {}",
-                        repo_root.join(TASK_MANIFEST_FILE).display(),
-                        declared_targets
-                            .iter()
-                            .map(|target| target.name.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )));
-                }
-                Some(target.to_owned())
-            }
-            None => match declared_targets.as_slice() {
-                [declared] => Some(declared.name.to_string()),
-                targets if targets.len() > 1 => {
-                    return Err(RunnerError::task_invocation(format!(
-                        "db seed input `{}` must name a target because multiple database targets are declared in `[bundle].databases` and `[data.targets]`: {}",
-                        seed.path.display(),
-                        targets
-                            .iter()
-                            .map(|target| target.name.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )));
-                }
-                _ => None,
-            },
-        };
-        if let Some(target) = effective_target.as_deref() {
-            if !seen_targets.insert(target.to_owned()) {
-                return Err(RunnerError::task_invocation(format!(
-                    "duplicate db seed target `{target}`"
-                )));
-            }
-        }
-        resolved.push(BootstrapDbSeedInput {
-            target: effective_target,
+    Ok(db_seeds
+        .iter()
+        .zip(selected)
+        .map(|(seed, target)| BootstrapDbSeedInput {
+            target: target.map(|target| target.to_string()),
             path: seed.path.clone(),
-        });
+        })
+        .collect())
+}
+
+fn db_seed_target_selection_error(
+    repo_root: &Path,
+    db_seeds: &[BootstrapDbSeedInput],
+    error: DataTargetSelectionError,
+) -> RunnerError {
+    match error {
+        DataTargetSelectionError::UnknownTarget {
+            target,
+            valid_targets,
+            ..
+        } => RunnerError::task_invocation(format!(
+            "db seed target `{target}` is not declared in `[bundle].databases` or `[data.targets]` for {}; valid targets: {}",
+            repo_root.join(TASK_MANIFEST_FILE).display(),
+            valid_targets.join(", ")
+        )),
+        DataTargetSelectionError::MissingTarget {
+            index,
+            valid_targets,
+        } => RunnerError::task_invocation(format!(
+            "db seed input `{}` must name a target because multiple database targets are declared in `[bundle].databases` and `[data.targets]`: {}",
+            db_seeds[index].path.display(),
+            valid_targets.join(", ")
+        )),
+        DataTargetSelectionError::DuplicateTarget { target, .. } => {
+            RunnerError::task_invocation(format!("duplicate db seed target `{target}`"))
+        }
     }
-    Ok(resolved)
 }
 
 pub(in crate::runner) fn bundle_database_targets(
@@ -671,32 +687,27 @@ pub(in crate::runner) fn bundle_database_targets(
 pub(in crate::runner) fn logical_database_targets(
     manifest: &effigy_manifest::TaskManifest,
 ) -> Vec<ResolvedDataTarget> {
-    let mut targets = BTreeMap::<String, ResolvedDataTarget>::new();
+    let mut input = DataTargetManifestInput::new();
     if let Some(bundle) = manifest.bundle.as_ref() {
         if let Some(bundle_targets) = bundle_database_targets(bundle) {
-            for target in bundle_targets {
-                targets.insert(
-                    target.clone(),
-                    ResolvedDataTarget::new(target.clone(), target),
-                );
-            }
+            input = input.bundle_databases(bundle_targets);
         }
     }
     if let Some(data) = manifest.data.as_ref() {
-        for (name, target) in &data.targets {
-            let service = target.service.trim();
-            let database = target.database.trim();
-            if service.is_empty() || database.is_empty() {
-                continue;
-            }
-            targets.insert(
-                name.clone(),
-                ResolvedDataTarget::new(name.clone(), database.to_owned())
-                    .service(service.to_owned()),
-            );
-        }
+        input = input.data_targets(
+            data.targets
+                .iter()
+                .map(|(name, target)| {
+                    DataTargetManifestEntry::new(
+                        name.clone(),
+                        target.service.clone(),
+                        target.database.clone(),
+                    )
+                })
+                .collect(),
+        );
     }
-    targets.into_values().collect()
+    collect_manifest_data_targets(&input)
 }
 
 fn run_builtin_db_seed_task(
@@ -807,92 +818,105 @@ fn resolve_builtin_seed_service(
                 target.name.as_str()
             ))
         })?;
-        let catalog = service.catalog.as_str();
-        if !matches!(catalog, "postgres" | "mariadb") {
+        if manifest_database_service_kind(&service.catalog).is_none() {
             return Err(RunnerError::task_invocation(format!(
-                "database target `{}` uses unsupported service catalog `{catalog}`",
-                target.name.as_str()
+                "database target `{}` uses unsupported service catalog `{}`",
+                target.name.as_str(),
+                service.catalog
             )));
         }
-        let password = service
-            .params
-            .get("password")
-            .and_then(toml::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("secret")
-            .to_owned();
-        return Ok((
-            service_name.to_owned(),
-            if catalog == "postgres" {
-                "postgres"
-            } else {
-                "mariadb"
-            },
-            password,
-        ));
     }
 
-    let mut matches = container
-        .services
+    let services = collect_builtin_seed_services(&container.services);
+    let service = select_database_service(&services, target.service.as_deref(), &target.database)
+        .map_err(|error| db_seed_service_selection_error(target, error))?;
+    Ok((
+        service.name.clone(),
+        service.kind.catalog(),
+        service.password.clone(),
+    ))
+}
+
+fn collect_builtin_seed_services(
+    services: &BTreeMap<String, ManifestContainerServiceConfig>,
+) -> Vec<DatabaseService> {
+    services
         .iter()
-        .filter(|(_, service)| {
-            service
-                .params
-                .get("databases")
-                .and_then(toml::Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(toml::Value::as_str)
-                .map(str::trim)
-                .any(|database| database == target.database)
+        .filter_map(|(service_name, service)| {
+            let kind = manifest_database_service_kind(&service.catalog)?;
+            Some(
+                DatabaseService::new(service_name.clone(), kind)
+                    .password(service_password(service))
+                    .declared_databases(service_declared_databases(service))
+                    .primary_database_opt(service_primary_database(service)),
+            )
         })
-        .collect::<Vec<_>>();
-    if matches.is_empty() {
-        matches = container
-            .services
-            .iter()
-            .filter(|(_, service)| {
-                service
-                    .params
-                    .get("database")
-                    .and_then(toml::Value::as_str)
-                    .map(str::trim)
-                    == Some(target.database.as_str())
-            })
-            .collect::<Vec<_>>();
+        .collect()
+}
+
+fn manifest_database_service_kind(catalog: &str) -> Option<DatabaseServiceKind> {
+    match catalog {
+        "postgres" => Some(DatabaseServiceKind::Postgres),
+        "mariadb" => Some(DatabaseServiceKind::MariaDb),
+        _ => None,
     }
-    if matches.len() != 1 {
-        return Err(RunnerError::task_invocation(format!(
-            "database target `{}` is ambiguous; expected exactly one matching database service for `{}`",
-            target.name.as_str(), target.database
-        )));
-    }
-    let (service_name, service) = matches.remove(0);
-    let catalog = service.catalog.as_str();
-    if !matches!(catalog, "postgres" | "mariadb") {
-        return Err(RunnerError::task_invocation(format!(
-            "database target `{}` uses unsupported service catalog `{catalog}`",
-            target.name.as_str()
-        )));
-    }
-    let password = service
+}
+
+fn service_password(service: &ManifestContainerServiceConfig) -> String {
+    service
         .params
         .get("password")
         .and_then(toml::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("secret")
-        .to_owned();
-    Ok((
-        service_name.to_owned(),
-        if catalog == "postgres" {
-            "postgres"
-        } else {
-            "mariadb"
-        },
-        password,
-    ))
+        .to_owned()
+}
+
+fn service_declared_databases(service: &ManifestContainerServiceConfig) -> Vec<String> {
+    service
+        .params
+        .get("databases")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn service_primary_database(service: &ManifestContainerServiceConfig) -> Option<String> {
+    service
+        .params
+        .get("database")
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn db_seed_service_selection_error(
+    target: &ResolvedDataTarget,
+    error: DatabaseServiceSelectionError,
+) -> RunnerError {
+    match error {
+        DatabaseServiceSelectionError::UnknownService { service } => {
+            RunnerError::task_invocation(format!(
+                "database target `{}` references unknown service `{service}`",
+                target.name.as_str()
+            ))
+        }
+        DatabaseServiceSelectionError::AmbiguousDeclaredDatabase { .. }
+        | DatabaseServiceSelectionError::AmbiguousPrimaryDatabase { .. }
+        | DatabaseServiceSelectionError::NoServiceForDatabase { .. } => {
+            RunnerError::task_invocation(format!(
+                "database target `{}` is ambiguous; expected exactly one matching database service for `{}`",
+                target.name.as_str(), target.database
+            ))
+        }
+    }
 }
 
 fn bootstrap_env_override_lock() -> &'static Mutex<()> {

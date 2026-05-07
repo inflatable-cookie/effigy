@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::{fmt, str::FromStr};
 
@@ -71,6 +72,267 @@ impl ResolvedDataTarget {
         self.service_kind = Some(service_kind);
         self
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DataTargetManifestInput {
+    pub bundle_databases: Vec<String>,
+    pub data_targets: Vec<DataTargetManifestEntry>,
+}
+
+impl DataTargetManifestInput {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn bundle_databases(mut self, databases: Vec<String>) -> Self {
+        self.bundle_databases = databases;
+        self
+    }
+
+    pub fn data_targets(mut self, targets: Vec<DataTargetManifestEntry>) -> Self {
+        self.data_targets = targets;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataTargetManifestEntry {
+    pub name: String,
+    pub service: String,
+    pub database: String,
+}
+
+impl DataTargetManifestEntry {
+    pub fn new(
+        name: impl Into<String>,
+        service: impl Into<String>,
+        database: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            service: service.into(),
+            database: database.into(),
+        }
+    }
+}
+
+pub fn collect_manifest_data_targets(input: &DataTargetManifestInput) -> Vec<ResolvedDataTarget> {
+    let mut targets = BTreeMap::<String, ResolvedDataTarget>::new();
+    for target in &input.bundle_databases {
+        let target = target.trim();
+        if target.is_empty() {
+            continue;
+        }
+        targets.insert(
+            target.to_owned(),
+            ResolvedDataTarget::new(target.to_owned(), target.to_owned()),
+        );
+    }
+    for target in &input.data_targets {
+        let name = target.name.trim();
+        let service = target.service.trim();
+        let database = target.database.trim();
+        if name.is_empty() || service.is_empty() || database.is_empty() {
+            continue;
+        }
+        targets.insert(
+            name.to_owned(),
+            ResolvedDataTarget::new(name.to_owned(), database.to_owned())
+                .service(service.to_owned()),
+        );
+    }
+    targets.into_values().collect()
+}
+
+pub fn select_data_targets(
+    declared_targets: &[ResolvedDataTarget],
+    requested_targets: &[Option<String>],
+) -> Result<Vec<Option<DataTargetRef>>, DataTargetSelectionError> {
+    let mut seen_targets = std::collections::BTreeSet::<String>::new();
+    let mut selected = Vec::with_capacity(requested_targets.len());
+    let valid_targets = || {
+        declared_targets
+            .iter()
+            .map(|target| target.name.to_string())
+            .collect::<Vec<_>>()
+    };
+
+    for (index, requested) in requested_targets.iter().enumerate() {
+        let effective_target = match requested.as_deref() {
+            Some(target) => {
+                if !declared_targets.is_empty()
+                    && !declared_targets
+                        .iter()
+                        .any(|declared| declared.name.as_str() == target)
+                {
+                    return Err(DataTargetSelectionError::UnknownTarget {
+                        index,
+                        target: target.to_owned(),
+                        valid_targets: valid_targets(),
+                    });
+                }
+                Some(DataTargetRef::from(target))
+            }
+            None => match declared_targets {
+                [declared] => Some(declared.name.clone()),
+                targets if targets.len() > 1 => {
+                    return Err(DataTargetSelectionError::MissingTarget {
+                        index,
+                        valid_targets: valid_targets(),
+                    });
+                }
+                _ => None,
+            },
+        };
+
+        if let Some(target) = effective_target.as_ref() {
+            if !seen_targets.insert(target.to_string()) {
+                return Err(DataTargetSelectionError::DuplicateTarget {
+                    index,
+                    target: target.to_string(),
+                });
+            }
+        }
+        selected.push(effective_target);
+    }
+
+    Ok(selected)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataTargetSelectionError {
+    UnknownTarget {
+        index: usize,
+        target: String,
+        valid_targets: Vec<String>,
+    },
+    MissingTarget {
+        index: usize,
+        valid_targets: Vec<String>,
+    },
+    DuplicateTarget {
+        index: usize,
+        target: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatabaseService {
+    pub name: String,
+    pub kind: DatabaseServiceKind,
+    pub password: String,
+    pub declared_databases: Vec<String>,
+    pub primary_database: Option<String>,
+}
+
+impl DatabaseService {
+    pub fn new(name: impl Into<String>, kind: DatabaseServiceKind) -> Self {
+        Self {
+            name: name.into(),
+            kind,
+            password: "secret".to_owned(),
+            declared_databases: Vec::new(),
+            primary_database: None,
+        }
+    }
+
+    pub fn password(mut self, password: impl Into<String>) -> Self {
+        self.password = password.into();
+        self
+    }
+
+    pub fn declared_databases(mut self, databases: Vec<String>) -> Self {
+        self.declared_databases = databases;
+        self
+    }
+
+    pub fn primary_database(mut self, database: impl Into<String>) -> Self {
+        self.primary_database = Some(database.into());
+        self
+    }
+
+    pub fn primary_database_opt(mut self, database: Option<String>) -> Self {
+        self.primary_database = database;
+        self
+    }
+}
+
+pub fn select_database_service<'a>(
+    services: &'a [DatabaseService],
+    requested_service: Option<&str>,
+    database: &str,
+) -> Result<&'a DatabaseService, DatabaseServiceSelectionError> {
+    if let Some(requested_service) = requested_service {
+        return services
+            .iter()
+            .find(|service| service.name == requested_service)
+            .ok_or_else(|| DatabaseServiceSelectionError::UnknownService {
+                service: requested_service.to_owned(),
+            });
+    }
+
+    let declared_matches = services
+        .iter()
+        .filter(|service| {
+            service
+                .declared_databases
+                .iter()
+                .any(|entry| entry == database)
+        })
+        .collect::<Vec<_>>();
+    if declared_matches.len() == 1 {
+        return Ok(declared_matches[0]);
+    }
+    if declared_matches.len() > 1 {
+        return Err(DatabaseServiceSelectionError::AmbiguousDeclaredDatabase {
+            database: database.to_owned(),
+            services: service_labels(&declared_matches),
+        });
+    }
+
+    let primary_matches = services
+        .iter()
+        .filter(|service| service.primary_database.as_deref() == Some(database))
+        .collect::<Vec<_>>();
+    if primary_matches.len() == 1 {
+        return Ok(primary_matches[0]);
+    }
+    if primary_matches.len() > 1 {
+        return Err(DatabaseServiceSelectionError::AmbiguousPrimaryDatabase {
+            database: database.to_owned(),
+            services: service_labels(&primary_matches),
+        });
+    }
+
+    Err(DatabaseServiceSelectionError::NoServiceForDatabase {
+        database: database.to_owned(),
+    })
+}
+
+fn service_labels(services: &[&DatabaseService]) -> Vec<String> {
+    services
+        .iter()
+        .map(|service| format!("{} ({})", service.name, service.kind.catalog()))
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DatabaseServiceSelectionError {
+    UnknownService {
+        service: String,
+    },
+    AmbiguousDeclaredDatabase {
+        database: String,
+        services: Vec<String>,
+    },
+    AmbiguousPrimaryDatabase {
+        database: String,
+        services: Vec<String>,
+    },
+    NoServiceForDatabase {
+        database: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -385,13 +647,138 @@ pub fn database_seed_import_command(
 pub enum ArtifactDataHandoff {
     StageSource {
         source: String,
+        source_kind: DataArtifactRefKind,
         staged_path: Option<PathBuf>,
     },
     CaptureDestination {
         destination: String,
+        destination_kind: DataArtifactRefKind,
         source_path: PathBuf,
         push: bool,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataArtifactRefKind {
+    Local,
+    Oci,
+}
+
+impl DataArtifactRefKind {
+    pub fn from_path(path: &std::path::Path) -> Self {
+        if is_oci_artifact_ref_path(path) {
+            Self::Oci
+        } else {
+            Self::Local
+        }
+    }
+}
+
+pub fn seed_artifact_handoff(source: &DataSeedSource) -> ArtifactDataHandoff {
+    match source {
+        DataSeedSource::Local(path) => ArtifactDataHandoff::StageSource {
+            source: path.display().to_string(),
+            source_kind: DataArtifactRefKind::Local,
+            staged_path: None,
+        },
+        DataSeedSource::Oci(reference) => ArtifactDataHandoff::StageSource {
+            source: reference.clone(),
+            source_kind: DataArtifactRefKind::Oci,
+            staged_path: None,
+        },
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SeedArtifactStagingPlan {
+    Local {
+        source_path: PathBuf,
+        artifact_root: PathBuf,
+    },
+    Oci {
+        reference: String,
+        artifact_root: PathBuf,
+        pull_destination_root: PathBuf,
+    },
+}
+
+pub fn seed_artifact_staging_plan(
+    repo_root: &std::path::Path,
+    handoff: &ArtifactDataHandoff,
+) -> Option<SeedArtifactStagingPlan> {
+    let artifact_root = default_data_artifact_root(repo_root);
+    match handoff {
+        ArtifactDataHandoff::StageSource {
+            source,
+            source_kind: DataArtifactRefKind::Local,
+            ..
+        } => {
+            let source_path = PathBuf::from(source);
+            let source_path = if source_path.is_absolute() {
+                source_path
+            } else {
+                repo_root.join(source_path)
+            };
+            Some(SeedArtifactStagingPlan::Local {
+                source_path,
+                artifact_root,
+            })
+        }
+        ArtifactDataHandoff::StageSource {
+            source,
+            source_kind: DataArtifactRefKind::Oci,
+            ..
+        } => Some(SeedArtifactStagingPlan::Oci {
+            reference: source.clone(),
+            pull_destination_root: artifact_root.join(".oci-pulls"),
+            artifact_root,
+        }),
+        ArtifactDataHandoff::CaptureDestination { .. } => None,
+    }
+}
+
+pub fn default_data_artifact_root(repo_root: &std::path::Path) -> PathBuf {
+    repo_root.join(".effigy/local/artifacts")
+}
+
+pub fn dump_artifact_handoff(
+    repo_root: &std::path::Path,
+    target: Option<&DataTargetRef>,
+    database: &str,
+    destination: &DataDumpDestination,
+    push: bool,
+) -> Option<ArtifactDataHandoff> {
+    match destination {
+        DataDumpDestination::Local(_) => None,
+        DataDumpDestination::Oci(reference) => Some(ArtifactDataHandoff::CaptureDestination {
+            destination: reference.clone(),
+            destination_kind: DataArtifactRefKind::Oci,
+            source_path: planned_dump_capture_source_path(repo_root, target, database),
+            push,
+        }),
+    }
+}
+
+pub fn planned_dump_capture_source_path(
+    repo_root: &std::path::Path,
+    target: Option<&DataTargetRef>,
+    database: &str,
+) -> PathBuf {
+    let target = target
+        .map(DataTargetRef::as_str)
+        .unwrap_or(database)
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    repo_root
+        .join(".effigy/local/data-dumps")
+        .join(format!("{target}.sql"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -440,6 +827,105 @@ mod tests {
         assert_eq!(target.database, "legacy");
         assert_eq!(target.service.as_deref(), Some("mysql"));
         assert_eq!(target.service_kind, Some(DatabaseServiceKind::MariaDb));
+    }
+
+    #[test]
+    fn collects_manifest_data_targets_from_bundle_and_explicit_targets() {
+        let targets = collect_manifest_data_targets(
+            &DataTargetManifestInput::new()
+                .bundle_databases(vec!["acowtancy".to_owned(), "acowtancy_test".to_owned()])
+                .data_targets(vec![DataTargetManifestEntry::new(
+                    "legacy_mysql",
+                    "mysql",
+                    "acowtancy",
+                )]),
+        );
+
+        assert_eq!(targets.len(), 3);
+        assert_eq!(targets[0].name.as_str(), "acowtancy");
+        assert_eq!(targets[0].database, "acowtancy");
+        assert_eq!(targets[1].name.as_str(), "acowtancy_test");
+        assert_eq!(targets[2].name.as_str(), "legacy_mysql");
+        assert_eq!(targets[2].service.as_deref(), Some("mysql"));
+        assert_eq!(targets[2].database, "acowtancy");
+    }
+
+    #[test]
+    fn explicit_manifest_data_target_replaces_bundle_target() {
+        let targets = collect_manifest_data_targets(
+            &DataTargetManifestInput::new()
+                .bundle_databases(vec!["app".to_owned()])
+                .data_targets(vec![DataTargetManifestEntry::new(
+                    "app", "postgres", "app_db",
+                )]),
+        );
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].name.as_str(), "app");
+        assert_eq!(targets[0].database, "app_db");
+        assert_eq!(targets[0].service.as_deref(), Some("postgres"));
+    }
+
+    #[test]
+    fn collect_manifest_data_targets_ignores_empty_material() {
+        let targets = collect_manifest_data_targets(
+            &DataTargetManifestInput::new()
+                .bundle_databases(vec![" ".to_owned(), "app".to_owned()])
+                .data_targets(vec![
+                    DataTargetManifestEntry::new("missing_service", "", "app"),
+                    DataTargetManifestEntry::new("missing_database", "postgres", ""),
+                    DataTargetManifestEntry::new("", "postgres", "app"),
+                ]),
+        );
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].name.as_str(), "app");
+    }
+
+    #[test]
+    fn selects_requested_and_default_data_targets() {
+        let declared = vec![
+            ResolvedDataTarget::new("app", "app"),
+            ResolvedDataTarget::new("legacy", "legacy"),
+        ];
+        let selected =
+            select_data_targets(&declared, &[Some("legacy".to_owned())]).expect("selection");
+
+        assert_eq!(selected, vec![Some(DataTargetRef::from("legacy"))]);
+
+        let selected = select_data_targets(&declared[..1], &[None]).expect("default selection");
+        assert_eq!(selected, vec![Some(DataTargetRef::from("app"))]);
+    }
+
+    #[test]
+    fn target_selection_reports_unknown_missing_and_duplicate_targets() {
+        let declared = vec![
+            ResolvedDataTarget::new("app", "app"),
+            ResolvedDataTarget::new("legacy", "legacy"),
+        ];
+
+        assert_eq!(
+            select_data_targets(&declared, &[Some("missing".to_owned())]),
+            Err(DataTargetSelectionError::UnknownTarget {
+                index: 0,
+                target: "missing".to_owned(),
+                valid_targets: vec!["app".to_owned(), "legacy".to_owned()],
+            })
+        );
+        assert_eq!(
+            select_data_targets(&declared, &[None]),
+            Err(DataTargetSelectionError::MissingTarget {
+                index: 0,
+                valid_targets: vec!["app".to_owned(), "legacy".to_owned()],
+            })
+        );
+        assert_eq!(
+            select_data_targets(&declared, &[Some("app".to_owned()), Some("app".to_owned())],),
+            Err(DataTargetSelectionError::DuplicateTarget {
+                index: 1,
+                target: "app".to_owned(),
+            })
+        );
     }
 
     #[test]
@@ -586,6 +1072,133 @@ mod tests {
     }
 
     #[test]
+    fn plans_local_and_oci_seed_artifact_handoffs() {
+        let local = seed_artifact_handoff(&DataSeedSource::Local(PathBuf::from("seed.sql")));
+        let oci = seed_artifact_handoff(&DataSeedSource::Oci(
+            "oci://ghcr.io/acme/seed:latest".to_owned(),
+        ));
+
+        assert_eq!(
+            local,
+            ArtifactDataHandoff::StageSource {
+                source: "seed.sql".to_owned(),
+                source_kind: DataArtifactRefKind::Local,
+                staged_path: None,
+            }
+        );
+        assert_eq!(
+            oci,
+            ArtifactDataHandoff::StageSource {
+                source: "oci://ghcr.io/acme/seed:latest".to_owned(),
+                source_kind: DataArtifactRefKind::Oci,
+                staged_path: None,
+            }
+        );
+    }
+
+    #[test]
+    fn plans_seed_artifact_staging_roots() {
+        let repo_root = std::path::Path::new("/repo");
+        let local_handoff =
+            seed_artifact_handoff(&DataSeedSource::Local(PathBuf::from("seed.sql")));
+        let oci_handoff = seed_artifact_handoff(&DataSeedSource::Oci(
+            "oci://ghcr.io/acme/seed:latest".to_owned(),
+        ));
+
+        assert_eq!(
+            seed_artifact_staging_plan(repo_root, &local_handoff),
+            Some(SeedArtifactStagingPlan::Local {
+                source_path: PathBuf::from("/repo/seed.sql"),
+                artifact_root: PathBuf::from("/repo/.effigy/local/artifacts"),
+            })
+        );
+        assert_eq!(
+            seed_artifact_staging_plan(repo_root, &oci_handoff),
+            Some(SeedArtifactStagingPlan::Oci {
+                reference: "oci://ghcr.io/acme/seed:latest".to_owned(),
+                artifact_root: PathBuf::from("/repo/.effigy/local/artifacts"),
+                pull_destination_root: PathBuf::from("/repo/.effigy/local/artifacts/.oci-pulls"),
+            })
+        );
+    }
+
+    #[test]
+    fn plans_absolute_seed_artifact_staging_path_without_joining_repo() {
+        let repo_root = std::path::Path::new("/repo");
+        let handoff = seed_artifact_handoff(&DataSeedSource::Local(PathBuf::from("/tmp/seed.sql")));
+
+        assert_eq!(
+            seed_artifact_staging_plan(repo_root, &handoff),
+            Some(SeedArtifactStagingPlan::Local {
+                source_path: PathBuf::from("/tmp/seed.sql"),
+                artifact_root: PathBuf::from("/repo/.effigy/local/artifacts"),
+            })
+        );
+    }
+
+    #[test]
+    fn capture_handoff_has_no_seed_staging_plan() {
+        let repo_root = std::path::Path::new("/repo");
+        let handoff = dump_artifact_handoff(
+            repo_root,
+            None,
+            "app",
+            &DataDumpDestination::Oci("oci://ghcr.io/acme/app:latest".to_owned()),
+            false,
+        )
+        .expect("dump handoff");
+
+        assert_eq!(seed_artifact_staging_plan(repo_root, &handoff), None);
+    }
+
+    #[test]
+    fn plans_local_and_oci_dump_artifact_handoffs() {
+        let repo_root = std::path::Path::new("/repo");
+        let target = DataTargetRef::from("legacy/mysql");
+
+        assert_eq!(
+            dump_artifact_handoff(
+                repo_root,
+                Some(&target),
+                "legacy",
+                &DataDumpDestination::Local(PathBuf::from("/tmp/dump.sql")),
+                false,
+            ),
+            None
+        );
+        assert_eq!(
+            dump_artifact_handoff(
+                repo_root,
+                Some(&target),
+                "legacy",
+                &DataDumpDestination::Oci("oci://ghcr.io/acme/dump:latest".to_owned()),
+                false,
+            ),
+            Some(ArtifactDataHandoff::CaptureDestination {
+                destination: "oci://ghcr.io/acme/dump:latest".to_owned(),
+                destination_kind: DataArtifactRefKind::Oci,
+                source_path: PathBuf::from("/repo/.effigy/local/data-dumps/legacy-mysql.sql"),
+                push: false,
+            })
+        );
+        assert_eq!(
+            dump_artifact_handoff(
+                repo_root,
+                None,
+                "app",
+                &DataDumpDestination::Oci("oci://ghcr.io/acme/app:latest".to_owned()),
+                true,
+            ),
+            Some(ArtifactDataHandoff::CaptureDestination {
+                destination: "oci://ghcr.io/acme/app:latest".to_owned(),
+                destination_kind: DataArtifactRefKind::Oci,
+                source_path: PathBuf::from("/repo/.effigy/local/data-dumps/app.sql"),
+                push: true,
+            })
+        );
+    }
+
+    #[test]
     fn renders_postgres_dump_command() {
         let plan =
             database_dump_command("postgres", DatabaseServiceKind::Postgres, "secret", "app");
@@ -604,6 +1217,69 @@ mod tests {
                 "--no-owner",
                 "--no-privileges",
             ]
+        );
+    }
+
+    #[test]
+    fn selects_database_services_by_requested_declared_and_primary_database() {
+        let services = vec![
+            DatabaseService::new("postgres", DatabaseServiceKind::Postgres)
+                .declared_databases(vec!["app".to_owned()]),
+            DatabaseService::new("mysql", DatabaseServiceKind::MariaDb)
+                .password("legacy-secret")
+                .primary_database("legacy"),
+        ];
+
+        assert_eq!(
+            select_database_service(&services, Some("mysql"), "ignored")
+                .expect("requested service")
+                .name,
+            "mysql"
+        );
+        assert_eq!(
+            select_database_service(&services, None, "app")
+                .expect("declared database")
+                .name,
+            "postgres"
+        );
+        assert_eq!(
+            select_database_service(&services, None, "legacy")
+                .expect("primary database")
+                .name,
+            "mysql"
+        );
+    }
+
+    #[test]
+    fn database_service_selection_reports_unknown_ambiguous_and_missing_service() {
+        let services = vec![
+            DatabaseService::new("postgres_a", DatabaseServiceKind::Postgres)
+                .declared_databases(vec!["app".to_owned()]),
+            DatabaseService::new("postgres_b", DatabaseServiceKind::Postgres)
+                .declared_databases(vec!["app".to_owned()]),
+        ];
+
+        assert_eq!(
+            select_database_service(&services, Some("missing"), "app"),
+            Err(DatabaseServiceSelectionError::UnknownService {
+                service: "missing".to_owned(),
+            })
+        );
+        assert_eq!(
+            select_database_service(&services, None, "app"),
+            Err(DatabaseServiceSelectionError::AmbiguousDeclaredDatabase {
+                database: "app".to_owned(),
+                services: vec![
+                    "postgres_a (postgres)".to_owned(),
+                    "postgres_b (postgres)".to_owned(),
+                ],
+            })
+        );
+        assert_eq!(
+            select_database_service(&services, None, "missing"),
+            Err(DatabaseServiceSelectionError::NoServiceForDatabase {
+                database: "missing".to_owned(),
+            })
         );
     }
 

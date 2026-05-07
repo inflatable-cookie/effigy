@@ -4,16 +4,16 @@ use effigy_runtime::data::{
 };
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
-use effigy_bootstrap::BootstrapStagedDbSeed;
-use effigy_builtin::{PromptDecision, PromptPolicy};
 use effigy_cli::{BootstrapDbSeedInput, ContainerDbDumpInput};
 use effigy_container_ops::ContainerDataOperation;
 use effigy_data::{
-    database_dump_command, is_oci_artifact_ref_path, normalize_dump_destination_path,
-    DatabaseServiceKind,
+    database_dump_command, dump_artifact_handoff, is_oci_artifact_ref_path,
+    normalize_dump_destination_path, select_data_targets, select_database_service,
+    ArtifactDataHandoff, DataDumpDestination, DataTargetRef, DataTargetSelectionError,
+    DatabaseService, DatabaseServiceKind, DatabaseServiceSelectionError,
 };
 use effigy_manifest::{ManifestContainerServiceConfig, TASK_MANIFEST_FILE};
 
@@ -31,6 +31,14 @@ use crate::runner::manifest::load_task_manifest;
 
 #[path = "data/hooks.rs"]
 mod hooks;
+#[path = "data/prompts.rs"]
+mod prompts;
+
+use prompts::{
+    confirm_container_data_import_from_io, confirm_destructive_container_action_from_io,
+    container_data_import_prompt_required, destructive_container_action_prompt_required,
+    maybe_confirm_container_data_pull_production, maybe_confirm_container_data_seed,
+};
 
 pub(super) fn run_container_data_pull_production(
     repo_root: &Path,
@@ -157,11 +165,9 @@ pub(super) fn resolve_db_dump_output_paths(
     let home = std::env::var_os("HOME").map(PathBuf::from);
     db_dumps
         .iter()
-        .map(|dump| {
-            ContainerDbDumpInput {
-                target: dump.target.clone(),
-                path: normalize_dump_destination_path(cwd, dump.path.clone(), home.as_deref()),
-            }
+        .map(|dump| ContainerDbDumpInput {
+            target: dump.target.clone(),
+            path: normalize_dump_destination_path(cwd, dump.path.clone(), home.as_deref()),
         })
         .collect()
 }
@@ -200,11 +206,20 @@ pub(super) fn run_container_data_dump(
 
     let mut dump_reports = Vec::with_capacity(plans.len());
     for plan in &plans {
-        let artifact_destination = is_oci_artifact_ref_path(&plan.output_path);
-        let write_path = if artifact_destination {
-            planned_capture_dump_source_path(repo_root, plan)
-        } else {
-            plan.output_path.clone()
+        let destination = DataDumpDestination::from_raw_path(plan.output_path.clone());
+        let target = plan.target.as_deref().map(DataTargetRef::from);
+        let artifact_handoff = dump_artifact_handoff(
+            repo_root,
+            target.as_ref(),
+            &plan.database,
+            &destination,
+            push,
+        );
+        let write_path = match artifact_handoff.as_ref() {
+            Some(ArtifactDataHandoff::CaptureDestination { source_path, .. }) => {
+                source_path.clone()
+            }
+            _ => plan.output_path.clone(),
         };
         if let Some(parent) = write_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
@@ -227,19 +242,20 @@ pub(super) fn run_container_data_dump(
                 write_path.display()
             ))
         })?;
-        let artifact_capture = if artifact_destination {
-            Some(capture_artifact_report(
+        let artifact_capture = match artifact_handoff.as_ref() {
+            Some(ArtifactDataHandoff::CaptureDestination {
+                destination, push, ..
+            }) => Some(capture_artifact_report(
                 &write_path.display().to_string(),
-                &plan.output_path.display().to_string(),
+                destination,
                 Some("sql-dump"),
                 None,
                 repo_root,
                 repo_root,
                 false,
-                push,
-            )?)
-        } else {
-            None
+                *push,
+            )?),
+            _ => None,
         };
         dump_reports.push((plan, write_path, artifact_capture));
     }
@@ -300,25 +316,6 @@ fn artifact_capture_status(report: Option<&serde_json::Value>) -> &'static str {
         Some(true) => "pushed",
         _ => "planned",
     }
-}
-
-fn planned_capture_dump_source_path(repo_root: &Path, plan: &DbDumpPlan) -> PathBuf {
-    let target = plan
-        .target
-        .as_deref()
-        .unwrap_or(plan.database.as_str())
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    repo_root
-        .join(".effigy/local/data-dumps")
-        .join(format!("{target}.sql"))
 }
 
 pub(super) fn maybe_confirm_container_data_import(
@@ -428,15 +425,6 @@ fn ensure_dump_target(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct DbDumpService {
-    service_name: String,
-    catalog: String,
-    password: String,
-    declared_databases: Vec<String>,
-    primary_database: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 struct DbDumpPlan {
     target: Option<String>,
     database: String,
@@ -510,15 +498,13 @@ fn resolve_db_dump_plans(
                 .and_then(|target| target.service.as_deref()),
             &database,
         )?;
-        let kind = DatabaseServiceKind::from_catalog(&service.catalog)
-            .expect("unsupported db dump catalog should be filtered before rendering");
         let command =
-            database_dump_command(&service.service_name, kind, &service.password, &database).argv;
+            database_dump_command(&service.name, service.kind, &service.password, &database).argv;
         plans.push(DbDumpPlan {
             target: dump.target,
             database,
-            service_name: service.service_name.clone(),
-            catalog: service.catalog.clone(),
+            service_name: service.name.clone(),
+            catalog: service.kind.catalog().to_owned(),
             output_path: dump.path,
             command,
         });
@@ -529,104 +515,97 @@ fn resolve_db_dump_plans(
 
 fn collect_db_dump_services(
     services: &std::collections::BTreeMap<String, ManifestContainerServiceConfig>,
-) -> Vec<DbDumpService> {
+) -> Vec<DatabaseService> {
     services
         .iter()
-        .filter(|(_, service)| matches!(service.catalog.as_str(), "postgres" | "mariadb"))
-        .map(|(service_name, service)| DbDumpService {
-            service_name: service_name.clone(),
-            catalog: service.catalog.clone(),
-            password: service
-                .params
-                .get("password")
-                .and_then(toml::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("secret")
-                .to_owned(),
-            declared_databases: service
-                .params
-                .get("databases")
-                .and_then(toml::Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(toml::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned)
-                .collect(),
-            primary_database: service
-                .params
-                .get("database")
-                .and_then(toml::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned),
+        .filter_map(|(service_name, service)| {
+            let kind = manifest_database_service_kind(&service.catalog)?;
+            Some((service_name, service, kind))
+        })
+        .map(|(service_name, service, kind)| {
+            DatabaseService::new(service_name.clone(), kind)
+                .password(service_password(service))
+                .declared_databases(service_declared_databases(service))
+                .primary_database_opt(service_primary_database(service))
         })
         .collect()
 }
 
+fn manifest_database_service_kind(catalog: &str) -> Option<DatabaseServiceKind> {
+    match catalog {
+        "postgres" => Some(DatabaseServiceKind::Postgres),
+        "mariadb" => Some(DatabaseServiceKind::MariaDb),
+        _ => None,
+    }
+}
+
+fn service_password(service: &ManifestContainerServiceConfig) -> String {
+    service
+        .params
+        .get("password")
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("secret")
+        .to_owned()
+}
+
+fn service_declared_databases(service: &ManifestContainerServiceConfig) -> Vec<String> {
+    service
+        .params
+        .get("databases")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn service_primary_database(service: &ManifestContainerServiceConfig) -> Option<String> {
+    service
+        .params
+        .get("database")
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
 fn resolve_db_dump_service_for_database<'a>(
-    services: &'a [DbDumpService],
+    services: &'a [DatabaseService],
     requested_service: Option<&str>,
     database: &str,
-) -> Result<&'a DbDumpService, RunnerError> {
-    if let Some(requested_service) = requested_service {
-        let service = services
-            .iter()
-            .find(|service| service.service_name == requested_service)
-            .ok_or_else(|| {
-                RunnerError::task_invocation(format!(
-                    "database dump target references unknown service `{requested_service}`"
-                ))
-            })?;
-        return Ok(service);
-    }
+) -> Result<&'a DatabaseService, RunnerError> {
+    select_database_service(services, requested_service, database)
+        .map_err(db_dump_service_selection_error)
+}
 
-    let explicit_matches = services
-        .iter()
-        .filter(|service| {
-            service
-                .declared_databases
-                .iter()
-                .any(|entry| entry == database)
-        })
-        .collect::<Vec<_>>();
-    if explicit_matches.len() == 1 {
-        return Ok(explicit_matches[0]);
+fn db_dump_service_selection_error(error: DatabaseServiceSelectionError) -> RunnerError {
+    match error {
+        DatabaseServiceSelectionError::UnknownService { service } => RunnerError::task_invocation(
+            format!("database dump target references unknown service `{service}`"),
+        ),
+        DatabaseServiceSelectionError::AmbiguousDeclaredDatabase { database, services } => {
+            RunnerError::task_invocation(format!(
+                "multiple database services can dump `{database}`: {}",
+                services.join(", ")
+            ))
+        }
+        DatabaseServiceSelectionError::AmbiguousPrimaryDatabase { database, services } => {
+            RunnerError::task_invocation(format!(
+                "multiple database services use `{database}` as their primary database: {}",
+                services.join(", ")
+            ))
+        }
+        DatabaseServiceSelectionError::NoServiceForDatabase { database } => {
+            RunnerError::task_invocation(format!(
+                "no database service in the selected container can dump `{database}`"
+            ))
+        }
     }
-    if explicit_matches.len() > 1 {
-        return Err(RunnerError::task_invocation(format!(
-            "multiple database services can dump `{database}`: {}",
-            explicit_matches
-                .iter()
-                .map(|service| format!("{} ({})", service.service_name, service.catalog))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )));
-    }
-
-    let primary_matches = services
-        .iter()
-        .filter(|service| service.primary_database.as_deref() == Some(database))
-        .collect::<Vec<_>>();
-    if primary_matches.len() == 1 {
-        return Ok(primary_matches[0]);
-    }
-    if primary_matches.len() > 1 {
-        return Err(RunnerError::task_invocation(format!(
-            "multiple database services use `{database}` as their primary database: {}",
-            primary_matches
-                .iter()
-                .map(|service| format!("{} ({})", service.service_name, service.catalog))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )));
-    }
-
-    Err(RunnerError::task_invocation(format!(
-        "no database service in the selected container can dump `{database}`"
-    )))
 }
 
 fn resolve_db_dump_targets(
@@ -635,370 +614,62 @@ fn resolve_db_dump_targets(
     db_dumps: &[ContainerDbDumpInput],
 ) -> Result<Vec<ContainerDbDumpInput>, RunnerError> {
     let declared_targets = logical_database_targets(manifest);
-    let mut seen_targets = BTreeSet::new();
-    let mut resolved = Vec::with_capacity(db_dumps.len());
-    for dump in db_dumps {
-        let effective_target = match dump.target.as_deref() {
-            Some(target) => {
-                if !declared_targets.is_empty()
-                    && !declared_targets
-                        .iter()
-                        .any(|declared| declared.name.as_str() == target)
-                {
-                    return Err(RunnerError::task_invocation(format!(
-                        "db dump target `{target}` is not declared in `[bundle].databases` or `[data.targets]` for {}; valid targets: {}",
-                        repo_root.join(TASK_MANIFEST_FILE).display(),
-                        declared_targets
-                            .iter()
-                            .map(|target| target.name.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )));
-                }
-                Some(target.to_owned())
-            }
-            None => match declared_targets.as_slice() {
-                [declared] => Some(declared.name.to_string()),
-                targets if targets.len() > 1 => {
-                    return Err(RunnerError::task_invocation(format!(
-                        "db dump output `{}` must name a target because multiple database targets are declared in `[bundle].databases` and `[data.targets]`: {}",
-                        dump.path.display(),
-                        targets
-                            .iter()
-                            .map(|target| target.name.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )));
-                }
-                _ => None,
-            },
-        };
-        if let Some(target) = effective_target.as_deref() {
-            if !seen_targets.insert(target.to_owned()) {
-                return Err(RunnerError::task_invocation(format!(
-                    "duplicate db dump target `{target}`"
-                )));
-            }
-        }
-        resolved.push(ContainerDbDumpInput {
-            target: effective_target,
-            path: dump.path.clone(),
-        });
-    }
-    Ok(resolved)
-}
-
-fn maybe_confirm_container_data_pull_production(
-    container_name: &str,
-    output_json: bool,
-    yes: bool,
-) -> Result<(), RunnerError> {
-    if !container_data_pull_production_prompt_required(
-        container_name,
-        output_json,
-        yes,
-        io::stdin().is_terminal(),
-        io::stdout().is_terminal(),
-    )? {
-        return Ok(());
-    }
-
-    let mut stdin = io::stdin().lock();
-    let mut stdout = io::stdout().lock();
-    confirm_container_data_pull_production_from_io(container_name, &mut stdin, &mut stdout)
-}
-
-fn maybe_confirm_container_data_seed(
-    container_name: &str,
-    staged_db_seeds: &[BootstrapStagedDbSeed],
-    output_json: bool,
-    yes: bool,
-) -> Result<(), RunnerError> {
-    if !container_data_seed_prompt_required(
-        container_name,
-        output_json,
-        yes,
-        io::stdin().is_terminal(),
-        io::stdout().is_terminal(),
-    )? {
-        return Ok(());
-    }
-
-    let mut stdin = io::stdin().lock();
-    let mut stdout = io::stdout().lock();
-    confirm_container_data_seed_from_io(container_name, staged_db_seeds, &mut stdin, &mut stdout)
-}
-
-fn container_data_pull_production_prompt_required(
-    container_name: &str,
-    output_json: bool,
-    yes: bool,
-    stdin_is_tty: bool,
-    stdout_is_tty: bool,
-) -> Result<bool, RunnerError> {
-    let policy = PromptPolicy {
-        output_json,
-        plan: false,
-        explicit_non_interactive: yes,
-        stdin_is_tty,
-        stdout_is_tty,
-    };
-    match policy.decide() {
-        PromptDecision::Prompt => Ok(true),
-        PromptDecision::SuppressedByExplicitNonInteractive => Ok(false),
-        PromptDecision::SuppressedByJson
-        | PromptDecision::SuppressedByPlan
-        | PromptDecision::SuppressedByNonTty => Err(RunnerError::task_invocation(format!(
-            "`effigy container {container_name} data pull-production` requires confirmation before pulling production data into the local generated-compose environment. Rerun from an interactive terminal to confirm, or pass --yes when automation intentionally accepts this action."
-        ))),
-    }
-}
-
-fn container_data_import_prompt_required(
-    container_name: &str,
-    output_json: bool,
-    yes: bool,
-    stdin_is_tty: bool,
-    stdout_is_tty: bool,
-) -> Result<bool, RunnerError> {
-    let policy = PromptPolicy {
-        output_json,
-        plan: false,
-        explicit_non_interactive: yes,
-        stdin_is_tty,
-        stdout_is_tty,
-    };
-    match policy.decide() {
-        PromptDecision::Prompt => Ok(true),
-        PromptDecision::SuppressedByExplicitNonInteractive => Ok(false),
-        PromptDecision::SuppressedByJson
-        | PromptDecision::SuppressedByPlan
-        | PromptDecision::SuppressedByNonTty => Err(RunnerError::task_invocation(format!(
-            "`effigy container {container_name} data import` requires confirmation before importing archive data into the local generated-compose environment. Rerun from an interactive terminal to confirm, or pass --yes when automation intentionally accepts this action."
-        ))),
-    }
-}
-
-fn container_data_seed_prompt_required(
-    container_name: &str,
-    output_json: bool,
-    yes: bool,
-    stdin_is_tty: bool,
-    stdout_is_tty: bool,
-) -> Result<bool, RunnerError> {
-    let policy = PromptPolicy {
-        output_json,
-        plan: false,
-        explicit_non_interactive: yes,
-        stdin_is_tty,
-        stdout_is_tty,
-    };
-    match policy.decide() {
-        PromptDecision::Prompt => Ok(true),
-        PromptDecision::SuppressedByExplicitNonInteractive => Ok(false),
-        PromptDecision::SuppressedByJson
-        | PromptDecision::SuppressedByPlan
-        | PromptDecision::SuppressedByNonTty => Err(RunnerError::task_invocation(format!(
-            "`effigy container {container_name} data seed` requires confirmation before resetting and importing local database dumps. Rerun from an interactive terminal to confirm, or pass --yes when automation intentionally accepts this action."
-        ))),
-    }
-}
-
-fn destructive_container_action_prompt_required(
-    command_label: &str,
-    output_json: bool,
-    yes: bool,
-    stdin_is_tty: bool,
-    stdout_is_tty: bool,
-) -> Result<bool, RunnerError> {
-    let policy = PromptPolicy {
-        output_json,
-        plan: false,
-        explicit_non_interactive: yes,
-        stdin_is_tty,
-        stdout_is_tty,
-    };
-    match policy.decide() {
-        PromptDecision::Prompt => Ok(true),
-        PromptDecision::SuppressedByExplicitNonInteractive => Ok(false),
-        PromptDecision::SuppressedByJson
-        | PromptDecision::SuppressedByPlan
-        | PromptDecision::SuppressedByNonTty => Err(RunnerError::task_invocation(format!(
-            "{command_label} requires confirmation because it deletes persistent local container data. Rerun from an interactive terminal to confirm, or pass --yes when automation intentionally accepts this action."
-        ))),
-    }
-}
-
-fn confirm_destructive_container_action_from_io<R: BufRead, W: Write>(
-    description: &str,
-    input: &mut R,
-    output: &mut W,
-) -> Result<(), RunnerError> {
-    writeln!(
-        output,
-        "{description}\nThis deletes persistent local data.\n"
+    let selected = select_data_targets(
+        &declared_targets,
+        &db_dumps
+            .iter()
+            .map(|dump| dump.target.clone())
+            .collect::<Vec<_>>(),
     )
-    .and_then(|_| output.flush())
-    .map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to render interactive container data prompt: {error}"
-        ))
-    })?;
-    output
-        .write_all(b"Continue? [y/N]: ")
-        .and_then(|_| output.flush())
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to render interactive container data prompt: {error}"
-            ))
-        })?;
-    let mut line = String::new();
-    input.read_line(&mut line).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to read interactive container data input: {error}"
-        ))
-    })?;
-    let normalized = line.trim().to_ascii_lowercase();
-    if normalized == "y" || normalized == "yes" {
-        return Ok(());
-    }
-    Err(RunnerError::task_invocation(
-        "destructive container action cancelled during confirmation",
-    ))
-}
+    .map_err(|error| db_dump_target_selection_error(repo_root, db_dumps, error))?;
 
-fn confirm_container_data_import_from_io<R: BufRead, W: Write>(
-    container_name: &str,
-    volume_name: &str,
-    archive_path: &Path,
-    input: &mut R,
-    output: &mut W,
-) -> Result<(), RunnerError> {
-    writeln!(
-        output,
-        "Import archive into local container `{container_name}`.\nVolume: {volume_name}\nArchive: {}\nThis may overwrite local generated-compose data.\n",
-        archive_path.display()
-    )
-    .and_then(|_| output.flush())
-    .map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to render interactive container data prompt: {error}"
-        ))
-    })?;
-    output
-        .write_all(b"Continue? [y/N]: ")
-        .and_then(|_| output.flush())
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to render interactive container data prompt: {error}"
-            ))
-        })?;
-    let mut line = String::new();
-    input.read_line(&mut line).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to read interactive container data input: {error}"
-        ))
-    })?;
-    let normalized = line.trim().to_ascii_lowercase();
-    if normalized == "y" || normalized == "yes" {
-        return Ok(());
-    }
-    Err(RunnerError::task_invocation(
-        "container data import cancelled during confirmation",
-    ))
-}
-
-fn confirm_container_data_pull_production_from_io<R: BufRead, W: Write>(
-    container_name: &str,
-    input: &mut R,
-    output: &mut W,
-) -> Result<(), RunnerError> {
-    writeln!(
-        output,
-        "Pull production data into local container `{container_name}`.\nThis may overwrite local generated-compose data.\n"
-    )
-    .and_then(|_| output.flush())
-    .map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to render interactive container data prompt: {error}"
-        ))
-    })?;
-    output
-        .write_all(b"Continue? [y/N]: ")
-        .and_then(|_| output.flush())
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to render interactive container data prompt: {error}"
-            ))
-        })?;
-    let mut line = String::new();
-    input.read_line(&mut line).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to read interactive container data input: {error}"
-        ))
-    })?;
-    let normalized = line.trim().to_ascii_lowercase();
-    if normalized == "y" || normalized == "yes" {
-        return Ok(());
-    }
-    Err(RunnerError::task_invocation(
-        "container data pull-production cancelled during confirmation",
-    ))
-}
-
-fn confirm_container_data_seed_from_io<R: BufRead, W: Write>(
-    container_name: &str,
-    staged_db_seeds: &[BootstrapStagedDbSeed],
-    input: &mut R,
-    output: &mut W,
-) -> Result<(), RunnerError> {
-    let seed_lines = staged_db_seeds
+    Ok(db_dumps
         .iter()
-        .map(|seed| match seed.target.as_deref() {
-            Some(target) => format!("{target}: {}", seed.source_path.display()),
-            None => seed.source_path.display().to_string(),
+        .zip(selected)
+        .map(|(dump, target)| ContainerDbDumpInput {
+            target: target.map(|target| target.to_string()),
+            path: dump.path.clone(),
         })
-        .collect::<Vec<_>>()
-        .join("\n");
-    writeln!(
-        output,
-        "Reset and seed local database(s) for container `{container_name}`.\nSQL dumps:\n{seed_lines}\nThis may overwrite local generated-compose data.\n"
-    )
-    .and_then(|_| output.flush())
-    .map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to render interactive container data prompt: {error}"
-        ))
-    })?;
-    output
-        .write_all(b"Continue? [y/N]: ")
-        .and_then(|_| output.flush())
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to render interactive container data prompt: {error}"
-            ))
-        })?;
-    let mut line = String::new();
-    input.read_line(&mut line).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to read interactive container data input: {error}"
-        ))
-    })?;
-    let normalized = line.trim().to_ascii_lowercase();
-    if normalized == "y" || normalized == "yes" {
-        return Ok(());
+        .collect())
+}
+
+fn db_dump_target_selection_error(
+    repo_root: &Path,
+    db_dumps: &[ContainerDbDumpInput],
+    error: DataTargetSelectionError,
+) -> RunnerError {
+    match error {
+        DataTargetSelectionError::UnknownTarget {
+            target,
+            valid_targets,
+            ..
+        } => RunnerError::task_invocation(format!(
+            "db dump target `{target}` is not declared in `[bundle].databases` or `[data.targets]` for {}; valid targets: {}",
+            repo_root.join(TASK_MANIFEST_FILE).display(),
+            valid_targets.join(", ")
+        )),
+        DataTargetSelectionError::MissingTarget {
+            index,
+            valid_targets,
+        } => RunnerError::task_invocation(format!(
+            "db dump output `{}` must name a target because multiple database targets are declared in `[bundle].databases` and `[data.targets]`: {}",
+            db_dumps[index].path.display(),
+            valid_targets.join(", ")
+        )),
+        DataTargetSelectionError::DuplicateTarget { target, .. } => {
+            RunnerError::task_invocation(format!("duplicate db dump target `{target}`"))
+        }
     }
-    Err(RunnerError::task_invocation(
-        "container data seed cancelled during confirmation",
-    ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
+    use super::prompts::{
         confirm_container_data_import_from_io, confirm_container_data_pull_production_from_io,
         confirm_container_data_seed_from_io, container_data_import_prompt_required,
         container_data_pull_production_prompt_required, container_data_seed_prompt_required,
+    };
+    use super::{
         resolve_db_dump_output_paths, resolve_db_dump_plans, run_container_data_dump,
         run_container_data_pull_production, run_container_data_seed,
     };
