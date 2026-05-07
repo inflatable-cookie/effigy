@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`005-data-seed-dump-pipeline.md`](./005-data-seed-dump-pipeline.md)
@@ -45,4 +45,5 @@ pipeline requests.
 
 ## Next Task
 
-Do not start until `g04.005` closes.
+Start roadmap
+[`g04.007`](./007-effective-container-policy-decomposition.md).

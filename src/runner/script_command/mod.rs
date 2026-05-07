@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use effigy_container_ops::ContainerCapturedExecOperation;
 use effigy_execution::ExecutionSurface;
 use effigy_rhai::{
     execute_rhai_script_with_runtime_context, install_stop_requested_flag, load_script,
@@ -149,8 +150,14 @@ fn host_callbacks() -> HostCallbacks {
         container_exec: Arc::new(|repo_root, name, service, command| {
             let name = if name.is_empty() { None } else { Some(name) };
             activate_rhai_container_exec(repo_root, name).map_err(|error| error.to_string())?;
-            let output = crate::runner::container_command::run_container_exec_capture(
-                repo_root, name, service, command,
+            let output = crate::runner::container_command::run_container_exec_operation_capture(
+                repo_root,
+                name,
+                ContainerCapturedExecOperation {
+                    service: service.map(str::to_owned),
+                    command: command.to_vec(),
+                    stdin_file: None,
+                },
             )
             .map_err(|error| error.to_string())?;
             Ok(HostCommandOutput {
@@ -167,12 +174,14 @@ fn host_callbacks() -> HostCallbacks {
                 .get("stdin_file")
                 .and_then(Value::as_str)
                 .map(std::path::PathBuf::from);
-            let output = crate::runner::container_command::run_container_exec_capture_with_options(
+            let output = crate::runner::container_command::run_container_exec_operation_capture(
                 repo_root,
                 name,
-                service,
-                command,
-                stdin_file.as_deref(),
+                ContainerCapturedExecOperation {
+                    service: service.map(str::to_owned),
+                    command: command.to_vec(),
+                    stdin_file,
+                },
             )
             .map_err(|error| error.to_string())?;
             Ok(HostCommandOutput {

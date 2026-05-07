@@ -4,8 +4,8 @@ use std::process::Output;
 
 use effigy_container_manager::{ContainerAction, ContainerRuntimeState};
 use effigy_container_ops::{
-    ContainerExecOperation, ContainerLifecycleOperation, ContainerOperationKind,
-    ContainerOperationPlan, ContainerOperationRequest,
+    ContainerCapturedExecOperation, ContainerExecOperation, ContainerLifecycleOperation,
+    ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
 };
 use effigy_containers::{
     effective_attach_mode, eject_generated_compose, eject_report,
@@ -358,20 +358,37 @@ pub(in crate::runner) fn run_container_exec_capture_with_options(
     command: &[String],
     stdin_file: Option<&Path>,
 ) -> Result<Output, RunnerError> {
-    if command.is_empty() {
+    run_container_exec_operation_capture(
+        repo_root,
+        name,
+        ContainerCapturedExecOperation {
+            service: service.map(str::to_owned),
+            command: command.to_vec(),
+            stdin_file: stdin_file.map(Path::to_path_buf),
+        },
+    )
+}
+
+pub(in crate::runner) fn run_container_exec_operation_capture(
+    repo_root: &Path,
+    name: Option<&str>,
+    operation: ContainerCapturedExecOperation,
+) -> Result<Output, RunnerError> {
+    if operation.command.is_empty() {
         return Err(RunnerError::task_invocation(
             "container_exec requires at least one command argument",
         ));
     }
 
-    let (policy, service, _) = resolve_container_shell_session(repo_root, name, service)?;
+    let (policy, service, _) =
+        resolve_container_shell_session(repo_root, name, operation.service.as_deref())?;
     let _operation_plan = exec_operation_plan(
         repo_root,
         &policy,
         ContainerExecOperation::captured(
             Some(service.clone()),
-            command.to_vec(),
-            stdin_file.map(Path::to_path_buf),
+            operation.command.clone(),
+            operation.stdin_file.clone(),
         ),
     );
     maybe_refresh_workspace_effigy_for_shell(repo_root, &policy)?;
@@ -386,7 +403,7 @@ pub(in crate::runner) fn run_container_exec_capture_with_options(
     args.push(OsString::from("-e"));
     args.push(OsString::from(CONTAINER_HANDOFF_ENV_ASSIGNMENT));
     args.push(OsString::from(service));
-    args.extend(command.iter().map(OsString::from));
+    args.extend(operation.command.iter().map(OsString::from));
     let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
         repo_root,
         &policy,
@@ -395,7 +412,7 @@ pub(in crate::runner) fn run_container_exec_capture_with_options(
         "docker compose exec",
     )
     .map_err(RunnerError::from)?;
-    run_compose_exec_plan_with_options(&policy, &plan, true, stdin_file)
+    run_compose_exec_plan_with_options(&policy, &plan, true, operation.stdin_file.as_deref())
 }
 
 fn resolve_container_exec_working_dir_for_service(
