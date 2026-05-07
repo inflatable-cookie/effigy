@@ -1,7 +1,7 @@
 //! Container-domain execution helpers extracted from
 //! `src/runner/container_command.rs`.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -213,7 +213,18 @@ pub fn run_docker_capture(
     label: &str,
 ) -> Result<Output, ContainerExecError> {
     let (program, args) = compose_invocation(policy, args);
-    match run_command_capture_os(repo_root, program, &args, label) {
+    run_compose_invocation_capture(repo_root, policy, OsStr::new(program), &args, label)
+}
+
+pub fn run_compose_invocation_capture(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    program: &OsStr,
+    args: &[OsString],
+    label: &str,
+) -> Result<Output, ContainerExecError> {
+    let program = program.to_string_lossy();
+    match run_command_capture_os(repo_root, &program, args, label) {
         Ok(output) => Ok(output),
         Err(ContainerExecError::Failure {
             command: _,
@@ -224,7 +235,7 @@ pub fn run_docker_capture(
             || docker_failure_looks_like_colima_runtime_state_loss(&stdout, &stderr) =>
         {
             repair_colima_runtime(policy, repo_root)?;
-            run_command_capture_os(repo_root, program, &args, label).map_err(|retry_error| {
+            run_command_capture_os(repo_root, &program, args, label).map_err(|retry_error| {
                 match retry_error {
                     ContainerExecError::Failure {
                         command: retry_command,
@@ -478,9 +489,14 @@ pub fn run_command_capture_allow_failure(
 }
 
 fn detect_container_backend() -> Result<BackendId, ContainerExecError> {
+    let mut detection = ContainerBackendDetection::from_env_and_path();
+    if detection.backend_override.is_none() && !running_colima_profiles(Path::new("."))?.is_empty()
+    {
+        detection.backend_override = Some(BackendId::colima_nerdctl());
+    }
     ContainerManager::defaults()
         .registry()
-        .detect_backend(&ContainerBackendDetection::from_env_and_path())
+        .detect_backend(&detection)
         .map_err(container_manager_error)
 }
 
@@ -490,13 +506,12 @@ fn run_runtime_command_capture(
     docker_args: &[OsString],
     label: &str,
 ) -> Result<Output, ContainerExecError> {
+    let mut detection = ContainerBackendDetection::from_env_and_path();
+    if detection.backend_override.is_none() {
+        detection.backend_override = Some(BackendId::colima_nerdctl());
+    }
     let (program, args) = ContainerManager::defaults()
-        .runtime_process_invocation(
-            &ContainerBackendDetection::from_env_and_path(),
-            profile,
-            "docker",
-            docker_args,
-        )
+        .runtime_process_invocation(&detection, profile, "docker", docker_args)
         .map_err(container_manager_error)?;
     let program = program.to_string_lossy().into_owned();
     run_command_capture_os(repo_root, &program, &args, label)
@@ -507,13 +522,12 @@ fn run_runtime_command_capture_allow_failure(
     profile: &str,
     docker_args: &[OsString],
 ) -> Result<Output, ContainerExecError> {
+    let mut detection = ContainerBackendDetection::from_env_and_path();
+    if detection.backend_override.is_none() {
+        detection.backend_override = Some(BackendId::colima_nerdctl());
+    }
     let (program, args) = ContainerManager::defaults()
-        .runtime_process_invocation(
-            &ContainerBackendDetection::from_env_and_path(),
-            profile,
-            "docker",
-            docker_args,
-        )
+        .runtime_process_invocation(&detection, profile, "docker", docker_args)
         .map_err(container_manager_error)?;
     let program = program.to_string_lossy().into_owned();
     let resolved_program = resolve_host_cli_program(&program);

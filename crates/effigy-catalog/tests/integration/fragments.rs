@@ -484,14 +484,14 @@ fn php_fpm_supports_explicit_decodelabs_style_service_params() {
     assert!(
         result
             .compose_yaml
-            .contains("test-project-app-vendor:/var/www/html/vendor"),
+            .contains("test-project-app-var-www-html-vendor:/var/www/html/vendor"),
         "php-fpm explicit params should isolate configured hot dirs with named volumes:\n{}",
         result.compose_yaml
     );
     assert!(
         result
             .compose_yaml
-            .contains("test-project-app-node-modules:/var/www/html/node_modules"),
+            .contains("test-project-app-var-www-html-node-modules:/var/www/html/node_modules"),
         "php-fpm explicit params should isolate configured hot dirs with named volumes:\n{}",
         result.compose_yaml
     );

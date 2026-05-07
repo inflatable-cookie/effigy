@@ -39,6 +39,8 @@ pub(super) fn render_text(report: &DoctorReport, verbose: bool) -> Result<String
         render_fix_actions(&mut renderer, report)?;
     }
 
+    render_root_resolution_summary(&mut renderer, report)?;
+
     renderer
         .summary(SummaryCounts {
             ok: report.summary.pass,
@@ -91,6 +93,93 @@ fn render_fix_actions(
     Ok(())
 }
 
+fn render_root_resolution_summary(
+    renderer: &mut PlainRenderer<Vec<u8>>,
+    report: &DoctorReport,
+) -> Result<(), DoctorError> {
+    if !report_has_runtime_resolution_details(report) {
+        return Ok(());
+    }
+    let mut sections = Vec::new();
+    if let Some(section) =
+        text_blocks::optional_bullet_section("root-resolution-trace", &report.root_evidence)
+    {
+        sections.push(section);
+    }
+    if let Some(section) =
+        text_blocks::optional_bullet_section("root-resolution-warnings", &report.root_warnings)
+    {
+        sections.push(section);
+    }
+    if sections.is_empty() {
+        return Ok(());
+    }
+    renderer
+        .section("Root Resolution")
+        .map_err(map_render_error)?;
+    text_blocks::render_bullet_sections(renderer, &sections).map_err(map_render_error)?;
+    renderer.text("").map_err(map_render_error)?;
+    Ok(())
+}
+
+fn report_has_runtime_resolution_details(report: &DoctorReport) -> bool {
+    !report.root_warnings.is_empty()
+        || report.root_evidence.iter().any(|line| {
+            line.starts_with("container-backend-selection:")
+                || line.starts_with("docker-context:")
+                || line.starts_with("colima-profile `")
+        })
+}
+
 fn map_render_error(error: effigy_ui::UiError) -> DoctorError {
     render_support::map_doctor_render_error(render_support::DOCTOR_RENDER_TARGET, error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::report_has_runtime_resolution_details;
+    use crate::{DoctorReport, DoctorSummary};
+
+    fn stub_report(evidence: Vec<&str>, warnings: Vec<&str>) -> DoctorReport {
+        DoctorReport {
+            resolved_root: "/tmp/workspace".to_owned(),
+            summary: DoctorSummary {
+                checks: 0,
+                pass: 0,
+                warning: 0,
+                error: 0,
+            },
+            findings: vec![],
+            fixes: vec![],
+            root_evidence: evidence.into_iter().map(str::to_owned).collect(),
+            root_warnings: warnings.into_iter().map(str::to_owned).collect(),
+        }
+    }
+
+    #[test]
+    fn root_resolution_summary_stays_hidden_for_plain_root_trace_only() {
+        let report = stub_report(vec!["resolved from current working directory"], vec![]);
+        assert!(!report_has_runtime_resolution_details(&report));
+    }
+
+    #[test]
+    fn root_resolution_summary_shows_for_runtime_diagnostics() {
+        let report = stub_report(
+            vec![
+                "resolved from current working directory",
+                "container-backend-selection: colima-nerdctl (manifest driver=colima, profiles=effigy)",
+            ],
+            vec![],
+        );
+        assert!(report_has_runtime_resolution_details(&report));
+    }
+
+    #[test]
+    fn root_resolution_summary_shows_for_warnings() {
+        let report = stub_report(
+            vec!["resolved from current working directory"],
+            vec!["warning"],
+        );
+        assert!(report_has_runtime_resolution_details(&report));
+    }
 }

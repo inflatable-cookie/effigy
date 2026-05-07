@@ -3,12 +3,13 @@ use std::path::Path;
 use std::process::Output;
 
 use effigy_catalog::volumes::{reset_commands, DockerCommand, VolumeClassification};
-use effigy_container_manager::{ContainerBackendDetection, ContainerManager};
+use effigy_container_manager::{
+    BackendId, ContainerAction, ContainerBackendDetection, ContainerInterruptPolicy,
+    ContainerManager, ContainerManagerRequest,
+};
 use effigy_containers::{
-    compose::compose_args,
     exec::{
-        list_running_compose_containers_for_profile, run_docker_capture, ContainerExecError,
-        RunningComposeContainer,
+        list_running_compose_containers_for_profile, ContainerExecError, RunningComposeContainer,
     },
     health::wait_for_ready,
     EffectiveContainerPolicy,
@@ -209,13 +210,15 @@ pub(super) fn install_primary_service_tcp_alias_hosts(
         "-lc",
         script.as_str(),
     ];
-    run_docker_capture(
+    let plan = effigy_runtime::container_manager::compose_invocation_plan(
         repo_root,
         policy,
-        &compose_args(policy, tail),
+        tail,
+        ContainerAction::Exec,
         "docker compose exec tcp alias hosts",
     )
     .map_err(RunnerError::from)?;
+    effigy_runtime::signals::run_compose_plan_capture(policy, &plan).map_err(RunnerError::from)?;
 
     Ok(pairs
         .into_iter()
@@ -446,16 +449,32 @@ fn run_shared_compose_capture(
     args: &[OsString],
     label: &str,
 ) -> Result<std::process::Output, RunnerError> {
-    let (program, args) = runtime_process_invocation(profile, "docker", args)?;
-    std::process::Command::new(&program)
+    let request = ContainerManagerRequest::new(repo_root)
+        .backend_override(BackendId::colima_nerdctl())
+        .interrupt_policy(ContainerInterruptPolicy::Forward);
+    let mut detection = ContainerBackendDetection::from_env_and_path();
+    if detection.backend_override.is_none() {
+        detection.backend_override = Some(BackendId::colima_nerdctl());
+    }
+    let plan = ContainerManager::defaults()
+        .compose_invocation_plan(
+            &request,
+            &detection,
+            profile,
+            args,
+            ContainerAction::Activate,
+            label,
+        )
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    std::process::Command::new(&plan.program)
         .current_dir(repo_root)
-        .args(&args)
+        .args(&plan.args)
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {
             command: format!(
                 "{label} ({} {})",
-                program.to_string_lossy(),
-                format_args(&args)
+                plan.program.to_string_lossy(),
+                format_args(&plan.args)
             ),
             error,
         })
@@ -485,18 +504,33 @@ pub(super) fn run_runtime_volume_capture(
         return run_runtime_volume_usage_batch_capture(repo_root, profile, command);
     }
     let docker_args = runtime_args(&command.args);
-    let (program, args) =
-        runtime_process_invocation(profile, command.program.as_str(), &docker_args)?;
-    std::process::Command::new(&program)
+    let request =
+        ContainerManagerRequest::new(repo_root).interrupt_policy(ContainerInterruptPolicy::Forward);
+    let mut detection = ContainerBackendDetection::from_env_and_path();
+    if detection.backend_override.is_none() {
+        detection.backend_override = Some(BackendId::colima_nerdctl());
+    }
+    let plan = ContainerManager::defaults()
+        .runtime_invocation_plan(
+            &request,
+            &detection,
+            profile,
+            command.program.as_str(),
+            &docker_args,
+            ContainerAction::Shutdown,
+            command.description.as_str(),
+        )
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    std::process::Command::new(&plan.program)
         .current_dir(repo_root)
-        .args(&args)
+        .args(&plan.args)
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {
             command: format!(
                 "{} ({} {})",
                 command.description,
-                program.to_string_lossy(),
-                format_args(&args)
+                plan.program.to_string_lossy(),
+                format_args(&plan.args)
             ),
             error,
         })
@@ -525,8 +559,8 @@ fn run_runtime_volume_usage_capture(
             "runtime volume usage command requires one mount-point argument",
         ));
     };
-    let detection = ContainerBackendDetection::from_env_and_path();
-    let (program, args) = if detection.docker_cli_available {
+    let backend_id = detect_profile_backend(profile)?;
+    let (program, args) = if backend_id == BackendId::docker_compose() {
         (
             OsString::from("du"),
             vec![OsString::from("-sk"), OsString::from(mount_point)],
@@ -585,8 +619,8 @@ fn run_runtime_volume_usage_batch_capture(
             "runtime volume usage batch command requires one or more mount-point arguments",
         ));
     }
-    let detection = ContainerBackendDetection::from_env_and_path();
-    let (program, args) = if detection.docker_cli_available {
+    let backend_id = detect_profile_backend(profile)?;
+    let (program, args) = if backend_id == BackendId::docker_compose() {
         let mut args = vec![OsString::from("-sk")];
         args.extend(command.args.iter().map(OsString::from));
         (OsString::from("du"), args)
@@ -635,18 +669,14 @@ fn run_runtime_volume_usage_batch_capture(
         })
 }
 
-fn runtime_process_invocation(
-    profile: &str,
-    docker_program: &str,
-    args: &[OsString],
-) -> Result<(OsString, Vec<OsString>), RunnerError> {
+fn detect_profile_backend(_profile: &str) -> Result<BackendId, RunnerError> {
+    let mut detection = ContainerBackendDetection::from_env_and_path();
+    if detection.backend_override.is_none() {
+        detection.backend_override = Some(BackendId::colima_nerdctl());
+    }
     ContainerManager::defaults()
-        .runtime_process_invocation(
-            &ContainerBackendDetection::from_env_and_path(),
-            profile,
-            docker_program,
-            args,
-        )
+        .registry()
+        .detect_backend(&detection)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 

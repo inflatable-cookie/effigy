@@ -9,8 +9,10 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use effigy_container_manager::ContainerComposeInvocationPlan;
 use effigy_containers::{
-    compose::compose_invocation, exec::run_docker_capture as run_docker_capture_via_exec,
+    compose::compose_invocation,
+    exec::{run_compose_invocation_capture, run_docker_capture as run_docker_capture_via_exec},
     EffectiveContainerPolicy,
 };
 #[cfg(unix)]
@@ -45,6 +47,31 @@ pub fn spawn_docker_inherit(
 ) -> Result<std::process::Child, EffigyRuntimeError> {
     let (program, args) = compose_invocation(policy, args);
     spawn_command_inherit_os(repo_root, program, &args, label)
+}
+
+pub fn run_compose_plan_capture(
+    policy: &EffectiveContainerPolicy,
+    plan: &ContainerComposeInvocationPlan,
+) -> Result<Output, EffigyRuntimeError> {
+    run_compose_invocation_capture(
+        &plan.repo_root,
+        policy,
+        &plan.program,
+        &plan.args,
+        &plan.label,
+    )
+    .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))
+}
+
+pub fn spawn_compose_plan_inherit(
+    plan: &ContainerComposeInvocationPlan,
+) -> Result<std::process::Child, EffigyRuntimeError> {
+    spawn_command_inherit_os(
+        &plan.repo_root,
+        &plan.program.to_string_lossy(),
+        &plan.args,
+        &plan.label,
+    )
 }
 
 fn spawn_command_inherit_os(
@@ -148,7 +175,23 @@ pub fn run_compose_inherit_with_stop_flag(
     label: &str,
     stop_flag: &AtomicBool,
 ) -> Result<ComposeRunOutcome, EffigyRuntimeError> {
-    let mut child = spawn_docker_inherit(repo_root, policy, args, label)?;
+    let child = spawn_docker_inherit(repo_root, policy, args, label)?;
+    run_compose_inherit_child_with_stop_flag(child, label, stop_flag)
+}
+
+pub fn run_compose_plan_inherit_with_stop_flag(
+    plan: &ContainerComposeInvocationPlan,
+    stop_flag: &AtomicBool,
+) -> Result<ComposeRunOutcome, EffigyRuntimeError> {
+    let child = spawn_compose_plan_inherit(plan)?;
+    run_compose_inherit_child_with_stop_flag(child, &plan.label, stop_flag)
+}
+
+fn run_compose_inherit_child_with_stop_flag(
+    mut child: std::process::Child,
+    label: &str,
+    stop_flag: &AtomicBool,
+) -> Result<ComposeRunOutcome, EffigyRuntimeError> {
     loop {
         if stop_flag.load(Ordering::Relaxed) {
             terminate_inherited_child_graceful(&mut child);

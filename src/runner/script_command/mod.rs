@@ -20,8 +20,10 @@ use serde_json::Value;
 
 use super::command_context::active_runtime_context;
 use super::command_context::EmbeddedRepoOverrideMode;
+use super::container_runtime_prep::{activate_container_runtime_for_task, ActivationRequest};
 use super::embedded_runner::parse_embedded_command;
 use super::error::RunnerError;
+use super::runtime_session_context::current_runtime_session_context;
 pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<String, RunnerError> {
     execute_repo_rhai_script(
         &required_repo_root(&args)?,
@@ -146,6 +148,7 @@ fn host_callbacks() -> HostCallbacks {
         }),
         container_exec: Arc::new(|repo_root, name, service, command| {
             let name = if name.is_empty() { None } else { Some(name) };
+            activate_rhai_container_exec(repo_root, name).map_err(|error| error.to_string())?;
             let output = crate::runner::container_command::run_container_exec_capture(
                 repo_root, name, service, command,
             )
@@ -159,6 +162,7 @@ fn host_callbacks() -> HostCallbacks {
         }),
         container_exec_with_options: Arc::new(|repo_root, name, service, command, options| {
             let name = if name.is_empty() { None } else { Some(name) };
+            activate_rhai_container_exec(repo_root, name).map_err(|error| error.to_string())?;
             let stdin_file = options
                 .get("stdin_file")
                 .and_then(Value::as_str)
@@ -179,6 +183,24 @@ fn host_callbacks() -> HostCallbacks {
             })
         }),
     }
+}
+
+fn activate_rhai_container_exec(repo_root: &Path, name: Option<&str>) -> Result<(), RunnerError> {
+    let policy = effigy_containers::load_container_policy(repo_root, name).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to resolve Rhai container exec policy: {error}"
+        ))
+    })?;
+    activate_container_runtime_for_task(
+        repo_root,
+        &policy,
+        ActivationRequest {
+            container_name: name,
+            repo_override: Some(repo_root.to_path_buf()),
+            session_context: current_runtime_session_context(),
+        },
+    )?;
+    Ok(())
 }
 
 fn run_rhai_feature(

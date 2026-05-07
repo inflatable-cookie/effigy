@@ -5,21 +5,18 @@ use effigy_runtime::shell::run_container_shell_session as run_runtime_container_
 use effigy_ui::style_text;
 use effigy_ui::theme::{is_ci_environment, Theme};
 use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
-use std::ffi::OsString;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use crate::runner::command_context::resolve_active_repo_root;
 use crate::runner::container_command::{
-    gateway_routes_registered_for_container, register_gateway_routes_for_container, run_container,
-    runtime_error_from_runner,
+    gateway_routes_registered_for_container, run_container, runtime_error_from_runner,
 };
 use crate::runner::container_runtime_prep::container_policy_uses_gateway_surface;
 use crate::runner::execute::api::{
     ensure_inline_workspace_supported, resolve_execution_binding_resolution, ExecutionBindingKind,
     InlineWorkspaceCapabilitySurface,
 };
-use crate::runner::gateway_command::gateway_up_for_managed_task;
 use crate::runner::interactive_session::{
     should_cleanup_interactive_session, InteractiveSessionIntent, InteractiveSessionOwnership,
 };
@@ -192,12 +189,13 @@ pub(super) fn effective_workspace_repo_override(
     repo_override.or_else(|| Some(repo_root.to_path_buf()))
 }
 
-pub(super) fn prepare_workspace_handoff(
+pub(super) fn finish_workspace_handoff_after_activation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     container_name: Option<&str>,
     repo_override: Option<PathBuf>,
     initial_command: Option<&str>,
+    routes_were_ready_before_handoff: bool,
 ) -> Result<bool, RunnerError> {
     prepare_workspace_handoff_using(
         repo_root,
@@ -205,9 +203,9 @@ pub(super) fn prepare_workspace_handoff(
         container_name,
         repo_override,
         initial_command,
-        gateway_routes_ready_before_handoff,
-        maybe_start_workspace_gateway,
-        |repo_root, policy| register_gateway_routes_for_container(repo_root, policy).map(|_| ()),
+        |_repo_root, _policy| Ok(routes_were_ready_before_handoff),
+        |_policy| Ok(()),
+        |_repo_root, _policy| Ok(()),
         super::workspace_provisioning::ensure_workspace_provisioning_ready,
         render_workspace_handoff_transition,
     )
@@ -317,13 +315,11 @@ fn probe_workspace_shell_capability(
 }
 
 fn run_workspace_shell_exec(
-    repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    args: &[OsString],
+    plan: &effigy_container_manager::ContainerComposeInvocationPlan,
     capture: bool,
-    label: &str,
 ) -> Result<std::process::Output, effigy_runtime::EffigyRuntimeError> {
-    crate::runner::exec_command::run_compose_exec(repo_root, policy, args, capture, label)
+    crate::runner::exec_command::run_compose_exec_plan_with_options(policy, plan, capture, None)
         .map_err(runtime_error_from_runner)
 }
 
@@ -335,7 +331,7 @@ fn should_shutdown_started_system(
     should_cleanup_interactive_session(ownership, session_succeeded)
 }
 
-fn gateway_routes_ready_before_handoff(
+pub(super) fn gateway_routes_ready_before_handoff(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<bool, RunnerError> {
@@ -343,16 +339,6 @@ fn gateway_routes_ready_before_handoff(
         return Ok(true);
     }
     gateway_routes_registered_for_container(repo_root, policy)
-}
-
-fn maybe_start_workspace_gateway(policy: &EffectiveContainerPolicy) -> Result<(), RunnerError> {
-    if policy.dns_routes.is_empty() {
-        return Ok(());
-    }
-    let executable =
-        effigy_containers::session::resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
-    let command = effigy_containers::session::managed_gateway_command(&executable);
-    gateway_up_for_managed_task(&command)
 }
 
 fn render_workspace_handoff_notice(policy: &EffectiveContainerPolicy) -> String {

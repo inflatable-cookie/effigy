@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`003-runtime-activation-pipeline.md`](./003-runtime-activation-pipeline.md)
@@ -48,4 +48,5 @@ Make container commands thin wrappers over typed operation requests.
 
 ## Next Task
 
-Do not start until `g04.003` closes.
+Closed by card
+[`501-remove-final-runner-compose-runtime-helper-drift.md`](../../specs/batch-cards/501-remove-final-runner-compose-runtime-helper-drift.md).

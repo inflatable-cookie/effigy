@@ -4,7 +4,9 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command as ProcessCommand, Output, Stdio};
 
-use effigy_container_manager::{BackendId, ContainerBackendDetection, ContainerManager};
+use effigy_container_manager::{
+    BackendId, ContainerBackendDetection, ContainerComposeInvocationPlan, ContainerManager,
+};
 use effigy_containers::{
     compose::{compose_args, compose_invocation, resolve_host_cli_program},
     EffectiveContainerPolicy,
@@ -78,13 +80,32 @@ pub(in crate::runner) fn run_compose_exec_with_options(
     label: &str,
     stdin_file: Option<&Path>,
 ) -> Result<Output, RunnerError> {
-    if active_backend_id()? == BackendId::colima_nerdctl() {
+    let (program, resolved_args) = compose_invocation(policy, args);
+    let plan = ContainerComposeInvocationPlan {
+        backend_id: active_backend_id()?,
+        repo_root: repo_root.to_path_buf(),
+        profile: policy.profile.clone(),
+        action: effigy_container_manager::ContainerAction::Exec,
+        program: OsString::from(program),
+        args: resolved_args,
+        label: label.to_owned(),
+    };
+    run_compose_exec_plan_with_options(policy, &plan, capture, stdin_file)
+}
+
+pub(in crate::runner) fn run_compose_exec_plan_with_options(
+    policy: &EffectiveContainerPolicy,
+    plan: &ContainerComposeInvocationPlan,
+    capture: bool,
+    stdin_file: Option<&Path>,
+) -> Result<Output, RunnerError> {
+    if plan.backend_id == BackendId::colima_nerdctl() {
         return colima::run_colima_direct_exec(
-            repo_root,
+            &plan.repo_root,
             policy,
-            args,
+            &plan.args,
             capture,
-            label,
+            &plan.label,
             stdin_file,
             &parse_compose_exec_args,
             &run_command_capture_allow_failure,
@@ -93,32 +114,36 @@ pub(in crate::runner) fn run_compose_exec_with_options(
         );
     }
 
-    let (program, resolved_args) = compose_invocation(policy, args);
     if capture {
         return run_command_capture_allow_failure_with_stdin(
-            repo_root,
-            OsStr::new(program),
-            &resolved_args,
+            &plan.repo_root,
+            plan.program.as_os_str(),
+            &plan.args,
             stdin_file,
         );
     }
 
-    let resolved_program = resolve_host_program(program);
+    let resolved_program = resolve_host_program(plan.program.as_os_str());
     let mut child = ProcessCommand::new(&resolved_program)
-        .current_dir(repo_root)
-        .args(&resolved_args)
+        .current_dir(&plan.repo_root)
+        .args(&plan.args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: format!("{label} ({program} {})", format_args(&resolved_args)),
+            command: format!(
+                "{} ({} {})",
+                plan.label,
+                plan.program.to_string_lossy(),
+                format_args(&plan.args)
+            ),
             error,
         })?;
     let status = child
         .wait()
         .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: label.to_owned(),
+            command: plan.label.clone(),
             error,
         })?;
     Ok(Output {

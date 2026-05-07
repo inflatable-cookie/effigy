@@ -27,7 +27,7 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
-- [`045-runtime-activation-pipeline-strict-lane.md`](./045-runtime-activation-pipeline-strict-lane.md)
+- [`047-data-seed-dump-pipeline-strict-lane.md`](./047-data-seed-dump-pipeline-strict-lane.md)
 
 Paused but still useful:
 
@@ -35,6 +35,8 @@ Paused but still useful:
 
 Recently completed:
 
+- [`046-container-operation-pipeline-strict-lane.md`](./046-container-operation-pipeline-strict-lane.md)
+- [`045-runtime-activation-pipeline-strict-lane.md`](./045-runtime-activation-pipeline-strict-lane.md)
 - [`044-execution-pipeline-ownership-strict-lane.md`](./044-execution-pipeline-ownership-strict-lane.md)
 - [`043-runtime-architecture-sanity-and-g04-rollover-strict-lane.md`](./043-runtime-architecture-sanity-and-g04-rollover-strict-lane.md)
 - [`042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md`](./042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md)
@@ -72,4 +74,4 @@ Recently completed:
 ## Next Task
 
 Card
-[`455-move-runtime-prep-activation-executor-behind-plan.md`](./batch-cards/455-move-runtime-prep-activation-executor-behind-plan.md).
+[`509-add-data-artifact-handoff-plan-foundation.md`](./batch-cards/509-add-data-artifact-handoff-plan-foundation.md).

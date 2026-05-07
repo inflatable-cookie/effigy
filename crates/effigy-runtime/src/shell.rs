@@ -3,10 +3,10 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
+use effigy_container_manager::{ContainerAction, ContainerComposeInvocationPlan};
 use effigy_containers::{
-    compose::compose_args, exec::colima_is_running, load_container_exec_working_dir,
-    load_container_policy, validate_compose_backend_runtime, validate_container_policy,
-    EffectiveContainerPolicy,
+    exec::colima_is_running, load_container_exec_working_dir, load_container_policy,
+    validate_compose_backend_runtime, validate_container_policy, EffectiveContainerPolicy,
 };
 use effigy_core::shell::shell_quote;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
@@ -44,11 +44,9 @@ where
     FValidate: Fn(&Path, &EffectiveContainerPolicy) -> Result<(), EffigyRuntimeError>,
     FProbeShell: Fn(&Path, &EffectiveContainerPolicy, &str) -> Result<String, EffigyRuntimeError>,
     FRunExec: Fn(
-        &Path,
         &EffectiveContainerPolicy,
-        &[OsString],
+        &ContainerComposeInvocationPlan,
         bool,
-        &str,
     ) -> Result<Output, EffigyRuntimeError>,
 {
     let (policy, service, working_dir) =
@@ -64,7 +62,14 @@ where
         &shell,
         workspace_identity.as_ref(),
     );
-    let status = run_exec(repo_root, &policy, &args, false, "docker compose exec")?.status;
+    let plan = crate::container_manager::compose_invocation_plan_from_args(
+        repo_root,
+        &policy,
+        args,
+        ContainerAction::Shell,
+        "docker compose exec",
+    )?;
+    let status = run_exec(&policy, &plan, false)?.status;
     if should_fail_container_shell_exit(initial_command.is_some(), status.success()) {
         return Err(EffigyRuntimeError::task_invocation(format!(
             "docker compose exec exited with status {status}"
@@ -94,11 +99,9 @@ where
     FValidate: Fn(&Path, &EffectiveContainerPolicy) -> Result<(), EffigyRuntimeError>,
     FProbeShell: Fn(&Path, &EffectiveContainerPolicy, &str) -> Result<String, EffigyRuntimeError>,
     FRunExec: Fn(
-        &Path,
         &EffectiveContainerPolicy,
-        &[OsString],
+        &ContainerComposeInvocationPlan,
         bool,
-        &str,
     ) -> Result<Output, EffigyRuntimeError>,
 {
     let (policy, service, working_dir) =
@@ -118,7 +121,14 @@ where
         &shell,
         workspace_identity.as_ref(),
     );
-    let status = run_exec(repo_root, &policy, &args, false, "docker compose exec")?.status;
+    let plan = crate::container_manager::compose_invocation_plan_from_args(
+        repo_root,
+        &policy,
+        args,
+        ContainerAction::Shell,
+        "docker compose exec",
+    )?;
+    let status = run_exec(&policy, &plan, false)?.status;
     if should_fail_container_shell_exit(command.is_some(), status.success()) {
         return Err(EffigyRuntimeError::task_invocation(format!(
             "docker compose exec exited with status {status}"
@@ -175,29 +185,34 @@ fn resolve_workspace_exec_identity<FRunExec>(
 ) -> Result<Option<ResolvedWorkspaceExecIdentity>, EffigyRuntimeError>
 where
     FRunExec: Fn(
-        &Path,
         &EffectiveContainerPolicy,
-        &[OsString],
+        &ContainerComposeInvocationPlan,
         bool,
-        &str,
     ) -> Result<Output, EffigyRuntimeError>,
 {
     let Some(user) = policy.workspace_user.as_deref() else {
         return Ok(None);
     };
 
-    let mut args = compose_args(policy, ["exec", "-T", service, "sh", "-lc"]);
+    let mut args = vec![
+        OsString::from("exec"),
+        OsString::from("-T"),
+        OsString::from(service),
+        OsString::from("sh"),
+        OsString::from("-lc"),
+    ];
     args.push(OsString::from(format!(
         "id -u {} >/dev/null 2>&1",
         shell_quote(user)
     )));
-    let output = run_exec(
+    let plan = crate::container_manager::compose_invocation_plan_from_args(
         repo_root,
         policy,
-        &args,
-        true,
+        args,
+        ContainerAction::Exec,
         "docker compose exec user probe",
     )?;
+    let output = run_exec(policy, &plan, true)?;
     if output.status.success() {
         return Ok(Some(ResolvedWorkspaceExecIdentity {
             user: user.to_owned(),
@@ -213,7 +228,7 @@ where
 }
 
 fn build_container_shell_args(
-    policy: &EffectiveContainerPolicy,
+    _policy: &EffectiveContainerPolicy,
     service: &str,
     command: Option<&str>,
     working_dir: &Path,
@@ -221,7 +236,11 @@ fn build_container_shell_args(
     workspace_identity: Option<&ResolvedWorkspaceExecIdentity>,
 ) -> Vec<OsString> {
     if let Some(command) = command {
-        let mut args = compose_args(policy, ["exec", "-T", "-w"]);
+        let mut args = vec![
+            OsString::from("exec"),
+            OsString::from("-T"),
+            OsString::from("-w"),
+        ];
         args.push(OsString::from(working_dir));
         append_workspace_exec_identity(&mut args, workspace_identity);
         append_color_exec_env(&mut args, false);
@@ -234,7 +253,7 @@ fn build_container_shell_args(
         return args;
     }
 
-    let mut args = compose_args(policy, ["exec", "-w"]);
+    let mut args = vec![OsString::from("exec"), OsString::from("-w")];
     args.push(OsString::from(working_dir));
     append_workspace_exec_identity(&mut args, workspace_identity);
     append_color_exec_env(&mut args, true);
@@ -250,14 +269,14 @@ fn build_container_shell_args(
 }
 
 fn build_interactive_container_shell_args(
-    policy: &EffectiveContainerPolicy,
+    _policy: &EffectiveContainerPolicy,
     service: &str,
     initial_command: Option<&str>,
     working_dir: &Path,
     shell: &str,
     workspace_identity: Option<&ResolvedWorkspaceExecIdentity>,
 ) -> Vec<OsString> {
-    let mut args = compose_args(policy, ["exec", "-w"]);
+    let mut args = vec![OsString::from("exec"), OsString::from("-w")];
     args.push(OsString::from(working_dir));
     append_workspace_exec_identity(&mut args, workspace_identity);
     append_color_exec_env(&mut args, true);

@@ -2,8 +2,9 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
+use effigy_container_manager::ContainerAction;
 use effigy_containers::{
-    exec::shutdown_container as shutdown_container_via_exec,
+    colima::shutdown_compose_commands,
     session::{
         attached_session_process_plans, attached_session_tab_order,
         render_attached_session_closeout as render_attached_session_closeout_text,
@@ -17,7 +18,7 @@ use effigy_process::ProcessSpec;
 use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
 
 use crate::signals::{
-    install_stop_requested_flag, spawn_docker_inherit, terminate_inherited_child_graceful,
+    install_stop_requested_flag, spawn_compose_plan_inherit, terminate_inherited_child_graceful,
 };
 use crate::EffigyRuntimeError;
 
@@ -136,15 +137,14 @@ where
         "[info] following `{service}` logs; use Ctrl+C to stop the session and apply the configured shutdown policy"
     );
     let flag = install_stop_requested_flag()?;
-    let mut child = spawn_docker_inherit(
+    let plan = crate::container_manager::compose_invocation_plan(
         repo_root,
         policy,
-        &effigy_containers::compose::compose_args(
-            policy,
-            ["logs", "--follow", "--tail", "100", service.as_str()],
-        ),
+        ["logs", "--follow", "--tail", "100", service.as_str()],
+        ContainerAction::Logs,
         "docker compose logs --follow",
     )?;
+    let mut child = spawn_compose_plan_inherit(&plan)?;
     let termination_reason = loop {
         if flag.load(std::sync::atomic::Ordering::Relaxed) {
             break "signal";
@@ -193,8 +193,7 @@ where
         // down so they don't restart their workloads against a
         // shutting-down compose project.
         pre_shutdown(repo_root, policy);
-        shutdown_container_via_exec(repo_root, policy)
-            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+        shutdown_container_with_manager_plan(repo_root, policy)?;
         gateway_domains_removed = deregister_gateway_routes(policy)?;
         shutdown_applied = true;
     }
@@ -209,4 +208,21 @@ where
         rendered.push_str(&format!("[gateway] removed {domain}"));
     }
     Ok(rendered)
+}
+
+fn shutdown_container_with_manager_plan(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), EffigyRuntimeError> {
+    for (args, label) in shutdown_compose_commands(policy) {
+        let plan = crate::container_manager::compose_invocation_plan_from_args(
+            repo_root,
+            policy,
+            args,
+            ContainerAction::Shutdown,
+            label,
+        )?;
+        crate::signals::run_compose_plan_capture(policy, &plan)?;
+    }
+    Ok(())
 }

@@ -615,10 +615,12 @@ dependencies = [
  "effigy-changelog",
  "effigy-cli",
  "effigy-container-manager",
+ "effigy-container-ops",
  "effigy-containers",
  "effigy-context",
  "effigy-contracts",
  "effigy-core",
+ "effigy-data",
  "effigy-demo",
  "effigy-distribution",
  "effigy-docs-policy",
@@ -736,6 +738,10 @@ name = "effigy-container-manager"
 version = "0.4.0"
 
 [[package]]
+name = "effigy-container-ops"
+version = "0.4.0"
+
+[[package]]
 name = "effigy-containers"
 version = "0.4.0"
 dependencies = [
@@ -776,6 +782,10 @@ dependencies = [
  "tempfile",
  "toml",
 ]
+
+[[package]]
+name = "effigy-data"
+version = "0.4.0"
 
 [[package]]
 name = "effigy-demo"
@@ -965,6 +975,7 @@ dependencies = [
  "anstyle",
  "effigy-catalog",
  "effigy-container-manager",
+ "effigy-container-ops",
  "effigy-containers",
  "effigy-core",
  "effigy-gateway",

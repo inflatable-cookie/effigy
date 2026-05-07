@@ -31,7 +31,7 @@ mod transport;
 
 pub(in crate::runner) use transport::{
     append_color_exec_env, copy_file_into_service, probe_container_capabilities, run_compose_exec,
-    run_compose_exec_with_options,
+    run_compose_exec_plan_with_options,
 };
 
 pub(super) fn run_exec(args: ExecArgs) -> Result<String, RunnerError> {

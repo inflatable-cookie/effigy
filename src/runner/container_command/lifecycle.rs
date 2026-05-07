@@ -3,8 +3,11 @@ use std::path::Path;
 use std::process::Output;
 
 use effigy_container_manager::{ContainerAction, ContainerRuntimeState};
+use effigy_container_ops::{
+    ContainerExecOperation, ContainerLifecycleOperation, ContainerOperationKind,
+    ContainerOperationPlan, ContainerOperationRequest,
+};
 use effigy_containers::{
-    compose::{compose_args, compose_up_args},
     effective_attach_mode, eject_generated_compose, eject_report,
     exec::{
         colima_is_running, colima_profile_warnings, ensure_colima_running,
@@ -17,8 +20,7 @@ use effigy_containers::{
 use effigy_runtime::session::run_attached_container_session_with_hook;
 use effigy_runtime::shell::run_container_shell as run_runtime_container_shell;
 use effigy_runtime::signals::{
-    install_stop_requested_flag, run_compose_inherit_with_stop_flag, run_docker_capture,
-    ComposeRunOutcome,
+    install_stop_requested_flag, run_compose_plan_inherit_with_stop_flag, ComposeRunOutcome,
 };
 
 use super::gateway_registration::{
@@ -35,8 +37,7 @@ use super::{render_container_report, RunnerError};
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::container_runtime_prep::ensure_primary_service_exec_ready_for_runtime;
 use crate::runner::exec_command::{
-    append_color_exec_env, probe_container_capabilities, run_compose_exec,
-    run_compose_exec_with_options,
+    append_color_exec_env, probe_container_capabilities, run_compose_exec_plan_with_options,
 };
 use crate::runner::host_container_lease::clear_host_container_lease;
 use crate::runner::host_process::start_host_processes_for_container;
@@ -57,6 +58,11 @@ pub(super) fn run_container_up(
 
     let stop_flag = install_stop_requested_flag()?;
     let policy = load_container_policy(repo_root, name)?;
+    let _operation_plan = lifecycle_operation_plan(
+        repo_root,
+        &policy,
+        ContainerLifecycleOperation::up(attach, detach),
+    );
     validate_container_policy(repo_root, &policy)?;
     validate_compose_backend_runtime(repo_root, &policy)?;
     let warnings = colima_profile_warnings(&policy, repo_root);
@@ -75,14 +81,15 @@ pub(super) fn run_container_up(
         None,
     )
     .map_err(RunnerError::from)?;
+    let up_plan = effigy_runtime::container_manager::compose_up_invocation_plan(
+        repo_root,
+        &policy,
+        ContainerAction::Activate,
+        "docker compose up",
+    )
+    .map_err(RunnerError::from)?;
     if attach_mode == EffectiveAttachMode::Attached {
-        match run_compose_inherit_with_stop_flag(
-            repo_root,
-            &policy,
-            &compose_up_args(&policy),
-            "docker compose up",
-            &stop_flag,
-        )? {
+        match run_compose_plan_inherit_with_stop_flag(&up_plan, &stop_flag)? {
             ComposeRunOutcome::Succeeded => {}
             ComposeRunOutcome::Interrupted => {
                 return render_interrupted_up_closeout(
@@ -103,12 +110,7 @@ pub(super) fn run_container_up(
             }
         }
     } else {
-        run_docker_capture(
-            repo_root,
-            &policy,
-            &compose_up_args(&policy),
-            "docker compose up",
-        )?;
+        effigy_runtime::signals::run_compose_plan_capture(&policy, &up_plan)?;
     }
     if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
         return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
@@ -182,6 +184,40 @@ pub(super) fn run_container_up(
         },
     )
     .map_err(Into::into)
+}
+
+pub(in crate::runner) fn lifecycle_operation_plan(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    operation: ContainerLifecycleOperation,
+) -> ContainerOperationPlan {
+    ContainerOperationRequest::new(
+        repo_root.to_path_buf(),
+        policy.name.clone(),
+        ContainerOperationKind::lifecycle(operation),
+    )
+    .backend_id(lifecycle_backend_id(policy))
+    .plan()
+}
+
+pub(in crate::runner) fn exec_operation_plan(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    operation: ContainerExecOperation,
+) -> ContainerOperationPlan {
+    ContainerOperationRequest::new(
+        repo_root.to_path_buf(),
+        policy.name.clone(),
+        ContainerOperationKind::exec(operation),
+    )
+    .backend_id(lifecycle_backend_id(policy))
+    .plan()
+}
+
+fn lifecycle_backend_id(policy: &EffectiveContainerPolicy) -> &'static str {
+    match policy.driver {
+        effigy_manifest::ManifestContainerDriver::Colima => "colima",
+    }
 }
 
 fn cleanup_failed_container_up(
@@ -288,6 +324,11 @@ pub(super) fn run_container_shell(
         ));
     }
     let (policy, _, _) = resolve_container_shell_session(repo_root, name, service)?;
+    let _operation_plan = exec_operation_plan(
+        repo_root,
+        &policy,
+        ContainerExecOperation::shell(service.map(str::to_owned), command.map(str::to_owned), true),
+    );
     maybe_refresh_workspace_effigy_for_shell(repo_root, &policy)?;
     run_runtime_container_shell(
         repo_root,
@@ -324,8 +365,17 @@ pub(in crate::runner) fn run_container_exec_capture_with_options(
     }
 
     let (policy, service, _) = resolve_container_shell_session(repo_root, name, service)?;
+    let _operation_plan = exec_operation_plan(
+        repo_root,
+        &policy,
+        ContainerExecOperation::captured(
+            Some(service.clone()),
+            command.to_vec(),
+            stdin_file.map(Path::to_path_buf),
+        ),
+    );
     maybe_refresh_workspace_effigy_for_shell(repo_root, &policy)?;
-    let mut args = compose_args(&policy, ["exec", "-T"]);
+    let mut args = vec![OsString::from("exec"), OsString::from("-T")];
     if let Some(working_dir) =
         resolve_container_exec_working_dir_for_service(repo_root, name, &policy, &service)?
     {
@@ -337,14 +387,15 @@ pub(in crate::runner) fn run_container_exec_capture_with_options(
     args.push(OsString::from(CONTAINER_HANDOFF_ENV_ASSIGNMENT));
     args.push(OsString::from(service));
     args.extend(command.iter().map(OsString::from));
-    run_compose_exec_with_options(
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
         repo_root,
         &policy,
-        &args,
-        true,
+        args,
+        ContainerAction::Exec,
         "docker compose exec",
-        stdin_file,
     )
+    .map_err(RunnerError::from)?;
+    run_compose_exec_plan_with_options(&policy, &plan, true, stdin_file)
 }
 
 fn resolve_container_exec_working_dir_for_service(
@@ -380,13 +431,12 @@ fn probe_runtime_shell_capability(
 }
 
 fn run_runtime_shell_exec(
-    repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    args: &[OsString],
+    plan: &effigy_container_manager::ContainerComposeInvocationPlan,
     capture: bool,
-    label: &str,
 ) -> Result<Output, effigy_runtime::EffigyRuntimeError> {
-    run_compose_exec(repo_root, policy, args, capture, label).map_err(runtime_error_from_runner)
+    run_compose_exec_plan_with_options(policy, plan, capture, None)
+        .map_err(runtime_error_from_runner)
 }
 
 fn emit_warning_lines(warnings: &[String]) {
@@ -431,13 +481,18 @@ fn maybe_refresh_workspace_effigy_for_shell(
 #[cfg(test)]
 mod tests {
     use super::{
-        finish_container_up_failure, render_interrupted_up_closeout_text,
-        resolve_container_exec_working_dir_for_service, run_container_eject, EffectiveAttachMode,
+        exec_operation_plan, finish_container_up_failure, lifecycle_operation_plan,
+        render_interrupted_up_closeout_text, resolve_container_exec_working_dir_for_service,
+        run_container_eject, EffectiveAttachMode,
     };
     use crate::runner::container_command::support::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
     use crate::runner::RunnerError;
+    use effigy_container_ops::{
+        ContainerConfirmationPolicy, ContainerExecOperation, ContainerLifecycleOperation,
+        ContainerOperationKind, ContainerSideEffectClass,
+    };
     use effigy_containers::{
         down_report, load_container_policy, up_detached_report, EffectiveComposeSource,
         EffectiveContainerPolicy, SharedServiceBinding,
@@ -543,6 +598,101 @@ catalog = "php-fpm"
             shutdown: ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
             host_processes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn lifecycle_operation_plan_keeps_policy_identity_and_backend_id() {
+        let policy = test_policy(Vec::new());
+        let plan = lifecycle_operation_plan(
+            Path::new("/tmp/repo"),
+            &policy,
+            ContainerLifecycleOperation::up(false, true),
+        );
+
+        assert_eq!(plan.request.repo_root, PathBuf::from("/tmp/repo"));
+        assert_eq!(plan.request.policy_name, "web");
+        assert_eq!(plan.request.backend_id.as_deref(), Some("colima"));
+        assert_eq!(plan.side_effect, ContainerSideEffectClass::StartsRuntime);
+    }
+
+    #[test]
+    fn lifecycle_reset_plan_requires_confirmation_only_for_wipe_data() {
+        let policy = test_policy(Vec::new());
+        let keep_data = lifecycle_operation_plan(
+            Path::new("/tmp/repo"),
+            &policy,
+            ContainerLifecycleOperation::reset(true, false, false),
+        );
+        assert_eq!(
+            keep_data.confirmation,
+            ContainerConfirmationPolicy::NoConfirmationRequired
+        );
+
+        let wipe_data = lifecycle_operation_plan(
+            Path::new("/tmp/repo"),
+            &policy,
+            ContainerLifecycleOperation::reset(false, true, false),
+        );
+        assert_eq!(
+            wipe_data.confirmation,
+            ContainerConfirmationPolicy::RequireConfirmation {
+                reason: "reset removes runtime data",
+            }
+        );
+    }
+
+    #[test]
+    fn exec_operation_plan_keeps_captured_command_identity() {
+        let policy = test_policy(Vec::new());
+        let stdin = PathBuf::from("/tmp/import.sql");
+        let plan = exec_operation_plan(
+            Path::new("/tmp/repo"),
+            &policy,
+            ContainerExecOperation::captured(
+                Some("db".to_owned()),
+                vec!["mysql".to_owned(), "app".to_owned()],
+                Some(stdin.clone()),
+            ),
+        );
+
+        assert_eq!(plan.request.repo_root, PathBuf::from("/tmp/repo"));
+        assert_eq!(plan.request.policy_name, "web");
+        assert_eq!(plan.request.backend_id.as_deref(), Some("colima"));
+        assert_eq!(
+            plan.side_effect,
+            ContainerSideEffectClass::InteractsWithRuntime
+        );
+        match plan.request.kind {
+            ContainerOperationKind::Exec(ContainerExecOperation::Captured(operation)) => {
+                assert_eq!(operation.service.as_deref(), Some("db"));
+                assert_eq!(operation.command, vec!["mysql", "app"]);
+                assert_eq!(operation.stdin_file, Some(stdin));
+            }
+            other => panic!("unexpected operation kind: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exec_operation_plan_keeps_shell_command_identity() {
+        let policy = test_policy(Vec::new());
+        let plan = exec_operation_plan(
+            Path::new("/tmp/repo"),
+            &policy,
+            ContainerExecOperation::shell(
+                Some("app".to_owned()),
+                Some("composer install".to_owned()),
+                true,
+            ),
+        );
+
+        match plan.request.kind {
+            ContainerOperationKind::Exec(ContainerExecOperation::Shell(operation)) => {
+                assert_eq!(operation.service.as_deref(), Some("app"));
+                assert_eq!(operation.command.as_deref(), Some("composer install"));
+                assert!(operation.interactive);
+            }
+            other => panic!("unexpected operation kind: {other:?}"),
         }
     }
 

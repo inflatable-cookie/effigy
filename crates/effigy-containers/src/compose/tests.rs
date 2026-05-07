@@ -76,6 +76,39 @@ fn resolve_compose_backend_honors_docker_override_env() {
 }
 
 #[test]
+fn resolve_compose_backend_for_policy_prefers_declared_colima_driver() {
+    let _lock = env_lock();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let bin = temp.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("mkdir bin");
+    std::fs::write(bin.join("docker"), "#!/bin/sh\n").expect("write docker");
+    let previous_path = std::env::var_os("PATH");
+    let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+    unsafe {
+        std::env::set_var("PATH", bin.display().to_string());
+        std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+    }
+    let backend = resolve_compose_backend_for_policy(&test_policy(EffectiveComposeSource::Direct));
+    match previous_path {
+        Some(value) => unsafe {
+            std::env::set_var("PATH", value);
+        },
+        None => unsafe {
+            std::env::remove_var("PATH");
+        },
+    }
+    match previous_backend {
+        Some(value) => unsafe {
+            std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
+        },
+        None => unsafe {
+            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+        },
+    }
+    assert_eq!(backend, ComposeBackend::ColimaNerdctl);
+}
+
+#[test]
 fn resolve_host_cli_program_prefers_path_hits() {
     let _lock = env_lock();
     let temp = tempfile::tempdir().expect("tempdir");

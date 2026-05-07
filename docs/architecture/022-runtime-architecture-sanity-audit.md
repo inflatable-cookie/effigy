@@ -444,4 +444,4 @@ Minimum proof before `g04` closes:
 ## Next Task
 
 Start card
-[`455-move-runtime-prep-activation-executor-behind-plan.md`](../specs/batch-cards/455-move-runtime-prep-activation-executor-behind-plan.md).
+[`509-add-data-artifact-handoff-plan-foundation.md`](../specs/batch-cards/509-add-data-artifact-handoff-plan-foundation.md).

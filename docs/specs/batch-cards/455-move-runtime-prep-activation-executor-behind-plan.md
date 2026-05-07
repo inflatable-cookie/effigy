@@ -2,7 +2,7 @@
 
 Lane: [`045-runtime-activation-pipeline-strict-lane.md`](../045-runtime-activation-pipeline-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -42,6 +42,17 @@ Make `container_runtime_prep` execute task activation from a
 This card is complete when task activation side effects are driven from a
 `RuntimeActivationPlan` and existing activation callers keep the same behavior.
 
+## Closeout
+
+- `activate_container_runtime_for_task` now converts the temporary
+  `ActivationRequest` shim into a `RuntimeActivationPlan`.
+- The internal task activation executor derives repo root, container name, repo
+  override, and lease policy from the plan.
+- Existing side-effect functions still own runtime prep, gateway readiness, and
+  host-container lease refresh.
+- Focused tests prove side-effect ordering, skip-refresh behavior, and
+  activation report identity without live containers.
+
 ## Validation
 
 - `cargo test -p effigy --lib container_runtime_prep`
@@ -51,4 +62,4 @@ This card is complete when task activation side effects are driven from a
 
 ## Next Task
 
-Extract the first named runtime-prep side-effect stage.
+Extract runtime policy validation into the first named activation stage.

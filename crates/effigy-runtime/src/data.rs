@@ -8,6 +8,11 @@ use effigy_catalog::volumes::{
     parse_listed_volume_names, parse_volume_usage_bytes_map, remove_volume_command,
     volume_usage_batch_command, DockerCommand, ManagedVolume,
 };
+use effigy_container_manager::ContainerAction;
+use effigy_container_ops::{
+    ContainerCacheOperation, ContainerDataOperation, ContainerOperationKind,
+    ContainerOperationPlan, ContainerOperationRequest,
+};
 use effigy_containers::{
     cache_list_all_report, cache_list_report, cache_prune_report, data_list_report,
     data_transfer_report, exec::colima_is_running, load_container_policy,
@@ -39,6 +44,7 @@ where
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let _operation_plan = data_operation_plan(repo_root, &policy, ContainerDataOperation::list());
     ensure_generated_data_path(&policy, "list")?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -80,6 +86,11 @@ where
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let _operation_plan = cache_operation_plan(
+        repo_root,
+        &policy,
+        ContainerCacheOperation::list(false, None, None),
+    );
     ensure_generated_data_path(&policy, "cache list")?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -143,6 +154,15 @@ where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     let profile = profile.unwrap_or("effigy");
+    let _operation_plan = global_cache_operation_plan(
+        cwd,
+        profile,
+        ContainerCacheOperation::list(
+            true,
+            project_filter.map(str::to_owned),
+            kind_filter.map(str::to_owned),
+        ),
+    );
     let caches = collect_global_cache_entries(cwd, profile, &run_runtime_volume_capture)?
         .into_iter()
         .filter(|cache| {
@@ -170,6 +190,11 @@ where
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let _operation_plan = cache_operation_plan(
+        repo_root,
+        &policy,
+        ContainerCacheOperation::prune(false, None, None, false),
+    );
     ensure_generated_data_path(&policy, "cache prune")?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -220,6 +245,16 @@ where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     let profile = profile.unwrap_or("effigy");
+    let _operation_plan = global_cache_operation_plan(
+        cwd,
+        profile,
+        ContainerCacheOperation::prune(
+            true,
+            project_filter.map(str::to_owned),
+            kind_filter.map(str::to_owned),
+            false,
+        ),
+    );
     let caches = collect_global_cache_entries(cwd, profile, &run_runtime_volume_capture)?
         .into_iter()
         .filter(|cache| {
@@ -311,6 +346,18 @@ where
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let _operation_plan = data_operation_plan(
+        repo_root,
+        &policy,
+        match action {
+            ContainerDataTransferAction::Export => {
+                ContainerDataOperation::export(volume_name, archive_path.to_path_buf())
+            }
+            ContainerDataTransferAction::Import => {
+                ContainerDataOperation::import(volume_name, archive_path.to_path_buf())
+            }
+        },
+    );
     ensure_generated_data_path(
         &policy,
         match action {
@@ -376,6 +423,11 @@ where
 {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let _operation_plan = data_operation_plan(
+        repo_root,
+        &policy,
+        ContainerDataOperation::pull_production(false),
+    );
     ensure_generated_data_path(&policy, "pull-production")?;
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -391,12 +443,13 @@ where
     let colima_started = effigy_containers::exec::ensure_colima_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let shared_service_notes = ensure_shared_services_running(&policy)?;
-    crate::signals::run_docker_capture(
+    let plan = crate::container_manager::compose_up_invocation_plan(
         repo_root,
         &policy,
-        &effigy_containers::compose::compose_up_args(&policy),
+        ContainerAction::Activate,
         "docker compose up",
     )?;
+    crate::signals::run_compose_plan_capture(&policy, &plan)?;
     let health = wait_for_container_ready(&policy)?;
     let gateway_routes = register_gateway_routes(repo_root, &policy)?;
     execute_pull_production_hook(repo_root, &policy, &hook)?;
@@ -414,6 +467,54 @@ where
         &effigy_containers::exec::colima_profile_warnings(&policy, repo_root),
     );
     Ok(render_container_report(report, output_json))
+}
+
+pub fn data_operation_plan(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    operation: ContainerDataOperation,
+) -> ContainerOperationPlan {
+    ContainerOperationRequest::new(
+        repo_root.to_path_buf(),
+        policy.name.clone(),
+        ContainerOperationKind::data(operation),
+    )
+    .backend_id(data_backend_id(policy))
+    .plan()
+}
+
+pub fn cache_operation_plan(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    operation: ContainerCacheOperation,
+) -> ContainerOperationPlan {
+    ContainerOperationRequest::new(
+        repo_root.to_path_buf(),
+        policy.name.clone(),
+        ContainerOperationKind::cache(operation),
+    )
+    .backend_id(data_backend_id(policy))
+    .plan()
+}
+
+pub fn global_cache_operation_plan(
+    cwd: &Path,
+    profile: &str,
+    operation: ContainerCacheOperation,
+) -> ContainerOperationPlan {
+    ContainerOperationRequest::new(
+        cwd.to_path_buf(),
+        format!("profile:{profile}"),
+        ContainerOperationKind::cache(operation),
+    )
+    .backend_id("colima")
+    .plan()
+}
+
+fn data_backend_id(policy: &EffectiveContainerPolicy) -> &'static str {
+    match policy.driver {
+        effigy_manifest::ManifestContainerDriver::Colima => "colima",
+    }
 }
 
 fn ensure_generated_data_path(
@@ -706,9 +807,19 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use effigy_catalog::volumes::RuntimeVolumeMetadata;
+    use effigy_container_ops::{
+        ContainerCacheOperation, ContainerConfirmationPolicy, ContainerDataOperation,
+        ContainerOperationKind, ContainerSideEffectClass,
+    };
+    use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
+    use effigy_manifest::{
+        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
+        ManifestContainerStartup,
+    };
 
     use super::{
-        collect_global_cache_entries_from_names, ensure_cache_prune_target_is_stopped,
+        cache_operation_plan, cache_scope_label, collect_global_cache_entries_from_names,
+        data_operation_plan, ensure_cache_prune_target_is_stopped, global_cache_operation_plan,
         project_name_from_volume_name,
     };
 
@@ -835,6 +946,99 @@ mod tests {
             ),
             "profile-wide cache inventory (project=acowtancy-dev, kind=rust-target)"
         );
+    }
+
+    #[test]
+    fn data_operation_plan_keeps_transfer_identity() {
+        let policy = stub_policy("web");
+        let archive = std::path::PathBuf::from("/tmp/export.tar.gz");
+        let plan = data_operation_plan(
+            std::path::Path::new("/tmp/repo"),
+            &policy,
+            ContainerDataOperation::export("postgres-data", archive.clone()),
+        );
+
+        assert_eq!(plan.request.policy_name, "web");
+        assert_eq!(plan.request.backend_id.as_deref(), Some("colima"));
+        assert_eq!(plan.side_effect, ContainerSideEffectClass::WritesHostData);
+        match plan.request.kind {
+            ContainerOperationKind::Data(ContainerDataOperation::Export(operation)) => {
+                assert_eq!(operation.volume, "postgres-data");
+                assert_eq!(operation.path, archive);
+            }
+            other => panic!("unexpected operation kind: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cache_prune_operation_plan_requires_confirmation() {
+        let policy = stub_policy("web");
+        let plan = cache_operation_plan(
+            std::path::Path::new("/tmp/repo"),
+            &policy,
+            ContainerCacheOperation::prune(false, None, None, false),
+        );
+
+        assert_eq!(plan.side_effect, ContainerSideEffectClass::RemovesCacheData);
+        assert_eq!(
+            plan.confirmation,
+            ContainerConfirmationPolicy::RequireConfirmation {
+                reason: "operation removes cache data",
+            }
+        );
+    }
+
+    #[test]
+    fn global_cache_operation_plan_keeps_profile_identity() {
+        let plan = global_cache_operation_plan(
+            std::path::Path::new("/tmp/repo"),
+            "effigy",
+            ContainerCacheOperation::list(true, Some("project".to_owned()), None),
+        );
+
+        assert_eq!(plan.request.policy_name, "profile:effigy");
+        assert_eq!(plan.request.backend_id.as_deref(), Some("colima"));
+        match plan.request.kind {
+            ContainerOperationKind::Cache(ContainerCacheOperation::List(operation)) => {
+                assert!(operation.all);
+                assert_eq!(operation.project.as_deref(), Some("project"));
+            }
+            other => panic!("unexpected operation kind: {other:?}"),
+        }
+    }
+
+    fn stub_policy(name: &str) -> EffectiveContainerPolicy {
+        EffectiveContainerPolicy {
+            name: name.to_owned(),
+            driver: ManifestContainerDriver::Colima,
+            startup: ManifestContainerStartup::Detached,
+            profile: "effigy".to_owned(),
+            compose_source: EffectiveComposeSource::Generated,
+            compose_files: vec![],
+            compose_file_display: String::new(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: format!("{name}-project"),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            service_aliases: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            workspace_user: None,
+            workspace_home: None,
+            on_task_exit: ManifestContainerOnTaskExit::Stop,
+            shutdown: ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+            host_processes: vec![],
+        }
     }
 }
 

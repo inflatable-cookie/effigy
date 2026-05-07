@@ -2,22 +2,20 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use effigy_catalog::volumes::classify_for_reset;
-use effigy_container_manager::{
-    ContainerAction, ContainerBackendDetection, ContainerCleanupResult, ContainerManager,
-    ContainerRuntimeState,
-};
+use effigy_container_manager::{ContainerAction, ContainerCleanupResult, ContainerRuntimeState};
 use effigy_containers::{
-    compose::compose_args,
-    down_report,
-    exec::{colima_is_running, shutdown_container as shutdown_container_via_exec},
-    load_container_policy, reset_report, validate_compose_backend_runtime,
-    validate_container_policy, EffectiveComposeSource, EffectiveContainerPolicy,
+    colima::shutdown_compose_commands, down_report, exec::colima_is_running, load_container_policy,
+    reset_report, validate_compose_backend_runtime, validate_container_policy,
+    EffectiveComposeSource, EffectiveContainerPolicy,
 };
 use serde_yaml::{Mapping, Value};
 
-use crate::container_manager::lifecycle_operation_report;
+use crate::container_manager::{
+    compose_invocation_plan, compose_invocation_plan_from_args, lifecycle_operation_report,
+    runtime_invocation_plan,
+};
 use crate::read::{discover_running_environments, filter_running_environments_for_scope};
-use crate::signals::run_docker_capture;
+use crate::signals::run_compose_plan_capture;
 use crate::EffigyRuntimeError;
 
 pub fn run_container_down<F>(
@@ -38,8 +36,7 @@ where
     let colima_running = colima_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     if colima_running {
-        shutdown_container_via_exec(repo_root, &policy)
-            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+        shutdown_container_with_manager_plan(repo_root, &policy)?;
     }
     let _manager_report = lifecycle_operation_report(
         repo_root,
@@ -98,8 +95,7 @@ where
         // host-side supervisors stop racing with the compose-down.
         pre_shutdown(repo_root, &policy);
         if colima_running {
-            shutdown_container_via_exec(repo_root, &policy)
-                .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+            shutdown_container_with_manager_plan(repo_root, &policy)?;
         }
         let _manager_report = lifecycle_operation_report(
             repo_root,
@@ -157,8 +153,7 @@ where
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
         pre_shutdown(repo_root, &policy);
         if colima_running {
-            shutdown_container_via_exec(repo_root, &policy)
-                .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+            shutdown_container_with_manager_plan(repo_root, &policy)?;
         }
         let _manager_report = lifecycle_operation_report(
             repo_root,
@@ -235,22 +230,26 @@ where
     };
     if colima_running {
         if preserve_persistent_data {
-            run_docker_capture(
+            let plan = compose_invocation_plan(
                 repo_root,
                 &policy,
-                &compose_args(&policy, ["down", "--remove-orphans"]),
+                ["down", "--remove-orphans"],
+                ContainerAction::Shutdown,
                 "docker compose down",
             )?;
+            run_compose_plan_capture(&policy, &plan)?;
             if let Some(classification) = volume_actions.as_ref() {
                 remove_reset_volumes(repo_root, &policy, classification)?;
             }
         } else {
-            run_docker_capture(
+            let plan = compose_invocation_plan(
                 repo_root,
                 &policy,
-                &compose_args(&policy, ["down", "-v", "--remove-orphans"]),
+                ["down", "-v", "--remove-orphans"],
+                ContainerAction::Shutdown,
                 "docker compose down -v",
             )?;
+            run_compose_plan_capture(&policy, &plan)?;
         }
     }
     remove_generated_runtime_artifacts(repo_root, &policy)?;
@@ -266,6 +265,23 @@ where
     annotate_left_running_shared_services(&mut report, &policy);
     annotate_removed_gateway_routes(&mut report, &removed_gateway_domains);
     Ok(render_container_report(report, output_json))
+}
+
+fn shutdown_container_with_manager_plan(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), EffigyRuntimeError> {
+    for (args, label) in shutdown_compose_commands(policy) {
+        let plan = compose_invocation_plan_from_args(
+            repo_root,
+            policy,
+            args,
+            ContainerAction::Shutdown,
+            label,
+        )?;
+        run_compose_plan_capture(policy, &plan)?;
+    }
+    Ok(())
 }
 
 fn remove_generated_runtime_artifacts(
@@ -365,24 +381,24 @@ fn remove_runtime_image_allow_missing(
         OsString::from("-f"),
         OsString::from(image_ref),
     ];
-    let (program, args) = ContainerManager::defaults()
-        .runtime_process_invocation(
-            &ContainerBackendDetection::from_env_and_path(),
-            policy.profile.as_str(),
-            "docker",
-            &docker_args,
-        )
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let plan = runtime_invocation_plan(
+        repo_root,
+        policy,
+        "docker",
+        &docker_args,
+        ContainerAction::Shutdown,
+        &format!("remove generated image `{image_ref}`"),
+    )?;
 
-    let output = std::process::Command::new(&program)
+    let output = std::process::Command::new(&plan.program)
         .current_dir(repo_root)
-        .args(&args)
+        .args(&plan.args)
         .output()
         .map_err(|error| EffigyRuntimeError::TaskCommandLaunch {
             command: format!(
                 "remove generated image `{image_ref}` ({} {})",
-                program.to_string_lossy(),
-                format_os_args(&args)
+                plan.program.to_string_lossy(),
+                format_os_args(&plan.args)
             ),
             error,
         })?;

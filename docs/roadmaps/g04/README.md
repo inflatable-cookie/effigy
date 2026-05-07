@@ -14,9 +14,9 @@ Current milestones:
 
 - [`001-runtime-architecture-sanity-audit-and-generation-rollover.md`](./001-runtime-architecture-sanity-audit-and-generation-rollover.md) (complete; audit landed and g04 opened)
 - [`002-execution-pipeline-ownership.md`](./002-execution-pipeline-ownership.md) (complete; shared execution planning surfaces landed)
-- [`003-runtime-activation-pipeline.md`](./003-runtime-activation-pipeline.md) (active; move runtime prep into typed activation pipeline)
-- [`004-container-operation-pipeline.md`](./004-container-operation-pipeline.md) (queued)
-- [`005-data-seed-dump-pipeline.md`](./005-data-seed-dump-pipeline.md) (queued)
+- [`003-runtime-activation-pipeline.md`](./003-runtime-activation-pipeline.md) (complete; runtime activation plan and stage path landed)
+- [`004-container-operation-pipeline.md`](./004-container-operation-pipeline.md) (complete; container operations moved behind typed plans and manager invocation surfaces)
+- [`005-data-seed-dump-pipeline.md`](./005-data-seed-dump-pipeline.md) (active; untangle DB seed/dump/artifact planning from runner glue)
 - [`006-rhai-host-api-split-and-callback-purity.md`](./006-rhai-host-api-split-and-callback-purity.md) (queued)
 - [`007-effective-container-policy-decomposition.md`](./007-effective-container-policy-decomposition.md) (queued)
 - [`008-manager-backed-runtime-read-write-shell.md`](./008-manager-backed-runtime-read-write-shell.md) (queued)
@@ -48,4 +48,4 @@ Rules:
 ## Next Task
 
 Start card
-[`455-move-runtime-prep-activation-executor-behind-plan.md`](../../specs/batch-cards/455-move-runtime-prep-activation-executor-behind-plan.md).
+[`509-add-data-artifact-handoff-plan-foundation.md`](../../specs/batch-cards/509-add-data-artifact-handoff-plan-foundation.md).

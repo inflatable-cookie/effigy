@@ -26,6 +26,13 @@ During v0.x, MINOR bumps may include breaking changes.
   like **`node:sqlite`** work out of the box in bundle-based sites while
   staying on the current LTS line.
 
+### Fixed
+- **Path-sensitive isolated volumes** now include the container workspace path
+  in their generated volume names, so moving a repo mount like
+  **`/var/www/html`** to **`/var/www/inventors`** gets a fresh
+  **`node_modules`** or similar cache volume instead of reusing one with stale
+  absolute-path metadata.
+
 ## [0.4.0] - 2026-05-06
 
 ### Breaking

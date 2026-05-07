@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`004-container-operation-pipeline.md`](./004-container-operation-pipeline.md)
@@ -47,4 +47,5 @@ glue.
 
 ## Next Task
 
-Do not start until `g04.004` closes.
+Start card
+[`509-add-data-artifact-handoff-plan-foundation.md`](../../specs/batch-cards/509-add-data-artifact-handoff-plan-foundation.md).

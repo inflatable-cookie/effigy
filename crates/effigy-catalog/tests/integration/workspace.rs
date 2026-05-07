@@ -229,19 +229,19 @@ fn workspace_rust_bun_emits_named_volumes_for_subproject_dirs() {
 
     assert!(
         volume_strings.contains(
-            &"underlay-reference-dev-workspace-acme-api-target:/workspace-root/underlay-reference/acme-api/target"
+            &"underlay-reference-dev-workspace-workspace-root-underlay-reference-acme-api-target:/workspace-root/underlay-reference/acme-api/target"
         ),
         "expected isolated target volume mount; got {volume_strings:?}"
     );
     assert!(
         volume_strings.contains(
-            &"underlay-reference-dev-workspace-acme-client-node-modules:/workspace-root/underlay-reference/acme-client/node_modules"
+            &"underlay-reference-dev-workspace-workspace-root-underlay-reference-acme-client-node-modules:/workspace-root/underlay-reference/acme-client/node_modules"
         ),
         "expected isolated node_modules volume mount; got {volume_strings:?}"
     );
     assert!(
         volume_strings.contains(
-            &"underlay-reference-dev-workspace-acme-ui-node-modules:/workspace-root/underlay-reference/acme-ui/node_modules"
+            &"underlay-reference-dev-workspace-workspace-root-underlay-reference-acme-ui-node-modules:/workspace-root/underlay-reference/acme-ui/node_modules"
         ),
         "expected isolated node_modules volume mount; got {volume_strings:?}"
     );
@@ -251,9 +251,13 @@ fn workspace_rust_bun_emits_named_volumes_for_subproject_dirs() {
     let vol_names: Vec<&str> = result.volumes.iter().map(|v| v.name.as_str()).collect();
     assert!(vol_names.contains(&"underlay-reference-dev-workspace-cargo-registry"));
     assert!(vol_names.contains(&"underlay-reference-dev-workspace-cargo-git"));
-    assert!(vol_names.contains(&"underlay-reference-dev-workspace-acme-api-target"));
-    assert!(vol_names.contains(&"underlay-reference-dev-workspace-acme-client-node-modules"));
-    assert!(vol_names.contains(&"underlay-reference-dev-workspace-acme-ui-node-modules"));
+    assert!(vol_names.contains(
+        &"underlay-reference-dev-workspace-workspace-root-underlay-reference-acme-api-target"
+    ));
+    assert!(vol_names.contains(&"underlay-reference-dev-workspace-workspace-root-underlay-reference-acme-client-node-modules"));
+    assert!(vol_names.contains(
+        &"underlay-reference-dev-workspace-workspace-root-underlay-reference-acme-ui-node-modules"
+    ));
 }
 
 #[test]

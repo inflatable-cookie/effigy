@@ -23,7 +23,7 @@ services:
     volumes:
       - {% if mount_source %}{{ mount_source }}{% else %}{{ repo_root }}{% endif %}:{{ working_dir }}
 {% for dir in isolated_dirs %}
-      - {{ project_name }}-{{ service_name }}-{{ dir | replace("/", "-") | replace("_", "-") }}:{{ working_dir }}/{{ dir }}
+      - {{ project_name }}-{{ service_name }}{{ working_dir | replace("/", "-") | replace("_", "-") }}-{{ dir | replace("/", "-") | replace("_", "-") }}:{{ working_dir }}/{{ dir }}
 {% endfor %}
 {% if host_ports %}
     ports:

@@ -4,7 +4,8 @@ use crate::runner::interactive_session::{
     classify_interactive_session_ownership, InteractiveSessionIntent, InteractiveSessionOwnership,
 };
 use crate::runner::runtime_session_context::{
-    current_runtime_session_context, PublicWorkspaceCleanupOverride,
+    current_runtime_session_context, LeaseRefreshPolicy, PublicWorkspaceCleanupOverride,
+    RuntimeSessionContext,
 };
 
 use super::{workspace, RunnerError};
@@ -20,23 +21,28 @@ pub(super) fn run_workspace_container_session(
     let repo_override = workspace::effective_workspace_repo_override(repo_root, repo_override);
     let container_name = container_name.map(str::to_owned);
     let policy = workspace::load_workspace_session_policy(repo_root, container_name.as_deref())?;
-    let system_was_running =
-        crate::runner::container_runtime_prep::ensure_container_runtime_prepared(
-            repo_root,
-            &policy,
-            container_name.as_deref(),
-            repo_override.clone(),
-        )?;
-    let routes_were_ready_before_handoff = workspace::prepare_workspace_handoff(
+    let routes_were_ready_before_handoff =
+        workspace::gateway_routes_ready_before_handoff(repo_root, &policy)?;
+    let activation = crate::runner::container_runtime_prep::activate_container_runtime_for_task(
+        repo_root,
+        &policy,
+        crate::runner::container_runtime_prep::ActivationRequest {
+            container_name: container_name.as_deref(),
+            repo_override: repo_override.clone(),
+            session_context: workspace_activation_session_context(),
+        },
+    )?;
+    workspace::finish_workspace_handoff_after_activation(
         repo_root,
         &policy,
         container_name.as_deref(),
         repo_override.clone(),
         initial_command,
+        routes_were_ready_before_handoff,
     )?;
     let ownership = classify_workspace_session_ownership(
         session_intent,
-        system_was_running,
+        activation.system_was_running,
         routes_were_ready_before_handoff,
         cleanup_override,
     );
@@ -53,6 +59,13 @@ pub(super) fn run_workspace_container_session(
     );
 
     combine_workspace_session_results(shell_result, cleanup_result)
+}
+
+fn workspace_activation_session_context() -> RuntimeSessionContext {
+    RuntimeSessionContext {
+        lease_refresh_policy: LeaseRefreshPolicy::SkipRefresh,
+        public_workspace_cleanup: current_runtime_session_context().public_workspace_cleanup,
+    }
 }
 
 pub(super) fn classify_workspace_session_ownership(

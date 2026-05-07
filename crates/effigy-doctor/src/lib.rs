@@ -50,7 +50,7 @@ pub use command::run_doctor;
 pub use contracts::{check_id, install_tool, remediation, schema_supported_value, ALL_CHECK_IDS};
 pub use error::DoctorError;
 pub use finding::{DoctorFinding, DoctorSeverity, FindingSink};
-pub use ports::DoctorRuntimePorts;
+pub use ports::{DoctorRuntimeDiagnostics, DoctorRuntimePorts};
 pub use projection::{
     doctor_finding_sections, doctor_fixes_table_rows, group_max_severity, grouped_findings,
     summarize_group, DoctorFindingSection, DoctorSectionFinding,

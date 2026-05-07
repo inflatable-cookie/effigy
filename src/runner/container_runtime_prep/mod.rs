@@ -4,22 +4,40 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::{fs, os::unix::fs::PermissionsExt};
 
-use effigy_cli::{ContainerArgs, ContainerSubcommand};
+mod gateway;
+mod lease;
+mod prep;
+mod running;
+mod validation;
+
 use effigy_containers::compose::compose_args;
 use effigy_containers::exec::{ensure_colima_running, run_docker_capture};
-use effigy_containers::session::{managed_gateway_command, resolve_effigy_invocation_prefix};
-use effigy_containers::{
-    load_container_exec_working_dir, validate_compose_backend_runtime, validate_container_policy,
-    EffectiveContainerPolicy,
+use effigy_containers::{load_container_exec_working_dir, EffectiveContainerPolicy};
+use effigy_runtime_plan::{
+    RuntimeActivationPlan, RuntimeActivationReport, RuntimeActivationRequest, RuntimeCleanupResult,
+    RuntimeLeasePolicy,
 };
 
-use crate::runner::container_command::support::reconcile_primary_service_tcp_alias_hosts;
-use crate::runner::container_command::{register_gateway_routes_for_container, run_container};
+pub(in crate::runner) use gateway::container_policy_uses_gateway_surface;
+use gateway::ensure_runtime_gateway_readiness_stage;
+#[cfg(test)]
+use gateway::ensure_runtime_gateway_readiness_stage_using;
+use lease::refresh_runtime_lease_stage;
+use prep::{
+    ensure_runtime_exec_readiness_stage, prepare_runtime_mounts_stage,
+    reconcile_runtime_aliases_stage, run_runtime_compose_up_stage,
+};
+#[cfg(test)]
+use prep::{ensure_runtime_exec_readiness_stage_using, reconcile_runtime_aliases_stage_using};
+use running::{check_runtime_running_state_stage, ensure_runtime_running_stage};
+use validation::validate_policy_runtime;
+#[cfg(test)]
+use validation::validate_runtime_activation_stage;
+
+use crate::runner::container_command::run_container;
 use crate::runner::error::RunnerError;
-use crate::runner::gateway_command::gateway_up_for_managed_task;
 use crate::runner::host_container_lease::refresh_host_container_lease_for_task_activation;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
-use crate::runner::system_command::is_primary_service_running;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::runner) struct ContainerTaskActivation {
@@ -41,18 +59,13 @@ pub(in crate::runner) fn ensure_container_runtime_prepared(
     repo_override: Option<PathBuf>,
 ) -> Result<bool, RunnerError> {
     validate_policy_runtime(repo_root, policy)?;
-    let system_was_running = is_primary_service_running(repo_root, policy)?;
-    if !system_was_running {
-        run_container(ContainerArgs {
-            subcommand: ContainerSubcommand::Up {
-                name: container_name.map(str::to_owned),
-                attach: false,
-                detach: true,
-            },
-            repo_override,
-            output_json: false,
-        })?;
-    }
+    let system_was_running = check_runtime_running_state_stage(repo_root, policy)?;
+    ensure_runtime_running_stage(
+        system_was_running,
+        container_name.map(str::to_owned),
+        repo_override,
+        run_container,
+    )?;
 
     prepare_container_exec_runtime(
         repo_root,
@@ -67,20 +80,41 @@ pub(in crate::runner) fn activate_container_runtime_for_task(
     policy: &EffectiveContainerPolicy,
     request: ActivationRequest<'_>,
 ) -> Result<ContainerTaskActivation, RunnerError> {
-    activate_container_runtime_for_task_using(
-        repo_root,
+    let plan = runtime_activation_plan_from_request(repo_root, policy, request);
+    activate_container_runtime_plan_for_task_using(
+        &plan,
         policy,
-        request,
         ensure_container_runtime_prepared,
-        ensure_task_container_gateway_ready,
+        ensure_runtime_gateway_readiness_stage,
         refresh_host_container_lease_for_task_activation,
     )
 }
 
-fn activate_container_runtime_for_task_using(
+fn runtime_activation_plan_from_request(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     request: ActivationRequest<'_>,
+) -> RuntimeActivationPlan {
+    let mut plan_request =
+        RuntimeActivationRequest::new(repo_root.to_path_buf(), policy.name.clone())
+            .repo_override(
+                request
+                    .repo_override
+                    .unwrap_or_else(|| repo_root.to_path_buf()),
+            )
+            .lease_policy(match request.session_context.lease_refresh_policy {
+                LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
+                LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
+            });
+    if let Some(container_name) = request.container_name {
+        plan_request = plan_request.container_name(container_name.to_owned());
+    }
+    plan_request.plan()
+}
+
+fn activate_container_runtime_plan_for_task_using(
+    plan: &RuntimeActivationPlan,
+    policy: &EffectiveContainerPolicy,
     ensure_runtime_prepared: impl FnOnce(
         &Path,
         &EffectiveContainerPolicy,
@@ -94,25 +128,34 @@ fn activate_container_runtime_for_task_using(
         bool,
     ) -> Result<bool, RunnerError>,
 ) -> Result<ContainerTaskActivation, RunnerError> {
+    let repo_root = plan.request.repo_root.as_path();
     let system_was_running = ensure_runtime_prepared(
         repo_root,
         policy,
-        request.container_name,
-        request.repo_override,
+        plan.request.container_name.as_deref(),
+        plan.request.repo_override.clone(),
     )?;
     ensure_gateway_ready(repo_root, policy)?;
-    let refreshed_host_container_lease = if matches!(
-        request.session_context.lease_refresh_policy,
-        LeaseRefreshPolicy::RefreshOnActivation
-    ) {
-        refresh_host_container_lease(repo_root, policy, system_was_running)?
-    } else {
-        false
-    };
+    let refreshed_host_container_lease = refresh_runtime_lease_stage(
+        plan,
+        policy,
+        system_was_running,
+        refresh_host_container_lease,
+    )?;
     Ok(ContainerTaskActivation {
         system_was_running,
         refreshed_host_container_lease,
     })
+}
+
+fn runtime_activation_report_for_result(
+    plan: RuntimeActivationPlan,
+    activation: ContainerTaskActivation,
+) -> RuntimeActivationReport {
+    plan.report(
+        activation.system_was_running,
+        RuntimeCleanupResult::NotRequired,
+    )
 }
 
 pub(in crate::runner) fn prepare_container_exec_runtime(
@@ -125,39 +168,15 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
     let working_dir = load_container_exec_working_dir(repo_root, container_name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     run_runtime_prep_steps(
-        || prepare_host_bind_mount_dirs(repo_root, policy),
+        || prepare_runtime_mounts_stage(repo_root, policy),
         || {
-            let _ = run_docker_capture(
-                repo_root,
-                policy,
-                &compose_args(policy, ["up", "-d"]),
-                "docker compose up (idempotent)",
-            );
+            run_runtime_compose_up_stage(repo_root, policy, |repo_root, policy, args, label| {
+                Ok(run_docker_capture(repo_root, policy, args, label).map(|_| ())?)
+            })
         },
-        || ensure_primary_service_exec_ready_for_runtime(repo_root, policy, &working_dir),
-        || reconcile_primary_service_tcp_alias_hosts(repo_root, policy).map(|_| ()),
+        || ensure_runtime_exec_readiness_stage(repo_root, policy, &working_dir),
+        || reconcile_runtime_aliases_stage(repo_root, policy),
     )
-}
-
-pub(in crate::runner) fn container_policy_uses_gateway_surface(
-    policy: &EffectiveContainerPolicy,
-) -> bool {
-    !(policy.dns_routes.is_empty()
-        && policy.service_aliases.is_empty()
-        && policy.shared_services.is_empty())
-}
-
-fn validate_policy_runtime(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> Result<(), RunnerError> {
-    validate_container_policy(repo_root, policy).map_err(|error| {
-        RunnerError::container_runtime_policy("policy validation", error.to_string())
-    })?;
-    validate_compose_backend_runtime(repo_root, policy).map_err(|error| {
-        RunnerError::container_runtime_policy("backend validation", error.to_string())
-    })?;
-    Ok(())
 }
 
 pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
@@ -203,20 +222,6 @@ fn run_runtime_prep_steps(
     compose_up();
     ensure_exec_ready()?;
     reconcile_aliases()?;
-    Ok(())
-}
-
-fn ensure_task_container_gateway_ready(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> Result<(), RunnerError> {
-    if !container_policy_uses_gateway_surface(policy) {
-        return Ok(());
-    }
-    let executable = resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd)?;
-    let command = managed_gateway_command(&executable);
-    gateway_up_for_managed_task(&command)?;
-    let _ = register_gateway_routes_for_container(repo_root, policy)?;
     Ok(())
 }
 
@@ -511,6 +516,5 @@ fn parse_mount_parts(spec: &str) -> Option<(&str, &str, Option<&str>)> {
     Some((source, target, options))
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests;

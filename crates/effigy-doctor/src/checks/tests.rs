@@ -6,7 +6,10 @@ use effigy_tasks::TaskSelector;
 
 use super::definitions::{doctor_check_definitions, DoctorCheckContext, DoctorCheckDefinition};
 use super::executor::for_each_check;
-use crate::{manifest_snapshot::ManifestSnapshot, DoctorError, DoctorRuntimePorts, DoctorState};
+use crate::{
+    manifest_snapshot::ManifestSnapshot, DoctorError, DoctorRuntimeDiagnostics, DoctorRuntimePorts,
+    DoctorState,
+};
 
 struct StubPorts;
 
@@ -27,6 +30,13 @@ impl DoctorRuntimePorts for StubPorts {
         _workspace_root: &Path,
     ) -> Option<DeferredCommand> {
         None
+    }
+
+    fn runtime_diagnostics(
+        &self,
+        _resolved_root: &Path,
+    ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
+        Ok(DoctorRuntimeDiagnostics::default())
     }
 }
 

@@ -784,7 +784,8 @@ fn validate_compose_backend_host_paths(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), ContainerPolicyError> {
-    if compose::resolve_compose_backend() != compose::ComposeBackend::ColimaNerdctl {
+    if compose::resolve_compose_backend_for_policy(policy) != compose::ComposeBackend::ColimaNerdctl
+    {
         return Ok(());
     }
     if std::env::var_os("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK").is_some()
@@ -810,7 +811,8 @@ fn validate_compose_backend_host_paths(
 fn validate_compose_backend_mount_budget(
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), ContainerPolicyError> {
-    if compose::resolve_compose_backend() != compose::ComposeBackend::ColimaNerdctl {
+    if compose::resolve_compose_backend_for_policy(policy) != compose::ComposeBackend::ColimaNerdctl
+    {
         return Ok(());
     }
     let Some(estimate) = estimate_primary_service_mount_label_size(

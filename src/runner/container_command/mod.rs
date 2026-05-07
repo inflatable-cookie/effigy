@@ -21,13 +21,16 @@ use crate::runner::db_seed::resolve_db_seed_input_paths;
 use effigy_cli::{
     ContainerArgs, ContainerCacheSubcommand, ContainerDataSubcommand, ContainerSubcommand,
 };
+use effigy_container_ops::{ContainerConfirmationPolicy, ContainerLifecycleOperation};
 
 use super::error::RunnerError;
 use data::{
     maybe_confirm_container_data_import, resolve_db_dump_output_paths, run_container_data_dump,
     run_container_data_pull_production, run_container_data_seed,
 };
-use lifecycle::{run_container_eject, run_container_shell, run_container_up};
+use lifecycle::{
+    lifecycle_operation_plan, run_container_eject, run_container_shell, run_container_up,
+};
 
 pub(in crate::runner) use gateway_registration::{
     gateway_routes_registered_for_container, register_gateway_routes_for_container,
@@ -383,6 +386,9 @@ fn run_container_down_adapter(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     stop_host_processes_best_effort(repo_root, name);
+    let policy = effigy_containers::load_container_policy(repo_root, name)?;
+    let _operation_plan =
+        lifecycle_operation_plan(repo_root, &policy, ContainerLifecycleOperation::down(false));
     run_container_down(
         repo_root,
         name,
@@ -476,7 +482,18 @@ pub(in crate::runner) fn run_container_reset_adapter(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     stop_host_processes_best_effort(repo_root, name);
-    maybe_confirm_container_reset_wipe_data(repo_root, name, output_json, wipe_data, yes)?;
+    let policy = effigy_containers::load_container_policy(repo_root, name)?;
+    let operation_plan = lifecycle_operation_plan(
+        repo_root,
+        &policy,
+        ContainerLifecycleOperation::reset(keep_data, wipe_data, yes),
+    );
+    maybe_confirm_container_reset_wipe_data(
+        &policy,
+        operation_plan.confirmation,
+        output_json,
+        yes,
+    )?;
     run_container_reset(
         repo_root,
         name,
@@ -493,16 +510,17 @@ pub(in crate::runner) fn run_container_reset_adapter(
 }
 
 fn maybe_confirm_container_reset_wipe_data(
-    repo_root: &std::path::Path,
-    name: Option<&str>,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+    confirmation: ContainerConfirmationPolicy,
     output_json: bool,
-    wipe_data: bool,
     yes: bool,
 ) -> Result<(), RunnerError> {
-    if !wipe_data {
+    if matches!(
+        confirmation,
+        ContainerConfirmationPolicy::NoConfirmationRequired
+    ) {
         return Ok(());
     }
-    let policy = effigy_containers::load_container_policy(repo_root, name)?;
     data::maybe_confirm_destructive_container_action(
         &format!("`effigy container {} reset --wipe-data`", policy.name),
         &format!(

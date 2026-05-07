@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.003`](../roadmaps/g04/003-runtime-activation-pipeline.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -28,7 +28,7 @@ side effects.
 
 ## Current Ready Card
 
-[`455-move-runtime-prep-activation-executor-behind-plan.md`](./batch-cards/455-move-runtime-prep-activation-executor-behind-plan.md)
+None. This lane is complete.
 
 ## Execution Chain
 
@@ -44,7 +44,21 @@ side effects.
 - `452` complete: wire runtime activation plan into standard task activation
 - `453` complete: wire runtime activation plan into managed task activation
 - `454` complete: select runtime prep stage migration slice
-- `455` ready: move runtime prep activation executor behind plan
+- `455` complete: move runtime prep activation executor behind plan
+- `456` complete: extract runtime policy validation stage
+- `457` complete: extract runtime running-state and ensure-running stages
+- `458` complete: extract runtime mount preparation stage
+- `459` complete: extract runtime compose up stage
+- `460` complete: extract runtime exec readiness stage
+- `461` complete: extract runtime alias reconciliation stage
+- `462` complete: extract runtime gateway readiness stage
+- `463` complete: extract runtime lease refresh stage
+- `464` complete: decide runtime activation stage extraction closeout
+- `465` complete: split runtime prep stage modules
+- `466` complete: wire runtime activation plan into workspace sessions
+- `467` complete: select next runtime activation caller migration
+- `468` complete: route Rhai container exec through runtime activation
+- `469` complete: decide runtime activation pipeline closeout
 
 ## Exit Condition
 
@@ -55,5 +69,5 @@ booleans are introduced.
 
 ## Next Task
 
-Card
-[`455-move-runtime-prep-activation-executor-behind-plan.md`](./batch-cards/455-move-runtime-prep-activation-executor-behind-plan.md).
+Continue in
+[`046-container-operation-pipeline-strict-lane.md`](./046-container-operation-pipeline-strict-lane.md).

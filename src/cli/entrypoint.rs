@@ -277,11 +277,9 @@ mod tests {
         )
         .expect("write manifest");
 
-        let parsed = parse_command_with_builtin_deferral(
-            vec!["deploy".to_owned(), "uat".to_owned()],
-            &root,
-        )
-        .expect("parse");
+        let parsed =
+            parse_command_with_builtin_deferral(vec!["deploy".to_owned(), "uat".to_owned()], &root)
+                .expect("parse");
 
         assert!(matches!(
             parsed,

@@ -3,11 +3,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use effigy_container_manager::{ContainerAction, ContainerRuntimeState};
+use effigy_container_ops::{
+    ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
+    ContainerReadOperation,
+};
 use effigy_containers::{
     exec::{
-        capture_compose_ps, capture_running_container_stats_for_profile, colima_is_running,
-        colima_profile_warnings, infer_host_working_dir_for_container,
-        list_running_compose_containers_profiled, RunningComposeContainer,
+        capture_running_container_stats_for_profile, colima_is_running, colima_profile_warnings,
+        infer_host_working_dir_for_container, list_running_compose_containers_profiled,
+        RunningComposeContainer,
     },
     health::probe_health_status,
     load_all_container_policies, load_container_policy, logs_report, status_report,
@@ -20,8 +24,8 @@ use effigy_containers::{
 };
 use effigy_gateway::ports::PortRegistry;
 
-use crate::container_manager::lifecycle_operation_report;
-use crate::signals::{run_docker_capture, spawn_docker_inherit};
+use crate::container_manager::{compose_invocation_plan, lifecycle_operation_report};
+use crate::signals::{run_compose_plan_capture, spawn_compose_plan_inherit};
 use crate::EffigyRuntimeError;
 
 pub fn run_container_status(
@@ -31,6 +35,8 @@ pub fn run_container_status(
 ) -> Result<String, EffigyRuntimeError> {
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let _operation_plan =
+        read_operation_plan(repo_root, &policy, ContainerReadOperation::status(false));
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
@@ -49,12 +55,15 @@ pub fn run_container_status(
         None,
     )?;
     let compose_ps = if colima_running {
-        Some(capture_compose_ps(
+        let plan = compose_invocation_plan(
             repo_root,
             &policy,
-            &effigy_containers::compose::compose_args(&policy, ["ps"]),
+            ["ps"],
+            ContainerAction::Status,
             "docker compose ps",
-        )?)
+        )?;
+        let output = run_compose_plan_capture(&policy, &plan)?;
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     } else {
         None
     };
@@ -83,6 +92,11 @@ pub fn run_container_logs(
 
     let policy = load_container_policy(repo_root, name)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let _operation_plan = read_operation_plan(
+        repo_root,
+        &policy,
+        ContainerReadOperation::logs(service.map(str::to_owned), follow),
+    );
     validate_container_policy(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
@@ -105,12 +119,14 @@ pub fn run_container_logs(
     )?;
 
     if follow {
-        let mut child = spawn_docker_inherit(
+        let plan = compose_invocation_plan(
             repo_root,
             &policy,
-            &effigy_containers::compose::compose_args(&policy, ["logs", "--follow", service]),
+            ["logs", "--follow", service],
+            ContainerAction::Logs,
             "docker compose logs --follow",
         )?;
+        let mut child = spawn_compose_plan_inherit(&plan)?;
         let status = child
             .wait()
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
@@ -125,12 +141,14 @@ pub fn run_container_logs(
         ));
     }
 
-    let output = run_docker_capture(
+    let plan = compose_invocation_plan(
         repo_root,
         &policy,
-        &effigy_containers::compose::compose_args(&policy, ["logs", "--tail", "100", service]),
+        ["logs", "--tail", "100", service],
+        ContainerAction::Logs,
         "docker compose logs",
     )?;
+    let output = run_compose_plan_capture(&policy, &plan)?;
     let rendered = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     Ok(render_container_report(
         logs_report(&policy, service, &rendered),
@@ -145,6 +163,11 @@ pub fn run_container_status_all(output_json: bool) -> Result<String, EffigyRunti
         .map(|environment| {
             let policy = environment.policy;
             let repo_root = environment.repo_root;
+            let _operation_plan = read_operation_plan(
+                Path::new(&repo_root),
+                &policy,
+                ContainerReadOperation::status(true),
+            );
             ContainerStatusAllEntry {
                 repo_root,
                 container: policy.name.clone(),
@@ -195,6 +218,13 @@ pub fn run_container_status_under_path(
 ) -> Result<String, EffigyRuntimeError> {
     let environments =
         filter_running_environments_for_scope(discover_running_environments()?, scope_root, name);
+    for environment in &environments {
+        let _operation_plan = read_operation_plan(
+            Path::new(&environment.repo_root),
+            &environment.policy,
+            ContainerReadOperation::status(true),
+        );
+    }
     Ok(render_container_report(
         status_all_report(
             &environments
@@ -209,6 +239,11 @@ pub fn run_container_status_under_path(
 pub fn run_container_stats_all(output_json: bool) -> Result<String, EffigyRuntimeError> {
     let environments = discover_running_environments()?;
     for environment in &environments {
+        let _operation_plan = read_operation_plan(
+            Path::new(&environment.repo_root),
+            &environment.policy,
+            ContainerReadOperation::stats(true),
+        );
         let _manager_report = lifecycle_operation_report(
             Path::new(&environment.repo_root),
             &environment.policy,
@@ -285,6 +320,26 @@ pub fn run_container_stats_all(output_json: bool) -> Result<String, EffigyRuntim
         stats_all_report(&environments, stats_warning.as_deref()),
         output_json,
     ))
+}
+
+pub fn read_operation_plan(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    operation: ContainerReadOperation,
+) -> ContainerOperationPlan {
+    ContainerOperationRequest::new(
+        repo_root.to_path_buf(),
+        policy.name.clone(),
+        ContainerOperationKind::read(operation),
+    )
+    .backend_id(read_backend_id(policy))
+    .plan()
+}
+
+fn read_backend_id(policy: &EffectiveContainerPolicy) -> &'static str {
+    match policy.driver {
+        effigy_manifest::ManifestContainerDriver::Colima => "colima",
+    }
 }
 
 fn render_container_report(report: ContainerCommandReport, output_json: bool) -> String {
@@ -529,8 +584,11 @@ fn load_port_registry() -> Option<PortRegistry> {
 #[cfg(test)]
 mod tests {
     use super::{
-        discover_effigy_repos_under, filter_running_environments_for_scope,
+        discover_effigy_repos_under, filter_running_environments_for_scope, read_operation_plan,
         resolve_effigy_repo_root, DiscoveredRunningEnvironment, MAX_REPO_ROOT_WALKUP,
+    };
+    use effigy_container_ops::{
+        ContainerOperationKind, ContainerReadOperation, ContainerSideEffectClass,
     };
     use effigy_containers::exec::RunningComposeContainer;
     use effigy_containers::EffectiveContainerPolicy;
@@ -634,6 +692,42 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].policy.name, "db");
+    }
+
+    #[test]
+    fn read_operation_plan_keeps_policy_identity_and_backend_id() {
+        let policy = stub_policy("web");
+        let plan = read_operation_plan(
+            std::path::Path::new("/tmp/repo"),
+            &policy,
+            ContainerReadOperation::status(false),
+        );
+
+        assert_eq!(
+            plan.request.repo_root,
+            std::path::PathBuf::from("/tmp/repo")
+        );
+        assert_eq!(plan.request.policy_name, "web");
+        assert_eq!(plan.request.backend_id.as_deref(), Some("colima"));
+        assert_eq!(plan.side_effect, ContainerSideEffectClass::ReadsRuntime);
+    }
+
+    #[test]
+    fn read_logs_operation_plan_keeps_service_and_follow_flags() {
+        let policy = stub_policy("web");
+        let plan = read_operation_plan(
+            std::path::Path::new("/tmp/repo"),
+            &policy,
+            ContainerReadOperation::logs(Some("worker".to_owned()), true),
+        );
+
+        match plan.request.kind {
+            ContainerOperationKind::Read(ContainerReadOperation::Logs(operation)) => {
+                assert_eq!(operation.service.as_deref(), Some("worker"));
+                assert!(operation.follow);
+            }
+            other => panic!("unexpected operation kind: {other:?}"),
+        }
     }
 
     #[test]

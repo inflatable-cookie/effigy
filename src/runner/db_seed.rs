@@ -11,6 +11,10 @@ use effigy_artifacts::{
 };
 use effigy_bootstrap::BootstrapStagedDbSeed;
 use effigy_cli::BootstrapDbSeedInput;
+use effigy_data::{
+    database_seed_import_command, database_seed_reset_command, normalize_seed_source_path,
+    DatabaseServiceKind, ResolvedDataTarget,
+};
 use effigy_execution::ExecutionSurface;
 use effigy_manifest::TASK_MANIFEST_FILE;
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
@@ -56,13 +60,6 @@ pub(in crate::runner) const LEGACY_BOOTSTRAP_DB_SEEDS_JSON_ENV: &str =
 pub(in crate::runner) const LEGACY_BOOTSTRAP_DB_SEED_TARGET_ENV: &str =
     "EFFIGY_BOOTSTRAP_DB_SEED_TARGET";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::runner) struct LogicalDatabaseTarget {
-    pub name: String,
-    pub service: Option<String>,
-    pub database: String,
-}
-
 #[derive(Debug, serde::Deserialize)]
 struct SeedMetadataEntry {
     target: Option<String>,
@@ -81,11 +78,7 @@ pub(in crate::runner) fn resolve_db_seed_input_paths(
         .iter()
         .map(|seed| BootstrapDbSeedInput {
             target: seed.target.clone(),
-            path: if is_oci_artifact_path(&seed.path) || seed.path.is_absolute() {
-                seed.path.clone()
-            } else {
-                cwd.join(&seed.path)
-            },
+            path: normalize_seed_source_path(cwd, seed.path.clone()),
         })
         .collect()
 }
@@ -117,7 +110,7 @@ pub(in crate::runner) fn maybe_prompt_db_seed_inputs(
         repo_root,
         &targets
             .iter()
-            .map(|target| target.name.clone())
+            .map(|target| target.name.to_string())
             .collect::<Vec<_>>(),
         &mut stdin,
         &mut stdout,
@@ -413,10 +406,6 @@ fn stage_seed_artifact(
     }
 }
 
-fn is_oci_artifact_path(path: &Path) -> bool {
-    path.as_os_str().to_string_lossy().starts_with("oci://")
-}
-
 pub(in crate::runner) fn db_seed_env(
     staged_db_seeds: &[BootstrapStagedDbSeed],
 ) -> BTreeMap<String, String> {
@@ -599,14 +588,14 @@ fn resolve_db_seed_targets(
                 if !declared_targets.is_empty()
                     && !declared_targets
                         .iter()
-                        .any(|declared| declared.name == target)
+                        .any(|declared| declared.name.as_str() == target)
                 {
                     return Err(RunnerError::task_invocation(format!(
                         "db seed target `{target}` is not declared in `[bundle].databases` or `[data.targets]` for {}; valid targets: {}",
                         repo_root.join(TASK_MANIFEST_FILE).display(),
                         declared_targets
                             .iter()
-                            .map(|target| target.name.clone())
+                            .map(|target| target.name.to_string())
                             .collect::<Vec<_>>()
                             .join(", ")
                     )));
@@ -614,14 +603,14 @@ fn resolve_db_seed_targets(
                 Some(target.to_owned())
             }
             None => match declared_targets.as_slice() {
-                [declared] => Some(declared.name.clone()),
+                [declared] => Some(declared.name.to_string()),
                 targets if targets.len() > 1 => {
                     return Err(RunnerError::task_invocation(format!(
                         "db seed input `{}` must name a target because multiple database targets are declared in `[bundle].databases` and `[data.targets]`: {}",
                         seed.path.display(),
                         targets
                             .iter()
-                            .map(|target| target.name.clone())
+                            .map(|target| target.name.to_string())
                             .collect::<Vec<_>>()
                             .join(", ")
                     )));
@@ -681,18 +670,14 @@ pub(in crate::runner) fn bundle_database_targets(
 
 pub(in crate::runner) fn logical_database_targets(
     manifest: &effigy_manifest::TaskManifest,
-) -> Vec<LogicalDatabaseTarget> {
-    let mut targets = BTreeMap::<String, LogicalDatabaseTarget>::new();
+) -> Vec<ResolvedDataTarget> {
+    let mut targets = BTreeMap::<String, ResolvedDataTarget>::new();
     if let Some(bundle) = manifest.bundle.as_ref() {
         if let Some(bundle_targets) = bundle_database_targets(bundle) {
             for target in bundle_targets {
                 targets.insert(
                     target.clone(),
-                    LogicalDatabaseTarget {
-                        name: target.clone(),
-                        service: None,
-                        database: target,
-                    },
+                    ResolvedDataTarget::new(target.clone(), target),
                 );
             }
         }
@@ -706,11 +691,8 @@ pub(in crate::runner) fn logical_database_targets(
             }
             targets.insert(
                 name.clone(),
-                LogicalDatabaseTarget {
-                    name: name.clone(),
-                    service: Some(service.to_owned()),
-                    database: database.to_owned(),
-                },
+                ResolvedDataTarget::new(name.clone(), database.to_owned())
+                    .service(service.to_owned()),
             );
         }
     }
@@ -753,7 +735,7 @@ fn run_builtin_db_seed_task(
             .target
             .clone()
             .or_else(|| match declared_targets.as_slice() {
-                [declared] => Some(declared.name.clone()),
+                [declared] => Some(declared.name.to_string()),
                 _ => None,
             });
         let target = target.ok_or_else(|| {
@@ -764,16 +746,18 @@ fn run_builtin_db_seed_task(
         })?;
         let declared = declared_targets
             .iter()
-            .find(|declared| declared.name == target)
+            .find(|declared| declared.name.as_str() == target)
             .ok_or_else(|| {
                 RunnerError::task_invocation(format!(
                     "database seed target `{target}` is not declared in `[bundle].databases` or `[data.targets]`"
                 ))
-            })?;
+        })?;
         let (service_name, catalog, password) = resolve_builtin_seed_service(container, declared)?;
         let stdin_file = repo_root.join(&seed.staged_path);
+        let kind = DatabaseServiceKind::from_catalog(catalog)
+            .expect("unsupported seed catalog should be filtered before rendering");
         let reset_command =
-            build_builtin_seed_reset_command(catalog, &password, &declared.database);
+            database_seed_reset_command(&service_name, kind, &password, &declared.database).argv;
         let reset_output = run_container_exec_capture_with_options(
             repo_root,
             Some(container_name),
@@ -792,7 +776,8 @@ fn run_builtin_db_seed_task(
                 "[error] database reset failed\nstdout:\n{stdout}\n\nstderr:\n{stderr}"
             )));
         }
-        let command = build_builtin_seed_import_command(catalog, &password, &declared.database);
+        let command =
+            database_seed_import_command(&service_name, kind, &password, &declared.database).argv;
         let output = run_container_exec_capture_with_options(
             repo_root,
             Some(container_name),
@@ -813,20 +798,20 @@ fn run_builtin_db_seed_task(
 
 fn resolve_builtin_seed_service(
     container: &effigy_manifest::ManifestContainerConfig,
-    target: &LogicalDatabaseTarget,
+    target: &ResolvedDataTarget,
 ) -> Result<(String, &'static str, String), RunnerError> {
     if let Some(service_name) = target.service.as_deref() {
         let service = container.services.get(service_name).ok_or_else(|| {
             RunnerError::task_invocation(format!(
                 "database target `{}` references unknown service `{service_name}`",
-                target.name
+                target.name.as_str()
             ))
         })?;
         let catalog = service.catalog.as_str();
         if !matches!(catalog, "postgres" | "mariadb") {
             return Err(RunnerError::task_invocation(format!(
                 "database target `{}` uses unsupported service catalog `{catalog}`",
-                target.name
+                target.name.as_str()
             )));
         }
         let password = service
@@ -880,7 +865,7 @@ fn resolve_builtin_seed_service(
     if matches.len() != 1 {
         return Err(RunnerError::task_invocation(format!(
             "database target `{}` is ambiguous; expected exactly one matching database service for `{}`",
-            target.name, target.database
+            target.name.as_str(), target.database
         )));
     }
     let (service_name, service) = matches.remove(0);
@@ -888,7 +873,7 @@ fn resolve_builtin_seed_service(
     if !matches!(catalog, "postgres" | "mariadb") {
         return Err(RunnerError::task_invocation(format!(
             "database target `{}` uses unsupported service catalog `{catalog}`",
-            target.name
+            target.name.as_str()
         )));
     }
     let password = service
@@ -908,57 +893,6 @@ fn resolve_builtin_seed_service(
         },
         password,
     ))
-}
-
-fn build_builtin_seed_reset_command(catalog: &str, password: &str, database: &str) -> Vec<String> {
-    match catalog {
-        "postgres" => vec![
-            "env".to_owned(),
-            format!("PGPASSWORD={password}"),
-            "psql".to_owned(),
-            "-v".to_owned(),
-            "ON_ERROR_STOP=1".to_owned(),
-            "-U".to_owned(),
-            "postgres".to_owned(),
-            "-d".to_owned(),
-            database.to_owned(),
-            "-c".to_owned(),
-            "DROP SCHEMA public CASCADE; CREATE SCHEMA public;".to_owned(),
-        ],
-        "mariadb" => vec![
-            "env".to_owned(),
-            format!("MYSQL_PWD={password}"),
-            "mysql".to_owned(),
-            "-uroot".to_owned(),
-            "-e".to_owned(),
-            format!("DROP DATABASE IF EXISTS `{database}`; CREATE DATABASE `{database}`;"),
-        ],
-        _ => unreachable!("unsupported seed catalog"),
-    }
-}
-
-fn build_builtin_seed_import_command(catalog: &str, password: &str, database: &str) -> Vec<String> {
-    match catalog {
-        "postgres" => vec![
-            "env".to_owned(),
-            format!("PGPASSWORD={password}"),
-            "psql".to_owned(),
-            "-v".to_owned(),
-            "ON_ERROR_STOP=1".to_owned(),
-            "-U".to_owned(),
-            "postgres".to_owned(),
-            "-d".to_owned(),
-            database.to_owned(),
-        ],
-        "mariadb" => vec![
-            "env".to_owned(),
-            format!("MYSQL_PWD={password}"),
-            "mysql".to_owned(),
-            "-uroot".to_owned(),
-            database.to_owned(),
-        ],
-        _ => unreachable!("unsupported seed catalog"),
-    }
 }
 
 fn bootstrap_env_override_lock() -> &'static Mutex<()> {
@@ -1054,10 +988,10 @@ database = "acowtancy"
 
         let targets = logical_database_targets(&manifest);
         assert_eq!(targets.len(), 3);
-        assert_eq!(targets[0].name, "acowtancy");
+        assert_eq!(targets[0].name.as_str(), "acowtancy");
         assert_eq!(targets[0].database, "acowtancy");
-        assert_eq!(targets[1].name, "acowtancy_test");
-        assert_eq!(targets[2].name, "legacy_mysql");
+        assert_eq!(targets[1].name.as_str(), "acowtancy_test");
+        assert_eq!(targets[2].name.as_str(), "legacy_mysql");
         assert_eq!(targets[2].service.as_deref(), Some("mysql"));
         assert_eq!(targets[2].database, "acowtancy");
     }

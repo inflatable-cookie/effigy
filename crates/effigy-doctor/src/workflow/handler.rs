@@ -85,7 +85,16 @@ impl phases::WorkflowPhaseHandler for DefaultWorkflowPhaseHandler<'_> {
         state: DoctorState,
         resolved: ResolvedTarget,
     ) -> DoctorRunOutput {
-        summarize_and_report(state, resolved)
+        let diagnostics = self
+            .ports
+            .runtime_diagnostics(&resolved.resolved_root)
+            .unwrap_or_else(|error| crate::DoctorRuntimeDiagnostics {
+                evidence: Vec::new(),
+                warnings: vec![format!(
+                    "container runtime diagnostics unavailable: {error}"
+                )],
+            });
+        summarize_and_report_with_diagnostics(state, resolved, diagnostics)
     }
 }
 
@@ -109,7 +118,13 @@ pub(super) fn add_manifest_availability_findings(
     }
 }
 
-fn summarize_and_report(state: DoctorState, resolved: ResolvedTarget) -> DoctorRunOutput {
+pub(super) fn summarize_and_report_with_diagnostics(
+    state: DoctorState,
+    mut resolved: ResolvedTarget,
+    diagnostics: crate::DoctorRuntimeDiagnostics,
+) -> DoctorRunOutput {
+    resolved.evidence.extend(diagnostics.evidence);
+    resolved.warnings.extend(diagnostics.warnings);
     let summary = state.summarize();
     let error_count = summary.error;
     let report = state.into_report(

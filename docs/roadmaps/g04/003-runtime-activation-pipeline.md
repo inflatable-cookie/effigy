@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`002-execution-pipeline-ownership.md`](./002-execution-pipeline-ownership.md)
@@ -46,4 +46,4 @@ Move runtime prep into a typed activation pipeline.
 ## Next Task
 
 Start card
-[`455-move-runtime-prep-activation-executor-behind-plan.md`](../../specs/batch-cards/455-move-runtime-prep-activation-executor-behind-plan.md).
+[`470-scaffold-container-operation-pipeline-lane.md`](../../specs/batch-cards/470-scaffold-container-operation-pipeline-lane.md).

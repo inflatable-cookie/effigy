@@ -18,6 +18,12 @@ use effigy_tasks::TaskSelector;
 
 use crate::DoctorError;
 
+#[derive(Debug, Clone, Default)]
+pub struct DoctorRuntimeDiagnostics {
+    pub evidence: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
 pub trait DoctorRuntimePorts {
     fn run_manifest_task(
         &self,
@@ -32,4 +38,9 @@ pub trait DoctorRuntimePorts {
         cwd: &Path,
         workspace_root: &Path,
     ) -> Option<DeferredCommand>;
+
+    fn runtime_diagnostics(
+        &self,
+        resolved_root: &Path,
+    ) -> Result<DoctorRuntimeDiagnostics, DoctorError>;
 }

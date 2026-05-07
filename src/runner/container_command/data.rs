@@ -10,6 +10,11 @@ use std::path::{Path, PathBuf};
 use effigy_bootstrap::BootstrapStagedDbSeed;
 use effigy_builtin::{PromptDecision, PromptPolicy};
 use effigy_cli::{BootstrapDbSeedInput, ContainerDbDumpInput};
+use effigy_container_ops::ContainerDataOperation;
+use effigy_data::{
+    database_dump_command, is_oci_artifact_ref_path, normalize_dump_destination_path,
+    DatabaseServiceKind,
+};
 use effigy_manifest::{ManifestContainerServiceConfig, TASK_MANIFEST_FILE};
 
 use super::gateway_registration::register_gateway_routes_for_container;
@@ -35,6 +40,11 @@ pub(super) fn run_container_data_pull_production(
 ) -> Result<String, RunnerError> {
     let policy = effigy_containers::load_container_policy(repo_root, name)?;
     ensure_pull_production_prompt_target(&policy)?;
+    let _operation_plan = effigy_runtime::data::data_operation_plan(
+        repo_root,
+        &policy,
+        ContainerDataOperation::pull_production(yes),
+    );
     maybe_confirm_container_data_pull_production(&policy.name, output_json, yes)?;
     run_runtime_container_data_pull_production(
         repo_root,
@@ -75,6 +85,11 @@ pub(super) fn run_container_data_seed(
 ) -> Result<String, RunnerError> {
     let policy = effigy_containers::load_container_policy(repo_root, name)?;
     ensure_seed_prompt_target(&policy)?;
+    let _operation_plan = effigy_runtime::data::data_operation_plan(
+        repo_root,
+        &policy,
+        ContainerDataOperation::seed(yes),
+    );
 
     let mut effective_db_seeds = db_seeds.to_vec();
     let mut prompt_checked = false;
@@ -135,33 +150,17 @@ pub(super) fn run_container_data_seed(
     }
 }
 
-fn expand_tilde(path: &Path) -> PathBuf {
-    let s = path.as_os_str().to_string_lossy();
-    if let Some(rest) = s.strip_prefix('~') {
-        if rest.is_empty() || rest.starts_with('/') || rest.starts_with("\\") {
-            if let Ok(home) = std::env::var("HOME") {
-                return PathBuf::from(home + rest);
-            }
-        }
-    }
-    path.to_path_buf()
-}
-
 pub(super) fn resolve_db_dump_output_paths(
     cwd: &Path,
     db_dumps: &[ContainerDbDumpInput],
 ) -> Vec<ContainerDbDumpInput> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
     db_dumps
         .iter()
         .map(|dump| {
-            let expanded = expand_tilde(&dump.path);
             ContainerDbDumpInput {
                 target: dump.target.clone(),
-                path: if is_oci_artifact_path(&expanded) || expanded.is_absolute() {
-                    expanded
-                } else {
-                    cwd.join(expanded)
-                },
+                path: normalize_dump_destination_path(cwd, dump.path.clone(), home.as_deref()),
             }
         })
         .collect()
@@ -176,6 +175,11 @@ pub(super) fn run_container_data_dump(
 ) -> Result<String, RunnerError> {
     let policy = effigy_containers::load_container_policy(repo_root, name)?;
     ensure_dump_target(&policy)?;
+    let _operation_plan = effigy_runtime::data::data_operation_plan(
+        repo_root,
+        &policy,
+        ContainerDataOperation::dump(push),
+    );
     if db_dumps.is_empty() {
         return Err(RunnerError::task_invocation(
             "container data dump requires one or more `--db-dump` values",
@@ -187,7 +191,7 @@ pub(super) fn run_container_data_dump(
     if push
         && !plans
             .iter()
-            .any(|plan| is_oci_artifact_path(&plan.output_path))
+            .any(|plan| is_oci_artifact_ref_path(&plan.output_path))
     {
         return Err(RunnerError::task_invocation(
             "`container data dump --push` requires at least one explicit `oci://` dump destination",
@@ -196,7 +200,7 @@ pub(super) fn run_container_data_dump(
 
     let mut dump_reports = Vec::with_capacity(plans.len());
     for plan in &plans {
-        let artifact_destination = is_oci_artifact_path(&plan.output_path);
+        let artifact_destination = is_oci_artifact_ref_path(&plan.output_path);
         let write_path = if artifact_destination {
             planned_capture_dump_source_path(repo_root, plan)
         } else {
@@ -296,10 +300,6 @@ fn artifact_capture_status(report: Option<&serde_json::Value>) -> &'static str {
         Some(true) => "pushed",
         _ => "planned",
     }
-}
-
-fn is_oci_artifact_path(path: &Path) -> bool {
-    path.as_os_str().to_string_lossy().starts_with("oci://")
 }
 
 fn planned_capture_dump_source_path(repo_root: &Path, plan: &DbDumpPlan) -> PathBuf {
@@ -483,7 +483,7 @@ fn resolve_db_dump_plans(
         let declared_target = dump.target.as_deref().and_then(|target| {
             declared_targets
                 .iter()
-                .find(|declared| declared.name == target)
+                .find(|declared| declared.name.as_str() == target)
                 .cloned()
         });
         let database = declared_target
@@ -510,7 +510,10 @@ fn resolve_db_dump_plans(
                 .and_then(|target| target.service.as_deref()),
             &database,
         )?;
-        let command = build_db_dump_command(service, &database);
+        let kind = DatabaseServiceKind::from_catalog(&service.catalog)
+            .expect("unsupported db dump catalog should be filtered before rendering");
+        let command =
+            database_dump_command(&service.service_name, kind, &service.password, &database).argv;
         plans.push(DbDumpPlan {
             target: dump.target,
             database,
@@ -626,34 +629,6 @@ fn resolve_db_dump_service_for_database<'a>(
     )))
 }
 
-fn build_db_dump_command(service: &DbDumpService, database: &str) -> Vec<String> {
-    match service.catalog.as_str() {
-        "postgres" => vec![
-            "env".to_owned(),
-            format!("PGPASSWORD={}", service.password),
-            "pg_dump".to_owned(),
-            "-U".to_owned(),
-            "postgres".to_owned(),
-            "-d".to_owned(),
-            database.to_owned(),
-            "--no-owner".to_owned(),
-            "--no-privileges".to_owned(),
-        ],
-        "mariadb" => vec![
-            "env".to_owned(),
-            format!("MYSQL_PWD={}", service.password),
-            "mysqldump".to_owned(),
-            "-uroot".to_owned(),
-            "--single-transaction".to_owned(),
-            "--skip-comments".to_owned(),
-            "--routines".to_owned(),
-            "--triggers".to_owned(),
-            database.to_owned(),
-        ],
-        _ => unreachable!("unsupported db dump catalog"),
-    }
-}
-
 fn resolve_db_dump_targets(
     repo_root: &Path,
     manifest: &effigy_manifest::TaskManifest,
@@ -668,14 +643,14 @@ fn resolve_db_dump_targets(
                 if !declared_targets.is_empty()
                     && !declared_targets
                         .iter()
-                        .any(|declared| declared.name == target)
+                        .any(|declared| declared.name.as_str() == target)
                 {
                     return Err(RunnerError::task_invocation(format!(
                         "db dump target `{target}` is not declared in `[bundle].databases` or `[data.targets]` for {}; valid targets: {}",
                         repo_root.join(TASK_MANIFEST_FILE).display(),
                         declared_targets
                             .iter()
-                            .map(|target| target.name.clone())
+                            .map(|target| target.name.to_string())
                             .collect::<Vec<_>>()
                             .join(", ")
                     )));
@@ -683,14 +658,14 @@ fn resolve_db_dump_targets(
                 Some(target.to_owned())
             }
             None => match declared_targets.as_slice() {
-                [declared] => Some(declared.name.clone()),
+                [declared] => Some(declared.name.to_string()),
                 targets if targets.len() > 1 => {
                     return Err(RunnerError::task_invocation(format!(
                         "db dump output `{}` must name a target because multiple database targets are declared in `[bundle].databases` and `[data.targets]`: {}",
                         dump.path.display(),
                         targets
                             .iter()
-                            .map(|target| target.name.clone())
+                            .map(|target| target.name.to_string())
                             .collect::<Vec<_>>()
                             .join(", ")
                     )));

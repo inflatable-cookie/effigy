@@ -12,7 +12,9 @@ use effigy_container_manager::{
     resolve_host_cli_program as manager_resolve_host_cli_program, BackendId,
     ContainerBackendDetection, ContainerBackendRegistry,
 };
-use effigy_manifest::{ManifestContainerOnTaskExit, ManifestContainerShutdownMode};
+use effigy_manifest::{
+    ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
+};
 
 /// The backend used to run Docker Compose commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +37,14 @@ pub fn resolve_compose_backend() -> ComposeBackend {
     let backend_id = ContainerBackendRegistry::defaults()
         .detect_backend(&detection)
         .unwrap_or_else(|_| BackendId::colima_nerdctl());
+    ComposeBackend::from_backend_id(&backend_id)
+}
+
+pub fn resolve_compose_backend_for_policy(policy: &EffectiveContainerPolicy) -> ComposeBackend {
+    let detection = compose_backend_detection_for_policy(policy);
+    let backend_id = ContainerBackendRegistry::defaults()
+        .detect_backend(&detection)
+        .unwrap_or_else(|_| backend_id_for_policy(policy));
     ComposeBackend::from_backend_id(&backend_id)
 }
 
@@ -83,7 +93,7 @@ pub fn compose_invocation(
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
 ) -> (&'static str, Vec<OsString>) {
-    let detection = compose_backend_detection();
+    let detection = compose_backend_detection_for_policy(policy);
     let (program, resolved_args) = effigy_container_manager::ContainerManager::defaults()
         .compose_process_invocation(&detection, policy.profile.as_str(), args)
         .unwrap_or_else(|_| (OsString::from("colima"), colima_nerdctl_args(policy, args)));
@@ -138,6 +148,22 @@ fn compose_backend_detection() -> ContainerBackendDetection {
         detection.backend_override = Some(backend.backend_id());
     }
     detection
+}
+
+fn compose_backend_detection_for_policy(
+    policy: &EffectiveContainerPolicy,
+) -> ContainerBackendDetection {
+    let mut detection = compose_backend_detection();
+    if detection.backend_override.is_none() {
+        detection.backend_override = Some(backend_id_for_policy(policy));
+    }
+    detection
+}
+
+fn backend_id_for_policy(policy: &EffectiveContainerPolicy) -> BackendId {
+    match policy.driver {
+        ManifestContainerDriver::Colima => BackendId::colima_nerdctl(),
+    }
 }
 
 impl ComposeBackend {

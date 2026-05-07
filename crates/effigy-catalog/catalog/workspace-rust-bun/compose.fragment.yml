@@ -19,7 +19,7 @@ services:
       - {{ project_name }}-{{ service_name }}-cargo-registry:/usr/local/cargo/registry
       - {{ project_name }}-{{ service_name }}-cargo-git:/usr/local/cargo/git
 {% for dir in isolated_dirs %}
-      - {{ project_name }}-{{ service_name }}-{{ dir | replace("/", "-") | replace("_", "-") }}:{{ workspace_mount }}{% if working_subdir %}/{{ working_subdir }}{% endif %}/{{ dir }}
+      - {{ project_name }}-{{ service_name }}{{ workspace_mount | replace("/", "-") | replace("_", "-") }}{% if working_subdir %}-{{ working_subdir | replace("/", "-") | replace("_", "-") }}{% endif %}-{{ dir | replace("/", "-") | replace("_", "-") }}:{{ workspace_mount }}{% if working_subdir %}/{{ working_subdir }}{% endif %}/{{ dir }}
 {% endfor %}
 {% if host_ports %}
     ports:
