@@ -59,6 +59,9 @@ pub struct AssemblyResult {
 /// Information about a named volume.
 #[derive(Debug, Clone)]
 pub struct VolumeInfo {
+    /// Compose project name for this volume.
+    pub project_name: String,
+
     /// Volume name (project-prefixed).
     pub name: String,
 
@@ -190,6 +193,7 @@ impl ComposeAssembler {
                 let vol_name = format!("{project_name}-{name}-{vol_key}");
                 declared_names.insert(vol_name.clone());
                 all_volumes.push(VolumeInfo {
+                    project_name: project_name.to_string(),
                     name: vol_name,
                     named: true,
                     persist: vol_schema.persist,
@@ -206,6 +210,7 @@ impl ComposeAssembler {
             for discovered in Self::discover_named_volume_references(&service_def, &declared_names)
             {
                 all_volumes.push(VolumeInfo {
+                    project_name: project_name.to_string(),
                     name: discovered.name,
                     named: true,
                     persist: true,
@@ -216,7 +221,8 @@ impl ComposeAssembler {
         }
 
         // 4. Build the final compose document.
-        let compose_yaml = Self::build_compose_document(merged_services, &all_volumes)?;
+        let compose_yaml =
+            Self::build_compose_document(merged_services, project_name, &all_volumes)?;
 
         Ok(AssemblyResult {
             compose_yaml,
@@ -319,6 +325,7 @@ impl ComposeAssembler {
     /// Build the final compose YAML document from merged services and volumes.
     fn build_compose_document(
         services: serde_yaml::Mapping,
+        project_name: &str,
         volumes: &[VolumeInfo],
     ) -> Result<String, CatalogError> {
         let mut doc = serde_yaml::Mapping::new();
@@ -341,6 +348,37 @@ impl ComposeAssembler {
                 vol_def.insert(
                     YamlValue::String("name".to_string()),
                     YamlValue::String(vol.name.clone()),
+                );
+                let mut labels = serde_yaml::Mapping::new();
+                labels.insert(
+                    YamlValue::String("com.effigy.managed".to_string()),
+                    YamlValue::String("true".to_string()),
+                );
+                labels.insert(
+                    YamlValue::String("com.effigy.project".to_string()),
+                    YamlValue::String(project_name.to_string()),
+                );
+                labels.insert(
+                    YamlValue::String("com.effigy.service".to_string()),
+                    YamlValue::String(vol.service.clone()),
+                );
+                labels.insert(
+                    YamlValue::String("com.effigy.volume-name".to_string()),
+                    YamlValue::String(vol.name.clone()),
+                );
+                labels.insert(
+                    YamlValue::String("com.effigy.persist".to_string()),
+                    YamlValue::String(if vol.persist { "true" } else { "false" }.to_string()),
+                );
+                if let Some(mount) = &vol.mount {
+                    labels.insert(
+                        YamlValue::String("com.effigy.mount-target".to_string()),
+                        YamlValue::String(mount.clone()),
+                    );
+                }
+                vol_def.insert(
+                    YamlValue::String("labels".to_string()),
+                    YamlValue::Mapping(labels),
                 );
                 vol_map.insert(
                     YamlValue::String(vol.name.clone()),

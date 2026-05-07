@@ -261,6 +261,7 @@ where
         run_bootstrap_run,
         run_task,
         |_event| Ok(()),
+        |_destination| Ok(false),
     )
 }
 
@@ -269,25 +270,28 @@ pub fn execute_bootstrap_request_with_progress<
     RunBootstrapRun,
     RunTask,
     ReportProgress,
+    ConfirmDestinationReuse,
 >(
     request: &BootstrapResolution,
     mut load_bootstrap: LoadBootstrap,
     mut run_bootstrap_run: RunBootstrapRun,
     mut run_task: RunTask,
     mut report_progress: ReportProgress,
+    mut confirm_destination_reuse: ConfirmDestinationReuse,
 ) -> Result<BootstrapExecutionResult, BootstrapError>
 where
     LoadBootstrap: FnMut(&Path) -> Result<Option<ManifestBootstrapConfig>, BootstrapError>,
     RunBootstrapRun: FnMut(&Path, &ManifestManagedRun, &str) -> Result<(), BootstrapError>,
     RunTask: FnMut(&Path, &str, &str) -> Result<(), BootstrapError>,
     ReportProgress: FnMut(BootstrapProgressEvent) -> Result<(), BootstrapError>,
+    ConfirmDestinationReuse: FnMut(&Path) -> Result<bool, BootstrapError>,
 {
     let mut effective_destination = request.destination.clone();
     report_progress(BootstrapProgressEvent::RootCheckoutStarted {
         repo_url: request.repo_url.clone(),
         destination: effective_destination.clone(),
     })?;
-    let root_repo_state = sync_repo_checkout(
+    let mut root_repo_state = sync_repo_checkout(
         &request.repo_url,
         &effective_destination,
         request.branch.as_deref(),
@@ -307,19 +311,35 @@ where
             if preferred_name != current_name {
                 let renamed_destination = effective_destination.with_file_name(&preferred_name);
                 if renamed_destination.exists() {
-                    return Err(BootstrapError::task_invocation(format!(
-                        "bootstrap catalog alias `{preferred_name}` wants destination {}, but that path already exists",
-                        renamed_destination.display()
-                    )));
-                }
-                std::fs::rename(&effective_destination, &renamed_destination).map_err(|error| {
-                    BootstrapError::Write {
-                        path: renamed_destination.clone(),
-                        error,
+                    if !confirm_destination_reuse(&renamed_destination)? {
+                        return Err(BootstrapError::task_invocation(format!(
+                            "bootstrap catalog alias `{preferred_name}` wants destination {}, but that path already exists",
+                            renamed_destination.display()
+                        )));
                     }
-                })?;
-                effective_destination = renamed_destination;
-                manifest_path = effective_destination.join(TASK_MANIFEST_FILE);
+                    root_repo_state = sync_repo_checkout(
+                        &request.repo_url,
+                        &renamed_destination,
+                        request.branch.as_deref(),
+                    )?;
+                    std::fs::remove_dir_all(&effective_destination).map_err(|error| {
+                        BootstrapError::Write {
+                            path: effective_destination.clone(),
+                            error,
+                        }
+                    })?;
+                    effective_destination = renamed_destination;
+                    manifest_path = effective_destination.join(TASK_MANIFEST_FILE);
+                } else {
+                    std::fs::rename(&effective_destination, &renamed_destination).map_err(
+                        |error| BootstrapError::Write {
+                            path: renamed_destination.clone(),
+                            error,
+                        },
+                    )?;
+                    effective_destination = renamed_destination;
+                    manifest_path = effective_destination.join(TASK_MANIFEST_FILE);
+                }
             }
         }
     }

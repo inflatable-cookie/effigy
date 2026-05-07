@@ -16,6 +16,12 @@ shared_service = true
 shared_host_env_vars = ["REDIS_HOST"]
 shared_port_env_vars = ["REDIS_PORT"]
 
+[volumes.data]
+mount = "/data"
+named = true
+persist = true
+description = "Redis data storage"
+
 [ports]
 default = [6379]
 description = "Redis protocol port"

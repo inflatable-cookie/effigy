@@ -78,4 +78,4 @@ Recently completed:
 ## Next Task
 
 Card
-[`562-scaffold-cli-parser-modularisation-lane.md`](./batch-cards/562-scaffold-cli-parser-modularisation-lane.md).
+[`567-extract-release-parser-module.md`](./batch-cards/567-extract-release-parser-module.md).

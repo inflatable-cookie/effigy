@@ -2,7 +2,7 @@
 
 Lane: [`051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md`](../051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -33,10 +33,21 @@ first implementation card is ready.
 
 ## Validation
 
-- parser file line-count scan
-- parse-test inventory scan
-- `git diff --check`
+- PASS: parser file line-count scan
+  - `crates/effigy-cli/src/command_parsing.rs`: 1846 lines
+  - `crates/effigy-cli/src/command_parsing_container.rs`: 777 lines
+  - `crates/effigy-cli/src/lib.rs`: 864 lines
+  - existing split parser modules are below target:
+    - `command_parsing_demo.rs`: 580 lines
+    - `command_parsing_docs.rs`: 458 lines
+    - `command_parsing_distribution.rs`: 446 lines
+- PASS: parse-test inventory scan
+  - artifact: `artifact_option_tests.rs`, 4 focused tests
+  - bootstrap: `bootstrap_option_tests.rs`, 15 focused tests
+  - container/cache/data: `catalog_and_container_option_tests.rs`, focused
+    coverage for status/down/stats/reset/cache/data/export/dump/import/pull/seed
+- PASS: `git diff --check`
 
 ## Next Task
 
-Scaffold CLI parser modularisation lane.
+Extract artifact parser module.

@@ -48,4 +48,4 @@ Rules:
 ## Next Task
 
 Start card
-[`562-scaffold-cli-parser-modularisation-lane.md`](../../specs/batch-cards/562-scaffold-cli-parser-modularisation-lane.md).
+[`567-extract-release-parser-module.md`](../../specs/batch-cards/567-extract-release-parser-module.md).

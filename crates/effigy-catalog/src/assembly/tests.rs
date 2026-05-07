@@ -81,6 +81,7 @@ fn build_compose_document_with_volumes() {
     );
 
     let volumes = vec![VolumeInfo {
+        project_name: "test".to_string(),
         name: "test-data".to_string(),
         named: true,
         persist: true,
@@ -88,12 +89,17 @@ fn build_compose_document_with_volumes() {
         mount: Some("/var/lib/mysql".to_string()),
     }];
 
-    let yaml = ComposeAssembler::build_compose_document(services, &volumes).unwrap();
+    let yaml = ComposeAssembler::build_compose_document(services, "test", &volumes).unwrap();
     assert!(yaml.contains("services:"));
     assert!(yaml.contains("app:"));
     assert!(yaml.contains("volumes:"));
     assert!(yaml.contains("test-data:"));
     assert!(yaml.contains("driver: local"));
+    assert!(yaml.contains("com.effigy.managed: 'true'"));
+    assert!(yaml.contains("com.effigy.project: test"));
+    assert!(yaml.contains("com.effigy.service: db"));
+    assert!(yaml.contains("com.effigy.volume-name: test-data"));
+    assert!(yaml.contains("com.effigy.mount-target: /var/lib/mysql"));
 }
 
 #[test]
@@ -109,7 +115,7 @@ fn build_compose_document_without_volumes() {
         YamlValue::Mapping(app),
     );
 
-    let yaml = ComposeAssembler::build_compose_document(services, &[]).unwrap();
+    let yaml = ComposeAssembler::build_compose_document(services, "test", &[]).unwrap();
     assert!(yaml.contains("services:"));
     assert!(!yaml.contains("volumes:"));
 }

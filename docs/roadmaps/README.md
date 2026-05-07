@@ -38,10 +38,10 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-- [`g04.007`](./g04/007-effective-container-policy-decomposition.md)
-- [`../specs/049-effective-container-policy-decomposition-strict-lane.md`](../specs/049-effective-container-policy-decomposition-strict-lane.md)
+- [`g04.009`](./g04/009-cli-parser-modularisation-for-runtime-surfaces.md)
+- [`../specs/051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md`](../specs/051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md)
 - Ready card:
-  [`544-extract-container-exec-process-module.md`](../specs/batch-cards/544-extract-container-exec-process-module.md)
+  [`567-extract-release-parser-module.md`](../specs/batch-cards/567-extract-release-parser-module.md)
 
 ## Research Program
 
@@ -78,7 +78,7 @@ Before rollover:
 ## Next Task
 
 Start card
-[`544-extract-container-exec-process-module.md`](../specs/batch-cards/544-extract-container-exec-process-module.md).
+[`567-extract-release-parser-module.md`](../specs/batch-cards/567-extract-release-parser-module.md).
 
 ## Historical language boundary
 

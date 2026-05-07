@@ -14,8 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use effigy_bootstrap::{
-    execute_bootstrap_request, render_bootstrap_result, resolve_bootstrap_request,
-    status_bootstrap_children, sync_bootstrap_children, BootstrapError, BootstrapResolution,
+    execute_bootstrap_request, execute_bootstrap_request_with_progress, render_bootstrap_result,
+    resolve_bootstrap_request, status_bootstrap_children, sync_bootstrap_children, BootstrapError,
+    BootstrapResolution,
 };
 use effigy_manifest::{
     load_task_manifest, ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy,
@@ -628,6 +629,49 @@ fn execute_bootstrap_request_uses_catalog_alias_for_default_destination() {
     assert!(!cwd.join("remote").exists());
     assert_eq!(
         fs::read_to_string(destination.join("root-setup.txt")).expect("root setup marker"),
+        "aliased"
+    );
+}
+
+#[test]
+fn execute_bootstrap_request_reuses_existing_catalog_alias_destination_when_confirmed() {
+    let remote = create_catalog_alias_root_remote();
+    let cwd = temp_dir("bootstrap-catalog-alias-reuse");
+    let alias_destination = cwd.join("contact-patch");
+    ProcessCommand::new("git")
+        .arg("clone")
+        .arg(&remote)
+        .arg(&alias_destination)
+        .status()
+        .expect("git clone alias destination");
+
+    let request = resolve_bootstrap_request(
+        &cwd,
+        &remote.display().to_string(),
+        None,
+        None,
+        &[],
+        false,
+        false,
+    )
+    .expect("resolve request");
+
+    let result = execute_bootstrap_request_with_progress(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+        |_event| Ok(()),
+        |_destination| Ok(true),
+    )
+    .expect("execute bootstrap with alias reuse");
+
+    assert_eq!(result.request.destination, alias_destination);
+    assert!(result.request.destination.is_dir());
+    assert!(!cwd.join("remote").exists());
+    assert_eq!(
+        fs::read_to_string(result.request.destination.join("root-setup.txt"))
+            .expect("root setup marker"),
         "aliased"
     );
 }

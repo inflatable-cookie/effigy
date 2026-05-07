@@ -75,6 +75,7 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
                 &cwd,
                 args.output_json,
                 *no_prompt,
+                *reuse_path,
                 *fresh,
                 &mut selected_backend,
                 &mut backend_guard,
@@ -418,6 +419,7 @@ fn execute_bootstrap_request(
     invocation_cwd: &Path,
     output_json: bool,
     no_prompt: bool,
+    reuse_path: bool,
     fresh: bool,
     selected_backend: &mut Option<BootstrapBackendOverride>,
     backend_guard: &mut Option<ScopedBootstrapBackendOverride>,
@@ -487,6 +489,11 @@ fn execute_bootstrap_request(
             }
             progress.borrow_mut().handle(event);
             Ok::<(), BootstrapError>(())
+        },
+        |destination| {
+            maybe_confirm_bootstrap_path_reuse(destination, output_json, no_prompt, reuse_path)
+                .map(|_| true)
+                .map_err(|error| BootstrapError::task_invocation(error.to_string()))
         },
     )
     .map_err(map_bootstrap_error)?;

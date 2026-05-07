@@ -3,3 +3,5 @@ services:
     image: redis:{{ version }}-alpine
     ports:
       - "6379:6379"
+    volumes:
+      - {{ project_name }}-{{ service_name }}-data:/data

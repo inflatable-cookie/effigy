@@ -60,6 +60,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Bundled nginx healthchecks** now treat any HTTP response as runtime-ready,
   so Decodelabs-style PHP stacks no longer hang bootstrap just because `/`
   returns a bootstrap-time **`404`**.
+- **Generated named volumes** now carry explicit Effigy labels for project,
+  service, original logical volume name, mount target, and persistence so
+  Docker Desktop volume rewrites stay inspectable. The bundled Redis service
+  now declares an explicit named `/data` volume instead of leaking an anonymous
+  hash volume.
 - **Shipped PHP workspaces** now install a sendmail-compatible `msmtp` shim and
   point PHP `mail()` at the local Mailpit SMTP service by default, so legacy
   mail code is captured in development instead of disappearing into an

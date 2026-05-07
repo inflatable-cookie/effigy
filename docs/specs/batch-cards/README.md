@@ -433,9 +433,25 @@ The active batch-card tree now starts with `g04` rollover card `431`.
   is complete. It closes manager-backed runtime read/write/shell.
 
 - [`562-scaffold-cli-parser-modularisation-lane.md`](./562-scaffold-cli-parser-modularisation-lane.md)
-  is ready. It scaffolds the CLI parser modularisation lane.
+  is complete. It scaffolds the CLI parser modularisation lane.
+
+- [`563-extract-artifact-parser-module.md`](./563-extract-artifact-parser-module.md)
+  is complete. It extracts artifact parsing from the root parser.
+
+- [`564-extract-bootstrap-parser-module.md`](./564-extract-bootstrap-parser-module.md)
+  is complete. It extracts bootstrap parsing from the root parser.
+
+- [`565-extract-container-data-parser-module.md`](./565-extract-container-data-parser-module.md)
+  is complete. It extracts container data parsing from the container parser.
+
+- [`566-extract-runtime-surface-parser-module.md`](./566-extract-runtime-surface-parser-module.md)
+  is complete. It extracts runtime-adjacent built-in parsing from the root
+  parser.
+
+- [`567-extract-release-parser-module.md`](./567-extract-release-parser-module.md)
+  is ready. It extracts release parsing from the root parser.
 
 ## Next Task
 
 Start card
-[`562-scaffold-cli-parser-modularisation-lane.md`](./562-scaffold-cli-parser-modularisation-lane.md).
+[`567-extract-release-parser-module.md`](./567-extract-release-parser-module.md).

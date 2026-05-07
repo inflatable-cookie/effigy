@@ -200,14 +200,23 @@ fn assemble_php_mariadb_redis_stack() {
         "missing named MariaDB data volume:\n{}",
         result.compose_yaml
     );
+    assert!(
+        result.compose_yaml.contains("test-project-redis-data:/data"),
+        "missing named Redis data volume:\n{}",
+        result.compose_yaml
+    );
 
     // Should have a Dockerfile for php-fpm.
     assert!(result.dockerfiles.contains_key("app"));
     assert!(result.dockerfiles["app"].contains("PHP_VERSION"));
 
-    assert_eq!(result.volumes.len(), 1);
-    assert_eq!(result.volumes[0].name, "test-project-db-data");
-    assert!(result.volumes[0].persist);
+    assert_eq!(result.volumes.len(), 2);
+    assert!(result.volumes.iter().any(|volume| volume.name == "test-project-db-data"
+        && volume.persist));
+    assert!(result
+        .volumes
+        .iter()
+        .any(|volume| volume.name == "test-project-redis-data" && volume.persist));
 }
 
 #[test]
