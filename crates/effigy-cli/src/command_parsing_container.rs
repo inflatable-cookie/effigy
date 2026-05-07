@@ -91,12 +91,30 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut all = false;
+    let mut project: Option<String> = None;
+    let mut kind: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
             "--all" => all = true,
+            "--project" => {
+                project = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--project".to_owned(),
+                    },
+                )?)
+            }
+            "--kind" => {
+                kind = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--kind".to_owned(),
+                    },
+                )?)
+            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
@@ -282,15 +300,37 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut all = false;
+    let mut project: Option<String> = None;
+    let mut kind: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
             "--all" => all = true,
+            "--project" => {
+                project = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--project".to_owned(),
+                    },
+                )?)
+            }
+            "--kind" => {
+                kind = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--kind".to_owned(),
+                    },
+                )?)
+            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
+    }
+
+    if project.is_some() || kind.is_some() {
+        all = true;
     }
 
     if all && name.is_some() {
@@ -302,7 +342,7 @@ where
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Cache {
             name,
-            subcommand: ContainerCacheSubcommand::List { all },
+            subcommand: ContainerCacheSubcommand::List { all, project, kind },
         },
         repo_override,
         output_json,
@@ -318,6 +358,8 @@ where
     let mut output_json = false;
     let mut all = false;
     let mut yes = false;
+    let mut project: Option<String> = None;
+    let mut kind: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -325,9 +367,29 @@ where
             "--json" => output_json = true,
             "--all" => all = true,
             "--yes" => yes = true,
+            "--project" => {
+                project = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--project".to_owned(),
+                    },
+                )?)
+            }
+            "--kind" => {
+                kind = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--kind".to_owned(),
+                    },
+                )?)
+            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
+    }
+
+    if project.is_some() || kind.is_some() {
+        all = true;
     }
 
     if all && name.is_some() {
@@ -339,7 +401,12 @@ where
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Cache {
             name,
-            subcommand: ContainerCacheSubcommand::Prune { all, yes },
+            subcommand: ContainerCacheSubcommand::Prune {
+                all,
+                yes,
+                project,
+                kind,
+            },
         },
         repo_override,
         output_json,

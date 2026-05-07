@@ -134,6 +134,8 @@ where
 pub fn run_container_cache_list_all<F>(
     cwd: &Path,
     profile: Option<&str>,
+    project_filter: Option<&str>,
+    kind_filter: Option<&str>,
     output_json: bool,
     run_runtime_volume_capture: F,
 ) -> Result<String, EffigyRuntimeError>
@@ -141,10 +143,18 @@ where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     let profile = profile.unwrap_or("effigy");
-    let caches = collect_global_cache_entries(cwd, profile, &run_runtime_volume_capture)?;
+    let caches = collect_global_cache_entries(cwd, profile, &run_runtime_volume_capture)?
+        .into_iter()
+        .filter(|cache| {
+            project_filter.is_none_or(|project| cache.project_name.as_deref() == Some(project))
+                && kind_filter.is_none_or(|kind| cache.kind == kind)
+        })
+        .collect::<Vec<_>>();
+    let scope_label =
+        cache_scope_label("profile-wide cache inventory", project_filter, kind_filter);
 
     Ok(render_container_report(
-        cache_list_all_report(profile, &caches),
+        cache_list_all_report(profile, &scope_label, &caches),
         output_json,
     ))
 }
@@ -201,6 +211,8 @@ where
 pub fn run_container_cache_prune_all<F>(
     cwd: &Path,
     profile: Option<&str>,
+    project_filter: Option<&str>,
+    kind_filter: Option<&str>,
     output_json: bool,
     run_runtime_volume_capture: F,
 ) -> Result<String, EffigyRuntimeError>
@@ -208,7 +220,13 @@ where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
     let profile = profile.unwrap_or("effigy");
-    let caches = collect_global_cache_entries(cwd, profile, &run_runtime_volume_capture)?;
+    let caches = collect_global_cache_entries(cwd, profile, &run_runtime_volume_capture)?
+        .into_iter()
+        .filter(|cache| {
+            project_filter.is_none_or(|project| cache.project_name.as_deref() == Some(project))
+                && kind_filter.is_none_or(|kind| cache.kind == kind)
+        })
+        .collect::<Vec<_>>();
     let mut entries = Vec::new();
     for cache in caches {
         let removed = if cache.in_use {
@@ -226,9 +244,11 @@ where
             in_use: cache.in_use,
         });
     }
+    let scope_label =
+        cache_scope_label("profile-wide cache inventory", project_filter, kind_filter);
 
     Ok(render_container_report(
-        cache_prune_report("profile-wide cache inventory", &entries),
+        cache_prune_report(&scope_label, &entries),
         output_json,
     ))
 }
@@ -609,6 +629,25 @@ fn ensure_cache_prune_target_is_stopped(
     Ok(())
 }
 
+fn cache_scope_label(
+    base: &str,
+    project_filter: Option<&str>,
+    kind_filter: Option<&str>,
+) -> String {
+    let mut filters = Vec::new();
+    if let Some(project) = project_filter {
+        filters.push(format!("project={project}"));
+    }
+    if let Some(kind) = kind_filter {
+        filters.push(format!("kind={kind}"));
+    }
+    if filters.is_empty() {
+        base.to_owned()
+    } else {
+        format!("{base} ({})", filters.join(", "))
+    }
+}
+
 fn collect_global_cache_entries_from_names(
     names: Vec<String>,
     running_projects: &BTreeSet<String>,
@@ -784,6 +823,18 @@ mod tests {
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].size_bytes, Some(4096));
+    }
+
+    #[test]
+    fn cache_scope_label_renders_active_filters() {
+        assert_eq!(
+            cache_scope_label(
+                "profile-wide cache inventory",
+                Some("acowtancy-dev"),
+                Some("rust-target")
+            ),
+            "profile-wide cache inventory (project=acowtancy-dev, kind=rust-target)"
+        );
     }
 }
 

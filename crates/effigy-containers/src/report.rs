@@ -740,6 +740,7 @@ pub fn cache_list_report(
 
 pub fn cache_list_all_report(
     profile: &str,
+    scope_label: &str,
     volumes: &[ContainerCacheGlobalEntry],
 ) -> ContainerCommandReport {
     let in_use_count = volumes.iter().filter(|volume| volume.in_use).count();
@@ -760,6 +761,7 @@ pub fn cache_list_all_report(
         "schema_version": 1,
         "ok": true,
         "profile": profile,
+        "scope": scope_label,
         "cache_count": volumes.len(),
         "in_use_count": in_use_count,
         "available_count": volumes.len().saturating_sub(in_use_count),
@@ -799,17 +801,15 @@ pub fn cache_list_all_report(
     if volumes.is_empty() {
         return ContainerCommandReport {
             json,
-            success_text: format!(
-                "[info] no purge-safe cache volumes found in Colima profile `{profile}`"
-            ),
+            success_text: format!("[info] no purge-safe cache volumes found in {scope_label}"),
         };
     }
 
     let mut lines = vec![format!(
-        "[ok] {} purge-safe cache volume{} in Colima profile `{}` (in_use={}, purgeable={})",
+        "[ok] {} purge-safe cache volume{} in {} (in_use={}, purgeable={})",
         volumes.len(),
         if volumes.len() == 1 { "" } else { "s" },
-        profile,
+        scope_label,
         in_use_count,
         volumes.len().saturating_sub(in_use_count),
     )];

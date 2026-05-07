@@ -46,6 +46,7 @@ fn render_artifact_help_shows_stage_and_handoff_options() {
     assert!(rendered.contains("effigy artifact capture <SOURCE_PATH> --ref oci://<REF>"));
     assert!(rendered.contains("--environment <LABEL>"));
     assert!(rendered.contains("--farmyard-handoff"));
+    assert!(rendered.contains("--push"));
     assert!(rendered.contains("oci://ghcr.io/acme/private-data:uat"));
 }
 
@@ -231,7 +232,12 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("--no-prompt"));
     assert!(rendered.contains("effigy container web data list"));
     assert!(rendered.contains("effigy container cache list --all"));
+    assert!(rendered.contains("effigy container cache list --project acowtancy-dev"));
+    assert!(rendered.contains("effigy container cache list --kind rust-target"));
+    assert!(rendered.contains("effigy container cache prune --project acowtancy-dev --yes"));
     assert!(rendered.contains("effigy container cache prune --all --yes"));
+    assert!(rendered.contains("--project <NAME>"));
+    assert!(rendered.contains("--kind <KIND>"));
     assert!(rendered.contains("effigy container web data export"));
     assert!(rendered.contains("effigy container web data import"));
     assert!(rendered.contains("effigy container data dump legacy_mysql"));

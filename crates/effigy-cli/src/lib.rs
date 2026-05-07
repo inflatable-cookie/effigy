@@ -640,8 +640,17 @@ pub enum SystemSubcommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerCacheSubcommand {
-    List { all: bool },
-    Prune { all: bool, yes: bool },
+    List {
+        all: bool,
+        project: Option<String>,
+        kind: Option<String>,
+    },
+    Prune {
+        all: bool,
+        yes: bool,
+        project: Option<String>,
+        kind: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

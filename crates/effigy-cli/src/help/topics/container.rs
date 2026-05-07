@@ -23,8 +23,8 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container status --all [--json]",
             "effigy container stats --all [--json]",
             "effigy container <NAME> status [--repo <PATH>] [--json]",
-            "effigy container cache list [--repo <PATH>] [--all] [--json]",
-            "effigy container cache prune [--repo <PATH>] [--all] [--yes] [--json]",
+            "effigy container cache list [--repo <PATH>] [--all] [--project <NAME>] [--kind <KIND>] [--json]",
+            "effigy container cache prune [--repo <PATH>] [--all] [--project <NAME>] [--kind <KIND>] [--yes] [--json]",
             "effigy container <NAME> cache list [--repo <PATH>] [--json]",
             "effigy container <NAME> cache prune [--repo <PATH>] [--yes] [--json]",
             "effigy container data list [--repo <PATH>] [--json]",
@@ -60,6 +60,14 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             (
                 "--all",
                 "For `down`, `status`, or `stats`, discover running Effigy-managed environments across repos. For `cache list`, inspect the Effigy Colima profile's named-volume inventory, including stopped projects.",
+            ),
+            (
+                "--project <NAME>",
+                "Restrict global cache inventory or cleanup to one inferred project name such as `acowtancy-dev`; implies profile-wide mode even without `--all`",
+            ),
+            (
+                "--kind <KIND>",
+                "Restrict global cache inventory or cleanup to one cache kind such as `rust-target`, `node-modules`, `cargo-registry`, or `cargo-git`; implies profile-wide mode even without `--all`",
             ),
             (
                 "--command <CMD>",
@@ -101,7 +109,11 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container stats --all",
             "effigy container cache list",
             "effigy container cache list --all",
+            "effigy container cache list --project acowtancy-dev",
+            "effigy container cache list --kind rust-target",
             "effigy container cache prune",
+            "effigy container cache prune --project acowtancy-dev --yes",
+            "effigy container cache prune --kind rust-target --yes",
             "effigy container cache prune --all --yes",
             "effigy container web data list",
             "effigy container web data export fixture-web-dev-db-data ./backup.tar.gz",

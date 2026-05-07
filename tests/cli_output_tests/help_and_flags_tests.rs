@@ -329,9 +329,13 @@ fn cli_container_help_is_command_specific() {
     assert!(stdout.contains(
         "effigy container <NAME> shell [--repo <PATH>] [--service <NAME>] [--command <CMD>]"
     ));
-    assert!(stdout.contains("effigy container cache list [--repo <PATH>] [--all] [--json]"));
+    assert!(stdout.contains(
+        "effigy container cache list [--repo <PATH>] [--all] [--project <NAME>] [--kind <KIND>] [--json]"
+    ));
     assert!(
-        stdout.contains("effigy container cache prune [--repo <PATH>] [--all] [--yes] [--json]")
+        stdout.contains(
+            "effigy container cache prune [--repo <PATH>] [--all] [--project <NAME>] [--kind <KIND>] [--yes] [--json]"
+        )
     );
     assert!(stdout.contains("effigy container <NAME> cache list [--repo <PATH>] [--json]"));
     assert!(stdout.contains("effigy container <NAME> data list [--repo <PATH>] [--json]"));

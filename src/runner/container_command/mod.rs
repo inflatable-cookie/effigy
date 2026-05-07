@@ -83,7 +83,12 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
     }
     if let ContainerSubcommand::Cache {
         name: _,
-        subcommand: ContainerCacheSubcommand::List { all: true },
+        subcommand:
+            ContainerCacheSubcommand::List {
+                all: true,
+                project,
+                kind,
+            },
     } = &args.subcommand
     {
         if args.repo_override.is_some() {
@@ -92,12 +97,25 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             ));
         }
         let cwd = crate::runner::command_context::active_invocation_cwd()?;
-        return run_container_cache_list_all(&cwd, None, args.output_json, runtime_volume_capture)
-            .map_err(Into::into);
+        return run_container_cache_list_all(
+            &cwd,
+            None,
+            project.as_deref(),
+            kind.as_deref(),
+            args.output_json,
+            runtime_volume_capture,
+        )
+        .map_err(Into::into);
     }
     if let ContainerSubcommand::Cache {
         name: _,
-        subcommand: ContainerCacheSubcommand::Prune { all: true, yes },
+        subcommand:
+            ContainerCacheSubcommand::Prune {
+                all: true,
+                yes,
+                project,
+                kind,
+            },
     } = &args.subcommand
     {
         if args.repo_override.is_some() {
@@ -112,8 +130,15 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             *yes,
         )?;
         let cwd = crate::runner::command_context::active_invocation_cwd()?;
-        return run_container_cache_prune_all(&cwd, None, args.output_json, runtime_volume_capture)
-            .map_err(Into::into);
+        return run_container_cache_prune_all(
+            &cwd,
+            None,
+            project.as_deref(),
+            kind.as_deref(),
+            args.output_json,
+            runtime_volume_capture,
+        )
+        .map_err(Into::into);
     }
     match args.subcommand {
         ContainerSubcommand::Up {
@@ -202,19 +227,35 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         }
         ContainerSubcommand::Cache {
             name,
-            subcommand: ContainerCacheSubcommand::List { all: false },
+            subcommand:
+                ContainerCacheSubcommand::List {
+                    all: false,
+                    project: _,
+                    kind: _,
+                },
         } => run_container_cache_list_fallback(
             args.repo_override.clone(),
             name.as_deref(),
             args.output_json,
         ),
         ContainerSubcommand::Cache {
-            subcommand: ContainerCacheSubcommand::List { all: true },
+            subcommand:
+                ContainerCacheSubcommand::List {
+                    all: true,
+                    project: _,
+                    kind: _,
+                },
             ..
         } => unreachable!("handled above"),
         ContainerSubcommand::Cache {
             name,
-            subcommand: ContainerCacheSubcommand::Prune { all: false, yes },
+            subcommand:
+                ContainerCacheSubcommand::Prune {
+                    all: false,
+                    yes,
+                    project: _,
+                    kind: _,
+                },
         } => {
             let context = resolve_active_command_context(args.repo_override.clone())?;
             let repo_root = &context.resolved.resolved_root;
@@ -237,7 +278,13 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             .map_err(Into::into)
         }
         ContainerSubcommand::Cache {
-            subcommand: ContainerCacheSubcommand::Prune { all: true, .. },
+            subcommand:
+                ContainerCacheSubcommand::Prune {
+                    all: true,
+                    yes: _,
+                    project: _,
+                    kind: _,
+                },
             ..
         } => unreachable!("handled above"),
         ContainerSubcommand::Data {

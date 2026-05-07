@@ -367,7 +367,11 @@ fn parse_container_cache_list_is_supported() {
         Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Cache {
                 name: None,
-                subcommand: ContainerCacheSubcommand::List { all: false },
+                subcommand: ContainerCacheSubcommand::List {
+                    all: false,
+                    project: None,
+                    kind: None,
+                },
             },
             repo_override: None,
             output_json: true,
@@ -389,7 +393,69 @@ fn parse_container_cache_list_all_is_supported() {
         Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Cache {
                 name: None,
-                subcommand: ContainerCacheSubcommand::List { all: true },
+                subcommand: ContainerCacheSubcommand::List {
+                    all: true,
+                    project: None,
+                    kind: None,
+                },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_container_cache_list_all_accepts_project_and_kind_filters() {
+    let parsed = parse_command(vec![
+        "container".to_owned(),
+        "cache".to_owned(),
+        "list".to_owned(),
+        "--project".to_owned(),
+        "acowtancy-dev".to_owned(),
+        "--kind".to_owned(),
+        "rust-target".to_owned(),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Cache {
+                name: None,
+                subcommand: ContainerCacheSubcommand::List {
+                    all: true,
+                    project: Some("acowtancy-dev".to_owned()),
+                    kind: Some("rust-target".to_owned()),
+                },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_container_cache_list_project_implies_all() {
+    let parsed = parse_command(vec![
+        "container".to_owned(),
+        "cache".to_owned(),
+        "list".to_owned(),
+        "--project".to_owned(),
+        "acowtancy-dev".to_owned(),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Cache {
+                name: None,
+                subcommand: ContainerCacheSubcommand::List {
+                    all: true,
+                    project: Some("acowtancy-dev".to_owned()),
+                    kind: None,
+                },
             },
             repo_override: None,
             output_json: false,
@@ -414,7 +480,9 @@ fn parse_container_cache_prune_is_supported() {
                 name: None,
                 subcommand: ContainerCacheSubcommand::Prune {
                     all: false,
-                    yes: true
+                    yes: true,
+                    project: None,
+                    kind: None,
                 },
             },
             repo_override: None,
@@ -442,11 +510,75 @@ fn parse_container_cache_prune_all_is_supported() {
                 name: None,
                 subcommand: ContainerCacheSubcommand::Prune {
                     all: true,
-                    yes: true
+                    yes: true,
+                    project: None,
+                    kind: None,
                 },
             },
             repo_override: None,
             output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_cache_prune_all_accepts_project_and_kind_filters() {
+    let parsed = parse_command(vec![
+        "container".to_owned(),
+        "cache".to_owned(),
+        "prune".to_owned(),
+        "--project".to_owned(),
+        "acowtancy-dev".to_owned(),
+        "--kind".to_owned(),
+        "rust-target".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Cache {
+                name: None,
+                subcommand: ContainerCacheSubcommand::Prune {
+                    all: true,
+                    yes: true,
+                    project: Some("acowtancy-dev".to_owned()),
+                    kind: Some("rust-target".to_owned()),
+                },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_container_cache_prune_project_implies_all() {
+    let parsed = parse_command(vec![
+        "container".to_owned(),
+        "cache".to_owned(),
+        "prune".to_owned(),
+        "--project".to_owned(),
+        "acowtancy-dev".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Cache {
+                name: None,
+                subcommand: ContainerCacheSubcommand::Prune {
+                    all: true,
+                    yes: true,
+                    project: Some("acowtancy-dev".to_owned()),
+                    kind: None,
+                },
+            },
+            repo_override: None,
+            output_json: false,
         })
     );
 }

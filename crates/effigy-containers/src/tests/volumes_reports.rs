@@ -565,6 +565,7 @@ primary_service = "app"
 fn cache_list_all_report_groups_by_project_in_text() {
     let report = crate::cache_list_all_report(
         "effigy",
+        "profile-wide cache inventory",
         &[
             crate::ContainerCacheGlobalEntry {
                 name: "underlay-reference-dev-workspace-acme-api-target".to_owned(),
@@ -586,6 +587,7 @@ fn cache_list_all_report_groups_by_project_in_text() {
     );
 
     assert_eq!(report.json["schema"], "effigy.container.cache-list-all.v1");
+    assert_eq!(report.json["scope"], "profile-wide cache inventory");
     assert_eq!(report.json["projects"].as_array().map(Vec::len), Some(2));
     assert!(report.success_text.contains("contact-patch-dev:\n- "));
     assert!(report

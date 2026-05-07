@@ -179,11 +179,14 @@ fn should_show_transient_spinner(context: &CliExecutionContext<'_>, command: &Co
     matches!(
         command,
         Command::Container(effigy_cli::ContainerArgs {
-            subcommand:
-                effigy_cli::ContainerSubcommand::Cache {
-                    name: _,
-                    subcommand: effigy_cli::ContainerCacheSubcommand::List { all: true },
+            subcommand: effigy_cli::ContainerSubcommand::Cache {
+                name: _,
+                subcommand: effigy_cli::ContainerCacheSubcommand::List {
+                    all: true,
+                    project: _,
+                    kind: _,
                 },
+            },
             ..
         })
     )
