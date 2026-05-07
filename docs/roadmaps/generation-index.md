@@ -27,6 +27,8 @@ Updated: 2026-05-07
     guards.
   - Current completed set closed with contract promotion into the package map and
     `015-runtime-operation-pipeline-contract.md`.
+  - The next queued set starts at `g04.012` and burns down integration debt
+    found after the first pipeline sweep.
 
 ## Research Roadmaps
 

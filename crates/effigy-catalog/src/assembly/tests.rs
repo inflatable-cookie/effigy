@@ -149,3 +149,16 @@ fn fragment_build_context_path_uses_supplied_catalog_root() {
         ".effigy-catalog/app"
     );
 }
+
+#[test]
+fn discovered_volume_persist_treats_cache_like_mounts_as_ephemeral() {
+    assert!(!discovered_volume_persist("/var/www/dtn/vendor"));
+    assert!(!discovered_volume_persist("/var/www/dtn/node_modules"));
+    assert!(!discovered_volume_persist("/workspace-root/api/target"));
+    assert!(!discovered_volume_persist(
+        "/home/dev/.local/share/pnpm/store"
+    ));
+    assert!(!discovered_volume_persist("/usr/local/cargo/git"));
+    assert!(!discovered_volume_persist("/usr/local/cargo/registry"));
+    assert!(discovered_volume_persist("/var/lib/mysql"));
+}

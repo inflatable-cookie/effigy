@@ -10,7 +10,8 @@ use effigy_containers::{
     exec::running_colima_profiles, load_all_container_policies, ContainerVolumeGlobalEntry,
 };
 
-use super::volume_io::inspect_runtime_volume_metadata;
+use super::volume_io::inspect_runtime_volume_metadata_batch;
+use crate::read::discover_running_environments;
 use crate::EffigyRuntimeError;
 
 const DOCKER_RUNTIME_PROFILE: &str = "docker";
@@ -20,6 +21,39 @@ const LABEL_REPO_ROOT: &str = "com.effigy.repo-root";
 const LABEL_SERVICE: &str = "com.effigy.service";
 const LABEL_MOUNT_TARGET: &str = "com.effigy.mount-target";
 const LABEL_PERSIST: &str = "com.effigy.persist";
+const LABEL_COMPOSE_PROJECT: &str = "com.docker.compose.project";
+const LABEL_COMPOSE_VOLUME: &str = "com.docker.compose.volume";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VolumeOwnershipHint {
+    repo_root: String,
+    service: String,
+    mount_target: Option<String>,
+    persist: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LegacyVolumeInference {
+    service: Option<String>,
+    mount_target: Option<String>,
+    persist: Option<bool>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RuntimeInspectRecord {
+    #[serde(rename = "Mounts", default)]
+    mounts: Vec<RuntimeInspectMount>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RuntimeInspectMount {
+    #[serde(rename = "Type")]
+    mount_type: Option<String>,
+    #[serde(rename = "Name")]
+    name: Option<String>,
+    #[serde(rename = "Destination")]
+    destination: Option<String>,
+}
 
 pub(super) fn collect_global_volume_entries<F>(
     cwd: &Path,
@@ -31,6 +65,7 @@ where
 {
     let mut entries = Vec::new();
     let mut ownership_cache = BTreeMap::<String, RepoOwnershipState>::new();
+    let ownership_hints = collect_running_volume_ownership_hints(cwd, run_runtime_volume_capture)?;
     let mut runtime_profiles = vec![DOCKER_RUNTIME_PROFILE.to_owned()];
     runtime_profiles.extend(running_colima_profiles(cwd).unwrap_or_default());
 
@@ -40,17 +75,15 @@ where
             continue;
         };
         let names = parse_listed_volume_names(String::from_utf8_lossy(&listed.stdout).as_ref());
-        let metadata = names
-            .iter()
-            .filter_map(|name| {
-                inspect_runtime_volume_metadata(cwd, &profile, name, run_runtime_volume_capture)
-                    .ok()
-                    .flatten()
-                    .filter(|metadata| {
-                        metadata.labels.get(LABEL_MANAGED).map(String::as_str) == Some("true")
-                    })
-            })
-            .collect::<Vec<_>>();
+        let metadata = inspect_runtime_volume_metadata_batch(
+            cwd,
+            &profile,
+            &names,
+            run_runtime_volume_capture,
+        )?
+        .into_iter()
+        .filter(|metadata| volume_has_effigy_ownership_signal(metadata))
+        .collect::<Vec<_>>();
         let missing_mount_points = metadata
             .iter()
             .filter(|entry| entry.size_bytes.is_none())
@@ -72,7 +105,18 @@ where
         };
 
         for metadata in metadata {
-            let repo_root = metadata.labels.get(LABEL_REPO_ROOT).cloned();
+            let project_name = volume_project_name(&metadata.labels);
+            let legacy_inference = project_name
+                .as_deref()
+                .map(|project_name| infer_legacy_volume_details(project_name, &metadata.name));
+            let ownership_hint = project_name.as_ref().and_then(|project_name| {
+                ownership_hints.get(&(profile.clone(), project_name.clone(), metadata.name.clone()))
+            });
+            let repo_root = metadata
+                .labels
+                .get(LABEL_REPO_ROOT)
+                .cloned()
+                .or_else(|| ownership_hint.map(|hint| hint.repo_root.clone()));
             let orphan_reason = repo_root.as_deref().and_then(|repo_root| {
                 orphan_reason(repo_root, &metadata.name, &mut ownership_cache)
             });
@@ -86,6 +130,35 @@ where
                     .as_deref()
                     .and_then(|mount| usage_by_mount_point.get(mount).copied())
             });
+            let service = metadata
+                .labels
+                .get(LABEL_SERVICE)
+                .cloned()
+                .or_else(|| ownership_hint.map(|hint| hint.service.clone()))
+                .or_else(|| {
+                    legacy_inference
+                        .as_ref()
+                        .and_then(|hint| hint.service.clone())
+                });
+            let mount_target = metadata
+                .labels
+                .get(LABEL_MOUNT_TARGET)
+                .cloned()
+                .or_else(|| ownership_hint.and_then(|hint| hint.mount_target.clone()))
+                .or_else(|| {
+                    legacy_inference
+                        .as_ref()
+                        .and_then(|hint| hint.mount_target.clone())
+                });
+            let persist = metadata
+                .labels
+                .get(LABEL_PERSIST)
+                .map(|value| value.eq_ignore_ascii_case("true"))
+                .or_else(|| ownership_hint.map(|hint| hint.persist))
+                .or_else(|| legacy_inference.as_ref().and_then(|hint| hint.persist));
+            if should_skip_legacy_noise_volume(&metadata.name, service.as_deref(), persist) {
+                continue;
+            }
             entries.push(ContainerVolumeGlobalEntry {
                 name: metadata.name,
                 backend: if profile == DOCKER_RUNTIME_PROFILE {
@@ -94,14 +167,11 @@ where
                     "containerd".to_owned()
                 },
                 profile: profile.clone(),
-                project_name: metadata.labels.get(LABEL_PROJECT).cloned(),
+                project_name,
                 repo_root,
-                service: metadata.labels.get(LABEL_SERVICE).cloned(),
-                mount_target: metadata.labels.get(LABEL_MOUNT_TARGET).cloned(),
-                persist: metadata
-                    .labels
-                    .get(LABEL_PERSIST)
-                    .map(|value| value.eq_ignore_ascii_case("true")),
+                service,
+                mount_target,
+                persist,
                 size_bytes,
                 orphaned,
                 orphan_reason,
@@ -117,6 +187,217 @@ where
             .then_with(|| left.profile.cmp(&right.profile))
     });
     Ok(entries)
+}
+
+fn volume_has_effigy_ownership_signal(
+    metadata: &effigy_catalog::volumes::RuntimeVolumeMetadata,
+) -> bool {
+    metadata.labels.get(LABEL_MANAGED).map(String::as_str) == Some("true")
+        || metadata.labels.contains_key(LABEL_COMPOSE_PROJECT)
+            && metadata.labels.contains_key(LABEL_COMPOSE_VOLUME)
+}
+
+fn volume_project_name(labels: &BTreeMap<String, String>) -> Option<String> {
+    labels
+        .get(LABEL_PROJECT)
+        .cloned()
+        .or_else(|| labels.get(LABEL_COMPOSE_PROJECT).cloned())
+}
+
+fn collect_running_volume_ownership_hints<F>(
+    cwd: &Path,
+    run_runtime_volume_capture: &F,
+) -> Result<BTreeMap<(String, String, String), VolumeOwnershipHint>, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let mut hints = BTreeMap::new();
+    for environment in discover_running_environments()? {
+        for volume in environment.policy.managed_volumes {
+            hints.insert(
+                (
+                    environment.runtime_profile.clone(),
+                    environment.policy.project_name.clone(),
+                    volume.name.clone(),
+                ),
+                VolumeOwnershipHint {
+                    repo_root: environment.repo_root.clone(),
+                    service: volume.service,
+                    mount_target: volume.mount_target,
+                    persist: volume.persist,
+                },
+            );
+        }
+        for service in &environment.services {
+            let mounts = inspect_runtime_volume_mounts(
+                cwd,
+                &environment.runtime_profile,
+                &service.container_name,
+                run_runtime_volume_capture,
+            )?;
+            for mount in mounts {
+                let destination = mount.destination;
+                let persist = infer_legacy_persistence("", Some(&destination)).unwrap_or(false);
+                hints
+                    .entry((
+                        environment.runtime_profile.clone(),
+                        environment.policy.project_name.clone(),
+                        mount.name,
+                    ))
+                    .or_insert_with(|| VolumeOwnershipHint {
+                        repo_root: environment.repo_root.clone(),
+                        service: service
+                            .service
+                            .clone()
+                            .unwrap_or_else(|| service.container_name.clone()),
+                        mount_target: Some(destination),
+                        persist,
+                    });
+            }
+        }
+    }
+    Ok(hints)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeVolumeMount {
+    name: String,
+    destination: String,
+}
+
+fn inspect_runtime_volume_mounts<F>(
+    cwd: &Path,
+    profile: &str,
+    container_name: &str,
+    run_runtime_volume_capture: &F,
+) -> Result<Vec<RuntimeVolumeMount>, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let Ok(output) =
+        run_runtime_volume_capture(cwd, profile, &inspect_container_command(container_name))
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(parse_runtime_volume_mounts(
+        String::from_utf8_lossy(&output.stdout).as_ref(),
+    ))
+}
+
+fn inspect_container_command(container_name: &str) -> DockerCommand {
+    DockerCommand {
+        program: "docker".to_owned(),
+        args: vec!["inspect".to_owned(), container_name.to_owned()],
+        description: format!("Inspect container '{container_name}'"),
+    }
+}
+
+fn parse_runtime_volume_mounts(stdout: &str) -> Vec<RuntimeVolumeMount> {
+    let Ok(records) = serde_json::from_str::<Vec<RuntimeInspectRecord>>(stdout) else {
+        return Vec::new();
+    };
+    let Some(record) = records.first() else {
+        return Vec::new();
+    };
+    record
+        .mounts
+        .iter()
+        .filter(|mount| mount.mount_type.as_deref() == Some("volume"))
+        .filter_map(|mount| {
+            Some(RuntimeVolumeMount {
+                name: mount.name.clone()?,
+                destination: mount.destination.clone()?,
+            })
+        })
+        .collect()
+}
+
+fn infer_legacy_volume_details(project_name: &str, volume_name: &str) -> LegacyVolumeInference {
+    let suffix = legacy_volume_suffix(project_name, volume_name);
+    let service = legacy_service_name(project_name, volume_name);
+    let mount_target = infer_legacy_mount_target(suffix.as_deref());
+    let persist = infer_legacy_persistence(volume_name, mount_target.as_deref());
+    LegacyVolumeInference {
+        service,
+        mount_target,
+        persist,
+    }
+}
+
+fn legacy_service_name(project_name: &str, volume_name: &str) -> Option<String> {
+    let suffix = legacy_volume_suffix(project_name, volume_name)?;
+    if let Some(rest) = suffix.strip_prefix("stack-iso-") {
+        return Some(rest.split('-').next().unwrap_or("stack").to_owned());
+    }
+    suffix
+        .split(['-', '_'])
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn legacy_volume_suffix(project_name: &str, volume_name: &str) -> Option<String> {
+    let mut rest = volume_name.strip_prefix(project_name)?;
+    rest = rest
+        .strip_prefix('-')
+        .or_else(|| rest.strip_prefix('_'))
+        .unwrap_or(rest);
+    if let Some(duplicated) = rest.strip_prefix(project_name) {
+        rest = duplicated
+            .strip_prefix('-')
+            .or_else(|| duplicated.strip_prefix('_'))
+            .unwrap_or(duplicated);
+    }
+    (!rest.is_empty()).then(|| rest.to_owned())
+}
+
+fn infer_legacy_mount_target(suffix: Option<&str>) -> Option<String> {
+    let suffix = suffix?;
+    if suffix.contains("cargo-registry") {
+        return Some("/usr/local/cargo/registry".to_owned());
+    }
+    if suffix.contains("cargo-git") {
+        return Some("/usr/local/cargo/git".to_owned());
+    }
+    if suffix.contains("pnpm-store") {
+        return Some("/home/dev/.local/share/pnpm/store".to_owned());
+    }
+    let (_, raw_target) = suffix.split_once('-')?;
+    let normalized = raw_target.replace("node-modules", "node_modules");
+    if normalized.ends_with("vendor")
+        || normalized.ends_with("node_modules")
+        || normalized.ends_with("target")
+    {
+        return Some(format!("/{}", normalized.replace('-', "/")));
+    }
+    None
+}
+
+fn infer_legacy_persistence(volume_name: &str, mount_target: Option<&str>) -> Option<bool> {
+    if volume_name.contains("-data") {
+        return Some(true);
+    }
+    if volume_name.contains("cargo-registry")
+        || volume_name.contains("cargo-git")
+        || volume_name.contains("pnpm-store")
+        || mount_target.is_some_and(|target| {
+            target.ends_with("/vendor")
+                || target.ends_with("/node_modules")
+                || target.ends_with("/target")
+        })
+    {
+        return Some(false);
+    }
+    None
+}
+
+fn should_skip_legacy_noise_volume(
+    volume_name: &str,
+    service: Option<&str>,
+    persist: Option<bool>,
+) -> bool {
+    volume_name.starts_with("efi-iso-") && service.is_none() && persist.is_none()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,5 +446,106 @@ fn load_repo_ownership(repo_root: &str) -> RepoOwnershipState {
                 .collect(),
         ),
         Err(_) => RepoOwnershipState::Unresolved,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        infer_legacy_volume_details, parse_runtime_volume_mounts, should_skip_legacy_noise_volume,
+        volume_has_effigy_ownership_signal, volume_project_name,
+    };
+    use effigy_catalog::volumes::RuntimeVolumeMetadata;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn legacy_compose_labeled_volume_counts_as_owned_signal() {
+        let metadata = RuntimeVolumeMetadata {
+            name: "legacy-volume".to_owned(),
+            mount_point: None,
+            size_bytes: None,
+            labels: BTreeMap::from([
+                (
+                    "com.docker.compose.project".to_owned(),
+                    "legacy-project".to_owned(),
+                ),
+                (
+                    "com.docker.compose.volume".to_owned(),
+                    "legacy-project-app-vendor".to_owned(),
+                ),
+            ]),
+        };
+
+        assert!(volume_has_effigy_ownership_signal(&metadata));
+    }
+
+    #[test]
+    fn project_name_prefers_effigy_label_before_legacy_compose_label() {
+        let labels = BTreeMap::from([
+            ("com.effigy.project".to_owned(), "fresh-project".to_owned()),
+            (
+                "com.docker.compose.project".to_owned(),
+                "legacy-project".to_owned(),
+            ),
+        ]);
+
+        assert_eq!(
+            volume_project_name(&labels).as_deref(),
+            Some("fresh-project")
+        );
+    }
+
+    #[test]
+    fn legacy_inference_recovers_common_decodelabs_volume_details() {
+        let inferred = infer_legacy_volume_details("cbs-dev", "cbs-dev-app-var-www-cbs-vendor");
+
+        assert_eq!(inferred.service.as_deref(), Some("app"));
+        assert_eq!(
+            inferred.mount_target.as_deref(),
+            Some("/var/www/cbs/vendor")
+        );
+        assert_eq!(inferred.persist, Some(false));
+    }
+
+    #[test]
+    fn legacy_inference_marks_data_volumes_persistent() {
+        let inferred = infer_legacy_volume_details("cbs-dev", "cbs-dev-db-data");
+
+        assert_eq!(inferred.service.as_deref(), Some("db"));
+        assert_eq!(inferred.mount_target, None);
+        assert_eq!(inferred.persist, Some(true));
+    }
+
+    #[test]
+    fn efi_iso_noise_volume_is_skipped() {
+        assert!(should_skip_legacy_noise_volume(
+            "efi-iso-929cd8baf57d3eb2",
+            None,
+            None
+        ));
+        assert!(!should_skip_legacy_noise_volume(
+            "cbs-dev-db-data",
+            Some("db"),
+            Some(true)
+        ));
+    }
+
+    #[test]
+    fn parse_runtime_volume_mounts_reads_named_volume_destinations() {
+        let mounts = parse_runtime_volume_mounts(
+            r#"[{
+              "Mounts": [
+                { "Type": "bind", "Source": "/tmp/repo", "Destination": "/workspace-root/repo" },
+                { "Type": "volume", "Name": "efv-123", "Destination": "/var/www/cbs/vendor" },
+                { "Type": "volume", "Name": "cbs-dev-db-data", "Destination": "/var/lib/mysql" }
+              ]
+            }]"#,
+        );
+
+        assert_eq!(mounts.len(), 2);
+        assert_eq!(mounts[0].name, "efv-123");
+        assert_eq!(mounts[0].destination, "/var/www/cbs/vendor");
+        assert_eq!(mounts[1].name, "cbs-dev-db-data");
+        assert_eq!(mounts[1].destination, "/var/lib/mysql");
     }
 }

@@ -9,7 +9,7 @@ use effigy_catalog::volumes::{
 use effigy_containers::ContainerCacheGlobalEntry;
 
 use super::planning::{cache_kind_from_volume_name, collect_global_cache_entries_from_names};
-use super::volume_io::inspect_runtime_volume_metadata;
+use super::volume_io::inspect_runtime_volume_metadata_batch;
 use crate::read::discover_running_environments;
 use crate::EffigyRuntimeError;
 
@@ -30,15 +30,11 @@ where
         .into_iter()
         .filter(|name| cache_kind_from_volume_name(name).is_some())
         .collect::<Vec<_>>();
-    let metadata = names
-        .iter()
-        .filter_map(|name| {
-            inspect_runtime_volume_metadata(cwd, profile, name, run_runtime_volume_capture)
-                .ok()
-                .flatten()
-        })
-        .map(|entry| (entry.name.clone(), entry))
-        .collect::<BTreeMap<_, _>>();
+    let metadata =
+        inspect_runtime_volume_metadata_batch(cwd, profile, &names, run_runtime_volume_capture)?
+            .into_iter()
+            .map(|entry| (entry.name.clone(), entry))
+            .collect::<BTreeMap<_, _>>();
     let missing_mount_points = metadata
         .values()
         .filter(|entry| entry.size_bytes.is_none())

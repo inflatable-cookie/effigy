@@ -185,6 +185,12 @@ pub fn inspect_volume_command(volume_name: &str) -> DockerCommand {
     )
 }
 
+pub fn inspect_volumes_command(volume_names: &[String]) -> DockerCommand {
+    let mut args = vec!["volume".to_string(), "inspect".to_string()];
+    args.extend(volume_names.iter().cloned());
+    DockerCommand::docker(args, format!("Inspect {} volume(s)", volume_names.len()))
+}
+
 pub fn volume_usage_command(mount_point: &str) -> DockerCommand {
     DockerCommand {
         program: VOLUME_USAGE_PROGRAM.to_owned(),
@@ -305,34 +311,49 @@ pub fn parse_listed_volume_names(output: &str) -> Vec<String> {
 }
 
 pub fn parse_inspect_volume_metadata(output: &str) -> Option<RuntimeVolumeMetadata> {
-    let parsed = serde_json::from_str::<JsonValue>(output).ok()?;
-    let first = parsed.as_array()?.first()?;
-    let name = first.get("Name")?.as_str()?.to_owned();
-    let mount_point = first
-        .get("Mountpoint")
-        .and_then(JsonValue::as_str)
-        .map(str::to_owned);
-    let size_bytes = first
-        .get("UsageData")
-        .and_then(|value| value.get("Size"))
-        .and_then(JsonValue::as_u64);
-    Some(RuntimeVolumeMetadata {
-        name,
-        mount_point,
-        size_bytes,
-        labels: first
-            .get("Labels")
-            .and_then(JsonValue::as_object)
-            .map(|labels| {
-                labels
-                    .iter()
-                    .filter_map(|(key, value)| {
-                        value.as_str().map(|value| (key.clone(), value.to_owned()))
+    parse_inspect_volume_metadata_list(output)
+        .into_iter()
+        .next()
+}
+
+pub fn parse_inspect_volume_metadata_list(output: &str) -> Vec<RuntimeVolumeMetadata> {
+    let Ok(parsed) = serde_json::from_str::<JsonValue>(output) else {
+        return Vec::new();
+    };
+    let Some(entries) = parsed.as_array() else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let name = entry.get("Name")?.as_str()?.to_owned();
+            let mount_point = entry
+                .get("Mountpoint")
+                .and_then(JsonValue::as_str)
+                .map(str::to_owned);
+            let size_bytes = entry
+                .get("UsageData")
+                .and_then(|value| value.get("Size"))
+                .and_then(JsonValue::as_u64);
+            Some(RuntimeVolumeMetadata {
+                name,
+                mount_point,
+                size_bytes,
+                labels: entry
+                    .get("Labels")
+                    .and_then(JsonValue::as_object)
+                    .map(|labels| {
+                        labels
+                            .iter()
+                            .filter_map(|(key, value)| {
+                                value.as_str().map(|value| (key.clone(), value.to_owned()))
+                            })
+                            .collect()
                     })
-                    .collect()
+                    .unwrap_or_default(),
             })
-            .unwrap_or_default(),
-    })
+        })
+        .collect()
 }
 
 pub fn parse_volume_usage_bytes(output: &str) -> Option<u64> {

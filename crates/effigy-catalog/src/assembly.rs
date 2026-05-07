@@ -213,7 +213,7 @@ impl ComposeAssembler {
                     project_name: project_name.to_string(),
                     name: discovered.name,
                     named: true,
-                    persist: true,
+                    persist: discovered_volume_persist(&discovered.mount),
                     service: name.clone(),
                     mount: Some(discovered.mount),
                 });
@@ -554,6 +554,19 @@ impl ComposeAssembler {
             );
         }
     }
+}
+
+fn discovered_volume_persist(mount: &str) -> bool {
+    let normalized = mount.trim_end_matches('/');
+    !(normalized.ends_with("/vendor")
+        || normalized.ends_with("/node_modules")
+        || normalized.ends_with("/target")
+        || normalized == "/home/dev/.local/share/pnpm/store"
+        || normalized.ends_with("/pnpm/store")
+        || normalized == "/usr/local/cargo/git"
+        || normalized.ends_with("/cargo/git")
+        || normalized == "/usr/local/cargo/registry"
+        || normalized.ends_with("/cargo/registry"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

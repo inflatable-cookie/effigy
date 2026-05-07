@@ -3,8 +3,8 @@ use std::path::Path;
 use std::process::Output;
 
 use effigy_catalog::volumes::{
-    export_volume_command, import_volume_command, inspect_volume_command, list_volumes_command,
-    merge_runtime_volume_metadata, parse_inspect_volume_metadata, parse_listed_volume_names,
+    export_volume_command, import_volume_command, inspect_volumes_command, list_volumes_command,
+    merge_runtime_volume_metadata, parse_inspect_volume_metadata_list, parse_listed_volume_names,
     DockerCommand, ManagedVolume, RuntimeVolumeMetadata,
 };
 use effigy_containers::{ContainerDataTransferAction, EffectiveContainerPolicy};
@@ -54,42 +54,38 @@ where
         .into_iter()
         .collect::<BTreeSet<_>>();
 
-    let mut runtime = Vec::new();
-    for volume in &volumes {
-        if !listed_names.contains(&volume.name) {
-            continue;
-        }
-        let output = run_runtime_volume_capture(
-            repo_root,
-            &policy.profile,
-            &inspect_volume_command(&volume.name),
-        )?;
-        if let Some(metadata) =
-            parse_inspect_volume_metadata(String::from_utf8_lossy(&output.stdout).as_ref())
-        {
-            runtime.push(metadata);
-        }
-    }
+    let inspect_names = volumes
+        .iter()
+        .filter(|volume| listed_names.contains(&volume.name))
+        .map(|volume| volume.name.clone())
+        .collect::<Vec<_>>();
+    let runtime = inspect_runtime_volume_metadata_batch(
+        repo_root,
+        &policy.profile,
+        &inspect_names,
+        run_runtime_volume_capture,
+    )?;
 
     Ok(merge_runtime_volume_metadata(&volumes, &runtime))
 }
 
-pub(super) fn inspect_runtime_volume_metadata<F>(
+pub(super) fn inspect_runtime_volume_metadata_batch<F>(
     cwd: &Path,
     profile: &str,
-    name: &str,
+    names: &[String],
     run_runtime_volume_capture: &F,
-) -> Result<Option<RuntimeVolumeMetadata>, EffigyRuntimeError>
+) -> Result<Vec<RuntimeVolumeMetadata>, EffigyRuntimeError>
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let Some(metadata) = run_runtime_volume_capture(cwd, profile, &inspect_volume_command(name))
-        .ok()
-        .and_then(|output| {
-            parse_inspect_volume_metadata(String::from_utf8_lossy(&output.stdout).as_ref())
-        })
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Ok(output) = run_runtime_volume_capture(cwd, profile, &inspect_volumes_command(names))
     else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
-    Ok(Some(metadata))
+    Ok(parse_inspect_volume_metadata_list(
+        String::from_utf8_lossy(&output.stdout).as_ref(),
+    ))
 }

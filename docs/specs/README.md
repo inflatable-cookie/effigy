@@ -28,8 +28,8 @@ Historical command-reference rule:
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
-No active strict lane. The current `g04` roadmap set is complete and the queue
-is in planning stop.
+No active strict lane. The next roadmap is `g04.012`; open a strict lane before
+implementation.
 
 Paused but still useful:
 
@@ -82,4 +82,4 @@ Recently completed:
 
 ## Next Task
 
-Planning stop. Add the next `g04` roadmap only by explicit human request.
+Open a strict lane and first ready card for `g04.012`.

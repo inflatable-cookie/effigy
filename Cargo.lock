@@ -984,6 +984,7 @@ dependencies = [
  "effigy-tui",
  "effigy-ui",
  "nix 0.31.2",
+ "serde",
  "serde_json",
  "serde_yaml",
  "signal-hook 0.4.4",

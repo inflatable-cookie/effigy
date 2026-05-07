@@ -34,12 +34,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   [`g04.001`](./g04/001-runtime-architecture-sanity-audit-and-generation-rollover.md),
   then moves into execution, runtime activation, container operation, data,
   Rhai, container policy, runtime read/write/shell, parser, drift-guard, and
-  contract closeout roadmaps.
+  contract closeout roadmaps. The next queued set starts at
+  [`g04.012`](./g04/012-runtime-pipeline-integration-audit-and-debt-map.md)
+  and focuses on integration debt, route authority, data-plan consumption,
+  volume operations, guards, and planning-crate decomposition.
 
 ## Active Strict Lane
 
-None. The current `g04` roadmap set is complete and the queue is in planning
-stop.
+None yet. The next step is to open a strict lane for `g04.012`.
 
 ## Research Program
 
@@ -75,7 +77,8 @@ Before rollover:
 
 ## Next Task
 
-Planning stop. Add the next `g04` roadmap only by explicit human request.
+Open a strict lane and first ready card for
+[`g04.012`](./g04/012-runtime-pipeline-integration-audit-and-debt-map.md).
 
 ## Historical language boundary
 

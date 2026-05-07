@@ -254,6 +254,24 @@ fn parse_inspect_volume_metadata_reads_mount_and_size() {
 }
 
 #[test]
+fn parse_inspect_volume_metadata_list_reads_multiple_entries() {
+    let entries = parse_inspect_volume_metadata_list(
+        r#"[{
+            "Name": "proj-db-data",
+            "Mountpoint": "/var/lib/docker/volumes/proj-db-data/_data",
+            "UsageData": { "Size": 4096 }
+        }, {
+            "Name": "proj-cache-data",
+            "Mountpoint": "/var/lib/docker/volumes/proj-cache-data/_data"
+        }]"#,
+    );
+
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].name, "proj-db-data");
+    assert_eq!(entries[1].name, "proj-cache-data");
+}
+
+#[test]
 fn parse_volume_usage_bytes_reads_kibibytes_output() {
     let parsed = parse_volume_usage_bytes("2048\t/var/lib/docker/volumes/demo/_data\n");
     assert_eq!(parsed, Some(2_097_152));

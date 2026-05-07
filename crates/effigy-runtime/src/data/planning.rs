@@ -237,6 +237,7 @@ mod tests {
                 name: "underlay-reference-dev-workspace-acme-api-target".to_owned(),
                 mount_point: Some("/var/lib/mock/target".to_owned()),
                 size_bytes: Some(1024),
+                labels: BTreeMap::new(),
             },
         );
         metadata.insert(
@@ -245,6 +246,7 @@ mod tests {
                 name: "contact-patch-dev-workspace-cargo-git".to_owned(),
                 mount_point: Some("/var/lib/mock/cargo-git".to_owned()),
                 size_bytes: Some(2048),
+                labels: BTreeMap::new(),
             },
         );
 
@@ -280,6 +282,7 @@ mod tests {
                 name: "contact-patch-dev-workspace-cargo-git".to_owned(),
                 mount_point: Some("/var/lib/mock/cargo-git".to_owned()),
                 size_bytes: None,
+                labels: BTreeMap::new(),
             },
         );
         let mut usage = BTreeMap::new();

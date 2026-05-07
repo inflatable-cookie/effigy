@@ -114,7 +114,7 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
         let _ = render_cli_header(&mut renderer, context.command_root);
     }
     let spinner = if should_show_transient_spinner(context, &command) {
-        renderer.spinner("Inspecting cache volumes...").ok()
+        renderer.spinner(transient_spinner_label(&command)).ok()
     } else {
         None
     };
@@ -188,8 +188,26 @@ fn should_show_transient_spinner(context: &CliExecutionContext<'_>, command: &Co
                 },
             },
             ..
+        }) | Command::Container(effigy_cli::ContainerArgs {
+            subcommand: effigy_cli::ContainerSubcommand::Volume {
+                subcommand: effigy_cli::ContainerVolumeSubcommand::List { .. },
+            },
+            ..
         })
     )
+}
+
+fn transient_spinner_label(command: &Command) -> &'static str {
+    match command {
+        Command::Container(effigy_cli::ContainerArgs {
+            subcommand:
+                effigy_cli::ContainerSubcommand::Volume {
+                    subcommand: effigy_cli::ContainerVolumeSubcommand::List { .. },
+                },
+            ..
+        }) => "Inspecting managed volumes...",
+        _ => "Inspecting cache volumes...",
+    }
 }
 
 fn parse_command_with_builtin_deferral(

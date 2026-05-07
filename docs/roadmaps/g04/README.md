@@ -23,6 +23,12 @@ Current milestones:
 - [`009-cli-parser-modularisation-for-runtime-surfaces.md`](./009-cli-parser-modularisation-for-runtime-surfaces.md) (complete; high-churn parser surfaces split below target sizes)
 - [`010-drift-guards-and-architecture-proof-matrix.md`](./010-drift-guards-and-architecture-proof-matrix.md) (complete; drift guard and proof matrix landed)
 - [`011-contract-promotion-and-closeout.md`](./011-contract-promotion-and-closeout.md) (complete; promoted the current g04 architecture set into contracts)
+- [`012-runtime-pipeline-integration-audit-and-debt-map.md`](./012-runtime-pipeline-integration-audit-and-debt-map.md) (queued; audit integration gaps and map debt before the next refactor)
+- [`013-runtime-activation-route-and-plan-authority.md`](./013-runtime-activation-route-and-plan-authority.md) (queued; make activation routes and plans authoritative)
+- [`014-data-seed-dump-plan-consumption.md`](./014-data-seed-dump-plan-consumption.md) (queued; make `effigy-data` plans drive seed/dump flows)
+- [`015-container-volume-operation-pipeline.md`](./015-container-volume-operation-pipeline.md) (queued; fold volume inventory into container operations)
+- [`016-architecture-guard-integration.md`](./016-architecture-guard-integration.md) (queued; wire architecture guards into normal validation)
+- [`017-planning-crate-decomposition.md`](./017-planning-crate-decomposition.md) (queued; split new planning crates after integration seams settle)
 
 Architecture anchors:
 
@@ -47,5 +53,5 @@ Rules:
 
 ## Next Task
 
-Planning stop. The current `g04` roadmap set is complete; add the next `g04`
-roadmap only by explicit human request.
+Open a strict lane and first ready card for
+[`012-runtime-pipeline-integration-audit-and-debt-map.md`](./012-runtime-pipeline-integration-audit-and-debt-map.md).
