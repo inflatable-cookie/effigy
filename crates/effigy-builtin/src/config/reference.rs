@@ -22,6 +22,10 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
     )?;
     renderer.notice(
         NoticeLevel::Info,
+        "Use `effigy config path|get|set|unset` for user-global machine settings, or `effigy config --user-inspect` for the full rendered user config without editing `~/.effigy/config.toml` by hand.",
+    )?;
+    renderer.notice(
+        NoticeLevel::Info,
         "Use `effigy bundle list` to discover shipped `[bundle]` presets and `effigy bundle inspect <name>` to inspect one shipped bundle's accepted inputs plus default manifest paths.",
     )?;
     renderer.notice(

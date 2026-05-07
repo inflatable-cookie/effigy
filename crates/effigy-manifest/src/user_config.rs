@@ -28,7 +28,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::ManifestError;
 
@@ -36,7 +36,7 @@ use crate::ManifestError;
 pub const USER_CONFIG_FILE: &str = "config.toml";
 
 /// Top-level user-global config schema.
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UserConfig {
     #[serde(default)]
@@ -46,7 +46,7 @@ pub struct UserConfig {
 }
 
 /// User-global container runtime preferences.
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UserContainersConfig {
     #[serde(default)]
@@ -56,7 +56,7 @@ pub struct UserContainersConfig {
 }
 
 /// User-global backend preference for runtime/container operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum UserContainerBackendPreference {
     #[serde(alias = "colima-nerdctl")]
@@ -66,7 +66,7 @@ pub enum UserContainerBackendPreference {
 }
 
 /// Per-bundle user-global override block.
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UserBundleConfig {
     /// Parent directories whose contents should be bind-mounted into the
@@ -87,6 +87,10 @@ pub struct LibraryMount {
 }
 
 impl UserConfig {
+    pub fn is_empty(&self) -> bool {
+        self.containers.is_empty() && self.bundle.is_empty()
+    }
+
     /// Returns the configured library mounts for the named bundle, with
     /// `~` and relative paths expanded against the user's home directory.
     /// Returns an empty vec if the bundle has no entry.
@@ -110,8 +114,17 @@ impl UserConfig {
     }
 
     pub fn preferred_container_profile(&self) -> Option<&str> {
-        self.containers
-            .profile
+        self.containers.preferred_profile()
+    }
+}
+
+impl UserContainersConfig {
+    pub fn is_empty(&self) -> bool {
+        self.backend.is_none() && self.preferred_profile().is_none()
+    }
+
+    pub fn preferred_profile(&self) -> Option<&str> {
+        self.profile
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -135,11 +148,15 @@ fn effigy_home_dir() -> Option<PathBuf> {
 /// overrides. Returns a `ManifestError` only when the file is present but
 /// unreadable or malformed.
 pub fn load_user_config() -> Result<UserConfig, ManifestError> {
-    let Some(home) = effigy_home_dir() else {
+    let Some(path) = user_config_path() else {
         return Ok(UserConfig::default());
     };
-    let path = home.join(USER_CONFIG_FILE);
     load_user_config_from(&path)
+}
+
+/// Resolve the default user-global config path (`~/.effigy/config.toml`).
+pub fn user_config_path() -> Option<PathBuf> {
+    effigy_home_dir().map(|home| home.join(USER_CONFIG_FILE))
 }
 
 /// Load the user-global config from an explicit path. Used by tests; also
@@ -153,6 +170,37 @@ pub fn load_user_config_from(path: &Path) -> Result<UserConfig, ManifestError> {
         error,
     })?;
     toml::from_str::<UserConfig>(&content).map_err(|error| ManifestError::Parse {
+        path: path.to_path_buf(),
+        error,
+    })
+}
+
+/// Write the user-global config to the default path, creating the Effigy home
+/// directory when needed.
+pub fn save_user_config(config: &UserConfig) -> Result<PathBuf, ManifestError> {
+    let Some(path) = user_config_path() else {
+        return Err(ManifestError::Render {
+            path: PathBuf::from(USER_CONFIG_FILE),
+            detail: "HOME is not set; cannot resolve user-global config path".to_owned(),
+        });
+    };
+    save_user_config_to(&path, config)?;
+    Ok(path)
+}
+
+/// Write the user-global config to an explicit path.
+pub fn save_user_config_to(path: &Path, config: &UserConfig) -> Result<(), ManifestError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
+            path: parent.to_path_buf(),
+            error,
+        })?;
+    }
+    let rendered = toml::to_string_pretty(config).map_err(|error| ManifestError::Render {
+        path: path.to_path_buf(),
+        detail: error.to_string(),
+    })?;
+    std::fs::write(path, rendered).map_err(|error| ManifestError::Read {
         path: path.to_path_buf(),
         error,
     })

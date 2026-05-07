@@ -8,7 +8,7 @@ use super::super::response::{
     builtin_output_color_enabled, render_optional_text_with_schema_text_fields_lazy,
 };
 use super::reference::{render_config_reference, style_schema_comments};
-use super::request::{ConfigRequest, ConfigSchemaTarget, ConfigTestRunner};
+use super::request::{ConfigRequest, ConfigSchemaTarget, ConfigTestRunner, UserConfigKey};
 use super::schema::{
     render_builtin_config_schema, render_builtin_config_schema_bundle_target,
     render_builtin_config_schema_minimal, render_builtin_config_schema_target,
@@ -16,14 +16,31 @@ use super::schema::{
 };
 use crate::BuiltinError;
 use effigy_manifest::{
-    get_bundle, list_bundle_default_paths, load_task_manifest_with_inspection,
-    ManifestCompositionEdge, ManifestCompositionOverride, ManifestCompositionValueSource,
+    get_bundle, list_bundle_default_paths, load_task_manifest_with_inspection, load_user_config,
+    save_user_config, user_config_path, ManifestCompositionEdge, ManifestCompositionOverride,
+    ManifestCompositionValueSource, UserConfig, UserContainerBackendPreference,
 };
 
 pub(super) fn render_config_request(
     request: ConfigRequest,
     target_root: &Path,
 ) -> Result<Option<String>, BuiltinError> {
+    if request.user_path {
+        return render_user_path_payload(request);
+    }
+    if let Some(key) = request.user_get {
+        return render_user_get_payload(request, key);
+    }
+    if request.user_inspect {
+        return render_user_inspect_payload(request);
+    }
+    if request.set_container_backend.is_some()
+        || request.set_container_profile.is_some()
+        || request.unset_container_backend
+        || request.unset_container_profile
+    {
+        return render_user_update_payload(request);
+    }
     if request.inspect {
         return render_inspect_payload(request, target_root);
     }
@@ -31,6 +48,94 @@ pub(super) fn render_config_request(
         return render_schema_payload(request);
     }
     render_reference_payload(request.output_json)
+}
+
+fn render_user_path_payload(request: ConfigRequest) -> Result<Option<String>, BuiltinError> {
+    let path = user_config_path().ok_or_else(|| {
+        BuiltinError::task_invocation("HOME is not set; cannot resolve user-global config path")
+    })?;
+    let text = format!("{}\n", path.display());
+    render_config_payload(
+        request.output_json,
+        ConfigPayload::user_path(text, path.display().to_string()),
+    )
+}
+
+fn render_user_get_payload(
+    request: ConfigRequest,
+    key: UserConfigKey,
+) -> Result<Option<String>, BuiltinError> {
+    let path = user_config_path().ok_or_else(|| {
+        BuiltinError::task_invocation("HOME is not set; cannot resolve user-global config path")
+    })?;
+    let config = load_user_config()?;
+    let value = render_user_config_key_value(&config, key).ok_or_else(|| {
+        BuiltinError::task_invocation(format!(
+            "user-global config key `{}` is not set",
+            key.as_str()
+        ))
+    })?;
+    let text = format!("{value}\n");
+    render_config_payload(
+        request.output_json,
+        ConfigPayload::user_get(
+            text,
+            path.display().to_string(),
+            &config,
+            key.as_str().to_owned(),
+            value,
+        ),
+    )
+}
+
+fn render_user_inspect_payload(request: ConfigRequest) -> Result<Option<String>, BuiltinError> {
+    let path = user_config_path().ok_or_else(|| {
+        BuiltinError::task_invocation("HOME is not set; cannot resolve user-global config path")
+    })?;
+    let config = load_user_config()?;
+    let text = render_user_config_text(&path, &config, false)?;
+    render_config_payload(
+        request.output_json,
+        ConfigPayload::user_inspect(text, path.display().to_string(), &config),
+    )
+}
+
+fn render_user_update_payload(request: ConfigRequest) -> Result<Option<String>, BuiltinError> {
+    let path = user_config_path().ok_or_else(|| {
+        BuiltinError::task_invocation("HOME is not set; cannot resolve user-global config path")
+    })?;
+    let mut config = load_user_config()?;
+
+    if let Some(backend) = request.set_container_backend {
+        config.containers.backend = Some(backend);
+    }
+    if request.unset_container_backend {
+        config.containers.backend = None;
+    }
+    if let Some(profile) = request.set_container_profile.as_ref() {
+        config.containers.profile = Some(profile.clone());
+    }
+    if request.unset_container_profile {
+        config.containers.profile = None;
+    }
+
+    let removed_file = if config.is_empty() {
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|error| BuiltinError::task_invocation_failed_write(&path, error))?;
+        }
+        true
+    } else {
+        let written_path = save_user_config(&config)?;
+        debug_assert_eq!(written_path, path);
+        false
+    };
+
+    let text = render_user_config_text(&path, &config, removed_file)?;
+    render_config_payload(
+        request.output_json,
+        ConfigPayload::user_update(text, path.display().to_string(), &config, removed_file),
+    )
 }
 
 pub(super) fn render_config_help_payload(output_json: bool) -> Result<String, BuiltinError> {
@@ -189,6 +294,11 @@ fn render_config_payload(
     let effective_manifest = payload.effective_manifest;
     let selected_path = payload.selected_path;
     let selected_value = payload.selected_value;
+    let user_config_path = payload.user_config_path;
+    let user_config = payload.user_config;
+    let user_config_removed = payload.user_config_removed;
+    let user_config_key = payload.user_config_key;
+    let user_config_value = payload.user_config_value;
     render_optional_text_with_schema_text_fields_lazy(
         output_json,
         "effigy.config.v1",
@@ -208,6 +318,11 @@ fn render_config_payload(
                 "effective_manifest": effective_manifest,
                 "selected_path": selected_path,
                 "selected_value": selected_value,
+                "user_config_path": user_config_path,
+                "user_config": user_config,
+                "user_config_removed": user_config_removed,
+                "user_config_key": user_config_key,
+                "user_config_value": user_config_value,
             })
         },
     )
@@ -227,6 +342,11 @@ struct ConfigPayload {
     effective_manifest: Option<String>,
     selected_path: Option<String>,
     selected_value: Option<serde_json::Value>,
+    user_config_path: Option<String>,
+    user_config: Option<serde_json::Value>,
+    user_config_removed: bool,
+    user_config_key: Option<String>,
+    user_config_value: Option<String>,
     text: String,
 }
 
@@ -246,6 +366,11 @@ impl ConfigPayload {
             effective_manifest: None,
             selected_path: None,
             selected_value: None,
+            user_config_path: None,
+            user_config: None,
+            user_config_removed: false,
+            user_config_key: None,
+            user_config_value: None,
             text,
         }
     }
@@ -271,6 +396,11 @@ impl ConfigPayload {
             effective_manifest: None,
             selected_path: None,
             selected_value: None,
+            user_config_path: None,
+            user_config: None,
+            user_config_removed: false,
+            user_config_key: None,
+            user_config_value: None,
             text,
         }
     }
@@ -300,6 +430,118 @@ impl ConfigPayload {
             effective_manifest: Some(effective_manifest),
             selected_path,
             selected_value,
+            user_config_path: None,
+            user_config: None,
+            user_config_removed: false,
+            user_config_key: None,
+            user_config_value: None,
+            text,
+        }
+    }
+
+    fn user_path(text: String, user_config_path: String) -> Self {
+        Self {
+            mode: "user_path",
+            minimal: false,
+            target: None,
+            bundle: None,
+            runner: None,
+            manifest_path: None,
+            evaluation_order: None,
+            include_graph: None,
+            overridden_paths: None,
+            value_sources: None,
+            effective_manifest: None,
+            selected_path: None,
+            selected_value: None,
+            user_config_path: Some(user_config_path),
+            user_config: None,
+            user_config_removed: false,
+            user_config_key: None,
+            user_config_value: None,
+            text,
+        }
+    }
+
+    fn user_inspect(text: String, user_config_path: String, user_config: &UserConfig) -> Self {
+        Self {
+            mode: "user_inspect",
+            minimal: false,
+            target: None,
+            bundle: None,
+            runner: None,
+            manifest_path: None,
+            evaluation_order: None,
+            include_graph: None,
+            overridden_paths: None,
+            value_sources: None,
+            effective_manifest: None,
+            selected_path: None,
+            selected_value: None,
+            user_config_path: Some(user_config_path),
+            user_config: Some(serialize_user_config(user_config)),
+            user_config_removed: false,
+            user_config_key: None,
+            user_config_value: None,
+            text,
+        }
+    }
+
+    fn user_get(
+        text: String,
+        user_config_path: String,
+        user_config: &UserConfig,
+        user_config_key: String,
+        user_config_value: String,
+    ) -> Self {
+        Self {
+            mode: "user_get",
+            minimal: false,
+            target: None,
+            bundle: None,
+            runner: None,
+            manifest_path: None,
+            evaluation_order: None,
+            include_graph: None,
+            overridden_paths: None,
+            value_sources: None,
+            effective_manifest: None,
+            selected_path: None,
+            selected_value: None,
+            user_config_path: Some(user_config_path),
+            user_config: Some(serialize_user_config(user_config)),
+            user_config_removed: false,
+            user_config_key: Some(user_config_key),
+            user_config_value: Some(user_config_value),
+            text,
+        }
+    }
+
+    fn user_update(
+        text: String,
+        user_config_path: String,
+        user_config: &UserConfig,
+        user_config_removed: bool,
+    ) -> Self {
+        Self {
+            mode: "user_update",
+            minimal: false,
+            target: None,
+            bundle: None,
+            runner: None,
+            manifest_path: None,
+            evaluation_order: None,
+            include_graph: None,
+            overridden_paths: None,
+            value_sources: None,
+            effective_manifest: None,
+            selected_path: None,
+            selected_value: None,
+            user_config_path: Some(user_config_path),
+            user_config: Some(serialize_user_config(user_config)),
+            user_config_removed,
+            user_config_key: None,
+            user_config_value: None,
             text,
         }
     }
@@ -544,4 +786,74 @@ fn insert_value_at_path(table: &mut toml::map::Map<String, Value>, path: &str, v
 
 fn toml_value_to_json(value: &Value) -> serde_json::Value {
     serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
+}
+
+fn render_user_config_text(
+    path: &Path,
+    config: &UserConfig,
+    removed_file: bool,
+) -> Result<String, BuiltinError> {
+    let mut out = String::new();
+    out.push_str("User Config\n");
+    out.push_str("===========\n\n");
+    out.push_str(&format!("Path: {}\n", path.display()));
+    if removed_file {
+        out.push_str("Status: removed empty config file\n\n");
+    } else if path.exists() {
+        out.push_str("Status: present\n\n");
+    } else {
+        out.push_str("Status: not yet created\n\n");
+    }
+
+    out.push_str("Container Preferences\n");
+    out.push_str("---------------------\n");
+    out.push_str(&format!(
+        "backend: {}\n",
+        config
+            .preferred_container_backend()
+            .map(render_backend_preference)
+            .unwrap_or("(unset)")
+    ));
+    out.push_str(&format!(
+        "profile: {}\n",
+        config.preferred_container_profile().unwrap_or("(unset)")
+    ));
+
+    if !config.bundle.is_empty() {
+        out.push('\n');
+        out.push_str("Rendered TOML\n");
+        out.push_str("-------------\n");
+        out.push_str(&render_user_config_toml(config)?);
+    }
+
+    Ok(out)
+}
+
+fn render_backend_preference(backend: UserContainerBackendPreference) -> &'static str {
+    match backend {
+        UserContainerBackendPreference::Containerd => "containerd",
+        UserContainerBackendPreference::Docker => "docker",
+    }
+}
+
+fn render_user_config_key_value(config: &UserConfig, key: UserConfigKey) -> Option<String> {
+    match key {
+        UserConfigKey::ContainersBackend => config
+            .preferred_container_backend()
+            .map(render_backend_preference)
+            .map(str::to_owned),
+        UserConfigKey::ContainersProfile => {
+            config.preferred_container_profile().map(str::to_owned)
+        }
+    }
+}
+
+fn render_user_config_toml(config: &UserConfig) -> Result<String, BuiltinError> {
+    toml::to_string_pretty(config).map_err(|error| {
+        BuiltinError::task_invocation(format!("failed to render user-global config: {error}"))
+    })
+}
+
+fn serialize_user_config(config: &UserConfig) -> serde_json::Value {
+    serde_json::to_value(config).unwrap_or(serde_json::Value::Null)
 }

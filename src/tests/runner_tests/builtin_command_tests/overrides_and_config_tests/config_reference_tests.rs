@@ -13,6 +13,7 @@ fn run_manifest_task_builtin_config_prints_reference() {
         &[
             "effigy.toml Reference",
             "Use `effigy config --inspect` to inspect the effective composed manifest",
+            "Use `effigy config path|get|set|unset` for user-global machine settings",
             "[manifest]",
             "cargo_env_match = \"prefix-aware\"",
             "[test.runners]",

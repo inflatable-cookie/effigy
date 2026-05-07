@@ -75,6 +75,80 @@ fn run_manifest_task_builtin_config_rejects_invalid_flag_combinations() {
             args: &["--wat"],
             expected: &["unknown argument(s) for built-in `config`: --wat"],
         },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-user-inspect-conflicts-with-schema",
+            args: &["--user-inspect", "--schema"],
+            expected: &[
+                "user-global config flags cannot be combined with `--inspect` or `--schema`",
+            ],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-user-path-conflict",
+            args: &["--user-inspect", "--path", "tasks.dev"],
+            expected: &["`--path` cannot be combined with user-global config flags"],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-user-inspect-conflicts-with-update",
+            args: &["--user-inspect", "--set-container-backend", "containerd"],
+            expected: &["`--user-inspect` cannot be combined with user-global config update flags"],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-container-backend-conflict",
+            args: &[
+                "--set-container-backend",
+                "containerd",
+                "--unset-container-backend",
+            ],
+            expected: &[
+                "`--set-container-backend` cannot be combined with `--unset-container-backend`",
+            ],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-container-profile-conflict",
+            args: &[
+                "--set-container-profile",
+                "effigy",
+                "--unset-container-profile",
+            ],
+            expected: &[
+                "`--set-container-profile` cannot be combined with `--unset-container-profile`",
+            ],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-container-backend-requires-value",
+            args: &["--set-container-backend"],
+            expected: &["`--set-container-backend` requires a value"],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-container-backend-invalid",
+            args: &["--set-container-backend", "podman"],
+            expected: &["invalid `--set-container-backend` value `podman`"],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-container-profile-requires-value",
+            args: &["--set-container-profile"],
+            expected: &["`--set-container-profile` requires a value"],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-get-requires-key",
+            args: &["get"],
+            expected: &["`config get` requires a subcommand"],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-set-requires-key",
+            args: &["set"],
+            expected: &["`config set` requires a subcommand"],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-unset-requires-key",
+            args: &["unset"],
+            expected: &["`config unset` requires a subcommand"],
+        },
+        BuiltinInvocationCase {
+            workspace: "builtin-config-get-unknown-key",
+            args: &["get", "containers.unknown"],
+            expected: &["unknown config get key `containers.unknown`"],
+        },
     ];
     assert_builtin_error_case_table_with_setup("config", &cases, |root| {
         write_root_manifest(root, "");

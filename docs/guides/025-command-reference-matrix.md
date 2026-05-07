@@ -89,7 +89,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
 | `effigy init` | Scaffold baseline `effigy.toml` (and any extra starter files such as root `README.md`) from a named starter (e.g. `minimal`, `underlay`, `northstar`) or list available starters | `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-foundation.md` |
-| `effigy config` | Render config reference/schema snippets or inspect the effective composed manifest | `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
+| `effigy config` | Render config reference/schema snippets, inspect the effective composed manifest, or manage user-global container defaults | `inspect`, `schema`, `path`, `get`, `set`, `unset`, `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--user-inspect`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy unlock` | Clear lock scopes manually | `--all`, `--yes`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
 | `effigy artifact` | Inspect, stage, capture, and push versioned data artifacts to OCI registries or local staging | `inspect`, `stage`, `capture`, `--ref`, `--kind`, `--environment`, `--push`, `--farmyard-handoff`, `--json` | `effigy.artifact.inspect.v1`, `effigy.artifact.stage.v1`, `effigy.artifact.capture.v1` | `072-artifact-commands-guide.md` |
 | `effigy cache` | Inspect and invalidate phase-1 cache metadata | `inspect`, `invalidate`, `--all`, `--json` | `effigy.cache.v1` | `022-manifest-cookbook.md` |
@@ -127,8 +127,13 @@ effigy tasks [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json]
 effigy defer [--repo <PATH>] [--json] <REQUEST> [args...]
 effigy doctor [--fix] [--verbose] [--json]
 effigy doctor <task> -- <args> [--json]
+effigy config path [--json]
+effigy config get <containers.backend|containers.profile> [--json]
+effigy config set <containers.backend|containers.profile> <value> [--json]
+effigy config unset <containers.backend|containers.profile> [--json]
 effigy config --inspect [--path <dotted.path>] [--json]
 effigy config --schema [--minimal] [--target <manifest|section>] [--runner <runner>] [--json]
+effigy config --user-inspect [--json]
 ```
 
 ### Docs, Contracts, and Scans

@@ -151,6 +151,22 @@ backend = "containerd"
 profile = "effigy"
 ```
 
+Or set the same values through the CLI:
+
+```sh
+effigy config set containers.backend containerd
+effigy config set containers.profile effigy
+```
+
+Inspect or clear them with:
+
+```sh
+effigy config path
+effigy config get containers.backend
+effigy config unset containers.backend
+effigy config unset containers.profile
+```
+
 ### Rules
 
 - `backend = "containerd"` maps Effigy's default unscoped runtime path to the

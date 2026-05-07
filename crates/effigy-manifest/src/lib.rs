@@ -62,9 +62,9 @@ pub use task_runtime::{
 use test_config::ManifestTestConfig;
 pub use test_config::{ManifestCargoEnvMatchMode, ManifestTestSuiteTeardownPolicy};
 pub use user_config::{
-    load_user_config, load_user_config_from, with_test_user_config_home, LibraryMount,
-    UserBundleConfig, UserConfig, UserContainerBackendPreference, UserContainersConfig,
-    USER_CONFIG_FILE,
+    load_user_config, load_user_config_from, save_user_config, save_user_config_to,
+    user_config_path, with_test_user_config_home, LibraryMount, UserBundleConfig, UserConfig,
+    UserContainerBackendPreference, UserContainersConfig, USER_CONFIG_FILE,
 };
 
 #[derive(Debug)]

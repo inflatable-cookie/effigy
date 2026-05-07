@@ -1,4 +1,5 @@
 use effigy_cli::TaskInvocation;
+use effigy_manifest::UserContainerBackendPreference;
 
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
 use crate::BuiltinError;
@@ -13,6 +14,28 @@ pub(super) struct ConfigRequest {
     pub(super) target: Option<ConfigSchemaTarget>,
     pub(super) bundle: Option<String>,
     pub(super) runner: Option<ConfigTestRunner>,
+    pub(super) user_inspect: bool,
+    pub(super) user_path: bool,
+    pub(super) user_get: Option<UserConfigKey>,
+    pub(super) set_container_backend: Option<UserContainerBackendPreference>,
+    pub(super) set_container_profile: Option<String>,
+    pub(super) unset_container_backend: bool,
+    pub(super) unset_container_profile: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum UserConfigKey {
+    ContainersBackend,
+    ContainersProfile,
+}
+
+impl UserConfigKey {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::ContainersBackend => "containers.backend",
+            Self::ContainersProfile => "containers.profile",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +103,12 @@ const CONFIG_RUNNER_CHOICES: [(&str, ConfigTestRunner); 4] = [
     ("cargo-test", ConfigTestRunner::CargoTest),
 ];
 
+const CONFIG_USER_BACKEND_CHOICES: [(&str, UserContainerBackendPreference); 3] = [
+    ("containerd", UserContainerBackendPreference::Containerd),
+    ("colima-nerdctl", UserContainerBackendPreference::Containerd),
+    ("docker", UserContainerBackendPreference::Docker),
+];
+
 pub(super) fn parse_config_request(
     task: &TaskInvocation,
     args: &[String],
@@ -93,6 +122,75 @@ pub(super) fn parse_config_request(
     let mut target: Option<ConfigSchemaTarget> = None;
     let mut bundle: Option<String> = None;
     let mut runner: Option<ConfigTestRunner> = None;
+    let mut user_inspect = false;
+    let mut user_path = false;
+    let mut user_get: Option<UserConfigKey> = None;
+    let mut set_container_backend: Option<UserContainerBackendPreference> = None;
+    let mut set_container_profile: Option<String> = None;
+    let mut unset_container_backend = false;
+    let mut unset_container_profile = false;
+    match args.first().map(String::as_str) {
+        Some("inspect") => {
+            let _ = parser.next();
+            inspect = true;
+        }
+        Some("schema") => {
+            let _ = parser.next();
+            schema = true;
+        }
+        Some("path") => {
+            let _ = parser.next();
+            user_path = true;
+        }
+        Some("get") => {
+            let _ = parser.next();
+            let key = parser.required_subcommand("config get", "`containers.backend` or `containers.profile`")?;
+            user_get = Some(parse_user_config_key("config get", key)?);
+        }
+        Some("set") => {
+            let _ = parser.next();
+            let key = parser.required_subcommand("config set", "`containers.backend` or `containers.profile`")?;
+            match parse_user_config_key("config set", key)? {
+                UserConfigKey::ContainersBackend => {
+                    set_container_backend = Some(parser.builtin_choice_flag_value(
+                        "config set",
+                        "containers.backend",
+                        "containerd, docker",
+                        |value| {
+                            BuiltinArgParser::choice_ignore_ascii_case(
+                                value,
+                                &CONFIG_USER_BACKEND_CHOICES,
+                            )
+                        },
+                    )?);
+                }
+                UserConfigKey::ContainersProfile => {
+                    set_container_profile = Some(parser.mapped_flag_value(
+                        "`config set containers.profile` requires a value",
+                        |value| {
+                            let trimmed = value.trim();
+                            if trimmed.is_empty() {
+                                None
+                            } else {
+                                Some(trimmed.to_owned())
+                            }
+                        },
+                        |_| "invalid `containers.profile` value".to_owned(),
+                    )?);
+                }
+            }
+        }
+        Some("unset") => {
+            let _ = parser.next();
+            let key =
+                parser.required_subcommand("config unset", "`containers.backend` or `containers.profile`")?;
+            match parse_user_config_key("config unset", key)? {
+                UserConfigKey::ContainersBackend => unset_container_backend = true,
+                UserConfigKey::ContainersProfile => unset_container_profile = true,
+            }
+        }
+        _ => {}
+    }
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| {
         if parser.consume_any_bool_flag(
             arg,
@@ -101,6 +199,10 @@ pub(super) fn parse_config_request(
                 ("--inspect", &mut inspect),
                 ("--minimal", &mut minimal),
                 ("--json", &mut output_json),
+                ("--user-inspect", &mut user_inspect),
+                ("--user-path", &mut user_path),
+                ("--unset-container-backend", &mut unset_container_backend),
+                ("--unset-container-profile", &mut unset_container_profile),
             ],
         ) {
             return Ok(ParseLoopAction::Handled);
@@ -139,16 +241,37 @@ pub(super) fn parse_config_request(
             )?);
             return Ok(ParseLoopAction::Handled);
         }
+        if arg == "--set-container-backend" {
+            set_container_backend = Some(parser.builtin_choice_flag_value(
+                "config",
+                "--set-container-backend",
+                "containerd, docker",
+                |value| {
+                    BuiltinArgParser::choice_ignore_ascii_case(value, &CONFIG_USER_BACKEND_CHOICES)
+                },
+            )?);
+            return Ok(ParseLoopAction::Handled);
+        }
+        if arg == "--set-container-profile" {
+            set_container_profile = Some(parser.mapped_flag_value(
+                "`--set-container-profile` requires a value",
+                |value| {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_owned())
+                    }
+                },
+                |_| "invalid `--set-container-profile` value".to_owned(),
+            )?);
+            return Ok(ParseLoopAction::Handled);
+        }
         Ok(ParseLoopAction::Unknown)
     })?;
     if inspect && schema {
         return Err(BuiltinError::task_invocation(
             "`--inspect` cannot be combined with `--schema` for built-in `config`",
-        ));
-    }
-    if inspect_path.is_some() && !inspect {
-        return Err(BuiltinError::task_invocation(
-            "`--path` requires `--inspect` for built-in `config`",
         ));
     }
     if minimal && !schema {
@@ -181,6 +304,71 @@ pub(super) fn parse_config_request(
             "`--runner` requires `--target test` for built-in `config`",
         ));
     }
+    let user_mode = user_inspect
+        || user_path
+        || user_get.is_some()
+        || set_container_backend.is_some()
+        || set_container_profile.is_some()
+        || unset_container_backend
+        || unset_container_profile;
+    if user_mode && (inspect || schema) {
+        return Err(BuiltinError::task_invocation(
+            "user-global config flags cannot be combined with `--inspect` or `--schema` for built-in `config`",
+        ));
+    }
+    if user_mode && inspect_path.is_some() {
+        return Err(BuiltinError::task_invocation(
+            "`--path` cannot be combined with user-global config flags for built-in `config`",
+        ));
+    }
+    if inspect_path.is_some() && !inspect {
+        return Err(BuiltinError::task_invocation(
+            "`--path` requires `--inspect` for built-in `config`",
+        ));
+    }
+    if user_inspect
+        && (user_path
+            || user_get.is_some()
+            || set_container_backend.is_some()
+            || set_container_profile.is_some()
+            || unset_container_backend
+            || unset_container_profile)
+    {
+        return Err(BuiltinError::task_invocation(
+            "`--user-inspect` cannot be combined with other user-global config operations for built-in `config`",
+        ));
+    }
+    if user_path
+        && (user_get.is_some()
+            || set_container_backend.is_some()
+            || set_container_profile.is_some()
+            || unset_container_backend
+            || unset_container_profile)
+    {
+        return Err(BuiltinError::task_invocation(
+            "`path`/`--user-path` cannot be combined with other user-global config operations for built-in `config`",
+        ));
+    }
+    if user_get.is_some()
+        && (set_container_backend.is_some()
+            || set_container_profile.is_some()
+            || unset_container_backend
+            || unset_container_profile)
+    {
+        return Err(BuiltinError::task_invocation(
+            "`get` cannot be combined with user-global config update flags for built-in `config`",
+        ));
+    }
+    if set_container_backend.is_some() && unset_container_backend {
+        return Err(BuiltinError::task_invocation(
+            "`--set-container-backend` cannot be combined with `--unset-container-backend` for built-in `config`",
+        ));
+    }
+    if set_container_profile.is_some() && unset_container_profile {
+        return Err(BuiltinError::task_invocation(
+            "`--set-container-profile` cannot be combined with `--unset-container-profile` for built-in `config`",
+        ));
+    }
 
     Ok(ConfigRequest {
         inspect,
@@ -191,6 +379,13 @@ pub(super) fn parse_config_request(
         target,
         bundle,
         runner,
+        user_inspect,
+        user_path,
+        user_get,
+        set_container_backend,
+        set_container_profile,
+        unset_container_backend,
+        unset_container_profile,
     })
 }
 
@@ -204,6 +399,13 @@ pub struct ConfigParseContract {
     pub target: Option<&'static str>,
     pub bundle: Option<String>,
     pub runner: Option<&'static str>,
+    pub user_inspect: bool,
+    pub user_path: bool,
+    pub user_get: Option<&'static str>,
+    pub set_container_backend: Option<&'static str>,
+    pub set_container_profile: Option<String>,
+    pub unset_container_backend: bool,
+    pub unset_container_profile: bool,
 }
 
 pub fn parse_config_contract_request(
@@ -220,5 +422,25 @@ pub fn parse_config_contract_request(
         target: parsed.target.map(ConfigSchemaTarget::as_str),
         bundle: parsed.bundle,
         runner: parsed.runner.map(ConfigTestRunner::as_str),
+        user_inspect: parsed.user_inspect,
+        user_path: parsed.user_path,
+        user_get: parsed.user_get.map(UserConfigKey::as_str),
+        set_container_backend: parsed.set_container_backend.map(|backend| match backend {
+            UserContainerBackendPreference::Containerd => "containerd",
+            UserContainerBackendPreference::Docker => "docker",
+        }),
+        set_container_profile: parsed.set_container_profile,
+        unset_container_backend: parsed.unset_container_backend,
+        unset_container_profile: parsed.unset_container_profile,
     })
+}
+
+fn parse_user_config_key(context: &str, key: &str) -> Result<UserConfigKey, BuiltinError> {
+    match key {
+        "containers.backend" => Ok(UserConfigKey::ContainersBackend),
+        "containers.profile" => Ok(UserConfigKey::ContainersProfile),
+        _ => Err(BuiltinError::task_invocation(format!(
+            "unknown {context} key `{key}` (expected `containers.backend` or `containers.profile`)"
+        ))),
+    }
 }
