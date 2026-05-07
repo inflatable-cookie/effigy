@@ -13,10 +13,9 @@ mod validation;
 use effigy_containers::compose::compose_args;
 use effigy_containers::exec::{ensure_colima_running, run_docker_capture};
 use effigy_containers::{load_container_exec_working_dir, EffectiveContainerPolicy};
-use effigy_runtime_plan::{
-    RuntimeActivationPlan, RuntimeActivationReport, RuntimeActivationRequest, RuntimeCleanupResult,
-    RuntimeLeasePolicy,
-};
+use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
+#[cfg(test)]
+use effigy_runtime_plan::{RuntimeActivationReport, RuntimeCleanupResult};
 
 pub(in crate::runner) use gateway::container_policy_uses_gateway_surface;
 use gateway::ensure_runtime_gateway_readiness_stage;
@@ -148,6 +147,7 @@ fn activate_container_runtime_plan_for_task_using(
     })
 }
 
+#[cfg(test)]
 fn runtime_activation_report_for_result(
     plan: RuntimeActivationPlan,
     activation: ContainerTaskActivation,

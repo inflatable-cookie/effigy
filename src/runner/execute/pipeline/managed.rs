@@ -75,7 +75,7 @@ pub(in crate::runner) fn run_managed_task(
     let Some(mut plan) = plan else {
         if should_open_workspace_shell_for_non_managed_task(
             selection.task.run.is_some(),
-            &container_binding,
+            container_binding,
             container_handoff,
         ) {
             let ContainerExecutionBinding::Container { name, .. } = &container_binding else {
@@ -98,7 +98,7 @@ pub(in crate::runner) fn run_managed_task(
             .map(Some);
         }
         ensure_inline_workspace_supported(
-            &container_binding,
+            container_binding,
             InlineWorkspaceCapabilitySurface::ManagedAttachedSession {
                 task_name: &preflight.selector.task_name,
             },
@@ -132,7 +132,7 @@ pub(in crate::runner) fn run_managed_task(
         )?;
         return run_workspace_seeded_task_session(
             &selection.catalog.catalog_root,
-            &container_binding,
+            container_binding,
             preflight.runtime_args_raw.repo_override.clone(),
             &preflight.selector.task_name,
             &preflight.runtime_args_exec.passthrough,
@@ -173,7 +173,7 @@ pub(in crate::runner) fn run_managed_task(
     {
         Some(build_managed_lifecycle_cleanup_command(
             &repo_for_task,
-            &container_binding,
+            container_binding,
         )?)
     } else {
         None

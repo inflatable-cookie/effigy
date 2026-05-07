@@ -23,7 +23,7 @@ pub(super) fn ensure_runtime_gateway_readiness_stage(
         repo_root,
         policy,
         || resolve_effigy_invocation_prefix().map_err(RunnerError::Cwd),
-        |command| gateway_up_for_managed_task(command),
+        gateway_up_for_managed_task,
         |repo_root, policy| register_gateway_routes_for_container(repo_root, policy).map(|_| ()),
     )
 }
