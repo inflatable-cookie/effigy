@@ -29,6 +29,9 @@ During v0.x, MINOR bumps may include breaking changes.
   for repo-bound container operations and honors the new user-global
   preference for unscoped runtime/cache flows before falling back to ambient
   Docker CLI detection.
+- **`effigy doctor`** now reports Docker/Colima runtime context more
+  explicitly and only warns about Docker context drift when no user-global
+  containerd preference is already pinned.
 - **Decodelabs bundles** now default their PHP-FPM workspace service to
   **Node.js 24** instead of **20**, so current pnpm and newer Node built-ins
   like **`node:sqlite`** work out of the box in bundle-based sites while

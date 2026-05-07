@@ -8,6 +8,7 @@ pub(crate) fn render_doctor_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
         &[
             "Run remediation-first health checks for environment tooling, manifest validity, and task references.",
             "Explain task resolution with `effigy doctor <task> <args>`.",
+            "Also surfaces runtime/backend context when Docker Desktop and Colima coexist.",
         ],
         &[
             "effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]",
@@ -28,6 +29,7 @@ pub(crate) fn render_doctor_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
             "effigy doctor --repo /path/to/workspace",
             "effigy doctor --fix",
             "effigy doctor --verbose",
+            "effigy doctor --verbose  # inspect Docker/Colima backend selection",
             "effigy doctor frontend/build -- --watch",
             "effigy --json doctor --repo /path/to/workspace",
         ],

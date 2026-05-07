@@ -110,7 +110,8 @@ fn collect_runtime_diagnostics(
         }
     }
 
-    if let Some(backend) = user_global_backend_preference() {
+    let user_backend = user_global_backend_preference();
+    if let Some(backend) = user_backend.clone() {
         diagnostics.evidence.push(format!(
             "user-global container backend preference: {backend}"
         ));
@@ -126,9 +127,11 @@ fn collect_runtime_diagnostics(
             diagnostics
                 .evidence
                 .push(format!("docker-context: {context}"));
-            if !profiles.is_empty() {
+            if !profiles.is_empty()
+                && user_backend != Some(effigy_container_manager::BackendId::colima_nerdctl())
+            {
                 diagnostics.warnings.push(format!(
-                    "docker CLI context is `{context}`, but Effigy will prefer Colima for declared `driver = \"colima\"` containers"
+                    "docker CLI context is `{context}`, but Effigy will prefer Colima for declared `driver = \"colima\"` containers. If Colima should stay your machine-wide default for unscoped runtime commands too, set `[containers] backend = \"containerd\"` in `~/.effigy/config.toml`."
                 ));
             }
         }

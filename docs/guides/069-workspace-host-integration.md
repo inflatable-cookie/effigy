@@ -164,6 +164,21 @@ profile = "effigy"
 - `EFFIGY_COMPOSE_BACKEND` still wins when set; user config is the stable
   default underneath that override.
 
+### Verifying the active runtime
+
+When Docker Desktop and Colima both exist on the same machine, use:
+
+```sh
+effigy doctor --verbose
+```
+
+The `Root Resolution` section reports:
+
+- the backend Effigy selected
+- the active Docker context, when Docker is installed
+- the Colima profiles declared by the target repo
+- whether a user-global backend/profile preference is pinned
+
 ## Host Git/SSH Integration
 
 Two default-on params plus one explicit opt-in param on the `php-fpm`,
