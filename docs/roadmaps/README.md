@@ -38,10 +38,10 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-- [`g04.002`](./g04/002-execution-pipeline-ownership.md)
-- [`../specs/044-execution-pipeline-ownership-strict-lane.md`](../specs/044-execution-pipeline-ownership-strict-lane.md)
+- [`g04.003`](./g04/003-runtime-activation-pipeline.md)
+- [`../specs/045-runtime-activation-pipeline-strict-lane.md`](../specs/045-runtime-activation-pipeline-strict-lane.md)
 - Ready card:
-  [`434-select-next-execution-planning-slice.md`](../specs/batch-cards/434-select-next-execution-planning-slice.md)
+  [`455-move-runtime-prep-activation-executor-behind-plan.md`](../specs/batch-cards/455-move-runtime-prep-activation-executor-behind-plan.md)
 
 ## Research Program
 
@@ -78,7 +78,7 @@ Before rollover:
 ## Next Task
 
 Start card
-[`434-select-next-execution-planning-slice.md`](../specs/batch-cards/434-select-next-execution-planning-slice.md).
+[`455-move-runtime-prep-activation-executor-behind-plan.md`](../specs/batch-cards/455-move-runtime-prep-activation-executor-behind-plan.md).
 
 ## Historical language boundary
 

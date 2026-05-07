@@ -634,6 +634,7 @@ dependencies = [
  "effigy-rhai",
  "effigy-routing",
  "effigy-runtime",
+ "effigy-runtime-plan",
  "effigy-scan",
  "effigy-tasks",
  "effigy-tui",
@@ -851,6 +852,7 @@ name = "effigy-execution"
 version = "0.4.0"
 dependencies = [
  "effigy-context",
+ "effigy-tasks",
 ]
 
 [[package]]
@@ -976,6 +978,10 @@ dependencies = [
  "signal-hook 0.4.4",
  "tempfile",
 ]
+
+[[package]]
+name = "effigy-runtime-plan"
+version = "0.4.0"
 
 [[package]]
 name = "effigy-scan"

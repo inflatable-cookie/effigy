@@ -3,6 +3,9 @@ use effigy_containers::{
     load_container_policy_with_workspace, load_inline_workspace_container_policy,
     resolve_inline_workspace_exec_working_dir, EffectiveContainerPolicy,
 };
+use effigy_execution::{
+    ExecutionBindingInput, ExecutionBindingKind as SharedExecutionBindingKind, ExecutionBindingPlan,
+};
 use effigy_manifest::{
     resolve_task_execution_binding_from_parts, ManifestContainersConfig,
     ManifestInlineWorkspaceContainerConfig, ManifestSystemsConfig, ManifestTask,
@@ -137,6 +140,22 @@ impl ExecutionBindingResolution {
         repo_root: &Path,
     ) -> Result<Option<PathBuf>, RunnerError> {
         self.binding.exec_working_dir(repo_root)
+    }
+
+    pub(in crate::runner) fn plan(&self, input: ExecutionBindingInput) -> ExecutionBindingPlan {
+        ExecutionBindingPlan::new(
+            input,
+            match self.kind {
+                ExecutionBindingKind::None => SharedExecutionBindingKind::None,
+                ExecutionBindingKind::Host => SharedExecutionBindingKind::Host,
+                ExecutionBindingKind::NamedContainer => SharedExecutionBindingKind::NamedContainer,
+                ExecutionBindingKind::InlineContainer => {
+                    SharedExecutionBindingKind::InlineContainer
+                }
+            },
+            self.requested_container_name.clone(),
+            self.is_inline_container(),
+        )
     }
 }
 

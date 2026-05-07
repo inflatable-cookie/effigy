@@ -8,3 +8,4 @@ description = "Canonical execution request model for Effigy"
 
 [dependencies]
 effigy-context = { path = "../effigy-context" }
+effigy-tasks = { path = "../effigy-tasks" }

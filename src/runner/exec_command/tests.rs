@@ -549,18 +549,23 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
     let captured = Arc::new(Mutex::new(None));
     let captured_clone = Arc::clone(&captured);
 
-    let activation = activate_exec_surface_with(&repo_root, &surface, move |repo_root, surface| {
-        *captured_clone.lock().expect("capture lock") = Some((
-            repo_root.to_path_buf(),
-            surface.container_name.clone(),
-            surface.policy.name.clone(),
-        ));
-        Ok(ContainerTaskActivation {
-            system_was_running: false,
-            refreshed_host_container_lease: true,
+    let activation =
+        activate_exec_surface_with(&repo_root, &surface, move |repo_root, surface, plan| {
+            *captured_clone.lock().expect("capture lock") = Some((
+                repo_root.to_path_buf(),
+                surface.container_name.clone(),
+                surface.policy.name.clone(),
+                plan.request.repo_override.clone(),
+                plan.request.container_name.clone(),
+                plan.request.policy_name.clone(),
+                plan.lease.policy,
+            ));
+            Ok(ContainerTaskActivation {
+                system_was_running: false,
+                refreshed_host_container_lease: true,
+            })
         })
-    })
-    .expect("activation");
+        .expect("activation");
 
     assert_eq!(
         *captured.lock().expect("capture lock"),
@@ -568,6 +573,10 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
             PathBuf::from("/tmp/repo"),
             "web".to_owned(),
             "web".to_owned(),
+            Some(PathBuf::from("/tmp/repo")),
+            Some("web".to_owned()),
+            "web".to_owned(),
+            effigy_runtime_plan::RuntimeLeasePolicy::RefreshOnActivation,
         ))
     );
     assert!(activation.refreshed_host_container_lease);

@@ -27,7 +27,7 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
-- [`044-execution-pipeline-ownership-strict-lane.md`](./044-execution-pipeline-ownership-strict-lane.md)
+- [`045-runtime-activation-pipeline-strict-lane.md`](./045-runtime-activation-pipeline-strict-lane.md)
 
 Paused but still useful:
 
@@ -35,6 +35,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`044-execution-pipeline-ownership-strict-lane.md`](./044-execution-pipeline-ownership-strict-lane.md)
 - [`043-runtime-architecture-sanity-and-g04-rollover-strict-lane.md`](./043-runtime-architecture-sanity-and-g04-rollover-strict-lane.md)
 - [`042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md`](./042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md)
 - [`041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md`](./041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md)
@@ -71,4 +72,4 @@ Recently completed:
 ## Next Task
 
 Card
-[`434-select-next-execution-planning-slice.md`](./batch-cards/434-select-next-execution-planning-slice.md).
+[`455-move-runtime-prep-activation-executor-behind-plan.md`](./batch-cards/455-move-runtime-prep-activation-executor-behind-plan.md).

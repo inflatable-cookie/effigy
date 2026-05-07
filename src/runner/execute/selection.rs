@@ -4,6 +4,9 @@ mod fallback;
 mod result;
 
 use effigy_cli::TaskInvocation;
+use effigy_execution::{
+    ExecutionSelectionCatalogSummary, ExecutionSelectionInput, ExecutionSelectionPlan,
+};
 
 use super::planning::ExecutionPreflight;
 use crate::runner::error::RunnerError;
@@ -20,9 +23,30 @@ pub(super) fn resolve_task_selection<'a>(
         &preflight.catalogs,
         &preflight.invocation_cwd,
     ) {
-        Ok(selection) => Ok(result::selected(selection)),
+        Ok(selection) => {
+            let plan = build_execution_selection_plan(preflight, &selection);
+            Ok(result::selected(selection, plan))
+        }
         Err(error) => resolve_selection_error(task, preflight, error.into()),
     }
+}
+
+pub(super) fn build_execution_selection_plan(
+    preflight: &ExecutionPreflight,
+    selection: &effigy_manifest::TaskSelection<'_>,
+) -> ExecutionSelectionPlan {
+    ExecutionSelectionPlan::new(
+        ExecutionSelectionInput::from_discovery(&preflight.discovery_plan),
+        ExecutionSelectionCatalogSummary {
+            alias: selection.catalog.alias.clone(),
+            catalog_root: selection.catalog.catalog_root.clone(),
+            manifest_path: selection.catalog.manifest_path.clone(),
+            depth: selection.catalog.depth,
+        },
+        selection.mode,
+        selection.evidence.clone(),
+        preflight.selector.task_name.clone(),
+    )
 }
 
 fn resolve_selection_error<'a>(

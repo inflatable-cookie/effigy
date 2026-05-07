@@ -40,11 +40,14 @@ use effigy_env::schema_support::{
     SchemaSupportError,
 };
 use effigy_env::secret::SecretString;
+use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
 use effigy_manifest::TaskSelection;
+use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
 
 pub(in crate::runner) fn run_standard_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
+    selection_plan: &ExecutionSelectionPlan,
 ) -> Result<String, RunnerError> {
     let env_schema_resolved = resolve_env_schema_if_present(
         &selection.catalog.catalog_root,
@@ -101,6 +104,10 @@ pub(in crate::runner) fn run_standard_task(
         selection.task,
         "standard task execution",
     )?;
+    let _binding_plan = binding_resolution.plan(ExecutionBindingInput::new(
+        selection_plan.clone(),
+        "standard task execution",
+    ));
     let container_binding = binding_resolution.binding();
     if let ContainerExecutionBinding::Inline { .. } = container_binding {
         return run_inline_workspace_standard_task(
@@ -254,7 +261,7 @@ fn activate_routed_container_runtime(
             load_container_policy(repo_root, Some(container_name))
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))
         },
-        |repo_root, policy, request| {
+        |repo_root, policy, request, _plan| {
             activate_container_runtime_for_task(repo_root, policy, request)
         },
     )
@@ -271,21 +278,49 @@ fn activate_routed_container_runtime_with(
         &Path,
         &effigy_containers::EffectiveContainerPolicy,
         ActivationRequest<'_>,
+        &RuntimeActivationPlan,
     ) -> Result<
         crate::runner::container_runtime_prep::ContainerTaskActivation,
         RunnerError,
     >,
 ) -> Result<crate::runner::container_runtime_prep::ContainerTaskActivation, RunnerError> {
     let policy = load_policy(repo_root, container_name)?;
+    let session_context = current_runtime_session_context();
+    let plan = standard_runtime_activation_plan(
+        repo_root,
+        policy.name.as_str(),
+        Some(container_name.to_owned()),
+        session_context,
+    );
     activate(
         repo_root,
         &policy,
         ActivationRequest {
-            container_name: Some(container_name),
-            repo_override: Some(repo_root.to_path_buf()),
-            session_context: current_runtime_session_context(),
+            container_name: plan.request.container_name.as_deref(),
+            repo_override: plan.request.repo_override.clone(),
+            session_context,
         },
+        &plan,
     )
+}
+
+fn standard_runtime_activation_plan(
+    repo_root: &Path,
+    policy_name: &str,
+    container_name: Option<String>,
+    session_context: RuntimeSessionContext,
+) -> RuntimeActivationPlan {
+    let mut request =
+        RuntimeActivationRequest::new(repo_root.to_path_buf(), policy_name.to_owned())
+            .repo_override(repo_root.to_path_buf())
+            .lease_policy(match session_context.lease_refresh_policy {
+                LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
+                LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
+            });
+    if let Some(container_name) = container_name {
+        request = request.container_name(container_name);
+    }
+    request.plan()
 }
 
 fn should_stay_in_workspace_shell(
@@ -396,7 +431,7 @@ fn activate_inline_workspace_container_runtime(
     activate_inline_workspace_container_runtime_with(
         repo_root,
         policy,
-        |repo_root, policy, request| {
+        |repo_root, policy, request, _plan| {
             activate_container_runtime_for_task(repo_root, policy, request)
         },
     )
@@ -409,22 +444,31 @@ fn activate_inline_workspace_container_runtime_with(
         &Path,
         &effigy_containers::EffectiveContainerPolicy,
         ActivationRequest<'_>,
+        &RuntimeActivationPlan,
     ) -> Result<
         crate::runner::container_runtime_prep::ContainerTaskActivation,
         RunnerError,
     >,
 ) -> Result<crate::runner::container_runtime_prep::ContainerTaskActivation, RunnerError> {
+    let session_context = RuntimeSessionContext {
+        lease_refresh_policy: LeaseRefreshPolicy::SkipRefresh,
+        ..current_runtime_session_context()
+    };
+    let plan = standard_runtime_activation_plan(
+        repo_root,
+        policy.name.as_str(),
+        Some(policy.name.clone()),
+        session_context,
+    );
     activate(
         repo_root,
         policy,
         ActivationRequest {
-            container_name: Some(policy.name.as_str()),
-            repo_override: Some(repo_root.to_path_buf()),
-            session_context: RuntimeSessionContext {
-                lease_refresh_policy: LeaseRefreshPolicy::SkipRefresh,
-                ..current_runtime_session_context()
-            },
+            container_name: plan.request.container_name.as_deref(),
+            repo_override: plan.request.repo_override.clone(),
+            session_context,
         },
+        &plan,
     )
 }
 
@@ -467,6 +511,7 @@ mod tests {
     use crate::runner::runtime_session_context::LeaseRefreshPolicy;
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn};
+    use effigy_runtime_plan::RuntimeLeasePolicy;
     use std::env;
     use std::path::{Path, PathBuf};
     use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -608,12 +653,15 @@ mod tests {
                     host_processes: Vec::new(),
                 })
             },
-            |repo_root, _policy, request| {
+            |repo_root, _policy, request, plan| {
                 activation_call = Some((
                     repo_root.to_path_buf(),
                     request.container_name.map(str::to_owned),
                     request.repo_override,
                     request.session_context.lease_refresh_policy,
+                    plan.request.container_name.clone(),
+                    plan.request.repo_override.clone(),
+                    plan.lease.policy,
                 ));
                 Ok(ContainerTaskActivation {
                     system_was_running: false,
@@ -630,6 +678,9 @@ mod tests {
                 Some("web".to_owned()),
                 Some(repo_root.to_path_buf()),
                 LeaseRefreshPolicy::RefreshOnActivation,
+                Some("web".to_owned()),
+                Some(repo_root.to_path_buf()),
+                RuntimeLeasePolicy::RefreshOnActivation,
             ))
         );
         assert!(activation.refreshed_host_container_lease);
@@ -674,13 +725,16 @@ mod tests {
         let activation = activate_inline_workspace_container_runtime_with(
             repo_root,
             &policy,
-            |repo_root, policy, request| {
+            |repo_root, policy, request, plan| {
                 activation_call = Some((
                     repo_root.to_path_buf(),
                     policy.name.clone(),
                     request.container_name.map(str::to_owned),
                     request.repo_override,
                     request.session_context.lease_refresh_policy,
+                    plan.request.container_name.clone(),
+                    plan.request.repo_override.clone(),
+                    plan.lease.policy,
                 ));
                 Ok(ContainerTaskActivation {
                     system_was_running: false,
@@ -698,6 +752,9 @@ mod tests {
                 Some("dev__app".to_owned()),
                 Some(repo_root.to_path_buf()),
                 LeaseRefreshPolicy::SkipRefresh,
+                Some("dev__app".to_owned()),
+                Some(repo_root.to_path_buf()),
+                RuntimeLeasePolicy::Skip,
             ))
         );
         assert!(!activation.refreshed_host_container_lease);

@@ -3,6 +3,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use effigy_context::EffigyRuntimeContext;
+use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskExecutionRequest {
@@ -166,11 +167,84 @@ pub struct ExecutionPreflightInput {
     pub surface: ExecutionSurface,
 }
 
+impl ExecutionPreflightInput {
+    pub fn new(
+        selector: impl Into<String>,
+        args: Vec<String>,
+        cwd: PathBuf,
+        surface: ExecutionSurface,
+    ) -> Self {
+        Self {
+            selector: selector.into(),
+            args,
+            cwd,
+            surface,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionRuntimeArgsPlan {
     pub raw_args: Vec<String>,
     pub exec_args: Vec<String>,
+    pub repo_override: Option<PathBuf>,
+    pub verbose_root: bool,
+    pub env_schema_override: Option<PathBuf>,
     pub output_json: bool,
+}
+
+impl ExecutionRuntimeArgsPlan {
+    pub fn from_args(args: &[String]) -> Result<Self, ExecutionRequestError> {
+        let raw = effigy_tasks::parse_task_runtime_args(args)
+            .map_err(ExecutionRequestError::InvalidRuntimeArgs)?;
+        let (exec_args, output_json) = strip_task_json_flag(&raw.passthrough);
+
+        Ok(Self {
+            raw_args: raw.passthrough,
+            exec_args,
+            repo_override: raw.repo_override,
+            verbose_root: raw.verbose_root,
+            env_schema_override: raw.env_schema_override,
+            output_json,
+        })
+    }
+
+    pub fn raw_task_runtime_args(&self) -> TaskRuntimeArgs {
+        TaskRuntimeArgs {
+            repo_override: self.repo_override.clone(),
+            verbose_root: self.verbose_root,
+            env_schema_override: self.env_schema_override.clone(),
+            passthrough: self.raw_args.clone(),
+        }
+    }
+
+    pub fn exec_task_runtime_args(&self) -> TaskRuntimeArgs {
+        TaskRuntimeArgs {
+            repo_override: self.repo_override.clone(),
+            verbose_root: self.verbose_root,
+            env_schema_override: self.env_schema_override.clone(),
+            passthrough: self.exec_args.clone(),
+        }
+    }
+}
+
+fn strip_task_json_flag(args: &[String]) -> (Vec<String>, bool) {
+    let mut stripped = Vec::with_capacity(args.len());
+    let mut json_mode = false;
+    let mut passthrough_mode = false;
+    for arg in args {
+        if arg == "--" {
+            passthrough_mode = true;
+            stripped.push(arg.clone());
+            continue;
+        }
+        if !passthrough_mode && arg == "--json" {
+            json_mode = true;
+            continue;
+        }
+        stripped.push(arg.clone());
+    }
+    (stripped, json_mode)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,6 +252,145 @@ pub struct ExecutionPreflightPlan {
     pub input: ExecutionPreflightInput,
     pub runtime_args: Option<ExecutionRuntimeArgsPlan>,
     pub diagnostics: Vec<ExecutionPlanDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionDiscoveryInput {
+    pub selector: String,
+    pub cwd: PathBuf,
+    pub repo_override: Option<PathBuf>,
+}
+
+impl ExecutionDiscoveryInput {
+    pub fn new(selector: impl Into<String>, cwd: PathBuf, repo_override: Option<PathBuf>) -> Self {
+        Self {
+            selector: selector.into(),
+            cwd,
+            repo_override,
+        }
+    }
+
+    pub fn resolve(
+        self,
+        invocation_cwd: PathBuf,
+        resolved_root: PathBuf,
+    ) -> Result<ExecutionDiscoveryPlan, ExecutionRequestError> {
+        let selector = effigy_tasks::parse_task_selector(&self.selector)
+            .map_err(ExecutionRequestError::InvalidTaskSelector)?;
+        Ok(ExecutionDiscoveryPlan {
+            invocation_cwd,
+            resolved_root,
+            selector,
+            repo_override: self.repo_override,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionDiscoveryPlan {
+    pub invocation_cwd: PathBuf,
+    pub resolved_root: PathBuf,
+    pub selector: TaskSelector,
+    pub repo_override: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionSelectionInput {
+    pub selector: TaskSelector,
+    pub invocation_cwd: PathBuf,
+    pub resolved_root: PathBuf,
+}
+
+impl ExecutionSelectionInput {
+    pub fn from_discovery(plan: &ExecutionDiscoveryPlan) -> Self {
+        Self {
+            selector: plan.selector.clone(),
+            invocation_cwd: plan.invocation_cwd.clone(),
+            resolved_root: plan.resolved_root.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionSelectionCatalogSummary {
+    pub alias: String,
+    pub catalog_root: PathBuf,
+    pub manifest_path: PathBuf,
+    pub depth: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionSelectionPlan {
+    pub input: ExecutionSelectionInput,
+    pub catalog: ExecutionSelectionCatalogSummary,
+    pub mode: CatalogSelectionMode,
+    pub evidence: Vec<String>,
+    pub task_name: String,
+}
+
+impl ExecutionSelectionPlan {
+    pub fn new(
+        input: ExecutionSelectionInput,
+        catalog: ExecutionSelectionCatalogSummary,
+        mode: CatalogSelectionMode,
+        evidence: Vec<String>,
+        task_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            input,
+            catalog,
+            mode,
+            evidence,
+            task_name: task_name.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionBindingInput {
+    pub selection: ExecutionSelectionPlan,
+    pub runtime_surface: String,
+}
+
+impl ExecutionBindingInput {
+    pub fn new(selection: ExecutionSelectionPlan, runtime_surface: impl Into<String>) -> Self {
+        Self {
+            selection,
+            runtime_surface: runtime_surface.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionBindingKind {
+    None,
+    Host,
+    NamedContainer,
+    InlineContainer,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionBindingPlan {
+    pub input: ExecutionBindingInput,
+    pub kind: ExecutionBindingKind,
+    pub requested_container_name: Option<String>,
+    pub inline_workspace: bool,
+}
+
+impl ExecutionBindingPlan {
+    pub fn new(
+        input: ExecutionBindingInput,
+        kind: ExecutionBindingKind,
+        requested_container_name: Option<String>,
+        inline_workspace: bool,
+    ) -> Self {
+        Self {
+            input,
+            kind,
+            requested_container_name,
+            inline_workspace,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,6 +448,15 @@ impl ExecutionDispatchPlan {
             surface: plan.request.surface.clone(),
             diagnostics: Vec::new(),
         })
+    }
+
+    pub fn preflight_input(&self) -> ExecutionPreflightInput {
+        ExecutionPreflightInput::new(
+            self.selector.clone(),
+            self.args.clone(),
+            self.effective_cwd.clone(),
+            self.surface.clone(),
+        )
     }
 }
 
@@ -385,6 +607,8 @@ pub enum ExecutionRequestError {
     MissingRuntimeContext,
     MissingInvocation,
     NonTaskInvocation,
+    InvalidRuntimeArgs(String),
+    InvalidTaskSelector(String),
 }
 
 impl std::fmt::Display for ExecutionRequestError {
@@ -395,6 +619,8 @@ impl std::fmt::Display for ExecutionRequestError {
             Self::NonTaskInvocation => {
                 write!(f, "execution request must contain a task invocation")
             }
+            Self::InvalidRuntimeArgs(error) => write!(f, "{error}"),
+            Self::InvalidTaskSelector(error) => write!(f, "{error}"),
         }
     }
 }
@@ -411,9 +637,11 @@ mod tests {
     use effigy_context::{CapturedEnv, EffigyRuntimeContext};
 
     use super::{
-        ExecutionDispatchPlan, ExecutionEnvironmentPlan, ExecutionIntent, ExecutionOutputMode,
-        ExecutionRoute, ExecutionRunTarget, ExecutionRuntimePolicy, ExecutionSurface,
-        TaskExecutionRequestBuilder,
+        CatalogSelectionMode, ExecutionBindingInput, ExecutionBindingKind, ExecutionBindingPlan,
+        ExecutionDiscoveryInput, ExecutionDispatchPlan, ExecutionEnvironmentPlan, ExecutionIntent,
+        ExecutionOutputMode, ExecutionRoute, ExecutionRunTarget, ExecutionRuntimeArgsPlan,
+        ExecutionRuntimePolicy, ExecutionSelectionCatalogSummary, ExecutionSelectionInput,
+        ExecutionSelectionPlan, ExecutionSurface, TaskExecutionRequestBuilder,
     };
 
     fn temp_repo(name: &str) -> PathBuf {
@@ -617,6 +845,165 @@ mod tests {
         assert_eq!(plan.output_mode, ExecutionOutputMode::Json);
         assert_eq!(plan.surface, ExecutionSurface::Bootstrap);
         assert_eq!(plan.route, ExecutionRoute::Host);
+    }
+
+    #[test]
+    fn dispatch_plan_exposes_preflight_input() {
+        let context = context("dispatch-preflight");
+        let cwd = context.invocation_cwd().join("workspace");
+        let request = TaskExecutionRequestBuilder::new()
+            .runtime_context(context)
+            .task("db:migrate", vec!["--json".to_owned()])
+            .surface(ExecutionSurface::Rhai)
+            .environment(ExecutionEnvironmentPlan::default().cwd(cwd.clone()))
+            .build()
+            .expect("request");
+
+        let input = ExecutionDispatchPlan::from_request(request)
+            .expect("dispatch plan")
+            .preflight_input();
+
+        assert_eq!(input.selector, "db:migrate");
+        assert_eq!(input.args, vec!["--json"]);
+        assert_eq!(input.cwd, cwd);
+        assert_eq!(input.surface, ExecutionSurface::Rhai);
+    }
+
+    #[test]
+    fn runtime_args_plan_preserves_raw_args_and_strips_execution_json() {
+        let repo = PathBuf::from("/tmp/repo");
+        let schema = PathBuf::from("/tmp/schema.env");
+        let args = vec![
+            "--repo".to_owned(),
+            repo.display().to_string(),
+            "--env-schema".to_owned(),
+            schema.display().to_string(),
+            "--verbose-root".to_owned(),
+            "--json".to_owned(),
+            "--".to_owned(),
+            "--json".to_owned(),
+        ];
+
+        let plan = ExecutionRuntimeArgsPlan::from_args(&args).expect("runtime args");
+
+        assert_eq!(plan.repo_override, Some(repo.clone()));
+        assert_eq!(plan.env_schema_override, Some(schema.clone()));
+        assert!(plan.verbose_root);
+        assert!(plan.output_json);
+        assert_eq!(
+            plan.raw_args,
+            vec!["--json".to_owned(), "--".to_owned(), "--json".to_owned()]
+        );
+        assert_eq!(plan.exec_args, vec!["--".to_owned(), "--json".to_owned()]);
+
+        let raw = plan.raw_task_runtime_args();
+        let exec = plan.exec_task_runtime_args();
+        assert_eq!(raw.repo_override, Some(repo.clone()));
+        assert_eq!(exec.repo_override, Some(repo));
+        assert_eq!(raw.env_schema_override, Some(schema.clone()));
+        assert_eq!(exec.env_schema_override, Some(schema));
+        assert_eq!(
+            raw.passthrough,
+            vec!["--json".to_owned(), "--".to_owned(), "--json".to_owned()]
+        );
+        assert_eq!(exec.passthrough, vec!["--".to_owned(), "--json".to_owned()]);
+    }
+
+    #[test]
+    fn discovery_input_builds_selector_plan_with_paths() {
+        let cwd = PathBuf::from("/tmp/repo/nested");
+        let root = PathBuf::from("/tmp/repo");
+        let repo_override = Some(root.clone());
+
+        let plan = ExecutionDiscoveryInput::new("api/test", cwd.clone(), repo_override.clone())
+            .resolve(cwd.clone(), root.clone())
+            .expect("discovery plan");
+
+        assert_eq!(plan.invocation_cwd, cwd);
+        assert_eq!(plan.resolved_root, root);
+        assert_eq!(plan.repo_override, repo_override);
+        assert_eq!(plan.selector.prefix.as_deref(), Some("api"));
+        assert_eq!(plan.selector.task_name, "test");
+    }
+
+    #[test]
+    fn discovery_input_rejects_invalid_selector() {
+        let error = ExecutionDiscoveryInput::new("api/", PathBuf::from("/tmp/repo"), None)
+            .resolve(PathBuf::from("/tmp/repo"), PathBuf::from("/tmp/repo"))
+            .expect_err("invalid selector");
+
+        assert_eq!(
+            error.to_string(),
+            "task name must be `<task>` or `<catalog>/<task>`"
+        );
+    }
+
+    #[test]
+    fn selection_input_and_plan_summarize_selected_task() {
+        let discovery =
+            ExecutionDiscoveryInput::new("api/test", PathBuf::from("/tmp/repo/api"), None)
+                .resolve(PathBuf::from("/tmp/repo/api"), PathBuf::from("/tmp/repo"))
+                .expect("discovery");
+        let input = ExecutionSelectionInput::from_discovery(&discovery);
+        let plan = ExecutionSelectionPlan::new(
+            input,
+            ExecutionSelectionCatalogSummary {
+                alias: "api".to_owned(),
+                catalog_root: PathBuf::from("/tmp/repo/api"),
+                manifest_path: PathBuf::from("/tmp/repo/api/effigy.toml"),
+                depth: 1,
+            },
+            CatalogSelectionMode::ExplicitPrefix,
+            vec!["selected catalog `api` by explicit prefix".to_owned()],
+            "test",
+        );
+
+        assert_eq!(plan.input.selector.prefix.as_deref(), Some("api"));
+        assert_eq!(plan.input.selector.task_name, "test");
+        assert_eq!(plan.input.invocation_cwd, PathBuf::from("/tmp/repo/api"));
+        assert_eq!(plan.input.resolved_root, PathBuf::from("/tmp/repo"));
+        assert_eq!(plan.catalog.alias, "api");
+        assert_eq!(plan.catalog.depth, 1);
+        assert_eq!(plan.mode, CatalogSelectionMode::ExplicitPrefix);
+        assert_eq!(
+            plan.evidence,
+            vec!["selected catalog `api` by explicit prefix".to_owned()]
+        );
+        assert_eq!(plan.task_name, "test");
+    }
+
+    #[test]
+    fn binding_plan_summarizes_binding_resolution_without_task_model() {
+        let discovery =
+            ExecutionDiscoveryInput::new("api/test", PathBuf::from("/tmp/repo/api"), None)
+                .resolve(PathBuf::from("/tmp/repo/api"), PathBuf::from("/tmp/repo"))
+                .expect("discovery");
+        let selection = ExecutionSelectionPlan::new(
+            ExecutionSelectionInput::from_discovery(&discovery),
+            ExecutionSelectionCatalogSummary {
+                alias: "api".to_owned(),
+                catalog_root: PathBuf::from("/tmp/repo/api"),
+                manifest_path: PathBuf::from("/tmp/repo/api/effigy.toml"),
+                depth: 1,
+            },
+            CatalogSelectionMode::CwdNearest,
+            vec!["selected nearest in-scope catalog `api`".to_owned()],
+            "test",
+        );
+
+        let plan = ExecutionBindingPlan::new(
+            ExecutionBindingInput::new(selection, "standard task execution"),
+            ExecutionBindingKind::NamedContainer,
+            Some("web".to_owned()),
+            false,
+        );
+
+        assert_eq!(plan.input.runtime_surface, "standard task execution");
+        assert_eq!(plan.input.selection.task_name, "test");
+        assert_eq!(plan.input.selection.catalog.alias, "api");
+        assert_eq!(plan.kind, ExecutionBindingKind::NamedContainer);
+        assert_eq!(plan.requested_container_name.as_deref(), Some("web"));
+        assert!(!plan.inline_workspace);
     }
 
     #[test]

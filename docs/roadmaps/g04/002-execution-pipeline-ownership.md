@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`001-runtime-architecture-sanity-audit-and-generation-rollover.md`](./001-runtime-architecture-sanity-audit-and-generation-rollover.md)
@@ -37,10 +37,25 @@ request-shape crate.
 
 - `run_manifest_task_request` consumes a resolved execution plan
 - embedded task dispatch cannot bypass request construction
-- standard and managed pipeline files either shrink below 500 lines each or
-  split into clear owner modules
+- standard and managed pipeline file-size work is handed to `g04.003` because
+  the remaining bulk is runtime/container activation ownership
 - equivalent direct/bootstrap/Rhai/run-array/demo task inputs produce equivalent
   route plans
+
+## Closeout
+
+Completed shared planning surfaces in `effigy-execution`:
+
+- `ExecutionDispatchPlan`
+- `ExecutionPreflightInput`
+- `ExecutionRuntimeArgsPlan`
+- `ExecutionDiscoveryPlan`
+- `ExecutionSelectionPlan`
+- `ExecutionBindingPlan`
+
+Remaining standard/managed pipeline size is now blocked by runtime activation,
+policy loading, workspace-seeded sessions, inline workspace cleanup, direct
+compose calls, and managed session handling. That work moves to `g04.003`.
 
 ## Validation
 
@@ -51,4 +66,4 @@ request-shape crate.
 ## Next Task
 
 Start card
-[`434-select-next-execution-planning-slice.md`](../../specs/batch-cards/434-select-next-execution-planning-slice.md).
+[`444-scaffold-runtime-activation-pipeline-lane.md`](../../specs/batch-cards/444-scaffold-runtime-activation-pipeline-lane.md).

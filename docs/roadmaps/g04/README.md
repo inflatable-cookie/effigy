@@ -13,8 +13,8 @@ Generation theme:
 Current milestones:
 
 - [`001-runtime-architecture-sanity-audit-and-generation-rollover.md`](./001-runtime-architecture-sanity-audit-and-generation-rollover.md) (complete; audit landed and g04 opened)
-- [`002-execution-pipeline-ownership.md`](./002-execution-pipeline-ownership.md) (ready; make `effigy-execution` the real execution planning authority)
-- [`003-runtime-activation-pipeline.md`](./003-runtime-activation-pipeline.md) (queued)
+- [`002-execution-pipeline-ownership.md`](./002-execution-pipeline-ownership.md) (complete; shared execution planning surfaces landed)
+- [`003-runtime-activation-pipeline.md`](./003-runtime-activation-pipeline.md) (active; move runtime prep into typed activation pipeline)
 - [`004-container-operation-pipeline.md`](./004-container-operation-pipeline.md) (queued)
 - [`005-data-seed-dump-pipeline.md`](./005-data-seed-dump-pipeline.md) (queued)
 - [`006-rhai-host-api-split-and-callback-purity.md`](./006-rhai-host-api-split-and-callback-purity.md) (queued)
@@ -48,4 +48,4 @@ Rules:
 ## Next Task
 
 Start card
-[`434-select-next-execution-planning-slice.md`](../../specs/batch-cards/434-select-next-execution-planning-slice.md).
+[`455-move-runtime-prep-activation-executor-behind-plan.md`](../../specs/batch-cards/455-move-runtime-prep-activation-executor-behind-plan.md).

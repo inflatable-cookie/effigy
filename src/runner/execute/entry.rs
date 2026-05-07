@@ -1,31 +1,33 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use effigy_cli::TaskInvocation;
-use effigy_execution::{ExecutionDispatchPlan, TaskExecutionRequest};
+use effigy_execution::{ExecutionDispatchPlan, ExecutionPreflightInput, TaskExecutionRequest};
 
 use super::pipeline::run_execution_pipeline;
-use super::planning::build_execution_preflight;
+use super::planning::build_execution_preflight_from_input;
 use crate::runner::error::RunnerError;
 
-pub(in crate::runner) fn run_manifest_task_with_cwd(
+fn run_manifest_task_with_preflight_input(
     task: &TaskInvocation,
-    cwd: PathBuf,
+    input: ExecutionPreflightInput,
 ) -> Result<String, RunnerError> {
-    let preflight = build_execution_preflight(task, cwd)?;
+    let preflight = build_execution_preflight_from_input(input)?;
     run_execution_pipeline(task, preflight)
 }
 
-pub(in crate::runner) fn run_manifest_task_with_cwd_and_env(
+fn run_manifest_task_with_preflight_input_and_env(
     task: &TaskInvocation,
-    cwd: PathBuf,
+    input: ExecutionPreflightInput,
     env_overrides: &BTreeMap<String, String>,
 ) -> Result<String, RunnerError> {
-    let preflight = build_execution_preflight(task, cwd)?;
-    let selection = match super::selection::resolve_task_selection(task, &preflight)? {
-        super::selection::SelectionResolution::Selected(selection) => selection,
-        super::selection::SelectionResolution::Output(output) => return Ok(output),
-    };
+    let preflight = build_execution_preflight_from_input(input)?;
+    let (selection, selection_plan) =
+        match super::selection::resolve_task_selection(task, &preflight)? {
+            super::selection::SelectionResolution::Selected { selection, plan } => {
+                (selection, plan)
+            }
+            super::selection::SelectionResolution::Output(output) => return Ok(output),
+        };
 
     let mut overridden_task = selection.task.clone();
     for (key, value) in env_overrides {
@@ -38,13 +40,15 @@ pub(in crate::runner) fn run_manifest_task_with_cwd_and_env(
         evidence: selection.evidence,
     };
 
-    if let Some(output) =
-        super::pipeline::managed::run_managed_task(&preflight, &overridden_selection)?
-    {
+    if let Some(output) = super::pipeline::managed::run_managed_task(
+        &preflight,
+        &overridden_selection,
+        &selection_plan,
+    )? {
         return Ok(output);
     }
 
-    super::pipeline::standard::run_standard_task(&preflight, &overridden_selection)
+    super::pipeline::standard::run_standard_task(&preflight, &overridden_selection, &selection_plan)
 }
 
 pub(in crate::runner) fn run_manifest_task_request(
@@ -56,9 +60,10 @@ pub(in crate::runner) fn run_manifest_task_request(
         name: plan.selector.clone(),
         args: plan.args.clone(),
     };
+    let preflight_input = plan.preflight_input();
 
     if plan.request.environment.env.is_empty() {
-        return run_manifest_task_with_cwd(&invocation, plan.effective_cwd);
+        return run_manifest_task_with_preflight_input(&invocation, preflight_input);
     }
 
     let mut env_overrides = BTreeMap::new();
@@ -70,5 +75,5 @@ pub(in crate::runner) fn run_manifest_task_request(
         })?;
         env_overrides.insert(key, value);
     }
-    run_manifest_task_with_cwd_and_env(&invocation, plan.effective_cwd, &env_overrides)
+    run_manifest_task_with_preflight_input_and_env(&invocation, preflight_input, &env_overrides)
 }

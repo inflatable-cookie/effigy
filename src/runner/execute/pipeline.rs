@@ -15,14 +15,14 @@ pub(super) fn run_execution_pipeline(
     task: &TaskInvocation,
     preflight: ExecutionPreflight,
 ) -> Result<String, RunnerError> {
-    let selection = match resolve_task_selection(task, &preflight)? {
-        SelectionResolution::Selected(selection) => selection,
+    let (selection, selection_plan) = match resolve_task_selection(task, &preflight)? {
+        SelectionResolution::Selected { selection, plan } => (selection, plan),
         SelectionResolution::Output(output) => return Ok(output),
     };
 
-    if let Some(output) = managed::run_managed_task(&preflight, &selection)? {
+    if let Some(output) = managed::run_managed_task(&preflight, &selection, &selection_plan)? {
         return Ok(output);
     }
 
-    standard::run_standard_task(&preflight, &selection)
+    standard::run_standard_task(&preflight, &selection, &selection_plan)
 }

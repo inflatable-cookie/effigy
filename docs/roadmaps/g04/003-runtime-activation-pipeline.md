@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`002-execution-pipeline-ownership.md`](./002-execution-pipeline-ownership.md)
@@ -45,4 +45,5 @@ Move runtime prep into a typed activation pipeline.
 
 ## Next Task
 
-Do not start until `g04.002` closes.
+Start card
+[`455-move-runtime-prep-activation-executor-behind-plan.md`](../../specs/batch-cards/455-move-runtime-prep-activation-executor-behind-plan.md).

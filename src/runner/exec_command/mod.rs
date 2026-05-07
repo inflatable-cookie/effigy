@@ -6,6 +6,7 @@ use effigy_containers::EffectiveContainerPolicy;
 use effigy_env::secret::SecretString;
 use effigy_exec::detection::determine_strategy;
 use effigy_manifest::ManifestContainerConfig;
+use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
 use effigy_tasks::{render_task_selector, TaskSelector};
 
 use super::command_context::resolve_active_command_context;
@@ -14,7 +15,9 @@ use super::container_runtime_prep::{
 };
 use super::error::RunnerError;
 use super::host_container_lease::emit_host_container_lease_notice;
-use super::runtime_session_context::current_runtime_session_context;
+use super::runtime_session_context::{
+    current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
+};
 use super::system_command::ensure_workspace_effigy_available_for_policy;
 use surface::{
     build_alias_table, build_raw_exec_args, ensure_container_running, exec_alias_surface_absent,
@@ -222,13 +225,13 @@ fn activate_exec_surface(
     repo_root: &Path,
     surface: &ResolvedExecSurface,
 ) -> Result<ContainerTaskActivation, RunnerError> {
-    activate_exec_surface_with(repo_root, surface, |repo_root, surface| {
+    activate_exec_surface_with(repo_root, surface, |repo_root, surface, plan| {
         activate_container_runtime_for_task(
             repo_root,
             &surface.policy,
             ActivationRequest {
                 container_name: Some(surface.container_name.as_str()),
-                repo_override: Some(repo_root.to_path_buf()),
+                repo_override: plan.request.repo_override.clone(),
                 session_context: current_runtime_session_context(),
             },
         )
@@ -238,9 +241,29 @@ fn activate_exec_surface(
 pub(super) fn activate_exec_surface_with(
     repo_root: &Path,
     surface: &ResolvedExecSurface,
-    activate: impl FnOnce(&Path, &ResolvedExecSurface) -> Result<ContainerTaskActivation, RunnerError>,
+    activate: impl FnOnce(
+        &Path,
+        &ResolvedExecSurface,
+        &RuntimeActivationPlan,
+    ) -> Result<ContainerTaskActivation, RunnerError>,
 ) -> Result<ContainerTaskActivation, RunnerError> {
-    activate(repo_root, surface)
+    let plan = exec_runtime_activation_plan(repo_root, surface, current_runtime_session_context());
+    activate(repo_root, surface, &plan)
+}
+
+fn exec_runtime_activation_plan(
+    repo_root: &Path,
+    surface: &ResolvedExecSurface,
+    session_context: RuntimeSessionContext,
+) -> RuntimeActivationPlan {
+    RuntimeActivationRequest::new(repo_root.to_path_buf(), surface.policy.name.clone())
+        .container_name(surface.container_name.clone())
+        .repo_override(repo_root.to_path_buf())
+        .lease_policy(match session_context.lease_refresh_policy {
+            LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
+            LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
+        })
+        .plan()
 }
 
 fn maybe_emit_exec_activation_notice(

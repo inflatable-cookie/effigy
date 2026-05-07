@@ -9,35 +9,16 @@ use effigy_execution::{
 use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn, TaskSelection};
 use effigy_tasks::CatalogSelectionMode;
 
-use super::binding::resolve_container_execution_binding as resolve_container_execution_binding_impl;
 use super::planning::{
     build_execution_preflight as build_execution_preflight_impl, ExecutionPreflight,
 };
 use crate::runner::error::RunnerError;
 
-pub(in crate::runner) use super::binding::ContainerExecutionBinding;
 pub(in crate::runner) use super::binding::{
-    ensure_inline_workspace_supported, resolve_execution_binding_resolution, ExecutionBindingKind,
-    ExecutionBindingResolution, InlineWorkspaceCapabilitySurface,
+    ensure_inline_workspace_supported, resolve_execution_binding_resolution,
+    ContainerExecutionBinding, ExecutionBindingKind, ExecutionBindingResolution,
+    InlineWorkspaceCapabilitySurface,
 };
-
-pub(in crate::runner) fn resolve_container_execution_binding(
-    default_run_in: Option<effigy_manifest::ManifestTaskRunIn>,
-    systems: Option<&effigy_manifest::ManifestSystemsConfig>,
-    containers: Option<&effigy_manifest::ManifestContainersConfig>,
-    task_name: &str,
-    task: &ManifestTask,
-    runtime_surface: &str,
-) -> Result<ContainerExecutionBinding, RunnerError> {
-    resolve_container_execution_binding_impl(
-        default_run_in,
-        systems,
-        containers,
-        task_name,
-        task,
-        runtime_surface,
-    )
-}
 
 pub(in crate::runner) fn run_manifest_task_request(
     request: TaskExecutionRequest,
@@ -123,5 +104,6 @@ pub(in crate::runner) fn run_managed_run_with_cwd(
         mode: CatalogSelectionMode::RootShallowest,
         evidence: vec!["bootstrap-local run".to_owned()],
     };
-    super::pipeline::standard::run_standard_task(&preflight, &selection)
+    let selection_plan = super::selection::build_execution_selection_plan(&preflight, &selection);
+    super::pipeline::standard::run_standard_task(&preflight, &selection, &selection_plan)
 }

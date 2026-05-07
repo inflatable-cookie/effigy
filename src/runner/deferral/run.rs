@@ -7,6 +7,7 @@ use effigy_cli::TaskInvocation;
 
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
 use effigy_manifest::{load_task_manifest, ManifestTask, ManifestTaskRunIn};
+use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
 
 use super::policy::DEFER_DEPTH_ENV;
 use super::trace::render_deferral_trace;
@@ -22,7 +23,9 @@ use crate::runner::execute::api::{
     resolve_execution_binding_resolution, ContainerExecutionBinding,
 };
 use crate::runner::host_container_lease::emit_host_container_lease_notice;
-use crate::runner::runtime_session_context::current_runtime_session_context;
+use crate::runner::runtime_session_context::{
+    current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
+};
 use effigy_manifest::DeferredCommand;
 use effigy_tasks::TaskRuntimeArgs;
 
@@ -253,13 +256,20 @@ fn run_deferred_request_with_binding(
                     ))
                 })?;
             validate_running_container_runtime_match(&deferral.working_dir, &policy)?;
+            let session_context = current_runtime_session_context();
+            let plan = deferral_runtime_activation_plan(
+                &deferral.working_dir,
+                policy.name.as_str(),
+                Some(policy.name.clone()),
+                session_context,
+            );
             let activation = activate_container_runtime_for_task(
                 &deferral.working_dir,
                 &policy,
                 ActivationRequest {
-                    container_name: Some(policy.name.as_str()),
-                    repo_override: Some(deferral.working_dir.clone()),
-                    session_context: current_runtime_session_context(),
+                    container_name: plan.request.container_name.as_deref(),
+                    repo_override: plan.request.repo_override.clone(),
+                    session_context,
                 },
             )?;
             crate::runner::system_command::ensure_workspace_permissions_ready(
@@ -302,6 +312,25 @@ fn run_deferred_request_with_binding(
             })
         }
     }
+}
+
+fn deferral_runtime_activation_plan(
+    repo_root: &Path,
+    policy_name: &str,
+    container_name: Option<String>,
+    session_context: RuntimeSessionContext,
+) -> RuntimeActivationPlan {
+    let mut request =
+        RuntimeActivationRequest::new(repo_root.to_path_buf(), policy_name.to_owned())
+            .repo_override(repo_root.to_path_buf())
+            .lease_policy(match session_context.lease_refresh_policy {
+                LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
+                LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
+            });
+    if let Some(container_name) = container_name {
+        request = request.container_name(container_name);
+    }
+    request.plan()
 }
 
 fn build_deferred_container_command_args(
@@ -361,4 +390,34 @@ fn build_deferred_command(
         .replace("{request}", &request_rendered)
         .replace("{args}", &args_rendered)
         .replace("{repo}", &repo_rendered))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use effigy_runtime_plan::RuntimeLeasePolicy;
+
+    use super::deferral_runtime_activation_plan;
+    use crate::runner::runtime_session_context::RuntimeSessionContext;
+
+    #[test]
+    fn deferral_runtime_activation_plan_keeps_identity_and_lease_policy() {
+        let repo_root = PathBuf::from("/tmp/repo");
+        let plan = deferral_runtime_activation_plan(
+            &repo_root,
+            "web",
+            Some("web".to_owned()),
+            RuntimeSessionContext::default(),
+        );
+
+        assert_eq!(plan.request.repo_root, repo_root);
+        assert_eq!(plan.request.policy_name, "web");
+        assert_eq!(plan.request.container_name.as_deref(), Some("web"));
+        assert_eq!(plan.request.repo_override, Some(PathBuf::from("/tmp/repo")));
+        assert_eq!(
+            plan.request.lease_policy,
+            RuntimeLeasePolicy::RefreshOnActivation
+        );
+    }
 }

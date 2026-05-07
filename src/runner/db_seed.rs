@@ -13,6 +13,7 @@ use effigy_bootstrap::BootstrapStagedDbSeed;
 use effigy_cli::BootstrapDbSeedInput;
 use effigy_execution::ExecutionSurface;
 use effigy_manifest::TASK_MANIFEST_FILE;
+use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
 use serde_json::json;
 
 use crate::runner::artifact_transport::{infer_kind_from_primary_files, OrasCliArtifactAdapter};
@@ -24,7 +25,9 @@ use crate::runner::execute::api::{
     resolve_execution_binding_resolution, run_manifest_task_with_surface_and_env,
 };
 use crate::runner::manifest::load_task_manifest;
-use crate::runner::runtime_session_context::{with_runtime_session_context, RuntimeSessionContext};
+use crate::runner::runtime_session_context::{
+    with_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
+};
 
 use super::error::RunnerError;
 use effigy_cli::TaskInvocation;
@@ -540,16 +543,45 @@ fn prepare_db_seed_runtime(
     let Some(policy) = binding_resolution.effective_policy(repo_root)? else {
         return Ok(());
     };
+    let session_context = data_seed_runtime_session_context();
+    let plan = db_seed_runtime_activation_plan(
+        repo_root,
+        policy.name.as_str(),
+        binding_resolution
+            .binding()
+            .container_name()
+            .map(str::to_owned),
+        session_context,
+    );
     activate_container_runtime_for_task(
         repo_root,
         &policy,
         ActivationRequest {
-            container_name: binding_resolution.binding().container_name(),
-            repo_override: Some(repo_root.to_path_buf()),
-            session_context: data_seed_runtime_session_context(),
+            container_name: plan.request.container_name.as_deref(),
+            repo_override: plan.request.repo_override.clone(),
+            session_context,
         },
     )?;
     Ok(())
+}
+
+fn db_seed_runtime_activation_plan(
+    repo_root: &Path,
+    policy_name: &str,
+    container_name: Option<String>,
+    session_context: RuntimeSessionContext,
+) -> RuntimeActivationPlan {
+    let mut request =
+        RuntimeActivationRequest::new(repo_root.to_path_buf(), policy_name.to_owned())
+            .repo_override(repo_root.to_path_buf())
+            .lease_policy(match session_context.lease_refresh_policy {
+                LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
+                LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
+            });
+    if let Some(container_name) = container_name {
+        request = request.container_name(container_name);
+    }
+    request.plan()
 }
 
 fn resolve_db_seed_targets(
@@ -974,8 +1006,8 @@ impl Drop for ScopedDbSeedEnvOverride {
 #[cfg(test)]
 mod tests {
     use super::{
-        logical_database_targets, resolve_db_seed_input_paths, resolve_db_seed_targets,
-        stage_db_seed_files, stage_db_seed_files_with_adapter,
+        db_seed_runtime_activation_plan, logical_database_targets, resolve_db_seed_input_paths,
+        resolve_db_seed_targets, stage_db_seed_files, stage_db_seed_files_with_adapter,
     };
     use effigy_artifacts::{
         OciArtifactAdapter, OciArtifactDescriptor, OciArtifactError, OciArtifactInspectRequest,
@@ -984,6 +1016,7 @@ mod tests {
     };
     use effigy_cli::BootstrapDbSeedInput;
     use effigy_manifest::TaskManifest;
+    use effigy_runtime_plan::RuntimeLeasePolicy;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1027,6 +1060,26 @@ database = "acowtancy"
         assert_eq!(targets[2].name, "legacy_mysql");
         assert_eq!(targets[2].service.as_deref(), Some("mysql"));
         assert_eq!(targets[2].database, "acowtancy");
+    }
+
+    #[test]
+    fn db_seed_runtime_activation_plan_keeps_identity_and_lease_policy() {
+        let repo_root = PathBuf::from("/tmp/repo");
+        let plan = db_seed_runtime_activation_plan(
+            &repo_root,
+            "web",
+            Some("db".to_owned()),
+            super::data_seed_runtime_session_context(),
+        );
+
+        assert_eq!(plan.request.repo_root, repo_root);
+        assert_eq!(plan.request.policy_name, "web");
+        assert_eq!(plan.request.container_name.as_deref(), Some("db"));
+        assert_eq!(plan.request.repo_override, Some(PathBuf::from("/tmp/repo")));
+        assert_eq!(
+            plan.request.lease_policy,
+            RuntimeLeasePolicy::RefreshOnActivation
+        );
     }
 
     #[test]

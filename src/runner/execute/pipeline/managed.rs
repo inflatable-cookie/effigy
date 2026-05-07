@@ -7,12 +7,13 @@ use super::super::super::managed_shell::{
     render_inline_compose_command, render_inline_managed_lifecycle_command,
     render_inline_managed_shell_command, render_inline_managed_standard_exec_command,
 };
-use super::super::super::runtime_session_context::current_runtime_session_context;
+use super::super::super::runtime_session_context::{
+    current_runtime_session_context, LeaseRefreshPolicy,
+};
 use super::super::super::system_command::run_workspace_with_repo_root_and_cleanup_override;
 use super::super::api::{
-    ensure_inline_workspace_supported, resolve_container_execution_binding,
-    resolve_execution_binding_resolution, ContainerExecutionBinding,
-    InlineWorkspaceCapabilitySurface,
+    ensure_inline_workspace_supported, resolve_execution_binding_resolution,
+    ContainerExecutionBinding, InlineWorkspaceCapabilitySurface,
 };
 use super::super::planning::ExecutionPreflight;
 use crate::runner::error::RunnerError;
@@ -25,11 +26,13 @@ use effigy_containers::session::{
     managed_shell_command, managed_standard_exec_command, resolve_effigy_invocation_prefix,
 };
 use effigy_containers::{load_container_policy, EffectiveContainerPolicy};
+use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
 use effigy_managed::{managed_execution_mode, ManagedExecutionMode};
 use effigy_manifest::TaskSelection;
+use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -38,10 +41,11 @@ const MANAGED_LIFECYCLE_CLEANUP_TIMEOUT_SECS: u64 = 90;
 pub(in crate::runner) fn run_managed_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
+    selection_plan: &ExecutionSelectionPlan,
 ) -> Result<Option<String>, RunnerError> {
     let container_handoff = inside_container_handoff();
     let execution_mode = managed_execution_mode();
-    let container_binding = resolve_container_execution_binding(
+    let binding_resolution = resolve_execution_binding_resolution(
         selection
             .catalog
             .manifest
@@ -54,6 +58,11 @@ pub(in crate::runner) fn run_managed_task(
         selection.task,
         "managed task execution",
     )?;
+    let _binding_plan = binding_resolution.plan(ExecutionBindingInput::new(
+        selection_plan.clone(),
+        "managed task execution",
+    ));
+    let container_binding = binding_resolution.binding();
     let plan = resolve_managed_task_plan(
         &preflight.selector,
         selection.catalog,
@@ -108,6 +117,12 @@ pub(in crate::runner) fn run_managed_task(
             container_binding.requested_container_name().flatten(),
         )
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        let _activation_plan = managed_runtime_activation_plan(
+            &selection.catalog.catalog_root,
+            &policy,
+            container_binding.container_name(),
+            current_runtime_session_context().lease_refresh_policy,
+        );
         validate_running_container_runtime_match(&selection.catalog.catalog_root, &policy)?;
         maybe_start_managed_gateway(
             &selection.catalog.catalog_root,
@@ -260,6 +275,24 @@ fn normalize_managed_lifecycle_container_ref(container_name: &str) -> Option<&st
     }
 }
 
+fn managed_runtime_activation_plan(
+    repo_root: &std::path::Path,
+    policy: &EffectiveContainerPolicy,
+    container_name: Option<&str>,
+    lease_refresh_policy: LeaseRefreshPolicy,
+) -> RuntimeActivationPlan {
+    let mut request = RuntimeActivationRequest::new(repo_root.to_path_buf(), policy.name.clone())
+        .repo_override(repo_root.to_path_buf())
+        .lease_policy(match lease_refresh_policy {
+            LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
+            LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
+        });
+    if let Some(container_name) = container_name {
+        request = request.container_name(container_name.to_owned());
+    }
+    request.plan()
+}
+
 fn build_managed_lifecycle_cleanup_command(
     repo_root: &std::path::Path,
     container_binding: &ContainerExecutionBinding,
@@ -389,8 +422,20 @@ fn materialize_special_managed_processes(
     };
     if !container_handoff {
         if let Some(policy) = inline_policy.as_ref() {
+            let _activation_plan = managed_runtime_activation_plan(
+                repo_root,
+                policy,
+                Some(policy.name.as_str()),
+                LeaseRefreshPolicy::SkipRefresh,
+            );
             validate_running_container_runtime_match(repo_root, policy)?;
         } else if let Some(policy) = named_policy.as_ref() {
+            let _activation_plan = managed_runtime_activation_plan(
+                repo_root,
+                policy,
+                container_binding.container_name(),
+                current_runtime_session_context().lease_refresh_policy,
+            );
             validate_running_container_runtime_match(repo_root, policy)?;
         }
     }
@@ -622,14 +667,16 @@ fn default_handoff_managed_shell_run() -> String {
 mod tests {
     use super::{
         default_handoff_managed_shell_run, finish_managed_task, managed_dns_route_lines,
-        render_handoff_managed_standard_command, render_managed_lifecycle_cleanup_notice,
-        should_open_workspace_shell_for_non_managed_task, ContainerExecutionBinding,
+        managed_runtime_activation_plan, render_handoff_managed_standard_command,
+        render_managed_lifecycle_cleanup_notice, should_open_workspace_shell_for_non_managed_task,
+        ContainerExecutionBinding,
     };
     use crate::runner::error::RunnerError;
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::managed_shell::{
         managed_readiness_probe_urls, render_inline_managed_standard_exec_command,
     };
+    use crate::runner::runtime_session_context::LeaseRefreshPolicy;
     use effigy_containers::{
         EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveServiceAlias,
     };
@@ -637,6 +684,7 @@ mod tests {
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
         ManifestContainerStartup,
     };
+    use effigy_runtime_plan::RuntimeLeasePolicy;
     use std::path::Path;
 
     #[test]
@@ -747,6 +795,37 @@ mod tests {
             .find("bun run dev")
             .expect("attach command should be present");
         assert!(setup_index < attach_index, "got: {rendered}");
+    }
+
+    #[test]
+    fn managed_runtime_activation_plan_keeps_identity_and_lease_policy() {
+        let plan = managed_runtime_activation_plan(
+            Path::new("/tmp/repo"),
+            &test_policy(),
+            Some("stack"),
+            LeaseRefreshPolicy::RefreshOnActivation,
+        );
+
+        assert_eq!(plan.request.repo_root, Path::new("/tmp/repo"));
+        assert_eq!(plan.request.policy_name, "stack");
+        assert_eq!(plan.request.container_name.as_deref(), Some("stack"));
+        assert_eq!(
+            plan.request.repo_override.as_deref(),
+            Some(Path::new("/tmp/repo"))
+        );
+        assert_eq!(plan.lease.policy, RuntimeLeasePolicy::RefreshOnActivation);
+    }
+
+    #[test]
+    fn managed_inline_activation_plan_can_skip_host_lease_refresh() {
+        let plan = managed_runtime_activation_plan(
+            Path::new("/tmp/repo"),
+            &test_policy(),
+            Some("stack"),
+            LeaseRefreshPolicy::SkipRefresh,
+        );
+
+        assert_eq!(plan.lease.policy, RuntimeLeasePolicy::Skip);
     }
 
     #[test]
