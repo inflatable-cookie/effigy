@@ -27,6 +27,7 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
+- [`044-execution-pipeline-ownership-strict-lane.md`](./044-execution-pipeline-ownership-strict-lane.md)
 
 Paused but still useful:
 
@@ -34,6 +35,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`043-runtime-architecture-sanity-and-g04-rollover-strict-lane.md`](./043-runtime-architecture-sanity-and-g04-rollover-strict-lane.md)
 - [`042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md`](./042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md)
 - [`041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md`](./041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md)
 - [`040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md`](./040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md)
@@ -68,6 +70,5 @@ Recently completed:
 
 ## Next Task
 
-No active ready card.
-
-Stop in planning and choose the next roadmap deliberately.
+Card
+[`432-scaffold-execution-pipeline-ownership-lane.md`](./batch-cards/432-scaffold-execution-pipeline-ownership-lane.md).

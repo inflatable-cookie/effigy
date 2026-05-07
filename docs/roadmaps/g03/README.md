@@ -1,6 +1,6 @@
 # Roadmap g03
 
-`g03` is the current Effigy roadmap generation.
+`g03` is the previous Effigy roadmap generation.
 
 Generation theme:
 
@@ -58,11 +58,10 @@ Architecture anchor:
 
 Rules:
 
-- `g03` is the live roadmap queue
+- `g03` is closed
 - `g02` is closed as the `v0.3.x` release and local-runtime expansion
   generation
-- new deployment-export work starts in `g03`, not by reopening old release
-  lanes
+- new runtime architecture simplification work starts in `g04`
 - `g03.019` through `g03.026` are now complete
 - `g03.019` through `g03.027` are now complete
 - `g03.019` through `g03.028` are now complete
@@ -77,6 +76,4 @@ Rules:
 
 ## Next Task
 
-No active ready card.
-
-Stop in planning and choose the next roadmap deliberately.
+Continue in [`../g04/README.md`](../g04/README.md).

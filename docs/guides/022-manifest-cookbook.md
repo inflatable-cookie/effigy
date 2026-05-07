@@ -1010,6 +1010,36 @@ validate = [{ run = "bun run lint" }, { run = "bun run test" }]
 
 Use catalog aliases to keep task ownership local while retaining root-level orchestration.
 
+### Sidecar Database Targets (`[data.targets.<name>]`)
+
+```toml
+[bundle]
+base = "underlay"
+databases = ["acowtancy", "acowtancy_test"]
+
+[data.targets.legacy_mysql]
+service = "mysql"
+database = "acowtancy"
+```
+
+Use `[data.targets.<name>]` when a sidecar database should participate in
+bootstrap/data seed/data dump without becoming part of `[bundle].databases`.
+
+Rules:
+
+- each target needs `service` (the container service name) and `database` (the
+  logical database name)
+- `data dump` and `data seed` resolve targets from both `[bundle].databases`
+  and `[data.targets]`
+- when multiple targets are declared, dump/seed inputs must name a target
+- when only one target exists, the target name can be omitted
+
+This is useful when:
+
+- a legacy or migration database runs alongside the primary app database
+- a target should participate in seed/dump but not in bundle-level deployment
+  modeling
+
 ## Notes
 
 - Discovery scans for `effigy.toml` recursively.

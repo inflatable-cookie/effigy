@@ -1,6 +1,6 @@
 # Roadmap g01
 
-`g01` is the current Effigy roadmap generation.
+`g01` is the original Effigy implementation and consolidation generation.
 
 Historical delivered milestones:
 
@@ -44,15 +44,12 @@ Rules:
 
 - Keep `Generation: g01` markers intact in imported numbered files.
 - `g01` is now closed as the implementation and consolidation generation.
-- New roadmap work starts in `g02/` after the manual rollover.
+- New roadmap work starts in the current generation.
 
 ## Next Task
 
-There are no remaining live `g01` blockers before `v0.3`.
-
-The remaining blocker is now entirely in `g02` release prep:
-
-1. [`../g02/007-distribution-release-and-consumer-rollout.md`](../g02/007-distribution-release-and-consumer-rollout.md)
+Continue in the current generation front door:
+[`../README.md`](../README.md).
 
 
 ## Historical language boundary

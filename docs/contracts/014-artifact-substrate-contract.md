@@ -1,6 +1,6 @@
 # 014 - Artifact Substrate Contract
 
-Status: Draft
+Status: Active
 Owner: Platform
 Created: 2026-05-06
 

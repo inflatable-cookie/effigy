@@ -54,6 +54,19 @@ standardizes on it), install it via Homebrew:
 brew install docker docker-compose
 ```
 
+### OCI artifacts (optional)
+
+If you use `data dump --push`, `data seed` with OCI refs, or `effigy artifact`
+commands, install `oras`:
+
+```bash
+brew install oras
+oras login ghcr.io
+```
+
+Effigy uses the normal registry-client auth store. It does not accept tokens in
+artifact refs or env files.
+
 ### HTTPS gateway routes (optional)
 
 If you use local domains with `tls = true`, install `mkcert` and run the
@@ -316,6 +329,8 @@ Generated-compose environments support:
 - `data export`
 - `data import`
 - `data pull-production`
+- `data dump`
+- `data seed`
 - data-safe `reset`
 - explicit `reset --wipe-data`
 - `eject`
@@ -328,6 +343,97 @@ because they can overwrite or delete local generated-compose data. In a real
 interactive terminal, Effigy asks for confirmation and defaults to no. In
 non-interactive or JSON mode it does not prompt; automation must pass `--yes`
 when the data change is intentional.
+
+### Data Dump and Push
+
+`effigy container data dump` exports logical SQL dumps from generated-compose
+database services. By default it writes local files:
+
+```sh
+# Bare target writes ./<target>.sql
+effigy container data dump legacy_mysql
+
+# Explicit local path
+effigy container data dump app=./app.sql app_test=./app_test.sql
+```
+
+You can also target an OCI registry. This stages the dump locally and reports
+the planned destination without publishing:
+
+```sh
+effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --json
+```
+
+To publish after staging, add `--push`:
+
+```sh
+effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push --json
+```
+
+Push rules:
+
+- `--push` is required for live registry writes
+- local-only dumps reject `--push`
+- digest-pinned refs are invalid push destinations
+- the pushed digest is reported in JSON output
+- use `oras login` beforehand for registry auth
+
+### Data Seed
+
+`effigy container data seed` stages local or OCI artifacts and invokes the
+standard `bootstrap:db-seed` task. It currently targets the repo default
+container only.
+
+```sh
+# Local file
+effigy container data seed --db-seed ./latest.sql
+
+# OCI artifact
+effigy container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat
+
+# Multiple targets
+effigy container data seed --db-seed cbs=./cbs.sql --db-seed cbs-mortcalc=./mortcalc.sql
+```
+
+OCI refs must use the explicit `oci://` prefix. `data seed` stages the artifact
+under `.effigy/local/db-seeds/` before the app-specific seed logic runs.
+
+## Cache Lifecycle
+
+`effigy container cache list` and `cache prune` manage purge-safe isolated
+build cache volumes. These are disposable build artifacts, not persistent app
+data.
+
+Cache kinds Effigy recognizes:
+
+- `rust-target` — Rust `target` directories
+- `node-modules` — package manager `node_modules` directories
+
+Cache volumes are created by catalog-generated compose files based on mount
+target heuristics. `cache list` inventories them; `cache prune` removes them.
+
+```sh
+# List caches for the current repo
+effigy container cache list
+
+# List caches across all projects on the Colima profile
+effigy container cache list --all
+
+# Filter by project or kind
+effigy container cache list --project acowtancy-dev
+effigy container cache list --kind rust-target
+
+# Prune (requires confirmation)
+effigy container cache prune --yes
+effigy container cache prune --kind node-modules --yes
+effigy container cache prune --all --yes
+```
+
+Safety rules:
+
+- running projects are skipped in `--all` mode
+- prune requires confirmation unless `--yes` is passed
+- cache volumes are recreated automatically on the next build
 
 ## DNS and Gateway
 
@@ -365,6 +471,8 @@ Still intentionally narrow:
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
+- [`072-artifact-commands-guide.md`](./072-artifact-commands-guide.md)
+- [`014-artifact-substrate-contract.md`](../contracts/014-artifact-substrate-contract.md)
 
 ## Next Step
 

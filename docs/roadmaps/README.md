@@ -4,7 +4,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Generation model
 
-- Use generation folders: `g01`, `g02`, `g03`.
+- Use generation folders: `g01`, `g02`, `g03`, `g04`.
 - Use milestone files inside each generation: `NNN-<slug>.md`.
 - Reference milestones as `gNN.NNN`.
 - Trigger generation rollover manually; do not use automatic file-count limits.
@@ -18,7 +18,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Layout
 
-- `g03/` current roadmap generation
+- `g04/` current roadmap generation
+- `g03/` previous production export and runtime hardening generation
 - `g02/` previous release and local-runtime expansion generation
 - `g01/` original implementation and consolidation generation
 - `generation-index.md` active generation and rollover history
@@ -26,69 +27,21 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Current queue
 
-- `g01/001` through `g01/012` capture the delivered Effigy implementation baseline.
-- `g01/013-effigy-northstar-doctrine-alignment.md` records the docs structure migration and is complete.
-- `g01/014-attention-marker-scan-and-doctor-integration.md` is complete.
-- `g01/015-effigy-self-hosting-and-agent-first-adoption.md` is complete.
-- `g01/016-duplicate-blocks-scan-and-doctor-integration.md` is complete.
-- `g01/017-comment-ratio-scan-and-doctor-integration.md` is complete.
-- `g01/018-generated-in-src-scan-and-doctor-integration.md` is complete.
-- `g01/019-stale-suppressions-scan-and-doctor-integration.md` is complete.
-- `g01/020-research-phase-1-core-execution.md` is complete.
-- `g01/021-research-phase-2-developer-experience.md` is complete.
-- `g01/022-research-phase-3-scale-and-integration.md` is complete.
-- `g01/023-builtin-test-suite-lifecycle-and-env.md` is complete.
-- `g01/024-release-pipeline-validation-and-consumer-ci.md` is complete.
-- `g01/027-release-orchestration-system.md` is complete.
-- `g01/029-northstar-effigy-consumer-adoption-kit.md` is complete.
-- `g01/028-script-surface-reduction-and-builtins.md` reduces repo shell logic into Effigy-native command surfaces and is complete.
-- `g02/001-bootstrap-command-and-clone-contract.md` started the new generation with a stateless bootstrap built-in for repo acquisition and environment bring-up, and is now complete: released plus live-pilot validated on `loophole` and `songsprout`.
-- `g02/002-manifest-composition-and-override-contract.md` is complete; the general split-manifest model, override contract, and inspectability surface are now shipped.
-- `g02/003-demo-harness-model-and-runner-contract.md` defines first-class demo proof and the runner/browser semantics that should sit inside Effigy; the lane shipped and released in `v0.2.13`, including registry loading, inspection, lifecycle control, one-demo history, attached and PTY-backed terminal runner semantics, browser demo tabs, browser terminal replay/input/resize consumption, concurrent-runner session plus interaction projection, browser-owned live attached terminal sessions for browser-launched run-backed interactive demos, bounded single-process concurrent-runner browser live-session parity, runner-owned concurrent-runtime projection-shape truth, projected-runtime process summary truth, and projected-output provenance truth.
-- `g02/004-rust-native-scripting-surface-contract.md` is complete; the shipped Rhai foundation, Effigy dogfooding, and native distribution cutover reached the intended boundary for `g02`.
-- `g02/005-optional-distribution-surface-contract.md` is complete; one real consumer proof plus bounded widening made the optional distribution boundary trustworthy for metadata validation, artifact validation, and closeout evidence reuse.
-- `g02/006-colima-container-environment-contract.md` is complete; the real-machine `colima nerdctl` live-stop and closeout path was hardened strongly enough to close the lane on its intended boundary.
-- `g02/020-multi-project-gateway-expansion-and-service-dns.md` is complete.
-- `g02/007-distribution-release-and-consumer-rollout.md` is complete; the `v0.3.x` release work shipped, and any broader rollout follow-up must now be re-sequenced deliberately into the live generation.
-- `g02/022-v0-3-pre-release-hardening-and-contract-cleanup.md` is complete; the bounded pre-cut hardening queue from the final `v0.3` audit landed before the `v0.3.0` cut.
-- `g02/010-effigy-modularization-and-crate-boundaries.md` is complete.
-- `g02/008-demo-and-manifest-import-rollout.md` is complete on the `g02` boundary; the rollout itself was intentionally not run and any future adoption push must be rehomed into the live generation or backlog.
-- `g02/009-vault-backed-varlock-rollout.md` is complete on the `g02` boundary; the rollout itself was intentionally not run and any future vault-backed adoption push must be rehomed into the live generation or backlog.
-- `g02/017-remaining-shell-cleanup-and-crate-extraction-program.md` is complete; the worthwhile cleanup and extraction jobs landed, and the remaining root-crate untidiness is no longer roadmap-worthy.
-- `g03/001-production-deployment-model-and-export-contract.md` is complete; the neutral deployment model, `deploy model --json`, and the first provider foundations are now shipped.
-- `g03/002-underlay-managed-deployment-export.md` is complete; Underlay now exports bounded Render and Railway deployment bundles with real proof coverage.
-- `g03/003-decodelabs-production-strategy-scope.md` is complete; Decodelabs now has an explicit no-fake-automation production boundary, and the honest short-term answer is to keep production operator-owned until a real topology or promotion trigger emerges.
-- `g03/007` is complete; the execution-surface convergence contract now lives in `docs/contracts/009-execution-surface-convergence.md`.
-- `g03/008` is complete; shared embedded repo-targeting now lives in `src/runner/command_context/repo_override.rs` and is consumed by run-array builtin dispatch plus Rhai command re-entry.
-- `g03/009` is complete; `effigy exec` and exec aliases now share the bounded non-shell activation contract with container-backed task execution.
-- `g03/010` is complete enough for this pass; direct workspace and seeded task shells now share one ownership model, while attached `container up --attach` remains an explicit operator lifecycle exception instead of the next widening seam.
-- `g03/011` is complete enough for this pass; the shared embedded-runner spine now covers Rhai command replay, run-array builtins, and bootstrap task dispatch, while bootstrap managed-run synthesis remains a separate synthetic managed-run path rather than a normal embedded replay seam.
-- `g03/012` is complete; the convergence lane now has bounded parity and drift-guard proof instead of relying on docs alone.
-- `g03/013-runtime-session-context-and-runtime-ownership-hardening.md` is complete; bootstrap/workspace/exec runtime ownership and lease policy now use a typed runtime/session context instead of bootstrap-only env-driven control.
-- `g03/014-container-assembly-model-and-single-pass-compose-emission.md` is complete; the main generated-compose policy seams now sit on typed ownership instead of repeated YAML reparsing.
-- `g03/015-workspace-runtime-orchestrator-split-and-handoff-simplification.md` is complete; public workspace/session lifecycle plus provisioning/prep now sit under narrower owners instead of one mixed hotspot.
-- `g03/016-container-and-runtime-error-taxonomy-and-diagnostics.md` is complete; the runtime/container core now has typed failure families across runtime prep, exec-surface selection, workspace handoff, lease policy, and gateway reconciliation instead of relying on string-first translation as the dominant shape.
-- `g03/017-architecture-map-and-authority-surface-repair.md` is complete; the live package and authority surfaces now match the post-hardening runtime/container seams closely enough to guide the final proof lane.
-- `g03/018-v1-runtime-hardening-proof-and-stress-matrix.md` is complete; the runtime/container core now has a bounded executable proof matrix for the historical brittle seams that blocked `v1.0` confidence.
-- `g03/019-v0.3.x-release-foundation-and-v1.0-readiness-assessment.md` is complete; the runtime/container hardening foundation is now proven and documented, and the `v0.x` release contract remains the live authority surface while additional features and tidy-up work continue in the `v0.3.x` line.
-- `g03/020-distribution-channel-proof-and-first-publish-closeout.md` is complete; the distribution channel story is closed with Homebrew and GitHub Releases proven, source install documented, and crates.io intentionally excluded.
-- `g03/027-interactive-cli-prompt-expansion-and-guardrails.md` is complete; the shared prompt policy, bootstrap existing-path reuse confirmation, container data confirmations, and broad `unlock` confirmation have landed.
-- `g03/028-next-v0-x-readiness-and-roadmap-selection.md` is complete; it selected the next live roadmap target after prompt-lane closeout.
-- `g03/029-v0-x-release-readiness-audit-and-gate-alignment.md` is complete; current `v0.x` release readiness was audited without release execution.
-- `g03/030-universal-runtime-context-and-path-authority.md` is complete; runtime context and Rhai context exposure landed.
-- `g03/032-canonical-task-execution-request-and-pipeline.md` is complete; execution request scaffolding, Rhai `exec::run`, and the initial caller migrations landed.
-- `g03/031-plugin-ready-container-manager-facade.md` is queued.
-- `g03/032-canonical-task-execution-request-and-pipeline.md` is queued.
-- `g03/033-runtime-container-caller-migration-and-cleanup.md` is queued.
-- `g03/034-dependability-proof-matrix-for-decodelabs-and-underlay-shapes.md` is queued.
-- `g03/035-contract-promotion-public-cleanup-breaks-and-closeout.md` is queued.
-- research carry-forward now lives in [`docs/research/carry-forward-intake.md`](../research/carry-forward-intake.md), not as an active `g02` roadmap.
+- `g01` is closed as the original implementation and consolidation generation.
+- `g02` is closed as the release and local-runtime expansion generation.
+- `g03` is closed as the production export and runtime hardening generation.
+- `g04` is current. It starts with
+  [`g04.001`](./g04/001-runtime-architecture-sanity-audit-and-generation-rollover.md),
+  then moves into execution, runtime activation, container operation, data,
+  Rhai, container policy, runtime read/write/shell, parser, drift-guard, and
+  contract closeout roadmaps.
 
 ## Active Strict Lane
 
-- [`g03.030`](./g03/030-universal-runtime-context-and-path-authority.md)
-- [`../specs/036-universal-runtime-context-and-path-authority-strict-lane.md`](../specs/036-universal-runtime-context-and-path-authority-strict-lane.md)
-- No active ready card. Card `374` is complete.
+- [`g04.002`](./g04/002-execution-pipeline-ownership.md)
+- [`../specs/044-execution-pipeline-ownership-strict-lane.md`](../specs/044-execution-pipeline-ownership-strict-lane.md)
+- Ready card:
+  [`432-scaffold-execution-pipeline-ownership-lane.md`](../specs/batch-cards/432-scaffold-execution-pipeline-ownership-lane.md)
 
 ## Research Program
 
@@ -124,8 +77,8 @@ Before rollover:
 
 ## Next Task
 
-Create the next `g03.030` migration card for command-local cwd/root callers.
-
+Start card
+[`432-scaffold-execution-pipeline-ownership-lane.md`](../specs/batch-cards/432-scaffold-execution-pipeline-ownership-lane.md).
 
 ## Historical language boundary
 

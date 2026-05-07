@@ -1114,6 +1114,100 @@ Failure variant:
 }
 ```
 
+## Artifact Payloads
+
+### 23) Artifact Inspect (`effigy.artifact.inspect.v1`)
+
+```json
+{
+  "schema": "effigy.artifact.inspect.v1",
+  "schema_version": 1,
+  "source": "oci://ghcr.io/acme/private-data:uat",
+  "kind": "sql-dump",
+  "staged_root": "/workspace/app/.effigy/local/artifacts/oci-ghcr-io-acme-private-data-uat-7f3a9b",
+  "primary_files": ["dump.sql.gz"],
+  "metadata": {
+    "schema": "effigy.artifact.v1",
+    "kind": "sql-dump",
+    "source_type": "oci",
+    "source_ref": "oci://ghcr.io/acme/private-data:uat",
+    "digest": "sha256:7f3a9b..."
+  }
+}
+```
+
+Use this when you need to confirm what Effigy resolved before passing the
+staged artifact into a seed or apply task.
+
+### 24) Artifact Stage (`effigy.artifact.stage.v1`)
+
+```json
+{
+  "schema": "effigy.artifact.stage.v1",
+  "schema_version": 1,
+  "source": "./data/legacy.sql.gz",
+  "kind": "sql-dump",
+  "staged_root": "/workspace/app/.effigy/local/artifacts/local-data-legacy-sql-gz-9c4e2d",
+  "primary_files": ["legacy.sql.gz"],
+  "metadata": {
+    "schema": "effigy.artifact.v1",
+    "kind": "sql-dump",
+    "source_type": "local",
+    "source_path": "./data/legacy.sql.gz"
+  }
+}
+```
+
+Staging is deterministic: the same source produces the same staged root path.
+
+### 25) Artifact Capture (`effigy.artifact.capture.v1`)
+
+Planned capture (no `--push`):
+
+```json
+{
+  "schema": "effigy.artifact.capture.v1",
+  "schema_version": 1,
+  "source": "./dumps/uat.sql.gz",
+  "ref": "oci://ghcr.io/acme/uat-content:2026-05-06",
+  "pushed": false,
+  "staged_root": "/workspace/app/.effigy/local/artifacts/capture-dumps-uat-sql-gz-1a2b3c",
+  "primary_files": ["uat.sql.gz"],
+  "metadata": {
+    "schema": "effigy.artifact.v1",
+    "kind": "sql-dump",
+    "source_type": "local",
+    "source_path": "./dumps/uat.sql.gz",
+    "environment": "uat"
+  }
+}
+```
+
+Pushed capture:
+
+```json
+{
+  "schema": "effigy.artifact.capture.v1",
+  "schema_version": 1,
+  "source": "./dumps/uat.sql.gz",
+  "ref": "oci://ghcr.io/acme/uat-content:2026-05-06",
+  "pushed": true,
+  "digest": "sha256:8e5d2f...",
+  "staged_root": "/workspace/app/.effigy/local/artifacts/capture-dumps-uat-sql-gz-1a2b3c",
+  "primary_files": ["uat.sql.gz"],
+  "metadata": {
+    "schema": "effigy.artifact.v1",
+    "kind": "sql-dump",
+    "source_type": "local",
+    "source_path": "./dumps/uat.sql.gz",
+    "environment": "uat"
+  }
+}
+```
+
+Capture is two-phase by default: stage locally first, then publish with `--push`.
+Digest-pinned refs are invalid push destinations.
+
 ## Notes
 
 - Field sets can grow with new optional keys while retaining schema compatibility.
@@ -1133,6 +1227,7 @@ After this guide, you should be able to:
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
+- [`072-artifact-commands-guide.md`](./072-artifact-commands-guide.md)
 
 ## Next Step
 

@@ -121,6 +121,9 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.completion.v1`
 - `effigy.completion.candidates.v1`
 - `effigy.task.run.v1`
+- `effigy.artifact.inspect.v1`
+- `effigy.artifact.stage.v1`
+- `effigy.artifact.capture.v1`
 
 Examples:
 

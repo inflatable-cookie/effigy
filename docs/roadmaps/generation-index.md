@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
-Current generation: `g03`
-Updated: 2026-04-30
+Current generation: `g04`
+Updated: 2026-05-07
 
 ## Generation history
 
@@ -14,11 +14,16 @@ Updated: 2026-04-30
     gateway, data, coordination, starter, release, and hardening work that led
     to `v0.3.0` and `v0.3.1`.
 - `g03`
-  - Starts the production deployment export generation.
-  - `001` defines the neutral deployment model and export contract.
-  - `002` proves Underlay managed-platform export.
-  - `003` scopes the future Decodelabs production strategy without forcing it
-    into the first delivery lane.
+  - Held the production deployment export and runtime hardening generation.
+  - Landed provider export foundations, runtime context, container manager,
+    canonical task execution request, dependability proof, contract promotion,
+    and artifact seed/apply/capture substrate work.
+- `g04`
+  - Starts the runtime architecture simplification generation.
+  - `001` lands the architecture sanity audit and opens the new queue.
+  - The generation focuses on ownership purity for execution, runtime
+    activation, container operations, data seed/dump, Rhai host APIs, and drift
+    guards.
 
 ## Research Roadmaps
 

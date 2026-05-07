@@ -143,7 +143,48 @@ Deep dive:
 - [`012-dev-process-manager-tui.md`](./012-dev-process-manager-tui.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 
-## 5) Move Friction Into The Manifest
+## 5) Use Artifacts for Data Lifecycle
+
+When a repo needs versioned database seeds, snapshots, or UAT content, use the
+artifact substrate instead of ad-hoc file copies:
+
+```sh
+# Inspect an OCI artifact before using it
+effigy artifact inspect oci://ghcr.io/acme/uat-content:2026-05-06 --json
+
+# Stage a local dump for seeding
+effigy artifact stage ./data/legacy.sql.gz --json
+
+# Capture and push a UAT snapshot
+effigy artifact capture ./dumps/uat.sql.gz \
+  --ref oci://ghcr.io/acme/uat-content:2026-05-06 \
+  --environment uat --push --json
+
+# Seed a container from an OCI artifact
+effigy container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat
+
+# Dump and push to OCI in one command
+effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push --json
+
+# Bootstrap a new checkout with an OCI seed
+effigy bootstrap git@github.com:acme/app.git --db-seed app=oci://ghcr.io/acme/seed:v1.0.0
+```
+
+Workflow rules:
+
+- OCI refs must use the explicit `oci://` prefix
+- `--push` is required for live registry writes; planned captures are the default
+- digest-pinned refs are preferred for audited apply operations
+- use `oras login` beforehand for registry auth
+- artifact kinds (`sql-dump`, `uat-content-snapshot`, etc.) help automation route
+  payloads correctly
+
+Deep dive:
+- [`072-artifact-commands-guide.md`](./072-artifact-commands-guide.md)
+- [`014-artifact-substrate-contract.md`](../contracts/014-artifact-substrate-contract.md)
+- [`057-bootstrap-repo-bringup.md`](./057-bootstrap-repo-bringup.md)
+
+## 6) Move Friction Into The Manifest
 
 When a workflow still depends on memory, shell aliases, or repo-specific setup,
 move that detail into `effigy.toml`.
@@ -162,7 +203,7 @@ Deep dive:
 - [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
 - [`050-env-schema-integration.md`](./050-env-schema-integration.md)
 
-## 6) Make Automation Boring
+## 7) Make Automation Boring
 
 When humans and tools use the same commands, the machine-facing path should
 stay just as clear:
@@ -181,7 +222,7 @@ Deep dive:
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 
-## 7) Treat Proof Demos As A First-Class Operator Surface
+## 8) Treat Proof Demos As A First-Class Operator Surface
 
 When a repo has demo or proof scripts that people actually need to discover,
 run, inspect, and review, move them into `[demos.<id>]` instead of keeping
@@ -201,9 +242,8 @@ one place.
 Deep dive:
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
-- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 
-## 8) Use Native Release And Distribution Surfaces
+## 9) Use Native Release And Distribution Surfaces
 
 When release or packaging work still depends on wrapper-script memory, the
 default path should be native:
@@ -220,6 +260,59 @@ Use `release` for release readiness and mutation flow. Use
 and closeout material where that built-in path fits your repo.
 
 Deep dive:
+- [`051-release-orchestration.md`](./051-release-orchestration.md)
+- [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
+- [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
+
+## 10) Bridge Legacy Commands With Deferral
+
+When a repo still has legacy commands that are not yet migrated to `effigy.toml`
+tasks, use deferral as a migration bridge instead of maintaining two separate
+runners:
+
+```sh
+effigy defer prep
+effigy defer release -- --dry-run
+```
+
+Configure the fallback in `effigy.toml`:
+
+```toml
+[defer]
+run = "composer global exec effigy -- {request} {args}"
+builtins = ["release"]
+```
+
+Use deferral when:
+- the project does not yet have full `effigy.toml` task coverage
+- you want unresolved selectors to hand off to a legacy runner automatically
+- you need to bypass a built-in temporarily so a legacy command can own that name
+
+Stop using deferral once all critical paths are native Effigy tasks.
+
+Deep dive:
+- [`015-deferral-fallback-migration.md`](./015-deferral-fallback-migration.md)
+- [`028-migration-quick-paths.md`](./028-migration-quick-paths.md)
+
+## 11) When Effigy Still Feels Hard
+
+That usually means the built-in path or manifest still needs work.
+
+Common signals:
+
+- new contributors need to know the repo layout before they can run the basics
+- test setup lives in wrapper scripts instead of `effigy test` or manifest data
+- env rules live in shell docs instead of `effigy.toml` or `.env.schema`
+- CI depends on ad-hoc parsing instead of `effigy --json <command>`
+- release steps are explained as a script bundle instead of one built-in flow
+
+Prefer fixing those by improving the manifest or built-in usage path, not by
+adding more onboarding prose around the same friction.
+
+Deep dive:
+- [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
+- [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md)
+- [`050-env-schema-integration.md`](./050-env-schema-integration.md)
 - [`051-release-orchestration.md`](./051-release-orchestration.md)
 - [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
@@ -283,6 +376,7 @@ After this guide, you should have a clearer default path for:
 - running tasks and tests
 - using one coherent local-dev path for services, containers, gateway, exec,
   and repo-owned dev sessions
+- using artifacts for versioned data seeds, snapshots, and OCI workflows
 - using built-ins for health, watch, and scans
 - using demos as an explicit proof path instead of script sprawl
 - using native release and distribution commands instead of wrapper-script
@@ -303,6 +397,7 @@ After this guide, you should have a clearer default path for:
 - [`063-container-system-guide.md`](./063-container-system-guide.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+- [`072-artifact-commands-guide.md`](./072-artifact-commands-guide.md)
 
 ## Next Step
 

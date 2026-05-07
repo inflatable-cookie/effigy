@@ -42,7 +42,7 @@ Container infrastructure design document:
 Closeout note:
 
 - `g02` carried the repo through `v0.3.0` and `v0.3.1`
-- `g03` now owns the next live roadmap queue
+- `g04` now owns the next live roadmap queue
 - no `g02` strict lane remains active
 
 Historical strict planning lanes:
@@ -57,7 +57,7 @@ Historical strict planning lanes:
 Rules:
 
 - `g01` remains the historical implementation and consolidation generation
-- new roadmap items now start in `g03`
+- new roadmap items now start in `g04`
 - `g02` numbering is closed
 - treat rollover as full closeout, not a convenience reset: `g02` does not end
   until every `g02` roadmap is closed, paused, superseded, or rehomed and the
@@ -70,5 +70,5 @@ Rules:
 
 `g02` is closed as the live roadmap queue.
 
-Move to [`../g03/README.md`](../g03/README.md) and continue the live `g03`
+Move to [`../g04/README.md`](../g04/README.md) and continue the live `g04`
 queue instead of reopening `g02`.

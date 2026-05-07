@@ -13,6 +13,14 @@ Batch cards are the execution units for active Effigy strict-lane work.
 
 ## Current Live Chain
 
+- [`431-audit-runtime-architecture-and-open-g04.md`](./431-audit-runtime-architecture-and-open-g04.md)
+  is complete. It landed the runtime architecture sanity audit and opened
+  `g04`.
+
+- [`432-scaffold-execution-pipeline-ownership-lane.md`](./432-scaffold-execution-pipeline-ownership-lane.md)
+  is ready. It opens the first `g04.002` implementation lane for execution
+  pipeline ownership.
+
 - [`415-plan-artifact-contract-and-acowtancy-boundary.md`](./415-plan-artifact-contract-and-acowtancy-boundary.md)
   is complete. It opened `g03.036` as strict lane `042` and pinned the
   Effigy/Farmyard artifact boundary.
@@ -686,6 +694,5 @@ Execute [`332-inventory-decodelabs-production-deployment-shape.md`](./332-invent
 
 ## Next Task
 
-No active ready card.
-
-Stop in planning and choose the next milestone deliberately.
+Start card
+[`432-scaffold-execution-pipeline-ownership-lane.md`](./432-scaffold-execution-pipeline-ownership-lane.md).
