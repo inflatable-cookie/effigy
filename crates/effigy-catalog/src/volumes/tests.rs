@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 
 fn test_volumes() -> Vec<ManagedVolume> {
     vec![
@@ -226,6 +227,10 @@ fn parse_inspect_volume_metadata_reads_mount_and_size() {
         r#"[{
             "Name": "proj-db-data",
             "Mountpoint": "/var/lib/docker/volumes/proj-db-data/_data",
+            "Labels": {
+                "com.effigy.managed": "true",
+                "com.effigy.repo-root": "/tmp/demo"
+            },
             "UsageData": {
                 "Size": 4096
             }
@@ -239,6 +244,13 @@ fn parse_inspect_volume_metadata_reads_mount_and_size() {
         Some("/var/lib/docker/volumes/proj-db-data/_data")
     );
     assert_eq!(metadata.size_bytes, Some(4096));
+    assert_eq!(
+        metadata
+            .labels
+            .get("com.effigy.repo-root")
+            .map(String::as_str),
+        Some("/tmp/demo")
+    );
 }
 
 #[test]
@@ -270,6 +282,7 @@ fn merge_runtime_volume_metadata_updates_matching_entries_only() {
             name: "proj-db-data".to_owned(),
             mount_point: Some("/data/db".to_owned()),
             size_bytes: Some(2048),
+            labels: BTreeMap::new(),
         }],
     );
 

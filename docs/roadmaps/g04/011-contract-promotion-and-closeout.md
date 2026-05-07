@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`010-drift-guards-and-architecture-proof-matrix.md`](./010-drift-guards-and-architecture-proof-matrix.md)
@@ -15,7 +15,7 @@ Promote the final runtime architecture and close `g04`.
 
 - update `docs/architecture/010-package-map.md`
 - update contracts `005`, `009`, `012`, `013`, and `014`
-- add `015-runtime-operation-pipeline-contract.md` if needed
+- add `015-runtime-operation-pipeline-contract.md`
 - update command/reference docs only where behavior changed
 - add changelog entries for public behavior changes
 - mark `g04` complete or leave an explicit next roadmap
@@ -35,4 +35,5 @@ Promote the final runtime architecture and close `g04`.
 
 ## Next Task
 
-Do not start until `g04.010` closes.
+Planning stop. The current `g04` roadmap set is complete; add the next `g04`
+roadmap only by explicit human request.

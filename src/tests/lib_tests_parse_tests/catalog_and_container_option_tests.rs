@@ -5,7 +5,7 @@ use crate::tests::prelude::{
 };
 use effigy_cli::{
     BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerCacheSubcommand,
-    ContainerDataSubcommand, ContainerDbDumpInput,
+    ContainerDataSubcommand, ContainerDbDumpInput, ContainerVolumeSubcommand,
 };
 
 #[test]
@@ -579,6 +579,49 @@ fn parse_container_cache_prune_project_implies_all() {
             },
             repo_override: None,
             output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_container_volume_list_is_supported() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "volume".to_owned(),
+        "list".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Volume {
+                subcommand: ContainerVolumeSubcommand::List { orphans: false },
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_volume_list_accepts_orphans_filter() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "volume".to_owned(),
+        "list".to_owned(),
+        "--orphans".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Volume {
+                subcommand: ContainerVolumeSubcommand::List { orphans: true },
+            },
+            repo_override: None,
+            output_json: true,
         })
     );
 }

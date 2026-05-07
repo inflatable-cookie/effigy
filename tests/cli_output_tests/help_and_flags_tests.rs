@@ -337,6 +337,7 @@ fn cli_container_help_is_command_specific() {
             "effigy container cache prune [--repo <PATH>] [--all] [--project <NAME>] [--kind <KIND>] [--yes] [--json]"
         )
     );
+    assert!(stdout.contains("effigy container volume list [--orphans] [--json]"));
     assert!(stdout.contains("effigy container <NAME> cache list [--repo <PATH>] [--json]"));
     assert!(stdout.contains("effigy container <NAME> data list [--repo <PATH>] [--json]"));
     assert!(stdout

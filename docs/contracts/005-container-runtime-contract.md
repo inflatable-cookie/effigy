@@ -1,5 +1,9 @@
 # 005 - Container Runtime Contract
 
+Status: Active
+Owner: Platform
+Last Updated: 2026-05-07
+
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
 
@@ -86,6 +90,11 @@ Surface-specific presentation may differ. The prep contract must not.
 Runtime prep must consume captured context facts and typed execution policy. It
 must not rediscover invocation cwd or handoff state after request construction.
 
+Runtime activation planning belongs to `effigy-runtime-plan`. The runner
+runtime-prep modules are side-effect adapters for that plan: they may start
+the runtime, perform readiness checks, reconcile aliases/routes, and refresh
+leases, but they must not invent a separate activation model.
+
 ## Handoff contract
 
 Effigy has two valid execution modes inside a running container:
@@ -132,7 +141,8 @@ must not branch on backend internals or construct `docker`, `colima`, or
 `nerdctl` process commands locally.
 
 The detailed manager contract lives in
-`012-container-manager-contract.md`.
+`012-container-manager-contract.md`. The cross-pipeline runner boundary lives
+in `015-runtime-operation-pipeline-contract.md`.
 
 ## Activation ownership
 
@@ -298,6 +308,9 @@ The minimum proof set should cover:
 - runner container commands routing through `ContainerManager`
 - container-targeted execution plans consuming captured runtime context instead
   of caller-local cwd/env probes
+- runtime activation plans preserving repo root, repo override, policy name,
+  container identity, and lease policy across `effigy exec`, workspace, and
+  managed surfaces
 
 ## Drift triggers
 
@@ -310,10 +323,12 @@ Update this contract when Effigy changes:
 - the supported backend fallback model
 - runner-facing container manager operation ownership
 - runtime context facts used by container-backed execution
+- runtime activation request/plan/report fields
 
 ## Next Task
 
 Use this contract with `011-runtime-context-contract.md`,
 `012-container-manager-contract.md`, and
-`013-task-execution-request-contract.md` as the durable authority set for
+`013-task-execution-request-contract.md`, plus
+`015-runtime-operation-pipeline-contract.md`, as the durable authority set for
 container-backed local runtime behavior.

@@ -985,6 +985,46 @@ fn workspace_handoff_preparation_runs_gateway_and_permissions_in_shared_order() 
 }
 
 #[test]
+fn workspace_handoff_preparation_preserves_explicit_repo_override() {
+    let repo_root = std::path::Path::new("/tmp/demo-repo");
+    let policy = test_policy();
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let captured_clone = std::sync::Arc::clone(&captured);
+
+    prepare_workspace_handoff_using(
+        repo_root,
+        &policy,
+        Some("web"),
+        Some(std::path::PathBuf::from("/tmp/cloned-target")),
+        Some("effigy dev"),
+        |_repo_root, _policy| Ok(true),
+        |_policy| Ok(()),
+        |_repo_root, _policy| Ok(()),
+        move |repo_root, policy, container_name, repo_override| {
+            *captured_clone.lock().expect("capture lock") = Some((
+                repo_root.to_path_buf(),
+                policy.name.clone(),
+                container_name.map(str::to_owned),
+                repo_override,
+            ));
+            Ok(())
+        },
+        |_policy, _initial_command| Ok(()),
+    )
+    .expect("prepare workspace handoff");
+
+    assert_eq!(
+        *captured.lock().expect("capture lock"),
+        Some((
+            std::path::PathBuf::from("/tmp/demo-repo"),
+            "stack".to_owned(),
+            Some("web".to_owned()),
+            Some(std::path::PathBuf::from("/tmp/cloned-target")),
+        ))
+    );
+}
+
+#[test]
 fn workspace_handoff_preparation_registers_routes_when_gateway_surface_is_active() {
     let repo_root = Path::new("/tmp/demo-repo");
     let mut policy = test_policy();

@@ -26,10 +26,11 @@ pub use report::{
     cache_list_all_report, cache_list_report, cache_prune_report, data_list_report,
     data_pull_production_report, data_transfer_report, down_report, eject_report, logs_report,
     reset_report, stats_all_report, status_all_report, status_report, up_detached_report,
-    AllocatedPortsSummary, ContainerCacheGlobalEntry, ContainerCachePruneEntry,
+    volume_list_report, AllocatedPortsSummary, ContainerCacheGlobalEntry, ContainerCachePruneEntry,
     ContainerCacheVolumeEntry, ContainerCommandReport, ContainerDataHookResult,
     ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerStatsAllEntry,
     ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
+    ContainerVolumeGlobalEntry,
 };
 pub use runtime::eject::eject_generated_compose;
 pub use workspace::load_workspace_ownership_targets;

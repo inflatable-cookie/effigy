@@ -3,7 +3,7 @@
 Status: Active
 Owner: Platform
 Created: 2026-05-05
-Last Updated: 2026-05-05
+Last Updated: 2026-05-07
 
 ## Purpose
 
@@ -33,6 +33,11 @@ It owns:
 Static registration is enough for this round. Dynamic plugin loading is out of
 scope.
 
+Container command intent is planned by `effigy-container-ops`. Backend work
+then routes through `effigy-container-manager` and, where compatibility still
+requires it, `effigy-runtime` adapter helpers. The cross-pipeline boundary is
+defined in `015-runtime-operation-pipeline-contract.md`.
+
 ## Backend Rules
 
 Supported first backends:
@@ -52,7 +57,8 @@ Backend-owned details include:
 
 ## Runner Rules
 
-Runner code must call `ContainerManager` for container operations.
+Runner code must call `ContainerManager` or an approved
+`effigy-container-ops`/`effigy-runtime` adapter for container operations.
 
 Runner code must not:
 
@@ -61,13 +67,14 @@ Runner code must not:
 - duplicate backend selection with env or manifest matches
 - own Ctrl+C shutdown policy for attached container sessions
 
-Temporary wrappers are allowed only while a card is actively migrating
-callers.
+Temporary wrappers are allowed only while a card is actively migrating callers
+or when they are named adapter boundaries in the package map and drift guard.
 
 ## Shipped Migration State
 
-`g03.031` ships the manager facade and moves runner-level backend selection
-behind it.
+`g03.031` shipped the manager facade and moved runner-level backend selection
+behind it. `g04` added typed operation plans and manager-backed runtime
+adapters.
 
 Shipped manager-owned surfaces:
 
@@ -77,6 +84,8 @@ Shipped manager-owned surfaces:
 - raw runtime process invocation wrapping for copy, volume, and image commands
 - internal lifecycle operation reports
 - runner-level exec/copy/data/lifecycle backend selection
+- operation request/plan surfaces for lifecycle, read, exec/shell, data, and
+  cache work
 
 Remaining compatibility boundary:
 
@@ -86,6 +95,8 @@ Remaining compatibility boundary:
   backend-local implementation details for Colima repair, runtime probing, and
   direct exec helpers
 - those wrappers must not leak back into runner command code
+- drift allowances for legacy runner/runtime callers must stay documented in
+  `scripts/check-runtime-container-drift.sh` and the active closeout lane
 
 ## Operation Reports
 
@@ -120,14 +131,12 @@ Minimum proof:
 - attached interrupt path runs manager-owned cleanup
 - copy, exec, status, logs, and stats route through the manager
 - runner drift guards reject caller-local backend branching
+- operation plans expose operation kind, side-effect class, and safety policy
 
 Lightweight drift check:
 
 ```bash
-rg "resolve_compose_backend|ComposeBackend" \
-  src/runner/exec_command \
-  src/runner/container_command \
-  crates/effigy-runtime/src/write.rs -n
+bash scripts/check-runtime-container-drift.sh
 ```
 
-The command should return no matches.
+The command should pass with only documented, path-scoped allowances.

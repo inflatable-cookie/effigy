@@ -36,7 +36,7 @@ pub(super) fn environment_status_entry(
         repo_root: environment.repo_root.clone(),
         container: policy.name.clone(),
         project_name: policy.project_name.clone(),
-        profile: policy.profile.clone(),
+        profile: environment.runtime_profile.clone(),
         primary_service: policy.primary_service.clone(),
         dns_domain: policy.dns_domain.clone(),
         dns_tls: policy.dns_tls,

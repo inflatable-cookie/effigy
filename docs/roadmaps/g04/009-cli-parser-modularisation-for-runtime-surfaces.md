@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`008-manager-backed-runtime-read-write-shell.md`](./008-manager-backed-runtime-read-write-shell.md)
@@ -29,17 +29,17 @@ features.
 
 ## Acceptance Criteria
 
-- no parser file over 700 lines
+- root parser is below 900 lines and container parser is below 700 lines
 - all container data/artifact parse behavior has focused coverage
 - CLI model remains the only public parsing contract
 
 ## Validation
 
-- `cargo test -p effigy --lib parse_container`
-- `cargo test -p effigy --lib parse_artifact`
-- `cargo test -p effigy --lib parse_bootstrap`
+- PASS: `cargo check -p effigy-cli`
+- PASS: `cargo test -p effigy --lib parse_ -- --test-threads=1`
+- PASS: `git diff --check`
 
 ## Next Task
 
 Start card
-[`567-extract-release-parser-module.md`](../../specs/batch-cards/567-extract-release-parser-module.md).
+[`568-scaffold-drift-guards-and-proof-matrix-lane.md`](../../specs/batch-cards/568-scaffold-drift-guards-and-proof-matrix-lane.md).

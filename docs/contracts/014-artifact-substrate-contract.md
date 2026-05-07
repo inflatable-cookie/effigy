@@ -3,6 +3,7 @@
 Status: Active
 Owner: Platform
 Created: 2026-05-06
+Last Updated: 2026-05-07
 
 ## Purpose
 
@@ -32,6 +33,18 @@ The artifact substrate owns:
 - artifact apply/capture operation reports
 - integration with seed/dump command inputs
 - deterministic handoff into task execution
+
+Current crate ownership:
+
+- `effigy-artifacts` owns artifact refs, OCI refs, staging, apply, capture,
+  metadata, and transport adapter plans.
+- `effigy-data` owns data target resolution, seed/dump source normalization,
+  database command plans, and artifact handoff planning for seed/dump flows.
+- runner command modules adapt CLI/bootstrap/container-data surfaces onto
+  those crates and render operator output.
+
+The cross-pipeline boundary is defined in
+`015-runtime-operation-pipeline-contract.md`.
 
 The artifact substrate does not own:
 
@@ -171,6 +184,10 @@ staged artifact shape before app-specific seed logic runs.
 For dump operations, local destinations write local SQL payloads today. OCI
 destinations require the later capture/push surface: stage the dump, package
 metadata, push the artifact, and report the immutable digest.
+
+Seed/dump target selection and database command rendering belong to
+`effigy-data`. Artifact transport and staging belong to `effigy-artifacts`.
+Runner code must not bypass those plans for `oci://` inputs or outputs.
 
 ## UAT and Deployment Rules
 
@@ -312,6 +329,9 @@ Update this contract when:
 - seed/dump integration changes
 - UAT apply/capture semantics change
 - artifact operation ledger fields change
+- the boundary between `effigy-data` and `effigy-artifacts` changes
+- runtime operation pipeline rules change in
+  `015-runtime-operation-pipeline-contract.md`
 
 ## First Proof
 
@@ -323,3 +343,5 @@ migration engine into Effigy:
 3. pass both into existing seed execution surfaces
 4. prove UAT-shaped apply reporting
 5. prove capture planning for a generated SQL dump
+6. prove `container data dump <target>=oci://...` creates an explicit capture
+   handoff and requires `--push` for publishing

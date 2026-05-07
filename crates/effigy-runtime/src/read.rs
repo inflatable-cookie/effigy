@@ -239,7 +239,7 @@ pub fn run_container_stats_all(output_json: bool) -> Result<String, EffigyRuntim
     let grouped_names = environments.iter().fold(
         BTreeMap::<String, Vec<String>>::new(),
         |mut acc, environment| {
-            acc.entry(environment.policy.profile.clone())
+            acc.entry(environment.runtime_profile.clone())
                 .or_default()
                 .extend(
                     environment
@@ -269,7 +269,7 @@ pub fn run_container_stats_all(output_json: bool) -> Result<String, EffigyRuntim
                 repo_root,
                 container: policy.name.clone(),
                 project_name: policy.project_name.clone(),
-                profile: policy.profile.clone(),
+                profile: environment.runtime_profile,
                 primary_service: policy.primary_service.clone(),
                 services: environment
                     .services

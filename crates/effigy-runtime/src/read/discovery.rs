@@ -15,6 +15,7 @@ use crate::EffigyRuntimeError;
 #[derive(Debug)]
 pub(crate) struct DiscoveredRunningEnvironment {
     pub(crate) repo_root: String,
+    pub(crate) runtime_profile: String,
     pub(crate) policy: EffectiveContainerPolicy,
     pub(crate) services: Vec<RunningComposeContainer>,
 }
@@ -74,6 +75,7 @@ pub(crate) fn discover_running_environments(
 
         environments.push(DiscoveredRunningEnvironment {
             repo_root,
+            runtime_profile: profile,
             policy,
             services,
         });
@@ -380,6 +382,7 @@ mod tests {
     ) -> DiscoveredRunningEnvironment {
         DiscoveredRunningEnvironment {
             repo_root,
+            runtime_profile: "effigy".to_owned(),
             policy,
             services: vec![RunningComposeContainer {
                 container_name: "demo-app-1".to_owned(),

@@ -597,6 +597,51 @@ fn cache_list_all_report_groups_by_project_in_text() {
 }
 
 #[test]
+fn volume_list_report_renders_orphan_contract() {
+    let report = crate::volume_list_report(
+        "global runtime volume inventory",
+        true,
+        &[
+            crate::ContainerVolumeGlobalEntry {
+                name: "dtn-dev-web-vendor".to_owned(),
+                backend: "docker".to_owned(),
+                profile: "docker".to_owned(),
+                project_name: Some("dtn-dev".to_owned()),
+                repo_root: Some("/tmp/missing-dtn".to_owned()),
+                service: Some("app".to_owned()),
+                mount_target: Some("/var/www/dtn/vendor".to_owned()),
+                persist: Some(false),
+                size_bytes: Some(4096),
+                orphaned: true,
+                orphan_reason: Some("repo-missing".to_owned()),
+            },
+            crate::ContainerVolumeGlobalEntry {
+                name: "acowtancy-dev-db-data".to_owned(),
+                backend: "containerd".to_owned(),
+                profile: "effigy".to_owned(),
+                project_name: Some("acowtancy-dev".to_owned()),
+                repo_root: Some("/tmp/acowtancy".to_owned()),
+                service: Some("db".to_owned()),
+                mount_target: Some("/var/lib/mysql".to_owned()),
+                persist: Some(true),
+                size_bytes: None,
+                orphaned: false,
+                orphan_reason: None,
+            },
+        ],
+    );
+
+    assert_eq!(report.json["schema"], "effigy.container.volume-list.v1");
+    assert_eq!(report.json["orphans_only"], true);
+    assert_eq!(report.json["volume_count"], 2);
+    assert_eq!(report.json["orphan_count"], 1);
+    assert!(report.success_text.contains("/tmp/missing-dtn:"));
+    assert!(report.success_text.contains("orphaned:repo-missing"));
+    assert!(report.success_text.contains("docker ephemeral"));
+    assert!(report.success_text.contains("containerd persistent"));
+}
+
+#[test]
 fn data_transfer_report_renders_export_contract() {
     let root = temp_repo("data-transfer-report");
     fs::write(

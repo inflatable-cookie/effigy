@@ -449,9 +449,42 @@ The active batch-card tree now starts with `g04` rollover card `431`.
   parser.
 
 - [`567-extract-release-parser-module.md`](./567-extract-release-parser-module.md)
-  is ready. It extracts release parsing from the root parser.
+  is complete. It extracts release parsing from the root parser and completes
+  the final changelog parser split needed for the line-count target.
+
+- [`568-scaffold-drift-guards-and-proof-matrix-lane.md`](./568-scaffold-drift-guards-and-proof-matrix-lane.md)
+  is complete. It opens the drift guards and architecture proof matrix lane.
+
+- [`569-add-runtime-container-drift-guard-task.md`](./569-add-runtime-container-drift-guard-task.md)
+  is complete. It adds the first runtime/container architecture drift guard.
+
+- [`570-add-runtime-container-proof-matrix-inventory.md`](./570-add-runtime-container-proof-matrix-inventory.md)
+  is complete. It inventories critical runtime/container proof coverage.
+
+- [`571-add-exec-workspace-managed-proof-coverage.md`](./571-add-exec-workspace-managed-proof-coverage.md)
+  is complete. It adds focused proof coverage for exec, workspace, and managed
+  runtime/container surfaces.
+
+- [`572-close-drift-guards-and-handoff-contract-promotion.md`](./572-close-drift-guards-and-handoff-contract-promotion.md)
+  is complete. It closes the drift-guard lane and hands off to contract
+  promotion.
+
+- [`573-scaffold-contract-promotion-closeout-lane.md`](./573-scaffold-contract-promotion-closeout-lane.md)
+  is complete. It scaffolds the `g04.011` contract promotion closeout lane.
+
+- [`574-promote-g04-crates-into-package-map.md`](./574-promote-g04-crates-into-package-map.md)
+  is complete. It promotes the shipped `g04` crates into the live package map.
+
+- [`575-add-runtime-operation-pipeline-contract.md`](./575-add-runtime-operation-pipeline-contract.md)
+  is complete. It adds the missing runtime operation pipeline contract.
+
+- [`576-align-existing-contracts-with-runtime-operation-pipelines.md`](./576-align-existing-contracts-with-runtime-operation-pipelines.md)
+  is complete. It aligns existing contracts with the runtime operation pipeline
+  contract.
+
+- [`577-close-g04-contract-promotion.md`](./577-close-g04-contract-promotion.md)
+  is complete. It closes `g04.011` and the current `g04` roadmap set.
 
 ## Next Task
 
-Start card
-[`567-extract-release-parser-module.md`](./567-extract-release-parser-module.md).
+Planning stop. Add the next `g04` roadmap only by explicit human request.

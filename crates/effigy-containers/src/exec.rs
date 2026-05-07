@@ -6,7 +6,8 @@ mod process;
 pub use colima_runtime::{
     colima_is_running, colima_profile_warnings, ensure_colima_running,
     ensure_runtime_backend_running, recover_colima_runtime, reset_colima_runtime,
-    runtime_backend_is_running, selected_backend_label, ColimaRecoveryReport,
+    running_colima_profiles, runtime_backend_is_running, selected_backend_label,
+    ColimaRecoveryReport,
 };
 pub use implementation::{
     capture_compose_ps, capture_running_container_stats,

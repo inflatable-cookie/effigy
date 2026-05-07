@@ -12,7 +12,7 @@ use effigy_containers::{
         list_running_compose_containers_for_profile, ContainerExecError, RunningComposeContainer,
     },
     health::wait_for_ready,
-    user_global_backend_preference, EffectiveContainerPolicy,
+    EffectiveContainerPolicy,
 };
 use effigy_core::shell::shell_quote;
 use serde_json::json;
@@ -508,7 +508,7 @@ pub(super) fn run_runtime_volume_capture(
         ContainerManagerRequest::new(repo_root).interrupt_policy(ContainerInterruptPolicy::Forward);
     let mut detection = ContainerBackendDetection::from_env_and_path();
     if detection.backend_override.is_none() {
-        detection.backend_override = Some(BackendId::colima_nerdctl());
+        detection.backend_override = Some(detect_profile_backend(profile)?);
     }
     let plan = ContainerManager::defaults()
         .runtime_invocation_plan(
@@ -669,16 +669,11 @@ fn run_runtime_volume_usage_batch_capture(
         })
 }
 
-fn detect_profile_backend(_profile: &str) -> Result<BackendId, RunnerError> {
-    let mut detection = ContainerBackendDetection::from_env_and_path();
-    if detection.backend_override.is_none() {
-        detection.backend_override =
-            user_global_backend_preference().or(Some(BackendId::colima_nerdctl()));
+fn detect_profile_backend(profile: &str) -> Result<BackendId, RunnerError> {
+    if profile == "docker" {
+        return Ok(BackendId::docker_compose());
     }
-    ContainerManager::defaults()
-        .registry()
-        .detect_backend(&detection)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+    Ok(BackendId::colima_nerdctl())
 }
 
 fn runtime_args(args: &[String]) -> Vec<OsString> {

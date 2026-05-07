@@ -115,6 +115,21 @@ pub struct ContainerCachePruneEntry {
     pub in_use: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerVolumeGlobalEntry {
+    pub name: String,
+    pub backend: String,
+    pub profile: String,
+    pub project_name: Option<String>,
+    pub repo_root: Option<String>,
+    pub service: Option<String>,
+    pub mount_target: Option<String>,
+    pub persist: Option<bool>,
+    pub size_bytes: Option<u64>,
+    pub orphaned: bool,
+    pub orphan_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerDataTransferAction {
     Export,
@@ -852,6 +867,112 @@ pub fn cache_list_all_report(
                 size,
                 if volume.in_use { "in-use" } else { "purgeable" },
             ));
+        }
+    }
+
+    ContainerCommandReport {
+        json,
+        success_text: lines.join("\n"),
+    }
+}
+
+pub fn volume_list_report(
+    scope_label: &str,
+    orphans_only: bool,
+    volumes: &[ContainerVolumeGlobalEntry],
+) -> ContainerCommandReport {
+    let orphan_count = volumes.iter().filter(|volume| volume.orphaned).count();
+    let json = json!({
+        "schema": "effigy.container.volume-list.v1",
+        "schema_version": 1,
+        "ok": true,
+        "scope": scope_label,
+        "orphans_only": orphans_only,
+        "volume_count": volumes.len(),
+        "orphan_count": orphan_count,
+        "volumes": volumes.iter().map(|volume| {
+            json!({
+                "name": volume.name,
+                "backend": volume.backend,
+                "profile": volume.profile,
+                "project_name": volume.project_name,
+                "repo_root": volume.repo_root,
+                "service": volume.service,
+                "mount_target": volume.mount_target,
+                "persist": volume.persist,
+                "classification": match volume.persist {
+                    Some(true) => Some("persistent"),
+                    Some(false) => Some("ephemeral"),
+                    None => None,
+                },
+                "size_bytes": volume.size_bytes,
+                "size_available": volume.size_bytes.is_some(),
+                "orphaned": volume.orphaned,
+                "orphan_reason": volume.orphan_reason,
+            })
+        }).collect::<Vec<_>>(),
+    });
+
+    if volumes.is_empty() {
+        return ContainerCommandReport {
+            json,
+            success_text: if orphans_only {
+                format!("[info] no orphaned Effigy-managed volumes found in {scope_label}")
+            } else {
+                format!("[info] no Effigy-managed volumes found in {scope_label}")
+            },
+        };
+    }
+
+    let mut grouped = BTreeMap::<String, Vec<&ContainerVolumeGlobalEntry>>::new();
+    for volume in volumes {
+        let heading = volume.repo_root.clone().unwrap_or_else(|| {
+            volume
+                .project_name
+                .clone()
+                .unwrap_or_else(|| "unknown-owner".to_owned())
+        });
+        grouped.entry(heading).or_default().push(volume);
+    }
+
+    let mut lines = vec![format!(
+        "[ok] {} Effigy-managed volume{} in {} (orphans={})",
+        volumes.len(),
+        if volumes.len() == 1 { "" } else { "s" },
+        scope_label,
+        orphan_count
+    )];
+    for (index, (heading, entries)) in grouped.into_iter().enumerate() {
+        if index > 0 {
+            lines.push(String::new());
+        }
+        lines.push(format!("{heading}:"));
+        for volume in entries {
+            let size = volume
+                .size_bytes
+                .map(format_bytes)
+                .unwrap_or_else(|| "unavailable".to_owned());
+            let project = volume.project_name.as_deref().unwrap_or("unknown");
+            let service = volume.service.as_deref().unwrap_or("unknown");
+            let target = volume.mount_target.as_deref().unwrap_or("unavailable");
+            let classification = match volume.persist {
+                Some(true) => "persistent",
+                Some(false) => "ephemeral",
+                None => "unknown",
+            };
+            let ownership = if volume.orphaned {
+                format!(
+                    "orphaned:{}",
+                    volume.orphan_reason.as_deref().unwrap_or("unknown")
+                )
+            } else {
+                "owned".to_owned()
+            };
+            lines.push(format!(
+                "- {} [{}:{}] {} {} (size={}, {})",
+                volume.name, project, service, volume.backend, classification, size, ownership
+            ));
+            lines.push(format!("  target={target}, profile={}", volume.profile));
         }
     }
 

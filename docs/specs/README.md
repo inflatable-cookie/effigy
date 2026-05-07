@@ -27,7 +27,9 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
-- [`051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md`](./051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md)
+
+No active strict lane. The current `g04` roadmap set is complete and the queue
+is in planning stop.
 
 Paused but still useful:
 
@@ -35,6 +37,9 @@ Paused but still useful:
 
 Recently completed:
 
+- [`053-contract-promotion-and-g04-closeout-strict-lane.md`](./053-contract-promotion-and-g04-closeout-strict-lane.md)
+- [`052-drift-guards-and-architecture-proof-matrix-strict-lane.md`](./052-drift-guards-and-architecture-proof-matrix-strict-lane.md)
+- [`051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md`](./051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md)
 - [`050-manager-backed-runtime-read-write-shell-strict-lane.md`](./050-manager-backed-runtime-read-write-shell-strict-lane.md)
 - [`049-effective-container-policy-decomposition-strict-lane.md`](./049-effective-container-policy-decomposition-strict-lane.md)
 - [`048-rhai-host-api-split-and-callback-purity-strict-lane.md`](./048-rhai-host-api-split-and-callback-purity-strict-lane.md)
@@ -77,5 +82,4 @@ Recently completed:
 
 ## Next Task
 
-Card
-[`567-extract-release-parser-module.md`](./batch-cards/567-extract-release-parser-module.md).
+Planning stop. Add the next `g04` roadmap only by explicit human request.

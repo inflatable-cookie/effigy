@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use crate::{Command, ContainerArgs, ContainerCacheSubcommand, ContainerSubcommand, HelpTopic};
+use crate::{
+    Command, ContainerArgs, ContainerCacheSubcommand, ContainerSubcommand,
+    ContainerVolumeSubcommand, HelpTopic,
+};
 
 use crate::value_parsing::{next_required_value, parse_repo_path};
 
@@ -11,8 +14,9 @@ pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseErr
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 10] = [
-        "up", "down", "status", "stats", "logs", "shell", "reset", "cache", "data", "eject",
+    const ACTIONS: [&str; 11] = [
+        "up", "down", "status", "stats", "logs", "shell", "reset", "cache", "volume", "data",
+        "eject",
     ];
 
     let mut args = args.into_iter();
@@ -42,6 +46,7 @@ where
         "shell" => parse_container_shell(name, args),
         "reset" => parse_container_reset(name, args),
         "cache" => parse_container_cache(name, args),
+        "volume" => parse_container_volume(name, args),
         "data" => parse_container_data(name, args),
         "eject" => parse_container_eject(name, args),
         other => Err(unknown_argument(other)),
@@ -246,6 +251,58 @@ where
         "prune" => parse_container_cache_prune(name, args),
         other => Err(unknown_argument(other)),
     }
+}
+
+fn parse_container_volume<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    if name.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container <NAME> volume` is not supported; use `effigy container volume list` for global Effigy-managed volume inventory".to_owned(),
+        ));
+    }
+
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container volume` requires a subcommand; use `list`".to_owned(),
+        ));
+    };
+
+    match subcmd.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Container)),
+        "list" => parse_container_volume_list(args),
+        other => Err(unknown_argument(other)),
+    }
+}
+
+fn parse_container_volume_list<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut orphans = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--orphans" => orphans = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Volume {
+            subcommand: ContainerVolumeSubcommand::List { orphans },
+        },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_container_cache_list<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>

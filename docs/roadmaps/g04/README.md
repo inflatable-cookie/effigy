@@ -1,6 +1,6 @@
 # Roadmap g04
 
-`g04` is the current Effigy roadmap generation.
+`g04` is the current Effigy runtime architecture simplification generation.
 
 Generation theme:
 
@@ -20,9 +20,9 @@ Current milestones:
 - [`006-rhai-host-api-split-and-callback-purity.md`](./006-rhai-host-api-split-and-callback-purity.md) (complete; Rhai host API split and callback purity landed)
 - [`007-effective-container-policy-decomposition.md`](./007-effective-container-policy-decomposition.md) (complete; split `effigy-containers` policy, workspace, generated compose, and exec ownership)
 - [`008-manager-backed-runtime-read-write-shell.md`](./008-manager-backed-runtime-read-write-shell.md) (complete; runtime data/read/write/shell modules split behind manager-plan seams)
-- [`009-cli-parser-modularisation-for-runtime-surfaces.md`](./009-cli-parser-modularisation-for-runtime-surfaces.md) (active; reduce parser centralisation for high-churn runtime/container surfaces)
-- [`010-drift-guards-and-architecture-proof-matrix.md`](./010-drift-guards-and-architecture-proof-matrix.md) (queued)
-- [`011-contract-promotion-and-closeout.md`](./011-contract-promotion-and-closeout.md) (queued)
+- [`009-cli-parser-modularisation-for-runtime-surfaces.md`](./009-cli-parser-modularisation-for-runtime-surfaces.md) (complete; high-churn parser surfaces split below target sizes)
+- [`010-drift-guards-and-architecture-proof-matrix.md`](./010-drift-guards-and-architecture-proof-matrix.md) (complete; drift guard and proof matrix landed)
+- [`011-contract-promotion-and-closeout.md`](./011-contract-promotion-and-closeout.md) (complete; promoted the current g04 architecture set into contracts)
 
 Architecture anchors:
 
@@ -36,7 +36,7 @@ Architecture anchors:
 
 Rules:
 
-- `g04` is the live roadmap queue
+- `g04` remains the current runtime architecture simplification generation
 - `g03` is closed as the production export and runtime hardening generation
 - no release work starts from this generation without explicit human request
 - no `.github/workflows/` edits
@@ -47,5 +47,5 @@ Rules:
 
 ## Next Task
 
-Start card
-[`567-extract-release-parser-module.md`](../../specs/batch-cards/567-extract-release-parser-module.md).
+Planning stop. The current `g04` roadmap set is complete; add the next `g04`
+roadmap only by explicit human request.

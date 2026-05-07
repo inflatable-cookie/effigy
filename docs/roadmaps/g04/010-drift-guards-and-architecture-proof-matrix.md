@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`009-cli-parser-modularisation-for-runtime-surfaces.md`](./009-cli-parser-modularisation-for-runtime-surfaces.md)
@@ -45,4 +45,5 @@ Prevent runtime/container logic soup from returning.
 
 ## Next Task
 
-Do not start until `g04.009` closes.
+Continue with
+[`g04.011`](./011-contract-promotion-and-closeout.md).

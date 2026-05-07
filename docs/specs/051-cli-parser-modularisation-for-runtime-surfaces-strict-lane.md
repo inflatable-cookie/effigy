@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.009`](../roadmaps/g04/009-cli-parser-modularisation-for-runtime-surfaces.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -22,7 +22,7 @@ keeping the public `effigy-cli` command model stable.
 
 ## Current Ready Card
 
-[`567-extract-release-parser-module.md`](./batch-cards/567-extract-release-parser-module.md)
+None. This lane is complete.
 
 ## Execution Chain
 
@@ -32,7 +32,7 @@ keeping the public `effigy-cli` command model stable.
 - `564` complete: extract bootstrap parser module
 - `565` complete: extract container data parser module
 - `566` complete: extract runtime surface parser module
-- `567` ready: extract release parser module
+- `567` complete: extract release parser module and final changelog split
 
 ## Parser Hotspot Inventory
 
@@ -86,6 +86,17 @@ Extract release parsing. It is a large, well-covered block still owned by the
 root parser. This should bring `command_parsing.rs` close to the roadmap target;
 split changelog next only if the root parser remains too large.
 
+Final state:
+
+- `crates/effigy-cli/src/command_parsing.rs`: 794 lines
+- `crates/effigy-cli/src/command_parsing_container.rs`: 484 lines
+- `crates/effigy-cli/src/command_parsing_artifact.rs`: 156 lines
+- `crates/effigy-cli/src/command_parsing_bootstrap.rs`: 294 lines
+- `crates/effigy-cli/src/command_parsing_container_data.rs`: 303 lines
+- `crates/effigy-cli/src/command_parsing_runtime.rs`: 263 lines
+- `crates/effigy-cli/src/command_parsing_release.rs`: 257 lines
+- `crates/effigy-cli/src/command_parsing_changelog.rs`: 134 lines
+
 ## Initial Targets
 
 - `crates/effigy-cli/src/command_parsing.rs`
@@ -102,4 +113,4 @@ or have a documented reason to stay larger, and the next roadmap is selected.
 ## Next Task
 
 Card
-[`567-extract-release-parser-module.md`](./batch-cards/567-extract-release-parser-module.md).
+[`568-scaffold-drift-guards-and-proof-matrix-lane.md`](./batch-cards/568-scaffold-drift-guards-and-proof-matrix-lane.md).

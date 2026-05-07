@@ -3,6 +3,7 @@
 Status: Active
 Owner: Platform
 Created: 2026-05-05
+Last Updated: 2026-05-07
 
 ## Purpose
 
@@ -37,6 +38,10 @@ Public contract types:
 
 Runner code may still own command presentation and final dispatch mechanics, but
 it must not invent a parallel task-request model.
+
+Runtime activation, container operation, and artifact/data handoff boundaries
+are defined by `015-runtime-operation-pipeline-contract.md`. This contract owns
+only the task/command execution request and resolved route model.
 
 ## Required Inputs
 
@@ -127,6 +132,9 @@ Required behavior:
 - `stdin_file` paths are carried in the environment plan
 - inside-container handoff turns container intent into local container handoff
 - host execution remains available for explicitly host-scoped commands
+- first-party scripts that need context-sensitive container commands should use
+  `exec::run(..., #{ run_in: "container", ... })` rather than choosing between
+  process and container helpers locally
 
 This is the contract that hardens DecodeLabs mysql seed scripts and similar
 bundle-backed scripts against host/container path drift.
@@ -195,6 +203,8 @@ Update this contract when Effigy changes:
 - Rhai execution helper behavior
 - embedded task dispatch behavior
 - public exposure of resolved execution plans
+- runtime operation pipeline boundaries that change what execution requests
+  must carry
 
 ## Validation Direction
 
@@ -208,3 +218,5 @@ Minimum proof:
 - env overrides merge through one path
 - drift checks reject embedded task dispatch that bypasses
   `TaskExecutionRequestBuilder`
+- drift checks and Rhai tests reject first-party container-sensitive scripts
+  bypassing `exec::run`

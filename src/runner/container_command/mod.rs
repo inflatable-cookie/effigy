@@ -4,7 +4,7 @@ use effigy_containers::ContainerCommandReport;
 use effigy_runtime::data::{
     run_container_cache_list, run_container_cache_list_all, run_container_cache_list_under_path,
     run_container_cache_prune, run_container_cache_prune_all, run_container_data_export,
-    run_container_data_import, run_container_data_list,
+    run_container_data_import, run_container_data_list, run_container_volume_list,
 };
 use effigy_runtime::read::{
     run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
@@ -20,6 +20,7 @@ use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::db_seed::resolve_db_seed_input_paths;
 use effigy_cli::{
     ContainerArgs, ContainerCacheSubcommand, ContainerDataSubcommand, ContainerSubcommand,
+    ContainerVolumeSubcommand,
 };
 use effigy_container_ops::{ContainerConfirmationPolicy, ContainerLifecycleOperation};
 
@@ -142,6 +143,19 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             runtime_volume_capture,
         )
         .map_err(Into::into);
+    }
+    if let ContainerSubcommand::Volume {
+        subcommand: ContainerVolumeSubcommand::List { orphans },
+    } = &args.subcommand
+    {
+        if args.repo_override.is_some() {
+            return Err(RunnerError::task_invocation(
+                "`effigy container volume list` does not accept `--repo`; it inspects Effigy-managed named volumes across available runtimes",
+            ));
+        }
+        let cwd = crate::runner::command_context::active_invocation_cwd()?;
+        return run_container_volume_list(&cwd, *orphans, args.output_json, runtime_volume_capture)
+            .map_err(Into::into);
     }
     match args.subcommand {
         ContainerSubcommand::Up {
@@ -289,6 +303,9 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
                     kind: _,
                 },
             ..
+        } => unreachable!("handled above"),
+        ContainerSubcommand::Volume {
+            subcommand: ContainerVolumeSubcommand::List { .. },
         } => unreachable!("handled above"),
         ContainerSubcommand::Data {
             name,

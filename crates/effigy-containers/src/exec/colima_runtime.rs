@@ -204,7 +204,7 @@ pub(super) fn detect_container_backend() -> Result<BackendId, ContainerExecError
         .map_err(container_manager_error)
 }
 
-pub(super) fn running_colima_profiles(repo_root: &Path) -> Result<Vec<String>, ContainerExecError> {
+pub fn running_colima_profiles(repo_root: &Path) -> Result<Vec<String>, ContainerExecError> {
     let profiles = list_colima_profiles(repo_root)?;
     Ok(profiles
         .into_iter()
@@ -215,24 +215,6 @@ pub(super) fn running_colima_profiles(repo_root: &Path) -> Result<Vec<String>, C
 
 pub(super) fn default_runtime_profile() -> String {
     user_global_colima_profile().unwrap_or_else(|| DEFAULT_COLIMA_PROFILE.to_owned())
-}
-
-pub(super) fn run_runtime_command_capture(
-    repo_root: &Path,
-    profile: &str,
-    docker_args: &[OsString],
-    label: &str,
-) -> Result<Output, ContainerExecError> {
-    let mut detection = ContainerBackendDetection::from_env_and_path();
-    if detection.backend_override.is_none() {
-        detection.backend_override =
-            user_global_backend_preference().or(Some(BackendId::colima_nerdctl()));
-    }
-    let (program, args) = ContainerManager::defaults()
-        .runtime_process_invocation(&detection, profile, "docker", docker_args)
-        .map_err(container_manager_error)?;
-    let program = program.to_string_lossy().into_owned();
-    run_command_capture_os(repo_root, &program, &args, label)
 }
 
 pub(super) fn run_runtime_command_capture_for_policy(
@@ -247,31 +229,6 @@ pub(super) fn run_runtime_command_capture_for_policy(
         .map_err(container_manager_error)?;
     let program = program.to_string_lossy().into_owned();
     run_command_capture_os(repo_root, &program, &args, label)
-}
-
-pub(super) fn run_runtime_command_capture_allow_failure(
-    repo_root: &Path,
-    profile: &str,
-    docker_args: &[OsString],
-) -> Result<Output, ContainerExecError> {
-    let mut detection = ContainerBackendDetection::from_env_and_path();
-    if detection.backend_override.is_none() {
-        detection.backend_override =
-            user_global_backend_preference().or(Some(BackendId::colima_nerdctl()));
-    }
-    let (program, args) = ContainerManager::defaults()
-        .runtime_process_invocation(&detection, profile, "docker", docker_args)
-        .map_err(container_manager_error)?;
-    let program = program.to_string_lossy().into_owned();
-    let resolved_program = resolve_host_cli_program(&program);
-    Command::new(&resolved_program)
-        .current_dir(repo_root)
-        .args(args.iter())
-        .output()
-        .map_err(|error| ContainerExecError::Launch {
-            command: format!("{program} {}", format_args(&args)),
-            error,
-        })
 }
 
 fn run_runtime_command_capture_for_policy_allow_failure(
@@ -724,7 +681,10 @@ mod tests {
             runtime_detection_for_policy(&repo_root, &test_policy())
         });
 
-        assert_eq!(detection.backend_override, Some(BackendId::docker_compose()));
+        assert_eq!(
+            detection.backend_override,
+            Some(BackendId::docker_compose())
+        );
     }
 
     fn test_policy() -> EffectiveContainerPolicy {

@@ -24,6 +24,9 @@ use crate::runner::exec_command::transport::{
 use crate::runner::exec_command::{
     activate_exec_surface_with, strategy_requires_workspace_effigy_install,
 };
+use crate::runner::runtime_session_context::{
+    with_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
+};
 
 fn temp_repo(name: &str) -> PathBuf {
     let base = std::env::current_dir()
@@ -673,4 +676,44 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
         ))
     );
     assert!(activation.refreshed_host_container_lease);
+}
+
+#[test]
+fn activate_exec_surface_preserves_skip_lease_policy_for_handoff_sessions() {
+    let repo_root = PathBuf::from("/tmp/repo");
+    let root = temp_repo("activate-surface-skip-lease");
+    write_container_manifest(&root, "/workspace");
+    let surface = resolve_dev_exec_surface(&root).expect("surface");
+    let captured = Arc::new(Mutex::new(None));
+    let captured_clone = Arc::clone(&captured);
+
+    with_runtime_session_context(
+        RuntimeSessionContext {
+            lease_refresh_policy: LeaseRefreshPolicy::SkipRefresh,
+            ..RuntimeSessionContext::default()
+        },
+        || {
+            activate_exec_surface_with(&repo_root, &surface, move |_, _, plan| {
+                *captured_clone.lock().expect("capture lock") = Some((
+                    plan.request.repo_override.clone(),
+                    plan.request.container_name.clone(),
+                    plan.lease.policy,
+                ));
+                Ok(ContainerTaskActivation {
+                    system_was_running: true,
+                    refreshed_host_container_lease: false,
+                })
+            })
+            .expect("activation");
+        },
+    );
+
+    assert_eq!(
+        *captured.lock().expect("capture lock"),
+        Some((
+            Some(PathBuf::from("/tmp/repo")),
+            Some("web".to_owned()),
+            effigy_runtime_plan::RuntimeLeasePolicy::Skip,
+        ))
+    );
 }

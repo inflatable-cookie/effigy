@@ -3,6 +3,7 @@ mod planning;
 mod report;
 mod transfer;
 mod volume_io;
+mod volumes;
 
 use std::path::Path;
 use std::process::Output;
@@ -15,8 +16,9 @@ use effigy_containers::{
     data_transfer_report,
     exec::{runtime_backend_is_running, selected_backend_label},
     load_container_policy, user_global_colima_profile, validate_compose_backend_runtime,
-    validate_container_policy, ContainerCachePruneEntry, ContainerCacheVolumeEntry,
-    ContainerDataTransferAction, ContainerDataVolumeEntry, EffectiveContainerPolicy,
+    validate_container_policy, volume_list_report, ContainerCachePruneEntry,
+    ContainerCacheVolumeEntry, ContainerDataTransferAction, ContainerDataVolumeEntry,
+    EffectiveContainerPolicy,
 };
 
 use crate::EffigyRuntimeError;
@@ -30,6 +32,7 @@ use report::{
 };
 use transfer::{ensure_generated_data_path, resolve_managed_volume, validate_transfer_path};
 use volume_io::{hydrate_managed_volumes, run_volume_transfer};
+use volumes::collect_global_volume_entries;
 
 pub fn run_container_data_list<F>(
     repo_root: &Path,
@@ -292,6 +295,22 @@ where
 
     Ok(render_container_report(
         cache_prune_report(&scope_label, &entries),
+        output_json,
+    ))
+}
+
+pub fn run_container_volume_list<F>(
+    cwd: &Path,
+    orphans_only: bool,
+    output_json: bool,
+    run_runtime_volume_capture: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let volumes = collect_global_volume_entries(cwd, orphans_only, &run_runtime_volume_capture)?;
+    Ok(render_container_report(
+        volume_list_report("global runtime volume inventory", orphans_only, &volumes),
         output_json,
     ))
 }

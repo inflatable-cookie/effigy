@@ -18,7 +18,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Layout
 
-- `g04/` current roadmap generation
+- `g04/` current runtime architecture simplification generation
 - `g03/` previous production export and runtime hardening generation
 - `g02/` previous release and local-runtime expansion generation
 - `g01/` original implementation and consolidation generation
@@ -30,7 +30,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01` is closed as the original implementation and consolidation generation.
 - `g02` is closed as the release and local-runtime expansion generation.
 - `g03` is closed as the production export and runtime hardening generation.
-- `g04` is current. It starts with
+- `g04` is current. Its completed roadmap set starts with
   [`g04.001`](./g04/001-runtime-architecture-sanity-audit-and-generation-rollover.md),
   then moves into execution, runtime activation, container operation, data,
   Rhai, container policy, runtime read/write/shell, parser, drift-guard, and
@@ -38,10 +38,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-- [`g04.009`](./g04/009-cli-parser-modularisation-for-runtime-surfaces.md)
-- [`../specs/051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md`](../specs/051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md)
-- Ready card:
-  [`567-extract-release-parser-module.md`](../specs/batch-cards/567-extract-release-parser-module.md)
+None. The current `g04` roadmap set is complete and the queue is in planning
+stop.
 
 ## Research Program
 
@@ -77,8 +75,7 @@ Before rollover:
 
 ## Next Task
 
-Start card
-[`567-extract-release-parser-module.md`](../specs/batch-cards/567-extract-release-parser-module.md).
+Planning stop. Add the next `g04` roadmap only by explicit human request.
 
 ## Historical language boundary
 

@@ -829,6 +829,25 @@ mod tests {
     }
 
     #[test]
+    fn managed_activation_plan_preserves_policy_identity_without_container_name() {
+        let plan = managed_runtime_activation_plan(
+            Path::new("/tmp/repo"),
+            &test_policy(),
+            None,
+            LeaseRefreshPolicy::SkipRefresh,
+        );
+
+        assert_eq!(plan.request.repo_root, Path::new("/tmp/repo"));
+        assert_eq!(plan.request.policy_name, "stack");
+        assert_eq!(plan.request.container_name, None);
+        assert_eq!(
+            plan.request.repo_override.as_deref(),
+            Some(Path::new("/tmp/repo"))
+        );
+        assert_eq!(plan.lease.policy, RuntimeLeasePolicy::Skip);
+    }
+
+    #[test]
     fn managed_dns_route_lines_include_http_routes_and_service_aliases() {
         let mut policy = test_policy();
         policy.primary_service = "app".to_owned();

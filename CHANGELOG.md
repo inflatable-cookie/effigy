@@ -15,6 +15,10 @@ During v0.x, MINOR bumps may include breaking changes.
   override for one-shot runtime selection, and on a real TTY it prompts when
   both Docker and Colima are available. If a machine preference is already
   pinned, the prompt uses it as the default choice.
+- `effigy container volume list` adds a first read-only volume-ownership
+  surface for Effigy-managed named volumes across available runtimes, and
+  `--orphans` narrows that view to labeled volumes whose owning repo is gone or
+  no longer declares them.
 
 ### Added
 - **User-global container runtime preferences:** `~/.effigy/config.toml` now
@@ -61,9 +65,10 @@ During v0.x, MINOR bumps may include breaking changes.
   so Decodelabs-style PHP stacks no longer hang bootstrap just because `/`
   returns a bootstrap-time **`404`**.
 - **Generated named volumes** now carry explicit Effigy labels for project,
-  service, original logical volume name, mount target, and persistence so
-  Docker Desktop volume rewrites stay inspectable. The bundled Redis service
-  now declares an explicit named `/data` volume instead of leaking an anonymous
+  repo root, service, original logical volume name, mount target, and
+  persistence so Docker Desktop volume rewrites stay inspectable and orphan
+  detection has a real ownership signal. The bundled Redis service now
+  declares an explicit named `/data` volume instead of leaking an anonymous
   hash volume.
 - **Shipped PHP workspaces** now install a sendmail-compatible `msmtp` shim and
   point PHP `mail()` at the local Mailpit SMTP service by default, so legacy

@@ -12,6 +12,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "Mounted sibling repos listed in `systems.<name>.mounts` auto-adopt producer `[isolation].paths` into workspace containers, and Colima/nerdctl now preflights oversized mount payloads before compose-up.",
             "`container data seed` currently targets the repo default container only and stays on the generated-compose path, while `container data dump` exports logical SQL dumps from generated-compose database services.",
             "`container cache list` inventories purge-safe isolated build caches like Rust `target` and package-manager `node_modules` volumes without touching persistent app data, and `cache prune` removes only those disposable volumes.",
+            "`container volume list` inventories Effigy-managed named volumes across available runtimes, and `--orphans` narrows that view to labeled volumes whose owning repo is gone or no longer declares them.",
         ],
         &[
             "effigy container up [--repo <PATH>] [--attach|--detach] [--json]",
@@ -23,6 +24,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container status --all [--json]",
             "effigy container stats --all [--json]",
             "effigy container <NAME> status [--repo <PATH>] [--json]",
+            "effigy container volume list [--orphans] [--json]",
             "effigy container cache list [--repo <PATH>] [--all] [--project <NAME>] [--kind <KIND>] [--json]",
             "effigy container cache prune [--repo <PATH>] [--all] [--project <NAME>] [--kind <KIND>] [--yes] [--json]",
             "effigy container <NAME> cache list [--repo <PATH>] [--json]",
@@ -60,6 +62,10 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             (
                 "--all",
                 "For `down`, `status`, or `stats`, discover running Effigy-managed environments across repos. For `cache list`, inspect the Effigy Colima profile's named-volume inventory, including stopped projects.",
+            ),
+            (
+                "--orphans",
+                "For `volume list`, show only labeled Effigy-managed named volumes whose owning repo is missing or no longer declares them.",
             ),
             (
                 "--project <NAME>",
@@ -111,6 +117,8 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container down --all",
             "effigy container status --all",
             "effigy container stats --all",
+            "effigy container volume list",
+            "effigy container volume list --orphans",
             "effigy container cache list",
             "effigy container cache list --all",
             "effigy container cache list --project acowtancy-dev",

@@ -56,6 +56,7 @@ pub struct RuntimeVolumeMetadata {
     pub name: String,
     pub mount_point: Option<String>,
     pub size_bytes: Option<u64>,
+    pub labels: BTreeMap<String, String>,
 }
 
 impl ManagedVolume {
@@ -319,6 +320,18 @@ pub fn parse_inspect_volume_metadata(output: &str) -> Option<RuntimeVolumeMetada
         name,
         mount_point,
         size_bytes,
+        labels: first
+            .get("Labels")
+            .and_then(JsonValue::as_object)
+            .map(|labels| {
+                labels
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        value.as_str().map(|value| (key.clone(), value.to_owned()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 

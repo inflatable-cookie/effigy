@@ -635,6 +635,9 @@ pub enum ContainerSubcommand {
         name: Option<String>,
         subcommand: ContainerCacheSubcommand,
     },
+    Volume {
+        subcommand: ContainerVolumeSubcommand,
+    },
     Data {
         name: Option<String>,
         subcommand: ContainerDataSubcommand,
@@ -667,6 +670,11 @@ pub enum ContainerCacheSubcommand {
         project: Option<String>,
         kind: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContainerVolumeSubcommand {
+    List { orphans: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -19,11 +19,14 @@ Updated: 2026-05-07
     canonical task execution request, dependability proof, contract promotion,
     and artifact seed/apply/capture substrate work.
 - `g04`
-  - Starts the runtime architecture simplification generation.
+  - Holds the current runtime architecture simplification generation.
   - `001` lands the architecture sanity audit and opens the new queue.
-  - The generation focuses on ownership purity for execution, runtime
+  - The completed roadmap set focused on ownership purity for execution,
+    runtime
     activation, container operations, data seed/dump, Rhai host APIs, and drift
     guards.
+  - Current completed set closed with contract promotion into the package map and
+    `015-runtime-operation-pipeline-contract.md`.
 
 ## Research Roadmaps
 

@@ -2,7 +2,7 @@
 
 Lane: [`051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md`](../051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -16,6 +16,8 @@ Move `effigy release ...` parsing out of
 - add `crates/effigy-cli/src/command_parsing_release.rs`
 - move release status, gates, resume, simulate, verify-install, prepare, and
   execute parser helpers into that module
+- add `crates/effigy-cli/src/command_parsing_changelog.rs` as the final small
+  root-parser split needed to meet the line-count target
 - preserve current release flags, dry-run aliases, gate-check flags, and parse
   errors
 - run focused release parse tests
@@ -35,10 +37,17 @@ target.
 
 ## Validation
 
-- `cargo check -p effigy-cli`
-- `cargo test -p effigy --lib parse_release`
-- `git diff --check`
+- PASS:
+  `CARGO_TARGET_DIR=/tmp/effigy-g04-cli-release-parser-check cargo check -p effigy-cli`
+- PASS:
+  `CARGO_TARGET_DIR=/tmp/effigy-g04-cli-release-parser-test cargo test -p effigy --lib parse_release -- --test-threads=1`
+- PASS:
+  `CARGO_TARGET_DIR=/tmp/effigy-g04-cli-changelog-parser-check cargo check -p effigy-cli`
+- PASS:
+  `CARGO_TARGET_DIR=/tmp/effigy-g04-cli-final-parser-test cargo test -p effigy --lib parse_ -- --test-threads=1`
+- PASS: `git diff --check`
 
 ## Next Task
 
-Extract release parser module.
+Card
+[`568-scaffold-drift-guards-and-proof-matrix-lane.md`](./568-scaffold-drift-guards-and-proof-matrix-lane.md).

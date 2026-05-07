@@ -1,7 +1,7 @@
 # Package Map
 
 Status: active
-Updated: 2026-05-02
+Updated: 2026-05-07
 
 ## Purpose
 
@@ -36,6 +36,10 @@ Current authority surfaces:
   ownership
 - `docs/contracts/013-task-execution-request-contract.md` for task request and
   resolved-plan ownership
+- `docs/contracts/014-artifact-substrate-contract.md` for artifact transport,
+  staging, seed, and dump handoff ownership
+- `docs/contracts/015-runtime-operation-pipeline-contract.md` for the `g04`
+  request/plan/report/adapter pipeline boundaries
 
 ## Workspace Crates
 
@@ -57,7 +61,7 @@ Current authority surfaces:
 | `effigy-tasks` | shared task model and task-shape helpers |
 | `effigy-builtin` | builtin task inventory and builtin-facing task helpers |
 | `effigy-exec` | execution-binding model and routing helpers shared below the runner |
-| `effigy-execution` | canonical task execution request, surface, runtime-policy, environment-plan, and resolved-route model |
+| `effigy-execution` | canonical task execution request, dispatch/preflight/binding summaries, surface, runtime-policy, environment-plan, and resolved-route model |
 | `effigy-managed` | managed-run/task-plan support |
 | `effigy-rhai` | Rhai integration and scripting support |
 
@@ -67,11 +71,15 @@ Current authority surfaces:
 | --- | --- |
 | `effigy-context` | boot-time runtime context, cwd/repo target authority, host facts, and container handoff capture |
 | `effigy-container-manager` | plugin-ready container manager facade, backend ids, backend operation requests, and operation reports |
+| `effigy-container-ops` | typed container operation request, plan, side-effect class, safety policy, and report substrate |
 | `effigy-containers` | effective container policy, compose assembly, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
 | `effigy-catalog` | shipped and user/project service catalogs, compose assembly inputs, catalog schema |
 | `effigy-gateway` | local gateway loopback and host-port registry primitives |
-| `effigy-runtime` | runtime metadata and working-dir ownership helpers |
+| `effigy-runtime-plan` | typed runtime activation request, activation plan, readiness/alias/lease plan, and activation report substrate |
+| `effigy-runtime` | runtime metadata, data/read/write/shell adapter helpers, and manager-backed runtime IO wrappers |
 | `effigy-process` | host process/runtime process primitives used by runner surfaces |
+| `effigy-data` | data target resolution, seed/dump source normalization, artifact handoff planning, and database command rendering |
+| `effigy-artifacts` | artifact refs, OCI adapter, staging/apply/capture plans, metadata, and operation reports |
 
 ### Operator and policy domains
 
@@ -114,18 +122,27 @@ Current authority surfaces:
 | --- | --- |
 | [`src/runner/runtime_session_context.rs`](../../src/runner/runtime_session_context.rs) | typed runtime/session context for lease refresh and public-workspace cleanup policy |
 | [`src/runner/container_runtime.rs`](../../src/runner/container_runtime.rs) | handoff marker and in-container recursion guard surface |
-| [`src/runner/container_runtime_prep.rs`](../../src/runner/container_runtime_prep.rs) | shared container runtime activation, exec readiness, alias reconciliation, gateway-ready prep |
+| [`src/runner/container_runtime_prep.rs`](../../src/runner/container_runtime_prep.rs) | side-effect adapter for `effigy-runtime-plan` activation stages: policy validation, running-state checks, mount prep, compose up, exec readiness, alias reconciliation, gateway readiness, and lease refresh |
 | [`src/runner/host_container_lease.rs`](../../src/runner/host_container_lease.rs) | non-shell host-container lease refresh, persistence, and reaper bootstrap |
 
 ### Execution surfaces
 
 | Module | Responsibility |
 | --- | --- |
-| [`src/runner/execute/*`](../../src/runner/execute.rs) | routed task execution, managed/deferred activation handoff, execution binding consumption, `effigy-execution` request consumption |
-| [`src/runner/exec_command/mod.rs`](../../src/runner/exec_command/mod.rs) | `effigy exec` command surface and raw container exec dispatch |
+| [`src/runner/execute/*`](../../src/runner/execute.rs) | routed task execution, managed/deferred activation handoff, execution binding consumption, and `effigy-execution` request/dispatch-plan consumption |
+| [`src/runner/exec_command/mod.rs`](../../src/runner/exec_command/mod.rs) | `effigy exec` command surface and container exec dispatch over runtime activation and transport adapters |
 | [`src/runner/exec_command/surface.rs`](../../src/runner/exec_command/surface.rs) | dev-container and named-container selection for exec surfaces |
 | [`src/runner/deferral/*`](../../src/runner/deferral.rs) | deferral selection, tracing, and delegated runtime activation |
 | [`src/runner/script_command.rs`](../../src/runner/script_command.rs) | Rhai-owned runner entry surface over captured runtime context and execution request helpers |
+
+### Container operation and data surfaces
+
+| Module | Responsibility |
+| --- | --- |
+| [`src/runner/container_command/*`](../../src/runner/container_command.rs) | container command-surface glue: parse resolved CLI model, call operation/runtime/data helpers, render operator output |
+| [`src/runner/container_command/data.rs`](../../src/runner/container_command/data.rs) | container data command glue over `effigy-data`, `effigy-artifacts`, container operation plans, and runtime IO adapters |
+| [`src/runner/db_seed.rs`](../../src/runner/db_seed.rs) | bootstrap and task-facing DB seed glue over `effigy-data` source normalization, artifact staging, and task execution requests |
+| [`src/runner/artifact_command.rs`](../../src/runner/artifact_command.rs) | artifact command glue over `effigy-artifacts` refs, OCI transport, staging, apply, and capture plans |
 
 ### Workspace/session ownership
 
@@ -172,6 +189,18 @@ These are the current `effigy-containers` ownership seams that matter most to
 | [`crates/effigy-containers/src/session.rs`](../../crates/effigy-containers/src/session.rs) | container-local Effigy invocation prefix and session-related shell helpers |
 | [`crates/effigy-containers/src/report.rs`](../../crates/effigy-containers/src/report.rs) | container command report rendering models |
 
+## Runtime Operation Pipeline Crates
+
+`g04` introduced small planning crates so runner modules describe intent instead
+of owning every runtime/container decision locally.
+
+| Crate | Main types | Responsibility |
+| --- | --- | --- |
+| [`effigy-runtime-plan`](../../crates/effigy-runtime-plan/src/lib.rs) | `RuntimeActivationRequest`, `RuntimeActivationPlan`, `RuntimeReadinessPlan`, `RuntimeAliasPlan`, `RuntimeLeasePlan`, `RuntimeActivationReport` | Pure runtime activation planning and report shape. Side effects remain in runner/runtime adapters. |
+| [`effigy-container-ops`](../../crates/effigy-container-ops/src/lib.rs) | `ContainerOperationRequest`, `ContainerOperationPlan`, operation kind structs, side-effect and safety policy models | Container operation planning for lifecycle, read, exec/shell, data, and cache surfaces. Backend work routes through manager/runtime adapters. |
+| [`effigy-data`](../../crates/effigy-data/src/lib.rs) | `DataTargetRef`, `ResolvedDataTarget`, `DataSeedPlan`, `DataDumpPlan`, `DatabaseCommandPlan`, `ArtifactDataHandoff` | Data seed/dump planning, logical target resolution, database command rendering, and artifact handoff normalization. |
+| [`effigy-artifacts`](../../crates/effigy-artifacts/src/lib.rs) | artifact refs, OCI refs, staging/capture/apply requests and reports | Artifact transport/staging substrate used by seed/dump and artifact commands. |
+
 ## Runtime/Container Hardening Deltas
 
 The current runtime/container architecture is not the same shape described by
@@ -186,6 +215,14 @@ The important live hardening seams are now:
   operation reports
 - `effigy-execution` request builder for direct and embedded task plan
   construction
+- `effigy-runtime-plan` activation requests/plans for runtime prep identity,
+  lease policy, and report shape
+- `effigy-container-ops` operation plans for lifecycle, read, exec/shell, data,
+  and cache command intent
+- `effigy-data` seed/dump planning for DB targets, artifact handoff, and
+  database command rendering
+- `effigy-artifacts` artifact transport/staging/capture substrate for OCI and
+  local payloads
 - typed generated-compose ownership instead of repeated YAML reparsing for the
   main generated policy seams
 - explicit workspace session and provisioning owners instead of one mixed

@@ -222,7 +222,7 @@ impl ComposeAssembler {
 
         // 4. Build the final compose document.
         let compose_yaml =
-            Self::build_compose_document(merged_services, project_name, &all_volumes)?;
+            Self::build_compose_document(merged_services, project_name, repo_root, &all_volumes)?;
 
         Ok(AssemblyResult {
             compose_yaml,
@@ -326,6 +326,7 @@ impl ComposeAssembler {
     fn build_compose_document(
         services: serde_yaml::Mapping,
         project_name: &str,
+        repo_root: &str,
         volumes: &[VolumeInfo],
     ) -> Result<String, CatalogError> {
         let mut doc = serde_yaml::Mapping::new();
@@ -357,6 +358,10 @@ impl ComposeAssembler {
                 labels.insert(
                     YamlValue::String("com.effigy.project".to_string()),
                     YamlValue::String(project_name.to_string()),
+                );
+                labels.insert(
+                    YamlValue::String("com.effigy.repo-root".to_string()),
+                    YamlValue::String(repo_root.to_string()),
                 );
                 labels.insert(
                     YamlValue::String("com.effigy.service".to_string()),

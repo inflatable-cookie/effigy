@@ -80,9 +80,13 @@ Current shared ownership should converge around:
 | Boot-time runtime context | `effigy_context::EffigyRuntimeContext` |
 | Task execution request and plan construction | `effigy_execution::TaskExecutionRequestBuilder`; contract `013-task-execution-request-contract.md` |
 | Embedded command repo targeting | shared helper under `src/runner/command_context/*` or adjacent shared runner module |
-| Execution binding resolution | `src/runner/execute/binding.rs` |
-| Standard routing policy | `src/runner/execute/routing.rs` plus `crates/effigy-exec` |
-| Runtime activation and prep | `src/runner/container_runtime_prep.rs` |
+| Execution binding resolution | `src/runner/execute/binding.rs` plus `effigy-execution` binding summaries |
+| Standard routing policy | `src/runner/execute/routing.rs`, `crates/effigy-exec`, and `effigy-execution` dispatch plans |
+| Runtime activation planning | `effigy-runtime-plan`; contract `015-runtime-operation-pipeline-contract.md` |
+| Runtime activation side effects | `src/runner/container_runtime_prep/*` stage adapters |
+| Container operation planning | `effigy-container-ops`; contract `015-runtime-operation-pipeline-contract.md` |
+| Container backend operations | `effigy-container-manager` and `effigy-runtime` adapters |
+| Data seed/dump planning | `effigy-data`; artifact transport through `effigy-artifacts` |
 | Handoff marker and recursion guard | `src/runner/container_runtime.rs` |
 | Interactive workspace/session ownership | shared session-ownership helper under `src/runner/system_command/workspace.rs` or adjacent shared runner module |
 | Gateway route reconciliation | `src/runner/container_command/gateway_registration.rs` |
@@ -255,6 +259,8 @@ Update this contract when Effigy changes:
 - session ownership semantics
 - inline workspace container support posture
 - unsupported-surface error family
+- runtime operation pipeline ownership from
+  `015-runtime-operation-pipeline-contract.md`
 
 ## Validation direction
 
@@ -273,10 +279,14 @@ Minimum proof areas:
 - interactive ownership parity across workspace, managed handoff, and
   `stay_in_shell`
 - unsupported inline-container failure-family parity
+- container data seed/dump local and `oci://` parity through `effigy-data` and
+  `effigy-artifacts`
+- drift guard coverage from `scripts/check-runtime-container-drift.sh`
 
 ## Next Task
 
 Use this contract with `011-runtime-context-contract.md`,
 `012-container-manager-contract.md`, and
-`013-task-execution-request-contract.md` as the durable authority set for
+`013-task-execution-request-contract.md`, plus
+`015-runtime-operation-pipeline-contract.md`, as the durable authority set for
 runtime/context/container/execution convergence.
