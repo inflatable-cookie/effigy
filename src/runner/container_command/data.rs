@@ -171,6 +171,7 @@ pub(super) fn run_container_data_dump(
     repo_root: &Path,
     name: Option<&str>,
     db_dumps: &[ContainerDbDumpInput],
+    push: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let policy = effigy_containers::load_container_policy(repo_root, name)?;
@@ -183,6 +184,15 @@ pub(super) fn run_container_data_dump(
 
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     let plans = resolve_db_dump_plans(repo_root, &manifest, &policy.name, db_dumps)?;
+    if push
+        && !plans
+            .iter()
+            .any(|plan| is_oci_artifact_path(&plan.output_path))
+    {
+        return Err(RunnerError::task_invocation(
+            "`container data dump --push` requires at least one explicit `oci://` dump destination",
+        ));
+    }
 
     let mut dump_reports = Vec::with_capacity(plans.len());
     for plan in &plans {
@@ -222,7 +232,7 @@ pub(super) fn run_container_data_dump(
                 repo_root,
                 repo_root,
                 false,
-                false,
+                push,
             )?)
         } else {
             None
@@ -256,14 +266,16 @@ pub(super) fn run_container_data_dump(
             .map(
                 |(plan, write_path, artifact_capture)| match plan.target.as_deref() {
                     Some(target) if artifact_capture.is_some() => format!(
-                        "{target}={} (planned artifact from {})",
+                        "{target}={} ({} artifact from {})",
                         plan.output_path.display(),
+                        artifact_capture_status(artifact_capture.as_ref()),
                         write_path.display()
                     ),
                     Some(target) => format!("{target}={}", plan.output_path.display()),
                     None if artifact_capture.is_some() => format!(
-                        "{} (planned artifact from {})",
+                        "{} ({} artifact from {})",
                         plan.output_path.display(),
+                        artifact_capture_status(artifact_capture.as_ref()),
                         write_path.display()
                     ),
                     None => plan.output_path.display().to_string(),
@@ -272,6 +284,17 @@ pub(super) fn run_container_data_dump(
             .collect::<Vec<_>>()
             .join(", ");
         Ok(format!("[ok] dumped local databases to {detail}"))
+    }
+}
+
+fn artifact_capture_status(report: Option<&serde_json::Value>) -> &'static str {
+    match report
+        .and_then(|report| report.get("destination"))
+        .and_then(|destination| destination.get("pushed"))
+        .and_then(|pushed| pushed.as_bool())
+    {
+        Some(true) => "pushed",
+        _ => "planned",
     }
 }
 
@@ -1149,10 +1172,45 @@ primary_service = "app"
                 path: PathBuf::from("/tmp/latest.sql"),
             }],
             false,
+            false,
         )
         .expect_err("should fail");
         let message = error.to_string();
         assert!(message.contains("`data dump` is supported only on the generated-compose path"));
+    }
+
+    #[test]
+    fn run_container_data_dump_rejects_push_without_oci_destination() {
+        let root = temp_repo("data-dump-push-local");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.db]
+catalog = "postgres"
+database = "app"
+"#,
+        )
+        .expect("write manifest");
+
+        let error = run_container_data_dump(
+            &root,
+            None,
+            &[ContainerDbDumpInput {
+                target: Some("app".to_owned()),
+                path: PathBuf::from("/tmp/app.sql"),
+            }],
+            true,
+            false,
+        )
+        .expect_err("should fail before container exec");
+        let message = error.to_string();
+        assert!(message.contains("`container data dump --push` requires"));
     }
 
     #[test]

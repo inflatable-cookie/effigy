@@ -4,7 +4,7 @@ use effigy_artifacts::{
     default_local_artifact_root, stage_local_artifact, stage_oci_artifact, ArtifactKind,
     ArtifactSourceRef, LocalArtifactRef, LocalArtifactStagingRequest, OciArtifactAdapter,
     OciArtifactDescriptor, OciArtifactInspectRequest, OciArtifactPullRequest,
-    OciArtifactStagingRequest,
+    OciArtifactPushRequest, OciArtifactStagingRequest,
 };
 use effigy_cli::{ArtifactArgs, ArtifactSubcommand};
 use serde_json::{json, Value};
@@ -149,12 +149,31 @@ pub(in crate::runner) fn capture_artifact_report(
     farmyard_handoff: bool,
     push: bool,
 ) -> Result<Value, RunnerError> {
-    if push {
-        return Err(RunnerError::task_invocation(
-            "live OCI artifact push is not implemented yet; omit `--push` to create a planned capture report",
-        ));
-    }
+    capture_artifact_report_with_adapter(
+        source,
+        destination,
+        kind,
+        environment_label,
+        repo_root,
+        invocation_cwd,
+        farmyard_handoff,
+        push,
+        &OrasCliArtifactAdapter::default(),
+    )
+}
 
+#[allow(clippy::too_many_arguments)]
+fn capture_artifact_report_with_adapter(
+    source: &str,
+    destination: &str,
+    kind: Option<&str>,
+    environment_label: Option<&str>,
+    repo_root: &Path,
+    invocation_cwd: &Path,
+    farmyard_handoff: bool,
+    push: bool,
+    adapter: &dyn OciArtifactAdapter,
+) -> Result<Value, RunnerError> {
     let source_ref = parse_artifact_source(source)?;
     let ArtifactSourceRef::Local(local) = source_ref else {
         return Err(RunnerError::task_invocation(
@@ -201,6 +220,25 @@ pub(in crate::runner) fn capture_artifact_report(
             staged.metadata.digest.clone(),
         )
     });
+    let push_report = if push {
+        Some(
+            adapter
+                .push(&OciArtifactPushRequest {
+                    reference: destination_oci.clone(),
+                    staged_root: staged.metadata.staged_root.clone(),
+                    metadata_path: staged.metadata_path.clone(),
+                    primary_files: staged.metadata.primary_files.clone(),
+                })
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let pushed = push_report.is_some();
+    let digest = push_report
+        .as_ref()
+        .and_then(|report| report.digest.clone());
+    let descriptor = push_report.as_ref().map(|report| report.descriptor.clone());
 
     Ok(json!({
         "schema": "effigy.artifact.capture.v1",
@@ -211,9 +249,10 @@ pub(in crate::runner) fn capture_artifact_report(
         "destination": {
             "source": ArtifactSourceRef::Oci(destination_oci.clone()).display_ref(),
             "reference": destination_oci.redacted(),
-            "planned": true,
-            "pushed": false,
-            "digest": null,
+            "planned": !pushed,
+            "pushed": pushed,
+            "digest": digest,
+            "descriptor": descriptor,
         },
         "farmyard_handoff": handoff,
     }))
@@ -461,11 +500,28 @@ fn render_capture_text(report: &Value) -> String {
         .get("staged_root")
         .and_then(Value::as_str)
         .unwrap_or("<unknown>");
+    let pushed = report
+        .get("destination")
+        .and_then(|value| value.get("pushed"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let destination_label = if pushed {
+        "pushed_destination"
+    } else {
+        "planned_destination"
+    };
     let mut lines = vec![
         format!("[artifact] captured {source}"),
         format!("staged_root={staged_root}"),
-        format!("planned_destination={destination}"),
+        format!("{destination_label}={destination}"),
     ];
+    if let Some(digest) = report
+        .get("destination")
+        .and_then(|value| value.get("digest"))
+        .and_then(Value::as_str)
+    {
+        lines.push(format!("digest={digest}"));
+    }
     if report
         .get("farmyard_handoff")
         .is_some_and(|value| !value.is_null())
@@ -500,7 +556,9 @@ fn parse_artifact_kind(value: &str) -> Result<ArtifactKind, RunnerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use effigy_artifacts::{LocalArtifactRef, OciArtifactError, OciArtifactPullReport};
+    use effigy_artifacts::{
+        LocalArtifactRef, OciArtifactError, OciArtifactPullReport, OciArtifactPushReport,
+    };
     use std::fs;
 
     #[test]
@@ -560,7 +618,7 @@ mod tests {
         let cwd = temp_dir("cwd-oci-inspect");
         let parsed = ArtifactSourceRef::parse("oci://token:secret@ghcr.io/acowtancy/private:uat")
             .expect("parse");
-        let adapter = FakeOciArtifactAdapter::default();
+        let adapter = FakeOciArtifactAdapter;
 
         let report = inspect_report(&parsed, &repo, &cwd, true, Some(&adapter)).expect("inspect");
 
@@ -576,7 +634,7 @@ mod tests {
     fn stage_oci_uses_adapter_pull_files_and_stages_metadata() {
         let repo = temp_dir("repo-oci-stage");
         let cwd = temp_dir("cwd-oci-stage");
-        let adapter = FakeOciArtifactAdapter::default();
+        let adapter = FakeOciArtifactAdapter;
 
         let report = stage_artifact_report(
             "oci://ghcr.io/acowtancy/private:uat",
@@ -654,11 +712,13 @@ mod tests {
     }
 
     #[test]
-    fn capture_rejects_push_until_live_push_lands() {
+    fn capture_push_uses_adapter_and_reports_digest() {
         let repo = temp_dir("repo-capture-push");
         let cwd = temp_dir("cwd-capture-push");
+        fs::write(cwd.join("uat.sql.gz"), "select 1;").expect("write source");
+        let adapter = FakeOciArtifactAdapter;
 
-        let error = capture_artifact_report(
+        let report = capture_artifact_report_with_adapter(
             "uat.sql.gz",
             "oci://ghcr.io/acme/uat-content:2026-05-06",
             None,
@@ -667,12 +727,17 @@ mod tests {
             &cwd,
             false,
             true,
+            &adapter,
         )
-        .expect_err("reject push");
+        .expect("push");
 
-        assert!(error
-            .to_string()
-            .contains("live OCI artifact push is not implemented yet"));
+        assert_eq!(report["destination"]["planned"], false);
+        assert_eq!(report["destination"]["pushed"], true);
+        assert_eq!(report["destination"]["digest"], "sha256:pushdigest");
+        assert_eq!(
+            report["destination"]["descriptor"]["redacted_reference"],
+            "ghcr.io/acme/uat-content:2026-05-06"
+        );
     }
 
     #[derive(Default)]
@@ -702,6 +767,21 @@ mod tests {
                 })?,
                 pulled_root,
                 primary_files: vec![PathBuf::from("legacy.sql")],
+            })
+        }
+
+        fn push(
+            &self,
+            request: &OciArtifactPushRequest,
+        ) -> Result<OciArtifactPushReport, OciArtifactError> {
+            assert!(request.metadata_path.is_file());
+            assert_eq!(request.primary_files.len(), 1);
+            let descriptor =
+                OciArtifactDescriptor::new(&request.reference).with_digest("sha256:pushdigest");
+            Ok(OciArtifactPushReport {
+                pushed_ref: request.reference.redacted(),
+                digest: descriptor.digest.clone(),
+                descriptor,
             })
         }
     }

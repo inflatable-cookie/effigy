@@ -91,30 +91,12 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut all = false;
-    let mut project: Option<String> = None;
-    let mut kind: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
             "--all" => all = true,
-            "--project" => {
-                project = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--project".to_owned(),
-                    },
-                )?)
-            }
-            "--kind" => {
-                kind = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--kind".to_owned(),
-                    },
-                )?)
-            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
@@ -457,11 +439,13 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut db_dumps = Vec::new();
+    let mut push = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
+            "--push" => push = true,
             "--db-dump" => {
                 let value = next_required_value(
                     &mut args,
@@ -480,7 +464,7 @@ where
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Data {
             name,
-            subcommand: ContainerDataSubcommand::Dump { db_dumps },
+            subcommand: ContainerDataSubcommand::Dump { db_dumps, push },
         },
         repo_override,
         output_json,

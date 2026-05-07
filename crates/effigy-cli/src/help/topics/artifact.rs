@@ -12,7 +12,7 @@ pub(crate) fn render_artifact_help<R: HelpRenderer>(renderer: &mut R) -> HelpRes
         &[
             "effigy artifact inspect <REF|PATH> [--repo <PATH>] [--farmyard-handoff] [--json]",
             "effigy artifact stage <REF|PATH> [--repo <PATH>] [--farmyard-handoff] [--json]",
-            "effigy artifact capture <SOURCE_PATH> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--farmyard-handoff] [--json]",
+            "effigy artifact capture <SOURCE_PATH> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--farmyard-handoff] [--push] [--json]",
         ],
         &[
             ("--repo <PATH>", "Override target repository path"),
@@ -29,6 +29,10 @@ pub(crate) fn render_artifact_help<R: HelpRenderer>(renderer: &mut R) -> HelpRes
                 "--farmyard-handoff",
                 "Include a stable Farmyard handoff block for app-local migration tools",
             ),
+            (
+                "--push",
+                "Publish a captured artifact to the explicit OCI ref instead of returning a planned capture only",
+            ),
             ("--json", "Render machine-readable artifact payloads"),
             ("-h, --help", "Print command help"),
         ],
@@ -36,6 +40,7 @@ pub(crate) fn render_artifact_help<R: HelpRenderer>(renderer: &mut R) -> HelpRes
             "effigy artifact inspect seed.sql --json",
             "effigy artifact stage ./data/legacy.sql.gz --farmyard-handoff --json",
             "effigy artifact capture ./dumps/uat.sql.gz --ref oci://ghcr.io/acme/uat-content:2026-05-06 --environment uat --json",
+            "effigy artifact capture ./dumps/uat.sql.gz --ref oci://ghcr.io/acme/uat-content:2026-05-06 --push --json",
             "effigy artifact inspect oci://ghcr.io/acme/private-data:uat",
         ],
     )

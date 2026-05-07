@@ -2,7 +2,7 @@
 
 Generation: `g03`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-06
 Depends on: [`035-contract-promotion-public-cleanup-breaks-and-closeout.md`](./035-contract-promotion-public-cleanup-breaks-and-closeout.md)
@@ -478,7 +478,7 @@ Closeout:
 
 ### 427 - Implement Live OCI Push Through Artifact Adapter
 
-Status: Ready
+Status: Complete
 
 Scope:
 
@@ -493,6 +493,83 @@ Exit condition:
 - `artifact capture --push` publishes through the adapter boundary and fake
   transport tests prove no credentials leak.
 
+Closeout:
+
+- `OciArtifactAdapter` now exposes live push
+- ORAS-backed push is wired into `artifact capture --push`
+- capture still stages locally before push
+- capture reports immutable pushed digest when available
+- fake adapter tests prove command-layer push reporting
+
+### 428 - Decide Container Data Dump Live Push Boundary
+
+Status: Complete
+
+Scope:
+
+- decide whether `container data dump <TARGET>=oci://<REF>` should mutate
+  registries directly or stay planned-only
+- define required flags such as `--push` or `--overwrite`
+- preserve explicit UAT auditability
+
+Exit condition:
+
+- the dump live-push boundary is explicit and the next implementation or stop
+  condition is clear.
+
+Closeout:
+
+- initial decision kept `container data dump <TARGET>=oci://<REF>`
+  planned-only.
+- one-command dump-and-push was later implemented in card `430` with explicit
+  `--push`.
+- dump-and-push must not become an automation default.
+
+### 429 - Close Artifact Substrate Lane
+
+Status: Complete
+
+Scope:
+
+- confirm the durable contract carries the selected behavior
+- mark this roadmap and strict lane complete
+- update front doors so no stale ready card remains
+- record that dump-and-push needs explicit planning before implementation
+
+Exit condition:
+
+- `g03.036` is closed and the next move is planning, not accidental
+  implementation.
+
+Closeout:
+
+- this roadmap is complete
+- strict lane `042` is complete
+- no next implementation card remains in this lane
+
+### 430 - Implement Container Data Dump Live OCI Push
+
+Status: Complete
+
+Scope:
+
+- add explicit `--push` to `container data dump`
+- keep local dump behavior unchanged
+- publish only explicit `oci://` destinations
+- reject local-only dumps with `--push`
+- route publication through artifact capture push
+
+Exit condition:
+
+- `container data dump --db-dump <TARGET>=oci://<REF> --push` stages the dump,
+  publishes it through the artifact adapter, and reports pushed metadata.
+
+Closeout:
+
+- one-command dump-and-push exists as explicit opt-in behavior
+- no implicit registry mutation was added
+- overwrite and credential management remain outside this round
+
 ## Acceptance Criteria
 
 - local SQL seed inputs and OCI artifact seed inputs resolve through one model
@@ -505,4 +582,4 @@ Exit condition:
 
 ## Next Task
 
-Start card `427-implement-live-oci-push-through-artifact-adapter`.
+Stop in planning and choose the next roadmap deliberately.

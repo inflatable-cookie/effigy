@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- **`effigy container data dump --push`** publishes explicit **`oci://`** dump
+  destinations after the local SQL dump is staged, using the artifact capture
+  push path and returning the pushed digest in JSON reports.
 - **Logical database targets:** optional **`[data.targets.<name>]`** entries let
   bootstrap DB seed, **`effigy container data seed`**, and
   **`effigy container data dump`** address sidecar databases without overloading

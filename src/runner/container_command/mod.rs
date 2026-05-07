@@ -302,13 +302,14 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         }
         ContainerSubcommand::Data {
             name,
-            subcommand: ContainerDataSubcommand::Dump { db_dumps },
+            subcommand: ContainerDataSubcommand::Dump { db_dumps, push },
         } => {
             let context = resolve_active_command_context(args.repo_override.clone())?;
             run_container_data_dump(
                 &context.resolved.resolved_root,
                 name.as_deref(),
                 &resolve_db_dump_output_paths(&context.invocation_cwd, &db_dumps),
+                push,
                 args.output_json,
             )
         }

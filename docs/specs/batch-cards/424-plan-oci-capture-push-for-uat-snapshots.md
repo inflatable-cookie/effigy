@@ -39,7 +39,7 @@ implement without guessing about UAT safety, tag mutability, or app ownership.
 - `014-artifact-substrate-contract.md` now defines the write-side command
   shape:
   - `effigy artifact capture <SOURCE_PATH> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--push]`
-  - `effigy container data dump <TARGET>=oci://<REF> [--environment <LABEL>] [--push]`
+  - `effigy container data dump <TARGET>=oci://<REF> [--push]`
 - capture is two-phase by default: stage locally first, then push only when
   explicitly requested
 - dump-to-OCI follows the same model and must not mutate a registry without

@@ -2,7 +2,7 @@
 
 Lane: [`042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md`](../042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-06
 
@@ -37,7 +37,18 @@ This card is complete when `artifact capture --push` can publish a staged
 artifact through the adapter boundary, returns the pushed digest, and fake
 transport tests prove no credentials leak.
 
+## Closeout
+
+- `OciArtifactAdapter` now exposes `push`
+- ORAS-backed push is wired through `artifact capture --push`
+- capture still stages locally before pushing
+- digest-pinned destination refs stay invalid
+- capture reports `planned=false`, `pushed=true`, and the immutable pushed
+  digest when push succeeds
+- fake adapter tests prove command-layer push reporting without a live registry
+- process errors still sanitize raw OCI refs/userinfo
+
 ## Next Task
 
-Decide whether live push should be enabled for `container data dump ...=oci://`
-or kept as a separate explicit artifact command.
+Card
+[`428-decide-container-data-dump-live-push-boundary.md`](./428-decide-container-data-dump-live-push-boundary.md).

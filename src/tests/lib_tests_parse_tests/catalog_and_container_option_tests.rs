@@ -632,6 +632,7 @@ fn parse_container_data_dump_is_supported() {
                         target: None,
                         path: PathBuf::from("./latest.sql"),
                     }],
+                    push: false,
                 },
             },
             repo_override: None,
@@ -660,6 +661,7 @@ fn parse_container_data_dump_accepts_bare_target_shorthand() {
                         target: Some("legacy_mysql".to_owned()),
                         path: PathBuf::from("legacy_mysql.sql"),
                     }],
+                    push: false,
                 },
             },
             repo_override: None,
@@ -695,6 +697,7 @@ fn parse_container_data_dump_accepts_positional_specs() {
                             path: PathBuf::from("./acowtancy.sql"),
                         },
                     ],
+                    push: false,
                 },
             },
             repo_override: None,
@@ -724,10 +727,42 @@ fn parse_named_container_data_dump_accepts_named_targets() {
                         target: Some("app".to_owned()),
                         path: PathBuf::from("./app.sql"),
                     }],
+                    push: false,
                 },
             },
             repo_override: None,
             output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_container_data_dump_accepts_push_for_oci_destinations() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "data".to_owned(),
+        "dump".to_owned(),
+        "--db-dump".to_owned(),
+        "app=oci://ghcr.io/acme/uat-content:2026-05-07".to_owned(),
+        "--push".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Data {
+                name: None,
+                subcommand: ContainerDataSubcommand::Dump {
+                    db_dumps: vec![ContainerDbDumpInput {
+                        target: Some("app".to_owned()),
+                        path: PathBuf::from("oci://ghcr.io/acme/uat-content:2026-05-07"),
+                    }],
+                    push: true,
+                },
+            },
+            repo_override: None,
+            output_json: true,
         })
     );
 }

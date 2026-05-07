@@ -27,7 +27,6 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
-- [`042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md`](./042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md)
 
 Paused but still useful:
 
@@ -35,6 +34,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md`](./042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md)
 - [`041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md`](./041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md)
 - [`040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md`](./040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md)
 - [`039-runtime-container-caller-migration-and-cleanup-strict-lane.md`](./039-runtime-container-caller-migration-and-cleanup-strict-lane.md)
@@ -68,5 +68,6 @@ Recently completed:
 
 ## Next Task
 
-Card
-[`427-implement-live-oci-push-through-artifact-adapter.md`](./batch-cards/427-implement-live-oci-push-through-artifact-adapter.md).
+No active ready card.
+
+Stop in planning and choose the next roadmap deliberately.

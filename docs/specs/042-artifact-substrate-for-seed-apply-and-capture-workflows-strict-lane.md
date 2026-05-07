@@ -2,7 +2,7 @@
 
 Roadmap: [`g03.036`](../roadmaps/g03/036-artifact-substrate-for-seed-apply-and-capture-workflows.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-06
 
@@ -29,7 +29,7 @@ semantics.
 
 ## Current Ready Card
 
-[`427-implement-live-oci-push-through-artifact-adapter.md`](./batch-cards/427-implement-live-oci-push-through-artifact-adapter.md)
+None.
 
 ## Execution Chain
 
@@ -45,7 +45,12 @@ semantics.
 - `424` complete: plan OCI capture/push for UAT snapshots
 - `425` complete: implement local artifact capture with planned OCI push
 - `426` complete: wire planned artifact capture into container data dump
-- `427` ready: implement live OCI push through artifact adapter
+- `427` complete: implement live OCI push through artifact adapter
+- `428` complete: initial conservative boundary kept container data dump
+  planned-only
+- `429` complete: close artifact substrate lane
+- `430` complete: implement explicit container data dump live OCI push after
+  user opted into the one-command workflow
 
 ## Exit Condition
 
@@ -56,5 +61,4 @@ migration logic outside Effigy.
 
 ## Next Task
 
-Card
-[`427-implement-live-oci-push-through-artifact-adapter.md`](./batch-cards/427-implement-live-oci-push-through-artifact-adapter.md).
+Stop in planning and choose the next roadmap deliberately.

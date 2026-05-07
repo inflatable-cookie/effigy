@@ -297,6 +297,14 @@ pub struct OciArtifactPullRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OciArtifactPushRequest {
+    pub reference: OciArtifactRef,
+    pub staged_root: PathBuf,
+    pub metadata_path: PathBuf,
+    pub primary_files: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OciArtifactDescriptor {
     pub reference: String,
     pub redacted_reference: String,
@@ -340,6 +348,13 @@ pub struct OciArtifactPullReport {
     pub primary_files: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OciArtifactPushReport {
+    pub descriptor: OciArtifactDescriptor,
+    pub pushed_ref: String,
+    pub digest: Option<String>,
+}
+
 pub trait OciArtifactAdapter {
     fn inspect(
         &self,
@@ -350,6 +365,11 @@ pub trait OciArtifactAdapter {
         &self,
         request: &OciArtifactPullRequest,
     ) -> Result<OciArtifactPullReport, OciArtifactError>;
+
+    fn push(
+        &self,
+        request: &OciArtifactPushRequest,
+    ) -> Result<OciArtifactPushReport, OciArtifactError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -589,6 +609,7 @@ impl std::error::Error for ArtifactStagingError {}
 pub enum OciArtifactError {
     InspectFailed { reference: String, message: String },
     PullFailed { reference: String, message: String },
+    PushFailed { reference: String, message: String },
 }
 
 impl fmt::Display for OciArtifactError {
@@ -599,6 +620,9 @@ impl fmt::Display for OciArtifactError {
             }
             Self::PullFailed { reference, message } => {
                 write!(f, "failed to pull OCI artifact `{reference}`: {message}")
+            }
+            Self::PushFailed { reference, message } => {
+                write!(f, "failed to push OCI artifact `{reference}`: {message}")
             }
         }
     }

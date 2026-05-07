@@ -5,6 +5,7 @@ use std::process::Command as ProcessCommand;
 use effigy_artifacts::{
     ArtifactKind, OciArtifactAdapter, OciArtifactDescriptor, OciArtifactError,
     OciArtifactInspectRequest, OciArtifactPullReport, OciArtifactPullRequest,
+    OciArtifactPushReport, OciArtifactPushRequest,
 };
 use serde_json::Value;
 
@@ -103,6 +104,51 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
             descriptor,
             pulled_root,
             primary_files,
+        })
+    }
+
+    fn push(
+        &self,
+        request: &OciArtifactPushRequest,
+    ) -> Result<OciArtifactPushReport, OciArtifactError> {
+        if request.primary_files.is_empty() {
+            return Err(OciArtifactError::PushFailed {
+                reference: request.reference.redacted(),
+                message: "push request has no primary files".to_owned(),
+            });
+        }
+
+        let mut command = ProcessCommand::new(&self.executable);
+        command
+            .arg("push")
+            .arg(request.reference.reference())
+            .arg(&request.metadata_path);
+        for file in &request.primary_files {
+            command.arg(file);
+        }
+        command.arg("--format").arg("json");
+        let output = command.output().map_err(|error| OciArtifactError::PushFailed {
+            reference: request.reference.redacted(),
+            message: format!("failed to run `oras`: {error}; install ORAS and authenticate with the registry before pushing OCI artifacts"),
+        })?;
+        if !output.status.success() {
+            return Err(OciArtifactError::PushFailed {
+                reference: request.reference.redacted(),
+                message: sanitize_process_output(&request.reference, &output.stderr),
+            });
+        }
+
+        let mut descriptor = parse_oras_descriptor(&request.reference, &output.stdout)
+            .unwrap_or_else(|_| OciArtifactDescriptor::new(&request.reference));
+        if descriptor.digest.is_none() {
+            descriptor = self.inspect(&OciArtifactInspectRequest {
+                reference: request.reference.clone(),
+            })?;
+        }
+        Ok(OciArtifactPushReport {
+            pushed_ref: request.reference.redacted(),
+            digest: descriptor.digest.clone(),
+            descriptor,
         })
     }
 }

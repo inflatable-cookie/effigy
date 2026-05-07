@@ -31,7 +31,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container <NAME> data list [--repo <PATH>] [--json]",
             "effigy container data export <VOLUME> <PATH> [--repo <PATH>] [--json]",
             "effigy container <NAME> data export <VOLUME> <PATH> [--repo <PATH>] [--json]",
-            "effigy container [<NAME>] data dump [<FILE>|<TARGET>|<TARGET>=<FILE>]... [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>]... [--repo <PATH>] [--json]",
+            "effigy container [<NAME>] data dump [<FILE>|<TARGET>|<TARGET>=<FILE|OCI>]... [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE|OCI>]... [--push] [--repo <PATH>] [--json]",
             "effigy container data import <VOLUME> <PATH> [--repo <PATH>] [--yes] [--json]",
             "effigy container <NAME> data import <VOLUME> <PATH> [--repo <PATH>] [--yes] [--json]",
             "effigy container data pull-production [--repo <PATH>] [--yes] [--json]",
@@ -87,7 +87,11 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>",
-                "Compatibility alias for positional `data dump` specs. A bare target writes `./<target>.sql`. Output paths are relative to the invocation cwd unless absolute.",
+                "Compatibility alias for positional `data dump` specs. A bare target writes `./<target>.sql`. Explicit `oci://` destinations stage a local dump and report artifact metadata.",
+            ),
+            (
+                "--push",
+                "For explicit `oci://` dump destinations, publish the captured artifact after the local dump is staged. Local-only dumps reject `--push`.",
             ),
             (
                 "--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>",
@@ -121,6 +125,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container data dump --db-dump legacy_mysql",
             "effigy container data dump --db-dump ./latest.sql",
             "effigy container data dump --db-dump app=./app.sql --db-dump app_test=./app_test.sql",
+            "effigy container data dump --db-dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push --json",
             "effigy container web data import fixture-web-dev-db-data ./backup.tar.gz",
             "effigy container web data pull-production",
             "effigy container data seed --db-seed legacy_mysql",

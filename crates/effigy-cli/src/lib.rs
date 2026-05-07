@@ -662,6 +662,7 @@ pub enum ContainerDataSubcommand {
     },
     Dump {
         db_dumps: Vec<ContainerDbDumpInput>,
+        push: bool,
     },
     Import {
         volume: String,

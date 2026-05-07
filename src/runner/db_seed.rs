@@ -979,7 +979,8 @@ mod tests {
     };
     use effigy_artifacts::{
         OciArtifactAdapter, OciArtifactDescriptor, OciArtifactError, OciArtifactInspectRequest,
-        OciArtifactPullReport, OciArtifactPullRequest,
+        OciArtifactPullReport, OciArtifactPullRequest, OciArtifactPushReport,
+        OciArtifactPushRequest,
     };
     use effigy_cli::BootstrapDbSeedInput;
     use effigy_manifest::TaskManifest;
@@ -1167,6 +1168,19 @@ database = "acowtancy"
                 })?,
                 pulled_root,
                 primary_files: vec![PathBuf::from("legacy.sql")],
+            })
+        }
+
+        fn push(
+            &self,
+            request: &OciArtifactPushRequest,
+        ) -> Result<OciArtifactPushReport, OciArtifactError> {
+            let descriptor =
+                OciArtifactDescriptor::new(&request.reference).with_digest("sha256:pushdigest");
+            Ok(OciArtifactPushReport {
+                pushed_ref: request.reference.redacted(),
+                digest: descriptor.digest.clone(),
+                descriptor,
             })
         }
     }

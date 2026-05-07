@@ -58,7 +58,18 @@ Batch cards are the execution units for active Effigy strict-lane work.
   is complete. It wires planned capture into container data dump.
 
 - [`427-implement-live-oci-push-through-artifact-adapter.md`](./427-implement-live-oci-push-through-artifact-adapter.md)
-  is ready. It adds explicit live OCI push through the artifact adapter.
+  is complete. It adds explicit live OCI push through the artifact adapter.
+
+- [`428-decide-container-data-dump-live-push-boundary.md`](./428-decide-container-data-dump-live-push-boundary.md)
+  is complete. It recorded the initial conservative dump push boundary.
+
+- [`429-close-artifact-substrate-lane.md`](./429-close-artifact-substrate-lane.md)
+  is complete. It closes the artifact substrate lane with no new
+  implementation.
+
+- [`430-implement-container-data-dump-live-oci-push.md`](./430-implement-container-data-dump-live-oci-push.md)
+  is complete. It adds explicit `container data dump --push` for OCI
+  destinations.
 
 - [`399-scaffold-dependability-proof-matrix-lane.md`](./399-scaffold-dependability-proof-matrix-lane.md)
   is complete. It opened `g03.034` as strict lane `040` and chose the first

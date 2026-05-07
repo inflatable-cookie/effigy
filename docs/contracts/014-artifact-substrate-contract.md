@@ -208,17 +208,27 @@ Command shape:
 
 ```sh
 effigy artifact capture <SOURCE_PATH> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--push]
-effigy container data dump <TARGET>=oci://<REF> [--environment <LABEL>] [--push]
+effigy container data dump <TARGET>=oci://<REF> [--push]
 ```
 
-First implementation rule:
+Implementation rule:
 
 - capture always stages a local artifact first
-- push is a separate explicit step unless `--push` is supplied
-- `container data dump <target>=oci://...` should dump to a local staged
-  artifact, then push only when `--push` is explicit
-- without `--push`, dump-to-OCI should report the staged artifact and planned
-  target ref, not mutate the registry
+- push requires explicit `--push`
+- `container data dump <target>=oci://...` dumps to a local staged artifact and
+  reports the planned target ref
+- `container data dump --push <target>=oci://...` may publish the staged
+  artifact after the local dump succeeds
+- local-only data dumps reject `--push`
+- operators may also publish dump output through the explicit artifact capture
+  surface, after inspecting the staged report:
+
+```sh
+effigy artifact capture <LOCAL_DUMP_PATH> --ref oci://<REF> --push
+```
+
+One-command dump-and-push must remain opt-in. It must not become the automation
+default for bootstrap, data dump, or UAT snapshot workflows.
 
 Metadata packaged for push:
 
@@ -235,7 +245,7 @@ Tag and digest rules:
 - mutable tags are allowed only as explicit operator input
 - pushing to a tag should report the immutable pushed digest
 - overwriting an existing tag requires an explicit future `--overwrite` flag;
-  first implementation should fail or rely on the registry/client refusal
+  current push behavior does not add an overwrite affordance
 - UAT snapshot refs should include a meaningful timestamp or release-candidate
   label, not `latest`
 
