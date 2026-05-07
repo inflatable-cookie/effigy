@@ -4,7 +4,11 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 
-use effigy_manifest::ManifestContainerConfig;
+use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
+use effigy_manifest::{
+    ManifestContainerConfig, ManifestContainerDriver, ManifestContainerOnTaskExit,
+    ManifestContainerShutdownMode, ManifestContainerStartup,
+};
 
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::container_runtime_prep::ContainerTaskActivation;
@@ -14,7 +18,8 @@ use crate::runner::exec_command::surface::{
     resolve_named_exec_surface,
 };
 use crate::runner::exec_command::transport::{
-    build_routed_task_exec_args, parse_compose_exec_args, resolve_host_program,
+    build_routed_task_exec_args, copy_file_into_service_invocation, parse_compose_exec_args,
+    resolve_host_program,
 };
 use crate::runner::exec_command::{
     activate_exec_surface_with, strategy_requires_workspace_effigy_install,
@@ -59,6 +64,40 @@ working_dir = "{working_dir}"
         ),
     )
     .expect("write manifest");
+}
+
+fn test_policy() -> EffectiveContainerPolicy {
+    EffectiveContainerPolicy {
+        name: "web".to_owned(),
+        driver: ManifestContainerDriver::Colima,
+        startup: ManifestContainerStartup::Detached,
+        profile: "effigy".to_owned(),
+        compose_source: EffectiveComposeSource::Direct,
+        compose_files: vec![PathBuf::from("docker-compose.yml")],
+        compose_file_display: "docker-compose.yml".to_owned(),
+        managed_volumes: vec![],
+        shared_services: vec![],
+        project_name: "demo-web".to_owned(),
+        primary_service: "app".to_owned(),
+        dns_domain: None,
+        dns_tls: false,
+        dns_port: None,
+        dns_routes: vec![],
+        service_aliases: vec![],
+        declared_ports: vec![],
+        ports_declared_explicitly: false,
+        declared_mounts: vec![],
+        declared_media_mounts: vec![],
+        pull_production_hook: None,
+        health_check: None,
+        health_timeout_secs: 60,
+        workspace_user: None,
+        workspace_home: None,
+        on_task_exit: ManifestContainerOnTaskExit::Stop,
+        shutdown: ManifestContainerShutdownMode::Graceful,
+        detach_timeout_secs: 10,
+        host_processes: Vec::new(),
+    }
 }
 
 #[test]
@@ -276,6 +315,60 @@ fn resolve_host_program_uses_host_cli_resolver_for_bare_names() {
     }
 
     assert_eq!(resolved, fake_colima.into_os_string());
+}
+
+#[test]
+fn copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker() {
+    let _env_lock = env_lock();
+    let temp_dir = temp_repo("copy-runtime-backend");
+    let bin_dir = temp_dir.join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    let fake_docker = bin_dir.join("docker");
+    fs::write(&fake_docker, "#!/bin/sh\nexit 0\n").expect("write fake docker");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&fake_docker).expect("stat").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_docker, permissions).expect("chmod");
+    }
+
+    let original_path = std::env::var_os("PATH");
+    let original_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+    std::env::set_var("PATH", &bin_dir);
+    std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+
+    let args = vec![
+        OsString::from("cp"),
+        OsString::from("/tmp/effigy"),
+        OsString::from("cbs-dev-app-1:/tmp/effigy-host-1"),
+    ];
+    let (program, resolved_args) =
+        copy_file_into_service_invocation(&test_policy(), &args).expect("invocation");
+
+    match original_path {
+        Some(path) => std::env::set_var("PATH", path),
+        None => std::env::remove_var("PATH"),
+    }
+    match original_backend {
+        Some(value) => std::env::set_var("EFFIGY_COMPOSE_BACKEND", value),
+        None => std::env::remove_var("EFFIGY_COMPOSE_BACKEND"),
+    }
+
+    assert_eq!(program, OsString::from("colima"));
+    assert_eq!(
+        resolved_args,
+        vec![
+            OsString::from("nerdctl"),
+            OsString::from("--profile"),
+            OsString::from("effigy"),
+            OsString::from("--"),
+            OsString::from("cp"),
+            OsString::from("/tmp/effigy"),
+            OsString::from("cbs-dev-app-1:/tmp/effigy-host-1"),
+        ]
+    );
 }
 
 #[test]
