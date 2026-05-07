@@ -342,7 +342,7 @@ fn cli_container_help_is_command_specific() {
     assert!(stdout
         .contains("effigy container <NAME> data export <VOLUME> <PATH> [--repo <PATH>] [--json]"));
     assert!(stdout.contains(
-        "effigy container [<NAME>] data dump [<FILE>|<TARGET>|<TARGET>=<FILE>]... [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>]... [--repo <PATH>] [--json]"
+        "effigy container [<NAME>] data dump [<FILE>|<TARGET>|<TARGET>=<FILE|OCI>]... [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE|OCI>]... [--push] [--repo <PATH>] [--json]"
     ));
     assert!(stdout.contains(
         "effigy container <NAME> data import <VOLUME> <PATH> [--repo <PATH>] [--yes] [--json]"
