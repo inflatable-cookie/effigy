@@ -39,6 +39,10 @@ During v0.x, MINOR bumps may include breaking changes.
   for repo-bound container operations and honors the new user-global
   preference for unscoped runtime/cache flows before falling back to ambient
   Docker CLI detection.
+- **`effigy container status`** and **`effigy doctor`** now distinguish the
+  manifest's declared driver from the effective selected backend more clearly,
+  so Docker-backed fresh sessions no longer read like they are still running on
+  Colima.
 - **`effigy doctor`** now reports Docker/Colima runtime context more
   explicitly and only warns about Docker context drift when no user-global
   containerd preference is already pinned.

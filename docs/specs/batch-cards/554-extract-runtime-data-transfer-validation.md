@@ -2,7 +2,7 @@
 
 Lane: [`050-manager-backed-runtime-read-write-shell-strict-lane.md`](../050-manager-backed-runtime-read-write-shell-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -36,10 +36,12 @@ public runtime data callers still compile, and focused runtime checks pass.
 
 ## Validation
 
-- `cargo check -p effigy-runtime`
-- `cargo check -p effigy --lib`
-- `git diff --check`
+- PASS:
+  `CARGO_TARGET_DIR=/tmp/effigy-g04-runtime-data-transfer-check cargo check -p effigy-runtime`
+- PASS:
+  `CARGO_TARGET_DIR=/tmp/effigy-g04-runtime-data-transfer-libcheck cargo check -p effigy --lib`
+- PASS: `git diff --check`
 
 ## Next Task
 
-Extract runtime data transfer validation helpers.
+Extract runtime data cache collection helpers.

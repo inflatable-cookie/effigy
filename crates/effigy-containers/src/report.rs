@@ -335,6 +335,7 @@ pub fn status_report(
         "ok": true,
         "container": policy.name,
         "driver": "colima",
+        "manifest_driver": driver_label(policy.driver),
         "backend": backend,
         "profile": policy.profile,
         "compose_file": policy.compose_file_display,
@@ -353,7 +354,7 @@ pub fn status_report(
 
     let mut lines = vec![
         format!("[container] {}", policy.name),
-        format!("driver: {}", driver_label(policy.driver)),
+        format!("manifest_driver: {}", driver_label(policy.driver)),
         format!("backend: {backend}"),
         format!("profile: {}", policy.profile),
         format!("compose_file: {}", policy.compose_file_display),

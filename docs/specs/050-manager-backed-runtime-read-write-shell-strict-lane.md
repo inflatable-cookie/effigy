@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.008`](../roadmaps/g04/008-manager-backed-runtime-read-write-shell.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -22,7 +22,7 @@ manager-backed invocation seams.
 
 ## Current Ready Card
 
-[`554-extract-runtime-data-transfer-validation.md`](./batch-cards/554-extract-runtime-data-transfer-validation.md)
+None. Lane complete.
 
 ## Execution Chain
 
@@ -34,7 +34,14 @@ manager-backed invocation seams.
 - `551` complete: extract runtime data volume/cache planning helpers
 - `552` complete: extract runtime data volume IO helpers
 - `553` complete: extract runtime data report helpers
-- `554` ready: extract runtime data transfer validation helpers
+- `554` complete: extract runtime data transfer validation helpers
+- `555` complete: extract runtime data cache collection helpers
+- `556` complete: extract runtime read discovery helpers
+- `557` complete: extract runtime read report helpers
+- `558` complete: extract runtime write planning helpers
+- `559` complete: extract runtime write report helpers
+- `560` complete: extract runtime shell exec argument helpers
+- `561` complete: close manager-backed runtime read/write/shell
 
 ## Drift Inventory
 
@@ -65,6 +72,21 @@ Initial forbidden-call checks:
 - Docker-named runtime signal helper exports: removed by card `548`
 - unused args-based compose signal helpers: removed by card `550`
 
+Final forbidden-call checks:
+
+- `compose_args(` in `crates/effigy-runtime/src`: only
+  `crates/effigy-runtime/src/container_manager.rs`
+- `run_docker_capture`, `resolve_compose_backend`, `ComposeBackend` in
+  `crates/effigy-runtime/src`: no matches
+- runner-local runtime binary construction in `crates/effigy-runtime/src`:
+  no `Command::new("docker"|"colima"|"nerdctl")` matches
+- runtime file sizes after closeout:
+  - `data.rs`: 492 lines
+  - `read.rs`: 429 lines
+  - `write.rs`: 275 lines
+  - `shell.rs`: 249 lines
+  - split helper modules: all under 500 lines
+
 First implementation slice:
 
 Rename runtime signal helpers away from Docker-specific names and migrate runner
@@ -79,4 +101,4 @@ operation reports remain compatible, and focused runtime tests pass.
 ## Next Task
 
 Card
-[`554-extract-runtime-data-transfer-validation.md`](./batch-cards/554-extract-runtime-data-transfer-validation.md).
+[`562-scaffold-cli-parser-modularisation-lane.md`](./batch-cards/562-scaffold-cli-parser-modularisation-lane.md).

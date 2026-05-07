@@ -1,3 +1,5 @@
+mod exec_args;
+
 use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -14,23 +16,12 @@ use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
 
 use crate::EffigyRuntimeError;
+use exec_args::{
+    build_container_shell_args, build_interactive_container_shell_args,
+    ResolvedWorkspaceExecIdentity,
+};
 
-const CONTAINER_HANDOFF_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1";
-const CONTAINER_WORKSPACE_EFFIGY_BIN_DIR: &str = "/usr/local/bin";
-const CONTAINER_COLOR_ENV: [(&str, &str); 3] = [
-    ("EFFIGY_COLOR", "always"),
-    ("CLICOLOR_FORCE", "1"),
-    ("FORCE_COLOR", "3"),
-];
-const CONTAINER_TTY_COLOR_ENV: [(&str, &str); 2] =
-    [("TERM", "xterm-256color"), ("COLORTERM", "truecolor")];
 const DEFAULT_CONTAINER_SHELL: &str = "sh";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ResolvedWorkspaceExecIdentity {
-    user: String,
-    home: Option<String>,
-}
 
 pub fn run_container_shell_session<FValidate, FProbeShell, FRunExec>(
     repo_root: &Path,
@@ -56,7 +47,6 @@ where
     let workspace_identity =
         resolve_workspace_exec_identity(repo_root, &policy, &service, &run_exec)?;
     let args = build_interactive_container_shell_args(
-        &policy,
         &service,
         initial_command,
         &working_dir,
@@ -115,7 +105,6 @@ where
     let workspace_identity =
         resolve_workspace_exec_identity(repo_root, &policy, &service, &run_exec)?;
     let args = build_container_shell_args(
-        &policy,
         &service,
         command,
         &working_dir,
@@ -229,119 +218,6 @@ where
     Ok(None)
 }
 
-fn build_container_shell_args(
-    _policy: &EffectiveContainerPolicy,
-    service: &str,
-    command: Option<&str>,
-    working_dir: &Path,
-    shell: &str,
-    workspace_identity: Option<&ResolvedWorkspaceExecIdentity>,
-) -> Vec<OsString> {
-    if let Some(command) = command {
-        let mut args = vec![
-            OsString::from("exec"),
-            OsString::from("-T"),
-            OsString::from("-w"),
-        ];
-        args.push(OsString::from(working_dir));
-        append_workspace_exec_identity(&mut args, workspace_identity);
-        append_color_exec_env(&mut args, false);
-        args.push(OsString::from("-e"));
-        args.push(OsString::from(CONTAINER_HANDOFF_ENV));
-        args.push(OsString::from(service));
-        args.push(OsString::from("sh"));
-        args.push(OsString::from("-lc"));
-        args.push(OsString::from(render_effigy_path_prefixed_command(command)));
-        return args;
-    }
-
-    let mut args = vec![OsString::from("exec"), OsString::from("-w")];
-    args.push(OsString::from(working_dir));
-    append_workspace_exec_identity(&mut args, workspace_identity);
-    append_color_exec_env(&mut args, true);
-    args.push(OsString::from("-e"));
-    args.push(OsString::from(CONTAINER_HANDOFF_ENV));
-    args.push(OsString::from(service));
-    args.push(OsString::from(shell));
-    args.push(OsString::from("-lc"));
-    args.push(OsString::from(render_effigy_path_prefixed_command(
-        &format!("exec {} -i", shell_quote(shell)),
-    )));
-    args
-}
-
-fn build_interactive_container_shell_args(
-    _policy: &EffectiveContainerPolicy,
-    service: &str,
-    initial_command: Option<&str>,
-    working_dir: &Path,
-    shell: &str,
-    workspace_identity: Option<&ResolvedWorkspaceExecIdentity>,
-) -> Vec<OsString> {
-    let mut args = vec![OsString::from("exec"), OsString::from("-w")];
-    args.push(OsString::from(working_dir));
-    append_workspace_exec_identity(&mut args, workspace_identity);
-    append_color_exec_env(&mut args, true);
-    args.push(OsString::from("-e"));
-    args.push(OsString::from(CONTAINER_HANDOFF_ENV));
-    args.push(OsString::from(service));
-    if let Some(command) = initial_command {
-        args.push(OsString::from(shell));
-        args.push(OsString::from("-lc"));
-        args.push(OsString::from(render_interactive_shell_session_command(
-            command, shell,
-        )));
-        return args;
-    }
-    args.push(OsString::from(shell));
-    args.push(OsString::from("-lc"));
-    args.push(OsString::from(render_effigy_path_prefixed_command(
-        &format!("exec {} -i", shell_quote(shell)),
-    )));
-    args
-}
-
-fn append_workspace_exec_identity(
-    args: &mut Vec<OsString>,
-    workspace_identity: Option<&ResolvedWorkspaceExecIdentity>,
-) {
-    if let Some(user) = workspace_identity.map(|identity| identity.user.as_str()) {
-        args.push(OsString::from("-u"));
-        args.push(OsString::from(user));
-    }
-    if let Some(home) = workspace_identity.and_then(|identity| identity.home.as_deref()) {
-        args.push(OsString::from("-e"));
-        args.push(OsString::from(format!("HOME={home}")));
-    }
-}
-
-fn append_color_exec_env(args: &mut Vec<OsString>, tty: bool) {
-    for (key, value) in CONTAINER_COLOR_ENV {
-        args.push(OsString::from("-e"));
-        args.push(OsString::from(format!("{key}={value}")));
-    }
-    if tty {
-        for (key, value) in CONTAINER_TTY_COLOR_ENV {
-            args.push(OsString::from("-e"));
-            args.push(OsString::from(format!("{key}={value}")));
-        }
-    }
-}
-
-fn render_interactive_shell_session_command(initial_command: &str, shell: &str) -> String {
-    render_effigy_path_prefixed_command(&format!(
-        "{initial_command}; exec {} -i",
-        shell_quote(shell)
-    ))
-}
-
-fn render_effigy_path_prefixed_command(command: &str) -> String {
-    format!(
-        "export PATH={}:$PATH; {command}",
-        shell_quote(CONTAINER_WORKSPACE_EFFIGY_BIN_DIR)
-    )
-}
-
 fn should_fail_container_shell_exit(command_mode: bool, success: bool) -> bool {
     command_mode && !success
 }
@@ -361,66 +237,7 @@ fn style_text(enabled: bool, style: anstyle::Style, text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_container_shell_args, build_interactive_container_shell_args,
-        render_effigy_path_prefixed_command, render_interactive_shell_session_command,
-        should_fail_container_shell_exit, ResolvedWorkspaceExecIdentity,
-    };
-    use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
-    use effigy_manifest::{
-        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-        ManifestContainerStartup,
-    };
-    use std::path::{Path, PathBuf};
-
-    fn test_policy() -> EffectiveContainerPolicy {
-        EffectiveContainerPolicy {
-            name: "demo".to_owned(),
-            driver: ManifestContainerDriver::Colima,
-            startup: ManifestContainerStartup::Attached,
-            profile: "effigy".to_owned(),
-            compose_source: EffectiveComposeSource::Generated,
-            compose_files: vec![PathBuf::from("compose.yml")],
-            compose_file_display: "compose.yml".to_owned(),
-            managed_volumes: Vec::new(),
-            shared_services: Vec::new(),
-            project_name: "demo".to_owned(),
-            primary_service: "app".to_owned(),
-            dns_domain: None,
-            dns_tls: false,
-            dns_port: None,
-            dns_routes: Vec::new(),
-            service_aliases: Vec::new(),
-            declared_ports: Vec::new(),
-            ports_declared_explicitly: false,
-            declared_mounts: Vec::new(),
-            declared_media_mounts: Vec::new(),
-            pull_production_hook: None,
-            health_check: None,
-            health_timeout_secs: 60,
-            workspace_user: None,
-            workspace_home: None,
-            on_task_exit: ManifestContainerOnTaskExit::LeaveRunning,
-            shutdown: ManifestContainerShutdownMode::Graceful,
-            detach_timeout_secs: 10,
-            host_processes: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn interactive_shell_command_reenters_shell() {
-        let rendered = render_interactive_shell_session_command("effigy dev", "/bin/custom shell");
-        assert_eq!(
-            rendered,
-            "export PATH='/usr/local/bin':$PATH; effigy dev; exec '/bin/custom shell' -i"
-        );
-    }
-
-    #[test]
-    fn effigy_path_prefixed_command_prepends_workspace_binary_dir() {
-        let rendered = render_effigy_path_prefixed_command("effigy tasks");
-        assert_eq!(rendered, "export PATH='/usr/local/bin':$PATH; effigy tasks");
-    }
+    use super::should_fail_container_shell_exit;
 
     #[test]
     fn interactive_shell_exit_only_fails_in_command_mode() {
@@ -428,119 +245,5 @@ mod tests {
         assert!(!should_fail_container_shell_exit(false, true));
         assert!(should_fail_container_shell_exit(true, false));
         assert!(!should_fail_container_shell_exit(true, true));
-    }
-
-    #[test]
-    fn command_mode_shell_exec_disables_nested_tty() {
-        let policy = test_policy();
-        let workspace_identity = ResolvedWorkspaceExecIdentity {
-            user: "dev".to_owned(),
-            home: Some("/home/dev".to_owned()),
-        };
-        let args = build_container_shell_args(
-            &policy,
-            "app",
-            Some("echo hi"),
-            Path::new("/tmp/work"),
-            "/bin/sh",
-            Some(&workspace_identity),
-        );
-        let rendered = args
-            .iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert!(rendered.windows(2).any(|window| window == ["exec", "-T"]));
-        assert!(rendered
-            .windows(2)
-            .any(|window| window == ["-w", "/tmp/work"]));
-        assert!(rendered.windows(2).any(|window| window == ["-u", "dev"]));
-        assert!(rendered
-            .windows(2)
-            .any(|window| window == ["-e", "HOME=/home/dev"]));
-        assert!(rendered
-            .windows(2)
-            .any(|window| window == ["-e", "EFFIGY_COLOR=always"]));
-        assert!(rendered
-            .windows(2)
-            .any(|window| window == ["-e", "FORCE_COLOR=3"]));
-        assert!(rendered
-            .windows(2)
-            .any(|window| window == ["-e", "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1"]));
-        assert!(rendered.ends_with(&[
-            "app".to_owned(),
-            "sh".to_owned(),
-            "-lc".to_owned(),
-            "export PATH='/usr/local/bin':$PATH; echo hi".to_owned(),
-        ]));
-    }
-
-    #[test]
-    fn interactive_shell_exec_keeps_tty_and_sets_working_dir() {
-        let policy = test_policy();
-        let args = build_container_shell_args(
-            &policy,
-            "app",
-            None,
-            Path::new("/workspace-root/repo"),
-            "/bin/bash",
-            None,
-        );
-        let rendered = args
-            .iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert!(rendered.windows(2).all(|window| window != ["exec", "-T"]));
-        assert!(rendered
-            .windows(2)
-            .any(|window| window == ["-w", "/workspace-root/repo"]));
-        assert!(rendered
-            .windows(2)
-            .any(|window| window == ["-e", "EFFIGY_COLOR=always"]));
-        assert!(rendered
-            .windows(2)
-            .any(|window| window == ["-e", "TERM=xterm-256color"]));
-        assert!(rendered
-            .windows(2)
-            .any(|window| window == ["-e", "COLORTERM=truecolor"]));
-        assert!(rendered
-            .windows(2)
-            .any(|window| window == ["-e", "EFFIGY_INTERNAL_CONTAINER_HANDOFF=1"]));
-        assert!(rendered
-            .windows(3)
-            .any(|window| window == ["app", "/bin/bash", "-lc"]));
-        let command = rendered.last().expect("interactive shell command");
-        assert!(command.contains("export PATH='/usr/local/bin':$PATH;"));
-        assert!(command.contains("exec"));
-        assert!(command.contains("/bin/bash"));
-        assert!(command.contains("-i"));
-    }
-
-    #[test]
-    fn interactive_shell_args_include_command_reentry() {
-        let policy = test_policy();
-        let args = build_interactive_container_shell_args(
-            &policy,
-            "app",
-            Some("effigy dev"),
-            Path::new("/workspace"),
-            "/bin/sh",
-            None,
-        );
-        let rendered = args
-            .iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert!(rendered.contains(&"exec".to_owned()));
-        assert!(rendered.contains(&"-w".to_owned()));
-        assert!(rendered.contains(&"/workspace".to_owned()));
-        assert!(rendered.contains(&"app".to_owned()));
-        assert!(rendered.contains(&"/bin/sh".to_owned()));
-        assert!(rendered.contains(&"-lc".to_owned()));
-        let command = rendered.last().expect("interactive command");
-        assert!(command.contains("export PATH='/usr/local/bin':$PATH;"));
-        assert!(command.contains("effigy dev;"));
-        assert!(command.contains("exec"));
-        assert!(command.contains("/bin/sh"));
-        assert!(command.contains("-i"));
     }
 }

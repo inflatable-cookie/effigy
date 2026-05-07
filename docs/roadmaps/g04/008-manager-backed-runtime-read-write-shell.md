@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`007-effective-container-policy-decomposition.md`](./007-effective-container-policy-decomposition.md)
@@ -41,4 +41,4 @@ Remove remaining old compose/process command construction from `effigy-runtime`.
 ## Next Task
 
 Start card
-[`554-extract-runtime-data-transfer-validation.md`](../../specs/batch-cards/554-extract-runtime-data-transfer-validation.md).
+[`562-scaffold-cli-parser-modularisation-lane.md`](../../specs/batch-cards/562-scaffold-cli-parser-modularisation-lane.md).

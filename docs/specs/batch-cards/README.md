@@ -409,9 +409,33 @@ The active batch-card tree now starts with `g04` rollover card `431`.
   is complete. It extracts runtime data report helpers.
 
 - [`554-extract-runtime-data-transfer-validation.md`](./554-extract-runtime-data-transfer-validation.md)
-  is ready. It extracts runtime data transfer validation helpers.
+  is complete. It extracts runtime data transfer validation helpers.
+
+- [`555-extract-runtime-data-cache-collection.md`](./555-extract-runtime-data-cache-collection.md)
+  is complete. It extracts runtime data cache collection helpers.
+
+- [`556-extract-runtime-read-discovery-helpers.md`](./556-extract-runtime-read-discovery-helpers.md)
+  is complete. It extracts runtime read discovery helpers.
+
+- [`557-extract-runtime-read-report-helpers.md`](./557-extract-runtime-read-report-helpers.md)
+  is complete. It extracts runtime read report helpers.
+
+- [`558-extract-runtime-write-planning-helpers.md`](./558-extract-runtime-write-planning-helpers.md)
+  is complete. It extracts runtime write planning helpers.
+
+- [`559-extract-runtime-write-report-helpers.md`](./559-extract-runtime-write-report-helpers.md)
+  is complete. It extracts runtime write report helpers.
+
+- [`560-extract-runtime-shell-exec-argument-helpers.md`](./560-extract-runtime-shell-exec-argument-helpers.md)
+  is complete. It extracts runtime shell exec argument helpers.
+
+- [`561-close-manager-backed-runtime-read-write-shell.md`](./561-close-manager-backed-runtime-read-write-shell.md)
+  is complete. It closes manager-backed runtime read/write/shell.
+
+- [`562-scaffold-cli-parser-modularisation-lane.md`](./562-scaffold-cli-parser-modularisation-lane.md)
+  is ready. It scaffolds the CLI parser modularisation lane.
 
 ## Next Task
 
 Start card
-[`554-extract-runtime-data-transfer-validation.md`](./554-extract-runtime-data-transfer-validation.md).
+[`562-scaffold-cli-parser-modularisation-lane.md`](./562-scaffold-cli-parser-modularisation-lane.md).

@@ -27,7 +27,7 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
-- [`050-manager-backed-runtime-read-write-shell-strict-lane.md`](./050-manager-backed-runtime-read-write-shell-strict-lane.md)
+- [`051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md`](./051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md)
 
 Paused but still useful:
 
@@ -35,6 +35,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`050-manager-backed-runtime-read-write-shell-strict-lane.md`](./050-manager-backed-runtime-read-write-shell-strict-lane.md)
 - [`049-effective-container-policy-decomposition-strict-lane.md`](./049-effective-container-policy-decomposition-strict-lane.md)
 - [`048-rhai-host-api-split-and-callback-purity-strict-lane.md`](./048-rhai-host-api-split-and-callback-purity-strict-lane.md)
 - [`047-data-seed-dump-pipeline-strict-lane.md`](./047-data-seed-dump-pipeline-strict-lane.md)
@@ -77,4 +78,4 @@ Recently completed:
 ## Next Task
 
 Card
-[`554-extract-runtime-data-transfer-validation.md`](./batch-cards/554-extract-runtime-data-transfer-validation.md).
+[`562-scaffold-cli-parser-modularisation-lane.md`](./batch-cards/562-scaffold-cli-parser-modularisation-lane.md).

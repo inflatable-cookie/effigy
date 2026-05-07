@@ -1,15 +1,13 @@
+mod cache;
 mod planning;
 mod report;
+mod transfer;
 mod volume_io;
 
-use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Output;
 
-use effigy_catalog::volumes::{
-    list_all_volumes_command, parse_listed_volume_names, parse_volume_usage_bytes_map,
-    remove_volume_command, volume_usage_batch_command, DockerCommand, ManagedVolume,
-};
+use effigy_catalog::volumes::{remove_volume_command, DockerCommand, ManagedVolume};
 use effigy_container_manager::ContainerAction;
 use effigy_container_ops::{ContainerCacheOperation, ContainerDataOperation};
 use effigy_containers::{
@@ -17,24 +15,21 @@ use effigy_containers::{
     data_transfer_report,
     exec::{runtime_backend_is_running, selected_backend_label},
     load_container_policy, user_global_colima_profile, validate_compose_backend_runtime,
-    validate_container_policy, ContainerCacheGlobalEntry, ContainerCachePruneEntry,
-    ContainerCacheVolumeEntry, ContainerDataTransferAction, ContainerDataVolumeEntry,
-    EffectiveComposeSource, EffectiveContainerPolicy,
+    validate_container_policy, ContainerCachePruneEntry, ContainerCacheVolumeEntry,
+    ContainerDataTransferAction, ContainerDataVolumeEntry, EffectiveContainerPolicy,
 };
 
-use crate::read::discover_running_environments;
 use crate::EffigyRuntimeError;
-use planning::{
-    cache_kind_from_volume_name, cache_kind_label, cache_scope_label,
-    collect_global_cache_entries_from_names, ensure_cache_prune_target_is_stopped,
-};
+use cache::{collect_global_cache_entries, project_is_running};
+use planning::{cache_kind_label, cache_scope_label, ensure_cache_prune_target_is_stopped};
 pub use planning::{cache_operation_plan, data_operation_plan, global_cache_operation_plan};
 pub use report::RegisteredGatewayRoute;
 use report::{
     annotate_registered_gateway_routes, annotate_shared_service_notes, annotate_warning_lines,
     render_container_report,
 };
-use volume_io::{hydrate_managed_volumes, inspect_runtime_volume_metadata, run_volume_transfer};
+use transfer::{ensure_generated_data_path, resolve_managed_volume, validate_transfer_path};
+use volume_io::{hydrate_managed_volumes, run_volume_transfer};
 
 pub fn run_container_data_list<F>(
     repo_root: &Path,
@@ -484,19 +479,6 @@ where
     Ok(render_container_report(report, output_json))
 }
 
-fn ensure_generated_data_path(
-    policy: &EffectiveContainerPolicy,
-    action: &str,
-) -> Result<(), EffigyRuntimeError> {
-    if policy.compose_source != EffectiveComposeSource::Generated {
-        return Err(EffigyRuntimeError::task_invocation(format!(
-            "container `{}` uses direct `compose_file` ownership; `data {action}` is supported only on the generated-compose path",
-            policy.name
-        )));
-    }
-    Ok(())
-}
-
 fn cache_volume_entry(volume: ManagedVolume) -> Option<ContainerCacheVolumeEntry> {
     let kind = volume.cache_kind()?;
     Some(ContainerCacheVolumeEntry {
@@ -507,121 +489,4 @@ fn cache_volume_entry(volume: ManagedVolume) -> Option<ContainerCacheVolumeEntry
         mount_point: volume.mount_point,
         mount_target: volume.mount_target,
     })
-}
-
-fn collect_global_cache_entries<F>(
-    cwd: &Path,
-    profile: &str,
-    run_runtime_volume_capture: &F,
-) -> Result<Vec<ContainerCacheGlobalEntry>, EffigyRuntimeError>
-where
-    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
-{
-    let running_projects = discover_running_environments()?
-        .into_iter()
-        .map(|environment| environment.policy.project_name)
-        .collect::<BTreeSet<_>>();
-    let listed = run_runtime_volume_capture(cwd, profile, &list_all_volumes_command())?;
-    let names = parse_listed_volume_names(String::from_utf8_lossy(&listed.stdout).as_ref())
-        .into_iter()
-        .filter(|name| cache_kind_from_volume_name(name).is_some())
-        .collect::<Vec<_>>();
-    let metadata = names
-        .iter()
-        .filter_map(|name| {
-            inspect_runtime_volume_metadata(cwd, profile, name, run_runtime_volume_capture)
-                .ok()
-                .flatten()
-        })
-        .map(|entry| (entry.name.clone(), entry))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let missing_mount_points = metadata
-        .values()
-        .filter(|entry| entry.size_bytes.is_none())
-        .filter_map(|entry| entry.mount_point.clone())
-        .collect::<Vec<_>>();
-    let usage_by_mount_point = if missing_mount_points.is_empty() {
-        std::collections::BTreeMap::new()
-    } else {
-        run_runtime_volume_capture(
-            cwd,
-            profile,
-            &volume_usage_batch_command(&missing_mount_points),
-        )
-        .ok()
-        .map(|output| {
-            parse_volume_usage_bytes_map(String::from_utf8_lossy(&output.stdout).as_ref())
-        })
-        .unwrap_or_default()
-    };
-    Ok(collect_global_cache_entries_from_names(
-        names,
-        &running_projects,
-        &metadata,
-        &usage_by_mount_point,
-    ))
-}
-
-fn project_is_running(repo_root: &Path, project_name: &str) -> Result<bool, EffigyRuntimeError> {
-    let target_root = canonicalize_or_original(repo_root);
-    Ok(discover_running_environments()?
-        .into_iter()
-        .any(|environment| {
-            canonicalize_or_original(Path::new(&environment.repo_root)) == target_root
-                && environment.policy.project_name == project_name
-        }))
-}
-
-fn canonicalize_or_original(path: &Path) -> std::path::PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
-fn resolve_managed_volume(
-    policy: &EffectiveContainerPolicy,
-    volume_name: &str,
-) -> Result<ManagedVolume, EffigyRuntimeError> {
-    let Some(volume) = policy
-        .managed_volumes
-        .iter()
-        .find(|volume| volume.name == volume_name)
-        .cloned()
-    else {
-        let available = policy
-            .managed_volumes
-            .iter()
-            .map(|volume| format!("`{}`", volume.name))
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(EffigyRuntimeError::task_invocation(format!(
-            "managed volume `{volume_name}` is not owned by container `{}` (available: {available})",
-            policy.name
-        )));
-    };
-    Ok(volume)
-}
-
-fn validate_transfer_path(
-    archive_path: &Path,
-    action: ContainerDataTransferAction,
-) -> Result<(), EffigyRuntimeError> {
-    match action {
-        ContainerDataTransferAction::Export => {
-            let parent = archive_path.parent().unwrap_or(Path::new("."));
-            if !parent.is_dir() {
-                return Err(EffigyRuntimeError::task_invocation(format!(
-                    "export path parent directory does not exist: {}",
-                    parent.display()
-                )));
-            }
-        }
-        ContainerDataTransferAction::Import => {
-            if !archive_path.is_file() {
-                return Err(EffigyRuntimeError::task_invocation(format!(
-                    "import archive not found: {}",
-                    archive_path.display()
-                )));
-            }
-        }
-    }
-    Ok(())
 }

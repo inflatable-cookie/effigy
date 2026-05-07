@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`008-manager-backed-runtime-read-write-shell.md`](./008-manager-backed-runtime-read-write-shell.md)
@@ -41,4 +41,5 @@ features.
 
 ## Next Task
 
-Do not start until `g04.008` closes.
+Start card
+[`562-scaffold-cli-parser-modularisation-lane.md`](../../specs/batch-cards/562-scaffold-cli-parser-modularisation-lane.md).

@@ -12,8 +12,9 @@ use std::process::Command;
 
 use effigy_cli::TaskInvocation;
 use effigy_containers::{
-    colima::parse_colima_running, load_all_container_policies, user_global_backend_preference,
-    user_global_colima_profile,
+    colima::parse_colima_running,
+    compose::{resolve_compose_backend_for_repo, ComposeBackend},
+    load_all_container_policies, user_global_backend_preference, user_global_colima_profile,
 };
 use effigy_doctor::{DoctorError, DoctorRuntimeDiagnostics, DoctorRuntimePorts};
 use effigy_execution::ExecutionSurface;
@@ -93,8 +94,12 @@ fn collect_runtime_diagnostics(
     profiles.dedup();
 
     if !profiles.is_empty() {
+        let selected_backend = match resolve_compose_backend_for_repo(resolved_root, &policies[0]) {
+            ComposeBackend::Docker => "docker-compose",
+            ComposeBackend::ColimaNerdctl => "colima-nerdctl",
+        };
         diagnostics.evidence.push(format!(
-            "container-backend-selection: colima-nerdctl (manifest driver=colima, profiles={})",
+            "container-backend-selection: {selected_backend} (manifest driver=colima, profiles={})",
             profiles.join(", ")
         ));
         for profile in &profiles {

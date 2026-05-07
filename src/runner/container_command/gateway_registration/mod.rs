@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use effigy_containers::exec::{
-    list_running_compose_containers, list_running_compose_containers_for_profile,
+    list_running_compose_containers, list_running_compose_containers_for_policy,
     RunningComposeContainer,
 };
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute, SharedServiceBinding};
@@ -49,7 +49,7 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    let rows = list_running_compose_containers_for_profile(&policy.profile)
+    let rows = list_running_compose_containers_for_policy(repo_root, policy)
         .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
     let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?;
     let project_alias_routes =
@@ -80,7 +80,7 @@ pub(in crate::runner) fn gateway_routes_registered_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<bool, RunnerError> {
-    let rows = list_running_compose_containers_for_profile(&policy.profile)
+    let rows = list_running_compose_containers_for_policy(repo_root, policy)
         .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
     let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?;
     let project_alias_routes =
@@ -112,7 +112,7 @@ pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    let rows = list_running_compose_containers_for_profile(&policy.profile)
+    let rows = list_running_compose_containers_for_policy(repo_root, policy)
         .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
     let mut project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
@@ -401,7 +401,7 @@ fn validate_gateway_routes_against_runtime(
     if routes.is_empty() {
         return Ok(());
     }
-    let rows = list_running_compose_containers_for_profile(&policy.profile)
+    let rows = list_running_compose_containers_for_policy(repo_root, policy)
         .map_err(|error| RunnerError::gateway_runtime_target("runtime rows", error.to_string()))?;
     validate_gateway_routes_against_rows(repo_root, policy, routes, &rows)?;
     validate_gateway_routes_against_host_listeners(policy, routes)
