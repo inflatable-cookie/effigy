@@ -20,6 +20,12 @@ During v0.x, MINOR bumps may include breaking changes.
   kinds are Rust **`target`**, package-manager **`node_modules`**, and shared
   Cargo cache volumes.
 
+### Changed
+- **Decodelabs bundles** now default their PHP-FPM workspace service to
+  **Node.js 24** instead of **20**, so current pnpm and newer Node built-ins
+  like **`node:sqlite`** work out of the box in bundle-based sites while
+  staying on the current LTS line.
+
 ## [0.4.0] - 2026-05-06
 
 ### Breaking

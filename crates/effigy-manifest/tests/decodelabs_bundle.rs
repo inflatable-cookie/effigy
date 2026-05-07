@@ -660,7 +660,7 @@ base = "decodelabs-library"
         app.params
             .get("node_version")
             .and_then(|value| value.as_str()),
-        Some("20")
+        Some("24")
     );
     assert_eq!(
         app.params
