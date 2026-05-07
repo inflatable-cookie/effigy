@@ -2,7 +2,7 @@
 
 Lane: [`049-effective-container-policy-decomposition-strict-lane.md`](../049-effective-container-policy-decomposition-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -37,13 +37,17 @@ file, public exec APIs still compile, and focused parser tests pass.
 
 ## Validation
 
-- `cargo check -p effigy-containers`
-- `cargo check -p effigy --lib`
-- `cargo test -p effigy-containers parse_running_compose_containers_splits_tab_fields -- --test-threads=1`
-- `cargo test -p effigy-containers parse_running_container_stats_reads_json_lines -- --test-threads=1`
-- `cargo test -p effigy-containers infer_host_working_dir_from_inspect_maps_container_working_dir_through_bind_mount -- --test-threads=1`
-- `git diff --check`
+- PASS: `CARGO_TARGET_DIR=/tmp/effigy-g04-exec-parse-check cargo check -p effigy-containers`
+- PASS: `CARGO_TARGET_DIR=/tmp/effigy-g04-exec-parse-libcheck cargo check -p effigy --lib`
+- PASS: `CARGO_TARGET_DIR=/tmp/effigy-g04-exec-parse-test-a cargo test -p effigy-containers parse_running_compose_containers_splits_tab_fields -- --test-threads=1`
+- PASS: `CARGO_TARGET_DIR=/tmp/effigy-g04-exec-parse-test-b cargo test -p effigy-containers parse_running_container_stats_reads_json_lines -- --test-threads=1`
+- PASS: `CARGO_TARGET_DIR=/tmp/effigy-g04-exec-parse-test-c cargo test -p effigy-containers infer_host_working_dir_from_inspect_maps_container_working_dir_through_bind_mount -- --test-threads=1`
+- PASS: `git diff --check`
+
+Note: `cargo check -p effigy --lib` still reports the pre-existing
+`runtime_activation_report_for_result` dead-code warning.
 
 ## Next Task
 
-Extract the container exec parse module.
+Start
+[`544-extract-container-exec-process-module.md`](./544-extract-container-exec-process-module.md).

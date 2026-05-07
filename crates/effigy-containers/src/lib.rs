@@ -43,6 +43,7 @@ pub(crate) use policy_support::with_test_effigy_home;
 pub(crate) use workspace::with_test_host_composer_home;
 
 use std::path::{Path, PathBuf};
+use std::{fs, io};
 
 use effigy_catalog::CatalogResolver;
 use effigy_container_manager::BackendId;
@@ -53,6 +54,7 @@ pub(crate) const DEFAULT_COLIMA_PROFILE: &str = "effigy";
 pub(crate) const DEFAULT_ATTACH_TIMEOUT_SECS: u64 = 10;
 pub(crate) const DEFAULT_HEALTH_TIMEOUT_SECS: u64 = 60;
 const GENERATED_RUNTIME_COMPOSE_DIR: &str = ".effigy/runtime/compose";
+const RUNTIME_BACKEND_METADATA_FILE: &str = ".effigy/runtime/compose/.effigy-runtime.json";
 pub(crate) const PROJECT_LOCAL_CATALOG_DIR: &str = "infra/dev/catalog";
 const SHARED_SERVICE_HOST: &str = "host.docker.internal";
 const NERDCTL_MOUNTS_LABEL_BUDGET_BYTES: usize = 4096;
@@ -114,6 +116,33 @@ pub fn user_global_backend_preference() -> Option<BackendId> {
 pub fn user_global_colima_profile() -> Option<String> {
     let user_config = effigy_manifest::load_user_config().ok()?;
     user_config.preferred_container_profile().map(str::to_owned)
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct RuntimeBackendMetadata {
+    backend: String,
+}
+
+pub fn load_runtime_backend_override(repo_root: &Path) -> Option<BackendId> {
+    let path = repo_root.join(RUNTIME_BACKEND_METADATA_FILE);
+    let source = fs::read_to_string(path).ok()?;
+    let parsed = toml::from_str::<RuntimeBackendMetadata>(&source).ok()?;
+    Some(BackendId::new(parsed.backend))
+}
+
+pub fn write_runtime_backend_override(
+    repo_root: &Path,
+    backend_id: &BackendId,
+) -> Result<(), io::Error> {
+    let path = repo_root.join(RUNTIME_BACKEND_METADATA_FILE);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let rendered = toml::to_string_pretty(&RuntimeBackendMetadata {
+        backend: backend_id.as_str().to_owned(),
+    })
+    .map_err(io::Error::other)?;
+    fs::write(path, rendered)
 }
 
 pub fn driver_label(driver: ManifestContainerDriver) -> &'static str {

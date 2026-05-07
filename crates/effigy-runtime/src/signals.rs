@@ -9,12 +9,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use effigy_container_manager::ContainerComposeInvocationPlan;
-use effigy_containers::{
-    compose::compose_invocation,
-    exec::{run_compose_invocation_capture, run_docker_capture as run_docker_capture_via_exec},
-    EffectiveContainerPolicy,
-};
+use effigy_container_manager::{ContainerComposeInvocationPlan, ContainerRuntimeInvocationPlan};
+use effigy_containers::{exec::run_compose_invocation_capture, EffectiveContainerPolicy};
 #[cfg(unix)]
 use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
@@ -29,26 +25,6 @@ pub enum ComposeRunOutcome {
     Interrupted,
 }
 
-pub fn run_docker_capture(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    args: &[OsString],
-    label: &str,
-) -> Result<Output, EffigyRuntimeError> {
-    run_docker_capture_via_exec(repo_root, policy, args, label)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))
-}
-
-pub fn spawn_docker_inherit(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    args: &[OsString],
-    label: &str,
-) -> Result<std::process::Child, EffigyRuntimeError> {
-    let (program, args) = compose_invocation(policy, args);
-    spawn_command_inherit_os(repo_root, program, &args, label)
-}
-
 pub fn run_compose_plan_capture(
     policy: &EffectiveContainerPolicy,
     plan: &ContainerComposeInvocationPlan,
@@ -61,6 +37,24 @@ pub fn run_compose_plan_capture(
         &plan.label,
     )
     .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))
+}
+
+pub fn run_runtime_plan_capture(
+    plan: &ContainerRuntimeInvocationPlan,
+) -> Result<Output, EffigyRuntimeError> {
+    Command::new(&plan.program)
+        .current_dir(&plan.repo_root)
+        .args(&plan.args)
+        .output()
+        .map_err(|error| EffigyRuntimeError::TaskCommandLaunch {
+            command: format!(
+                "{} ({} {})",
+                plan.label,
+                plan.program.to_string_lossy(),
+                format_args(&plan.args)
+            ),
+            error,
+        })
 }
 
 pub fn spawn_compose_plan_inherit(
@@ -166,17 +160,6 @@ fn spawn_shutdown_ack_watcher(flag: Arc<AtomicBool>) {
         }
         thread::sleep(Duration::from_millis(80));
     });
-}
-
-pub fn run_compose_inherit_with_stop_flag(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    args: &[OsString],
-    label: &str,
-    stop_flag: &AtomicBool,
-) -> Result<ComposeRunOutcome, EffigyRuntimeError> {
-    let child = spawn_docker_inherit(repo_root, policy, args, label)?;
-    run_compose_inherit_child_with_stop_flag(child, label, stop_flag)
 }
 
 pub fn run_compose_plan_inherit_with_stop_flag(

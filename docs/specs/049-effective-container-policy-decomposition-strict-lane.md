@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.007`](../roadmaps/g04/007-effective-container-policy-decomposition.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -21,7 +21,7 @@ ownership modules while keeping public exports stable.
 
 ## Current Ready Card
 
-[`543-extract-container-exec-parse-module.md`](./batch-cards/543-extract-container-exec-parse-module.md)
+None. This lane is complete.
 
 ## Execution Chain
 
@@ -40,7 +40,10 @@ ownership modules while keeping public exports stable.
 - `540` complete: extract workspace compose rewrite module
 - `541` complete: extract generated compose source module
 - `542` complete: extract container exec implementation module
-- `543` ready: extract container exec parse module
+- `543` complete: extract container exec parse module
+- `544` complete: extract container exec process module
+- `545` complete: extract container exec Colima runtime module
+- `546` complete: close effective container policy decomposition
 
 ## Decomposition Inventory
 
@@ -87,5 +90,4 @@ orchestration, and focused container tests pass.
 
 ## Next Task
 
-Card
-[`543-extract-container-exec-parse-module.md`](./batch-cards/543-extract-container-exec-parse-module.md).
+Open the manager-backed runtime read/write/shell lane for `g04.008`.

@@ -269,7 +269,7 @@ primary_service = "app"
         port_env_vars: vec!["DB_PORT".to_owned(), "MYSQL_PORT".to_owned()],
     }];
 
-    let report = status_report(&policy, true, None, None, None);
+    let report = status_report(&policy, "containerd", true, None, None, None);
 
     assert!(report.success_text.contains("shared_services: 1"));
     assert!(report
@@ -695,7 +695,7 @@ primary_service = "app"
     let mut policy = load_container_policy(&root, None).expect("policy");
     policy.declared_media_mounts = vec!["storage/uploads:/var/www/html/storage/uploads".to_owned()];
 
-    let report = status_report(&policy, true, None, None, None);
+    let report = status_report(&policy, "containerd", true, None, None, None);
 
     assert_eq!(
         report.json["media_mounts"][0],
@@ -734,6 +734,7 @@ primary_service = "app"
 
     let report = status_report(
         &policy,
+        "containerd",
         true,
         None,
         Some(services.as_slice()),

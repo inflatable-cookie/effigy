@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`006-rhai-host-api-split-and-callback-purity.md`](./006-rhai-host-api-split-and-callback-purity.md)
@@ -42,5 +42,5 @@ ownership modules.
 
 ## Next Task
 
-Start card
-[`543-extract-container-exec-parse-module.md`](../../specs/batch-cards/543-extract-container-exec-parse-module.md).
+Start roadmap
+[`008-manager-backed-runtime-read-write-shell.md`](./008-manager-backed-runtime-read-write-shell.md).

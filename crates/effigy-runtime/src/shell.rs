@@ -5,8 +5,9 @@ use std::process::Output;
 
 use effigy_container_manager::{ContainerAction, ContainerComposeInvocationPlan};
 use effigy_containers::{
-    exec::colima_is_running, load_container_exec_working_dir, load_container_policy,
-    validate_compose_backend_runtime, validate_container_policy, EffectiveContainerPolicy,
+    exec::{runtime_backend_is_running, selected_backend_label},
+    load_container_exec_working_dir, load_container_policy, validate_compose_backend_runtime,
+    validate_container_policy, EffectiveContainerPolicy,
 };
 use effigy_core::shell::shell_quote;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
@@ -160,12 +161,13 @@ where
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    if !colima_is_running(&policy, repo_root)
+    if !runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?
     {
         return Err(EffigyRuntimeError::task_invocation(format!(
-            "Colima profile `{}` is not running for container `{}`",
-            policy.profile, policy.name
+            "{} runtime is not available for container `{}`",
+            selected_backend_label(&policy, repo_root),
+            policy.name
         )));
     }
     validate_runtime_match(repo_root, &policy)?;

@@ -32,7 +32,7 @@ use crate::runner::runtime_session_context::{
     current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
 };
 use effigy_containers::compose::compose_args;
-use effigy_containers::exec::run_docker_capture;
+use effigy_containers::exec::run_compose_capture;
 use effigy_containers::load_container_policy;
 use effigy_env::resolver::ResolvedEnv;
 use effigy_env::schema_support::{
@@ -371,7 +371,7 @@ fn run_inline_workspace_standard_task(
             context.command(),
             secret_ref,
         );
-        let _ = run_docker_capture(
+        let _ = run_compose_capture(
             repo_root,
             &policy,
             &compose_args(&policy, ["down", "--remove-orphans"]),
@@ -406,7 +406,7 @@ fn run_inline_workspace_standard_task(
             context.command(),
             secret_ref,
         );
-        let _ = run_docker_capture(
+        let _ = run_compose_capture(
             repo_root,
             &policy,
             &compose_args(&policy, ["down", "--remove-orphans"]),

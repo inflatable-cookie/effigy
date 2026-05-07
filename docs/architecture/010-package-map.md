@@ -159,11 +159,16 @@ These are the current `effigy-containers` ownership seams that matter most to
 
 | Module | Responsibility |
 | --- | --- |
-| [`crates/effigy-containers/src/lib.rs`](../../crates/effigy-containers/src/lib.rs) | effective container policy model, shared-service binding model, top-level policy entrypoints |
-| [`crates/effigy-containers/src/policy_support.rs`](../../crates/effigy-containers/src/policy_support.rs) | typed generated-compose document, policy application over compose assembly, generated mount and env attachment |
-| [`crates/effigy-containers/src/workspace.rs`](../../crates/effigy-containers/src/workspace.rs) | workspace mount rewrite, workspace host integration materialization, container-home mount ownership |
+| [`crates/effigy-containers/src/lib.rs`](../../crates/effigy-containers/src/lib.rs) | top-level exports and compatibility facade for policy, workspace, runtime, compose, exec, session, and report modules |
+| [`crates/effigy-containers/src/policy/`](../../crates/effigy-containers/src/policy/mod.rs) | effective policy model, loading, project-name shaping, validation, and inline workspace policy |
+| [`crates/effigy-containers/src/policy_support.rs`](../../crates/effigy-containers/src/policy_support.rs) | facade for generated-compose support |
+| [`crates/effigy-containers/src/policy_support/generated_compose.rs`](../../crates/effigy-containers/src/policy_support/generated_compose.rs) | typed generated-compose document, policy application over compose assembly, generated mount and env attachment |
+| [`crates/effigy-containers/src/workspace.rs`](../../crates/effigy-containers/src/workspace.rs) | workspace compatibility facade and top-level mount assembly |
+| [`crates/effigy-containers/src/workspace/`](../../crates/effigy-containers/src/workspace/) | host integration, library mounts, isolation mounts, and compose path/volume rewrite helpers |
+| [`crates/effigy-containers/src/runtime/`](../../crates/effigy-containers/src/runtime/mod.rs) | runtime DNS override materialization and generated compose eject helpers |
 | [`crates/effigy-containers/src/compose.rs`](../../crates/effigy-containers/src/compose.rs) | lower-level compose backend compatibility wrappers and compose invocation argument building |
-| [`crates/effigy-containers/src/exec.rs`](../../crates/effigy-containers/src/exec.rs) | lower-level container exec/process invocation and runtime probing helpers used behind manager-backed callers |
+| [`crates/effigy-containers/src/exec.rs`](../../crates/effigy-containers/src/exec.rs) | exec compatibility facade for process, parsing, Colima runtime, and runtime-inspection helpers |
+| [`crates/effigy-containers/src/exec/`](../../crates/effigy-containers/src/exec/) | process spawning/capture, runtime output parsing, Colima runtime repair, and low-level runtime inspection helpers |
 | [`crates/effigy-containers/src/session.rs`](../../crates/effigy-containers/src/session.rs) | container-local Effigy invocation prefix and session-related shell helpers |
 | [`crates/effigy-containers/src/report.rs`](../../crates/effigy-containers/src/report.rs) | container command report rendering models |
 

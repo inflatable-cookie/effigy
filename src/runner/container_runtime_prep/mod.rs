@@ -11,7 +11,7 @@ mod running;
 mod validation;
 
 use effigy_containers::compose::compose_args;
-use effigy_containers::exec::{ensure_colima_running, run_docker_capture};
+use effigy_containers::exec::{ensure_colima_running, run_compose_capture};
 use effigy_containers::{load_container_exec_working_dir, EffectiveContainerPolicy};
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
 #[cfg(test)]
@@ -171,7 +171,7 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
         || prepare_runtime_mounts_stage(repo_root, policy),
         || {
             run_runtime_compose_up_stage(repo_root, policy, |repo_root, policy, args, label| {
-                Ok(run_docker_capture(repo_root, policy, args, label).map(|_| ())?)
+                Ok(run_compose_capture(repo_root, policy, args, label).map(|_| ())?)
             })
         },
         || ensure_runtime_exec_readiness_stage(repo_root, policy, &working_dir),
@@ -245,7 +245,7 @@ fn probe_primary_service_exec_ready(
     );
     let started = Instant::now();
     loop {
-        if let Ok(output) = run_docker_capture(
+        if let Ok(output) = run_compose_capture(
             repo_root,
             policy,
             &probe_args,
@@ -267,7 +267,7 @@ fn restart_primary_service(
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
     restart_primary_service_using(repo_root, policy, |repo_root, policy, args, label| {
-        Ok(run_docker_capture(repo_root, policy, args, label)?)
+        Ok(run_compose_capture(repo_root, policy, args, label)?)
     })
 }
 

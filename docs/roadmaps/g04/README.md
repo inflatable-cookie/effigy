@@ -18,8 +18,8 @@ Current milestones:
 - [`004-container-operation-pipeline.md`](./004-container-operation-pipeline.md) (complete; container operations moved behind typed plans and manager invocation surfaces)
 - [`005-data-seed-dump-pipeline.md`](./005-data-seed-dump-pipeline.md) (complete; data seed/dump decisions moved behind `effigy-data`)
 - [`006-rhai-host-api-split-and-callback-purity.md`](./006-rhai-host-api-split-and-callback-purity.md) (complete; Rhai host API split and callback purity landed)
-- [`007-effective-container-policy-decomposition.md`](./007-effective-container-policy-decomposition.md) (active; split `effigy-containers` policy and workspace ownership)
-- [`008-manager-backed-runtime-read-write-shell.md`](./008-manager-backed-runtime-read-write-shell.md) (queued)
+- [`007-effective-container-policy-decomposition.md`](./007-effective-container-policy-decomposition.md) (complete; split `effigy-containers` policy, workspace, generated compose, and exec ownership)
+- [`008-manager-backed-runtime-read-write-shell.md`](./008-manager-backed-runtime-read-write-shell.md) (active; remove old runtime compose/process command construction)
 - [`009-cli-parser-modularisation-for-runtime-surfaces.md`](./009-cli-parser-modularisation-for-runtime-surfaces.md) (queued)
 - [`010-drift-guards-and-architecture-proof-matrix.md`](./010-drift-guards-and-architecture-proof-matrix.md) (queued)
 - [`011-contract-promotion-and-closeout.md`](./011-contract-promotion-and-closeout.md) (queued)
@@ -48,4 +48,4 @@ Rules:
 ## Next Task
 
 Start card
-[`543-extract-container-exec-parse-module.md`](../../specs/batch-cards/543-extract-container-exec-parse-module.md).
+[`554-extract-runtime-data-transfer-validation.md`](../../specs/batch-cards/554-extract-runtime-data-transfer-validation.md).

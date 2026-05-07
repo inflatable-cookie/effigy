@@ -53,6 +53,9 @@ During v0.x, MINOR bumps may include breaking changes.
   **`/var/www/html`** to **`/var/www/inventors`** gets a fresh
   **`node_modules`** or similar cache volume instead of reusing one with stale
   absolute-path metadata.
+- **Bundled nginx healthchecks** now treat any HTTP response as runtime-ready,
+  so Decodelabs-style PHP stacks no longer hang bootstrap just because `/`
+  returns a bootstrap-time **`404`**.
 - **Shipped PHP workspaces** now install a sendmail-compatible `msmtp` shim and
   point PHP `mail()` at the local Mailpit SMTP service by default, so legacy
   mail code is captured in development instead of disappearing into an

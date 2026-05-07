@@ -8,7 +8,7 @@ use effigy_container_manager::{
 };
 use effigy_containers::{
     compose::{compose_args, compose_up_args, normalize_compose_command_args},
-    EffectiveContainerPolicy,
+    load_runtime_backend_override, EffectiveContainerPolicy,
 };
 
 use crate::EffigyRuntimeError;
@@ -40,7 +40,7 @@ pub fn compose_invocation_plan<'a>(
     ContainerManager::defaults()
         .compose_invocation_plan(
             &request,
-            &backend_detection_for_policy(policy),
+            &backend_detection_for_policy(repo_root, policy),
             policy.profile.as_str(),
             &args,
             action,
@@ -61,7 +61,7 @@ pub fn compose_invocation_plan_from_args(
     ContainerManager::defaults()
         .compose_invocation_plan(
             &request,
-            &backend_detection_for_policy(policy),
+            &backend_detection_for_policy(repo_root, policy),
             policy.profile.as_str(),
             &normalized_args,
             action,
@@ -109,7 +109,7 @@ pub fn runtime_invocation_plan(
     ContainerManager::defaults()
         .runtime_invocation_plan(
             &request,
-            &backend_detection_for_policy(policy),
+            &backend_detection_for_policy(repo_root, policy),
             policy.profile.as_str(),
             docker_program,
             docker_args,
@@ -126,8 +126,14 @@ fn container_manager_request(
     ContainerManagerRequest::new(repo_root).interrupt_policy(ContainerInterruptPolicy::Forward)
 }
 
-fn backend_detection_for_policy(policy: &EffectiveContainerPolicy) -> ContainerBackendDetection {
+fn backend_detection_for_policy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> ContainerBackendDetection {
     let mut detection = ContainerBackendDetection::from_env_and_path();
+    if detection.backend_override.is_none() {
+        detection.backend_override = load_runtime_backend_override(repo_root);
+    }
     if detection.backend_override.is_none() {
         detection.backend_override = Some(backend_id_for_policy(policy));
     }

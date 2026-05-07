@@ -1,7 +1,8 @@
 use std::path::Path;
 
-use effigy_containers::compose::compose_args;
-use effigy_containers::EffectiveContainerPolicy;
+use effigy_container_manager::BackendId;
+use effigy_containers::compose::{compose_args, resolve_compose_backend_for_repo, ComposeBackend};
+use effigy_containers::{write_runtime_backend_override, EffectiveContainerPolicy};
 
 use crate::runner::container_command::support::reconcile_primary_service_tcp_alias_hosts;
 use crate::runner::error::RunnerError;
@@ -31,6 +32,11 @@ pub(super) fn run_runtime_compose_up_stage(
         &compose_args(policy, ["up", "-d"]),
         "docker compose up (idempotent)",
     );
+    let backend_id = match resolve_compose_backend_for_repo(repo_root, policy) {
+        ComposeBackend::Docker => BackendId::docker_compose(),
+        ComposeBackend::ColimaNerdctl => BackendId::colima_nerdctl(),
+    };
+    let _ = write_runtime_backend_override(repo_root, &backend_id);
 }
 
 pub(super) fn ensure_runtime_exec_readiness_stage(

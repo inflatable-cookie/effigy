@@ -4,9 +4,9 @@ use std::path::Path;
 use effigy_catalog::volumes::classify_for_reset;
 use effigy_container_manager::{ContainerAction, ContainerCleanupResult, ContainerRuntimeState};
 use effigy_containers::{
-    colima::shutdown_compose_commands, down_report, exec::colima_is_running, load_container_policy,
-    reset_report, validate_compose_backend_runtime, validate_container_policy,
-    EffectiveComposeSource, EffectiveContainerPolicy,
+    colima::shutdown_compose_commands, down_report, exec::runtime_backend_is_running,
+    load_container_policy, reset_report, validate_compose_backend_runtime,
+    validate_container_policy, EffectiveComposeSource, EffectiveContainerPolicy,
 };
 use serde_yaml::{Mapping, Value};
 
@@ -15,7 +15,7 @@ use crate::container_manager::{
     runtime_invocation_plan,
 };
 use crate::read::{discover_running_environments, filter_running_environments_for_scope};
-use crate::signals::run_compose_plan_capture;
+use crate::signals::{run_compose_plan_capture, run_runtime_plan_capture};
 use crate::EffigyRuntimeError;
 
 pub fn run_container_down<F>(
@@ -33,28 +33,28 @@ where
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    let colima_running = colima_is_running(&policy, repo_root)
+    let runtime_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    if colima_running {
+    if runtime_running {
         shutdown_container_with_manager_plan(repo_root, &policy)?;
     }
     let _manager_report = lifecycle_operation_report(
         repo_root,
         &policy,
         ContainerAction::Shutdown,
-        if colima_running {
+        if runtime_running {
             ContainerRuntimeState::Stopped
         } else {
             ContainerRuntimeState::Unknown
         },
-        Some(if colima_running {
+        Some(if runtime_running {
             ContainerCleanupResult::Completed
         } else {
             ContainerCleanupResult::NotRequested
         }),
     )?;
     let removed_gateway_domains = deregister_gateway_routes(&policy)?;
-    let mut report = down_report(&policy, colima_running);
+    let mut report = down_report(&policy, runtime_running);
     annotate_left_running_shared_services(&mut report, &policy);
     annotate_removed_gateway_routes(&mut report, &removed_gateway_domains);
     Ok(render_container_report(report, output_json))
@@ -89,24 +89,24 @@ where
     for environment in environments {
         let repo_root = Path::new(&environment.repo_root);
         let policy = environment.policy;
-        let colima_running = colima_is_running(&policy, repo_root)
+        let runtime_running = runtime_backend_is_running(&policy, repo_root)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
         // Run the pre-shutdown hook before we touch compose so any
         // host-side supervisors stop racing with the compose-down.
         pre_shutdown(repo_root, &policy);
-        if colima_running {
+        if runtime_running {
             shutdown_container_with_manager_plan(repo_root, &policy)?;
         }
         let _manager_report = lifecycle_operation_report(
             repo_root,
             &policy,
             ContainerAction::Shutdown,
-            if colima_running {
+            if runtime_running {
                 ContainerRuntimeState::Stopped
             } else {
                 ContainerRuntimeState::Unknown
             },
-            Some(if colima_running {
+            Some(if runtime_running {
                 ContainerCleanupResult::Completed
             } else {
                 ContainerCleanupResult::NotRequested
@@ -124,7 +124,7 @@ where
                 .iter()
                 .map(|service| service.service_name.clone())
                 .collect(),
-            runtime_was_running: colima_running,
+            runtime_was_running: runtime_running,
         });
     }
 
@@ -149,22 +149,22 @@ where
     for environment in environments {
         let repo_root = Path::new(&environment.repo_root);
         let policy = environment.policy;
-        let colima_running = colima_is_running(&policy, repo_root)
+        let runtime_running = runtime_backend_is_running(&policy, repo_root)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
         pre_shutdown(repo_root, &policy);
-        if colima_running {
+        if runtime_running {
             shutdown_container_with_manager_plan(repo_root, &policy)?;
         }
         let _manager_report = lifecycle_operation_report(
             repo_root,
             &policy,
             ContainerAction::Shutdown,
-            if colima_running {
+            if runtime_running {
                 ContainerRuntimeState::Stopped
             } else {
                 ContainerRuntimeState::Unknown
             },
-            Some(if colima_running {
+            Some(if runtime_running {
                 ContainerCleanupResult::Completed
             } else {
                 ContainerCleanupResult::NotRequested
@@ -182,7 +182,7 @@ where
                 .iter()
                 .map(|service| service.service_name.clone())
                 .collect(),
-            runtime_was_running: colima_running,
+            runtime_was_running: runtime_running,
         });
     }
 
@@ -217,7 +217,7 @@ where
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    let colima_running = colima_is_running(&policy, repo_root)
+    let runtime_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let preserve_persistent_data = !wipe_data;
     let volume_actions = if policy.compose_source == EffectiveComposeSource::Generated {
@@ -228,7 +228,7 @@ where
     } else {
         None
     };
-    if colima_running {
+    if runtime_running {
         if preserve_persistent_data {
             let plan = compose_invocation_plan(
                 repo_root,
@@ -257,7 +257,7 @@ where
     let removed_gateway_domains = deregister_gateway_routes(&policy)?;
     let mut report = reset_report(
         &policy,
-        colima_running,
+        runtime_running,
         preserve_persistent_data,
         wipe_data,
         volume_actions.as_ref(),
@@ -390,18 +390,7 @@ fn remove_runtime_image_allow_missing(
         &format!("remove generated image `{image_ref}`"),
     )?;
 
-    let output = std::process::Command::new(&plan.program)
-        .current_dir(repo_root)
-        .args(&plan.args)
-        .output()
-        .map_err(|error| EffigyRuntimeError::TaskCommandLaunch {
-            command: format!(
-                "remove generated image `{image_ref}` ({} {})",
-                plan.program.to_string_lossy(),
-                format_os_args(&plan.args)
-            ),
-            error,
-        })?;
+    let output = run_runtime_plan_capture(&plan)?;
     if output.status.success() || image_remove_failure_is_missing(&output) {
         return Ok(());
     }
@@ -420,13 +409,6 @@ fn image_remove_failure_is_missing(output: &std::process::Output) -> bool {
     combined.contains("no such image")
         || combined.contains("not found")
         || combined.contains("no such object")
-}
-
-fn format_os_args(args: &[OsString]) -> String {
-    args.iter()
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 struct StoppedContainerEnvironment {

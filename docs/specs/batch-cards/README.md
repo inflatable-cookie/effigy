@@ -375,9 +375,43 @@ The active batch-card tree now starts with `g04` rollover card `431`.
   is complete. It extracts the container exec implementation behind a facade.
 
 - [`543-extract-container-exec-parse-module.md`](./543-extract-container-exec-parse-module.md)
-  is ready. It extracts container exec parsing.
+  is complete. It extracts container exec parsing.
+
+- [`544-extract-container-exec-process-module.md`](./544-extract-container-exec-process-module.md)
+  is complete. It extracts container exec process helpers.
+
+- [`545-extract-container-exec-colima-runtime-module.md`](./545-extract-container-exec-colima-runtime-module.md)
+  is complete. It extracts container exec Colima runtime helpers.
+
+- [`546-close-effective-container-policy-decomposition.md`](./546-close-effective-container-policy-decomposition.md)
+  is complete. It closes the effective container policy decomposition lane.
+
+- [`547-scaffold-manager-backed-runtime-read-write-shell-lane.md`](./547-scaffold-manager-backed-runtime-read-write-shell-lane.md)
+  is complete. It opens the manager-backed runtime read/write/shell lane.
+
+- [`548-rename-runtime-signal-compose-helpers.md`](./548-rename-runtime-signal-compose-helpers.md)
+  is complete. It renames runtime signal compose helpers away from
+  Docker-specific names.
+
+- [`549-move-runtime-image-cleanup-capture-behind-signal-helper.md`](./549-move-runtime-image-cleanup-capture-behind-signal-helper.md)
+  is complete. It moves runtime image cleanup capture behind a signal helper.
+
+- [`550-remove-unused-args-based-compose-signal-helpers.md`](./550-remove-unused-args-based-compose-signal-helpers.md)
+  is complete. It removes unused args-based compose signal helpers.
+
+- [`551-extract-runtime-data-volume-planning-module.md`](./551-extract-runtime-data-volume-planning-module.md)
+  is complete. It extracts runtime data volume/cache planning helpers.
+
+- [`552-extract-runtime-data-volume-io-module.md`](./552-extract-runtime-data-volume-io-module.md)
+  is complete. It extracts runtime data volume IO helpers.
+
+- [`553-extract-runtime-data-report-helpers.md`](./553-extract-runtime-data-report-helpers.md)
+  is complete. It extracts runtime data report helpers.
+
+- [`554-extract-runtime-data-transfer-validation.md`](./554-extract-runtime-data-transfer-validation.md)
+  is ready. It extracts runtime data transfer validation helpers.
 
 ## Next Task
 
 Start card
-[`543-extract-container-exec-parse-module.md`](./543-extract-container-exec-parse-module.md).
+[`554-extract-runtime-data-transfer-validation.md`](./554-extract-runtime-data-transfer-validation.md).

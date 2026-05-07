@@ -157,6 +157,34 @@ fn nginx_supports_genesis_rewrite_params_without_variant() {
 }
 
 #[test]
+fn nginx_healthcheck_treats_http_response_as_ready_even_for_404_routes() {
+    let resolver = bundled_resolver();
+    let assembler = ComposeAssembler::new(resolver);
+
+    let services = vec![ServiceDeclaration {
+        name: "web".to_string(),
+        catalog: "nginx".to_string(),
+        params: HashMap::new(),
+        variant: Some("default".to_string()),
+        config: None,
+    }];
+
+    let result = assembler
+        .assemble(&services, "test", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let web = validate_service(&doc, "web");
+    let health = web.get("healthcheck").expect("healthcheck");
+    let test = format!("{:?}", health.get("test").expect("healthcheck test"));
+    assert!(
+        test.contains("wget -q -O /dev/null http://127.0.0.1:80/")
+            && test.contains("[ \"$code\" -eq 8 ]"),
+        "nginx healthcheck should treat any HTTP response as ready, got: {test}"
+    );
+}
+
+#[test]
 fn nginx_genesis_rewrite_params_apply_without_variant() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);

@@ -52,7 +52,8 @@ fn validate_compose_backend_host_paths(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), ContainerPolicyError> {
-    if compose::resolve_compose_backend_for_policy(policy) != compose::ComposeBackend::ColimaNerdctl
+    if compose::resolve_compose_backend_for_repo(repo_root, policy)
+        != compose::ComposeBackend::ColimaNerdctl
     {
         return Ok(());
     }
@@ -79,7 +80,8 @@ fn validate_compose_backend_host_paths(
 fn validate_compose_backend_mount_budget(
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), ContainerPolicyError> {
-    if compose::resolve_compose_backend_for_policy(policy) != compose::ComposeBackend::ColimaNerdctl
+    if compose::resolve_compose_backend_for_repo(Path::new("."), policy)
+        != compose::ComposeBackend::ColimaNerdctl
     {
         return Ok(());
     }

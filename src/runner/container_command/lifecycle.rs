@@ -8,14 +8,15 @@ use effigy_container_ops::{
     ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
 };
 use effigy_containers::{
+    compose::{resolve_compose_backend_for_repo, ComposeBackend},
     effective_attach_mode, eject_generated_compose, eject_report,
     exec::{
-        colima_is_running, colima_profile_warnings, ensure_colima_running,
-        shutdown_container as shutdown_container_via_exec,
+        colima_profile_warnings, ensure_runtime_backend_running, runtime_backend_is_running,
+        selected_backend_label, shutdown_container as shutdown_container_via_exec,
     },
     load_container_exec_working_dir, load_container_policy, up_detached_report,
-    validate_compose_backend_runtime, validate_container_policy, EffectiveAttachMode,
-    EffectiveContainerPolicy,
+    validate_compose_backend_runtime, validate_container_policy, write_runtime_backend_override,
+    EffectiveAttachMode, EffectiveContainerPolicy,
 };
 use effigy_runtime::session::run_attached_container_session_with_hook;
 use effigy_runtime::shell::run_container_shell as run_runtime_container_shell;
@@ -68,7 +69,7 @@ pub(super) fn run_container_up(
     let warnings = colima_profile_warnings(&policy, repo_root);
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
-    let colima_started = ensure_colima_running(&policy, repo_root)?;
+    let colima_started = ensure_runtime_backend_running(&policy, repo_root)?;
     if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
         return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
     }
@@ -112,6 +113,11 @@ pub(super) fn run_container_up(
     } else {
         effigy_runtime::signals::run_compose_plan_capture(&policy, &up_plan)?;
     }
+    let backend_id = match resolve_compose_backend_for_repo(repo_root, &policy) {
+        ComposeBackend::Docker => effigy_container_manager::BackendId::docker_compose(),
+        ComposeBackend::ColimaNerdctl => effigy_container_manager::BackendId::colima_nerdctl(),
+    };
+    let _ = write_runtime_backend_override(repo_root, &backend_id);
     if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
         return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
     }
@@ -470,10 +476,11 @@ fn resolve_container_shell_session(
     let policy = load_container_policy(repo_root, name)?;
     validate_container_policy(repo_root, &policy)?;
     validate_compose_backend_runtime(repo_root, &policy)?;
-    if !colima_is_running(&policy, repo_root)? {
+    if !runtime_backend_is_running(&policy, repo_root)? {
         return Err(RunnerError::task_invocation(format!(
-            "Colima profile `{}` is not running for container `{}`",
-            policy.profile, policy.name
+            "{} runtime is not available for container `{}`",
+            selected_backend_label(&policy, repo_root),
+            policy.name
         )));
     }
     validate_running_container_runtime_match(repo_root, &policy)?;

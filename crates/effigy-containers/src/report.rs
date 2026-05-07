@@ -323,7 +323,8 @@ pub fn data_pull_production_report(
 /// Build the `container status` report.
 pub fn status_report(
     policy: &EffectiveContainerPolicy,
-    colima_running: bool,
+    backend: &str,
+    runtime_running: bool,
     health: Option<&'static str>,
     services: Option<&[ContainerStatusService]>,
     compose_ps: Option<&str>,
@@ -334,12 +335,13 @@ pub fn status_report(
         "ok": true,
         "container": policy.name,
         "driver": "colima",
+        "backend": backend,
         "profile": policy.profile,
         "compose_file": policy.compose_file_display,
         "project_name": policy.project_name,
         "primary_service": policy.primary_service,
         "shared_services": shared_services_json(policy),
-        "colima_running": colima_running,
+        "runtime_running": runtime_running,
         "health": health,
         "ports": policy.declared_ports,
         "mounts": policy.declared_mounts,
@@ -352,11 +354,12 @@ pub fn status_report(
     let mut lines = vec![
         format!("[container] {}", policy.name),
         format!("driver: {}", driver_label(policy.driver)),
+        format!("backend: {backend}"),
         format!("profile: {}", policy.profile),
         format!("compose_file: {}", policy.compose_file_display),
         format!("project_name: {}", policy.project_name),
         format!("primary_service: {}", policy.primary_service),
-        format!("colima_running: {}", yes_no(colima_running)),
+        format!("runtime_running: {}", yes_no(runtime_running)),
     ];
     if !policy.declared_ports.is_empty() {
         lines.push(format!("ports: {}", policy.declared_ports.join(", ")));

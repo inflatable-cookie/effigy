@@ -10,8 +10,9 @@ use effigy_container_ops::{
 use effigy_containers::{
     exec::{
         capture_running_container_stats_for_profile, colima_is_running, colima_profile_warnings,
-        infer_host_working_dir_for_container, list_running_compose_containers_profiled,
-        RunningComposeContainer,
+        infer_host_working_dir_for_container, list_running_compose_containers_for_policy,
+        list_running_compose_containers_profiled, runtime_backend_is_running,
+        selected_backend_label, RunningComposeContainer,
     },
     health::probe_health_status,
     load_all_container_policies, load_container_policy, logs_report, status_report,
@@ -41,25 +42,25 @@ pub fn run_container_status(
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    let colima_running = colima_is_running(&policy, repo_root)
+    let runtime_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let _manager_report = lifecycle_operation_report(
         repo_root,
         &policy,
         ContainerAction::Status,
-        if colima_running {
+        if runtime_running {
             ContainerRuntimeState::Running
         } else {
             ContainerRuntimeState::Stopped
         },
         None,
     )?;
-    let services = if colima_running {
+    let services = if runtime_running {
         discover_running_services_for_policy(repo_root, &policy)?
     } else {
         Vec::new()
     };
-    let compose_ps = if colima_running && services.is_empty() {
+    let compose_ps = if runtime_running && services.is_empty() {
         let plan = compose_invocation_plan(
             repo_root,
             &policy,
@@ -72,16 +73,17 @@ pub fn run_container_status(
     } else {
         None
     };
-    let health = if colima_running {
+    let health = if runtime_running {
         probe_health_status(policy.health_check.as_deref())
     } else {
         None
     };
     let mut report = status_report(
         &policy,
-        colima_running,
+        selected_backend_label(&policy, repo_root),
+        runtime_running,
         health,
-        colima_running.then_some(services.as_slice()),
+        runtime_running.then_some(services.as_slice()),
         compose_ps.as_deref(),
     );
     annotate_warning_lines(&mut report, &colima_profile_warnings(&policy, repo_root));
@@ -557,31 +559,21 @@ fn discover_running_services_for_policy(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<ContainerStatusService>, EffigyRuntimeError> {
-    let canonical_repo = canonicalize_or_original(repo_root);
-    let environment = discover_running_environments()?
-        .into_iter()
-        .find(|environment| {
-            canonicalize_or_original(Path::new(&environment.repo_root)) == canonical_repo
-                && environment.policy.name == policy.name
-                && environment.policy.project_name == policy.project_name
-        });
-    Ok(environment
-        .map(|environment| {
-            environment
-                .services
-                .into_iter()
-                .map(|service| ContainerStatusService {
-                    name: service
-                        .service
-                        .clone()
-                        .unwrap_or_else(|| service.container_name.clone()),
-                    container_name: service.container_name,
-                    status: service.status,
-                    ports: service.ports,
-                })
-                .collect()
-        })
-        .unwrap_or_default())
+    Ok(
+        list_running_compose_containers_for_policy(repo_root, policy)
+            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?
+            .into_iter()
+            .map(|service| ContainerStatusService {
+                name: service
+                    .service
+                    .clone()
+                    .unwrap_or_else(|| service.container_name.clone()),
+                container_name: service.container_name,
+                status: service.status,
+                ports: service.ports,
+            })
+            .collect(),
+    )
 }
 
 /// Walk up from `start` looking for an `effigy.toml` marker.
@@ -632,7 +624,8 @@ fn load_port_registry() -> Option<PortRegistry> {
 mod tests {
     use super::{
         discover_effigy_repos_under, filter_running_environments_for_scope, read_operation_plan,
-        resolve_effigy_repo_root, DiscoveredRunningEnvironment, MAX_REPO_ROOT_WALKUP,
+        resolve_effigy_repo_root, resolve_repo_root_for_project_rows, DiscoveredRunningEnvironment,
+        MAX_REPO_ROOT_WALKUP,
     };
     use effigy_container_ops::{
         ContainerOperationKind, ContainerReadOperation, ContainerSideEffectClass,

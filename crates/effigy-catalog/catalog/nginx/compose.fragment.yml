@@ -12,7 +12,11 @@ services:
         condition: service_started
 {% endif %}
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80/"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:80/ >/dev/null 2>&1; code=$?; [ \"$code\" -eq 0 ] || [ \"$code\" -eq 8 ]",
+        ]
       interval: 5s
       timeout: 3s
       retries: 3

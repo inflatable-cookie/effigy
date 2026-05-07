@@ -5,7 +5,9 @@
 //! not runner shell behavior.
 
 use std::ffi::OsString;
+use std::path::Path;
 
+use crate::load_runtime_backend_override;
 use crate::EffectiveContainerPolicy;
 
 use effigy_container_manager::{
@@ -44,7 +46,14 @@ pub fn resolve_compose_backend() -> ComposeBackend {
 }
 
 pub fn resolve_compose_backend_for_policy(policy: &EffectiveContainerPolicy) -> ComposeBackend {
-    let detection = compose_backend_detection_for_policy(policy);
+    resolve_compose_backend_for_repo(Path::new("."), policy)
+}
+
+pub fn resolve_compose_backend_for_repo(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> ComposeBackend {
+    let detection = compose_backend_detection_for_policy(repo_root, policy);
     let backend_id = ContainerBackendRegistry::defaults()
         .detect_backend(&detection)
         .unwrap_or_else(|_| backend_id_for_policy(policy));
@@ -116,8 +125,16 @@ pub fn compose_invocation(
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
 ) -> (&'static str, Vec<OsString>) {
+    compose_invocation_for_repo(Path::new("."), policy, args)
+}
+
+pub fn compose_invocation_for_repo(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    args: &[OsString],
+) -> (&'static str, Vec<OsString>) {
     let normalized_args = normalize_compose_command_args(policy, args);
-    let detection = compose_backend_detection_for_policy(policy);
+    let detection = compose_backend_detection_for_policy(repo_root, policy);
     let (program, resolved_args) = effigy_container_manager::ContainerManager::defaults()
         .compose_process_invocation(&detection, policy.profile.as_str(), &normalized_args)
         .unwrap_or_else(|_| {
@@ -167,19 +184,12 @@ fn colima_nerdctl_args(policy: &EffectiveContainerPolicy, args: &[OsString]) -> 
 
 #[cfg(not(test))]
 fn compose_backend_detection() -> ContainerBackendDetection {
-    let mut detection = ContainerBackendDetection::from_env_and_path();
-    if detection.backend_override.is_none() {
-        detection.backend_override = crate::user_global_backend_preference();
-    }
-    detection
+    ContainerBackendDetection::from_env_and_path()
 }
 
 #[cfg(test)]
 fn compose_backend_detection() -> ContainerBackendDetection {
     let mut detection = ContainerBackendDetection::from_env_and_path();
-    if detection.backend_override.is_none() {
-        detection.backend_override = crate::user_global_backend_preference();
-    }
     if let Some(backend) = tests::test_compose_backend_override() {
         detection.backend_override = Some(backend.backend_id());
     }
@@ -187,9 +197,16 @@ fn compose_backend_detection() -> ContainerBackendDetection {
 }
 
 fn compose_backend_detection_for_policy(
+    repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> ContainerBackendDetection {
     let mut detection = compose_backend_detection();
+    if detection.backend_override.is_none() {
+        detection.backend_override = load_runtime_backend_override(repo_root);
+    }
+    if detection.backend_override.is_none() {
+        detection.backend_override = crate::user_global_backend_preference();
+    }
     if detection.backend_override.is_none() {
         detection.backend_override = Some(backend_id_for_policy(policy));
     }

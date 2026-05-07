@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`007-effective-container-policy-decomposition.md`](./007-effective-container-policy-decomposition.md)
@@ -40,4 +40,5 @@ Remove remaining old compose/process command construction from `effigy-runtime`.
 
 ## Next Task
 
-Do not start until `g04.007` closes.
+Start card
+[`554-extract-runtime-data-transfer-validation.md`](../../specs/batch-cards/554-extract-runtime-data-transfer-validation.md).
