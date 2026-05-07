@@ -1,6 +1,6 @@
 use crate::tests::prelude::{
-    parse_command, BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand, Command, HelpTopic,
-    PathBuf,
+    parse_command, BootstrapArgs, BootstrapBackendOverride, BootstrapDepsSyncMode,
+    BootstrapSubcommand, Command, HelpTopic, PathBuf,
 };
 use effigy_cli::BootstrapDbSeedInput;
 
@@ -35,6 +35,7 @@ fn parse_bootstrap_plan_with_path_branch_and_start() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: Some(PathBuf::from("./loophole")),
                 branch: Some("main".to_owned()),
+                backend: None,
                 db_seeds: vec![BootstrapDbSeedInput {
                     target: None,
                     path: PathBuf::from("./infra/bootstrap/latest.sql"),
@@ -65,6 +66,7 @@ fn parse_bootstrap_defaults_to_start_when_unspecified() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: false,
@@ -93,6 +95,7 @@ fn parse_bootstrap_no_start_disables_default_start() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: false,
@@ -124,6 +127,7 @@ fn parse_bootstrap_accepts_repeated_db_seed_flags() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: vec![
                     BootstrapDbSeedInput {
                         target: None,
@@ -162,6 +166,7 @@ fn parse_bootstrap_accepts_bare_target_db_seed_flag() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: vec![BootstrapDbSeedInput {
                     target: Some("legacy_mysql".to_owned()),
                     path: PathBuf::from("legacy_mysql.sql"),
@@ -196,6 +201,7 @@ fn parse_bootstrap_accepts_named_db_seed_flags() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: vec![
                     BootstrapDbSeedInput {
                         target: Some("cbs".to_owned()),
@@ -234,6 +240,7 @@ fn parse_bootstrap_accepts_named_oci_db_seed_flags() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: vec![BootstrapDbSeedInput {
                     target: Some("app".to_owned()),
                     path: PathBuf::from("oci://ghcr.io/acme/private-data:uat"),
@@ -265,6 +272,7 @@ fn parse_bootstrap_accepts_no_prompt_flag() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: true,
@@ -293,6 +301,7 @@ fn parse_bootstrap_accepts_reuse_path_flag() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: false,
@@ -321,8 +330,39 @@ fn parse_bootstrap_accepts_fresh_flag() {
                 repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: true,
+                no_prompt: false,
+                reuse_path: false,
+                start: true,
+                plan: false,
+            },
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_bootstrap_accepts_backend_flag() {
+    let cmd = parse_command(vec![
+        "bootstrap".to_owned(),
+        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+        "--backend".to_owned(),
+        "docker".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Bootstrap(BootstrapArgs {
+            subcommand: BootstrapSubcommand::Clone {
+                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
+                path: None,
+                branch: None,
+                backend: Some(BootstrapBackendOverride::Docker),
+                db_seeds: Vec::new(),
+                fresh: false,
                 no_prompt: false,
                 reuse_path: false,
                 start: true,

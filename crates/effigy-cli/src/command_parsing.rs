@@ -12,14 +12,14 @@ mod distribution;
 mod docs;
 
 use crate::{
-    ArtifactArgs, ArtifactSubcommand, BootstrapArgs, BootstrapDbSeedInput, BootstrapDepsSyncMode,
-    BootstrapSubcommand, BundleArgs, BundleSubcommand, ChangelogArgs, ChangelogSubcommand, Command,
-    ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs,
-    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic,
-    InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalHostProcessStopArgs,
-    InternalHostProcessSuperviseArgs, InternalRhaiArgs, ReleaseArgs, ReleaseSubcommand,
-    ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs,
-    WorkspaceArgs,
+    ArtifactArgs, ArtifactSubcommand, BootstrapArgs, BootstrapBackendOverride,
+    BootstrapDbSeedInput, BootstrapDepsSyncMode, BootstrapSubcommand, BundleArgs, BundleSubcommand,
+    ChangelogArgs, ChangelogSubcommand, Command, ContractsArgs, ContractsCheckMode,
+    ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DoctorArgs, ExecArgs, GatewayArgs,
+    GatewaySubcommand, HelpTopic, InternalContainerLeaseReaperArgs, InternalGatewayArgs,
+    InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs, InternalRhaiArgs, ReleaseArgs,
+    ReleaseSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand,
+    TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 use container::parse_container_command;
 use demo::parse_demo_command;
@@ -997,6 +997,7 @@ where
 
     let mut path: Option<PathBuf> = None;
     let mut branch: Option<String> = None;
+    let mut backend = None;
     let mut db_seeds = Vec::<BootstrapDbSeedInput>::new();
     let mut fresh = false;
     let mut no_prompt = false;
@@ -1031,6 +1032,14 @@ where
                     },
                 )?);
             }
+            "--backend" => {
+                backend = Some(parse_bootstrap_backend_override(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--backend".to_owned(),
+                    },
+                )?)?);
+            }
             "--db-seed" => {
                 let value = next_required_value(
                     &mut args,
@@ -1050,6 +1059,7 @@ where
             repo_url,
             path,
             branch,
+            backend,
             db_seeds,
             fresh,
             no_prompt,
@@ -1154,6 +1164,20 @@ pub(super) fn parse_bootstrap_db_seed(
         target: None,
         path: PathBuf::from(value),
     })
+}
+
+fn parse_bootstrap_backend_override(
+    value: String,
+) -> Result<BootstrapBackendOverride, CliParseError> {
+    match value.trim() {
+        "containerd" | "colima-nerdctl" => Ok(BootstrapBackendOverride::Containerd),
+        "docker" | "docker-compose" => Ok(BootstrapBackendOverride::Docker),
+        other => Err(CliParseError::InvalidFlagValue {
+            flag: "--backend".to_owned(),
+            value: other.to_owned(),
+            expected: "containerd|docker".to_owned(),
+        }),
+    }
 }
 
 fn looks_like_bare_db_target(value: &str) -> bool {

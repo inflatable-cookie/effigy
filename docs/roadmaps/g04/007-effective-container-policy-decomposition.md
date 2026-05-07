@@ -43,4 +43,4 @@ ownership modules.
 ## Next Task
 
 Start card
-[`532-extract-effective-container-policy-validation-module.md`](../../specs/batch-cards/532-extract-effective-container-policy-validation-module.md).
+[`540-extract-workspace-compose-rewrite-module.md`](../../specs/batch-cards/540-extract-workspace-compose-rewrite-module.md).

@@ -1,7 +1,7 @@
 //! UI-renderer bridge for help topics.
 //!
 //! The core help surface in [`super`] renders through a narrow
-//! [`HelpRenderer`](super::HelpRenderer) trait so topic definitions stay
+//! [`HelpRenderer`] trait so topic definitions stay
 //! free of the heavier `effigy-ui` machinery. Runner callers already have
 //! an [`effigy_ui::Renderer`] on hand, so this module exposes the same
 //! help API with a wider renderer bound and adapts it internally via a

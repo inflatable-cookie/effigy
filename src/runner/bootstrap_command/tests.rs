@@ -6,10 +6,15 @@
 //! integration tests in `crates/effigy-bootstrap/tests/integration.rs`.
 
 use super::{
-    bootstrap_runtime_session_context, render_bootstrap_progress_message, run_bootstrap_with_cwd,
+    bootstrap_runtime_session_context, parse_colima_backend_available_rows,
+    prompt_bootstrap_backend_choice_from_io, render_bootstrap_progress_message,
+    run_bootstrap_with_cwd,
 };
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, PublicWorkspaceCleanupOverride};
-use effigy_cli::{BootstrapArgs, BootstrapDbSeedInput, BootstrapDepsSyncMode, BootstrapSubcommand};
+use effigy_cli::{
+    BootstrapArgs, BootstrapBackendOverride, BootstrapDbSeedInput, BootstrapDepsSyncMode,
+    BootstrapSubcommand,
+};
 #[allow(dead_code)]
 #[path = "../../../crates/effigy-bootstrap/tests/support.rs"]
 mod support;
@@ -95,6 +100,64 @@ fn bootstrap_progress_message_colors_known_prefixes() {
     assert!(rendered.contains("[ok]"));
     assert!(rendered.contains("[gateway]"));
     assert!(rendered.contains("[bootstrap]"));
+}
+
+#[test]
+fn bootstrap_backend_prompt_accepts_containerd_choice() {
+    let mut input = Cursor::new(b"1\n".to_vec());
+    let mut output = Vec::new();
+    let backend = prompt_bootstrap_backend_choice_from_io(None, &mut input, &mut output)
+        .expect("backend choice");
+    assert_eq!(backend, BootstrapBackendOverride::Containerd);
+}
+
+#[test]
+fn bootstrap_backend_prompt_accepts_docker_choice() {
+    let mut input = Cursor::new(b"docker\n".to_vec());
+    let mut output = Vec::new();
+    let backend = prompt_bootstrap_backend_choice_from_io(None, &mut input, &mut output)
+        .expect("backend choice");
+    assert_eq!(backend, BootstrapBackendOverride::Docker);
+}
+
+#[test]
+fn bootstrap_backend_prompt_accepts_empty_input_for_saved_containerd_default() {
+    let mut input = Cursor::new(b"\n".to_vec());
+    let mut output = Vec::new();
+    let backend = prompt_bootstrap_backend_choice_from_io(
+        Some(BootstrapBackendOverride::Containerd),
+        &mut input,
+        &mut output,
+    )
+    .expect("backend choice");
+    assert_eq!(backend, BootstrapBackendOverride::Containerd);
+    let rendered = String::from_utf8(output).expect("utf8");
+    assert!(rendered.contains("Default: containerd (Colima)"));
+    assert!(rendered.contains("Bootstrap backend [1/2] [default 1]: "));
+}
+
+#[test]
+fn bootstrap_backend_prompt_allows_overriding_saved_docker_default() {
+    let mut input = Cursor::new(b"1\n".to_vec());
+    let mut output = Vec::new();
+    let backend = prompt_bootstrap_backend_choice_from_io(
+        Some(BootstrapBackendOverride::Docker),
+        &mut input,
+        &mut output,
+    )
+    .expect("backend choice");
+    assert_eq!(backend, BootstrapBackendOverride::Containerd);
+    let rendered = String::from_utf8(output).expect("utf8");
+    assert!(rendered.contains("Default: docker (Docker Desktop)"));
+    assert!(rendered.contains("Bootstrap backend [1/2] [default 2]: "));
+}
+
+#[test]
+fn bootstrap_colima_backend_probe_accepts_ndjson_profile_rows() {
+    let stdout = r#"{"name":"effigy","status":"Running","arch":"aarch64","cpus":2,"memory":34359738368,"disk":322122547200,"runtime":"containerd"}
+{"name":"effigy-release","status":"Stopped","arch":"aarch64","cpus":2,"memory":2147483648,"disk":107374182400,"runtime":"containerd"}
+"#;
+    assert!(parse_colima_backend_available_rows(stdout).expect("probe parse"));
 }
 
 fn create_child_remote(name: &str) -> PathBuf {
@@ -539,6 +602,7 @@ fn run_bootstrap_with_cwd_starts_when_requested() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: false,
@@ -572,6 +636,7 @@ fn run_bootstrap_with_cwd_stages_db_seed_before_root_run() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: vec![BootstrapDbSeedInput {
                     target: None,
                     path: dump.clone(),
@@ -614,6 +679,7 @@ fn run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: vec![BootstrapDbSeedInput {
                     target: None,
                     path: dump,
@@ -655,6 +721,7 @@ fn run_bootstrap_with_cwd_auto_targets_single_database_bundle_seed_input() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: vec![BootstrapDbSeedInput {
                     target: None,
                     path: dump,
@@ -703,6 +770,7 @@ fn run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases() 
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: vec![
                     BootstrapDbSeedInput {
                         target: Some("cbs".into()),
@@ -756,6 +824,7 @@ fn run_bootstrap_with_cwd_rejects_unnamed_db_seed_for_multi_database_bundle() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: vec![BootstrapDbSeedInput {
                     target: None,
                     path: dump,
@@ -792,6 +861,7 @@ fn run_bootstrap_with_cwd_requires_container_registry_for_builtin_db_seed_fallba
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: vec![BootstrapDbSeedInput {
                     target: None,
                     path: dump,
@@ -825,6 +895,7 @@ fn run_bootstrap_with_cwd_reports_optional_child_warning_in_text_output() {
                 repo_url: root_remote.display().to_string(),
                 path: None,
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: false,
@@ -928,6 +999,7 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
                 repo_url: root_remote.display().to_string(),
                 path: Some(PathBuf::from("underlay-reference")),
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: false,
@@ -1067,6 +1139,7 @@ fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_without_tty_pro
                 repo_url: root_remote.display().to_string(),
                 path: Some(destination.clone()),
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: false,
@@ -1103,6 +1176,7 @@ fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_in_json_mode() 
                 repo_url: root_remote.display().to_string(),
                 path: Some(destination),
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: false,
@@ -1138,6 +1212,7 @@ fn run_bootstrap_with_cwd_plan_skips_existing_destination_prompt() {
                 repo_url: root_remote.display().to_string(),
                 path: Some(destination.clone()),
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: false,
@@ -1167,6 +1242,7 @@ fn run_bootstrap_with_cwd_no_prompt_rejects_existing_checkout_without_reuse_path
                 repo_url: root_remote.display().to_string(),
                 path: Some(destination.clone()),
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: false,
@@ -1186,6 +1262,7 @@ fn run_bootstrap_with_cwd_no_prompt_rejects_existing_checkout_without_reuse_path
                 repo_url: root_remote.display().to_string(),
                 path: Some(destination),
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: true,
@@ -1214,6 +1291,7 @@ fn run_bootstrap_with_cwd_reuse_path_bypasses_existing_checkout_confirmation() {
                 repo_url: root_remote.display().to_string(),
                 path: Some(destination.clone()),
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: false,
@@ -1233,6 +1311,7 @@ fn run_bootstrap_with_cwd_reuse_path_bypasses_existing_checkout_confirmation() {
                 repo_url: root_remote.display().to_string(),
                 path: Some(destination),
                 branch: None,
+                backend: None,
                 db_seeds: Vec::new(),
                 fresh: false,
                 no_prompt: true,

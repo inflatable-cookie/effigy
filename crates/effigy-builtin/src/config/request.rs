@@ -144,12 +144,18 @@ pub(super) fn parse_config_request(
         }
         Some("get") => {
             let _ = parser.next();
-            let key = parser.required_subcommand("config get", "`containers.backend` or `containers.profile`")?;
+            let key = parser.required_subcommand(
+                "config get",
+                "`containers.backend` or `containers.profile`",
+            )?;
             user_get = Some(parse_user_config_key("config get", key)?);
         }
         Some("set") => {
             let _ = parser.next();
-            let key = parser.required_subcommand("config set", "`containers.backend` or `containers.profile`")?;
+            let key = parser.required_subcommand(
+                "config set",
+                "`containers.backend` or `containers.profile`",
+            )?;
             match parse_user_config_key("config set", key)? {
                 UserConfigKey::ContainersBackend => {
                     set_container_backend = Some(parser.builtin_choice_flag_value(
@@ -182,8 +188,10 @@ pub(super) fn parse_config_request(
         }
         Some("unset") => {
             let _ = parser.next();
-            let key =
-                parser.required_subcommand("config unset", "`containers.backend` or `containers.profile`")?;
+            let key = parser.required_subcommand(
+                "config unset",
+                "`containers.backend` or `containers.profile`",
+            )?;
             match parse_user_config_key("config unset", key)? {
                 UserConfigKey::ContainersBackend => unset_container_backend = true,
                 UserConfigKey::ContainersProfile => unset_container_profile = true,

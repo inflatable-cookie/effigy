@@ -11,6 +11,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy config` can now inspect and manage user-global container defaults with
   `config path|get|set|unset`, so Docker vs Colima preferences no longer
   require manual edits to `~/.effigy/config.toml`.
+- `effigy bootstrap` now has a first-class `--backend containerd|docker`
+  override for one-shot runtime selection, and on a real TTY it prompts when
+  both Docker and Colima are available. If a machine preference is already
+  pinned, the prompt uses it as the default choice.
 
 ### Added
 - **User-global container runtime preferences:** `~/.effigy/config.toml` now

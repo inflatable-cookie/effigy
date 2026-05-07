@@ -49,7 +49,7 @@ effigy bootstrap <git-url> --no-start
 ## Command Shape
 
 ```sh
-effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--start] [--plan] [--json]
+effigy bootstrap <git-url> [--path <DIR>] [--branch <NAME>] [--backend <containerd|docker>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--start] [--plan] [--json]
 effigy bootstrap teardown [--yes] [--json]
 ```
 
@@ -58,6 +58,8 @@ What each flag means:
 - `--path <DIR>`: clone or update into a specific destination instead of
   the default clone directory
 - `--branch <NAME>`: target a specific branch during clone or update
+- `--backend <containerd|docker>`: force a specific container backend for this
+  bootstrap session instead of using ambient detection or machine defaults
 - `--db-seed <FILE>|<TARGET>=<FILE>`: stage one or more SQL dumps into the
   cloned repo before bootstrap-owned setup runs
 - `--fresh`: append a session-scoped suffix to generated-compose project names
@@ -353,6 +355,7 @@ What ships now:
 
 - root clone or update
 - branch override
+- `--backend` override for one-shot container runtime selection
 - `[bootstrap]` manifest loading
 - submodule policy (`none`, `init`, `recursive`)
 - child repo clone or update

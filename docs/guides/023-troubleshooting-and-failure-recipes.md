@@ -364,6 +364,26 @@ Fix:
 
 ## 7) Container and System Recovery
 
+### Symptom: Docker Desktop is installed but Effigy still tries to use Colima, or vice versa
+
+Diagnosis:
+
+```sh
+effigy doctor --verbose
+```
+
+The `Root Resolution` section shows:
+- the backend Effigy selected
+- whether a user-global backend/profile preference is pinned
+- the active Docker context, when Docker is installed
+
+Fix:
+- pin a global preference with `effigy config set containers.backend docker` or
+  `effigy config set containers.backend containerd`
+- for one-shot override, pass `--backend docker` or `--backend containerd` to
+  `bootstrap` or `container` commands
+- clear a pinned preference with `effigy config unset containers.backend`
+
 ### Symptom: container environment is half-up or unresponsive
 
 Diagnosis:

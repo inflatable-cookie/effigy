@@ -842,9 +842,7 @@ fn render_user_config_key_value(config: &UserConfig, key: UserConfigKey) -> Opti
             .preferred_container_backend()
             .map(render_backend_preference)
             .map(str::to_owned),
-        UserConfigKey::ContainersProfile => {
-            config.preferred_container_profile().map(str::to_owned)
-        }
+        UserConfigKey::ContainersProfile => config.preferred_container_profile().map(str::to_owned),
     }
 }
 

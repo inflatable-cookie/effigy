@@ -126,6 +126,10 @@ macOS prerequisites (Homebrew):
 brew install colima
 ```
 
+If Docker Desktop is also installed, Effigy prefers Colima by default. Use
+`effigy config set containers.backend docker` to switch globally, or
+`--backend docker` on individual `bootstrap` or `container` commands.
+
 If the repo uses local HTTPS routes (`tls = true`), also install `mkcert` and
 run the one-time trust-store install:
 

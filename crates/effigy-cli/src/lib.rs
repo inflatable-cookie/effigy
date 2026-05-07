@@ -462,6 +462,21 @@ pub struct BootstrapArgs {
     pub output_json: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootstrapBackendOverride {
+    Containerd,
+    Docker,
+}
+
+impl BootstrapBackendOverride {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Containerd => "containerd",
+            Self::Docker => "docker",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootstrapDbSeedInput {
     pub target: Option<String>,
@@ -480,6 +495,7 @@ pub enum BootstrapSubcommand {
         repo_url: String,
         path: Option<PathBuf>,
         branch: Option<String>,
+        backend: Option<BootstrapBackendOverride>,
         db_seeds: Vec<BootstrapDbSeedInput>,
         fresh: bool,
         no_prompt: bool,

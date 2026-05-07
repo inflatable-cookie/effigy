@@ -2,7 +2,7 @@
 
 Lane: [`049-effective-container-policy-decomposition-strict-lane.md`](../049-effective-container-policy-decomposition-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -40,12 +40,21 @@ This card is complete when validation helpers live under
 `policy/validation.rs`, policy validation tests pass, and public callers still
 compile.
 
+## Closeout
+
+Policy validation helpers now live under
+`crates/effigy-containers/src/policy/validation.rs` and the public validation
+functions remain re-exported from `lib.rs`. `lib.rs` dropped from 1255 to 1067
+lines.
+
 ## Validation
 
-- `cargo test -p effigy-containers -- --test-threads=1`
-- `cargo check -p effigy --lib`
+- `CARGO_TARGET_DIR=/tmp/effigy-g04-policy-validation-check cargo check -p effigy-containers`
+- `CARGO_TARGET_DIR=/tmp/effigy-g04-policy-validation-libcheck cargo check -p effigy --lib`
+- `CARGO_TARGET_DIR=/tmp/effigy-g04-policy-validation-test cargo test -p effigy-containers -- --test-threads=1`
 - `git diff --check`
 
 ## Next Task
 
-Extract the effective container policy validation module.
+Start card
+[`533-extract-inline-workspace-policy-module.md`](./533-extract-inline-workspace-policy-module.md).

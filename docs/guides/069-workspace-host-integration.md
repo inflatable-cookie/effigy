@@ -156,6 +156,9 @@ Or set the same values through the CLI:
 ```sh
 effigy config set containers.backend containerd
 effigy config set containers.profile effigy
+
+# one-shot Docker bootstrap on a machine that normally defaults to Colima
+effigy bootstrap git@github.com:inflatable-cookie/loophole.git --backend docker --fresh
 ```
 
 Inspect or clear them with:

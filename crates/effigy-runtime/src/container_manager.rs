@@ -120,11 +120,9 @@ pub fn runtime_invocation_plan(
 
 fn container_manager_request(
     repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
+    _policy: &EffectiveContainerPolicy,
 ) -> ContainerManagerRequest {
-    ContainerManagerRequest::new(repo_root)
-        .backend_override(backend_id_for_policy(policy))
-        .interrupt_policy(ContainerInterruptPolicy::Forward)
+    ContainerManagerRequest::new(repo_root).interrupt_policy(ContainerInterruptPolicy::Forward)
 }
 
 fn backend_detection_for_policy(policy: &EffectiveContainerPolicy) -> ContainerBackendDetection {
@@ -231,5 +229,47 @@ mod tests {
         }
         assert_eq!(plan.backend_id, BackendId::colima_nerdctl());
         assert_eq!(plan.program, std::ffi::OsString::from("colima"));
+    }
+
+    #[test]
+    fn compose_invocation_plan_honors_env_backend_override_over_policy() {
+        let _lock = env_lock();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let bin = temp.path().join("bin");
+        std::fs::create_dir_all(&bin).expect("mkdir bin");
+        std::fs::write(bin.join("docker"), "#!/bin/sh\n").expect("write docker");
+        let previous_path = std::env::var_os("PATH");
+        let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+        unsafe {
+            std::env::set_var("PATH", bin.display().to_string());
+            std::env::set_var("EFFIGY_COMPOSE_BACKEND", "docker");
+        }
+        let repo_root = temp.path();
+        let plan = super::compose_invocation_plan(
+            repo_root,
+            &test_policy(),
+            ["ps"],
+            ContainerAction::Status,
+            "docker compose ps",
+        )
+        .expect("plan");
+        match previous_path {
+            Some(value) => unsafe {
+                std::env::set_var("PATH", value);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+        match previous_backend {
+            Some(value) => unsafe {
+                std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
+            },
+            None => unsafe {
+                std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+            },
+        }
+        assert_eq!(plan.backend_id, BackendId::docker_compose());
+        assert_eq!(plan.program, std::ffi::OsString::from("docker"));
     }
 }

@@ -260,6 +260,7 @@ fn render_bootstrap_help_shows_planning_options() {
     assert!(rendered.contains("effigy bootstrap teardown [--yes] [--json]"));
     assert!(rendered.contains("--path <DIR>"));
     assert!(rendered.contains("--branch <NAME>"));
+    assert!(rendered.contains("--backend <containerd|docker>"));
     assert!(rendered.contains("--fresh"));
     assert!(rendered.contains("--no-prompt"));
     assert!(rendered.contains("--reuse-path"));

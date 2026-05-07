@@ -208,7 +208,8 @@ Use this when:
 
 Current v1 rules:
 
-- `driver` is effectively Colima-only
+- `driver` defaults to Colima for repo-bound operations; Docker is available
+  through user-global preferences (see [`069-workspace-host-integration.md`](./069-workspace-host-integration.md))
 - `primary_service` is required
 - `compose_file`, when used, must stay repo-relative
 - repo-relative `host.mounts` may not escape the repo root unless they use the
@@ -412,6 +413,10 @@ Cache kinds Effigy recognizes:
 
 Cache volumes are created by catalog-generated compose files based on mount
 target heuristics. `cache list` inventories them; `cache prune` removes them.
+
+Cache volume names include the container workspace path, so moving a mount from
+`/var/www/html` to `/var/www/inventors` gives a fresh `node_modules` volume
+instead of reusing one with stale absolute-path metadata.
 
 ```sh
 # List caches for the current repo

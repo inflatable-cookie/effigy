@@ -21,7 +21,7 @@ ownership modules while keeping public exports stable.
 
 ## Current Ready Card
 
-[`532-extract-effective-container-policy-validation-module.md`](./batch-cards/532-extract-effective-container-policy-validation-module.md)
+[`540-extract-workspace-compose-rewrite-module.md`](./batch-cards/540-extract-workspace-compose-rewrite-module.md)
 
 ## Execution Chain
 
@@ -29,7 +29,15 @@ ownership modules while keeping public exports stable.
 - `529` complete: scaffold effective container policy decomposition lane
 - `530` complete: extract effective container policy model module
 - `531` complete: extract effective container policy project module
-- `532` ready: extract effective container policy validation module
+- `532` complete: extract effective container policy validation module
+- `533` complete: extract inline workspace policy module
+- `534` complete: extract runtime DNS policy module
+- `535` complete: extract generated compose eject module
+- `536` complete: extract container policy load module
+- `537` complete: extract workspace host-integration module
+- `538` complete: extract workspace library mounts module
+- `539` complete: extract workspace isolation mounts module
+- `540` ready: extract workspace compose rewrite module
 
 ## Decomposition Inventory
 
@@ -77,4 +85,4 @@ orchestration, and focused container tests pass.
 ## Next Task
 
 Card
-[`532-extract-effective-container-policy-validation-module.md`](./batch-cards/532-extract-effective-container-policy-validation-module.md).
+[`540-extract-workspace-compose-rewrite-module.md`](./batch-cards/540-extract-workspace-compose-rewrite-module.md).

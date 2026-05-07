@@ -11,7 +11,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "Use `--fresh` when you need an isolated throwaway runtime namespace for bootstrap testing. Pair it with `effigy bootstrap teardown` afterward to clean up the session-scoped volumes and runtime.",
         ],
         &[
-            "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]",
+            "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--backend <containerd|docker>] [--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]",
             "effigy bootstrap children status [--json]",
             "effigy bootstrap children sync [--fetch-only] [--checkout] [--json]",
             "effigy bootstrap teardown [--yes] [--json]",
@@ -25,6 +25,10 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             (
                 "--branch <NAME>",
                 "Override the initial branch/ref target for clone/update",
+            ),
+            (
+                "--backend <containerd|docker>",
+                "Force bootstrap to use a specific container backend for this session instead of ambient detection or machine defaults; on a real TTY Effigy also prompts when both are available and uses any saved machine preference as the default choice",
             ),
             (
                 "--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>",
@@ -73,6 +77,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy bootstrap git@github.com:inflatable-cookie/loophole.git --plan",
             "effigy bootstrap https://github.com/inflatable-cookie/loophole.git --path ./loophole --plan",
             "effigy bootstrap git@github.com:inflatable-cookie/loophole.git --branch main --no-start --plan",
+            "effigy bootstrap git@github.com:inflatable-cookie/loophole.git --backend docker --fresh --no-start",
             "effigy bootstrap git@github.com:inflatable-cookie/legacy.git --db-seed ./backups/latest.sql --start",
             "effigy bootstrap git@github.com:inflatable-cookie/legacy.git --db-seed app=oci://ghcr.io/acme/private-data:uat --start",
             "effigy bootstrap git@github.com:acowtancy/market.git --db-seed legacy_mysql --start",

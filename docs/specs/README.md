@@ -76,4 +76,4 @@ Recently completed:
 ## Next Task
 
 Card
-[`532-extract-effective-container-policy-validation-module.md`](./batch-cards/532-extract-effective-container-policy-validation-module.md).
+[`540-extract-workspace-compose-rewrite-module.md`](./batch-cards/540-extract-workspace-compose-rewrite-module.md).

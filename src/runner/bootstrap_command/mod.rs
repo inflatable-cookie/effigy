@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use effigy_bootstrap::{
     execute_bootstrap_request_with_progress as crate_execute_bootstrap,
@@ -14,7 +15,12 @@ use effigy_bootstrap::{
     BootstrapDbSeedInput as BootstrapSeedArg, BootstrapError, BootstrapExecutionResult,
     BootstrapProgressEvent, BootstrapResolution, BootstrapStagedDbSeed,
 };
-use effigy_cli::{BootstrapArgs, BootstrapDbSeedInput, BootstrapSubcommand, TaskInvocation};
+use effigy_cli::{
+    BootstrapArgs, BootstrapBackendOverride, BootstrapDbSeedInput, BootstrapSubcommand,
+    TaskInvocation,
+};
+use effigy_container_manager::BackendId;
+use effigy_containers::{colima::parse_colima_running, user_global_backend_preference};
 use effigy_manifest::ManifestManagedRun;
 use effigy_ui::theme::{is_ci_environment, resolve_color_enabled, Theme};
 use effigy_ui::{style_text, OutputMode, PlainRenderer, Renderer, SpinnerHandle};
@@ -47,8 +53,12 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
             fresh,
             no_prompt,
             reuse_path,
+            backend,
             ..
         } => {
+            let selected_backend =
+                select_bootstrap_backend(*backend, args.output_json, *no_prompt, *plan)?;
+            let _backend_guard = selected_backend.map(ScopedBootstrapBackendOverride::set);
             let request = resolve_bootstrap_request(&cwd, &args)?;
             if *plan {
                 return Ok(crate_render_bootstrap_plan(&request, args.output_json));
@@ -116,6 +126,7 @@ fn resolve_bootstrap_request(
         repo_url,
         path,
         branch,
+        backend: _,
         db_seeds,
         fresh,
         no_prompt: _,
@@ -186,6 +197,94 @@ fn maybe_confirm_bootstrap_path_reuse(
     }
 }
 
+fn select_bootstrap_backend(
+    explicit_backend: Option<BootstrapBackendOverride>,
+    output_json: bool,
+    no_prompt: bool,
+    plan: bool,
+) -> Result<Option<BootstrapBackendOverride>, RunnerError> {
+    if explicit_backend.is_some() {
+        return Ok(explicit_backend);
+    }
+    let default_backend = user_global_backend_preference().and_then(bootstrap_backend_from_id);
+
+    let policy = PromptPolicy {
+        output_json,
+        plan,
+        explicit_non_interactive: no_prompt,
+        stdin_is_tty: io::stdin().is_terminal(),
+        stdout_is_tty: io::stdout().is_terminal(),
+    };
+
+    if policy.decide() != PromptDecision::Prompt {
+        return Ok(explicit_backend);
+    }
+
+    if !docker_backend_available() || !colima_backend_available()? {
+        return Ok(explicit_backend);
+    }
+
+    let mut stdin = io::stdin().lock();
+    let mut stdout = io::stdout().lock();
+    prompt_bootstrap_backend_choice_from_io(default_backend, &mut stdin, &mut stdout).map(Some)
+}
+
+fn bootstrap_backend_from_id(backend: BackendId) -> Option<BootstrapBackendOverride> {
+    if backend == BackendId::colima_nerdctl() {
+        return Some(BootstrapBackendOverride::Containerd);
+    }
+    if backend == BackendId::docker_compose() {
+        return Some(BootstrapBackendOverride::Docker);
+    }
+    None
+}
+
+fn docker_backend_available() -> bool {
+    Command::new("docker")
+        .arg("ps")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn colima_backend_available() -> Result<bool, RunnerError> {
+    let output = Command::new("colima")
+        .args(["list", "--json"])
+        .output()
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to probe available Colima profiles for bootstrap backend selection: {error}"
+            ))
+        })?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+    parse_colima_backend_available_rows(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_colima_backend_available_rows(stdout: &str) -> Result<bool, RunnerError> {
+    let mut saw_rows = false;
+    for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+        saw_rows = true;
+        let value = serde_json::from_str::<serde_json::Value>(line).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to parse `colima list --json` during bootstrap backend selection: {error}"
+            ))
+        })?;
+        let status = value
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if parse_colima_running(status, "") {
+            return Ok(true);
+        }
+    }
+    if !saw_rows {
+        return Ok(false);
+    }
+    Ok(false)
+}
+
 fn is_existing_non_empty_dir(path: &Path) -> Result<bool, RunnerError> {
     if !path.exists() || !path.is_dir() {
         return Ok(false);
@@ -235,6 +334,76 @@ fn confirm_bootstrap_path_reuse_from_io<R: BufRead, W: Write>(
     Err(RunnerError::task_invocation(
         "bootstrap cancelled during destination reuse confirmation",
     ))
+}
+
+pub(super) fn prompt_bootstrap_backend_choice_from_io<R: BufRead, W: Write>(
+    default_backend: Option<BootstrapBackendOverride>,
+    input: &mut R,
+    output: &mut W,
+) -> Result<BootstrapBackendOverride, RunnerError> {
+    let default_label = match default_backend {
+        Some(BootstrapBackendOverride::Containerd) => "containerd (Colima)",
+        Some(BootstrapBackendOverride::Docker) => "docker (Docker Desktop)",
+        None => "none",
+    };
+    writeln!(
+        output,
+        "Both Docker and Colima are available for this bootstrap session.\nChoose which container backend Effigy should use:\n  1. containerd (Colima)\n  2. docker (Docker Desktop)\nDefault: {default_label}\n"
+    )
+    .and_then(|_| output.flush())
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to render interactive bootstrap prompt: {error}"
+        ))
+    })?;
+
+    loop {
+        let prompt = match default_backend {
+            Some(BootstrapBackendOverride::Containerd) => "Bootstrap backend [1/2] [default 1]: ",
+            Some(BootstrapBackendOverride::Docker) => "Bootstrap backend [1/2] [default 2]: ",
+            None => "Bootstrap backend [1/2]: ",
+        };
+        output
+            .write_all(prompt.as_bytes())
+            .and_then(|_| output.flush())
+            .map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "failed to render interactive bootstrap prompt: {error}"
+                ))
+            })?;
+        let mut line = String::new();
+        input.read_line(&mut line).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to read interactive bootstrap input: {error}"
+            ))
+        })?;
+        let normalized = line.trim().to_ascii_lowercase();
+        if normalized.is_empty() {
+            if let Some(default_backend) = default_backend {
+                return Ok(default_backend);
+            }
+        }
+        match normalized.as_str() {
+            "1" | "containerd" | "colima" | "colima-nerdctl" => {
+                return Ok(BootstrapBackendOverride::Containerd);
+            }
+            "2" | "docker" | "docker-compose" => {
+                return Ok(BootstrapBackendOverride::Docker);
+            }
+            _ => {
+                writeln!(
+                    output,
+                    "Enter `1` for containerd (Colima) or `2` for docker."
+                )
+                .and_then(|_| output.flush())
+                .map_err(|error| {
+                    RunnerError::task_invocation(format!(
+                        "failed to render interactive bootstrap prompt: {error}"
+                    ))
+                })?;
+            }
+        }
+    }
 }
 
 fn execute_bootstrap_request(
@@ -450,6 +619,39 @@ pub(super) fn collect_bootstrap_db_seed_prompts_from_io<R: BufRead, W: Write>(
     output: &mut W,
 ) -> Result<Vec<BootstrapDbSeedInput>, RunnerError> {
     crate::runner::db_seed::collect_db_seed_prompts_from_io(repo_root, targets, input, output)
+}
+
+struct ScopedBootstrapBackendOverride {
+    previous: Option<std::ffi::OsString>,
+}
+
+impl ScopedBootstrapBackendOverride {
+    fn set(backend: BootstrapBackendOverride) -> Self {
+        let previous = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+        unsafe {
+            std::env::set_var(
+                "EFFIGY_COMPOSE_BACKEND",
+                match backend {
+                    BootstrapBackendOverride::Containerd => "containerd",
+                    BootstrapBackendOverride::Docker => "docker",
+                },
+            );
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for ScopedBootstrapBackendOverride {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => unsafe {
+                std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
+            },
+            None => unsafe {
+                std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+            },
+        }
+    }
 }
 
 struct BootstrapProgressReporter {

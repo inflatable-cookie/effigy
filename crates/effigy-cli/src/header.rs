@@ -147,7 +147,10 @@ mod tests {
         )
         .expect("header");
         let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
-        let lines = rendered.lines().filter(|line| !line.is_empty()).collect::<Vec<_>>();
+        let lines = rendered
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].chars().count(), lines[1].chars().count());
         assert_eq!(lines[1].chars().count(), lines[2].chars().count());

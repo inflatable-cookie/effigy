@@ -215,11 +215,7 @@ mod tests {
     #[test]
     fn docker_context_warning_stays_hidden_when_containerd_is_already_pinned() {
         assert_eq!(
-            docker_context_mismatch_warning(
-                "default",
-                true,
-                Some(BackendId::colima_nerdctl())
-            ),
+            docker_context_mismatch_warning("default", true, Some(BackendId::colima_nerdctl())),
             None
         );
     }

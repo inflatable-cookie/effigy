@@ -19,8 +19,11 @@ fn run_manifest_task_builtin_config_can_manage_user_global_container_preferences
             "config",
             &["set", "containers.backend", "containerd"],
         );
-        let set_profile =
-            run_builtin_ok(root.clone(), "config", &["set", "containers.profile", "effigy"]);
+        let set_profile = run_builtin_ok(
+            root.clone(),
+            "config",
+            &["set", "containers.profile", "effigy"],
+        );
         let rendered = std::fs::read_to_string(&config_path).expect("user config written");
 
         assert_output_contains_all(&out, &["User Config", "backend: containerd"]);

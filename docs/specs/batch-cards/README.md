@@ -342,9 +342,33 @@ The active batch-card tree now starts with `g04` rollover card `431`.
   is complete. It extracts policy project-name helpers.
 
 - [`532-extract-effective-container-policy-validation-module.md`](./532-extract-effective-container-policy-validation-module.md)
-  is ready. It extracts policy validation helpers.
+  is complete. It extracts policy validation helpers.
+
+- [`533-extract-inline-workspace-policy-module.md`](./533-extract-inline-workspace-policy-module.md)
+  is complete. It extracts inline workspace policy helpers.
+
+- [`534-extract-runtime-dns-policy-module.md`](./534-extract-runtime-dns-policy-module.md)
+  is complete. It extracts runtime DNS policy helpers.
+
+- [`535-extract-generated-compose-eject-module.md`](./535-extract-generated-compose-eject-module.md)
+  is complete. It extracts generated compose eject helpers.
+
+- [`536-extract-container-policy-load-module.md`](./536-extract-container-policy-load-module.md)
+  is complete. It extracts container policy loading and assembly.
+
+- [`537-extract-workspace-host-integration-module.md`](./537-extract-workspace-host-integration-module.md)
+  is complete. It extracts workspace host-integration helpers.
+
+- [`538-extract-workspace-library-mounts-module.md`](./538-extract-workspace-library-mounts-module.md)
+  is complete. It extracts workspace library mount helpers.
+
+- [`539-extract-workspace-isolation-mounts-module.md`](./539-extract-workspace-isolation-mounts-module.md)
+  is complete. It extracts workspace isolation mount helpers.
+
+- [`540-extract-workspace-compose-rewrite-module.md`](./540-extract-workspace-compose-rewrite-module.md)
+  is ready. It extracts workspace compose rewrite helpers.
 
 ## Next Task
 
 Start card
-[`532-extract-effective-container-policy-validation-module.md`](./532-extract-effective-container-policy-validation-module.md).
+[`540-extract-workspace-compose-rewrite-module.md`](./540-extract-workspace-compose-rewrite-module.md).
