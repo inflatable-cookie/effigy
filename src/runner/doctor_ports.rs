@@ -127,12 +127,10 @@ fn collect_runtime_diagnostics(
             diagnostics
                 .evidence
                 .push(format!("docker-context: {context}"));
-            if !profiles.is_empty()
-                && user_backend != Some(effigy_container_manager::BackendId::colima_nerdctl())
+            if let Some(warning) =
+                docker_context_mismatch_warning(&context, !profiles.is_empty(), user_backend)
             {
-                diagnostics.warnings.push(format!(
-                    "docker CLI context is `{context}`, but Effigy will prefer Colima for declared `driver = \"colima\"` containers. If Colima should stay your machine-wide default for unscoped runtime commands too, set `[containers] backend = \"containerd\"` in `~/.effigy/config.toml`."
-                ));
+                diagnostics.warnings.push(warning);
             }
         }
         Ok(None) => {}
@@ -142,6 +140,21 @@ fn collect_runtime_diagnostics(
     }
 
     Ok(diagnostics)
+}
+
+fn docker_context_mismatch_warning(
+    context: &str,
+    has_colima_profiles: bool,
+    user_backend: Option<effigy_container_manager::BackendId>,
+) -> Option<String> {
+    if !has_colima_profiles
+        || user_backend == Some(effigy_container_manager::BackendId::colima_nerdctl())
+    {
+        return None;
+    }
+    Some(format!(
+        "docker CLI context is `{context}`, but Effigy will prefer Colima for declared `driver = \"colima\"` containers. If Colima should stay your machine-wide default for unscoped runtime commands too, set `[containers] backend = \"containerd\"` in `~/.effigy/config.toml`."
+    ))
 }
 
 fn colima_profile_running(profile: &str) -> Result<bool, DoctorError> {
@@ -182,5 +195,40 @@ fn docker_context_name() -> Result<Option<String>, DoctorError> {
         Ok(None)
     } else {
         Ok(Some(value))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::docker_context_mismatch_warning;
+    use effigy_container_manager::BackendId;
+
+    #[test]
+    fn docker_context_warning_shows_when_colima_repo_has_no_pinned_containerd_preference() {
+        let warning =
+            docker_context_mismatch_warning("default", true, Some(BackendId::docker_compose()))
+                .expect("warning");
+        assert!(warning.contains("docker CLI context is `default`"));
+        assert!(warning.contains("[containers] backend = \"containerd\""));
+    }
+
+    #[test]
+    fn docker_context_warning_stays_hidden_when_containerd_is_already_pinned() {
+        assert_eq!(
+            docker_context_mismatch_warning(
+                "default",
+                true,
+                Some(BackendId::colima_nerdctl())
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn docker_context_warning_stays_hidden_without_colima_profiles() {
+        assert_eq!(
+            docker_context_mismatch_warning("default", false, None),
+            None
+        );
     }
 }
