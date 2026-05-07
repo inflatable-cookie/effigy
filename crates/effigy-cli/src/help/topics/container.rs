@@ -67,7 +67,7 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             ),
             (
                 "--kind <KIND>",
-                "Restrict global cache inventory or cleanup to one cache kind such as `rust-target`, `node-modules`, `cargo-registry`, or `cargo-git`; implies profile-wide mode even without `--all`",
+                "Restrict global cache inventory or cleanup to one cache kind such as `rust-target`, `node-modules`, `pnpm-store`, `cargo-registry`, or `cargo-git`; implies profile-wide mode even without `--all`",
             ),
             (
                 "--command <CMD>",

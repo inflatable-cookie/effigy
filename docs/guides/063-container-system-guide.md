@@ -408,6 +408,7 @@ Cache kinds Effigy recognizes:
 
 - `rust-target` — Rust `target` directories
 - `node-modules` — package manager `node_modules` directories
+- `pnpm-store` — pnpm content-addressable store volumes outside the repo bind mount
 
 Cache volumes are created by catalog-generated compose files based on mount
 target heuristics. `cache list` inventories them; `cache prune` removes them.

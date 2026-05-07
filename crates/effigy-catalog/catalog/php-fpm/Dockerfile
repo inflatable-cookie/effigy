@@ -20,6 +20,8 @@ COPY --from=mlocati/php-extension-installer:latest /usr/bin/install-php-extensio
 RUN apt-get update && apt-get install -y --no-install-recommends \
         # Version control and archive tools
         git unzip curl wget \
+        # Lightweight sendmail-compatible SMTP shim for PHP mail()
+        msmtp msmtp-mta ca-certificates \
         # SSH client for git push over ssh and remote interactive use
         # (pairs with the host gitconfig / known_hosts / agent-socket
         # mounts driven by the workspace catalog params)
@@ -109,6 +111,7 @@ RUN { \
         echo 'opcache.max_accelerated_files = 20000'; \
         echo 'opcache.validate_timestamps = 1'; \
         echo 'opcache.revalidate_freq = 1'; \
+        echo 'sendmail_path = "/usr/bin/msmtp -t --read-envelope-from"'; \
     } > /usr/local/etc/php/conf.d/effigy-dev.ini
 
 # ── PHP-FPM tuning ───────────────────────────────────────────────────
@@ -199,8 +202,23 @@ RUN set -eux; \
         echo 'bridge_sock=/tmp/effigy-ssh-auth.sock'; \
         echo 'log=/var/log/effigy-ssh-bridge.log'; \
         echo 'mkcert_ca=/usr/local/share/ca-certificates/effigy-mkcert.crt'; \
+        echo 'smtp_host=${EFFIGY_SMTP_HOST:-mail}'; \
+        echo 'smtp_port=${EFFIGY_SMTP_PORT:-1025}'; \
+        echo 'smtp_from=${EFFIGY_SMTP_FROM:-effigy@localhost}'; \
         echo ': > "$log" || true'; \
         echo 'echo "[effigy-entrypoint] $(date -u +%FT%TZ) start" >> "$log" 2>&1 || true'; \
+        echo 'cat > /etc/msmtprc <<EOF'; \
+        echo 'defaults'; \
+        echo 'auth off'; \
+        echo 'tls off'; \
+        echo 'syslog LOG_MAIL'; \
+        echo 'account default'; \
+        echo 'host '"'"'$smtp_host'"'"''; \
+        echo 'port '"'"'$smtp_port'"'"''; \
+        echo 'from '"'"'$smtp_from'"'"''; \
+        echo 'EOF'; \
+        echo 'chmod 0600 /etc/msmtprc'; \
+        echo 'echo "[effigy-entrypoint] configured msmtp sendmail shim -> ${smtp_host}:${smtp_port} from ${smtp_from}" >> "$log"'; \
         echo 'dev_uid=$(id -u dev 2>/dev/null || echo 1000)'; \
         echo 'dev_gid=$(id -g dev 2>/dev/null || echo 1000)'; \
         echo 'echo "[effigy-entrypoint] dev uid=$dev_uid gid=$dev_gid" >> "$log"'; \

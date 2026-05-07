@@ -22,6 +22,7 @@ services:
 {% endif %}
     volumes:
       - {% if mount_source %}{{ mount_source }}{% else %}{{ repo_root }}{% endif %}:{{ working_dir }}
+      - {{ project_name }}-{{ service_name }}-pnpm-store:/home/dev/.local/share/pnpm/store
 {% for dir in isolated_dirs %}
       - {{ project_name }}-{{ service_name }}{{ working_dir | replace("/", "-") | replace("_", "-") }}-{{ dir | replace("/", "-") | replace("_", "-") }}:{{ working_dir }}/{{ dir }}
 {% endfor %}
@@ -37,8 +38,10 @@ services:
       COMPOSER_HOME: "/home/dev/.config/composer"
       COMPOSER_CACHE_DIR: "/home/dev/.cache/composer"
       PNPM_HOME: "/home/dev/.local/share/pnpm"
-      npm_config_store_dir: "{{ working_dir }}/.effigy/runtime/pnpm/store"
-{% if services.mariadb or services.postgres or services.redis or services.memcached %}
+      npm_config_store_dir: "/home/dev/.local/share/pnpm/store"
+      EFFIGY_SMTP_HOST: "{% if services.mail %}{{ services.mail.name }}{% elif services.mailpit %}{{ services.mailpit.name }}{% else %}mail{% endif %}"
+      EFFIGY_SMTP_PORT: "{% if services.mail %}1025{% elif services.mailpit %}1025{% else %}1025{% endif %}"
+{% if services.mariadb or services.postgres or services.redis or services.memcached or services.mail or services.mailpit %}
     depends_on:
 {% endif %}
 {% if services.mariadb %}
@@ -55,5 +58,12 @@ services:
 {% endif %}
 {% if services.memcached %}
       {{ services.memcached.name }}:
+        condition: service_started
+{% endif %}
+{% if services.mail %}
+      {{ services.mail.name }}:
+        condition: service_started
+{% elif services.mailpit %}
+      {{ services.mailpit.name }}:
         condition: service_started
 {% endif %}

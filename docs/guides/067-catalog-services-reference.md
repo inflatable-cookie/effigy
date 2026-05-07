@@ -198,6 +198,10 @@ Local SMTP catcher and web UI for development email.
   `[containers.<name>.dns]`; also gets a TCP loopback alias for the SMTP
   port when the bundle wires one.
 
+For shipped PHP workspaces, Effigy also configures a sendmail-compatible
+`msmtp` shim so PHP `mail()` calls are forwarded to the local Mailpit SMTP
+listener by default.
+
 ### `minio`
 
 Local S3-compatible object storage and console.

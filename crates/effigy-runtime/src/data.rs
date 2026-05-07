@@ -619,10 +619,14 @@ fn cache_kind_label(kind: effigy_catalog::volumes::CacheVolumeKind) -> &'static 
     match kind {
         effigy_catalog::volumes::CacheVolumeKind::RustTarget => "rust-target",
         effigy_catalog::volumes::CacheVolumeKind::NodeModules => "node-modules",
+        effigy_catalog::volumes::CacheVolumeKind::PnpmStore => "pnpm-store",
     }
 }
 
 fn cache_kind_from_volume_name(name: &str) -> Option<String> {
+    if name.contains("pnpm-store") {
+        return Some("pnpm-store".to_owned());
+    }
     if name.contains("node_modules") || name.contains("node-modules") {
         return Some("node-modules".to_owned());
     }

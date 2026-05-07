@@ -334,7 +334,7 @@ databases = ["my_database"]
 | `web`      | `nginx`               | Nginx in front of `app` using the bundled `decodelabs` config variant. Document root `.`, rewrites every request to `/vendor/genesis.php`, and hands off to php-fpm. No `try_files`, asset caching, or security locations — DecodeLabs apps handle routing, asset serving, and error pages in PHP. See guide 067 for the variant reference. |
 | `db`       | `mariadb:10.11`       | MariaDB with the configured `database` created on first start.                              |
 | `pma`      | `phpmyadmin:latest`   | phpMyAdmin connected to `db`.                                                               |
-| `mail`     | `mailpit:latest`      | SMTP catch-all and inbox UI for local development. Apps inside the stack should send mail to `mail:1025`. |
+| `mail`     | `mailpit:latest`      | SMTP catch-all and inbox UI for local development. Apps inside the stack should send mail to `mail:1025`. In the shipped PHP workspace, legacy `mail()` calls are also forwarded there through a sendmail-compatible shim. |
 | `memcache` | `memcached`           | In-memory cache sized at 128 MB by default.                                                 |
 | `redis`    | `redis:7`             | Key-value store.                                                                            |
 

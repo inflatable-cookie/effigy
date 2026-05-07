@@ -364,8 +364,15 @@ fn php_fpm_supports_node_globals_and_pnpm_tooling() {
     assert!(
         result
             .compose_yaml
-            .contains("npm_config_store_dir: /var/www/html/.effigy/runtime/pnpm/store"),
-        "php-fpm compose should pin the pnpm store under the repo runtime dir:\n{}",
+            .contains("npm_config_store_dir: /home/dev/.local/share/pnpm/store"),
+        "php-fpm compose should pin the pnpm store to the dedicated container cache volume:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result
+            .compose_yaml
+            .contains("test-project-app-pnpm-store:/home/dev/.local/share/pnpm/store"),
+        "php-fpm compose should mount a dedicated pnpm store volume:\n{}",
         result.compose_yaml
     );
     assert!(
@@ -479,6 +486,13 @@ fn php_fpm_supports_explicit_decodelabs_style_service_params() {
         result.compose_yaml.contains("DOCUMENT_ROOT: '.'")
             || result.compose_yaml.contains("DOCUMENT_ROOT: ."),
         "php-fpm explicit params should apply the repo-root document root:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result
+            .compose_yaml
+            .contains("test-project-app-pnpm-store:/home/dev/.local/share/pnpm/store"),
+        "php-fpm explicit params should mount a dedicated pnpm store volume:\n{}",
         result.compose_yaml
     );
     assert!(

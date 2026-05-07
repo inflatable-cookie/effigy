@@ -48,6 +48,7 @@ pub struct ManagedVolume {
 pub enum CacheVolumeKind {
     RustTarget,
     NodeModules,
+    PnpmStore,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +78,9 @@ impl ManagedVolume {
         }
         if target.ends_with("/node_modules") || target == "node_modules" {
             return Some(CacheVolumeKind::NodeModules);
+        }
+        if target.ends_with("/pnpm/store") || target == "/home/dev/.local/share/pnpm/store" {
+            return Some(CacheVolumeKind::PnpmStore);
         }
         None
     }

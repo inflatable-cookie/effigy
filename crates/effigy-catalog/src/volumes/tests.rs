@@ -26,6 +26,14 @@ fn test_volumes() -> Vec<ManagedVolume> {
             mount_point: None,
             mount_target: Some("/workspace-root/api/target".to_string()),
         },
+        ManagedVolume {
+            name: "proj-pnpm-store".to_string(),
+            service: "app".to_string(),
+            persist: false,
+            size_bytes: None,
+            mount_point: None,
+            mount_target: Some("/home/dev/.local/share/pnpm/store".to_string()),
+        },
     ]
 }
 
@@ -35,7 +43,7 @@ fn test_volumes() -> Vec<ManagedVolume> {
 fn reset_without_keep_data_removes_all() {
     let vols = test_volumes();
     let class = classify_for_reset(&vols, false);
-    assert_eq!(class.remove.len(), 3);
+    assert_eq!(class.remove.len(), 4);
     assert!(class.keep.is_empty());
 }
 
@@ -43,8 +51,9 @@ fn reset_without_keep_data_removes_all() {
 fn reset_with_keep_data_preserves_persistent() {
     let vols = test_volumes();
     let class = classify_for_reset(&vols, true);
-    assert_eq!(class.remove.len(), 1);
-    assert_eq!(class.remove[0], "proj-cache-data");
+    assert_eq!(class.remove.len(), 2);
+    assert!(class.remove.contains(&"proj-cache-data".to_string()));
+    assert!(class.remove.contains(&"proj-pnpm-store".to_string()));
     assert_eq!(class.keep.len(), 2);
     assert!(class.keep.contains(&"proj-db-data".to_string()));
     assert!(class.keep.contains(&"proj-search-data".to_string()));
@@ -172,7 +181,7 @@ fn reset_commands_all_volumes() {
     let vols = test_volumes();
     let class = classify_for_reset(&vols, false);
     let cmds = reset_commands(&class);
-    assert_eq!(cmds.len(), 3);
+    assert_eq!(cmds.len(), 4);
 }
 
 // ── ManagedVolume construction ───────────────────────────────────
@@ -200,6 +209,7 @@ fn managed_volume_classifies_cache_kinds_from_mount_target() {
     assert_eq!(volumes[0].cache_kind(), None);
     assert_eq!(volumes[1].cache_kind(), Some(CacheVolumeKind::NodeModules));
     assert_eq!(volumes[2].cache_kind(), Some(CacheVolumeKind::RustTarget));
+    assert_eq!(volumes[3].cache_kind(), Some(CacheVolumeKind::PnpmStore));
 }
 
 #[test]

@@ -36,7 +36,7 @@ pub fn render_cli_header<R: Renderer>(
     let path_line = fit_cli_header_path(&title_line, &path_line, pkg_version);
     let combined_line = format!("{title_line}  {path_line}");
     let version = format!(" {pkg_version} ");
-    let inner_width = combined_line.len();
+    let inner_width = combined_line.len().max(pkg_version.len());
     let top = format!("╭{}╮", "─".repeat(inner_width + 2));
     let middle = format!("│ {:<width$} │", combined_line, width = inner_width);
     let bottom_fill = (inner_width + 2).saturating_sub(version.len());
@@ -125,13 +125,35 @@ fn truncate_path_for_header(path: &str, available_path_width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_path_for_header;
+    use super::{render_cli_header, truncate_path_for_header};
+    use effigy_ui::PlainRenderer;
+    use std::path::Path;
 
     #[test]
     fn truncate_path_for_header_keeps_tail_when_space_is_tight() {
         assert_eq!(
             truncate_path_for_header("/Users/tom/Dev/projects/effigy", 18),
             "…/projects/effigy"
+        );
+    }
+
+    #[test]
+    fn render_cli_header_width_grows_to_fit_long_version() {
+        let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
+        render_cli_header(
+            &mut renderer,
+            Path::new("/var/www/cbs"),
+            "v0.4.0+local.e2bcb80.dirty",
+        )
+        .expect("header");
+        let rendered = String::from_utf8(renderer.into_inner()).expect("utf8");
+        let lines = rendered.lines().filter(|line| !line.is_empty()).collect::<Vec<_>>();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].chars().count(), lines[1].chars().count());
+        assert_eq!(lines[1].chars().count(), lines[2].chars().count());
+        assert!(
+            lines[2].contains("v0.4.0+local.e2bcb80.dirty"),
+            "bottom border should contain the full version: {rendered}"
         );
     }
 }

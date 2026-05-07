@@ -113,5 +113,11 @@ shell = "/bin/bash"
 workspace_host_integration = true
 installs_mkcert_ca = true
 
+[volumes.pnpm-store]
+mount = "/home/dev/.local/share/pnpm/store"
+named = true
+persist = false
+description = "pnpm content-addressable store kept on Linux-native storage outside the repo bind mount"
+
 [depends_on]
 optional = ["mariadb", "postgres", "redis", "memcached"]
