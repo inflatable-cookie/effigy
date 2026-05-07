@@ -741,7 +741,9 @@ primary_service = "app"
     );
 
     assert!(report.success_text.contains("services:"));
-    assert!(report.success_text.contains("- app: Up 2 minutes [0.0.0.0:8080->80/tcp]"));
+    assert!(report
+        .success_text
+        .contains("- app: Up 2 minutes [0.0.0.0:8080->80/tcp]"));
     assert!(!report.success_text.contains("compose status:"));
     assert_eq!(report.json["services"][0]["name"], "app");
 }

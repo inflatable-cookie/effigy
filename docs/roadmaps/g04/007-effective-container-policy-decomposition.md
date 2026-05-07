@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`006-rhai-host-api-split-and-callback-purity.md`](./006-rhai-host-api-split-and-callback-purity.md)
@@ -42,4 +42,5 @@ ownership modules.
 
 ## Next Task
 
-Do not start until `g04.006` closes.
+Start card
+[`532-extract-effective-container-policy-validation-module.md`](../../specs/batch-cards/532-extract-effective-container-policy-validation-module.md).

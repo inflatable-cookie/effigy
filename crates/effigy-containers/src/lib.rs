@@ -3,11 +3,17 @@ pub mod compose;
 pub mod exec;
 pub mod health;
 mod mount_spec;
+pub mod policy;
 mod policy_support;
 pub mod report;
 pub mod session;
 mod workspace;
 
+pub use policy::model::{
+    ContainerEjectResult, ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource,
+    EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveHostProcess, EffectiveServiceAlias,
+    HostProcessRestart, HostProcessSignal, SharedServiceBinding,
+};
 pub use report::{
     cache_list_all_report, cache_list_report, cache_prune_report, data_list_report,
     data_pull_production_report, data_transfer_report, down_report, eject_report, logs_report,
@@ -22,6 +28,9 @@ pub use workspace::load_workspace_ownership_targets;
 #[cfg(test)]
 pub(crate) use compose::with_test_compose_backend;
 use mount_spec::resolve_host_mounts;
+use policy::project::{
+    default_project_name_base, resolve_project_name, validate_unique_project_names,
+};
 #[cfg(test)]
 pub(crate) use policy_support::with_test_effigy_home;
 use policy_support::{resolve_compose_source, validate_media_mounts};
@@ -33,7 +42,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use effigy_catalog::{volumes::ManagedVolume, CatalogError, CatalogResolver, ComposeOutput};
+use effigy_catalog::{CatalogResolver, ComposeOutput};
 use effigy_container_manager::BackendId;
 use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 use effigy_manifest::user_config::UserContainerBackendPreference;
@@ -41,7 +50,7 @@ use effigy_manifest::{
     load_task_manifest_with_inspection, resolve_task_execution_binding_from_parts,
     ManifestContainerConfig, ManifestContainerDriver, ManifestContainerOnTaskExit,
     ManifestContainerShutdownMode, ManifestContainerStartup, ManifestContainersConfig,
-    ManifestError, ManifestInlineWorkspaceContainerConfig, ManifestTask, ManifestWorkspaceConfig,
+    ManifestInlineWorkspaceContainerConfig, ManifestTask, ManifestWorkspaceConfig,
     ResolvedTaskExecutionBinding, ResolvedWorkspaceContainer, TASK_MANIFEST_FILE,
 };
 
@@ -54,131 +63,6 @@ const EJECTED_COMPOSE_DIR: &str = "infra/dev";
 const SHARED_SERVICE_HOST: &str = "host.docker.internal";
 const RUNTIME_DNS_FALLBACK_SERVERS: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
 const NERDCTL_MOUNTS_LABEL_BUDGET_BYTES: usize = 4096;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EffectiveAttachMode {
-    Attached,
-    Detached,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EffectiveComposeSource {
-    Direct,
-    Generated,
-}
-
-#[derive(Debug, Clone)]
-pub struct EffectiveContainerPolicy {
-    pub name: String,
-    pub driver: ManifestContainerDriver,
-    pub startup: ManifestContainerStartup,
-    pub profile: String,
-    pub compose_source: EffectiveComposeSource,
-    pub compose_files: Vec<PathBuf>,
-    pub compose_file_display: String,
-    pub managed_volumes: Vec<ManagedVolume>,
-    pub shared_services: Vec<SharedServiceBinding>,
-    pub project_name: String,
-    pub primary_service: String,
-    pub dns_domain: Option<String>,
-    pub dns_tls: bool,
-    pub dns_port: Option<u16>,
-    pub dns_routes: Vec<EffectiveDnsRoute>,
-    pub service_aliases: Vec<EffectiveServiceAlias>,
-    pub declared_ports: Vec<String>,
-    pub ports_declared_explicitly: bool,
-    pub declared_mounts: Vec<String>,
-    pub declared_media_mounts: Vec<String>,
-    pub pull_production_hook: Option<String>,
-    pub health_check: Option<String>,
-    pub health_timeout_secs: u64,
-    pub workspace_user: Option<String>,
-    pub workspace_home: Option<String>,
-    pub on_task_exit: ManifestContainerOnTaskExit,
-    pub shutdown: ManifestContainerShutdownMode,
-    pub detach_timeout_secs: u64,
-    pub host_processes: Vec<EffectiveHostProcess>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EffectiveHostProcess {
-    pub name: String,
-    pub run: String,
-    pub restart: HostProcessRestart,
-    pub restart_delay_ms: u64,
-    pub shutdown_signal: HostProcessSignal,
-    pub shutdown_grace_secs: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostProcessRestart {
-    OnFailure,
-    Always,
-    Never,
-}
-
-impl HostProcessRestart {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::OnFailure => "on-failure",
-            Self::Always => "always",
-            Self::Never => "never",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostProcessSignal {
-    Sigterm,
-    Sigint,
-    Sighup,
-    Sigkill,
-}
-
-impl HostProcessSignal {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Sigterm => "SIGTERM",
-            Self::Sigint => "SIGINT",
-            Self::Sighup => "SIGHUP",
-            Self::Sigkill => "SIGKILL",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EffectiveDnsRoute {
-    pub domain: String,
-    pub tls: bool,
-    pub port: Option<u16>,
-    pub service: Option<String>,
-    /// External `host:port` target. When set, the gateway registers
-    /// this route directly against the listener and skips the
-    /// container-service host-port resolution. Mutually exclusive
-    /// with `service` at the manifest layer.
-    pub target_host: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EffectiveServiceAlias {
-    pub service: String,
-    pub domain_label: String,
-    pub container_port: u16,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SharedServiceBinding {
-    pub service_name: String,
-    pub catalog: String,
-    pub domain_label: String,
-    pub project_name: String,
-    pub compose_file: PathBuf,
-    pub host: String,
-    pub host_port: u16,
-    pub container_port: u16,
-    pub host_env_vars: Vec<String>,
-    pub port_env_vars: Vec<String>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CatalogNetworkContract {
@@ -212,71 +96,6 @@ pub(crate) fn resolve_catalog_network_contract(
         shared_host_env_vars: capabilities.shared_host_env_vars,
         shared_port_env_vars: capabilities.shared_port_env_vars,
     }))
-}
-
-impl SharedServiceBinding {
-    pub fn standard_env_vars(&self) -> Vec<(String, String)> {
-        let port = self.host_port.to_string();
-        let mut vars = Vec::new();
-        vars.extend(
-            self.host_env_vars
-                .iter()
-                .cloned()
-                .map(|name| (name, self.host.clone())),
-        );
-        vars.extend(
-            self.port_env_vars
-                .iter()
-                .cloned()
-                .map(|name| (name, port.clone())),
-        );
-        vars
-    }
-}
-
-#[derive(Debug)]
-pub enum ContainerPolicyError {
-    Manifest(ManifestError),
-    Catalog(CatalogError),
-    TaskInvocation(String),
-    Read {
-        path: PathBuf,
-        error: std::io::Error,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContainerEjectResult {
-    pub compose_path: PathBuf,
-    pub dockerfile_count: usize,
-    pub config_count: usize,
-}
-
-impl std::fmt::Display for ContainerPolicyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Manifest(error) => write!(f, "{error}"),
-            Self::Catalog(error) => write!(f, "{error}"),
-            Self::TaskInvocation(message) => write!(f, "{message}"),
-            Self::Read { path, error } => {
-                write!(f, "failed to read {}: {error}", path.display())
-            }
-        }
-    }
-}
-
-impl std::error::Error for ContainerPolicyError {}
-
-impl From<ManifestError> for ContainerPolicyError {
-    fn from(value: ManifestError) -> Self {
-        Self::Manifest(value)
-    }
-}
-
-impl From<CatalogError> for ContainerPolicyError {
-    fn from(value: CatalogError) -> Self {
-        Self::Catalog(value)
-    }
 }
 
 fn project_local_catalog_dir(repo_root: Option<&Path>) -> Option<PathBuf> {
@@ -977,133 +796,6 @@ fn effective_service_aliases(
         });
     }
     Ok(aliases)
-}
-
-fn default_project_name_base(manifest: &effigy_manifest::TaskManifest, repo_root: &Path) -> String {
-    manifest
-        .catalog
-        .as_ref()
-        .and_then(|catalog| catalog.alias.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(sanitize_project_name_component)
-        .unwrap_or_else(|| {
-            let repo = repo_root
-                .file_name()
-                .and_then(OsStr::to_str)
-                .unwrap_or("repo");
-            sanitize_project_name_component(repo)
-        })
-}
-
-fn sanitize_project_name_component(value: &str) -> String {
-    value.replace(|c: char| !c.is_ascii_alphanumeric(), "-")
-}
-
-fn resolve_project_name(
-    config: &ManifestContainerConfig,
-    default_project_name_base: &str,
-    name: &str,
-    container_count: usize,
-    repo_root: &Path,
-) -> String {
-    let project_name = config
-        .project_name
-        .clone()
-        .unwrap_or_else(|| default_project_name(default_project_name_base, name, container_count));
-    apply_bootstrap_fresh_session_suffix(repo_root, project_name)
-}
-
-fn default_project_name(
-    default_project_name_base: &str,
-    name: &str,
-    container_count: usize,
-) -> String {
-    if container_count <= 1 {
-        return format!("{default_project_name_base}-dev");
-    }
-    format!("{default_project_name_base}-{name}-dev")
-}
-
-fn validate_unique_project_names(
-    containers: &ManifestContainersConfig,
-    default_project_name_base: &str,
-    repo_root: &Path,
-) -> Result<(), ContainerPolicyError> {
-    if containers.environments.len() <= 1 {
-        return Ok(());
-    }
-
-    let mut by_project_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (name, config) in &containers.environments {
-        by_project_name
-            .entry(resolve_project_name(
-                config,
-                default_project_name_base,
-                name,
-                containers.environments.len(),
-                repo_root,
-            ))
-            .or_default()
-            .push(name.clone());
-    }
-
-    let duplicates = by_project_name
-        .into_iter()
-        .filter(|(_project_name, names)| names.len() > 1)
-        .map(|(project_name, mut names)| {
-            names.sort();
-            format!(
-                "`{project_name}` for containers {}",
-                names
-                    .into_iter()
-                    .map(|name| format!("`{name}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        })
-        .collect::<Vec<_>>();
-    if duplicates.is_empty() {
-        return Ok(());
-    }
-
-    Err(ContainerPolicyError::TaskInvocation(format!(
-        "containers must resolve to unique `project_name` values when more than one container is declared; duplicate effective project names: {}",
-        duplicates.join("; ")
-    )))
-}
-
-fn apply_bootstrap_fresh_session_suffix(repo_root: &Path, project_name: String) -> String {
-    let Some(session_id) = bootstrap_fresh_session_id(repo_root) else {
-        return project_name;
-    };
-    format!("{project_name}-{session_id}")
-}
-
-fn bootstrap_fresh_session_id(repo_root: &Path) -> Option<String> {
-    if let Some(value) = std::env::var("EFFIGY_BOOTSTRAP_FRESH_SESSION_ID")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-    {
-        return Some(value);
-    }
-
-    let session_file = repo_root
-        .join(".effigy")
-        .join("runtime")
-        .join("bootstrap-fresh-session.json");
-    let source = std::fs::read_to_string(session_file).ok()?;
-    let parsed = serde_json::from_str::<serde_json::Value>(&source).ok()?;
-    if parsed.get("active").and_then(serde_json::Value::as_bool) != Some(true) {
-        return None;
-    }
-    parsed
-        .get("session_id")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
 }
 
 fn infer_default_workspace_for_container(

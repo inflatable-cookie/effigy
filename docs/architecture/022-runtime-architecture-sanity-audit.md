@@ -444,4 +444,4 @@ Minimum proof before `g04` closes:
 ## Next Task
 
 Start card
-[`509-add-data-artifact-handoff-plan-foundation.md`](../specs/batch-cards/509-add-data-artifact-handoff-plan-foundation.md).
+[`515-add-data-target-selection-plan.md`](../specs/batch-cards/515-add-data-target-selection-plan.md).

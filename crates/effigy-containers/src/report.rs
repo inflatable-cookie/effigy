@@ -390,10 +390,7 @@ pub fn status_report(
                 } else {
                     format!(" [{}]", service.ports.join(", "))
                 };
-                lines.push(format!(
-                    "- {}: {}{}",
-                    service.name, service.status, ports
-                ));
+                lines.push(format!("- {}: {}{}", service.name, service.status, ports));
             }
         }
     } else if let Some(compose_ps) = compose_ps {
