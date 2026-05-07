@@ -130,6 +130,40 @@ the container at:
 - Per-developer; the file lives in `$HOME/.effigy` and is never checked in.
 - Missing config or missing bundle block silently no-ops.
 
+## User-Global Container Preferences
+
+The same `~/.effigy/config.toml` file can also pin the default container
+backend and Colima profile for machine-local Effigy usage.
+
+Use this when:
+
+- Docker Desktop is installed, but your normal Effigy runtime should still use
+  Colima/containerd
+- you want global cache/runtime commands to target a non-default Colima
+  profile without repeating flags
+
+### Example
+
+```toml
+# ~/.effigy/config.toml
+[containers]
+backend = "containerd"
+profile = "effigy"
+```
+
+### Rules
+
+- `backend = "containerd"` maps Effigy's default unscoped runtime path to the
+  Colima nerdctl backend.
+- `backend = "docker"` maps it to Docker Compose.
+- repo-bound container operations still prefer stronger manifest policy, so a
+  repo with `driver = "colima"` keeps using Colima even when Docker Desktop is
+  installed.
+- `profile` sets the default Colima profile for unscoped runtime/cache
+  commands when no explicit profile flag is supplied.
+- `EFFIGY_COMPOSE_BACKEND` still wins when set; user config is the stable
+  default underneath that override.
+
 ## Host Git/SSH Integration
 
 Two default-on params plus one explicit opt-in param on the `php-fpm`,

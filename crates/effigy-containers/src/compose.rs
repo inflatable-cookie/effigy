@@ -27,13 +27,16 @@ pub enum ComposeBackend {
 
 /// Resolve which compose backend to use.
 ///
-/// Prefers `docker` if available on PATH, falls back to Colima nerdctl.
+/// Precedence:
+/// - explicit env override
+/// - user-global backend preference
+/// - ambient runtime detection
 pub fn resolve_compose_backend() -> ComposeBackend {
     #[cfg(test)]
     if let Some(backend) = tests::test_compose_backend_override() {
         return backend;
     }
-    let detection = ContainerBackendDetection::from_env_and_path();
+    let detection = compose_backend_detection();
     let backend_id = ContainerBackendRegistry::defaults()
         .detect_backend(&detection)
         .unwrap_or_else(|_| BackendId::colima_nerdctl());
@@ -138,12 +141,19 @@ fn colima_nerdctl_args(policy: &EffectiveContainerPolicy, args: &[OsString]) -> 
 
 #[cfg(not(test))]
 fn compose_backend_detection() -> ContainerBackendDetection {
-    ContainerBackendDetection::from_env_and_path()
+    let mut detection = ContainerBackendDetection::from_env_and_path();
+    if detection.backend_override.is_none() {
+        detection.backend_override = crate::user_global_backend_preference();
+    }
+    detection
 }
 
 #[cfg(test)]
 fn compose_backend_detection() -> ContainerBackendDetection {
     let mut detection = ContainerBackendDetection::from_env_and_path();
+    if detection.backend_override.is_none() {
+        detection.backend_override = crate::user_global_backend_preference();
+    }
     if let Some(backend) = tests::test_compose_backend_override() {
         detection.backend_override = Some(backend.backend_id());
     }

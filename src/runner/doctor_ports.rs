@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use effigy_cli::TaskInvocation;
-use effigy_containers::{colima::parse_colima_running, load_all_container_policies};
+use effigy_containers::{
+    colima::parse_colima_running, load_all_container_policies, user_global_backend_preference,
+    user_global_colima_profile,
+};
 use effigy_doctor::{DoctorError, DoctorRuntimeDiagnostics, DoctorRuntimePorts};
 use effigy_execution::ExecutionSurface;
 use effigy_manifest::{DeferredCommand, LoadedCatalog, ManifestContainerDriver};
@@ -105,6 +108,17 @@ fn collect_runtime_diagnostics(
                     .push(format!("colima profile `{profile}` probe failed: {error}")),
             }
         }
+    }
+
+    if let Some(backend) = user_global_backend_preference() {
+        diagnostics.evidence.push(format!(
+            "user-global container backend preference: {backend}"
+        ));
+    }
+    if let Some(profile) = user_global_colima_profile() {
+        diagnostics
+            .evidence
+            .push(format!("user-global Colima profile preference: {profile}"));
     }
 
     match docker_context_name() {

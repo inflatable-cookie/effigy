@@ -34,7 +34,9 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use effigy_catalog::{volumes::ManagedVolume, CatalogError, CatalogResolver, ComposeOutput};
+use effigy_container_manager::BackendId;
 use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
+use effigy_manifest::user_config::UserContainerBackendPreference;
 use effigy_manifest::{
     load_task_manifest_with_inspection, resolve_task_execution_binding_from_parts,
     ManifestContainerConfig, ManifestContainerDriver, ManifestContainerOnTaskExit,
@@ -315,6 +317,19 @@ fn resolve_library_mounts(
     };
     let user_config = effigy_manifest::load_user_config()?;
     Ok(user_config.library_mounts_for(bundle_name))
+}
+
+pub fn user_global_backend_preference() -> Option<BackendId> {
+    let user_config = effigy_manifest::load_user_config().ok()?;
+    match user_config.preferred_container_backend()? {
+        UserContainerBackendPreference::Containerd => Some(BackendId::colima_nerdctl()),
+        UserContainerBackendPreference::Docker => Some(BackendId::docker_compose()),
+    }
+}
+
+pub fn user_global_colima_profile() -> Option<String> {
+    let user_config = effigy_manifest::load_user_config().ok()?;
+    user_config.preferred_container_profile().map(str::to_owned)
 }
 
 pub fn load_container_policy_with_workspace(

@@ -12,7 +12,7 @@ use effigy_containers::{
         list_running_compose_containers_for_profile, ContainerExecError, RunningComposeContainer,
     },
     health::wait_for_ready,
-    EffectiveContainerPolicy,
+    user_global_backend_preference, EffectiveContainerPolicy,
 };
 use effigy_core::shell::shell_quote;
 use serde_json::json;
@@ -672,7 +672,8 @@ fn run_runtime_volume_usage_batch_capture(
 fn detect_profile_backend(_profile: &str) -> Result<BackendId, RunnerError> {
     let mut detection = ContainerBackendDetection::from_env_and_path();
     if detection.backend_override.is_none() {
-        detection.backend_override = Some(BackendId::colima_nerdctl());
+        detection.backend_override =
+            user_global_backend_preference().or(Some(BackendId::colima_nerdctl()));
     }
     ContainerManager::defaults()
         .registry()

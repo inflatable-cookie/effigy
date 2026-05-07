@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Added
+- **User-global container runtime preferences:** `~/.effigy/config.toml` now
+  accepts `[containers] backend = "containerd"|"docker"` and `profile = "..."`
+  so Docker Desktop can coexist with Colima without ambient Docker CLI context
+  silently hijacking Effigy's runtime selection.
 - **`effigy container data dump --push`** publishes explicit **`oci://`** dump
   destinations after the local SQL dump is staged, using the artifact capture
   push path and returning the pushed digest in JSON reports.
@@ -21,6 +25,10 @@ During v0.x, MINOR bumps may include breaking changes.
   Cargo cache volumes.
 
 ### Changed
+- **Container backend selection** now prefers manifest-declared Colima drivers
+  for repo-bound container operations and honors the new user-global
+  preference for unscoped runtime/cache flows before falling back to ambient
+  Docker CLI detection.
 - **Decodelabs bundles** now default their PHP-FPM workspace service to
   **Node.js 24** instead of **20**, so current pnpm and newer Node built-ins
   like **`node:sqlite`** work out of the box in bundle-based sites while

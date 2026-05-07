@@ -10,6 +10,10 @@
 //! Schema, with room to grow:
 //!
 //! ```toml
+//! [containers]
+//! backend = "containerd"
+//! profile = "effigy"
+//!
 //! [bundle.decodelabs]
 //! library_mounts = [
 //!   "~/Dev/legacy/libraries/decodelabs",
@@ -36,7 +40,29 @@ pub const USER_CONFIG_FILE: &str = "config.toml";
 #[serde(deny_unknown_fields)]
 pub struct UserConfig {
     #[serde(default)]
+    pub containers: UserContainersConfig,
+    #[serde(default)]
     pub bundle: BTreeMap<String, UserBundleConfig>,
+}
+
+/// User-global container runtime preferences.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UserContainersConfig {
+    #[serde(default)]
+    pub backend: Option<UserContainerBackendPreference>,
+    #[serde(default)]
+    pub profile: Option<String>,
+}
+
+/// User-global backend preference for runtime/container operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UserContainerBackendPreference {
+    #[serde(alias = "colima-nerdctl")]
+    Containerd,
+    #[serde(alias = "docker-compose")]
+    Docker,
 }
 
 /// Per-bundle user-global override block.
@@ -77,6 +103,18 @@ impl UserConfig {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    pub fn preferred_container_backend(&self) -> Option<UserContainerBackendPreference> {
+        self.containers.backend
+    }
+
+    pub fn preferred_container_profile(&self) -> Option<&str> {
+        self.containers
+            .profile
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
     }
 }
 
@@ -219,6 +257,46 @@ library_mounts = ["~/Dev/u-libs"]
 
         let unknown = cfg.library_mounts_for("does-not-exist");
         assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn parses_user_global_container_preferences() {
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[containers]
+backend = "containerd"
+profile = "effigy"
+"#,
+        )
+        .expect("write");
+        let cfg = load_user_config_from(&path).expect("load");
+        assert_eq!(
+            cfg.preferred_container_backend(),
+            Some(UserContainerBackendPreference::Containerd)
+        );
+        assert_eq!(cfg.preferred_container_profile(), Some("effigy"));
+    }
+
+    #[test]
+    fn parses_backend_aliases() {
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[containers]
+backend = "colima-nerdctl"
+"#,
+        )
+        .expect("write");
+        let cfg = load_user_config_from(&path).expect("load");
+        assert_eq!(
+            cfg.preferred_container_backend(),
+            Some(UserContainerBackendPreference::Containerd)
+        );
     }
 
     #[test]

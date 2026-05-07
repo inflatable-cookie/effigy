@@ -24,7 +24,8 @@ use crate::{
         shutdown_compose_commands,
     },
     compose::{compose_invocation, resolve_host_cli_program},
-    EffectiveContainerPolicy, DEFAULT_COLIMA_PROFILE,
+    user_global_backend_preference, user_global_colima_profile, EffectiveContainerPolicy,
+    DEFAULT_COLIMA_PROFILE,
 };
 
 const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}";
@@ -263,7 +264,7 @@ pub fn list_running_compose_containers() -> Result<Vec<RunningComposeContainer>,
 {
     match detect_container_backend()? {
         backend if backend == BackendId::docker_compose() => {
-            list_running_compose_containers_for_profile(DEFAULT_COLIMA_PROFILE)
+            list_running_compose_containers_for_profile(default_runtime_profile().as_str())
         }
         _ => {
             let mut rows = Vec::new();
@@ -296,10 +297,10 @@ pub fn list_running_compose_containers_profiled(
 ) -> Result<Vec<RunningComposeContainerProfiled>, ContainerExecError> {
     match detect_container_backend()? {
         backend if backend == BackendId::docker_compose() => Ok(
-            list_running_compose_containers_for_profile(DEFAULT_COLIMA_PROFILE)?
+            list_running_compose_containers_for_profile(default_runtime_profile().as_str())?
                 .into_iter()
                 .map(|row| RunningComposeContainerProfiled {
-                    profile: DEFAULT_COLIMA_PROFILE.to_owned(),
+                    profile: default_runtime_profile(),
                     row,
                 })
                 .collect(),
@@ -343,7 +344,7 @@ pub fn infer_host_working_dir_for_container(
 }
 
 pub fn capture_running_container_stats(container_names: &[String]) -> RunningContainerStatsCapture {
-    capture_running_container_stats_for_profile(DEFAULT_COLIMA_PROFILE, container_names)
+    capture_running_container_stats_for_profile(default_runtime_profile().as_str(), container_names)
 }
 
 pub fn capture_running_container_stats_for_profile(
@@ -490,6 +491,9 @@ pub fn run_command_capture_allow_failure(
 
 fn detect_container_backend() -> Result<BackendId, ContainerExecError> {
     let mut detection = ContainerBackendDetection::from_env_and_path();
+    if detection.backend_override.is_none() {
+        detection.backend_override = user_global_backend_preference();
+    }
     if detection.backend_override.is_none() && !running_colima_profiles(Path::new("."))?.is_empty()
     {
         detection.backend_override = Some(BackendId::colima_nerdctl());
@@ -508,7 +512,8 @@ fn run_runtime_command_capture(
 ) -> Result<Output, ContainerExecError> {
     let mut detection = ContainerBackendDetection::from_env_and_path();
     if detection.backend_override.is_none() {
-        detection.backend_override = Some(BackendId::colima_nerdctl());
+        detection.backend_override =
+            user_global_backend_preference().or(Some(BackendId::colima_nerdctl()));
     }
     let (program, args) = ContainerManager::defaults()
         .runtime_process_invocation(&detection, profile, "docker", docker_args)
@@ -524,7 +529,8 @@ fn run_runtime_command_capture_allow_failure(
 ) -> Result<Output, ContainerExecError> {
     let mut detection = ContainerBackendDetection::from_env_and_path();
     if detection.backend_override.is_none() {
-        detection.backend_override = Some(BackendId::colima_nerdctl());
+        detection.backend_override =
+            user_global_backend_preference().or(Some(BackendId::colima_nerdctl()));
     }
     let (program, args) = ContainerManager::defaults()
         .runtime_process_invocation(&detection, profile, "docker", docker_args)
@@ -592,6 +598,10 @@ fn running_colima_profiles(repo_root: &Path) -> Result<Vec<String>, ContainerExe
         .filter(|entry| entry.status.eq_ignore_ascii_case("running"))
         .map(|entry| entry.name)
         .collect())
+}
+
+fn default_runtime_profile() -> String {
+    user_global_colima_profile().unwrap_or_else(|| DEFAULT_COLIMA_PROFILE.to_owned())
 }
 
 fn colima_profile_entry(repo_root: &Path, profile: &str) -> Option<ColimaProfileEntry> {
@@ -1392,6 +1402,7 @@ fn json_string_field(object: &serde_json::Map<String, JsonValue>, keys: &[&str])
 #[cfg(test)]
 mod tests {
     use super::*;
+    use effigy_manifest::with_test_user_config_home;
 
     #[test]
     fn parse_running_compose_containers_splits_tab_fields() {
@@ -1405,6 +1416,20 @@ mod tests {
         assert_eq!(parsed[0].working_dir.as_deref(), Some("/tmp/demo"));
         assert_eq!(parsed[0].service.as_deref(), Some("app"));
         assert_eq!(parsed[0].ports.len(), 2);
+    }
+
+    #[test]
+    fn default_runtime_profile_honors_user_global_preference() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = temp.path().join(".effigy-home");
+        std::fs::create_dir_all(&home).expect("mkdir home");
+        std::fs::write(
+            home.join("config.toml"),
+            "[containers]\nprofile = \"devbox\"\n",
+        )
+        .expect("write config");
+        let profile = with_test_user_config_home(&home, default_runtime_profile);
+        assert_eq!(profile, "devbox");
     }
 
     #[test]

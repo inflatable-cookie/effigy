@@ -16,10 +16,10 @@ use effigy_container_ops::{
 use effigy_containers::{
     cache_list_all_report, cache_list_report, cache_prune_report, data_list_report,
     data_transfer_report, exec::colima_is_running, load_container_policy,
-    validate_compose_backend_runtime, validate_container_policy, ContainerCacheGlobalEntry,
-    ContainerCachePruneEntry, ContainerCacheVolumeEntry, ContainerCommandReport,
-    ContainerDataTransferAction, ContainerDataVolumeEntry, EffectiveComposeSource,
-    EffectiveContainerPolicy,
+    user_global_colima_profile, validate_compose_backend_runtime, validate_container_policy,
+    ContainerCacheGlobalEntry, ContainerCachePruneEntry, ContainerCacheVolumeEntry,
+    ContainerCommandReport, ContainerDataTransferAction, ContainerDataVolumeEntry,
+    EffectiveComposeSource, EffectiveContainerPolicy,
 };
 
 use crate::read::discover_running_environments;
@@ -153,17 +153,20 @@ pub fn run_container_cache_list_all<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let profile = profile.unwrap_or("effigy");
+    let resolved_profile = profile
+        .map(str::to_owned)
+        .or_else(user_global_colima_profile)
+        .unwrap_or_else(|| "effigy".to_owned());
     let _operation_plan = global_cache_operation_plan(
         cwd,
-        profile,
+        &resolved_profile,
         ContainerCacheOperation::list(
             true,
             project_filter.map(str::to_owned),
             kind_filter.map(str::to_owned),
         ),
     );
-    let caches = collect_global_cache_entries(cwd, profile, &run_runtime_volume_capture)?
+    let caches = collect_global_cache_entries(cwd, &resolved_profile, &run_runtime_volume_capture)?
         .into_iter()
         .filter(|cache| {
             project_filter.is_none_or(|project| cache.project_name.as_deref() == Some(project))
@@ -174,7 +177,7 @@ where
         cache_scope_label("profile-wide cache inventory", project_filter, kind_filter);
 
     Ok(render_container_report(
-        cache_list_all_report(profile, &scope_label, &caches),
+        cache_list_all_report(&resolved_profile, &scope_label, &caches),
         output_json,
     ))
 }
@@ -244,10 +247,13 @@ pub fn run_container_cache_prune_all<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
-    let profile = profile.unwrap_or("effigy");
+    let resolved_profile = profile
+        .map(str::to_owned)
+        .or_else(user_global_colima_profile)
+        .unwrap_or_else(|| "effigy".to_owned());
     let _operation_plan = global_cache_operation_plan(
         cwd,
-        profile,
+        &resolved_profile,
         ContainerCacheOperation::prune(
             true,
             project_filter.map(str::to_owned),
@@ -255,7 +261,7 @@ where
             false,
         ),
     );
-    let caches = collect_global_cache_entries(cwd, profile, &run_runtime_volume_capture)?
+    let caches = collect_global_cache_entries(cwd, &resolved_profile, &run_runtime_volume_capture)?
         .into_iter()
         .filter(|cache| {
             project_filter.is_none_or(|project| cache.project_name.as_deref() == Some(project))
@@ -267,7 +273,11 @@ where
         let removed = if cache.in_use {
             false
         } else {
-            run_runtime_volume_capture(cwd, profile, &remove_volume_command(&cache.name))?;
+            run_runtime_volume_capture(
+                cwd,
+                &resolved_profile,
+                &remove_volume_command(&cache.name),
+            )?;
             true
         };
         entries.push(ContainerCachePruneEntry {

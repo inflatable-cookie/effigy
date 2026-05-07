@@ -1,8 +1,8 @@
 use super::*;
 use crate::{EffectiveComposeSource, EffectiveContainerPolicy};
 use effigy_manifest::{
-    ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-    ManifestContainerStartup,
+    with_test_user_config_home, ManifestContainerDriver, ManifestContainerOnTaskExit,
+    ManifestContainerShutdownMode, ManifestContainerStartup,
 };
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -89,6 +89,46 @@ fn resolve_compose_backend_for_policy_prefers_declared_colima_driver() {
         std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
     }
     let backend = resolve_compose_backend_for_policy(&test_policy(EffectiveComposeSource::Direct));
+    match previous_path {
+        Some(value) => unsafe {
+            std::env::set_var("PATH", value);
+        },
+        None => unsafe {
+            std::env::remove_var("PATH");
+        },
+    }
+    match previous_backend {
+        Some(value) => unsafe {
+            std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
+        },
+        None => unsafe {
+            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+        },
+    }
+    assert_eq!(backend, ComposeBackend::ColimaNerdctl);
+}
+
+#[test]
+fn resolve_compose_backend_honors_user_global_containerd_preference() {
+    let _lock = env_lock();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = temp.path().join(".effigy-home");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    std::fs::write(
+        home.join("config.toml"),
+        "[containers]\nbackend = \"containerd\"\n",
+    )
+    .expect("write config");
+    let bin = temp.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("mkdir bin");
+    std::fs::write(bin.join("docker"), "#!/bin/sh\n").expect("write docker");
+    let previous_path = std::env::var_os("PATH");
+    let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+    unsafe {
+        std::env::set_var("PATH", bin.display().to_string());
+        std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+    }
+    let backend = with_test_user_config_home(&home, resolve_compose_backend);
     match previous_path {
         Some(value) => unsafe {
             std::env::set_var("PATH", value);
