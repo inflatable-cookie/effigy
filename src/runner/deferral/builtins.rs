@@ -5,20 +5,24 @@ use effigy_manifest::LoadedCatalog;
 
 pub(crate) fn deferred_builtins_for_root(root: &Path) -> BTreeSet<String> {
     let manifest_path = root.join(effigy_manifest::TASK_MANIFEST_FILE);
-    let explicit = crate::runner::manifest::load_task_manifest(&manifest_path)
+    crate::runner::manifest::load_task_manifest(&manifest_path)
         .ok()
-        .and_then(|manifest| {
-            manifest
+        .map(|manifest| {
+            let mut deferred = manifest
                 .defer
                 .as_ref()
                 .map(|defer| defer.explicitly_deferred_builtins())
+                .unwrap_or_default();
+            deferred.extend(
+                manifest
+                    .tasks
+                    .keys()
+                    .filter(|task_name| is_top_level_builtin_command(task_name))
+                    .cloned(),
+            );
+            deferred
         })
-        .unwrap_or_default();
-    if !explicit.is_empty() {
-        return explicit;
-    }
-    let _ = root;
-    BTreeSet::new()
+        .unwrap_or_default()
 }
 
 pub(crate) fn deferred_builtins_from_catalogs(
@@ -30,6 +34,32 @@ pub(crate) fn deferred_builtins_from_catalogs(
         .find(|catalog| catalog.catalog_root == resolved_root)
         .map(|catalog| catalog.deferred_builtins.clone())
         .unwrap_or_default()
+}
+
+fn is_top_level_builtin_command(name: &str) -> bool {
+    matches!(
+        name,
+        "artifact"
+            | "bootstrap"
+            | "bundle"
+            | "catalogs"
+            | "changelog"
+            | "container"
+            | "contracts"
+            | "defer"
+            | "demo"
+            | "deploy"
+            | "distribution"
+            | "docs"
+            | "doctor"
+            | "exec"
+            | "gateway"
+            | "release"
+            | "service"
+            | "system"
+            | "tasks"
+            | "workspace"
+    )
 }
 
 #[cfg(test)]
@@ -71,5 +101,32 @@ mod tests {
 
         let builtins = deferred_builtins_for_root(&root);
         assert!(!builtins.contains("release"), "got: {builtins:?}");
+    }
+
+    #[test]
+    fn deferred_builtins_include_root_task_name_collisions() {
+        let root = temp_workspace("implicit-collision");
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.deploy]\nrun = \"printf deploy\"\n",
+        )
+        .expect("write manifest");
+
+        let builtins = deferred_builtins_for_root(&root);
+        assert!(builtins.contains("deploy"), "got: {builtins:?}");
+    }
+
+    #[test]
+    fn deferred_builtins_merge_explicit_and_implicit_entries() {
+        let root = temp_workspace("merge-explicit-implicit");
+        fs::write(
+            root.join("effigy.toml"),
+            "[defer]\nrun = \"printf deferred\"\nbuiltins = [\"release\"]\n[tasks.deploy]\nrun = \"printf deploy\"\n",
+        )
+        .expect("write manifest");
+
+        let builtins = deferred_builtins_for_root(&root);
+        assert!(builtins.contains("release"), "got: {builtins:?}");
+        assert!(builtins.contains("deploy"), "got: {builtins:?}");
     }
 }

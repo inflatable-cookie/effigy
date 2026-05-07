@@ -232,3 +232,60 @@ fn repo_override_from_args(args: &[String]) -> Option<PathBuf> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_command_with_builtin_deferral;
+    use effigy_cli::Command;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_root(name: &str) -> std::path::PathBuf {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("effigy-entrypoint-{name}-{ts}"));
+        fs::create_dir_all(&root).expect("mkdir root");
+        root
+    }
+
+    #[test]
+    fn parse_command_with_builtin_deferral_prefers_root_task_name_collision() {
+        let root = temp_root("builtin-collision");
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.deploy]\nrun = \"printf deploy\"\n",
+        )
+        .expect("write manifest");
+
+        let parsed =
+            parse_command_with_builtin_deferral(vec!["deploy".to_owned()], &root).expect("parse");
+
+        assert!(matches!(
+            parsed,
+            Command::Task(task) if task.name == "deploy" && task.args.is_empty()
+        ));
+    }
+
+    #[test]
+    fn parse_command_with_builtin_deferral_preserves_passthrough_args_for_root_task_collision() {
+        let root = temp_root("builtin-collision-args");
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.deploy]\nrun = \"printf deploy\"\n",
+        )
+        .expect("write manifest");
+
+        let parsed = parse_command_with_builtin_deferral(
+            vec!["deploy".to_owned(), "uat".to_owned()],
+            &root,
+        )
+        .expect("parse");
+
+        assert!(matches!(
+            parsed,
+            Command::Task(task) if task.name == "deploy" && task.args == vec!["uat".to_owned()]
+        ));
+    }
+}
