@@ -444,4 +444,4 @@ Minimum proof before `g04` closes:
 ## Next Task
 
 Start card
-[`432-scaffold-execution-pipeline-ownership-lane.md`](../specs/batch-cards/432-scaffold-execution-pipeline-ownership-lane.md).
+[`434-select-next-execution-planning-slice.md`](../specs/batch-cards/434-select-next-execution-planning-slice.md).

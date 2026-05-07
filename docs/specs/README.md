@@ -71,4 +71,4 @@ Recently completed:
 ## Next Task
 
 Card
-[`432-scaffold-execution-pipeline-ownership-lane.md`](./batch-cards/432-scaffold-execution-pipeline-ownership-lane.md).
+[`434-select-next-execution-planning-slice.md`](./batch-cards/434-select-next-execution-planning-slice.md).

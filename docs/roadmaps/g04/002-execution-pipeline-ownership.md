@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Ready
+Status: Active
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`001-runtime-architecture-sanity-audit-and-generation-rollover.md`](./001-runtime-architecture-sanity-audit-and-generation-rollover.md)
@@ -51,4 +51,4 @@ request-shape crate.
 ## Next Task
 
 Start card
-[`432-scaffold-execution-pipeline-ownership-lane.md`](../../specs/batch-cards/432-scaffold-execution-pipeline-ownership-lane.md).
+[`434-select-next-execution-planning-slice.md`](../../specs/batch-cards/434-select-next-execution-planning-slice.md).

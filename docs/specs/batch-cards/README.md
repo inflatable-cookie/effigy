@@ -18,8 +18,15 @@ Batch cards are the execution units for active Effigy strict-lane work.
   `g04`.
 
 - [`432-scaffold-execution-pipeline-ownership-lane.md`](./432-scaffold-execution-pipeline-ownership-lane.md)
-  is ready. It opens the first `g04.002` implementation lane for execution
-  pipeline ownership.
+  is complete. It opened the first `g04.002` implementation lane and selected
+  the dispatch-plan foundation slice.
+
+- [`433-add-execution-dispatch-plan-foundation.md`](./433-add-execution-dispatch-plan-foundation.md)
+  is complete. It added pure dispatch-plan types to `effigy-execution` before
+  moving side effects.
+
+- [`434-select-next-execution-planning-slice.md`](./434-select-next-execution-planning-slice.md)
+  is ready. It selects the next bounded `g04.002` implementation slice.
 
 - [`415-plan-artifact-contract-and-acowtancy-boundary.md`](./415-plan-artifact-contract-and-acowtancy-boundary.md)
   is complete. It opened `g03.036` as strict lane `042` and pinned the

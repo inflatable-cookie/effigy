@@ -48,6 +48,10 @@ impl TaskExecutionRequest {
             route,
         }
     }
+
+    pub fn into_dispatch_plan(self) -> Result<ExecutionDispatchPlan, ExecutionRequestError> {
+        self.resolve().into_dispatch_plan()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -146,6 +150,107 @@ impl TaskExecutionRequestBuilder {
 pub struct ResolvedTaskExecutionPlan {
     pub request: TaskExecutionRequest,
     pub route: ExecutionRoute,
+}
+
+impl ResolvedTaskExecutionPlan {
+    pub fn into_dispatch_plan(self) -> Result<ExecutionDispatchPlan, ExecutionRequestError> {
+        ExecutionDispatchPlan::from_resolved_task_plan(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionPreflightInput {
+    pub selector: String,
+    pub args: Vec<String>,
+    pub cwd: PathBuf,
+    pub surface: ExecutionSurface,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionRuntimeArgsPlan {
+    pub raw_args: Vec<String>,
+    pub exec_args: Vec<String>,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionPreflightPlan {
+    pub input: ExecutionPreflightInput,
+    pub runtime_args: Option<ExecutionRuntimeArgsPlan>,
+    pub diagnostics: Vec<ExecutionPlanDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionDispatchInput {
+    pub request: TaskExecutionRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionDispatchPlan {
+    pub request: TaskExecutionRequest,
+    pub route: ExecutionRoute,
+    pub selector: String,
+    pub args: Vec<String>,
+    pub effective_cwd: PathBuf,
+    pub env_keys: Vec<String>,
+    pub output_mode: ExecutionOutputMode,
+    pub surface: ExecutionSurface,
+    pub diagnostics: Vec<ExecutionPlanDiagnostic>,
+}
+
+impl ExecutionDispatchPlan {
+    pub fn from_request(request: TaskExecutionRequest) -> Result<Self, ExecutionRequestError> {
+        request.into_dispatch_plan()
+    }
+
+    pub fn from_resolved_task_plan(
+        plan: ResolvedTaskExecutionPlan,
+    ) -> Result<Self, ExecutionRequestError> {
+        let ExecutionIntent::Task { selector, args } = &plan.request.invocation else {
+            return Err(ExecutionRequestError::NonTaskInvocation);
+        };
+        let effective_cwd = plan
+            .request
+            .environment
+            .cwd
+            .clone()
+            .unwrap_or_else(|| plan.request.runtime_context.invocation_cwd().to_path_buf());
+        let mut env_keys = plan
+            .request
+            .environment
+            .env
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        env_keys.sort();
+
+        Ok(Self {
+            request: plan.request.clone(),
+            route: plan.route,
+            selector: selector.clone(),
+            args: args.clone(),
+            effective_cwd,
+            env_keys,
+            output_mode: plan.request.output_mode,
+            surface: plan.request.surface.clone(),
+            diagnostics: Vec::new(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionPlanDiagnostic {
+    pub code: String,
+    pub message: String,
+}
+
+impl ExecutionPlanDiagnostic {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -279,6 +384,7 @@ pub enum ExecutionRoute {
 pub enum ExecutionRequestError {
     MissingRuntimeContext,
     MissingInvocation,
+    NonTaskInvocation,
 }
 
 impl std::fmt::Display for ExecutionRequestError {
@@ -286,6 +392,9 @@ impl std::fmt::Display for ExecutionRequestError {
         match self {
             Self::MissingRuntimeContext => write!(f, "missing runtime context"),
             Self::MissingInvocation => write!(f, "missing execution invocation"),
+            Self::NonTaskInvocation => {
+                write!(f, "execution request must contain a task invocation")
+            }
         }
     }
 }
@@ -302,8 +411,9 @@ mod tests {
     use effigy_context::{CapturedEnv, EffigyRuntimeContext};
 
     use super::{
-        ExecutionEnvironmentPlan, ExecutionIntent, ExecutionOutputMode, ExecutionRoute,
-        ExecutionRunTarget, ExecutionRuntimePolicy, ExecutionSurface, TaskExecutionRequestBuilder,
+        ExecutionDispatchPlan, ExecutionEnvironmentPlan, ExecutionIntent, ExecutionOutputMode,
+        ExecutionRoute, ExecutionRunTarget, ExecutionRuntimePolicy, ExecutionSurface,
+        TaskExecutionRequestBuilder,
     };
 
     fn temp_repo(name: &str) -> PathBuf {
@@ -477,6 +587,90 @@ mod tests {
             plan.request.runtime_context.target().resolved_root,
             root,
             "execution plans must keep target repo authority from the captured context"
+        );
+    }
+
+    #[test]
+    fn dispatch_plan_normalizes_task_request_without_exposing_env_values() {
+        let context = context("dispatch");
+        let cwd = context.invocation_cwd().join("workspace");
+        let request = TaskExecutionRequestBuilder::new()
+            .runtime_context(context)
+            .task("db:migrate", vec!["--fresh".to_owned()])
+            .surface(ExecutionSurface::Bootstrap)
+            .output_mode(ExecutionOutputMode::Json)
+            .environment(
+                ExecutionEnvironmentPlan::default()
+                    .cwd(cwd.clone())
+                    .env("BETA", OsString::from("two"))
+                    .env("ALPHA", OsString::from("one")),
+            )
+            .build()
+            .expect("request");
+
+        let plan = ExecutionDispatchPlan::from_request(request).expect("dispatch plan");
+
+        assert_eq!(plan.selector, "db:migrate");
+        assert_eq!(plan.args, vec!["--fresh"]);
+        assert_eq!(plan.effective_cwd, cwd);
+        assert_eq!(plan.env_keys, vec!["ALPHA", "BETA"]);
+        assert_eq!(plan.output_mode, ExecutionOutputMode::Json);
+        assert_eq!(plan.surface, ExecutionSurface::Bootstrap);
+        assert_eq!(plan.route, ExecutionRoute::Host);
+    }
+
+    #[test]
+    fn dispatch_plan_is_equivalent_for_embedded_task_surfaces() {
+        let surfaces = [
+            ExecutionSurface::DirectCli,
+            ExecutionSurface::Bootstrap,
+            ExecutionSurface::Rhai,
+            ExecutionSurface::RunArray,
+        ];
+        let context = context("dispatch-surfaces");
+        let cwd = context.invocation_cwd().join("repo");
+
+        let plans = surfaces
+            .into_iter()
+            .map(|surface| {
+                let request = TaskExecutionRequestBuilder::new()
+                    .runtime_context(context.clone())
+                    .task("db:seed", vec!["--latest".to_owned()])
+                    .surface(surface)
+                    .environment(ExecutionEnvironmentPlan::default().cwd(cwd.clone()))
+                    .build()
+                    .expect("request");
+
+                ExecutionDispatchPlan::from_request(request).expect("dispatch plan")
+            })
+            .collect::<Vec<_>>();
+
+        for plan in &plans {
+            assert_eq!(plan.selector, "db:seed");
+            assert_eq!(plan.args, vec!["--latest"]);
+            assert_eq!(plan.route, ExecutionRoute::Host);
+            assert_eq!(plan.effective_cwd, cwd);
+        }
+
+        assert_eq!(plans[0].surface, ExecutionSurface::DirectCli);
+        assert_eq!(plans[1].surface, ExecutionSurface::Bootstrap);
+        assert_eq!(plans[2].surface, ExecutionSurface::Rhai);
+        assert_eq!(plans[3].surface, ExecutionSurface::RunArray);
+    }
+
+    #[test]
+    fn command_request_is_not_a_task_dispatch_plan() {
+        let request = TaskExecutionRequestBuilder::new()
+            .runtime_context(context("command-dispatch"))
+            .command(vec!["echo".to_owned(), "ok".to_owned()])
+            .build()
+            .expect("request");
+
+        let error = ExecutionDispatchPlan::from_request(request).expect_err("should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "execution request must contain a task invocation"
         );
     }
 }

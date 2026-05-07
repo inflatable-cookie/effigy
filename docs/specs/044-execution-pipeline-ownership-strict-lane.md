@@ -27,11 +27,13 @@ changing task behavior.
 
 ## Current Ready Card
 
-[`432-scaffold-execution-pipeline-ownership-lane.md`](./batch-cards/432-scaffold-execution-pipeline-ownership-lane.md)
+[`434-select-next-execution-planning-slice.md`](./batch-cards/434-select-next-execution-planning-slice.md)
 
 ## Execution Chain
 
-- `432` ready: scaffold execution pipeline ownership lane
+- `432` complete: scaffold execution pipeline ownership lane
+- `433` complete: add execution dispatch plan foundation
+- `434` ready: select next execution planning slice
 
 ## Exit Condition
 
@@ -43,4 +45,4 @@ split into clear owner modules.
 ## Next Task
 
 Card
-[`432-scaffold-execution-pipeline-ownership-lane.md`](./batch-cards/432-scaffold-execution-pipeline-ownership-lane.md).
+[`434-select-next-execution-planning-slice.md`](./batch-cards/434-select-next-execution-planning-slice.md).

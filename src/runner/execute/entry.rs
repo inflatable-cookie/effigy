@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use effigy_cli::TaskInvocation;
-use effigy_execution::{ExecutionIntent, TaskExecutionRequest};
+use effigy_execution::{ExecutionDispatchPlan, TaskExecutionRequest};
 
 use super::pipeline::run_execution_pipeline;
 use super::planning::build_execution_preflight;
@@ -50,26 +50,19 @@ pub(in crate::runner) fn run_manifest_task_with_cwd_and_env(
 pub(in crate::runner) fn run_manifest_task_request(
     request: TaskExecutionRequest,
 ) -> Result<String, RunnerError> {
-    let ExecutionIntent::Task { selector, args } = request.invocation else {
-        return Err(RunnerError::task_invocation(
-            "execution request must contain a task invocation",
-        ));
-    };
-    let cwd = request
-        .environment
-        .cwd
-        .unwrap_or_else(|| request.runtime_context.invocation_cwd().to_path_buf());
+    let plan = ExecutionDispatchPlan::from_request(request)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let invocation = TaskInvocation {
-        name: selector,
-        args,
+        name: plan.selector.clone(),
+        args: plan.args.clone(),
     };
 
-    if request.environment.env.is_empty() {
-        return run_manifest_task_with_cwd(&invocation, cwd);
+    if plan.request.environment.env.is_empty() {
+        return run_manifest_task_with_cwd(&invocation, plan.effective_cwd);
     }
 
     let mut env_overrides = BTreeMap::new();
-    for (key, value) in request.environment.env {
+    for (key, value) in plan.request.environment.env {
         let value = value.into_string().map_err(|_| {
             RunnerError::task_invocation(format!(
                 "execution request env override `{key}` is not valid UTF-8"
@@ -77,5 +70,5 @@ pub(in crate::runner) fn run_manifest_task_request(
         })?;
         env_overrides.insert(key, value);
     }
-    run_manifest_task_with_cwd_and_env(&invocation, cwd, &env_overrides)
+    run_manifest_task_with_cwd_and_env(&invocation, plan.effective_cwd, &env_overrides)
 }
