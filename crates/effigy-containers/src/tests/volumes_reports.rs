@@ -269,7 +269,7 @@ primary_service = "app"
         port_env_vars: vec!["DB_PORT".to_owned(), "MYSQL_PORT".to_owned()],
     }];
 
-    let report = status_report(&policy, true, None, None);
+    let report = status_report(&policy, true, None, None, None);
 
     assert!(report.success_text.contains("shared_services: 1"));
     assert!(report
@@ -695,7 +695,7 @@ primary_service = "app"
     let mut policy = load_container_policy(&root, None).expect("policy");
     policy.declared_media_mounts = vec!["storage/uploads:/var/www/html/storage/uploads".to_owned()];
 
-    let report = status_report(&policy, true, None, None);
+    let report = status_report(&policy, true, None, None, None);
 
     assert_eq!(
         report.json["media_mounts"][0],
@@ -704,4 +704,44 @@ primary_service = "app"
     assert!(report
         .success_text
         .contains("media_mounts: storage/uploads:/var/www/html/storage/uploads"));
+}
+
+#[test]
+fn status_report_prefers_runtime_services_over_compose_ps_text() {
+    let root = temp_repo("status-services");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let services = vec![ContainerStatusService {
+        name: "app".to_owned(),
+        container_name: "demo-app-1".to_owned(),
+        status: "Up 2 minutes".to_owned(),
+        ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
+    }];
+
+    let report = status_report(
+        &policy,
+        true,
+        None,
+        Some(services.as_slice()),
+        Some("NAME STATUS\napp running\n"),
+    );
+
+    assert!(report.success_text.contains("services:"));
+    assert!(report.success_text.contains("- app: Up 2 minutes [0.0.0.0:8080->80/tcp]"));
+    assert!(!report.success_text.contains("compose status:"));
+    assert_eq!(report.json["services"][0]["name"], "app");
 }

@@ -6,6 +6,7 @@
 //! contract to this module.
 
 use effigy_catalog::volumes::VolumeClassification;
+use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
 use std::collections::BTreeMap;
 
@@ -23,7 +24,7 @@ pub struct ContainerCommandReport {
     pub success_text: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ContainerStatusService {
     pub name: String,
     pub container_name: String,
@@ -31,7 +32,7 @@ pub struct ContainerStatusService {
     pub ports: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AllocatedPortsSummary {
     pub base: u16,
     pub http: u16,
@@ -41,7 +42,7 @@ pub struct AllocatedPortsSummary {
     pub memcached: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ContainerStatusAllEntry {
     pub repo_root: String,
     pub container: String,
@@ -324,6 +325,7 @@ pub fn status_report(
     policy: &EffectiveContainerPolicy,
     colima_running: bool,
     health: Option<&'static str>,
+    services: Option<&[ContainerStatusService]>,
     compose_ps: Option<&str>,
 ) -> ContainerCommandReport {
     let json = json!({
@@ -342,6 +344,7 @@ pub fn status_report(
         "ports": policy.declared_ports,
         "mounts": policy.declared_mounts,
         "detach_timeout_secs": policy.detach_timeout_secs,
+        "services": services,
         "compose_ps": compose_ps,
         "media_mounts": policy.declared_media_mounts,
     });
@@ -375,7 +378,25 @@ pub fn status_report(
     if let Some(health) = health {
         lines.push(format!("health: {health}"));
     }
-    if let Some(compose_ps) = compose_ps {
+    if let Some(services) = services {
+        lines.push(String::new());
+        lines.push("services:".to_owned());
+        if services.is_empty() {
+            lines.push("(none)".to_owned());
+        } else {
+            for service in services {
+                let ports = if service.ports.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", service.ports.join(", "))
+                };
+                lines.push(format!(
+                    "- {}: {}{}",
+                    service.name, service.status, ports
+                ));
+            }
+        }
+    } else if let Some(compose_ps) = compose_ps {
         lines.push(String::new());
         lines.push("compose status:".to_owned());
         lines.push(compose_ps.trim().to_owned());

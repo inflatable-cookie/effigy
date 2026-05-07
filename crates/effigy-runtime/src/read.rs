@@ -54,7 +54,12 @@ pub fn run_container_status(
         },
         None,
     )?;
-    let compose_ps = if colima_running {
+    let services = if colima_running {
+        discover_running_services_for_policy(repo_root, &policy)?
+    } else {
+        Vec::new()
+    };
+    let compose_ps = if colima_running && services.is_empty() {
         let plan = compose_invocation_plan(
             repo_root,
             &policy,
@@ -72,7 +77,13 @@ pub fn run_container_status(
     } else {
         None
     };
-    let mut report = status_report(&policy, colima_running, health, compose_ps.as_deref());
+    let mut report = status_report(
+        &policy,
+        colima_running,
+        health,
+        colima_running.then_some(services.as_slice()),
+        compose_ps.as_deref(),
+    );
     annotate_warning_lines(&mut report, &colima_profile_warnings(&policy, repo_root));
     Ok(render_container_report(report, output_json))
 }
@@ -535,6 +546,37 @@ fn environment_status_entry(environment: &DiscoveredRunningEnvironment) -> Conta
             })
             .collect(),
     }
+}
+
+fn discover_running_services_for_policy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<ContainerStatusService>, EffigyRuntimeError> {
+    let canonical_repo = canonicalize_or_original(repo_root);
+    let environment = discover_running_environments()?
+        .into_iter()
+        .find(|environment| {
+            canonicalize_or_original(Path::new(&environment.repo_root)) == canonical_repo
+                && environment.policy.name == policy.name
+                && environment.policy.project_name == policy.project_name
+        });
+    Ok(environment
+        .map(|environment| {
+            environment
+                .services
+                .into_iter()
+                .map(|service| ContainerStatusService {
+                    name: service
+                        .service
+                        .clone()
+                        .unwrap_or_else(|| service.container_name.clone()),
+                    container_name: service.container_name,
+                    status: service.status,
+                    ports: service.ports,
+                })
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 /// Walk up from `start` looking for an `effigy.toml` marker.
