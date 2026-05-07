@@ -76,4 +76,4 @@ Recently completed:
 ## Next Task
 
 Card
-[`540-extract-workspace-compose-rewrite-module.md`](./batch-cards/540-extract-workspace-compose-rewrite-module.md).
+[`543-extract-container-exec-parse-module.md`](./batch-cards/543-extract-container-exec-parse-module.md).

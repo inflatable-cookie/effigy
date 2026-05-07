@@ -366,9 +366,18 @@ The active batch-card tree now starts with `g04` rollover card `431`.
   is complete. It extracts workspace isolation mount helpers.
 
 - [`540-extract-workspace-compose-rewrite-module.md`](./540-extract-workspace-compose-rewrite-module.md)
-  is ready. It extracts workspace compose rewrite helpers.
+  is complete. It extracts workspace compose rewrite helpers.
+
+- [`541-extract-generated-compose-source-module.md`](./541-extract-generated-compose-source-module.md)
+  is complete. It extracts generated compose source resolution.
+
+- [`542-extract-container-exec-implementation-module.md`](./542-extract-container-exec-implementation-module.md)
+  is complete. It extracts the container exec implementation behind a facade.
+
+- [`543-extract-container-exec-parse-module.md`](./543-extract-container-exec-parse-module.md)
+  is ready. It extracts container exec parsing.
 
 ## Next Task
 
 Start card
-[`540-extract-workspace-compose-rewrite-module.md`](./540-extract-workspace-compose-rewrite-module.md).
+[`543-extract-container-exec-parse-module.md`](./543-extract-container-exec-parse-module.md).

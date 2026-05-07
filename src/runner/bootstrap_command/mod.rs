@@ -26,11 +26,12 @@ use effigy_ui::theme::{is_ci_environment, resolve_color_enabled, Theme};
 use effigy_ui::{style_text, OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 
 use crate::runner::db_seed::{
-    maybe_prompt_db_seed_inputs, resolve_db_seed_input_paths, run_db_seed_task,
-    stage_db_seed_files, ScopedDbSeedEnvOverride, DB_SEED_TASK,
+    db_seed_task_requires_container_runtime, maybe_prompt_db_seed_inputs,
+    resolve_db_seed_input_paths, run_db_seed_task, stage_db_seed_files, ScopedDbSeedEnvOverride,
+    DB_SEED_TASK,
 };
 use crate::runner::embedded_runner::run_embedded_task;
-use crate::runner::execute::api::run_managed_run_with_cwd;
+use crate::runner::execute::api::{run_managed_run_with_cwd, task_requires_container_runtime};
 use crate::runner::manifest::load_task_manifest;
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, LeaseRefreshPolicy, PublicWorkspaceCleanupOverride,
@@ -56,22 +57,28 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
             backend,
             ..
         } => {
-            let selected_backend =
-                select_bootstrap_backend(*backend, args.output_json, *no_prompt, *plan)?;
-            let _backend_guard = selected_backend.map(ScopedBootstrapBackendOverride::set);
             let request = resolve_bootstrap_request(&cwd, &args)?;
             if *plan {
                 return Ok(crate_render_bootstrap_plan(&request, args.output_json));
             }
 
+            let mut selected_backend = *backend;
+            let mut backend_guard = None::<ScopedBootstrapBackendOverride>;
             maybe_confirm_bootstrap_path_reuse(
                 &request.destination,
                 args.output_json,
                 *no_prompt,
                 *reuse_path,
             )?;
-            let result =
-                execute_bootstrap_request(&request, &cwd, args.output_json, *no_prompt, *fresh)?;
+            let result = execute_bootstrap_request(
+                &request,
+                &cwd,
+                args.output_json,
+                *no_prompt,
+                *fresh,
+                &mut selected_backend,
+                &mut backend_guard,
+            )?;
             Ok(crate_render_bootstrap_result(&result, args.output_json))
         }
         BootstrapSubcommand::Teardown { yes } => {
@@ -412,6 +419,8 @@ fn execute_bootstrap_request(
     output_json: bool,
     no_prompt: bool,
     fresh: bool,
+    selected_backend: &mut Option<BootstrapBackendOverride>,
+    backend_guard: &mut Option<ScopedBootstrapBackendOverride>,
 ) -> Result<BootstrapExecutionResult, RunnerError> {
     let progress = RefCell::new(BootstrapProgressReporter::new(output_json));
     let mut fresh_session = fresh.then(|| {
@@ -514,6 +523,14 @@ fn execute_bootstrap_request(
         progress
             .borrow_mut()
             .start_command_phase("[bootstrap] running database seed task");
+        if db_seed_task_requires_container_runtime(&effective_destination)? {
+            ensure_bootstrap_backend_selected(
+                selected_backend,
+                backend_guard,
+                output_json,
+                no_prompt,
+            )?;
+        }
         let db_seed_env_entries = crate::runner::db_seed::db_seed_env(&result.staged_db_seeds);
         run_db_seed_task(&effective_destination, &db_seed_env_entries)?;
         progress.borrow_mut().finish_success(&format!(
@@ -529,6 +546,20 @@ fn execute_bootstrap_request(
             ));
         }
         for selector in &result.start_tasks {
+            if task_requires_container_runtime(
+                &TaskInvocation {
+                    name: selector.clone(),
+                    args: Vec::new(),
+                },
+                effective_destination.clone(),
+            )? {
+                ensure_bootstrap_backend_selected(
+                    selected_backend,
+                    backend_guard,
+                    output_json,
+                    no_prompt,
+                )?;
+            }
             progress
                 .borrow_mut()
                 .handle(BootstrapProgressEvent::StartTaskStarted {
@@ -547,6 +578,23 @@ fn execute_bootstrap_request(
     }
 
     Ok(result)
+}
+
+fn ensure_bootstrap_backend_selected(
+    selected_backend: &mut Option<BootstrapBackendOverride>,
+    backend_guard: &mut Option<ScopedBootstrapBackendOverride>,
+    output_json: bool,
+    no_prompt: bool,
+) -> Result<(), RunnerError> {
+    if backend_guard.is_some() {
+        return Ok(());
+    }
+    let chosen = select_bootstrap_backend(*selected_backend, output_json, no_prompt, false)?;
+    if let Some(backend) = chosen {
+        *backend_guard = Some(ScopedBootstrapBackendOverride::set(backend));
+        *selected_backend = Some(backend);
+    }
+    Ok(())
 }
 
 fn maybe_stage_bootstrap_db_seed_inputs(

@@ -21,7 +21,7 @@ ownership modules while keeping public exports stable.
 
 ## Current Ready Card
 
-[`540-extract-workspace-compose-rewrite-module.md`](./batch-cards/540-extract-workspace-compose-rewrite-module.md)
+[`543-extract-container-exec-parse-module.md`](./batch-cards/543-extract-container-exec-parse-module.md)
 
 ## Execution Chain
 
@@ -37,7 +37,10 @@ ownership modules while keeping public exports stable.
 - `537` complete: extract workspace host-integration module
 - `538` complete: extract workspace library mounts module
 - `539` complete: extract workspace isolation mounts module
-- `540` ready: extract workspace compose rewrite module
+- `540` complete: extract workspace compose rewrite module
+- `541` complete: extract generated compose source module
+- `542` complete: extract container exec implementation module
+- `543` ready: extract container exec parse module
 
 ## Decomposition Inventory
 
@@ -85,4 +88,4 @@ orchestration, and focused container tests pass.
 ## Next Task
 
 Card
-[`540-extract-workspace-compose-rewrite-module.md`](./batch-cards/540-extract-workspace-compose-rewrite-module.md).
+[`543-extract-container-exec-parse-module.md`](./batch-cards/543-extract-container-exec-parse-module.md).

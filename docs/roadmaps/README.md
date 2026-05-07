@@ -41,7 +41,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - [`g04.007`](./g04/007-effective-container-policy-decomposition.md)
 - [`../specs/049-effective-container-policy-decomposition-strict-lane.md`](../specs/049-effective-container-policy-decomposition-strict-lane.md)
 - Ready card:
-  [`540-extract-workspace-compose-rewrite-module.md`](../specs/batch-cards/540-extract-workspace-compose-rewrite-module.md)
+  [`543-extract-container-exec-parse-module.md`](../specs/batch-cards/543-extract-container-exec-parse-module.md)
 
 ## Research Program
 
@@ -78,7 +78,7 @@ Before rollover:
 ## Next Task
 
 Start card
-[`540-extract-workspace-compose-rewrite-module.md`](../specs/batch-cards/540-extract-workspace-compose-rewrite-module.md).
+[`543-extract-container-exec-parse-module.md`](../specs/batch-cards/543-extract-container-exec-parse-module.md).
 
 ## Historical language boundary
 

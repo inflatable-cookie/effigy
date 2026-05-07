@@ -2,7 +2,7 @@
 
 Lane: [`049-effective-container-policy-decomposition-strict-lane.md`](../049-effective-container-policy-decomposition-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 
@@ -40,12 +40,16 @@ workspace file, generated compose tests pass, and public callers still compile.
 
 ## Validation
 
-- `cargo check -p effigy-containers`
-- `cargo check -p effigy --lib`
-- `cargo test -p effigy-containers generated_compose_underlay_shape_keeps_runtime_paths_and_external_mounts_stable -- --test-threads=1`
-- `cargo test -p effigy-containers direct_compose_policy_rewrites_workspace_mounts_from_manifest_contract -- --test-threads=1`
-- `git diff --check`
+- PASS: `CARGO_TARGET_DIR=/tmp/effigy-g04-workspace-compose-check cargo check -p effigy-containers`
+- PASS: `CARGO_TARGET_DIR=/tmp/effigy-g04-workspace-compose-libcheck cargo check -p effigy --lib`
+- PASS: `CARGO_TARGET_DIR=/tmp/effigy-g04-workspace-compose-test-a cargo test -p effigy-containers generated_compose_underlay_shape_keeps_runtime_paths_and_external_mounts_stable -- --test-threads=1`
+- PASS: `CARGO_TARGET_DIR=/tmp/effigy-g04-workspace-compose-test-b cargo test -p effigy-containers direct_compose_policy_rewrites_workspace_mounts_from_manifest_contract -- --test-threads=1`
+- PASS: `git diff --check`
+
+Note: `cargo check -p effigy --lib` still reports the pre-existing
+`runtime_activation_report_for_result` dead-code warning.
 
 ## Next Task
 
-Extract the workspace compose rewrite module.
+Start
+[`541-extract-generated-compose-source-module.md`](./541-extract-generated-compose-source-module.md).

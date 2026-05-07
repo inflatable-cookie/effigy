@@ -253,3 +253,33 @@ fn compose_up_args_leave_direct_compose_without_force_recreate() {
     assert!(rendered.contains(&"--build".to_owned()));
     assert!(!rendered.contains(&"--force-recreate".to_owned()));
 }
+
+#[test]
+fn normalize_compose_command_args_wraps_bare_exec_tail() {
+    let args = normalize_compose_command_args(
+        &test_policy(EffectiveComposeSource::Direct),
+        &[
+            OsString::from("exec"),
+            OsString::from("-T"),
+            OsString::from("app"),
+        ],
+    );
+    let rendered = args
+        .iter()
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        rendered,
+        vec![
+            "compose".to_owned(),
+            "-f".to_owned(),
+            "docker-compose.yml".to_owned(),
+            "-p".to_owned(),
+            "demo".to_owned(),
+            "exec".to_owned(),
+            "-T".to_owned(),
+            "app".to_owned(),
+        ]
+    );
+}

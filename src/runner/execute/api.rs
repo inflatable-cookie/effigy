@@ -12,6 +12,7 @@ use effigy_tasks::CatalogSelectionMode;
 use super::planning::{
     build_execution_preflight as build_execution_preflight_impl, ExecutionPreflight,
 };
+use super::selection::{resolve_task_selection, SelectionResolution};
 use crate::runner::error::RunnerError;
 
 pub(in crate::runner) use super::binding::{
@@ -69,6 +70,35 @@ pub(in crate::runner) fn build_execution_preflight(
     cwd: PathBuf,
 ) -> Result<ExecutionPreflight, RunnerError> {
     build_execution_preflight_impl(task, cwd)
+}
+
+pub(in crate::runner) fn task_requires_container_runtime(
+    task: &TaskInvocation,
+    cwd: PathBuf,
+) -> Result<bool, RunnerError> {
+    let preflight = build_execution_preflight_impl(task, cwd)?;
+    let selection = match resolve_task_selection(task, &preflight)? {
+        SelectionResolution::Selected { selection, .. } => selection,
+        SelectionResolution::Output(_) => return Ok(false),
+    };
+    let binding_resolution = resolve_execution_binding_resolution(
+        selection
+            .catalog
+            .manifest
+            .task_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.run_in),
+        selection.catalog.manifest.systems.as_ref(),
+        selection.catalog.manifest.containers.as_ref(),
+        &preflight.selector.task_name,
+        selection.task,
+        "bootstrap backend selection",
+    )?;
+    Ok(binding_resolution.is_inline_container()
+        || matches!(
+            binding_resolution.kind(),
+            ExecutionBindingKind::NamedContainer
+        ))
 }
 
 pub(in crate::runner) fn run_managed_run_with_cwd(

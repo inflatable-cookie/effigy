@@ -7,7 +7,7 @@ use effigy_container_manager::{
     ContainerRuntimeState,
 };
 use effigy_containers::{
-    compose::{compose_args, compose_up_args},
+    compose::{compose_args, compose_up_args, normalize_compose_command_args},
     EffectiveContainerPolicy,
 };
 
@@ -56,13 +56,14 @@ pub fn compose_invocation_plan_from_args(
     action: ContainerAction,
     label: &str,
 ) -> Result<ContainerComposeInvocationPlan, EffigyRuntimeError> {
+    let normalized_args = normalize_compose_command_args(policy, &args);
     let request = container_manager_request(repo_root, policy);
     ContainerManager::defaults()
         .compose_invocation_plan(
             &request,
             &backend_detection_for_policy(policy),
             policy.profile.as_str(),
-            &args,
+            &normalized_args,
             action,
             label,
         )
@@ -271,5 +272,83 @@ mod tests {
         }
         assert_eq!(plan.backend_id, BackendId::docker_compose());
         assert_eq!(plan.program, std::ffi::OsString::from("docker"));
+        assert_eq!(
+            plan.args
+                .iter()
+                .map(|value| value.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            vec![
+                "compose".to_owned(),
+                "-f".to_owned(),
+                "docker-compose.yml".to_owned(),
+                "-p".to_owned(),
+                "demo".to_owned(),
+                "ps".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn compose_invocation_plan_wraps_bare_exec_tail_for_docker_backend() {
+        let _lock = env_lock();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let bin = temp.path().join("bin");
+        std::fs::create_dir_all(&bin).expect("mkdir bin");
+        std::fs::write(bin.join("docker"), "#!/bin/sh\n").expect("write docker");
+        let previous_path = std::env::var_os("PATH");
+        let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+        unsafe {
+            std::env::set_var("PATH", bin.display().to_string());
+            std::env::set_var("EFFIGY_COMPOSE_BACKEND", "docker");
+        }
+        let repo_root = temp.path();
+        let plan = super::compose_invocation_plan_from_args(
+            repo_root,
+            &test_policy(),
+            vec![
+                std::ffi::OsString::from("exec"),
+                std::ffi::OsString::from("-T"),
+                std::ffi::OsString::from("app"),
+                std::ffi::OsString::from("sh"),
+            ],
+            ContainerAction::Exec,
+            "docker compose exec",
+        )
+        .expect("plan");
+        match previous_path {
+            Some(value) => unsafe {
+                std::env::set_var("PATH", value);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+        match previous_backend {
+            Some(value) => unsafe {
+                std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
+            },
+            None => unsafe {
+                std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+            },
+        }
+        assert_eq!(plan.backend_id, BackendId::docker_compose());
+        assert_eq!(plan.program, std::ffi::OsString::from("docker"));
+        assert_eq!(
+            plan.args
+                .iter()
+                .map(|value| value.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            vec![
+                "compose".to_owned(),
+                "-f".to_owned(),
+                "docker-compose.yml".to_owned(),
+                "-p".to_owned(),
+                "demo".to_owned(),
+                "exec".to_owned(),
+                "-T".to_owned(),
+                "app".to_owned(),
+                "sh".to_owned(),
+            ]
+        );
     }
 }

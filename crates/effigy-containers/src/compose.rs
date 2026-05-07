@@ -74,6 +74,26 @@ pub fn compose_args<'a>(
     args
 }
 
+pub fn normalize_compose_command_args(
+    policy: &EffectiveContainerPolicy,
+    args: &[OsString],
+) -> Vec<OsString> {
+    match args.first().map(|value| value.to_string_lossy()) {
+        Some(first) if first == "compose" => args.to_vec(),
+        _ => {
+            let mut normalized = vec![OsString::from("compose")];
+            for compose_file in &policy.compose_files {
+                normalized.push(OsString::from("-f"));
+                normalized.push(compose_file.as_os_str().to_os_string());
+            }
+            normalized.push(OsString::from("-p"));
+            normalized.push(OsString::from(policy.project_name.as_str()));
+            normalized.extend(args.iter().cloned());
+            normalized
+        }
+    }
+}
+
 /// Build standard detached bring-up args.
 ///
 /// Uses `--build` so compose-backed services track local Dockerfile changes
@@ -96,10 +116,16 @@ pub fn compose_invocation(
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
 ) -> (&'static str, Vec<OsString>) {
+    let normalized_args = normalize_compose_command_args(policy, args);
     let detection = compose_backend_detection_for_policy(policy);
     let (program, resolved_args) = effigy_container_manager::ContainerManager::defaults()
-        .compose_process_invocation(&detection, policy.profile.as_str(), args)
-        .unwrap_or_else(|_| (OsString::from("colima"), colima_nerdctl_args(policy, args)));
+        .compose_process_invocation(&detection, policy.profile.as_str(), &normalized_args)
+        .unwrap_or_else(|_| {
+            (
+                OsString::from("colima"),
+                colima_nerdctl_args(policy, &normalized_args),
+            )
+        });
     let program = if program == "docker" {
         "docker"
     } else {

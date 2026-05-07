@@ -533,6 +533,28 @@ pub(in crate::runner) fn run_db_seed_task(
     run_builtin_db_seed_task(repo_root, &manifest, env_overrides)
 }
 
+pub(in crate::runner) fn db_seed_task_requires_container_runtime(
+    repo_root: &Path,
+) -> Result<bool, RunnerError> {
+    let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
+    if let Some(task) = manifest.tasks.get(DB_SEED_TASK) {
+        let binding_resolution = resolve_execution_binding_resolution(
+            manifest
+                .task_defaults
+                .as_ref()
+                .and_then(|defaults| defaults.run_in),
+            manifest.systems.as_ref(),
+            manifest.containers.as_ref(),
+            DB_SEED_TASK,
+            task,
+            "database seed",
+        )?;
+        return Ok(binding_resolution.is_inline_container()
+            || binding_resolution.effective_policy(repo_root)?.is_some());
+    }
+    Ok(manifest.containers.is_some())
+}
+
 fn prepare_db_seed_runtime(
     repo_root: &Path,
     manifest: &effigy_manifest::TaskManifest,

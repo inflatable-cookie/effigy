@@ -1,0 +1,1306 @@
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+
+use effigy_catalog::{
+    assembly::ServiceDeclaration, volumes::ManagedVolume, CatalogResolver, ComposeAssembler,
+    ComposeOutput,
+};
+use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
+use effigy_gateway::loopback::LoopbackRegistry;
+use effigy_gateway::ports::PortRegistry;
+use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
+use serde::{Deserialize, Serialize};
+use serde_yaml::Value as YamlValue;
+
+use crate::{
+    mount_spec::resolve_host_mounts, resolve_catalog_network_contract, ContainerPolicyError,
+    SharedServiceBinding, GENERATED_RUNTIME_COMPOSE_DIR, PROJECT_LOCAL_CATALOG_DIR,
+    SHARED_SERVICE_HOST,
+};
+
+#[cfg(test)]
+thread_local! {
+    static TEST_EFFIGY_HOME: std::cell::RefCell<Option<PathBuf>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GeneratedComposeDocument {
+    #[serde(default)]
+    services: std::collections::BTreeMap<String, GeneratedComposeService>,
+    #[serde(flatten)]
+    extra: std::collections::BTreeMap<String, YamlValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GeneratedComposeService {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    environment: Option<GeneratedComposeEnvironment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ports: Option<Vec<GeneratedComposePort>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    volumes: Option<Vec<GeneratedComposeVolume>>,
+    #[serde(flatten)]
+    extra: std::collections::BTreeMap<String, YamlValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum GeneratedComposeEnvironment {
+    Mapping(std::collections::BTreeMap<String, YamlValue>),
+    Sequence(Vec<String>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum GeneratedComposePort {
+    String(String),
+    Other(YamlValue),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum GeneratedComposeVolume {
+    String(String),
+    Other(YamlValue),
+}
+
+impl GeneratedComposeDocument {
+    fn parse(project_name: &str, phase: &str, raw: &str) -> Result<Self, ContainerPolicyError> {
+        let parsed = serde_yaml::from_str::<Self>(raw).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "generated compose for `{project_name}` is invalid YAML before {phase}: {error}"
+            ))
+        })?;
+        if parsed.services.is_empty() {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "generated compose for `{project_name}` is missing a `services` mapping"
+            )));
+        }
+        Ok(parsed)
+    }
+
+    fn write_back(
+        &self,
+        project_name: &str,
+        phase: &str,
+        assembly: &mut effigy_catalog::assembly::AssemblyResult,
+    ) -> Result<(), ContainerPolicyError> {
+        assembly.compose_yaml = serde_yaml::to_string(self).map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "failed to serialize generated compose for `{project_name}` after {phase}: {error}"
+            ))
+        })?;
+        Ok(())
+    }
+
+    fn sorted_service_names(&self) -> Vec<String> {
+        self.services.keys().cloned().collect()
+    }
+}
+
+impl GeneratedComposeService {
+    fn environment_mapping_mut(
+        &mut self,
+    ) -> Result<&mut std::collections::BTreeMap<String, YamlValue>, ContainerPolicyError> {
+        match self.environment.take() {
+            Some(GeneratedComposeEnvironment::Mapping(mapping)) => {
+                self.environment = Some(GeneratedComposeEnvironment::Mapping(mapping));
+            }
+            Some(GeneratedComposeEnvironment::Sequence(sequence)) => {
+                let mut mapping = std::collections::BTreeMap::new();
+                for raw in sequence {
+                    let Some((name, value)) = raw.split_once('=') else {
+                        return Err(ContainerPolicyError::TaskInvocation(format!(
+                            "shared-service env injection expected `KEY=VALUE` environment entry, got `{raw}`"
+                        )));
+                    };
+                    mapping.insert(
+                        name.trim().to_owned(),
+                        YamlValue::String(value.trim().to_owned()),
+                    );
+                }
+                self.environment = Some(GeneratedComposeEnvironment::Mapping(mapping));
+            }
+            None => {
+                self.environment = Some(GeneratedComposeEnvironment::Mapping(
+                    std::collections::BTreeMap::new(),
+                ));
+            }
+        }
+
+        let Some(GeneratedComposeEnvironment::Mapping(mapping)) = self.environment.as_mut() else {
+            return Err(ContainerPolicyError::TaskInvocation(
+                "shared-service env injection only supports mapping or string-list `environment` entries".to_owned(),
+            ));
+        };
+        Ok(mapping)
+    }
+
+    fn has_repo_root_mount(&self, repo_root: &str) -> bool {
+        self.volumes.as_ref().is_some_and(|volumes| {
+            volumes.iter().any(|entry| {
+                let GeneratedComposeVolume::String(raw) = entry else {
+                    return false;
+                };
+                raw.split_once(':')
+                    .is_some_and(|(source, _target)| source.trim() == repo_root)
+            })
+        })
+    }
+
+    fn append_mounts(&mut self, mounts: &[String]) {
+        let volumes = self.volumes.get_or_insert_with(Vec::new);
+        for mount in mounts {
+            if volumes
+                .iter()
+                .any(|entry| matches!(entry, GeneratedComposeVolume::String(existing) if existing == mount))
+            {
+                continue;
+            }
+            volumes.push(GeneratedComposeVolume::String(mount.clone()));
+        }
+    }
+}
+
+pub(crate) fn resolve_compose_source(
+    repo_root: &Path,
+    container_name: &str,
+    config: &ManifestContainerConfig,
+    project_name: &str,
+    effective_manifest: &str,
+) -> Result<
+    (
+        Vec<PathBuf>,
+        String,
+        Vec<ManagedVolume>,
+        Vec<String>,
+        Vec<SharedServiceBinding>,
+    ),
+    ContainerPolicyError,
+> {
+    if config.compose_file.is_some() && !config.services.is_empty() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` cannot combine `compose_file` with `[containers.{container_name}.services]`"
+        )));
+    }
+
+    if let Some(compose_file) = &config.compose_file {
+        if !configured_media_mounts(config).is_empty() {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` cannot combine direct `compose_file` ownership with `[containers.{container_name}.data].media`; the bounded media lifecycle path only supports generated compose"
+            )));
+        }
+        let compose_file =
+            repo_relative_path(repo_root, compose_file, "containers.*.compose_file")?;
+        let display = path_relative_to_repo(repo_root, &compose_file);
+        let effective_ports = if config
+            .host
+            .as_ref()
+            .is_some_and(|host| !host.ports.is_empty())
+        {
+            configured_host_ports(config)
+        } else {
+            infer_direct_compose_host_ports(&compose_file, project_name)?
+        };
+        return Ok((
+            vec![compose_file],
+            display,
+            Vec::new(),
+            effective_ports,
+            Vec::new(),
+        ));
+    }
+
+    if config.services.is_empty() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` must declare either `compose_file` or `[containers.{container_name}.services]`"
+        )));
+    }
+
+    let shared_services = resolve_shared_service_bindings(repo_root, config)?;
+    let local_services = config
+        .services
+        .iter()
+        .filter(|(_name, service)| !service.shared.unwrap_or(false))
+        .map(|(name, service)| (name.clone(), service.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    if local_services.is_empty() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` cannot mark every generated service as `shared = true`; at least one local service must remain"
+        )));
+    }
+    if config.primary_service.as_ref().is_some_and(|primary| {
+        shared_services
+            .iter()
+            .any(|service| service.service_name == *primary)
+    }) {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` cannot use shared service `{}` as `primary_service`",
+            config.primary_service.as_deref().unwrap_or_default()
+        )));
+    }
+
+    let services = build_service_declarations(repo_root, config, &local_services)?;
+    let resolver = CatalogResolver::new(
+        project_local_catalog_dir(repo_root),
+        user_global_catalog_dir(),
+    );
+    let assembler = ComposeAssembler::new(resolver);
+    let generated_catalog_root = format!("{GENERATED_RUNTIME_COMPOSE_DIR}/.effigy-catalog");
+    let (host_uid, host_gid) = host_workspace_identity();
+    let mut assembly = assembler.assemble(
+        &services,
+        project_name,
+        &repo_root.display().to_string(),
+        &generated_catalog_root,
+        host_uid,
+        host_gid,
+    )?;
+    let mut compose_document = GeneratedComposeDocument::parse(
+        project_name,
+        "typed assembly policy application",
+        &assembly.compose_yaml,
+    )?;
+    apply_shared_service_env_policy(&shared_services, &mut compose_document)?;
+    apply_generated_compose_media_policy(
+        repo_root,
+        container_name,
+        &configured_media_mounts(config),
+        &mut compose_document,
+    )?;
+    apply_generated_compose_host_mount_policy(
+        repo_root,
+        container_name,
+        config,
+        &mut compose_document,
+    )?;
+    let configured_bindings = configured_host_ports(config)
+        .iter()
+        .map(|raw| parse_port_binding(raw))
+        .collect::<Result<Vec<_>, _>>()?;
+    let shared_container_ports = shared_services
+        .iter()
+        .map(|service| service.container_port)
+        .collect::<std::collections::BTreeSet<_>>();
+    let conflicting_shared_ports = configured_bindings
+        .iter()
+        .filter(|binding| shared_container_ports.contains(&binding.container))
+        .map(|binding| format!("{}:{}", binding.host, binding.container))
+        .collect::<Vec<_>>();
+    if !conflicting_shared_ports.is_empty() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` cannot bind shared service port mappings through `[containers.{container_name}.host].ports`: {}",
+            conflicting_shared_ports.join(", ")
+        )));
+    }
+    let effective_ports = apply_generated_compose_port_policy(
+        repo_root,
+        project_name,
+        &configured_bindings,
+        &project_loopback_port_rules(repo_root, project_name, config)?,
+        &mut compose_document,
+    )?;
+    compose_document.write_back(
+        project_name,
+        "typed assembly policy application",
+        &mut assembly,
+    )?;
+    let output = ComposeOutput::new(repo_root.join(GENERATED_RUNTIME_COMPOSE_DIR));
+    ensure_effigy_ignored_in_git_root(repo_root).map_err(|error| ContainerPolicyError::Read {
+        path: repo_root.join(".gitignore"),
+        error,
+    })?;
+    let manifest_cache_key = if effective_ports.is_empty() {
+        effective_manifest.to_owned()
+    } else {
+        format!(
+            "{effective_manifest}\n# effective_ports={}\n# shared_services={}",
+            effective_ports.join(","),
+            shared_services
+                .iter()
+                .map(|service| format!(
+                    "{}:{}:{}",
+                    service.catalog, service.project_name, service.host_port
+                ))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    };
+    let write = output.write(&assembly, &manifest_cache_key)?;
+
+    let mut compose_files = vec![write.compose_path];
+    if output.has_override() {
+        compose_files.push(output.override_compose_path());
+    }
+    let display = compose_files
+        .iter()
+        .map(|path| path_relative_to_repo(repo_root, path))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok((
+        compose_files,
+        display,
+        assembly
+            .volumes
+            .iter()
+            .map(ManagedVolume::from_volume_info)
+            .collect(),
+        effective_ports,
+        shared_services,
+    ))
+}
+
+fn build_service_declarations(
+    repo_root: &Path,
+    container_config: &ManifestContainerConfig,
+    services: &std::collections::BTreeMap<String, ManifestContainerServiceConfig>,
+) -> Result<Vec<ServiceDeclaration>, ContainerPolicyError> {
+    let resolver = CatalogResolver::new(
+        project_local_catalog_dir(repo_root),
+        user_global_catalog_dir(),
+    );
+
+    services
+        .iter()
+        .map(|(name, service)| {
+            let fragment = resolver.resolve(&service.catalog)?;
+            let mut params = service
+                .params
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect::<std::collections::HashMap<_, _>>();
+
+            let inferred_working_dir = container_config
+                .working_dir
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let Some(working_dir) = inferred_working_dir {
+                if !params.contains_key("working_dir")
+                    && fragment.schema.params.contains_key("working_dir")
+                {
+                    params.insert(
+                        "working_dir".to_owned(),
+                        toml::Value::String(working_dir.to_owned()),
+                    );
+                }
+            }
+
+            Ok(ServiceDeclaration {
+                name: name.clone(),
+                catalog: service.catalog.clone(),
+                params,
+                variant: service.variant.clone(),
+                config: service
+                    .config
+                    .as_deref()
+                    .map(|raw| repo_relative_path(repo_root, raw, "containers.*.services.*.config"))
+                    .transpose()?,
+            })
+        })
+        .collect()
+}
+
+fn resolve_shared_service_bindings(
+    repo_root: &Path,
+    config: &ManifestContainerConfig,
+) -> Result<Vec<SharedServiceBinding>, ContainerPolicyError> {
+    let mut bindings = Vec::new();
+    for (service_name, service) in &config.services {
+        if !service.shared.unwrap_or(false) {
+            continue;
+        }
+        let contract = validate_supported_shared_service(repo_root, service_name, service)?;
+        let shared_project_name = shared_service_project_name(service);
+        let output_dir = shared_service_output_dir(&shared_project_name)?;
+        let declaration = ServiceDeclaration {
+            name: service_name.clone(),
+            catalog: service.catalog.clone(),
+            params: service
+                .params
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+            variant: None,
+            config: None,
+        };
+        let resolver = CatalogResolver::new(None, user_global_catalog_dir());
+        let assembler = ComposeAssembler::new(resolver);
+        let (host_uid, host_gid) = host_workspace_identity();
+        let mut assembly = assembler.assemble(
+            &[declaration],
+            &shared_project_name,
+            &output_dir.display().to_string(),
+            ".effigy-catalog",
+            host_uid,
+            host_gid,
+        )?;
+        let mut compose_document = GeneratedComposeDocument::parse(
+            &shared_project_name,
+            "shared-service typed port policy application",
+            &assembly.compose_yaml,
+        )?;
+        let effective_ports = apply_generated_compose_port_policy(
+            &output_dir,
+            &shared_project_name,
+            &[],
+            &shared_service_loopback_port_rules(
+                &output_dir,
+                &shared_project_name,
+                service_name,
+                service,
+            )?,
+            &mut compose_document,
+        )?;
+        compose_document.write_back(
+            &shared_project_name,
+            "shared-service typed port policy application",
+            &mut assembly,
+        )?;
+        if effective_ports.is_empty() {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "shared service `{service_name}` must expose at least one published port on the bounded shared-service path"
+            )));
+        }
+        let parsed_bindings = effective_ports
+            .iter()
+            .map(|raw| parse_port_binding(raw))
+            .collect::<Result<Vec<_>, _>>()?;
+        let binding = parsed_bindings
+            .iter()
+            .copied()
+            .find(|binding| binding.host != binding.container)
+            .unwrap_or(parsed_bindings[0]);
+        let output = ComposeOutput::new(output_dir);
+        let write = output.write(&assembly, &shared_project_name)?;
+        bindings.push(SharedServiceBinding {
+            service_name: service_name.clone(),
+            catalog: service.catalog.clone(),
+            domain_label: contract.domain_label,
+            project_name: shared_project_name,
+            compose_file: write.compose_path,
+            host: SHARED_SERVICE_HOST.to_owned(),
+            host_port: binding.host,
+            container_port: binding.container,
+            host_env_vars: contract.shared_host_env_vars,
+            port_env_vars: contract.shared_port_env_vars,
+        });
+    }
+    bindings.sort_by(|left, right| left.service_name.cmp(&right.service_name));
+    Ok(bindings)
+}
+
+fn validate_supported_shared_service(
+    repo_root: &Path,
+    service_name: &str,
+    service: &ManifestContainerServiceConfig,
+) -> Result<crate::CatalogNetworkContract, ContainerPolicyError> {
+    let contract = resolve_catalog_network_contract(Some(repo_root), &service.catalog)?;
+    let Some(contract) = contract.filter(|value| value.shared_service) else {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "service `{service_name}` uses unsupported shared catalog `{}`; the bounded shared-service path only supports catalogs that declare `shared_service = true`",
+            service.catalog
+        )));
+    };
+    if service.variant.is_some() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "service `{service_name}` cannot combine `shared = true` with `variant`; the bounded shared-service path only supports standalone backing-service catalogs"
+        )));
+    }
+    if service.config.is_some() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "service `{service_name}` cannot combine `shared = true` with `config`; the bounded shared-service path only supports standalone backing-service catalogs"
+        )));
+    }
+    Ok(contract)
+}
+
+fn shared_service_project_name(service: &ManifestContainerServiceConfig) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    service.catalog.hash(&mut hasher);
+    service.variant.hash(&mut hasher);
+    service.config.hash(&mut hasher);
+    for (key, value) in &service.params {
+        key.hash(&mut hasher);
+        value.to_string().hash(&mut hasher);
+    }
+    format!(
+        "effigy-shared-{}-{:08x}",
+        service.catalog,
+        (hasher.finish() & 0xffff_ffff) as u32
+    )
+}
+
+fn shared_service_output_dir(project_name: &str) -> Result<PathBuf, ContainerPolicyError> {
+    let Some(home) = effigy_home_dir() else {
+        return Err(ContainerPolicyError::TaskInvocation(
+            "`HOME` is not set; cannot resolve shared service state directory".to_owned(),
+        ));
+    };
+    Ok(home.join("shared-services").join(project_name))
+}
+
+fn apply_shared_service_env_policy(
+    shared_services: &[SharedServiceBinding],
+    compose_document: &mut GeneratedComposeDocument,
+) -> Result<(), ContainerPolicyError> {
+    if shared_services.is_empty() {
+        return Ok(());
+    }
+
+    let env_vars = shared_services
+        .iter()
+        .flat_map(SharedServiceBinding::standard_env_vars)
+        .collect::<Vec<_>>();
+
+    for service in compose_document.services.values_mut() {
+        inject_service_env_vars(service, &env_vars)?;
+    }
+    Ok(())
+}
+
+fn inject_service_env_vars(
+    service: &mut GeneratedComposeService,
+    env_vars: &[(String, String)],
+) -> Result<(), ContainerPolicyError> {
+    let environment = service.environment_mapping_mut()?;
+
+    for (name, value) in env_vars {
+        environment
+            .entry(name.clone())
+            .or_insert_with(|| YamlValue::String(value.clone()));
+    }
+    Ok(())
+}
+
+fn apply_generated_compose_port_policy(
+    repo_root: &Path,
+    project_name: &str,
+    explicit_bindings: &[PortBinding],
+    loopback_rules: &[LoopbackPortRule],
+    compose_document: &mut GeneratedComposeDocument,
+) -> Result<Vec<String>, ContainerPolicyError> {
+    let mut used_explicit_ports = std::collections::BTreeSet::<u16>::new();
+    let mut effective_ports = Vec::new();
+
+    let mut registry = if explicit_bindings.is_empty() {
+        Some(load_port_registry()?.unwrap_or_default())
+    } else {
+        None
+    };
+
+    for service_name in compose_document.sorted_service_names() {
+        let Some(service) = compose_document.services.get_mut(&service_name) else {
+            continue;
+        };
+        let Some(ports) = service.ports.as_mut() else {
+            continue;
+        };
+
+        let mut rewritten_ports = Vec::new();
+        for port in ports.iter_mut() {
+            let GeneratedComposePort::String(raw) = port else {
+                rewritten_ports.push(port.clone());
+                continue;
+            };
+            let binding = parse_port_binding(raw)?;
+            let loopback_rule = loopback_rules.iter().find(|rule| {
+                rule.service_name == service_name && rule.container_port == binding.container
+            });
+            let explicit = explicit_bindings
+                .iter()
+                .find(|candidate| candidate.container == binding.container);
+            let keep_runtime_binding = loopback_rule
+                .is_none_or(|rule| rule.keep_runtime_host_binding)
+                || explicit.is_some();
+            if !keep_runtime_binding {
+                continue;
+            }
+            let host_port = if let Some(explicit) = explicit {
+                used_explicit_ports.insert(explicit.container);
+                explicit.host
+            } else {
+                let registry = registry.as_mut().expect("registry exists");
+                registry
+                    .assign_port(
+                        project_name,
+                        &repo_root.display().to_string(),
+                        &service_name,
+                        binding.container,
+                    )
+                    .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
+            };
+            rewritten_ports.push(GeneratedComposePort::String(format!(
+                "{host_port}:{}",
+                binding.container
+            )));
+            effective_ports.push(format!("{host_port}:{}", binding.container));
+        }
+        *ports = rewritten_ports;
+    }
+
+    if let Some(registry) = registry.as_ref() {
+        save_port_registry(registry)?;
+    }
+
+    if !explicit_bindings.is_empty() {
+        let unused = explicit_bindings
+            .iter()
+            .filter(|binding| !used_explicit_ports.contains(&binding.container))
+            .map(|binding| format!("{}:{}", binding.host, binding.container))
+            .collect::<Vec<_>>();
+        if !unused.is_empty() {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "generated compose for `{project_name}` does not expose manifest `host.ports` mapping(s): {}",
+                unused.join(", ")
+            )));
+        }
+    }
+
+    Ok(effective_ports)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PortBinding {
+    host: u16,
+    container: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LoopbackPortRule {
+    loopback_ip: std::net::Ipv4Addr,
+    service_name: String,
+    container_port: u16,
+    keep_runtime_host_binding: bool,
+}
+
+fn project_loopback_port_rules(
+    repo_root: &Path,
+    project_name: &str,
+    config: &ManifestContainerConfig,
+) -> Result<Vec<LoopbackPortRule>, ContainerPolicyError> {
+    let Some(loopback_ip) =
+        load_or_allocate_loopback_ip(project_name, &repo_root.display().to_string())?
+    else {
+        return Ok(Vec::new());
+    };
+    let mut rules = Vec::new();
+    for (service_name, service) in config
+        .services
+        .iter()
+        .filter(|(_service_name, service)| !service.shared.unwrap_or(false))
+    {
+        let Some(contract) = resolve_catalog_network_contract(Some(repo_root), &service.catalog)?
+        else {
+            continue;
+        };
+        rules.push(LoopbackPortRule {
+            loopback_ip,
+            service_name: service_name.clone(),
+            container_port: contract.container_port,
+            keep_runtime_host_binding: true,
+        });
+    }
+    Ok(rules)
+}
+
+fn shared_service_loopback_port_rules(
+    output_dir: &Path,
+    project_name: &str,
+    service_name: &str,
+    service: &ManifestContainerServiceConfig,
+) -> Result<Vec<LoopbackPortRule>, ContainerPolicyError> {
+    let resolver = CatalogResolver::new(None, user_global_catalog_dir());
+    let fragment = resolver.resolve(&service.catalog)?;
+    let capabilities = fragment.schema.capabilities;
+    let Some(container_port) = capabilities.loopback_alias_port else {
+        return Ok(Vec::new());
+    };
+    let Some(loopback_ip) = load_or_allocate_loopback_ip(
+        &format!("shared:{project_name}"),
+        &output_dir.display().to_string(),
+    )?
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(vec![LoopbackPortRule {
+        loopback_ip,
+        service_name: service_name.to_owned(),
+        container_port,
+        keep_runtime_host_binding: true,
+    }])
+}
+
+fn load_or_allocate_loopback_ip(
+    identity: &str,
+    source: &str,
+) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
+    let Some(home) = effigy_home_dir() else {
+        return Ok(None);
+    };
+    let path = home.join("gateway").join("loopback-ips.json");
+    let mut registry = LoopbackRegistry::load(&path)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    if let Some(existing) = registry.get(identity) {
+        return Ok(Some(existing.ip));
+    }
+    let assignment = registry
+        .allocate(identity, source)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
+        .ip;
+    registry
+        .save(&path)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    Ok(Some(assignment))
+}
+
+fn parse_port_binding(raw: &str) -> Result<PortBinding, ContainerPolicyError> {
+    let mut parts = raw.split(':');
+    let host = parts.next().unwrap_or_default().trim();
+    let container = parts.next().unwrap_or_default().trim();
+    if host.is_empty() || container.is_empty() || parts.next().is_some() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "unsupported port mapping `{raw}`; expected `<host-port>:<container-port>`"
+        )));
+    }
+    Ok(PortBinding {
+        host: host.parse::<u16>().map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "invalid host port mapping `{raw}`: {error}"
+            ))
+        })?,
+        container: container.parse::<u16>().map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "invalid container port mapping `{raw}`: {error}"
+            ))
+        })?,
+    })
+}
+
+fn load_port_registry() -> Result<Option<PortRegistry>, ContainerPolicyError> {
+    let Some(home) = effigy_home_dir() else {
+        return Ok(None);
+    };
+    let path = home.join("ports.json");
+    PortRegistry::load(&path)
+        .map(Some)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
+}
+
+fn save_port_registry(registry: &PortRegistry) -> Result<(), ContainerPolicyError> {
+    let Some(home) = effigy_home_dir() else {
+        return Ok(());
+    };
+    let path = home.join("ports.json");
+    registry
+        .save(&path)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
+}
+
+fn project_local_catalog_dir(repo_root: &Path) -> Option<PathBuf> {
+    let path = repo_root.join(PROJECT_LOCAL_CATALOG_DIR);
+    path.is_dir().then_some(path)
+}
+
+fn user_global_catalog_dir() -> Option<PathBuf> {
+    let path = effigy_home_dir()?.join("catalog");
+    path.is_dir().then_some(path)
+}
+
+pub(crate) fn effigy_home_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = test_effigy_home_override() {
+        return Some(path);
+    }
+
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".effigy"))
+}
+
+fn host_workspace_identity() -> (u32, u32) {
+    #[cfg(unix)]
+    {
+        return unsafe { (nix::libc::geteuid(), nix::libc::getegid()) };
+    }
+
+    #[allow(unreachable_code)]
+    (1000, 1000)
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_effigy_home<T>(path: &Path, run: impl FnOnce() -> T) -> T {
+    struct ResetGuard(Option<PathBuf>);
+
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            TEST_EFFIGY_HOME.with(|slot| {
+                *slot.borrow_mut() = previous;
+            });
+        }
+    }
+
+    let previous = TEST_EFFIGY_HOME.with(|slot| slot.borrow_mut().replace(path.to_path_buf()));
+    let _guard = ResetGuard(previous);
+    run()
+}
+
+#[cfg(test)]
+fn test_effigy_home_override() -> Option<PathBuf> {
+    TEST_EFFIGY_HOME.with(|slot| slot.borrow().clone())
+}
+
+fn configured_host_ports(config: &ManifestContainerConfig) -> Vec<String> {
+    config
+        .host
+        .as_ref()
+        .map(|host| host.ports.clone())
+        .unwrap_or_default()
+}
+
+fn infer_direct_compose_host_ports(
+    compose_file: &Path,
+    project_name: &str,
+) -> Result<Vec<String>, ContainerPolicyError> {
+    let content =
+        std::fs::read_to_string(compose_file).map_err(|error| ContainerPolicyError::Read {
+            path: compose_file.to_path_buf(),
+            error,
+        })?;
+    let parsed: YamlValue = serde_yaml::from_str(&content).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "compose file for `{project_name}` is invalid YAML: {error}"
+        ))
+    })?;
+    let Some(services) = parsed.get("services").and_then(YamlValue::as_mapping) else {
+        return Ok(Vec::new());
+    };
+
+    let mut inferred = Vec::new();
+    let mut service_names = services
+        .keys()
+        .filter_map(YamlValue::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    service_names.sort();
+
+    for service_name in service_names {
+        let Some(service) = services
+            .get(YamlValue::String(service_name))
+            .and_then(YamlValue::as_mapping)
+        else {
+            continue;
+        };
+        let Some(ports) = service.get("ports").and_then(YamlValue::as_sequence) else {
+            continue;
+        };
+        for port in ports {
+            if let Some(binding) = infer_compose_port_binding(port)? {
+                inferred.push(format!("{}:{}", binding.host, binding.container));
+            }
+        }
+    }
+
+    Ok(inferred)
+}
+
+fn infer_compose_port_binding(
+    port: &YamlValue,
+) -> Result<Option<PortBinding>, ContainerPolicyError> {
+    if let Some(raw) = port.as_str() {
+        return infer_compose_port_binding_from_short_syntax(raw).map(Some);
+    }
+    let Some(mapping) = port.as_mapping() else {
+        return Ok(None);
+    };
+    let published = mapping
+        .get("published")
+        .and_then(YamlValue::as_i64)
+        .or_else(|| {
+            mapping
+                .get("published")
+                .and_then(YamlValue::as_str)
+                .and_then(|value| value.parse::<i64>().ok())
+        });
+    let target = mapping
+        .get("target")
+        .and_then(YamlValue::as_i64)
+        .or_else(|| {
+            mapping
+                .get("target")
+                .and_then(YamlValue::as_str)
+                .and_then(|value| value.parse::<i64>().ok())
+        });
+    let Some(published) = published else {
+        return Ok(None);
+    };
+    let Some(target) = target else {
+        return Ok(None);
+    };
+    Ok(Some(PortBinding {
+        host: u16::try_from(published).map_err(|_| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "compose port mapping has invalid published port `{published}`"
+            ))
+        })?,
+        container: u16::try_from(target).map_err(|_| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "compose port mapping has invalid target port `{target}`"
+            ))
+        })?,
+    }))
+}
+
+fn infer_compose_port_binding_from_short_syntax(
+    raw: &str,
+) -> Result<PortBinding, ContainerPolicyError> {
+    let raw = raw.trim();
+    let published = raw.split('/').next().unwrap_or(raw).trim();
+    let mut parts = published.split(':').map(str::trim).collect::<Vec<_>>();
+    if parts.len() < 2 {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "unsupported compose port mapping `{raw}`; expected a published host port"
+        )));
+    }
+    let container = parts.pop().unwrap_or_default();
+    let host = parts.pop().unwrap_or_default();
+    Ok(PortBinding {
+        host: host.parse::<u16>().map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "invalid published host port in compose mapping `{raw}`: {error}"
+            ))
+        })?,
+        container: container.parse::<u16>().map_err(|error| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "invalid target container port in compose mapping `{raw}`: {error}"
+            ))
+        })?,
+    })
+}
+
+fn configured_media_mounts(config: &ManifestContainerConfig) -> Vec<String> {
+    config
+        .data
+        .as_ref()
+        .map(|data| data.media.clone())
+        .unwrap_or_default()
+}
+
+fn configured_host_mounts(
+    repo_root: &Path,
+    container_name: &str,
+    config: &ManifestContainerConfig,
+) -> Result<Vec<String>, ContainerPolicyError> {
+    let mounts = config
+        .host
+        .as_ref()
+        .map(|host| host.mounts.as_slice())
+        .unwrap_or(&[]);
+    resolve_host_mounts(repo_root, container_name, mounts)
+}
+
+pub(crate) fn validate_media_mounts(
+    repo_root: &Path,
+    container_name: &str,
+    mounts: &[String],
+) -> Result<(), ContainerPolicyError> {
+    for mount in mounts {
+        let _ = parse_media_mount(repo_root, container_name, mount)?;
+    }
+    Ok(())
+}
+
+fn apply_generated_compose_media_policy(
+    repo_root: &Path,
+    container_name: &str,
+    media_mounts: &[String],
+    compose_document: &mut GeneratedComposeDocument,
+) -> Result<(), ContainerPolicyError> {
+    if media_mounts.is_empty() {
+        return Ok(());
+    }
+
+    let parsed_mounts = media_mounts
+        .iter()
+        .map(|mount| parse_media_mount(repo_root, container_name, mount))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let repo_root_display = repo_root.display().to_string();
+    let mount_specs = parsed_mounts
+        .iter()
+        .map(|(source, target)| format!("{}:{target}", source.display()))
+        .collect::<Vec<_>>();
+    let mut attached_services = 0usize;
+    for service in compose_document.services.values_mut() {
+        if !service.has_repo_root_mount(&repo_root_display) {
+            continue;
+        }
+        service.append_mounts(&mount_specs);
+        attached_services += 1;
+    }
+
+    if attached_services == 0 {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` declares `[containers.{container_name}.data].media`, but no generated service has a repo-root bind mount to attach it to"
+        )));
+    }
+    Ok(())
+}
+
+fn apply_generated_compose_host_mount_policy(
+    repo_root: &Path,
+    container_name: &str,
+    config: &ManifestContainerConfig,
+    compose_document: &mut GeneratedComposeDocument,
+) -> Result<(), ContainerPolicyError> {
+    let host_mounts = configured_host_mounts(repo_root, container_name, config)?;
+    if host_mounts.is_empty() {
+        return Ok(());
+    }
+
+    let repo_root_display = repo_root.display().to_string();
+    let mut attached_services = 0usize;
+    for service in compose_document.services.values_mut() {
+        if !service.has_repo_root_mount(&repo_root_display) {
+            continue;
+        }
+        service.append_mounts(&host_mounts);
+        attached_services += 1;
+    }
+
+    if attached_services == 0 {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` declares `[containers.{container_name}.host].mounts`, but no generated service has a repo-root bind mount to attach them to"
+        )));
+    }
+    Ok(())
+}
+
+fn parse_media_mount(
+    repo_root: &Path,
+    container_name: &str,
+    mount: &str,
+) -> Result<(PathBuf, String), ContainerPolicyError> {
+    let repo_root = repo_root
+        .canonicalize()
+        .map_err(|error| ContainerPolicyError::Read {
+            path: repo_root.to_path_buf(),
+            error,
+        })?;
+    let (raw_source, raw_target) = mount.split_once(':').ok_or_else(|| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` has invalid media mount `{mount}`; expected `<repo-relative-source>:<absolute-target>`"
+        ))
+    })?;
+    let source = raw_source.trim();
+    let target = raw_target.trim();
+    if source.is_empty() || target.is_empty() || target.contains(':') || !target.starts_with('/') {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` has invalid media mount `{mount}`; expected `<repo-relative-source>:<absolute-target>`"
+        )));
+    }
+    let source_path = Path::new(source);
+    if source_path.is_absolute() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` media mount `{mount}` must use a repo-relative source path"
+        )));
+    }
+
+    let resolved = repo_root.join(source_path);
+    let mut ancestor = resolved.as_path();
+    while !ancestor.exists() {
+        let Some(parent) = ancestor.parent() else {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` media mount `{mount}` is invalid"
+            )));
+        };
+        ancestor = parent;
+    }
+    let canonical_ancestor = ancestor.canonicalize().map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` media mount source `{source}` is invalid: {error}"
+        ))
+    })?;
+    if canonical_ancestor.strip_prefix(&repo_root).is_err() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` media mount `{mount}` escapes the repo root"
+        )));
+    }
+
+    std::fs::create_dir_all(&resolved).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{container_name}` media mount source `{source}` could not be prepared: {error}"
+        ))
+    })?;
+
+    Ok((resolved, target.to_owned()))
+}
+
+pub(crate) fn repo_relative_path(
+    repo_root: &Path,
+    raw: &str,
+    field: &str,
+) -> Result<PathBuf, ContainerPolicyError> {
+    let path = Path::new(raw);
+    if path.is_absolute() {
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "`{field}` must stay repo-relative in v1"
+        )));
+    }
+    Ok(repo_root.join(path))
+}
+
+pub(crate) fn path_relative_to_repo(repo_root: &Path, path: &Path) -> String {
+    path.strip_prefix(repo_root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_generated_compose_env_policy_converts_sequence_entries() {
+        let mut compose_document = GeneratedComposeDocument::parse(
+            "acme",
+            "test parse",
+            r#"
+services:
+  app:
+    image: php:8.4-fpm
+    environment:
+      - APP_ENV=local
+"#,
+        )
+        .expect("parse generated compose");
+
+        apply_shared_service_env_policy(
+            &[SharedServiceBinding {
+                service_name: "db".to_owned(),
+                catalog: "mariadb".to_owned(),
+                domain_label: "db".to_owned(),
+                project_name: "effigy-shared-mariadb-12345678".to_owned(),
+                compose_file: PathBuf::from("/tmp/shared.yml"),
+                host: SHARED_SERVICE_HOST.to_owned(),
+                host_port: 3306,
+                container_port: 3306,
+                host_env_vars: vec!["DB_HOST".to_owned()],
+                port_env_vars: vec!["DB_PORT".to_owned()],
+            }],
+            &mut compose_document,
+        )
+        .expect("apply shared env policy");
+
+        let Some(GeneratedComposeEnvironment::Mapping(environment)) = compose_document
+            .services
+            .get("app")
+            .and_then(|service| service.environment.clone())
+        else {
+            panic!("expected mapping environment");
+        };
+
+        assert_eq!(
+            environment.get("APP_ENV"),
+            Some(&YamlValue::String("local".to_owned()))
+        );
+        assert_eq!(
+            environment.get("DB_HOST"),
+            Some(&YamlValue::String(SHARED_SERVICE_HOST.to_owned()))
+        );
+        assert_eq!(
+            environment.get("DB_PORT"),
+            Some(&YamlValue::String("3306".to_owned()))
+        );
+    }
+
+    #[test]
+    fn typed_generated_compose_port_policy_rewrites_string_ports() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        with_test_effigy_home(tempdir.path(), || {
+            let mut compose_document = GeneratedComposeDocument::parse(
+                "acme",
+                "test parse",
+                r#"
+services:
+  app:
+    image: php:8.4-fpm
+    ports:
+      - "8080:80"
+      - target: 9000
+        published: "9000"
+"#,
+            )
+            .expect("parse generated compose");
+
+            let effective_ports = apply_generated_compose_port_policy(
+                Path::new("/tmp/acme"),
+                "acme",
+                &[PortBinding {
+                    host: 18080,
+                    container: 80,
+                }],
+                &[],
+                &mut compose_document,
+            )
+            .expect("apply port policy");
+
+            assert_eq!(effective_ports, vec!["18080:80".to_owned()]);
+
+            let ports = compose_document
+                .services
+                .get("app")
+                .and_then(|service| service.ports.clone())
+                .expect("service ports");
+            assert_eq!(ports.len(), 2);
+            assert!(matches!(
+                &ports[0],
+                GeneratedComposePort::String(raw) if raw == "18080:80"
+            ));
+            assert!(matches!(&ports[1], GeneratedComposePort::Other(_)));
+        });
+    }
+
+    #[test]
+    fn typed_generated_compose_mount_policy_detects_repo_root_and_preserves_non_string_volumes() {
+        let repo_root = "/tmp/acme";
+        let mut compose_document = GeneratedComposeDocument::parse(
+            "acme",
+            "test parse",
+            r#"
+services:
+  app:
+    image: php:8.4-fpm
+    volumes:
+      - "/tmp/acme:/var/www/html"
+      - type: volume
+        source: cache
+        target: /cache
+"#,
+        )
+        .expect("parse generated compose");
+
+        let service = compose_document
+            .services
+            .get_mut("app")
+            .expect("app service");
+        assert!(service.has_repo_root_mount(repo_root));
+
+        service.append_mounts(&["/tmp/shared:/var/www/shared".to_owned()]);
+
+        let volumes = service.volumes.clone().expect("service volumes");
+        assert_eq!(volumes.len(), 3);
+        assert!(matches!(
+            &volumes[0],
+            GeneratedComposeVolume::String(raw) if raw == "/tmp/acme:/var/www/html"
+        ));
+        assert!(matches!(&volumes[1], GeneratedComposeVolume::Other(_)));
+        assert!(matches!(
+            &volumes[2],
+            GeneratedComposeVolume::String(raw) if raw == "/tmp/shared:/var/www/shared"
+        ));
+    }
+}
