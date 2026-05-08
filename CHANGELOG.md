@@ -81,6 +81,9 @@ During v0.x, MINOR bumps may include breaking changes.
   `efv-*` volumes as stale when the current repo no longer declares them, so
   old Underlay and Decodelabs generations can be identified and pruned instead
   of lingering forever as inactive unknowns.
+- **Cache and volume prune reports** now include reclaimed and skipped byte
+  totals in both text and JSON output, so cleanup impact is visible without
+  manual summing.
 - **Shipped PHP workspaces** now install a sendmail-compatible `msmtp` shim and
   point PHP `mail()` at the local Mailpit SMTP service by default, so legacy
   mail code is captured in development instead of disappearing into an
