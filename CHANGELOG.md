@@ -6,13 +6,6 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
-Release direction for the next cut:
-
-- first-class Docker/Desktop support alongside Colima/containerd
-- backend-aware bootstrap, status, doctor, and workspace handoff behavior
-- OCI-backed dump, seed, inspect, stage, and capture flows
-- cache and volume inventory/prune surfaces with reclaimed-size reporting
-
 ### Breaking
 - **Container machine-scope flags** now use **`--global`** instead of
   **`--all`** on container status, stats, down, cache, and volume surfaces.
