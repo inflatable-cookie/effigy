@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 use effigy_container_manager::{ContainerComposeInvocationPlan, ContainerRuntimeInvocationPlan};
 use effigy_containers::{exec::run_compose_invocation_capture, EffectiveContainerPolicy};
 #[cfg(unix)]
+use nix::libc;
+#[cfg(unix)]
 use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
 use nix::unistd::{setpgid, Pid};
@@ -99,10 +101,12 @@ fn spawn_command_inherit_os(
 pub fn terminate_inherited_child_graceful(child: &mut std::process::Child) {
     #[cfg(unix)]
     {
+        let process_group_id = child.id() as i32;
         let _ = signal_child_process_group(child, Signal::SIGTERM);
         let deadline = Instant::now() + Duration::from_millis(800);
         while Instant::now() < deadline {
-            if child.try_wait().ok().flatten().is_some() {
+            let child_exited = child.try_wait().ok().flatten().is_some();
+            if child_exited && !process_group_still_exists(process_group_id) {
                 return;
             }
             thread::sleep(Duration::from_millis(40));
@@ -127,6 +131,24 @@ fn signal_child_process_group(
         kill(Pid::from_raw(-pid), signal)
     } else {
         Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn process_group_still_exists(process_group_id: i32) -> bool {
+    if process_group_id <= 0 {
+        return false;
+    }
+    unsafe {
+        let result = libc::kill(-process_group_id, 0);
+        if result == 0 {
+            true
+        } else {
+            matches!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM)
+            )
+        }
     }
 }
 

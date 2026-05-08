@@ -7448,9 +7448,9 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
 
     let output = child.wait_with_output().expect("wait output");
     assert!(output.status.success(), "attached up failed: {output:?}");
-    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
-    assert!(docker_invocations.contains("logs --follow"));
-    assert!(docker_invocations.contains("down --remove-orphans"));
+    let colima_invocations = fs::read_to_string(&colima_args).expect("read colima args");
+    assert!(colima_invocations.contains("logs --follow"));
+    assert!(colima_invocations.contains("down --remove-orphans"));
 }
 
 #[test]
@@ -7459,7 +7459,6 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
     let root = temp_workspace("container-up-stream-overview");
     write_container_fixture(&root, None, "./app:/workspace");
     let (bin_dir, colima_state) = install_fake_container_runtime(&root);
-    let docker_args = root.join("docker-args.log");
     let colima_args = root.join("colima-args.log");
     let log_follow = root.join("log-follow.marker");
     let path = format!(
@@ -7476,7 +7475,7 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
         .env("NO_COLOR", "1")
         .env("PATH", path)
         .env("EFFIGY_CONTAINER_STREAM", "1")
-        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
+        .env("EFFIGY_TEST_DOCKER_ARGS_FILE", root.join("docker-args.log"))
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
