@@ -6,6 +6,36 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- **State stack planning foundation:** `effigy state plan [<STACK>]` now
+  validates `effigy.state-stack.v1` manifests and reports ordered lineage in
+  text or JSON without executing app hooks. When no standalone manifest is
+  supplied, it reads `[state]` from the composed Effigy manifest and supports
+  positional stack selection, `state.default`, and `--stack <NAME>`.
+  `--write-report` persists the plan to
+  `.effigy/reports/state/<stack>/plan.json`. `effigy state apply` now adds a
+  guarded apply surface that executes `apply_mode = "task"` layers and stages
+  `apply_mode = "artifact"` layers only when `--yes` is supplied. SQL layers can
+  now declare `target = "<data-target>"` and import through the existing
+  database seed/import path after target preflight. `effigy state capture` now
+  emits plan-only `effigy.state-stack.capture.v1` reports for future capture
+  layers and can stage an already-produced local payload with
+  `--yes --source <PATH> --ref oci://...`; adding `--push` explicitly publishes
+  the staged capture artifact and reports the digest. `--task <TASK>` now runs
+  one repo-owned capture task before staging and records task output or failure,
+  while built-in app payload semantics remain unsupported. `effigy state history`
+  now provides a read-only JSON/text lookup over existing state report files.
+  Plan, apply, and capture reports now write latest pointers and timestamped
+  history entries; the legacy `plan.json` write is preserved for plan reports.
+  Capture tasks now receive a versioned JSON context file through
+  `EFFIGY_STATE_CAPTURE_CONTEXT` and report it as `tasks[].context_path`.
+  Named capture profiles under `[state.<stack>.captures.<profile>]` let
+  operators run concise captures such as `effigy state capture uat new-content`
+  while preserving flag overrides for one-off captures.
+  Task env overrides now propagate through routed workspace-container handoff,
+  so state capture context reaches app-owned tasks that execute inside the
+  workspace container.
+
 ### Fixed
 - **Scoped runtime backend persistence** now stores container backend overrides
   per container policy instead of one repo-wide backend value, so helper

@@ -39,6 +39,11 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
             None,
         ),
         (
+            "effigy state",
+            "Plan layered state-stack manifests and lineage without executing app hooks",
+            None,
+        ),
+        (
             "effigy system",
             "Operate the manifest default system substrate through its default workspace container",
             None,

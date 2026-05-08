@@ -16,6 +16,7 @@ fn help_topic_label_maps_all_topics() {
     assert_eq!(help_topic_label(HelpTopic::Deploy), "deploy");
     assert_eq!(help_topic_label(HelpTopic::Defer), "defer");
     assert_eq!(help_topic_label(HelpTopic::Exec), "exec");
+    assert_eq!(help_topic_label(HelpTopic::State), "state");
     assert_eq!(help_topic_label(HelpTopic::System), "system");
     assert_eq!(help_topic_label(HelpTopic::Workspace), "workspace");
     assert_eq!(help_topic_label(HelpTopic::Gateway), "gateway");

@@ -163,7 +163,7 @@ pub(in crate::runner) fn capture_artifact_report(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn capture_artifact_report_with_adapter(
+pub(in crate::runner) fn capture_artifact_report_with_adapter(
     source: &str,
     destination: &str,
     kind: Option<&str>,
@@ -258,7 +258,7 @@ fn capture_artifact_report_with_adapter(
     }))
 }
 
-fn stage_artifact_report(
+pub(in crate::runner) fn stage_artifact_report(
     source: &str,
     repo_root: &Path,
     invocation_cwd: &Path,

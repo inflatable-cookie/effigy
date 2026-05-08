@@ -254,11 +254,66 @@ pub(in crate::runner) fn stage_db_seed_files(
     stage_db_seed_files_with_adapter(repo_root, db_seeds, &adapter)
 }
 
+pub(in crate::runner) fn validate_db_seed_import_inputs(
+    repo_root: &Path,
+    db_seeds: &[BootstrapDbSeedInput],
+) -> Result<(), RunnerError> {
+    let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
+    resolve_db_seed_targets(repo_root, &manifest, db_seeds)?;
+    Ok(())
+}
+
+pub(in crate::runner) fn run_db_seed_import_report(
+    repo_root: &Path,
+    source: PathBuf,
+    target: Option<String>,
+) -> Result<serde_json::Value, RunnerError> {
+    let adapter = OrasCliArtifactAdapter::default();
+    let stage_report = stage_db_seed_files_report_with_adapter(
+        repo_root,
+        &[BootstrapDbSeedInput {
+            target: target.clone(),
+            path: source.clone(),
+        }],
+        &adapter,
+    )?;
+    let env = db_seed_env(&stage_report.staged);
+    run_db_seed_task(repo_root, &env)?;
+    Ok(json!({
+        "schema": "effigy.state-stack.sql-import.v1",
+        "schema_version": 1,
+        "ok": true,
+        "target": target,
+        "source": source.display().to_string(),
+        "artifact_reports": stage_report.artifact_reports,
+        "staged": stage_report.staged.iter().map(|seed| {
+            json!({
+                "target": seed.target,
+                "source_path": seed.source_path.display().to_string(),
+                "staged_path": seed.staged_path.display().to_string(),
+            })
+        }).collect::<Vec<_>>(),
+    }))
+}
+
 fn stage_db_seed_files_with_adapter(
     repo_root: &Path,
     db_seeds: &[BootstrapDbSeedInput],
     adapter: &dyn OciArtifactAdapter,
 ) -> Result<Vec<BootstrapStagedDbSeed>, RunnerError> {
+    Ok(stage_db_seed_files_report_with_adapter(repo_root, db_seeds, adapter)?.staged)
+}
+
+struct DbSeedStageReport {
+    staged: Vec<BootstrapStagedDbSeed>,
+    artifact_reports: Vec<serde_json::Value>,
+}
+
+fn stage_db_seed_files_report_with_adapter(
+    repo_root: &Path,
+    db_seeds: &[BootstrapDbSeedInput],
+    adapter: &dyn OciArtifactAdapter,
+) -> Result<DbSeedStageReport, RunnerError> {
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     let seed_plans = bootstrap_db_seed_plans(repo_root, &manifest, db_seeds)?;
     let staging_dir = repo_root.join(DB_SEEDS_DIR);
@@ -271,6 +326,7 @@ fn stage_db_seed_files_with_adapter(
 
     let mut seen_names = BTreeSet::new();
     let mut staged = Vec::with_capacity(seed_plans.len());
+    let mut artifact_reports = Vec::with_capacity(seed_plans.len());
     for plan in &seed_plans {
         let source = data_seed_source_display(&plan.input.source);
         let artifact_report = stage_seed_artifact(repo_root, plan, adapter)?;
@@ -307,11 +363,17 @@ fn stage_db_seed_files_with_adapter(
                 destination.display(),
             ))
         })?;
+        let encoded_artifact_report = serde_json::to_value(&artifact_report).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to encode db seed artifact staging report: {error}"
+            ))
+        })?;
         staged.push(BootstrapStagedDbSeed {
             target: plan.input.target.as_ref().map(ToString::to_string),
             source_path: PathBuf::from(artifact_report.metadata.source),
             staged_path: destination,
         });
+        artifact_reports.push(encoded_artifact_report);
     }
 
     let metadata = serde_json::to_string(
@@ -346,7 +408,10 @@ fn stage_db_seed_files_with_adapter(
             ))
         })?;
     }
-    Ok(staged)
+    Ok(DbSeedStageReport {
+        staged,
+        artifact_reports,
+    })
 }
 
 fn stage_seed_artifact(

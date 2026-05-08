@@ -128,6 +128,13 @@ fn parse_exec_help_is_scoped() {
 }
 
 #[test]
+fn parse_state_help_is_scoped() {
+    let cmd =
+        parse_command(vec!["state".to_owned(), "--help".to_owned()]).expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::State));
+}
+
+#[test]
 fn parse_gateway_help_is_scoped() {
     let cmd = parse_command(vec!["gateway".to_owned(), "--help".to_owned()])
         .expect("parse should succeed");

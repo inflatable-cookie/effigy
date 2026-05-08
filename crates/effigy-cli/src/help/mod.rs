@@ -58,6 +58,7 @@ pub fn render_help_with_deferred_builtins<R: HelpRenderer>(
         HelpTopic::Deploy => topics::render_deploy_help(renderer),
         HelpTopic::Defer => topics::render_defer_help(renderer),
         HelpTopic::Exec => topics::render_exec_help(renderer),
+        HelpTopic::State => topics::render_state_help(renderer),
         HelpTopic::System => topics::render_system_help(renderer),
         HelpTopic::Workspace => topics::render_workspace_help(renderer),
         HelpTopic::Gateway => topics::render_gateway_help(renderer),

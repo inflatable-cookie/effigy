@@ -122,6 +122,8 @@ pub struct TaskManifest {
     #[serde(default)]
     pub data: Option<ManifestDataConfig>,
     #[serde(default)]
+    pub state: Option<toml::Value>,
+    #[serde(default)]
     pub test: Option<ManifestTestConfig>,
     #[serde(default)]
     pub package_manager: Option<ManifestPackageManagerConfig>,

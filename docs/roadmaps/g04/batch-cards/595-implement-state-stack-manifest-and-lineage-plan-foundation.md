@@ -2,7 +2,7 @@
 
 Lane: [`061-state-stack-and-layered-seed-framework-strict-lane.md`](../061-state-stack-and-layered-seed-framework-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-08
 
@@ -36,13 +36,22 @@ This card is complete when a focused crate/module can parse a state-stack
 fixture, validate the first policy rules, and produce a deterministic lineage
 plan/report without invoking app code.
 
+## Closeout
+
+- added `crates/effigy-state`
+- added `effigy.state-stack.v1` manifest parsing
+- added role ordering, environment policy, artifact-source, duplicate-key, and
+  dependency validation
+- added deterministic lineage planning and report shaping
+- added Acowtancy-shaped fixture coverage for structure, baseline seed,
+  legacy-import, dev-overlay, UAT capture, and full-capture layers
+
 ## Validation
 
-- focused unit tests for manifest parsing and validation
-- focused unit tests for lineage plan/report output
-- docs path checks for changed planning docs
-- `git diff --check`
+- PASS: `cargo test -p effigy-state`
+- PASS: `git diff --check`
 
 ## Next Task
 
-Select the first adapter surface after the plan foundation lands.
+Card
+[`596-add-state-stack-plan-command-surface.md`](./596-add-state-stack-plan-command-surface.md).

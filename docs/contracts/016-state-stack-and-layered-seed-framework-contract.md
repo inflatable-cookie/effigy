@@ -249,34 +249,163 @@ Apply report should include:
 - lineage id or lineage root
 - timestamp
 
-## Capture Rules
+Current shipped boundary:
 
-Stack capture should package new state into a replayable layer plus lineage.
+- `effigy state apply` emits `effigy.state-stack.apply.v1`
+- `effigy state apply` is plan-only unless `--yes` is supplied
+- task, artifact, and SQL apply modes have first-slice adapters
+- capture, manual, checkpoint, and app-specific payload semantics remain
+  unsupported in apply
+- apply reports are persisted to the state report history layout
 
-Core rules:
+## Capture Report Boundary
 
-- capture stages locally first
-- OCI publish stays explicit
-- capture role must be named
-- capture reports must identify the source environment and current lineage root
+State capture packages current system state into one or more replayable layers
+plus lineage. It is a reporting and orchestration boundary, not a diff engine.
 
-Likely capture roles:
+Capture must stay two-phase:
 
-- `uat-capture`
-- `content-overlay`
-- `full-capture`
+- capture stages local artifacts first
+- OCI publish stays explicit through `--push`
+- capture reports must identify the source environment and parent lineage
+- produced layers must be appendable to a future state stack
+- app-owned hooks may produce payloads, but Effigy records the outer operation
 
-Capture report should include:
+Capture modes:
 
-- schema id
-- source environment label
-- parent stack or lineage id
-- produced layer role
-- artifact ref/path
-- digest when available
-- invoked app hook or task
-- lineage id
-- timestamp
+| Mode | Intended Role | Meaning |
+| --- | --- | --- |
+| `uat-overlay` | `uat-capture` | Capture new-system-authored changes that should replay on top of a refreshed migrated baseline. This does not imply full database/media ownership. |
+| `full-snapshot` | `full-capture` | Capture enough running state to recreate the current environment elsewhere. This may include database and media artifacts, but app-specific consistency rules remain repo-owned. |
+
+Command shape:
+
+```sh
+effigy state capture --stack <NAME> --role uat-capture --source-env uat
+effigy state capture --stack <NAME> --role full-capture --source-env uat
+```
+
+The first implementation is plan-only unless `--yes` is supplied, like
+`state apply`.
+
+Report schema:
+
+- `schema`: `effigy.state-stack.capture.v1`
+- `schema_version`: `1`
+- `ok`
+- `executed`
+- `stack_name`
+- `source_environment`
+- `capture_role`
+- `capture_mode`
+- `parent_lineage_id`
+- `created_at`
+- `produced_layers[]`
+- `capture_artifacts[]`
+- `tasks[]`
+- `warnings[]`
+
+`produced_layers[]` describes the state-stack layer material that the capture
+would add or has added:
+
+- `key`
+- `role`
+- `apply_mode`
+- `environment_policy`
+- `artifact_kind`
+- `source_ref`
+- `snapshot_identity`
+- `depends_on[]`
+- `hook`
+
+`capture_artifacts[]` references artifact-level capture reports:
+
+- `layer_key`
+- `operation`: `planned-capture`, `captured-local`, or `pushed`
+- `artifact_report`
+- `digest` when pushed
+- `ref` when an OCI destination is known
+
+`tasks[]` records repo-owned capture hooks:
+
+- `name`
+- `status`: `planned`, `executed`, or `failed`
+- `context_path` when a task context file was written
+- `output`
+- `error`
+
+## Capture Task Context
+
+Repo-owned capture tasks receive a stable context surface. Environment
+variables remain convenience aliases, but the versioned JSON context file is the
+preferred app integration seam because it can grow without creating shell
+quoting or naming churn.
+
+Context file:
+
+- path: `.effigy/state/capture-context/<stack>/<key>.json`
+- schema: `effigy.state-stack.capture-context.v1`
+- written before the repo task runs
+- overwritten by later captures with the same stack/key
+- exposed to the task as `EFFIGY_STATE_CAPTURE_CONTEXT`
+- recorded in the capture report as `tasks[].context_path`
+
+Context fields:
+
+- `schema`
+- `schema_version`
+- `stack_name`
+- `parent_lineage_id`
+- `capture_role`
+- `capture_mode`
+- `source_environment`
+- `key`
+- `source` when supplied
+- `destination_ref` when supplied
+
+Environment aliases:
+
+- `EFFIGY_STATE_CAPTURE_SCHEMA`
+- `EFFIGY_STATE_CAPTURE_STACK`
+- `EFFIGY_STATE_CAPTURE_PARENT_LINEAGE_ID`
+- `EFFIGY_STATE_CAPTURE_ROLE`
+- `EFFIGY_STATE_CAPTURE_MODE`
+- `EFFIGY_STATE_CAPTURE_SOURCE_ENV`
+- `EFFIGY_STATE_CAPTURE_KEY`
+- `EFFIGY_STATE_CAPTURE_SOURCE` when supplied
+- `EFFIGY_STATE_CAPTURE_DESTINATION_REF` when supplied
+- `EFFIGY_STATE_CAPTURE_CONTEXT` when a task context file is written
+
+App-owned semantics:
+
+- selecting which rows/files belong in an overlay
+- database/media consistency checks
+- conflict detection
+- record-level merge or reconciliation
+- generating app-specific payloads
+
+Effigy-owned semantics:
+
+- validating the requested capture role and environment
+- passing structured context to repo-owned tasks
+- staging/publishing artifacts through existing artifact reports
+- emitting the state-level capture report
+- linking the produced layer back to parent lineage
+
+Current shipped boundary:
+
+- `effigy state plan` does not produce a capture report
+- `effigy state apply` reports capture-shaped layers as unsupported
+- capture-shaped roles may appear in a manifest for planning and lineage only
+- `effigy state capture` emits the state-level capture report
+- `effigy state capture --yes --source <PATH> --ref oci://...` stages an
+  already-produced local payload and embeds `effigy.artifact.capture.v1`
+- adding `--push` publishes the staged capture artifact to the explicit OCI ref
+  and reports the digest
+- `--task <TASK>` runs one repo-owned capture task before artifact staging and
+  records `planned`, `executed`, or `failed`
+- state capture does not run produced-layer apply hooks yet
+- capture reports are persisted to the state report history layout
 
 ## Rebase Rules
 
@@ -347,19 +476,70 @@ The current minimum lineage surface should record:
 - invoked hooks/tasks
 - timestamps
 
-The first shipped surface may be command-level JSON/text reports plus staged
-metadata. A separate durable persisted ledger can remain future work if the
-report contract is explicit now.
+The first shipped surfaces are `effigy state plan`, `effigy state apply`,
+`effigy state capture`, and `effigy state history`. Apply/capture reports share
+the same environment-level lineage anchor. Effigy persists reports as
+operator-readable files without introducing a database-backed ledger.
 
-First-round lineage relationship:
+When no standalone manifest path is supplied, Effigy reads state config from the
+effective composed manifest:
+
+```toml
+[state.uat]
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[state.uat.layers]]
+key = "structure"
+role = "structure"
+source = "farmyard/db:migrate"
+apply_mode = "task"
+environment_policy = "all"
+```
+
+Large state declarations should use normal manifest composition, for example
+including a repo-owned `state/acowtancy.state.toml` fragment from `effigy.toml`.
+There is no separate state-specific file discovery convention.
+
+Selection rules:
+
+- `--manifest <PATH>` or positional `<MANIFEST>` plans a standalone
+  `effigy.state-stack.v1` document
+- no standalone manifest reads `[state]` from the composed manifest
+- positional `<STACK>` or `--stack <NAME>` selects one composed stack explicitly
+- `state.default` selects the default composed stack
+- a single composed stack may be selected without `state.default`
+- multiple composed stacks without `state.default`, positional `<STACK>`, or `--stack` fail with a
+  clear ambiguity error
+
+Named capture profiles:
+
+```toml
+[state.uat.captures.new-content]
+role = "uat-capture"
+source_env = "uat"
+source = ".effigy/state/captures/{key}.tar"
+ref = "oci://ghcr.io/acowtancy/state:{key}"
+task = "state:capture-new-content"
+```
+
+`effigy state capture uat new-content --yes` expands the profile, defaults the
+produced layer key to the profile name, and supports `{stack}`, `{profile}`, and
+`{key}` in `source` and `ref` templates. Explicit CLI flags override profile
+fields for one-off captures.
+
+Lineage relationship:
 
 - artifact operation reports remain the source of truth for individual artifact
   inspect, stage, capture, seed, and dump work
-- state-stack reports reference those artifact reports by layer when an
-  artifact operation occurs
+- state-stack plan reports include planned artifact-operation references by
+  layer
+- state-stack apply and capture reports embed concrete artifact operation
+  reports by layer when an artifact operation occurs
 - the state-stack lineage record is the environment-level rollup across all
   layers
-- no durable cross-run ledger is required for the first implementation
+- no database-backed ledger is required for the first history implementation
 
 Minimum lineage report fields:
 
@@ -371,6 +551,187 @@ Minimum lineage report fields:
 - `layers[]`
 - `artifact_reports[]`
 - `warnings[]`
+- `written_report_path` when `--write-report` is used
+- `written_history_path` when history output is written
+
+Report writing:
+
+- `effigy state plan --write-report` writes the lineage report to
+  `.effigy/reports/state/<stack>/plan.json`
+- plan report writing also updates `latest-plan.json` and a timestamped
+  `history/*.json` entry
+- apply and capture report-producing commands update their matching latest file
+  and a timestamped `history/*.json` entry
+- the written report is the same lineage payload returned through stdout, with
+  `written_report_path` and `written_history_path` set where applicable
+- report writing does not make the report an append-only ledger
+- the report path is an operator artifact, not proof that any layer has been
+  applied
+
+## State Report History
+
+State history should be file-based first. The goal is to let operators find
+prior plan/apply/capture reports without creating a hidden database or making
+the report directory authoritative beyond the files it contains.
+
+Directory shape:
+
+```text
+.effigy/reports/state/<stack>/
+  latest-plan.json
+  latest-apply.json
+  latest-capture.json
+  history/
+    <created-at>-plan-<short-lineage>.json
+    <created-at>-apply-<short-lineage>.json
+    <created-at>-capture-<short-lineage>.json
+```
+
+Rules:
+
+- latest files are convenience pointers and may be overwritten
+- `history/` files are append-only by convention
+- file names must be filesystem-safe and lexically sortable
+- `<created-at>` should use UTC basic timestamp form when execution creates the
+  report, for example `20260508T143012Z`
+- `<short-lineage>` should be derived from the report lineage id or parent
+  lineage id and truncated to a readable safe component
+- report content remains the source of truth; file names are lookup indexes
+- manual file deletion is allowed and should not corrupt hidden state
+- history lookup must tolerate missing latest files, missing history files, and
+  mixed old/new report layouts
+
+Report kinds:
+
+| Kind | Schema | Lineage Field |
+| --- | --- | --- |
+| `plan` | `effigy.state-stack.lineage.v1` | `lineage_id` |
+| `apply` | `effigy.state-stack.apply.v1` | `lineage_id` |
+| `capture` | `effigy.state-stack.capture.v1` | `parent_lineage_id` plus produced layer keys |
+
+Lookup semantics:
+
+- default lookup lists newest reports for the selected stack
+- `--kind plan|apply|capture` narrows by report kind
+- `--limit <N>` bounds output
+- `--lineage <ID>` matches `lineage_id` or `parent_lineage_id`
+- `latest-*` files can speed up lookup but must not be the only source
+- history lookup should read JSON reports directly and ignore malformed files
+  with warnings rather than failing the whole query
+
+Command shape:
+
+```sh
+effigy state history uat
+effigy state history uat --kind capture --limit 5
+effigy state history uat --lineage <ID>
+```
+
+Minimum history payload:
+
+- `schema`: `effigy.state-stack.history.v1`
+- `schema_version`: `1`
+- `stack_name`
+- `reports[]`
+- `warnings[]`
+
+Each `reports[]` entry should include:
+
+- `kind`
+- `schema`
+- `path`
+- `created_at`
+- `lineage_id` when available
+- `parent_lineage_id` when available
+- `ok` when available
+- `executed` when available
+- `summary`
+
+Smallest implementation slice:
+
+- keep existing `plan.json` write for compatibility
+- add timestamped history writes for plan/apply/capture reports
+- add latest pointers for plan/apply/capture reports
+- add a read-only `state history` command that scans files
+- do not introduce retention, pruning, compaction, or a database index yet
+
+## Apply Adapter Boundary
+
+The first execution adapter started task-only and now includes artifact staging
+and SQL import.
+
+`effigy state apply` without `--yes` renders an apply plan and does not execute
+layers. `effigy state apply --yes` executes layers with `apply_mode = "task"`
+by passing each layer `source` to existing Effigy task execution in stack order.
+It stages layers with `apply_mode = "artifact"` through the existing artifact
+staging substrate and embeds the resulting `effigy.artifact.stage.v1` report.
+It imports layers with `apply_mode = "sql"` through the existing database
+seed/import path.
+
+Rules:
+
+- `task` layers execute through repo-owned tasks
+- `artifact` layers stage only; they are not applied to databases or media
+- `sql` layers stage their SQL payload as an artifact, copy the staged primary
+  file into the DB seed handoff directory, and run the existing DB seed/import
+  task path
+- capture, manual, checkpoint, and app-specific payload semantics are reported
+  as `unsupported`
+- task output is captured in `effigy.state-stack.apply.v1`
+- artifact staging reports are captured in `effigy.state-stack.apply.v1`
+- SQL import reports are captured in `effigy.state-stack.apply.v1` as
+  `effigy.state-stack.sql-import.v1`
+- task failure marks the layer `failed`, sets `ok = false`, and stops further
+  task execution
+- app-specific behavior remains inside repo-owned tasks
+- capture and conflict logic remain future adapters
+
+## SQL Apply Adapter
+
+SQL apply is a database import adapter, not a migration engine.
+
+The first SQL boundary reuses Effigy's existing data target model:
+
+- `[data.targets.<name>]` remains the named database target contract
+- bundle database declarations remain valid implicit targets
+- target resolution must use the same target-selection semantics as database
+  seed/import flows
+- supported database engines are the same engines already supported by
+  generated-compose data seed/import
+
+`apply_mode = "sql"` should mean:
+
+- the layer source resolves to a SQL payload
+- local and OCI SQL payloads stage through the artifact substrate first
+- the staged primary SQL file is imported into one explicit data target
+- the import report is embedded in `effigy.state-stack.apply.v1` under
+  `sql_report`
+- no app-specific transform, merge, or validation logic runs inside Effigy
+
+Target selection must be explicit enough to avoid destructive ambiguity:
+
+- if the repo declares exactly one database target, SQL layers may use it by
+  default
+- if multiple database targets exist, each SQL layer must declare a target
+  before execution
+- `target = "<name>"` is accepted as the layer-level SQL target field and maps
+  to the internal `sql_target` lineage field
+- missing or unknown targets must fail before any SQL layer executes
+
+Safety gates:
+
+- `effigy state apply` remains plan-only by default
+- `effigy state apply --yes` is required for SQL execution
+- SQL target selection is preflighted before any state layer executes
+- SQL execution uses import semantics that match existing database seed behavior
+  rather than inventing a new SQL runner
+
+Report shape additions for SQL layers:
+
+- `target`: selected logical data target
+- `sql_report.artifact_reports`: staged SQL artifact report list
+- `sql_report`: database import result
+- `status`: `would-import`, `planned-sql-import`, `imported`, or `failed`
 
 ## Acowtancy Proof Boundary
 
@@ -407,13 +768,13 @@ Effigy should not absorb:
 ## Deferred For Later
 
 - durable persisted cross-run lineage ledger
-- direct CLI syntax beyond the first planning surface
 - post-go-live sync surfaces
 - implementation-specific hook payload schema
 - live rebase execution
-- app hook execution for Acowtancy/Farmyard
+- automatic apply-hook execution for Acowtancy/Farmyard
 
 ## Next Task
 
-Implement the first state-stack manifest and lineage planning surface without
-executing app hooks.
+Use this contract as the next release boundary. Further rebase execution
+semantics should be driven by Acowtancy rebasing real migration code onto the
+released state-stack surface.

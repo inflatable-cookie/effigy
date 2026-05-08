@@ -56,7 +56,7 @@ Rules:
 ## Next Task
 
 Execute ready card
-[`595-implement-state-stack-manifest-and-lineage-plan-foundation.md`](./batch-cards/595-implement-state-stack-manifest-and-lineage-plan-foundation.md).
+[`598-add-state-stack-json-contract-examples.md`](./batch-cards/598-add-state-stack-json-contract-examples.md).
 
 
 Batch cards live in `g04/batch-cards/` when strict posture uses them.

@@ -23,6 +23,7 @@ use super::super::run_internal_host_process_supervise;
 use super::super::run_internal_rhai;
 use super::super::run_release;
 use super::super::run_service;
+use super::super::run_state;
 use super::super::run_system;
 use super::super::run_tasks;
 use super::super::run_workspace;
@@ -56,6 +57,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Deploy(args) => run_deploy(args),
         Command::Defer(args) => run_defer(args),
         Command::Exec(args) => run_exec(args),
+        Command::State(args) => run_state(args),
         Command::System(args) => run_system(args),
         Command::Workspace(args) => run_workspace(args),
         Command::Gateway(args) => run_gateway(args),

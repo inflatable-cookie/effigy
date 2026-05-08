@@ -638,6 +638,7 @@ dependencies = [
  "effigy-runtime",
  "effigy-runtime-plan",
  "effigy-scan",
+ "effigy-state",
  "effigy-tasks",
  "effigy-tui",
  "effigy-ui",
@@ -1006,6 +1007,15 @@ dependencies = [
  "ignore",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "effigy-state"
+version = "0.5.0"
+dependencies = [
+ "effigy-artifacts",
+ "serde",
+ "toml",
 ]
 
 [[package]]

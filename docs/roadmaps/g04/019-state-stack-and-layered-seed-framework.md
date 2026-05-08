@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-08
 Depends on:
@@ -115,6 +115,19 @@ not.
 - the first implementation card is narrow and proves manifest/lineage planning
   before app hook execution
 
+## Result
+
+This roadmap is complete for the first release boundary.
+
+Effigy now owns the app-agnostic state-stack frame: composed or standalone stack
+declaration, ordered layer planning, bounded apply adapters, explicit capture
+orchestration, and file-backed report history. The Acowtancy proof confirms
+that app-owned transform and reconciliation logic can sit behind this frame
+without being absorbed into Effigy.
+
+Hold the next release here. Further work should wait for real Acowtancy rebase
+pressure against the released contract.
+
 ## Validation
 
 - docs path/link checks for changed planning docs
@@ -122,5 +135,4 @@ not.
 
 ## Next Task
 
-Start
-[`595-implement-state-stack-manifest-and-lineage-plan-foundation.md`](./batch-cards/595-implement-state-stack-manifest-and-lineage-plan-foundation.md).
+Hand off to the release-prep thread. Release execution remains human-owned.

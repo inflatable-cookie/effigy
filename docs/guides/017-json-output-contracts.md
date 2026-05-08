@@ -124,6 +124,8 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.artifact.inspect.v1`
 - `effigy.artifact.stage.v1`
 - `effigy.artifact.capture.v1`
+- `effigy.state-stack.lineage.v1`
+- `effigy.state-stack.apply.v1`
 
 Examples:
 
@@ -154,6 +156,12 @@ effigy --json migrate --apply
 effigy --json unlock --all --yes
 effigy --json completion bash
 effigy --json completion candidates --prefix farm
+effigy --json state plan ./state/acowtancy-uat.toml
+effigy --json state plan uat --write-report
+effigy --json state apply uat
+effigy --json state capture uat new-content
+effigy --json state capture uat --role uat-capture --source-env uat --key uat-capture-2026-05-08
+effigy --json state history uat --kind capture --limit 5
 effigy --json build --repo /path/to/workspace
 ```
 

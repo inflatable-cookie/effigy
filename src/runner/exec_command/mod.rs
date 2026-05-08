@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Output;
 
@@ -87,6 +88,7 @@ pub(in crate::runner) fn run_routed_task_container_exec(
     container_name: &str,
     service: &str,
     command: &str,
+    task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<String, RunnerError> {
     let output = run_routed_task_exec_internal(
@@ -97,6 +99,7 @@ pub(in crate::runner) fn run_routed_task_container_exec(
         container_name,
         service,
         command,
+        task_env,
         secret_env,
         false,
     )?;
@@ -120,6 +123,7 @@ pub(in crate::runner) fn capture_routed_task_container_exec(
     container_name: &str,
     service: &str,
     command: &str,
+    task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<Output, RunnerError> {
     run_routed_task_exec_internal(
@@ -130,6 +134,7 @@ pub(in crate::runner) fn capture_routed_task_container_exec(
         container_name,
         service,
         command,
+        task_env,
         secret_env,
         true,
     )
@@ -144,6 +149,7 @@ pub(in crate::runner) fn run_routed_task_container_exec_with_policy(
     working_dir: &Path,
     service: &str,
     command: &str,
+    task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<String, RunnerError> {
     let output = run_routed_task_exec_internal_with_surface(
@@ -155,6 +161,7 @@ pub(in crate::runner) fn run_routed_task_container_exec_with_policy(
         working_dir,
         service,
         command,
+        task_env,
         secret_env,
         false,
     )?;
@@ -179,6 +186,7 @@ pub(in crate::runner) fn capture_routed_task_container_exec_with_policy(
     working_dir: &Path,
     service: &str,
     command: &str,
+    task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<Output, RunnerError> {
     run_routed_task_exec_internal_with_surface(
@@ -190,6 +198,7 @@ pub(in crate::runner) fn capture_routed_task_container_exec_with_policy(
         working_dir,
         service,
         command,
+        task_env,
         secret_env,
         true,
     )
@@ -314,6 +323,7 @@ fn run_routed_task_exec_internal(
     container_name: &str,
     service: &str,
     command: &str,
+    task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
     capture: bool,
 ) -> Result<Output, RunnerError> {
@@ -333,6 +343,7 @@ fn run_routed_task_exec_internal(
         &mapped_cwd,
         service,
         command,
+        task_env,
         secret_env,
         capture,
     )
@@ -347,6 +358,7 @@ fn run_routed_task_exec_internal_with_surface(
     working_dir: &Path,
     service: &str,
     command: &str,
+    task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
     capture: bool,
 ) -> Result<Output, RunnerError> {
@@ -363,6 +375,7 @@ fn run_routed_task_exec_internal_with_surface(
         &mapped_cwd,
         service,
         command,
+        task_env,
         secret_env,
         capture,
     )
@@ -376,6 +389,7 @@ fn run_routed_task_exec_internal_with_mapped_cwd(
     mapped_cwd: &str,
     service: &str,
     command: &str,
+    task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
     capture: bool,
 ) -> Result<Output, RunnerError> {
@@ -392,7 +406,7 @@ fn run_routed_task_exec_internal_with_mapped_cwd(
     if strategy_requires_workspace_effigy_install(&strategy) {
         ensure_workspace_effigy_available_for_policy(repo_root, policy, None)?;
     }
-    let args = build_routed_task_exec_args(&strategy, secret_env, service, mapped_cwd);
+    let args = build_routed_task_exec_args(&strategy, task_env, secret_env, service, mapped_cwd);
 
     run_compose_exec(repo_root, policy, &args, capture, "docker compose exec")
 }

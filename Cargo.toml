@@ -28,6 +28,7 @@ members = [
     "crates/effigy-routing",
     "crates/effigy-scan",
     "crates/effigy-demo",
+    "crates/effigy-state",
     "crates/effigy-runtime",
     "crates/effigy-runtime-plan",
     "crates/effigy-docs-policy",
@@ -78,6 +79,7 @@ effigy-runtime = { path = "crates/effigy-runtime" }
 effigy-runtime-plan = { path = "crates/effigy-runtime-plan" }
 effigy-routing = { path = "crates/effigy-routing" }
 effigy-scan = { path = "crates/effigy-scan" }
+effigy-state = { path = "crates/effigy-state" }
 effigy-tasks = { path = "crates/effigy-tasks" }
 effigy-tui = { path = "crates/effigy-tui" }
 effigy-ui = { path = "crates/effigy-ui" }

@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.019`](../roadmaps/g04/019-state-stack-and-layered-seed-framework.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-08
 
@@ -26,7 +26,7 @@ captures, and rebuilds.
 
 ## Current Ready Card
 
-[`595-implement-state-stack-manifest-and-lineage-plan-foundation.md`](./batch-cards/595-implement-state-stack-manifest-and-lineage-plan-foundation.md)
+None. The lane is complete for this release slice.
 
 ## Execution Chain
 
@@ -34,15 +34,51 @@ captures, and rebuilds.
   anchors, and selected the first contract-shaping card
 - `594` complete: promoted the phase model, stack manifest, and Acowtancy proof
   boundary
-- `595` ready: implement state-stack manifest and lineage plan foundation
+- `595` complete: implemented state-stack manifest and lineage plan foundation
+- `596` complete: added a plan-only state-stack command surface
+- `597` complete: closed the foundation pass and selected JSON contract
+  examples as the next boundary
+- `598` complete: added state-stack JSON contract examples and command lookup
+- `599` complete: added the first repo-native composed-manifest state config
+  boundary
+- `600` complete: added a durable operator-visible lineage report location before
+  execution adapters
+- `601` complete: added the first bounded execution adapter for task-mode layers
+- `602` complete: added artifact staging to state-stack apply reports without
+  applying payload semantics
+- `603` complete: designed the SQL apply adapter boundary before executing SQL
+  payload layers
+- `604` complete: added the narrowest safe SQL import adapter through existing
+  database seed/import plumbing, including target preflight before execution
+- `605` complete: designed the state capture report boundary before capture
+  execution
+- `606` complete: added a plan-only `state capture` command surface
+- `607` complete: added local artifact staging for an already-produced capture
+  payload
+- `608` complete: added explicit OCI publish for state capture artifacts
+- `609` complete: added repo-owned capture task execution before artifact
+  staging
+- `610` complete: designed lineage-history lookup before adding more execution
+  semantics
+- `611` complete: added a read-only state history command over report files
+- `612` complete: added latest and timestamped report history writes while
+  preserving the legacy plan report path
+- `613` complete: closed the first state-stack proof slice with documentation and
+  validation
+- `614` complete: hardened the capture task context contract with a versioned
+  JSON context file and env alias
+- `615` complete: ran the first Acowtancy-side state-stack proof and fixed
+  routed workspace-container env forwarding for capture task context
+- `616` complete: closed the state-stack release slice and held this as the next
+  release boundary
 
 ## Exit Condition
 
-This lane closes when Effigy has a durable contract for layered seed/migration
-state, a bounded first proof loop, and a clear next implementation surface that
-does not depend on inventing app-specific semantics during execution.
+This lane is closed for the next release boundary. Effigy now has a durable
+contract for layered seed/migration state, a bounded Acowtancy proof loop, and
+operator-visible plan/apply/capture/history surfaces that do not execute
+app-specific semantics.
 
 ## Next Task
 
-Card
-[`595-implement-state-stack-manifest-and-lineage-plan-foundation.md`](./batch-cards/595-implement-state-stack-manifest-and-lineage-plan-foundation.md).
+Hand off to the release-prep thread. Release execution remains human-owned.

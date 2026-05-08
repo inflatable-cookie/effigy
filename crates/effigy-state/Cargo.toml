@@ -1,0 +1,12 @@
+[package]
+name = "effigy-state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "State stack manifest and lineage planning substrate for Effigy"
+
+[dependencies]
+effigy-artifacts = { path = "../effigy-artifacts" }
+serde = { version = "1", features = ["derive"] }
+toml = "1"

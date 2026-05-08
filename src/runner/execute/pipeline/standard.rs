@@ -166,6 +166,7 @@ pub(in crate::runner) fn run_standard_task(
                 container,
                 service,
                 context.command(),
+                Some(&context.selection.task.env),
                 secret_ref,
             )?;
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -198,6 +199,7 @@ pub(in crate::runner) fn run_standard_task(
             container,
             service,
             context.command(),
+            Some(&context.selection.task.env),
             secret_ref,
         )?;
         if task_activation.is_some_and(|activation| activation.refreshed_host_container_lease) {
@@ -367,6 +369,7 @@ fn run_inline_workspace_standard_task(
             &working_dir,
             policy.primary_service.as_str(),
             context.command(),
+            Some(&context.selection.task.env),
             secret_ref,
         );
         let _ = run_compose_capture(
@@ -402,6 +405,7 @@ fn run_inline_workspace_standard_task(
             &working_dir,
             policy.primary_service.as_str(),
             context.command(),
+            Some(&context.selection.task.env),
             secret_ref,
         );
         let _ = run_compose_capture(

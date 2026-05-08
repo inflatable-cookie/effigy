@@ -33,6 +33,8 @@ Start with the family that matches your job:
   `Test Plan`, `Test Results`, `Watch`
 - bootstrap and setup:
   `Bootstrap`, `Deploy Model`, `Init`, `Migrate`, `Config`, `Unlock`
+- layered state, seed, and migration planning:
+  `State Stack Lineage`
 - shell completion or editor integration:
   `Completion`, `Completion Candidates`
 
@@ -242,7 +244,9 @@ Companion references:
       "notes": "Managed Postgres connection string for primary database `acme`"
     }
   ],
-  "warnings": []
+  "warnings": [],
+  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-apply.json",
+  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143013Z-apply-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
 }
 ```
 
@@ -261,7 +265,9 @@ Companion references:
     "services/api/railway.toml",
     "report.json"
   ],
-  "warnings": []
+  "warnings": [],
+  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-apply.json",
+  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143014Z-apply-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
 }
 ```
 
@@ -1207,6 +1213,525 @@ Pushed capture:
 
 Capture is two-phase by default: stage locally first, then publish with `--push`.
 Digest-pinned refs are invalid push destinations.
+
+## State Stack Payloads
+
+### 26) State Stack Lineage (`effigy.state-stack.lineage.v1`)
+
+This is the `result` payload for:
+
+```sh
+effigy --json state plan ./state/acowtancy-uat.toml
+```
+
+```json
+{
+  "schema": "effigy.state-stack.lineage.v1",
+  "schema_version": 1,
+  "lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content+uat-capture",
+  "stack_name": "acowtancy-uat",
+  "environment": "uat",
+  "created_at": "planned",
+  "layers": [
+    {
+      "index": 0,
+      "key": "structure",
+      "role": "structure",
+      "apply_mode": "task",
+      "environment_policy": "all",
+      "source": "farmyard:db:migrate",
+      "artifact_source": null,
+      "hook": "farmyard:db:migrate",
+      "snapshot_identity": null
+    },
+    {
+      "index": 1,
+      "key": "baseline-seed",
+      "role": "baseline-seed",
+      "apply_mode": "sql",
+      "environment_policy": "all",
+      "source": "./seed/static.sql",
+      "artifact_source": {
+        "source_ref": "./seed/static.sql",
+        "kind": "sql-dump"
+      },
+      "hook": null,
+      "snapshot_identity": "static-reference-data@2026-05-08"
+    },
+    {
+      "index": 2,
+      "key": "legacy-content",
+      "role": "legacy-import",
+      "apply_mode": "artifact",
+      "environment_policy": "all",
+      "source": "oci://ghcr.io/acowtancy/content:legacy-2026-05-08",
+      "artifact_source": {
+        "source_ref": "oci://ghcr.io/acowtancy/content:legacy-2026-05-08",
+        "kind": "app-specific"
+      },
+      "hook": "acowtancy:migrate:apply-legacy-content",
+      "snapshot_identity": "old-site-db@2026-05-08"
+    },
+    {
+      "index": 3,
+      "key": "uat-capture",
+      "role": "uat-capture",
+      "apply_mode": "artifact",
+      "environment_policy": "non-production",
+      "source": "oci://ghcr.io/acowtancy/content:uat-authored-2026-05-08",
+      "artifact_source": {
+        "source_ref": "oci://ghcr.io/acowtancy/content:uat-authored-2026-05-08",
+        "kind": "content-overlay"
+      },
+      "hook": "acowtancy:migrate:apply-uat-overlay",
+      "snapshot_identity": "uat-freeze@2026-05-08"
+    }
+  ],
+  "artifact_reports": [
+    {
+      "layer_key": "baseline-seed",
+      "source_ref": "./seed/static.sql",
+      "artifact_kind": "sql-dump",
+      "operation": "planned-resolve"
+    },
+    {
+      "layer_key": "legacy-content",
+      "source_ref": "oci://ghcr.io/acowtancy/content:legacy-2026-05-08",
+      "artifact_kind": "app-specific",
+      "operation": "planned-resolve"
+    },
+    {
+      "layer_key": "uat-capture",
+      "source_ref": "oci://ghcr.io/acowtancy/content:uat-authored-2026-05-08",
+      "artifact_kind": "content-overlay",
+      "operation": "planned-resolve"
+    }
+  ],
+  "warnings": [],
+  "written_report_path": ".effigy/reports/state/acowtancy-uat/plan.json",
+  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143012Z-plan-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+}
+```
+
+The state plan payload is lineage-only. `planned-resolve` means Effigy has
+validated the layer source as an artifact reference for later execution; it has
+not staged, pulled, applied, captured, or run app-owned hooks.
+`written_report_path` and `written_history_path` are present only when
+`--write-report` is used.
+
+### 27) State Stack Apply (`effigy.state-stack.apply.v1`)
+
+Plan-only apply:
+
+```json
+{
+  "schema": "effigy.state-stack.apply.v1",
+  "schema_version": 1,
+  "ok": true,
+  "executed": false,
+  "stack_name": "acowtancy-uat",
+  "environment": "uat",
+  "lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content",
+  "layers": [
+    {
+      "index": 0,
+      "key": "structure",
+      "role": "structure",
+      "apply_mode": "task",
+      "source": "farmyard:db:migrate",
+      "status": "would-execute"
+    },
+    {
+      "index": 1,
+      "key": "baseline-seed",
+      "role": "baseline-seed",
+      "apply_mode": "sql",
+      "source": "./seed/static.sql",
+      "target": "app",
+      "status": "would-import"
+    },
+    {
+      "index": 2,
+      "key": "legacy-content",
+      "role": "legacy-import",
+      "apply_mode": "artifact",
+      "source": "./legacy.sql",
+      "status": "would-stage"
+    }
+  ],
+  "warnings": [],
+  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-capture.json",
+  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143015Z-capture-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+}
+```
+
+Executed task-only apply:
+
+```json
+{
+  "schema": "effigy.state-stack.apply.v1",
+  "schema_version": 1,
+  "ok": true,
+  "executed": true,
+  "stack_name": "acowtancy-uat",
+  "environment": "uat",
+  "lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content",
+  "layers": [
+    {
+      "index": 0,
+      "key": "structure",
+      "role": "structure",
+      "apply_mode": "task",
+      "source": "farmyard:db:migrate",
+      "status": "executed",
+      "output": "migration complete"
+    },
+    {
+      "index": 1,
+      "key": "baseline-seed",
+      "role": "baseline-seed",
+      "apply_mode": "sql",
+      "source": "./seed/static.sql",
+      "target": "app",
+      "status": "imported",
+      "sql_report": {
+        "schema": "effigy.state-stack.sql-import.v1",
+        "schema_version": 1,
+        "ok": true,
+        "target": "app",
+        "source": "./seed/static.sql",
+        "artifact_reports": [
+          {
+            "metadata": {
+              "schema": "effigy.artifact.v1",
+              "kind": "sql-dump",
+              "source_type": "local",
+              "source": "./seed/static.sql",
+              "digest": null,
+              "staged_root": "/workspace/app/.effigy/local/artifacts/static-sql-8bc721",
+              "primary_files": [
+                "/workspace/app/.effigy/local/artifacts/static-sql-8bc721/static.sql"
+              ],
+              "environment_label": null
+            },
+            "metadata_path": "/workspace/app/.effigy/local/artifacts/static-sql-8bc721/effigy-artifact.json"
+          }
+        ],
+        "staged": [
+          {
+            "target": "app",
+            "source_path": "./seed/static.sql",
+            "staged_path": "/workspace/app/.effigy/local/db-seeds/app--static.sql"
+          }
+        ]
+      }
+    },
+    {
+      "index": 2,
+      "key": "legacy-content",
+      "role": "legacy-import",
+      "apply_mode": "artifact",
+      "source": "./legacy.sql",
+      "status": "staged",
+      "artifact_report": {
+        "schema": "effigy.artifact.stage.v1",
+        "schema_version": 1,
+        "ok": true,
+        "metadata_path": "/workspace/app/.effigy/local/artifacts/legacy-sql-9c4e2d/effigy-artifact.json",
+        "metadata": {
+          "schema": "effigy.artifact.v1",
+          "kind": "sql-dump",
+          "source_type": "local",
+          "source": "./legacy.sql",
+          "digest": null,
+          "staged_root": "/workspace/app/.effigy/local/artifacts/legacy-sql-9c4e2d",
+          "primary_files": [
+            "/workspace/app/.effigy/local/artifacts/legacy-sql-9c4e2d/legacy.sql"
+          ],
+          "environment_label": null
+        },
+        "farmyard_handoff": null
+      }
+    }
+  ],
+  "warnings": [],
+  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-capture.json",
+  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143016Z-capture-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+}
+```
+
+`state apply --yes` executes `apply_mode = "task"` layers, stages
+`apply_mode = "artifact"` layers, and imports `apply_mode = "sql"` layers
+through the existing database seed/import plumbing. Apply reports update
+`latest-apply.json` and timestamped history. Capture, manual, checkpoint, and
+app-specific payload semantics remain reported as `unsupported` by the apply
+adapter.
+
+### 28) State Stack Capture (`effigy.state-stack.capture.v1`)
+
+This payload is the state-level report shape for `effigy state capture`. The
+capture boundary stays separate from app-owned diff/reconciliation logic.
+
+Planned UAT overlay capture:
+
+```json
+{
+  "schema": "effigy.state-stack.capture.v1",
+  "schema_version": 1,
+  "ok": true,
+  "executed": false,
+  "stack_name": "acowtancy-uat",
+  "source_environment": "uat",
+  "capture_role": "uat-capture",
+  "capture_mode": "uat-overlay",
+  "parent_lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content",
+  "created_at": "planned",
+  "produced_layers": [
+    {
+      "key": "uat-capture-2026-05-08",
+      "role": "uat-capture",
+      "apply_mode": "artifact",
+      "environment_policy": "non-production",
+      "artifact_kind": "app-specific",
+      "source_ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "snapshot_identity": "uat-authored-content@2026-05-08",
+      "depends_on": ["legacy-content"],
+      "hook": "acowtancy:migrate:apply-uat-capture"
+    }
+  ],
+  "capture_artifacts": [
+    {
+      "layer_key": "uat-capture-2026-05-08",
+      "operation": "planned-capture",
+      "ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "digest": null,
+      "artifact_report": null
+    }
+  ],
+  "tasks": [
+    {
+      "name": "acowtancy:migrate:capture-uat-overlay",
+      "status": "planned",
+      "output": null,
+      "error": null
+    }
+  ],
+  "warnings": [],
+  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-capture.json",
+  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143017Z-capture-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+}
+```
+
+Executed capture tasks receive a versioned JSON context file. The path is also
+available in `EFFIGY_STATE_CAPTURE_CONTEXT`.
+
+```json
+{
+  "schema": "effigy.state-stack.capture-context.v1",
+  "schema_version": 1,
+  "stack_name": "acowtancy-uat",
+  "parent_lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content",
+  "capture_role": "uat-capture",
+  "capture_mode": "uat-overlay",
+  "source_environment": "uat",
+  "key": "uat-capture-2026-05-08",
+  "source": "captures/uat-overlay.json",
+  "destination_ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08"
+}
+```
+
+Staged local capture:
+
+```json
+{
+  "schema": "effigy.state-stack.capture.v1",
+  "schema_version": 1,
+  "ok": true,
+  "executed": true,
+  "stack_name": "acowtancy-uat",
+  "source_environment": "uat",
+  "capture_role": "uat-capture",
+  "capture_mode": "uat-overlay",
+  "parent_lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content",
+  "created_at": "planned",
+  "produced_layers": [
+    {
+      "key": "uat-capture-2026-05-08",
+      "role": "uat-capture",
+      "apply_mode": "artifact",
+      "environment_policy": "non-production",
+      "artifact_kind": "app-specific",
+      "source_ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "snapshot_identity": "uat-authored-content@planned",
+      "depends_on": ["legacy-content"],
+      "hook": "acowtancy:migrate:apply-uat-capture"
+    }
+  ],
+  "capture_artifacts": [
+    {
+      "layer_key": "uat-capture-2026-05-08",
+      "operation": "captured-local",
+      "ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "artifact_report": {
+        "schema": "effigy.artifact.capture.v1",
+        "schema_version": 1,
+        "ok": true,
+        "metadata_path": "/workspace/app/.effigy/local/artifacts/capture-uat-overlay-json-a1b2c3/effigy-artifact.json",
+        "metadata": {
+          "schema": "effigy.artifact.v1",
+          "kind": "app-specific",
+          "source_type": "local",
+          "source": "/workspace/app/captures/uat-overlay.json",
+          "digest": null,
+          "staged_root": "/workspace/app/.effigy/local/artifacts/capture-uat-overlay-json-a1b2c3",
+          "primary_files": [
+            "/workspace/app/.effigy/local/artifacts/capture-uat-overlay-json-a1b2c3/uat-overlay.json"
+          ],
+          "environment_label": "uat"
+        },
+        "destination": {
+          "source": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+          "reference": "ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+          "planned": true,
+          "pushed": false,
+          "digest": null,
+          "descriptor": null
+        },
+        "farmyard_handoff": null
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "name": "acowtancy:migrate:capture-uat-overlay",
+      "status": "executed",
+      "context_path": ".effigy/state/capture-context/acowtancy-uat/uat-capture-2026-05-08.json",
+      "output": "capture complete"
+    }
+  ],
+  "warnings": [],
+  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-capture.json",
+  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143016Z-capture-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+}
+```
+
+Explicitly pushed capture:
+
+```json
+{
+  "schema": "effigy.state-stack.capture.v1",
+  "schema_version": 1,
+  "ok": true,
+  "executed": true,
+  "stack_name": "acowtancy-uat",
+  "source_environment": "uat",
+  "capture_role": "uat-capture",
+  "capture_mode": "uat-overlay",
+  "parent_lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content",
+  "created_at": "planned",
+  "produced_layers": [
+    {
+      "key": "uat-capture-2026-05-08",
+      "role": "uat-capture",
+      "apply_mode": "artifact",
+      "environment_policy": "non-production",
+      "artifact_kind": "app-specific",
+      "source_ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "snapshot_identity": "uat-authored-content@planned",
+      "depends_on": ["legacy-content"],
+      "hook": "acowtancy:migrate:apply-uat-capture"
+    }
+  ],
+  "capture_artifacts": [
+    {
+      "layer_key": "uat-capture-2026-05-08",
+      "operation": "pushed",
+      "ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "digest": "sha256:8e5d2f...",
+      "artifact_report": {
+        "schema": "effigy.artifact.capture.v1",
+        "schema_version": 1,
+        "ok": true,
+        "metadata_path": "/workspace/app/.effigy/local/artifacts/capture-uat-overlay-json-a1b2c3/effigy-artifact.json",
+        "metadata": {
+          "schema": "effigy.artifact.v1",
+          "kind": "app-specific",
+          "source_type": "local",
+          "source": "/workspace/app/captures/uat-overlay.json",
+          "digest": null,
+          "staged_root": "/workspace/app/.effigy/local/artifacts/capture-uat-overlay-json-a1b2c3",
+          "primary_files": [
+            "/workspace/app/.effigy/local/artifacts/capture-uat-overlay-json-a1b2c3/uat-overlay.json"
+          ],
+          "environment_label": "uat"
+        },
+        "destination": {
+          "source": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+          "reference": "ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+          "planned": false,
+          "pushed": true,
+          "digest": "sha256:8e5d2f...",
+          "descriptor": {
+            "reference": "ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+            "redacted_reference": "ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+            "digest": "sha256:8e5d2f...",
+            "media_type": "application/vnd.oci.image.manifest.v1+json",
+            "size": 123
+          }
+        },
+        "farmyard_handoff": null
+      }
+    }
+  ],
+  "tasks": [],
+  "warnings": [],
+  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-capture.json",
+  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143017Z-capture-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+}
+```
+
+### 29) State Stack History (`effigy.state-stack.history.v1`)
+
+This payload is the `result` for:
+
+```sh
+effigy --json state history uat --kind capture --limit 5
+```
+
+```json
+{
+  "schema": "effigy.state-stack.history.v1",
+  "schema_version": 1,
+  "stack_name": "uat",
+  "reports": [
+    {
+      "kind": "capture",
+      "schema": "effigy.state-stack.capture.v1",
+      "path": ".effigy/reports/state/uat/history/20260508T110000Z-capture-uat.json",
+      "created_at": "20260508T110000Z",
+      "parent_lineage_id": "uat:lineage:base",
+      "ok": true,
+      "executed": true,
+      "summary": "1 produced layer(s)"
+    },
+    {
+      "kind": "plan",
+      "schema": "effigy.state-stack.lineage.v1",
+      "path": ".effigy/reports/state/uat/plan.json",
+      "created_at": "20260508T100000Z",
+      "lineage_id": "uat:lineage:base",
+      "summary": "3 planned layer(s)"
+    }
+  ],
+  "warnings": [
+    "ignored malformed state report .effigy/reports/state/uat/history/broken.json: expected ident at line 1 column 2"
+  ]
+}
+```
+
+History lookup is read-only. It scans report JSON files and treats malformed
+files as warnings so manual cleanup or old report layouts do not corrupt hidden
+state.
 
 ## Notes
 

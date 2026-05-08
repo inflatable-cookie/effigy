@@ -1,0 +1,29 @@
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[layers]]
+key = "structure"
+role = "structure"
+source = "farmyard:db:migrate"
+apply_mode = "task"
+environment_policy = "all"
+
+[[layers]]
+key = "baseline-seed"
+role = "baseline-seed"
+source = "./seed/static.sql"
+apply_mode = "sql"
+environment_policy = "all"
+artifact_kind = "sql-dump"
+snapshot_identity = "static-reference-data@2026-05-08"
+
+[[layers]]
+key = "legacy-content"
+role = "legacy-import"
+source = "oci://ghcr.io/acowtancy/content:legacy-2026-05-08"
+apply_mode = "artifact"
+environment_policy = "all"
+artifact_kind = "app-specific"
+hook = "acowtancy:migrate:apply-legacy-content"
+snapshot_identity = "old-site-db@2026-05-08"

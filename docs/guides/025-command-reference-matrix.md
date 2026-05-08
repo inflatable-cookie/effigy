@@ -62,6 +62,8 @@ For narrative workflow guidance instead of lookup, start with:
 - Need release workflows: use `effigy release`.
 - Need distribution validation, GLIBC checks, artifact validation, or
   first-publish evidence: use `effigy distribution`.
+- Need to inspect the planned schema/seed/import/capture layer order for a
+  repo state stack: use `effigy state plan`.
 
 ## Primary Commands
 
@@ -96,6 +98,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy completion` | Generate shell completion scripts and selector candidates | `bash\|zsh\|fish`, `candidates`, `--repo`, `--prefix`, `--json` | `effigy.completion.v1`, `effigy.completion.candidates.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy changelog` | Validate, format, analyze, and extract Northstar changelog content | `validate`, `format`, `analyze`, `extract`, `--write`, `--preview`, `--version`, `--json` | changelog subcommands render direct output; some results can be wrapped in `effigy.command.v1` with global JSON mode | `052-changelog-workflows-and-northstar-profile.md` |
 | `effigy release` | Inspect release readiness, run gates, preview or apply release mutations, resume prepared-state review, execute release flow, and verify tagged installs | `status`, `gates`, `resume`, `simulate`, `prepare`, `execute`, `verify-install`, `--check-gates`, `--plan`, `--dry-run`, `--yes`, `--version`, `--allow-stale`, `--tag`, `--repo-url`, `--json` | `effigy.release.status.v1`, `effigy.release.gates.v1`, `effigy.release.resume.v1`, `effigy.release.simulate.v1`, `effigy.release.prepare.plan.v1`, `effigy.release.prepare.v1`, `effigy.release.execute.plan.v1`, `effigy.release.execute.v1`, `effigy.release.verify-install.v1` | `051-release-orchestration.md` |
+| `effigy state` | Plan, apply, capture, and inspect layered state-stack reports without moving app semantics into Effigy | `plan [<STACK>]`, `apply [<STACK>]`, `capture <STACK> <PROFILE>`, `history [<STACK>]`, `--manifest`, `--stack`, `--write-report`, `--yes`, `--repo`, `--json` | `effigy.state-stack.lineage.v1`, `effigy.state-stack.apply.v1`, `effigy.state-stack.capture.v1`, `effigy.state-stack.history.v1` | [`../contracts/016-state-stack-and-layered-seed-framework-contract.md`](../contracts/016-state-stack-and-layered-seed-framework-contract.md) |
 | `effigy <task>` / `effigy <catalog>/<task>` | Run manifest-defined tasks with routing rules | passthrough args, `--json` | `effigy.task.run.v1` | `022-manifest-cookbook.md` |
 
 ## JSON Envelope
@@ -226,6 +229,11 @@ effigy completion candidates [--prefix <value>] [--json]
 effigy changelog <validate|format|analyze|extract> [ARGS...] [--json]
 effigy release <status|gates|resume|simulate|prepare|execute|verify-install> [ARGS...] [--json]
 effigy distribution <preflight|validate-metadata|check-glibc-floor|first-publish|validate-artifacts|generate-closeout|write-summary> [ARGS...] [--json]
+effigy state plan [<STACK>] [--manifest <PATH>] [--write-report] [--json]
+effigy state apply [<STACK>] [--manifest <PATH>] [--yes] [--json]
+effigy state capture <STACK> <PROFILE> [--yes] [--push] [--json]
+effigy state capture [<STACK>] --role <ROLE> --source-env <ENV> --key <KEY> [--source <PATH>] [--ref <REF>] [--hook <TASK>] [--task <TASK>] [--yes] [--push] [--json]
+effigy state history [<STACK>] [--kind plan|apply|capture] [--limit <N>] [--lineage <ID>] [--json]
 ```
 
 ## Scope Notes and Constraints
@@ -289,6 +297,31 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   task selectors
 - `init` never replaces an existing **root** `README.md` unless `--force`; other
   declared paths still fail fast when present without `--force`
+- `state plan` is plan-only: it validates the manifest, reports ordered lineage,
+  and records planned artifact resolutions without running hooks or applying data
+- `state plan` without a standalone manifest reads `[state]` from the composed
+  Effigy manifest; use `state.default`, positional `<STACK>`, or `--stack
+  <NAME>` when multiple stacks are declared
+- `state plan --write-report` writes the lineage payload to
+  `.effigy/reports/state/<stack>/plan.json`, updates `latest-plan.json`, writes
+  a timestamped `history/*.json` entry, and includes written path fields in the
+  output
+- `state apply` is plan-only unless `--yes` is supplied; `--yes` executes
+  `apply_mode = "task"` layers, stages `apply_mode = "artifact"` layers, and
+  imports `apply_mode = "sql"` layers through the existing DB seed/import path;
+  apply reports update `latest-apply.json` and timestamped history
+- `state capture` is plan-only unless `--yes --source <PATH> --ref oci://...`
+  is supplied; execution stages the already-produced local payload, and `--push`
+  explicitly publishes it after local staging; `--task <TASK>` runs one
+  repo-owned capture task before staging, while produced-layer apply hooks still
+  do not run; capture reports update `latest-capture.json` and timestamped
+  history; capture tasks receive `EFFIGY_STATE_CAPTURE_CONTEXT` pointing to a
+  versioned JSON context file
+- `state capture <STACK> <PROFILE>` resolves `[state.<STACK>.captures.<PROFILE>]`
+  from the composed manifest; CLI flags can still override profile fields for
+  one-off captures
+- `state history` is read-only; it scans report JSON files and ignores malformed
+  files with warnings instead of maintaining an index
 
 ## Common Recipes
 
@@ -319,6 +352,13 @@ effigy --json scan attention-markers
 effigy --json scan stale-suppressions
 effigy --json bootstrap git@github.com:inflatable-cookie/loophole.git --plan
 effigy --json test --plan
+effigy state plan
+effigy state plan --write-report
+effigy state plan uat
+effigy state apply uat
+effigy state apply uat --yes
+effigy state capture uat new-content --yes
+effigy --json state plan ./state/acowtancy-uat.toml
 effigy release simulate
 effigy release prepare --plan
 effigy release execute --plan

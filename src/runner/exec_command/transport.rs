@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ffi::OsString;
@@ -33,11 +34,13 @@ const CONTAINER_TTY_COLOR_ENV: [(&str, &str); 2] =
 
 pub(super) fn build_routed_task_exec_args(
     strategy: &effigy_exec::ExecStrategy,
+    task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
     service: &str,
     mapped_cwd: &str,
 ) -> Vec<OsString> {
     let mut args = vec![OsString::from("exec"), OsString::from("-T")];
+    append_task_exec_env(&mut args, task_env);
     append_exec_env(&mut args, secret_env);
     append_color_exec_env(&mut args, false);
 
@@ -63,6 +66,16 @@ pub(super) fn build_routed_task_exec_args(
     }
 
     args
+}
+
+fn append_task_exec_env(args: &mut Vec<OsString>, task_env: Option<&BTreeMap<String, String>>) {
+    let Some(task_env) = task_env else {
+        return;
+    };
+    for (key, value) in task_env {
+        args.push(OsString::from("-e"));
+        args.push(OsString::from(format!("{key}={value}")));
+    }
 }
 
 pub(in crate::runner) fn run_compose_exec(

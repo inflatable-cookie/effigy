@@ -382,6 +382,7 @@ fn build_routed_task_exec_args_raw_exec_emits_single_workdir_flag() {
             command: vec!["sh".to_owned(), "-lc".to_owned(), "pwd".to_owned()],
         },
         None,
+        None,
         "postgres",
         "/ignored/by/raw-exec",
     );
@@ -413,6 +414,7 @@ fn build_routed_task_exec_args_handoff_uses_installed_effigy_path() {
             args: vec!["tasks".to_owned(), "--json".to_owned()],
         },
         None,
+        None,
         "workspace",
         "/workspace-root/repo",
     );
@@ -437,6 +439,28 @@ fn build_routed_task_exec_args_handoff_uses_installed_effigy_path() {
             OsString::from("--json"),
         ]
     );
+}
+
+#[test]
+fn build_routed_task_exec_args_forwards_task_env_to_handoff() {
+    let mut task_env = std::collections::BTreeMap::new();
+    task_env.insert(
+        "EFFIGY_STATE_CAPTURE_CONTEXT".to_owned(),
+        ".effigy/context.json".to_owned(),
+    );
+    let args = build_routed_task_exec_args(
+        &effigy_exec::ExecStrategy::Handoff {
+            args: vec!["state:capture-proof".to_owned()],
+        },
+        Some(&task_env),
+        None,
+        "workspace",
+        "/workspace-root/repo",
+    );
+    assert!(args
+        .windows(2)
+        .any(|window| window[0] == OsString::from("-e")
+            && window[1] == OsString::from("EFFIGY_STATE_CAPTURE_CONTEXT=.effigy/context.json")));
 }
 
 #[test]

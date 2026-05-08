@@ -85,6 +85,7 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Deploy(_)
         | Command::Defer(_)
         | Command::Exec(_)
+        | Command::State(_)
         | Command::System(_)
         | Command::Workspace(_)
         | Command::Gateway(_)
