@@ -76,7 +76,7 @@ Run them:
 
 ```bash
 effigy dev
-effigy app/db:reset
+effigy db:reset
 ```
 
 Leave `test` alone — Effigy will auto-detect your test runner (`vitest`, `cargo nextest`, `cargo test`) and orchestrate across your whole repo.
@@ -219,30 +219,23 @@ Use Rhai when the logic is too complex for a one-liner but too small to justify 
 
 ### Host-Clean Local Dev Stacks
 
-Declare your local environment in `effigy.toml`:
+Declare services and run your dev task inside a container:
 
 ```toml
-[systems]
-default = "dev"
-
-[systems.dev]
-default_workspace = "app"
-
-[systems.dev.workspaces.app]
-container = "app"
+[containers.app]
+services.db.catalog = "postgres"
+services.cache.catalog = "redis"
 
 [tasks.dev]
 run_in = "container"
 run = "bun run dev"
 ```
 
-Then just run your dev task:
-
 ```bash
 effigy dev
 ```
 
-Effigy auto-starts the container with whatever services the repo declared, runs your dev task inside it, and stops everything on exit. No `docker compose up`, no manual teardown, no host pollution.
+Effigy auto-starts the container with Postgres and Redis, runs your dev task inside it, and stops everything on exit. No `docker compose up`, no manual teardown, no host pollution.
 
 Prerequisites: Colima or Docker Desktop must be installed (e.g. `brew install colima`).
 
