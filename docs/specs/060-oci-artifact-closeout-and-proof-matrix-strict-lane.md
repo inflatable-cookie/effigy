@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.018`](../roadmaps/g04/018-oci-artifact-closeout-and-proof-matrix.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-08
 
@@ -25,15 +25,15 @@ round of substrate sprawl.
 
 ## Current Ready Card
 
-- [`589-add-oci-proof-matrix-for-shipped-surfaces.md`](../roadmaps/g04/batch-cards/589-add-oci-proof-matrix-for-shipped-surfaces.md)
+No ready card.
 
 ## Execution Chain
 
-- `589` ready: add OCI proof coverage for the shipped bootstrap, container
-  data, and artifact surfaces
-- `590` pending: harden auth and push failure remediation
-- `591` pending: decide and document the artifact operation record boundary
-- `592` pending: close OCI docs/contracts/help and mark the lane complete
+- `589` complete: added OCI proof coverage for the shipped bootstrap,
+  container data, and artifact surfaces
+- `590` complete: hardened auth and push failure remediation
+- `591` complete: decided and documented the artifact operation record boundary
+- `592` complete: closed OCI docs/contracts/help and marked the lane complete
 
 ## Exit Condition
 
@@ -43,5 +43,4 @@ substrate.
 
 ## Next Task
 
-Execute
-[`589-add-oci-proof-matrix-for-shipped-surfaces.md`](../roadmaps/g04/batch-cards/589-add-oci-proof-matrix-for-shipped-surfaces.md).
+Planning stop.

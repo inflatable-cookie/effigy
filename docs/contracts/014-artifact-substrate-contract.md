@@ -96,14 +96,14 @@ Artifact operation report:
 
 ## Source Rules
 
-Supported first-round sources:
+Supported sources:
 
 - local `.sql`
 - local `.sql.gz`
 - local `.dump`
 - OCI refs with an explicit `oci://` prefix
 
-`oci://` is required in the first round. Effigy must not guess whether a
+`oci://` is required. Effigy must not guess whether a
 Docker-like string is a local path, registry ref, or app argument.
 
 Examples:
@@ -188,8 +188,8 @@ For seed operations, local files and OCI artifacts must resolve to the same
 staged artifact shape before app-specific seed logic runs.
 
 For dump operations, local destinations write local SQL payloads today. OCI
-destinations require the later capture/push surface: stage the dump, package
-metadata, push the artifact, and report the immutable digest.
+destinations use the shipped capture/push surface: stage the dump, package
+metadata, optionally push the artifact, and report the immutable digest.
 
 Seed/dump target selection and database command rendering belong to
 `effigy-data`. Artifact transport and staging belong to `effigy-artifacts`.

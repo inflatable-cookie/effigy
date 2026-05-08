@@ -30,7 +30,7 @@ Historical command-reference rule:
 
 No active strict lane.
 
-The current g04 follow-up set is complete.
+The current g04 follow-up set is complete, including the OCI closeout lane.
 
 Paused but still useful:
 

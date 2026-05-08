@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-08
 Depends on:
@@ -12,7 +12,7 @@ Depends on:
 
 ## Goal
 
-Move OCI artifact support from first-round usable substrate to a finished,
+Move OCI artifact support from usable substrate to a finished,
 operator-credible Effigy surface.
 
 The missing work is not core parsing or transport anymore. It is proof,
@@ -66,19 +66,18 @@ OCI support is considered done for this generation only when:
   - either the ledger/report surface is part of the supported contract now
   - or the contract explicitly says it is deferred and names the remaining gap
 
-## Key Open Gaps
+## Closed Gaps
 
-Current substrate coverage is strong enough to use, but not strong enough to
-call complete:
+This milestone closed the remaining OCI gaps that had kept the surface short of
+done:
 
-- proof coverage still leans on parser, crate, and fixture tests more than
-  user-visible command proofs
-- auth and push failures are documented, but the closeout standard should be
-  clear remediation text and contract-tested output
-- dump-to-OCI is implemented, but the operator story still needs a deliberate
-  closeout sweep
-- the artifact operation ledger/record language exists in the contract, but the
-  shipped boundary needs an explicit “done now” vs “later” decision
+- command-level proof coverage now exists for the shipped artifact and
+  dump-to-OCI paths, with the remaining shared-seed seam made explicit
+- auth and push failures now produce operator-actionable remediation with
+  contract-tested output
+- dump-to-OCI and direct artifact capture now share one explicit push model
+- the contract now says clearly that operation reports are shipped today while
+  a durable persisted artifact ledger is deferred
 
 ## Acceptance Criteria
 
@@ -89,7 +88,7 @@ call complete:
 - `014-artifact-substrate-contract.md` matches the actual shipped OCI support
   level
 - the strict lane closes with no open ready card and no ambiguous OCI
-  “later” language left in the current roadmap set
+  provisional language left in the current roadmap set
 
 ## Validation
 
@@ -104,5 +103,4 @@ call complete:
 
 ## Next Task
 
-Continue with
-[`g04.060`](../../specs/060-oci-artifact-closeout-and-proof-matrix-strict-lane.md).
+Planning stop.
