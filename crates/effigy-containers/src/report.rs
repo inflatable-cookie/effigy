@@ -131,6 +131,18 @@ pub struct ContainerVolumeGlobalEntry {
     pub orphan_reason: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerVolumePruneEntry {
+    pub name: String,
+    pub backend: String,
+    pub profile: String,
+    pub project_name: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub removed: bool,
+    pub in_use: bool,
+    pub orphan_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerDataTransferAction {
     Export,
@@ -1055,6 +1067,92 @@ pub fn cache_prune_report(
             } else {
                 "skipped"
             }
+        ));
+    }
+
+    ContainerCommandReport {
+        json,
+        success_text: lines.join("\n"),
+    }
+}
+
+pub fn volume_prune_report(
+    scope_label: &str,
+    filter_label: &str,
+    entries: &[ContainerVolumePruneEntry],
+) -> ContainerCommandReport {
+    let removed_count = entries.iter().filter(|entry| entry.removed).count();
+    let skipped_count = entries.len().saturating_sub(removed_count);
+    let removed_size_bytes: u64 = entries
+        .iter()
+        .filter(|entry| entry.removed)
+        .filter_map(|entry| entry.size_bytes)
+        .sum();
+    let skipped_size_bytes: u64 = entries
+        .iter()
+        .filter(|entry| !entry.removed)
+        .filter_map(|entry| entry.size_bytes)
+        .sum();
+    let json = json!({
+        "schema": "effigy.container.volume-prune.v1",
+        "schema_version": 1,
+        "ok": true,
+        "scope": scope_label,
+        "filter": filter_label,
+        "removed_count": removed_count,
+        "removed_size_bytes": removed_size_bytes,
+        "skipped_count": skipped_count,
+        "skipped_size_bytes": skipped_size_bytes,
+        "volumes": entries.iter().map(|entry| {
+            json!({
+                "name": entry.name,
+                "backend": entry.backend,
+                "profile": entry.profile,
+                "project_name": entry.project_name,
+                "size_bytes": entry.size_bytes,
+                "removed": entry.removed,
+                "in_use": entry.in_use,
+                "orphan_reason": entry.orphan_reason,
+            })
+        }).collect::<Vec<_>>(),
+    });
+
+    if entries.is_empty() {
+        return ContainerCommandReport {
+            json,
+            success_text: format!("[info] no {filter_label} Effigy-managed volumes matched {scope_label}"),
+        };
+    }
+
+    let mut lines = vec![format!(
+        "[ok] removed {} volume{} ({}) and skipped {} ({}) for {} ({})",
+        removed_count,
+        if removed_count == 1 { "" } else { "s" },
+        format_bytes(removed_size_bytes),
+        skipped_count,
+        format_bytes(skipped_size_bytes),
+        scope_label,
+        filter_label
+    )];
+    for entry in entries {
+        let size = entry
+            .size_bytes
+            .map(format_bytes)
+            .unwrap_or_else(|| "unavailable".to_owned());
+        let project = entry.project_name.as_deref().unwrap_or("unknown");
+        let status = if entry.removed {
+            "removed".to_owned()
+        } else if entry.in_use {
+            "skipped: in-use".to_owned()
+        } else {
+            format!(
+                "skipped:{}",
+                entry.orphan_reason.as_deref().unwrap_or("unmatched")
+            )
+        };
+        lines.push(format!(
+            "- {} (size={}, backend={}, profile={}, project={}, {})",
+            entry.name, size, entry.backend, entry.profile, project, status
         ));
     }
 

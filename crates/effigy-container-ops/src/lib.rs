@@ -1,5 +1,32 @@
 use std::path::PathBuf;
 
+mod cache;
+mod data;
+mod exec;
+mod lifecycle;
+mod read;
+mod safety;
+mod volume;
+
+pub use cache::{
+    ContainerCacheListOperation, ContainerCacheOperation, ContainerCachePruneOperation,
+};
+pub use data::{
+    ContainerDataOperation, ContainerDataTransferOperation, ContainerDumpOperation,
+    ContainerPromptedOperation,
+};
+pub use exec::{ContainerCapturedExecOperation, ContainerExecOperation, ContainerShellOperation};
+pub use lifecycle::{
+    ContainerDownOperation, ContainerLifecycleOperation, ContainerResetOperation,
+    ContainerUpOperation,
+};
+pub use read::{
+    ContainerLogsOperation, ContainerReadOperation, ContainerStatsOperation,
+    ContainerStatusOperation,
+};
+pub use safety::{ContainerConfirmationPolicy, ContainerSideEffectClass};
+pub use volume::{ContainerVolumeListOperation, ContainerVolumeOperation};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerOperationRequest {
     pub repo_root: PathBuf,
@@ -70,6 +97,7 @@ pub enum ContainerOperationKind {
     Exec(ContainerExecOperation),
     Data(ContainerDataOperation),
     Cache(ContainerCacheOperation),
+    Volume(ContainerVolumeOperation),
 }
 
 impl ContainerOperationKind {
@@ -93,6 +121,10 @@ impl ContainerOperationKind {
         Self::Cache(operation)
     }
 
+    pub fn volume(operation: ContainerVolumeOperation) -> Self {
+        Self::Volume(operation)
+    }
+
     pub fn side_effect_class(&self) -> ContainerSideEffectClass {
         match self {
             Self::Lifecycle(operation) => operation.side_effect_class(),
@@ -100,6 +132,7 @@ impl ContainerOperationKind {
             Self::Exec(operation) => operation.side_effect_class(),
             Self::Data(operation) => operation.side_effect_class(),
             Self::Cache(operation) => operation.side_effect_class(),
+            Self::Volume(operation) => operation.side_effect_class(),
         }
     }
 
@@ -110,328 +143,9 @@ impl ContainerOperationKind {
             Self::Exec(operation) => operation.confirmation_policy(),
             Self::Data(operation) => operation.confirmation_policy(),
             Self::Cache(operation) => operation.confirmation_policy(),
+            Self::Volume(operation) => operation.confirmation_policy(),
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContainerLifecycleOperation {
-    Up(ContainerUpOperation),
-    Down(ContainerDownOperation),
-    Reset(ContainerResetOperation),
-}
-
-impl ContainerLifecycleOperation {
-    pub fn up(attach: bool, detach: bool) -> Self {
-        Self::Up(ContainerUpOperation { attach, detach })
-    }
-
-    pub fn down(all: bool) -> Self {
-        Self::Down(ContainerDownOperation { all })
-    }
-
-    pub fn reset(keep_data: bool, wipe_data: bool, assume_yes: bool) -> Self {
-        Self::Reset(ContainerResetOperation {
-            keep_data,
-            wipe_data,
-            assume_yes,
-        })
-    }
-
-    pub fn side_effect_class(&self) -> ContainerSideEffectClass {
-        match self {
-            Self::Up(_) => ContainerSideEffectClass::StartsRuntime,
-            Self::Down(_) => ContainerSideEffectClass::StopsRuntime,
-            Self::Reset(operation) if operation.wipe_data => {
-                ContainerSideEffectClass::DestroysRuntimeData
-            }
-            Self::Reset(_) => ContainerSideEffectClass::RecreatesRuntime,
-        }
-    }
-
-    pub fn confirmation_policy(&self) -> ContainerConfirmationPolicy {
-        match self {
-            Self::Reset(operation) if operation.wipe_data && !operation.assume_yes => {
-                ContainerConfirmationPolicy::RequireConfirmation {
-                    reason: "reset removes runtime data",
-                }
-            }
-            _ => ContainerConfirmationPolicy::NoConfirmationRequired,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContainerUpOperation {
-    pub attach: bool,
-    pub detach: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContainerDownOperation {
-    pub all: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContainerResetOperation {
-    pub keep_data: bool,
-    pub wipe_data: bool,
-    pub assume_yes: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContainerReadOperation {
-    Status(ContainerStatusOperation),
-    Logs(ContainerLogsOperation),
-    Stats(ContainerStatsOperation),
-}
-
-impl ContainerReadOperation {
-    pub fn status(all: bool) -> Self {
-        Self::Status(ContainerStatusOperation { all })
-    }
-
-    pub fn logs(service: Option<String>, follow: bool) -> Self {
-        Self::Logs(ContainerLogsOperation { service, follow })
-    }
-
-    pub fn stats(all: bool) -> Self {
-        Self::Stats(ContainerStatsOperation { all })
-    }
-
-    pub fn side_effect_class(&self) -> ContainerSideEffectClass {
-        ContainerSideEffectClass::ReadsRuntime
-    }
-
-    pub fn confirmation_policy(&self) -> ContainerConfirmationPolicy {
-        ContainerConfirmationPolicy::NoConfirmationRequired
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContainerStatusOperation {
-    pub all: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContainerLogsOperation {
-    pub service: Option<String>,
-    pub follow: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContainerStatsOperation {
-    pub all: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContainerExecOperation {
-    Captured(ContainerCapturedExecOperation),
-    Shell(ContainerShellOperation),
-}
-
-impl ContainerExecOperation {
-    pub fn captured(
-        service: Option<String>,
-        command: Vec<String>,
-        stdin_file: Option<PathBuf>,
-    ) -> Self {
-        Self::Captured(ContainerCapturedExecOperation {
-            service,
-            command,
-            stdin_file,
-        })
-    }
-
-    pub fn shell(service: Option<String>, command: Option<String>, interactive: bool) -> Self {
-        Self::Shell(ContainerShellOperation {
-            service,
-            command,
-            interactive,
-        })
-    }
-
-    pub fn side_effect_class(&self) -> ContainerSideEffectClass {
-        ContainerSideEffectClass::InteractsWithRuntime
-    }
-
-    pub fn confirmation_policy(&self) -> ContainerConfirmationPolicy {
-        ContainerConfirmationPolicy::NoConfirmationRequired
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContainerCapturedExecOperation {
-    pub service: Option<String>,
-    pub command: Vec<String>,
-    pub stdin_file: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContainerShellOperation {
-    pub service: Option<String>,
-    pub command: Option<String>,
-    pub interactive: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContainerDataOperation {
-    List,
-    Export(ContainerDataTransferOperation),
-    Import(ContainerDataTransferOperation),
-    PullProduction(ContainerPromptedOperation),
-    Seed(ContainerPromptedOperation),
-    Dump(ContainerDumpOperation),
-}
-
-impl ContainerDataOperation {
-    pub fn list() -> Self {
-        Self::List
-    }
-
-    pub fn export(volume: impl Into<String>, path: PathBuf) -> Self {
-        Self::Export(ContainerDataTransferOperation {
-            volume: volume.into(),
-            path,
-        })
-    }
-
-    pub fn import(volume: impl Into<String>, path: PathBuf) -> Self {
-        Self::Import(ContainerDataTransferOperation {
-            volume: volume.into(),
-            path,
-        })
-    }
-
-    pub fn pull_production(assume_yes: bool) -> Self {
-        Self::PullProduction(ContainerPromptedOperation { assume_yes })
-    }
-
-    pub fn seed(assume_yes: bool) -> Self {
-        Self::Seed(ContainerPromptedOperation { assume_yes })
-    }
-
-    pub fn dump(push: bool) -> Self {
-        Self::Dump(ContainerDumpOperation { push })
-    }
-
-    pub fn side_effect_class(&self) -> ContainerSideEffectClass {
-        match self {
-            Self::List => ContainerSideEffectClass::ReadsRuntime,
-            Self::Export(_) | Self::Dump(_) => ContainerSideEffectClass::WritesHostData,
-            Self::Import(_) | Self::PullProduction(_) | Self::Seed(_) => {
-                ContainerSideEffectClass::MutatesRuntimeData
-            }
-        }
-    }
-
-    pub fn confirmation_policy(&self) -> ContainerConfirmationPolicy {
-        match self {
-            Self::Import(_) => ContainerConfirmationPolicy::RequireConfirmation {
-                reason: "operation mutates runtime data",
-            },
-            Self::PullProduction(operation) | Self::Seed(operation) if !operation.assume_yes => {
-                ContainerConfirmationPolicy::RequireConfirmation {
-                    reason: "operation mutates runtime data",
-                }
-            }
-            _ => ContainerConfirmationPolicy::NoConfirmationRequired,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContainerDataTransferOperation {
-    pub volume: String,
-    pub path: PathBuf,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContainerPromptedOperation {
-    pub assume_yes: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContainerDumpOperation {
-    pub push: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContainerCacheOperation {
-    List(ContainerCacheListOperation),
-    Prune(ContainerCachePruneOperation),
-}
-
-impl ContainerCacheOperation {
-    pub fn list(all: bool, project: Option<String>, kind: Option<String>) -> Self {
-        Self::List(ContainerCacheListOperation { all, project, kind })
-    }
-
-    pub fn prune(
-        all: bool,
-        project: Option<String>,
-        kind: Option<String>,
-        assume_yes: bool,
-    ) -> Self {
-        Self::Prune(ContainerCachePruneOperation {
-            all,
-            project,
-            kind,
-            assume_yes,
-        })
-    }
-
-    pub fn side_effect_class(&self) -> ContainerSideEffectClass {
-        match self {
-            Self::List(_) => ContainerSideEffectClass::ReadsRuntime,
-            Self::Prune(_) => ContainerSideEffectClass::RemovesCacheData,
-        }
-    }
-
-    pub fn confirmation_policy(&self) -> ContainerConfirmationPolicy {
-        match self {
-            Self::Prune(operation) if !operation.assume_yes => {
-                ContainerConfirmationPolicy::RequireConfirmation {
-                    reason: "operation removes cache data",
-                }
-            }
-            _ => ContainerConfirmationPolicy::NoConfirmationRequired,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContainerCacheListOperation {
-    pub all: bool,
-    pub project: Option<String>,
-    pub kind: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContainerCachePruneOperation {
-    pub all: bool,
-    pub project: Option<String>,
-    pub kind: Option<String>,
-    pub assume_yes: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContainerSideEffectClass {
-    ReadsRuntime,
-    InteractsWithRuntime,
-    WritesHostData,
-    MutatesRuntimeData,
-    RemovesCacheData,
-    StartsRuntime,
-    StopsRuntime,
-    RecreatesRuntime,
-    DestroysRuntimeData,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContainerConfirmationPolicy {
-    NoConfirmationRequired,
-    RequireConfirmation { reason: &'static str },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -747,6 +461,33 @@ mod tests {
                 assert!(operation.all);
                 assert_eq!(operation.project.as_deref(), Some("project"));
                 assert_eq!(operation.kind.as_deref(), Some("rust-target"));
+            }
+            other => panic!("unexpected operation kind: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn volume_list_plan_is_read_only_and_keeps_inventory_filters() {
+        let plan = ContainerOperationRequest::new(
+            PathBuf::from("/tmp/repo"),
+            "profile:effigy",
+            ContainerOperationKind::volume(ContainerVolumeOperation::list(
+                true,
+                Some("effigy".to_owned()),
+            )),
+        )
+        .backend_id("colima")
+        .plan();
+
+        assert_eq!(plan.side_effect, ContainerSideEffectClass::ReadsRuntime);
+        assert_eq!(
+            plan.confirmation,
+            ContainerConfirmationPolicy::NoConfirmationRequired
+        );
+        match plan.request.kind {
+            ContainerOperationKind::Volume(ContainerVolumeOperation::List(operation)) => {
+                assert!(operation.orphans_only);
+                assert_eq!(operation.profile.as_deref(), Some("effigy"));
             }
             other => panic!("unexpected operation kind: {other:?}"),
         }

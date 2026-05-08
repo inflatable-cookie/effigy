@@ -19,6 +19,9 @@ During v0.x, MINOR bumps may include breaking changes.
   surface for Effigy-managed named volumes across available runtimes, and
   `--orphans` narrows that view to labeled volumes whose owning repo is gone or
   no longer declares them.
+- `effigy container volume prune` adds the destructive half of the volume
+  ownership surface, with repo-scoped `--dormant` cleanup for superseded local
+  volumes and `--global --orphans` cleanup for ownerless machine-wide volumes.
 
 ### Added
 - **User-global container runtime preferences:** `~/.effigy/config.toml` now
@@ -74,6 +77,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `vendor`, `node_modules`, `target`, `pnpm-store`, and shared Cargo caches as
   ephemeral instead of incorrectly labeling them persistent in generated
   runtime metadata.
+- **Repo-scoped dormant volume detection** now treats stopped legacy generated
+  `efv-*` volumes as stale when the current repo no longer declares them, so
+  old Underlay and Decodelabs generations can be identified and pruned instead
+  of lingering forever as inactive unknowns.
 - **Shipped PHP workspaces** now install a sendmail-compatible `msmtp` shim and
   point PHP `mail()` at the local Mailpit SMTP service by default, so legacy
   mail code is captured in development instead of disappearing into an

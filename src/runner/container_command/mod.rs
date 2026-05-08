@@ -5,7 +5,8 @@ use effigy_runtime::data::{
     run_container_cache_list, run_container_cache_list_all, run_container_cache_list_under_path,
     run_container_cache_prune, run_container_cache_prune_all, run_container_data_export,
     run_container_data_import, run_container_data_list, run_container_volume_list,
-    run_container_volume_list_for_repo,
+    run_container_volume_list_for_repo, run_container_volume_prune_for_repo,
+    run_container_volume_prune_global,
 };
 use effigy_runtime::read::{
     run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
@@ -178,6 +179,51 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         )
         .map_err(Into::into);
     }
+    if let ContainerSubcommand::Volume {
+        subcommand:
+            ContainerVolumeSubcommand::Prune {
+                global,
+                yes,
+                orphans,
+                dormant,
+            },
+    } = &args.subcommand
+    {
+        if *global {
+            if args.repo_override.is_some() {
+                return Err(RunnerError::task_invocation(
+                    "`effigy container volume prune --global` does not accept `--repo`; use `effigy container volume prune --dormant` for one repo or omit `--repo` for global orphan cleanup",
+                ));
+            }
+            data::maybe_confirm_destructive_container_action(
+                "`effigy container volume prune --global --orphans`",
+                "Purge ownerless Effigy-managed volumes across available runtimes.",
+                args.output_json,
+                *yes,
+            )?;
+            let cwd = crate::runner::command_context::active_invocation_cwd()?;
+            return run_container_volume_prune_global(
+                &cwd,
+                args.output_json,
+                runtime_volume_capture,
+            )
+            .map_err(Into::into);
+        }
+        debug_assert!(!orphans && *dormant);
+        data::maybe_confirm_destructive_container_action(
+            "`effigy container volume prune --dormant`",
+            "Purge dormant Effigy-managed volumes that the current repo no longer declares or mounts.",
+            args.output_json,
+            *yes,
+        )?;
+        let context = resolve_active_command_context(args.repo_override.clone())?;
+        return run_container_volume_prune_for_repo(
+            &context.resolved.resolved_root,
+            args.output_json,
+            runtime_volume_capture,
+        )
+        .map_err(Into::into);
+    }
     match args.subcommand {
         ContainerSubcommand::Up {
             name,
@@ -327,6 +373,9 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         } => unreachable!("handled above"),
         ContainerSubcommand::Volume {
             subcommand: ContainerVolumeSubcommand::List { .. },
+        } => unreachable!("handled above"),
+        ContainerSubcommand::Volume {
+            subcommand: ContainerVolumeSubcommand::Prune { .. },
         } => unreachable!("handled above"),
         ContainerSubcommand::Data {
             name,
@@ -743,6 +792,27 @@ mod tests {
         assert!(error
             .to_string()
             .contains("`effigy container volume list --global` does not accept `--repo`"));
+    }
+
+    #[test]
+    fn container_volume_prune_global_rejects_repo_override() {
+        let error = run_container(ContainerArgs {
+            subcommand: ContainerSubcommand::Volume {
+                subcommand: ContainerVolumeSubcommand::Prune {
+                    global: true,
+                    yes: true,
+                    orphans: true,
+                    dormant: false,
+                },
+            },
+            repo_override: Some(std::path::PathBuf::from("/tmp/demo")),
+            output_json: false,
+        })
+        .expect_err("volume prune --global should reject --repo");
+
+        assert!(error
+            .to_string()
+            .contains("`effigy container volume prune --global` does not accept `--repo`"));
     }
 
     #[test]

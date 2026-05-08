@@ -576,9 +576,14 @@ impl DeclaredRepoVolumes {
             return entry;
         }
 
+        let is_legacy_generated_volume = entry.name.starts_with("efv-")
+            && entry.service.is_none()
+            && entry.mount_target.is_none()
+            && entry.persist.is_none();
         let can_mark_stale = entry.service.is_some()
             || entry.mount_target.is_some()
-            || self.running_projects.contains(project_name);
+            || self.running_projects.contains(project_name)
+            || is_legacy_generated_volume;
         if can_mark_stale {
             entry.orphaned = true;
             entry.orphan_reason = Some("no-longer-declared".to_owned());
@@ -772,6 +777,43 @@ mod tests {
             reconciled.repo_root.as_deref(),
             Some("/tmp/underlay-reference")
         );
+        assert!(reconciled.orphaned);
+        assert_eq!(
+            reconciled.orphan_reason.as_deref(),
+            Some("no-longer-declared")
+        );
+    }
+
+    #[test]
+    fn repo_scope_marks_stopped_legacy_generated_volume_as_stale() {
+        let declared = DeclaredRepoVolumes {
+            repo_root: "/tmp/underlay-reference".to_owned(),
+            by_project: BTreeMap::from([(
+                "underlay-reference-dev".to_owned(),
+                DeclaredProjectVolumes {
+                    runtime_names: BTreeSet::from([
+                        "underlay-reference-dev-postgres-data".to_owned()
+                    ]),
+                    mount_keys: BTreeSet::new(),
+                },
+            )]),
+            running_projects: BTreeSet::new(),
+        };
+        let reconciled = declared.reconcile_entry(ContainerVolumeGlobalEntry {
+            name: "efv-f1958972bdd653b9".to_owned(),
+            backend: "containerd".to_owned(),
+            profile: "effigy".to_owned(),
+            project_name: Some("underlay-reference-dev".to_owned()),
+            repo_root: None,
+            service: None,
+            mount_target: None,
+            persist: None,
+            size_bytes: Some(5_700_000_000),
+            in_use: false,
+            orphaned: false,
+            orphan_reason: None,
+        });
+
         assert!(reconciled.orphaned);
         assert_eq!(
             reconciled.orphan_reason.as_deref(),

@@ -273,6 +273,7 @@ where
     match subcmd.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Container)),
         "list" => parse_container_volume_list(args),
+        "prune" => parse_container_volume_prune(args),
         other => Err(unknown_argument(other)),
     }
 }
@@ -323,6 +324,70 @@ where
         subcommand: ContainerSubcommand::Volume {
             subcommand: ContainerVolumeSubcommand::List {
                 global,
+                orphans,
+                dormant,
+            },
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_container_volume_prune<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut global = false;
+    let mut yes = false;
+    let mut orphans = false;
+    let mut dormant = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--global" => global = true,
+            "--yes" => yes = true,
+            "--orphans" => orphans = true,
+            "--dormant" => dormant = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    if orphans && !global {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container volume prune --orphans` requires `--global`; use `--dormant` for repo-scoped stale volumes"
+                .to_owned(),
+        ));
+    }
+    if dormant && global {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container volume prune --dormant` does not accept `--global`; use `--orphans` for global ownerless volumes"
+                .to_owned(),
+        ));
+    }
+    if dormant && orphans {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container volume prune` does not accept both `--orphans` and `--dormant`"
+                .to_owned(),
+        ));
+    }
+    if !orphans && !dormant {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container volume prune` requires either `--dormant` or `--global --orphans`"
+                .to_owned(),
+        ));
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Volume {
+            subcommand: ContainerVolumeSubcommand::Prune {
+                global,
+                yes,
                 orphans,
                 dormant,
             },

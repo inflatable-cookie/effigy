@@ -30,7 +30,7 @@ pub use report::{
     ContainerCacheVolumeEntry, ContainerCommandReport, ContainerDataHookResult,
     ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerStatsAllEntry,
     ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
-    ContainerVolumeGlobalEntry,
+    ContainerVolumeGlobalEntry, ContainerVolumePruneEntry, volume_prune_report,
 };
 pub use runtime::eject::eject_generated_compose;
 pub use workspace::load_workspace_ownership_targets;

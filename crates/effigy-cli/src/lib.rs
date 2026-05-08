@@ -679,6 +679,12 @@ pub enum ContainerVolumeSubcommand {
         orphans: bool,
         dormant: bool,
     },
+    Prune {
+        global: bool,
+        yes: bool,
+        orphans: bool,
+        dormant: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

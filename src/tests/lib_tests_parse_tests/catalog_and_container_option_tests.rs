@@ -718,6 +718,77 @@ fn parse_container_volume_list_rejects_dormant_with_global() {
 }
 
 #[test]
+fn parse_container_volume_prune_accepts_dormant_filter() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "volume".to_owned(),
+        "prune".to_owned(),
+        "--dormant".to_owned(),
+        "--yes".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Volume {
+                subcommand: ContainerVolumeSubcommand::Prune {
+                    global: false,
+                    yes: true,
+                    orphans: false,
+                    dormant: true,
+                },
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_volume_prune_accepts_orphans_filter_with_global() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "volume".to_owned(),
+        "prune".to_owned(),
+        "--global".to_owned(),
+        "--orphans".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Volume {
+                subcommand: ContainerVolumeSubcommand::Prune {
+                    global: true,
+                    yes: true,
+                    orphans: true,
+                    dormant: false,
+                },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_container_volume_prune_requires_explicit_filter() {
+    let error = parse_command(vec![
+        "container".to_owned(),
+        "volume".to_owned(),
+        "prune".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect_err("parse should fail");
+
+    assert!(error
+        .to_string()
+        .contains("`effigy container volume prune` requires either `--dormant` or `--global --orphans`"));
+}
+
+#[test]
 fn parse_container_data_export_is_supported() {
     let cmd = parse_command(vec![
         "container".to_owned(),

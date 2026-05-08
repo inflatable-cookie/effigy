@@ -234,6 +234,8 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("--no-prompt"));
     assert!(rendered.contains("effigy container web data list"));
     assert!(rendered.contains("effigy container volume list --global --orphans"));
+    assert!(rendered.contains("effigy container volume prune --dormant --yes"));
+    assert!(rendered.contains("effigy container volume prune --global --orphans --yes"));
     assert!(rendered.contains("effigy container cache list --global"));
     assert!(rendered.contains("effigy container cache list --project acowtancy-dev"));
     assert!(rendered.contains("effigy container cache list --kind rust-target"));

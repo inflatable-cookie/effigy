@@ -648,6 +648,48 @@ fn volume_list_report_renders_orphan_contract() {
 }
 
 #[test]
+fn volume_prune_report_renders_contract() {
+    let report = crate::volume_prune_report(
+        "repo volume inventory for /tmp/underlay-reference",
+        "dormant",
+        &[
+            crate::ContainerVolumePruneEntry {
+                name: "legacy-postgres".to_owned(),
+                backend: "containerd".to_owned(),
+                profile: "effigy".to_owned(),
+                project_name: Some("underlay-reference-dev".to_owned()),
+                size_bytes: Some(1024),
+                removed: true,
+                in_use: false,
+                orphan_reason: Some("no-longer-declared".to_owned()),
+            },
+            crate::ContainerVolumePruneEntry {
+                name: "legacy-live".to_owned(),
+                backend: "docker".to_owned(),
+                profile: "docker".to_owned(),
+                project_name: Some("dtn-dev".to_owned()),
+                size_bytes: None,
+                removed: false,
+                in_use: true,
+                orphan_reason: None,
+            },
+        ],
+    );
+
+    assert_eq!(report.json["schema"], "effigy.container.volume-prune.v1");
+    assert_eq!(report.json["filter"], "dormant");
+    assert_eq!(report.json["removed_count"], 1);
+    assert_eq!(report.json["removed_size_bytes"], 1024);
+    assert_eq!(report.json["skipped_count"], 1);
+    assert_eq!(report.json["skipped_size_bytes"], 0);
+    assert!(report.success_text.contains("removed 1 volume"));
+    assert!(report.success_text.contains("(1.0 KiB)"));
+    assert!(report.success_text.contains("legacy-postgres"));
+    assert!(report.success_text.contains("removed"));
+    assert!(report.success_text.contains("skipped: in-use"));
+}
+
+#[test]
 fn data_transfer_report_renders_export_contract() {
     let root = temp_repo("data-transfer-report");
     fs::write(

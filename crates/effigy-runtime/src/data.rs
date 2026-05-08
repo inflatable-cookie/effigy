@@ -18,9 +18,9 @@ use effigy_containers::{
     data_transfer_report,
     exec::{runtime_backend_is_running, selected_backend_label},
     load_container_policy, user_global_colima_profile, validate_compose_backend_runtime,
-    validate_container_policy, volume_list_report, ContainerCachePruneEntry,
+    validate_container_policy, volume_list_report, volume_prune_report, ContainerCachePruneEntry,
     ContainerCacheVolumeEntry, ContainerDataTransferAction, ContainerDataVolumeEntry,
-    EffectiveContainerPolicy,
+    ContainerVolumePruneEntry, EffectiveContainerPolicy,
 };
 
 use crate::EffigyRuntimeError;
@@ -352,6 +352,94 @@ where
             &format!("repo volume inventory for {}", repo_root.display()),
             orphans_only.then_some("dormant"),
             &volumes,
+        ),
+        output_json,
+    ))
+}
+
+pub fn run_container_volume_prune_global<F>(
+    cwd: &Path,
+    output_json: bool,
+    run_runtime_volume_capture: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
+    let _operation_plan = global_volume_operation_plan(
+        cwd,
+        &profile,
+        ContainerVolumeOperation::prune(true, Some(profile.clone())),
+    );
+    let volumes = collect_global_volume_entries(cwd, true, &run_runtime_volume_capture)?;
+    let mut entries = Vec::new();
+    for volume in volumes {
+        let removed = if volume.in_use {
+            false
+        } else {
+            run_runtime_volume_capture(cwd, &volume.profile, &remove_volume_command(&volume.name))?;
+            true
+        };
+        entries.push(ContainerVolumePruneEntry {
+            name: volume.name,
+            backend: volume.backend,
+            profile: volume.profile,
+            project_name: volume.project_name,
+            size_bytes: volume.size_bytes,
+            removed,
+            in_use: volume.in_use,
+            orphan_reason: volume.orphan_reason,
+        });
+    }
+    Ok(render_container_report(
+        volume_prune_report("global runtime volume inventory", "orphans", &entries),
+        output_json,
+    ))
+}
+
+pub fn run_container_volume_prune_for_repo<F>(
+    repo_root: &Path,
+    output_json: bool,
+    run_runtime_volume_capture: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
+    let _operation_plan = global_volume_operation_plan(
+        repo_root,
+        &profile,
+        ContainerVolumeOperation::prune(true, Some(profile.clone())),
+    );
+    let volumes = collect_repo_volume_entries(repo_root, true, &run_runtime_volume_capture)?;
+    let mut entries = Vec::new();
+    for volume in volumes {
+        let removed = if volume.in_use {
+            false
+        } else {
+            run_runtime_volume_capture(
+                repo_root,
+                &volume.profile,
+                &remove_volume_command(&volume.name),
+            )?;
+            true
+        };
+        entries.push(ContainerVolumePruneEntry {
+            name: volume.name,
+            backend: volume.backend,
+            profile: volume.profile,
+            project_name: volume.project_name,
+            size_bytes: volume.size_bytes,
+            removed,
+            in_use: volume.in_use,
+            orphan_reason: volume.orphan_reason,
+        });
+    }
+    Ok(render_container_report(
+        volume_prune_report(
+            &format!("repo volume inventory for {}", repo_root.display()),
+            "dormant",
+            &entries,
         ),
         output_json,
     ))

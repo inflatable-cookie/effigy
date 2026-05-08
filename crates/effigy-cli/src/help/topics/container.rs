@@ -26,6 +26,8 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container <NAME> status [--repo <PATH>] [--json]",
             "effigy container volume list [--repo <PATH>] [--dormant] [--json]",
             "effigy container volume list --global [--orphans] [--json]",
+            "effigy container volume prune [--repo <PATH>] --dormant [--yes] [--json]",
+            "effigy container volume prune --global --orphans [--yes] [--json]",
             "effigy container cache list [--repo <PATH>] [--global] [--project <NAME>] [--kind <KIND>] [--json]",
             "effigy container cache prune [--repo <PATH>] [--global] [--project <NAME>] [--kind <KIND>] [--yes] [--json]",
             "effigy container <NAME> cache list [--repo <PATH>] [--json]",
@@ -73,6 +75,10 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
                 "For repo-scoped `volume list`, show only superseded volumes the current repo no longer declares or mounts.",
             ),
             (
+                "--yes",
+                "Confirm destructive data, cache, or volume cleanup operations without an interactive prompt",
+            ),
+            (
                 "--project <NAME>",
                 "Restrict global cache inventory or cleanup to one inferred project name such as `acowtancy-dev`; implies profile-wide mode even without `--global`",
             ),
@@ -91,10 +97,6 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             (
                 "--keep-data",
                 "For `reset`, preserve generated-compose persistent named volumes and remove only ephemeral ones",
-            ),
-            (
-                "--yes",
-                "Confirm destructive data or cache cleanup operations without an interactive prompt",
             ),
             (
                 "--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>",
@@ -127,6 +129,8 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container volume list --repo ~/Dev/projects/underlay-reference --dormant",
             "effigy container volume list --global",
             "effigy container volume list --global --orphans",
+            "effigy container volume prune --dormant --yes",
+            "effigy container volume prune --global --orphans --yes",
             "effigy container cache list",
             "effigy container cache list --global",
             "effigy container cache list --project acowtancy-dev",
