@@ -14,25 +14,17 @@ During v0.x, MINOR bumps may include breaking changes.
   cleanup uses **`--global --orphans`**.
 
 ### Added
-- **`effigy config`** can now inspect and manage user-global container
-  defaults with **`config path|get|set|unset`**, so Docker vs Colima
-  preferences no longer require manual edits to **`~/.effigy/config.toml`**.
-- **`effigy bootstrap --backend containerd|docker`** adds a first-class
-  one-shot backend override, and on a real TTY Effigy now prompts when both
-  Docker and Colima are available, defaulting to the saved machine preference
-  when one exists.
-- **User-global container runtime preferences:** `~/.effigy/config.toml` now
-  accepts `[containers] backend = "containerd"|"docker"` and `profile = "..."`
-  so Docker Desktop can coexist with Colima without ambient Docker CLI context
-  silently hijacking Effigy's runtime selection.
-- **`effigy container volume list`** adds a first read-only volume-ownership
-  surface for Effigy-managed named volumes across available runtimes. Repo
-  scope can show **`--dormant`** superseded volumes; machine scope can show
-  **`--global --orphans`** ownerless volumes.
-- **`effigy container volume prune`** adds the destructive half of the volume
-  ownership surface, with repo-scoped **`--dormant`** cleanup for superseded
-  local volumes and **`--global --orphans`** cleanup for ownerless
-  machine-wide volumes.
+- **First-class Docker/Desktop backend control:** `effigy config` now manages
+  machine-local container defaults with **`config path|get|set|unset`**,
+  `~/.effigy/config.toml` accepts `[containers] backend/profile`, and
+  **`effigy bootstrap --backend containerd|docker`** adds a one-shot override
+  with real-TTY backend prompting when both Docker and Colima are available.
+- **Container cleanup surfaces:** **`effigy container cache list/prune`**
+  inventories and removes purge-safe build caches such as Rust **`target`**,
+  **`node_modules`**, **`pnpm-store`**, and shared Cargo caches, while
+  **`effigy container volume list/prune`** adds repo-scoped **`--dormant`**
+  cleanup for superseded named volumes and machine-scoped
+  **`--global --orphans`** cleanup for ownerless ones.
 - **`effigy container data dump --push`** publishes explicit **`oci://`** dump
   destinations after the local SQL dump is staged, using the artifact capture
   push path and returning the pushed digest in JSON reports.
@@ -40,25 +32,13 @@ During v0.x, MINOR bumps may include breaking changes.
   bootstrap DB seed, **`effigy container data seed`**, and
   **`effigy container data dump`** address sidecar databases without overloading
   **`[bundle].databases`**.
-- **`effigy container cache list`** inventories purge-safe isolated build
-  cache volumes from repo scope or from machine-level runtime inventory with
-  **`--global`**, including stopped projects where runtime metadata is
-  available. The first supported kinds are Rust **`target`**,
-  package-manager **`node_modules`**, **`pnpm-store`**, and shared Cargo cache
-  volumes.
 
 ### Changed
-- **Container backend selection** now prefers manifest-declared Colima drivers
-  for repo-bound container operations and honors the new user-global
-  preference for unscoped runtime/cache flows before falling back to ambient
-  Docker CLI detection.
-- **`effigy container status`** and **`effigy doctor`** now distinguish the
-  manifest's declared driver from the effective selected backend more clearly,
-  so Docker-backed fresh sessions no longer read like they are still running on
-  Colima.
-- **`effigy doctor`** now reports Docker/Colima runtime context more
-  explicitly and only warns about Docker context drift when no user-global
-  containerd preference is already pinned.
+- **Container backend selection** is now stable across Docker Desktop and
+  Colima: repo-bound operations keep their declared runtime, repo-local runtime
+  choices persist after bootstrap, unscoped runtime/cache flows honor the new
+  machine preference, and **`effigy doctor`** / **`effigy container status`**
+  now report the selected backend more clearly.
 - **Decodelabs bundles** now default their PHP-FPM workspace service to
   **Node.js 24** instead of **20**, so current pnpm and newer Node built-ins
   like **`node:sqlite`** work out of the box in bundle-based sites while
@@ -69,31 +49,16 @@ During v0.x, MINOR bumps may include breaking changes.
   `oras` failure classes such as missing auth, denied push access, malformed
   refs, and registry reachability, so inspect/pull/push errors say what to do
   next instead of only echoing raw registry stderr.
-- **Path-sensitive isolated volumes** now include the container workspace path
-  in their generated volume names, so moving a repo mount like
-  **`/var/www/html`** to **`/var/www/inventors`** gets a fresh
-  **`node_modules`** or similar cache volume instead of reusing one with stale
-  absolute-path metadata.
 - **Bundled nginx healthchecks** now treat any HTTP response as runtime-ready,
   so Decodelabs-style PHP stacks no longer hang bootstrap just because `/`
   returns a bootstrap-time **`404`**.
-- **Generated named volumes** now carry explicit Effigy labels for project,
-  repo root, service, original logical volume name, mount target, and
-  persistence so Docker Desktop volume rewrites stay inspectable and orphan
-  detection has a real ownership signal. The bundled Redis service now
-  declares an explicit named `/data` volume instead of leaking an anonymous
-  hash volume.
-- **Auto-discovered named volumes** now classify cache-like mounts such as
-  `vendor`, `node_modules`, `target`, `pnpm-store`, and shared Cargo caches as
-  ephemeral instead of incorrectly labeling them persistent in generated
-  runtime metadata.
-- **Repo-scoped dormant volume detection** now treats stopped legacy generated
-  `efv-*` volumes as stale when the current repo no longer declares them, so
-  old Underlay and Decodelabs generations can be identified and pruned instead
-  of lingering forever as inactive unknowns.
-- **Cache and volume prune reports** now include reclaimed and skipped byte
-  totals in both text and JSON output, so cleanup impact is visible without
-  manual summing.
+- **Container volume ownership and cleanup** are now much more accurate:
+  path-sensitive isolated volumes get fresh names when their container mount
+  path changes, generated named volumes carry explicit ownership labels,
+  Redis now uses an explicit named `/data` volume, cache-like mounts are marked
+  ephemeral correctly, repo-scoped dormant detection catches stale legacy
+  `efv-*` generations, and cache/volume prune reports now include reclaimed and
+  skipped byte totals.
 - **Shipped PHP workspaces** now install a sendmail-compatible `msmtp` shim and
   point PHP `mail()` at the local Mailpit SMTP service by default, so legacy
   mail code is captured in development instead of disappearing into an
