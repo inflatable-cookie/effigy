@@ -39,11 +39,13 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   [`g04.012`](./g04/012-runtime-pipeline-integration-audit-and-debt-map.md)
   and focuses on integration debt, route authority, data-plan consumption,
   volume operations, guards, and planning-crate decomposition. `g04.012` is
-  complete through `g04.017`.
+  complete through `g04.018`. The next active roadmap is
+  [`g04.019`](./g04/019-state-stack-and-layered-seed-framework.md) for layered
+  seed/migration state above the OCI artifact substrate.
 
 ## Active Strict Lane
 
-No active strict lane. The current g04 follow-up set is complete.
+`061` is active for [`g04.019`](./g04/019-state-stack-and-layered-seed-framework.md).
 
 ## Research Program
 
@@ -79,7 +81,7 @@ Before rollover:
 
 ## Next Task
 
-Planning stop, unless a human selects the next `g04` roadmap.
+Execute the ready `g04.019` card under strict lane `061`.
 
 ## Historical language boundary
 

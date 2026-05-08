@@ -56,6 +56,9 @@ This folder contains both:
 - [`015-runtime-operation-pipeline-contract.md`](./015-runtime-operation-pipeline-contract.md):
   runtime operation pipeline contract for execution, activation, container
   operation, and artifact/data request-plan-adapter seams.
+- [`016-state-stack-and-layered-seed-framework-contract.md`](./016-state-stack-and-layered-seed-framework-contract.md):
+  layered state-stack contract for schema baselines, imported data, overlays,
+  lineage, and Acowtancy-style UAT capture/rebase workflows.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -72,6 +75,7 @@ This folder contains both:
 | `013-task-execution-request-contract.md` | Platform maintainers | Execution request fields, route selection rules, Rhai execution helper behavior, embedded task dispatch behavior, public plan exposure if added | `cargo test -p effigy-execution` plus targeted embedded dispatch parity tests |
 | `014-artifact-substrate-contract.md` | Platform maintainers | Artifact ref syntax, metadata schema, OCI pull/push behavior, seed/dump integration, UAT apply/capture semantics, operation ledger fields | Artifact crate tests plus targeted bootstrap/container data seed and dump integration tests |
 | `015-runtime-operation-pipeline-contract.md` | Platform maintainers | Pipeline ownership, request/plan/report boundaries, runner adapter boundaries, drift guards, runtime/container proof matrix | `bash scripts/check-runtime-container-drift.sh` plus focused runtime/container proof tests |
+| `016-state-stack-and-layered-seed-framework-contract.md` | Platform maintainers | Phase taxonomy, stack-manifest shape, lineage boundary, app hook ownership, apply/capture/rebase semantics | Planning review against `g04.019` plus focused state-stack contract proofs once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -103,4 +107,6 @@ as the backend capability matrix for `g03.006`,
 `013-task-execution-request-contract.md` as the `g03.032` execution request
 contract, `014-artifact-substrate-contract.md` as the `g03.036` artifact
 substrate contract, and `015-runtime-operation-pipeline-contract.md` as the
-`g04` runtime operation pipeline contract.
+`g04` runtime operation pipeline contract, and
+`016-state-stack-and-layered-seed-framework-contract.md` as the `g04.019`
+state-stack framework contract.

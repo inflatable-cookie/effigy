@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: `g04`
-Updated: 2026-05-07
+Updated: 2026-05-08
 
 ## Generation history
 
@@ -29,6 +29,8 @@ Updated: 2026-05-07
     `015-runtime-operation-pipeline-contract.md`.
   - The next queued set starts at `g04.012` and burns down integration debt
     found after the first pipeline sweep.
+  - The current active follow-up lane is `g04.019`, which turns the OCI/data
+    substrate into a state-stack framework for layered seed/migration replay.
 
 ## Research Roadmaps
 

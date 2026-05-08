@@ -30,6 +30,7 @@ Current milestones:
 - [`016-architecture-guard-integration.md`](./016-architecture-guard-integration.md) (complete; architecture guards are wired into normal validation)
 - [`017-planning-crate-decomposition.md`](./017-planning-crate-decomposition.md) (complete; first planning-crate decomposition pass landed)
 - [`018-oci-artifact-closeout-and-proof-matrix.md`](./018-oci-artifact-closeout-and-proof-matrix.md) (complete; OCI support now has proof, remediation, and contract closeout)
+- [`019-state-stack-and-layered-seed-framework.md`](./019-state-stack-and-layered-seed-framework.md) (active; next planning lane for layered seed/migration state, lineage, and Acowtancy-style UAT capture/rebase loops)
 
 Architecture anchors:
 
@@ -54,7 +55,8 @@ Rules:
 
 ## Next Task
 
-No ready card. Planning stop.
+Execute ready card
+[`595-implement-state-stack-manifest-and-lineage-plan-foundation.md`](./batch-cards/595-implement-state-stack-manifest-and-lineage-plan-foundation.md).
 
 
 Batch cards live in `g04/batch-cards/` when strict posture uses them.

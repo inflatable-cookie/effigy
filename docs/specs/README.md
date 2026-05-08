@@ -27,10 +27,11 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
+- [`061-state-stack-and-layered-seed-framework-strict-lane.md`](./061-state-stack-and-layered-seed-framework-strict-lane.md)
 
-No active strict lane.
+Active strict lane:
 
-The current g04 follow-up set is complete, including the OCI closeout lane.
+- `061` for `g04.019` state-stack and layered seed framework planning
 
 Paused but still useful:
 
@@ -90,4 +91,5 @@ Recently completed:
 
 ## Next Task
 
-No ready card. The next move is a human-selected `g04` roadmap or planning stop.
+Execute the ready `g04.019` card under
+[`061-state-stack-and-layered-seed-framework-strict-lane.md`](./061-state-stack-and-layered-seed-framework-strict-lane.md).
