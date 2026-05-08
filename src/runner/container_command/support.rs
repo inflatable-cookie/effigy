@@ -9,7 +9,7 @@ use effigy_container_manager::{
 };
 use effigy_containers::{
     exec::{
-        list_running_compose_containers_for_profile, ContainerExecError, RunningComposeContainer,
+        list_running_compose_containers_for_policy, ContainerExecError, RunningComposeContainer,
     },
     health::wait_for_ready,
     EffectiveContainerPolicy,
@@ -39,7 +39,7 @@ pub(in crate::runner) fn validate_running_container_runtime_match(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
-    let rows = match list_running_compose_containers_for_profile(&policy.profile) {
+    let rows = match list_running_compose_containers_for_policy(repo_root, policy) {
         Ok(rows) => rows,
         Err(error) if exec_error_means_runtime_not_running(&error) => return Ok(()),
         Err(error) => return Err(RunnerError::task_invocation(error.to_string())),

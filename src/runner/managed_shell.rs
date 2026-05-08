@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use effigy_containers::compose::{compose_args, compose_invocation};
+use effigy_containers::compose::{
+    compose_args, compose_invocation_for_repo, resolve_host_cli_program,
+};
 use effigy_containers::session::{
     container_exec_command, managed_lifecycle_dns_routes_section,
     managed_lifecycle_idle_wait_command, managed_lifecycle_readiness_wait,
@@ -37,11 +39,17 @@ pub(crate) fn render_inline_compose_command(
     policy: &EffectiveContainerPolicy,
     args: &[std::ffi::OsString],
 ) -> String {
-    let (program, resolved_args) = compose_invocation(policy, args);
+    let (program, resolved_args) = compose_invocation_for_repo(repo_root, policy, args);
+    let resolved_program = match program {
+        value if value.contains('/') => value.to_owned(),
+        value => resolve_host_cli_program(value)
+            .to_string_lossy()
+            .into_owned(),
+    };
     format!(
         "cd {} && {} {}",
         shell_quote(&repo_root.display().to_string()),
-        shell_quote(program),
+        shell_quote(&resolved_program),
         format_os_args(&resolved_args),
     )
 }

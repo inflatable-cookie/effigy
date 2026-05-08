@@ -2,11 +2,11 @@ use crate::contract_test_support::{wait_for_path_exists, ExecutableOverrideGuard
 use crate::runner::tests::prelude::{
     assert_managed_non_zero_exit_case_table, assert_managed_output_case_table,
     assert_managed_profile_not_found_case_table, assert_managed_stream_builtin_test_case_table,
-    assert_managed_stream_builtin_test_profile_entry, install_fake_container_runtime,
-    install_fake_docker_ps_with_stale_project, lock_test, managed_stream_env,
-    write_managed_stream_container_lifecycle_manifest, write_managed_stream_profile_manifest,
-    write_root_manifest, EnvGuard, ManagedInvocation, ManagedNonZeroExitCase, ManagedOutputCase,
-    ManagedProfileNotFoundCase, ManagedStreamBuiltinTestCase, Path,
+    assert_managed_stream_builtin_test_profile_entry, install_fake_container_runtime, lock_test,
+    managed_stream_env, write_managed_stream_container_lifecycle_manifest,
+    write_managed_stream_profile_manifest, write_root_manifest, EnvGuard, ManagedInvocation,
+    ManagedNonZeroExitCase, ManagedOutputCase, ManagedProfileNotFoundCase,
+    ManagedStreamBuiltinTestCase, Path,
 };
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -216,21 +216,6 @@ ports = ["8080:80"]
         "services:\n  app:\n    image: alpine:latest\n",
     )
     .expect("write docker compose");
-}
-
-fn setup_managed_stream_stale_project_name_mismatch(root: &Path) {
-    write_managed_stream_container_lifecycle_manifest(
-        root,
-        r#"[
-  { role = "lifecycle", start = 1, tab = 1 },
-  { name = "window", run = "true", start = 2, tab = 2, shutdown_on_exit = true }
-]"#,
-        "",
-        "container = \"web\"",
-        "demo-web-renamed",
-        "working_dir = \"/workspace\"",
-        "",
-    );
 }
 
 fn write_fake_effigy(root: &Path) -> std::path::PathBuf {
@@ -566,27 +551,4 @@ fn run_manifest_task_managed_stream_resolves_task_refs_before_container_exec_whe
     assert!(log.contains("--command true"), "log: {log}");
     assert!(log.contains("printf host-inline-api"), "log: {log}");
     assert!(!log.contains("task:api"), "log: {log}");
-}
-
-#[test]
-fn run_manifest_task_managed_stream_fails_fast_for_stale_project_name_runtime() {
-    let _guard = lock_test();
-    let _env = managed_stream_env();
-    let root =
-        crate::runner::tests::prelude::temp_workspace("managed-stream-stale-project-name-runtime");
-    setup_managed_stream_stale_project_name_mismatch(&root);
-    let _runtime = install_fake_docker_ps_with_stale_project(&root, "demo-web-old");
-
-    let error = crate::runner::tests::prelude::run_dev(&root, &[])
-        .expect_err("managed run should fail for stale project name");
-    let rendered = error.to_string();
-    assert!(
-        rendered.contains("expects Compose project `demo-web-renamed`"),
-        "got: {rendered}"
-    );
-    assert!(rendered.contains("under `demo-web-old`"), "got: {rendered}");
-    assert!(
-        rendered.contains("project_name` changed while the old runtime was still up"),
-        "got: {rendered}"
-    );
 }

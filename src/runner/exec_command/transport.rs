@@ -9,7 +9,7 @@ use effigy_container_manager::{
 };
 use effigy_containers::{
     compose::{
-        compose_args, compose_invocation, resolve_compose_backend_for_policy,
+        compose_args, compose_invocation_for_repo, resolve_compose_backend_for_repo,
         resolve_host_cli_program, ComposeBackend,
     },
     EffectiveContainerPolicy,
@@ -83,9 +83,9 @@ pub(in crate::runner) fn run_compose_exec_with_options(
     label: &str,
     stdin_file: Option<&Path>,
 ) -> Result<Output, RunnerError> {
-    let (program, resolved_args) = compose_invocation(policy, args);
+    let (program, resolved_args) = compose_invocation_for_repo(repo_root, policy, args);
     let plan = ContainerComposeInvocationPlan {
-        backend_id: active_backend_id()?,
+        backend_id: active_backend_id_for_policy(repo_root, policy),
         repo_root: repo_root.to_path_buf(),
         profile: policy.profile.clone(),
         action: effigy_container_manager::ContainerAction::Exec,
@@ -156,11 +156,11 @@ pub(in crate::runner) fn run_compose_exec_plan_with_options(
     })
 }
 
-fn active_backend_id() -> Result<BackendId, RunnerError> {
-    ContainerManager::defaults()
-        .registry()
-        .detect_backend(&ContainerBackendDetection::from_env_and_path())
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+fn active_backend_id_for_policy(repo_root: &Path, policy: &EffectiveContainerPolicy) -> BackendId {
+    match resolve_compose_backend_for_repo(repo_root, policy) {
+        ComposeBackend::Docker => BackendId::docker_compose(),
+        ComposeBackend::ColimaNerdctl => BackendId::colima_nerdctl(),
+    }
 }
 
 pub(in crate::runner) fn copy_file_into_service(
@@ -185,7 +185,7 @@ pub(in crate::runner) fn copy_file_into_service(
         container_dest
     )));
 
-    let (program, resolved_args) = copy_file_into_service_invocation(policy, &args)
+    let (program, resolved_args) = copy_file_into_service_invocation(repo_root, policy, &args)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let output = run_command_capture_allow_failure(repo_root, program.as_os_str(), &resolved_args)?;
     if !output.status.success() {
@@ -204,11 +204,12 @@ pub(in crate::runner) fn copy_file_into_service(
 }
 
 pub(super) fn copy_file_into_service_invocation(
+    repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
 ) -> Result<(OsString, Vec<OsString>), effigy_container_manager::ContainerManagerError> {
     let mut detection = ContainerBackendDetection::from_env_and_path();
-    detection.backend_override = Some(match resolve_compose_backend_for_policy(policy) {
+    detection.backend_override = Some(match resolve_compose_backend_for_repo(repo_root, policy) {
         ComposeBackend::Docker => BackendId::docker_compose(),
         ComposeBackend::ColimaNerdctl => BackendId::colima_nerdctl(),
     });
@@ -393,7 +394,7 @@ fn run_command_capture_allow_failure_with_policy(
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
 ) -> Result<Output, RunnerError> {
-    let (program, resolved_args) = compose_invocation(policy, args);
+    let (program, resolved_args) = compose_invocation_for_repo(repo_root, policy, args);
     run_command_capture_allow_failure(repo_root, OsStr::new(program), &resolved_args)
 }
 

@@ -6,26 +6,33 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
-- `effigy config` can now inspect and manage user-global container defaults with
-  `config path|get|set|unset`, so Docker vs Colima preferences no longer
-  require manual edits to `~/.effigy/config.toml`.
-- `effigy bootstrap` now has a first-class `--backend containerd|docker`
-  override for one-shot runtime selection, and on a real TTY it prompts when
-  both Docker and Colima are available. If a machine preference is already
-  pinned, the prompt uses it as the default choice.
-- `effigy container volume list` adds a first read-only volume-ownership
-  surface for Effigy-managed named volumes across available runtimes, and
-  `--orphans` narrows that view to labeled volumes whose owning repo is gone or
-  no longer declares them.
-- `effigy container volume prune` adds the destructive half of the volume
-  ownership surface, with repo-scoped `--dormant` cleanup for superseded local
-  volumes and `--global --orphans` cleanup for ownerless machine-wide volumes.
+### Breaking
+- **Container machine-scope flags** now use **`--global`** instead of
+  **`--all`** on container status, stats, down, cache, and volume surfaces.
+- **Volume cleanup semantics** are now split by scope:
+  repo inventory/prune uses **`--dormant`**, while machine-wide ownerless
+  cleanup uses **`--global --orphans`**.
 
 ### Added
+- **`effigy config`** can now inspect and manage user-global container
+  defaults with **`config path|get|set|unset`**, so Docker vs Colima
+  preferences no longer require manual edits to **`~/.effigy/config.toml`**.
+- **`effigy bootstrap --backend containerd|docker`** adds a first-class
+  one-shot backend override, and on a real TTY Effigy now prompts when both
+  Docker and Colima are available, defaulting to the saved machine preference
+  when one exists.
 - **User-global container runtime preferences:** `~/.effigy/config.toml` now
   accepts `[containers] backend = "containerd"|"docker"` and `profile = "..."`
   so Docker Desktop can coexist with Colima without ambient Docker CLI context
   silently hijacking Effigy's runtime selection.
+- **`effigy container volume list`** adds a first read-only volume-ownership
+  surface for Effigy-managed named volumes across available runtimes. Repo
+  scope can show **`--dormant`** superseded volumes; machine scope can show
+  **`--global --orphans`** ownerless volumes.
+- **`effigy container volume prune`** adds the destructive half of the volume
+  ownership surface, with repo-scoped **`--dormant`** cleanup for superseded
+  local volumes and **`--global --orphans`** cleanup for ownerless
+  machine-wide volumes.
 - **`effigy container data dump --push`** publishes explicit **`oci://`** dump
   destinations after the local SQL dump is staged, using the artifact capture
   push path and returning the pushed digest in JSON reports.

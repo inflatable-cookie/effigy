@@ -192,6 +192,7 @@ fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
     );
     let _env = EnvGuard::set_many(&[
         ("PATH", Some(path)),
+        ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
         (
             "EFFIGY_TEST_DOCKER_ARGS_FILE",
             Some(docker_args.display().to_string()),

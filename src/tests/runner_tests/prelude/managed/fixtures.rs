@@ -22,7 +22,7 @@ pub(in crate::runner::tests) fn install_fake_container_runtime(root: &Path) -> E
     fs::write(
         &docker,
         format!(
-            "#!/bin/sh\nlog='{}'\nprintf 'docker:%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = compose ]; then\n  shift\n  while [ $# -gt 0 ]; do\n    case \"$1\" in\n      -f|-p)\n        shift 2\n        ;;\n      up)\n        printf 'compose:up\\n' >> \"$log\"\n        exit 0\n        ;;\n      down)\n        printf 'compose:down\\n' >> \"$log\"\n        exit 0\n        ;;\n      ps)\n        printf 'compose:ps\\n' >> \"$log\"\n        printf 'NAME STATUS\\n'\n        exit 0\n        ;;\n      exec)\n        shift\n        if [ \"$1\" = -T ]; then\n          shift\n        fi\n        service=\"$1\"\n        shift\n        printf 'compose:exec:%s:%s\\n' \"$service\" \"$*\" >> \"$log\"\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ] && [ \"$3\" = true ]; then\n          exit 0\n        fi\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ]; then\n          command=$(printf '%s' \"$3\" | sed \"s/^'//; s/'$//\")\n          eval \"$command\"\n          exit $?\n        fi\n        exec \"$@\"\n        ;;\n      *)\n        shift\n        ;;\n    esac\n  done\nfi\nexit 0\n",
+            "#!/bin/sh\nlog='{}'\nprintf 'docker:%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = compose ]; then\n  shift\n  while [ $# -gt 0 ]; do\n    case \"$1\" in\n      -f|-p)\n        shift 2\n        ;;\n      up)\n        printf 'compose:up\\n' >> \"$log\"\n        exit 0\n        ;;\n      down)\n        printf 'compose:down\\n' >> \"$log\"\n        exit 0\n        ;;\n      ps)\n        printf 'compose:ps\\n' >> \"$log\"\n        printf 'NAME STATUS\\n'\n        exit 0\n        ;;\n      exec)\n        shift\n        service=''\n        while [ $# -gt 0 ]; do\n          case \"$1\" in\n            -T|--tty=false)\n              shift\n              ;;\n            -w|--workdir|-u|--user|-e|--env)\n              shift 2\n              ;;\n            --)\n              shift\n              ;;\n            -*)\n              shift\n              ;;\n            *)\n              service=\"$1\"\n              shift\n              break\n              ;;\n          esac\n        done\n        printf 'compose:exec:%s:%s\\n' \"$service\" \"$*\" >> \"$log\"\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ] && [ \"$3\" = true ]; then\n          exit 0\n        fi\n        if [ \"$1\" = sh ] && [ \"$2\" = -lc ]; then\n          command=$(printf '%s' \"$3\" | sed \"s/^'//; s/'$//\")\n          eval \"$command\"\n          exit $?\n        fi\n        exec \"$@\"\n        ;;\n      *)\n        shift\n        ;;\n    esac\n  done\nfi\nexit 0\n",
             docker_log.display()
         ),
     )
@@ -50,37 +50,10 @@ pub(in crate::runner::tests) fn install_fake_container_runtime(root: &Path) -> E
     fs::set_permissions(&colima, perms).expect("chmod fake colima");
 
     let old_path = std::env::var("PATH").ok().unwrap_or_default();
-    EnvGuard::set_many(&[("PATH", Some(format!("{}:{old_path}", bin_dir.display())))])
-}
-
-pub(in crate::runner::tests) fn install_fake_docker_ps_with_stale_project(
-    root: &Path,
-    stale_project_name: &str,
-) -> EnvGuard {
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
-    let canonical_root = root.canonicalize().expect("canonical root");
-
-    let docker = bin_dir.join("docker");
-    let docker_log = root.join("fake-docker.log");
-    fs::write(
-        &docker,
-        format!(
-            "#!/bin/sh\nlog='{}'\nprintf 'docker:%s\\n' \"$*\" >> \"$log\"\nif [ \"$1\" = ps ]; then\n  printf 'demo-app-1\\tUp 2 minutes\\t\\t{}\\t{}\\tapp\\n'\n  exit 0\nfi\nprintf 'unexpected:%s\\n' \"$*\" >> \"$log\"\nexit 0\n",
-            docker_log.display(),
-            stale_project_name,
-            canonical_root.display()
-        ),
-    )
-    .expect("write fake docker");
-    let mut perms = fs::metadata(&docker)
-        .expect("stat fake docker")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&docker, perms).expect("chmod fake docker");
-
-    let old_path = std::env::var("PATH").ok().unwrap_or_default();
-    EnvGuard::set_many(&[("PATH", Some(format!("{}:{old_path}", bin_dir.display())))])
+    EnvGuard::set_many(&[
+        ("PATH", Some(format!("{}:{old_path}", bin_dir.display()))),
+        ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+    ])
 }
 
 pub(in crate::runner::tests) fn write_catalogs_with_tasks(

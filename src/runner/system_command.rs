@@ -6,7 +6,7 @@ use crate::runner::runtime_session_context::PublicWorkspaceCleanupOverride;
 use effigy_cli::{ContainerArgs, ContainerSubcommand, SystemArgs, SystemSubcommand, WorkspaceArgs};
 use effigy_containers::{
     exec::{
-        colima_is_running, list_running_compose_containers_for_profile, recover_colima_runtime,
+        colima_is_running, list_running_compose_containers_for_policy, recover_colima_runtime,
         reset_colima_runtime, ColimaRecoveryReport, ContainerExecError, RunningComposeContainer,
     },
     load_container_policy, validate_compose_backend_runtime, validate_container_policy,
@@ -139,7 +139,7 @@ pub(in crate::runner) fn is_primary_service_running(
         return Ok(false);
     }
 
-    let running = match list_running_compose_containers_for_profile(&policy.profile) {
+    let running = match list_running_compose_containers_for_policy(repo_root, policy) {
         Ok(running) => running,
         Err(error) if exec_error_means_runtime_not_running(&error) => return Ok(false),
         Err(error) => return Err(error.into()),

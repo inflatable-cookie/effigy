@@ -348,7 +348,7 @@ fn copy_file_into_service_invocation_prefers_policy_backend_over_installed_docke
         OsString::from("cbs-dev-app-1:/tmp/effigy-host-1"),
     ];
     let (program, resolved_args) =
-        copy_file_into_service_invocation(&test_policy(), &args).expect("invocation");
+        copy_file_into_service_invocation(&temp_dir, &test_policy(), &args).expect("invocation");
 
     match original_path {
         Some(path) => std::env::set_var("PATH", path),

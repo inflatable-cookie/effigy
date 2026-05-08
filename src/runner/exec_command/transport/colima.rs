@@ -6,7 +6,7 @@ use std::thread;
 
 use effigy_containers::{
     compose::{compose_args, compose_invocation},
-    exec::list_running_compose_containers_for_profile,
+    exec::list_running_compose_containers_for_policy,
     EffectiveContainerPolicy,
 };
 
@@ -223,7 +223,7 @@ fn resolve_running_service_container_name(
     policy: &EffectiveContainerPolicy,
     service: &str,
 ) -> Result<Option<String>, RunnerError> {
-    let rows = match list_running_compose_containers_for_profile(&policy.profile) {
+    let rows = match list_running_compose_containers_for_policy(repo_root, policy) {
         Ok(rows) => rows,
         Err(_) => return Ok(None),
     };

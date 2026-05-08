@@ -90,7 +90,9 @@ fn run_manifest_task_builtin_config_rejects_invalid_flag_combinations() {
         BuiltinInvocationCase {
             workspace: "builtin-config-user-inspect-conflicts-with-update",
             args: &["--user-inspect", "--set-container-backend", "containerd"],
-            expected: &["`--user-inspect` cannot be combined with user-global config update flags"],
+            expected: &[
+                "`--user-inspect` cannot be combined with other user-global config operations",
+            ],
         },
         BuiltinInvocationCase {
             workspace: "builtin-config-container-backend-conflict",

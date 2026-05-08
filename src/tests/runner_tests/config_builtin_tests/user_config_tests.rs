@@ -32,6 +32,9 @@ fn run_manifest_task_builtin_config_can_manage_user_global_container_preferences
         assert!(rendered.contains("backend = \"containerd\""));
         assert!(rendered.contains("profile = \"effigy\""));
 
+        let inspect = run_builtin_ok(root.clone(), "config", &["path"]);
+        assert_eq!(inspect.trim(), config_path.display().to_string());
+
         let inspect = run_builtin_ok(root.clone(), "config", &["--user-inspect"]);
         assert_output_contains_all(
             &inspect,
@@ -58,7 +61,7 @@ fn run_manifest_task_builtin_config_can_manage_user_global_container_preferences
             &inspect_after,
             &[
                 "User Config",
-                "Status: removed empty config file",
+                "Status: not yet created",
                 "backend: (unset)",
                 "profile: (unset)",
             ],

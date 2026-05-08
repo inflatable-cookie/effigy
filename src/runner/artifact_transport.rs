@@ -142,10 +142,12 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
             command.arg(file);
         }
         command.arg("--format").arg("json");
-        let output = command.output().map_err(|error| OciArtifactError::PushFailed {
-            reference: request.reference.redacted(),
-            message: oras_invocation_error_message(OciOperation::Push, error),
-        })?;
+        let output = command
+            .output()
+            .map_err(|error| OciArtifactError::PushFailed {
+                reference: request.reference.redacted(),
+                message: oras_invocation_error_message(OciOperation::Push, error),
+            })?;
         if !output.status.success() {
             return Err(OciArtifactError::PushFailed {
                 reference: request.reference.redacted(),
@@ -311,7 +313,12 @@ fn looks_like_reference_shape_failure(lower: &str) -> bool {
 }
 
 fn registry_host(reference: &str) -> Option<&str> {
-    reference.split('/').next().and_then(|authority| authority.rsplit_once('@').map(|(_, host)| host).or(Some(authority)))
+    reference.split('/').next().and_then(|authority| {
+        authority
+            .rsplit_once('@')
+            .map(|(_, host)| host)
+            .or(Some(authority))
+    })
 }
 
 fn discover_pulled_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
@@ -379,8 +386,8 @@ mod tests {
 
     #[test]
     fn oras_failure_remediation_points_to_registry_login_for_auth_errors() {
-        let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private:uat")
-            .expect("parse");
+        let parsed =
+            ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private:uat").expect("parse");
         let ArtifactSourceRef::Oci(oci) = parsed else {
             panic!("expected oci");
         };
@@ -397,8 +404,8 @@ mod tests {
 
     #[test]
     fn oras_failure_remediation_calls_out_push_access_for_denied_pushes() {
-        let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private:uat")
-            .expect("parse");
+        let parsed =
+            ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private:uat").expect("parse");
         let ArtifactSourceRef::Oci(oci) = parsed else {
             panic!("expected oci");
         };
@@ -415,8 +422,8 @@ mod tests {
 
     #[test]
     fn oras_failure_remediation_calls_out_reference_shape_errors() {
-        let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private:uat")
-            .expect("parse");
+        let parsed =
+            ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private:uat").expect("parse");
         let ArtifactSourceRef::Oci(oci) = parsed else {
             panic!("expected oci");
         };
@@ -434,8 +441,8 @@ mod tests {
 
     #[test]
     fn oras_failure_remediation_calls_out_registry_reachability_errors() {
-        let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private:uat")
-            .expect("parse");
+        let parsed =
+            ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private:uat").expect("parse");
         let ArtifactSourceRef::Oci(oci) = parsed else {
             panic!("expected oci");
         };
