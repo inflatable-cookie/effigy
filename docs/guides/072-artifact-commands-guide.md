@@ -167,6 +167,13 @@ Payload schemas:
 See [`026-json-payload-examples.md`](./026-json-payload-examples.md) for
 realistic sample payloads.
 
+Current boundary:
+
+- these JSON/text reports are the shipped artifact operation record today
+- Effigy does not yet persist a separate durable artifact ledger across runs
+- if you need audit history now, capture the command report and staged
+  metadata in your own operator workflow
+
 ## Metadata
 
 Every staged artifact carries an `effigy-artifact.json` metadata file shaped like

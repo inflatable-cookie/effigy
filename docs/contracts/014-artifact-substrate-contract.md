@@ -85,8 +85,14 @@ Artifact capture:
 
 Artifact ledger:
 
-- durable operation record naming what artifact was applied or captured, with
-  digest, environment, task, timestamp, and result
+- deferred future surface for durable persisted operation history naming what
+  artifact was applied or captured, with digest, environment, task, timestamp,
+  and result
+
+Artifact operation report:
+
+- the shipped output/report payload Effigy returns for inspect, stage, seed,
+  dump, apply, or capture work in the current process
 
 ## Source Rules
 
@@ -201,9 +207,19 @@ UAT assumptions:
 - artifact refs are passed explicitly
 - digest-pinned refs are preferred for audited apply operations
 
-Effigy must record apply/capture reports suitable for an operation ledger.
+Effigy must return apply/capture reports suitable for later ledger adoption.
 
-An apply record should include:
+Current shipped boundary:
+
+- operation reports are part of the supported artifact substrate now
+- those reports may include environment labels, refs, digests, staged roots,
+  task/command identity, and result data
+- Effigy does not yet persist a durable artifact ledger across runs as part of
+  the shipped OCI contract
+- operators should treat JSON/text command output and staged metadata as the
+  current operation record surface
+
+An apply report should include:
 
 - environment label
 - artifact ref
@@ -215,7 +231,8 @@ An apply record should include:
 - timestamp
 
 The app should own DB-level idempotency and migration history. Effigy owns the
-outer artifact operation record.
+outer operation report surface today, and may later promote that into a durable
+ledger without changing the current command-level contract.
 
 ## Capture and Push Rules
 
