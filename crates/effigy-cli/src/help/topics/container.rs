@@ -6,10 +6,10 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
         renderer,
         "container",
         &[
-            "Operate one manifest-defined Colima-backed container environment by name or through the manifest default alias.",
+            "Operate one manifest-defined local container environment by name or through the manifest default alias.",
             "V1 stays explicit: host-facing ports and repo-relative mounts are declared in `[containers.*.host]`, and attached sessions shut the environment down on owner exit by default.",
             "Generated compose also supports bounded `shared = true` backing services for standalone shared databases and caches on the product-owned path.",
-            "Mounted sibling repos listed in `systems.<name>.mounts` auto-adopt producer `[isolation].paths` into workspace containers, and Colima/nerdctl now preflights oversized mount payloads before compose-up.",
+            "Mounted sibling repos listed in `systems.<name>.mounts` auto-adopt producer `[isolation].paths` into workspace containers, and the Colima/containerd path now preflights oversized mount payloads before compose-up.",
             "`container data seed` currently targets the repo default container only and stays on the generated-compose path, while `container data dump` exports logical SQL dumps from generated-compose database services.",
             "`container cache list` inventories purge-safe isolated build caches like Rust `target` and package-manager `node_modules` volumes without touching persistent app data, and `cache prune` removes only those disposable volumes.",
             "`container volume list` now follows normal repo scope by default; add `--global` for cross-runtime inventory, use `--dormant` for repo-scoped superseded volumes, and use `--orphans` only with `--global` for true ownerless volumes.",

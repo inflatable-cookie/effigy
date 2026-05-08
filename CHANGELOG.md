@@ -6,8 +6,6 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
-### Added
-
 - `effigy config` can now inspect and manage user-global container defaults with
   `config path|get|set|unset`, so Docker vs Colima preferences no longer
   require manual edits to `~/.effigy/config.toml`.
@@ -151,7 +149,7 @@ During v0.x, MINOR bumps may include breaking changes.
   version and command output contract instead of trusting zero exit codes alone.
 - **`effigy container status`** and **`effigy container down`** can discover Effigy
   repos under the current directory when you are not at a repo root, so you
-  often do not need **`--all`** for subtree checks.
+  often do not need **`--global`** for subtree checks.
 - **`effigy container data seed`** is documented and implemented only for the
   repo default container on the **generated-compose** path.
 - **DecodeLabs starter bundle:** default **`[bootstrap].start`** is **`dev`**;
@@ -510,7 +508,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - Compatibility-only release wrapper scripts are gone. Call the native Effigy release surfaces directly instead of relying on the old shell entrypoints.
 
 ### Added
-- A full container and system surface: `effigy container ...`, `effigy system ...`, `effigy workspace`, generated compose ownership, data lifecycle commands, cross-project `status --all` / `stats --all`, shared backing services, and bounded reset/eject/import/export flows.
+- A full container and system surface: `effigy container ...`, `effigy system ...`, `effigy workspace`, generated compose ownership, data lifecycle commands, cross-project `status --global` / `stats --global`, shared backing services, and bounded reset/eject/import/export flows.
 - A native local gateway surface: `effigy gateway up/down/status/setup-tls`, HTTP reverse proxying, DNS routing, TCP aliases, auto port allocation, TLS management, and support for non-`.test` local domains via macOS `/etc/resolver` integration.
 - A shipped service catalog with extract/list tooling plus new built-in fragments such as `workspace-rust-bun`, `php-fpm`, `phpmyadmin`, `dbgate`, `mailpit`, and `minio`.
 - A first-class demo system: manifest-owned `[demos.*]`, `effigy demo list/inspect/run/stop/rerun/history`, receipts and artifact tracking, and the interactive `effigy demo browser`.

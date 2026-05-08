@@ -651,6 +651,36 @@ fn volume_list_report_renders_orphan_contract() {
 }
 
 #[test]
+fn volume_list_report_renders_dormant_contract() {
+    let report = crate::volume_list_report(
+        "repo volume inventory for /tmp/underlay-reference",
+        Some("dormant"),
+        &[crate::ContainerVolumeGlobalEntry {
+            name: "efv-f1958972bdd653b9".to_owned(),
+            backend: "containerd".to_owned(),
+            profile: "effigy".to_owned(),
+            project_name: Some("underlay-reference-dev".to_owned()),
+            repo_root: Some("/tmp/underlay-reference".to_owned()),
+            service: None,
+            mount_target: None,
+            persist: None,
+            size_bytes: Some(5_700_000_000),
+            in_use: false,
+            orphaned: true,
+            orphan_reason: Some("no-longer-declared".to_owned()),
+        }],
+    );
+
+    assert_eq!(report.json["schema"], "effigy.container.volume-list.v1");
+    assert_eq!(report.json["filter"], "dormant");
+    assert_eq!(report.json["volume_count"], 1);
+    assert_eq!(report.json["dormant_count"], 1);
+    assert_eq!(report.json.get("orphan_count"), None);
+    assert!(report.success_text.contains("dormant=1"));
+    assert!(report.success_text.contains("inactive:no-longer-declared"));
+}
+
+#[test]
 fn volume_prune_report_renders_contract() {
     let report = crate::volume_prune_report(
         "repo volume inventory for /tmp/underlay-reference",

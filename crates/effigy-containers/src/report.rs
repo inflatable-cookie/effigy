@@ -894,16 +894,15 @@ pub fn volume_list_report(
     filter_label: Option<&str>,
     volumes: &[ContainerVolumeGlobalEntry],
 ) -> ContainerCommandReport {
-    let orphan_count = volumes.iter().filter(|volume| volume.orphaned).count();
+    let matched_count = volumes.iter().filter(|volume| volume.orphaned).count();
     let in_use_count = volumes.iter().filter(|volume| volume.in_use).count();
-    let json = json!({
+    let mut json = json!({
         "schema": "effigy.container.volume-list.v1",
         "schema_version": 1,
         "ok": true,
         "scope": scope_label,
         "filter": filter_label,
         "volume_count": volumes.len(),
-        "orphan_count": orphan_count,
         "in_use_count": in_use_count,
         "inactive_count": volumes.len().saturating_sub(in_use_count),
         "volumes": volumes.iter().map(|volume| {
@@ -929,6 +928,14 @@ pub fn volume_list_report(
             })
         }).collect::<Vec<_>>(),
     });
+    match filter_label {
+        Some("dormant") => {
+            json["dormant_count"] = json!(matched_count);
+        }
+        _ => {
+            json["orphan_count"] = json!(matched_count);
+        }
+    }
 
     if volumes.is_empty() {
         return ContainerCommandReport {
@@ -959,13 +966,17 @@ pub fn volume_list_report(
     }
 
     let mut lines = vec![format!(
-        "[ok] {} Effigy-managed volume{} in {} (in_use={}, inactive={}, orphans={})",
+        "[ok] {} Effigy-managed volume{} in {} (in_use={}, inactive={}, {}={})",
         volumes.len(),
         if volumes.len() == 1 { "" } else { "s" },
         scope_label,
         in_use_count,
         volumes.len().saturating_sub(in_use_count),
-        orphan_count
+        match filter_label {
+            Some("dormant") => "dormant",
+            _ => "orphans",
+        },
+        matched_count
     )];
     for (index, (heading, entries)) in grouped.into_iter().enumerate() {
         if index > 0 {

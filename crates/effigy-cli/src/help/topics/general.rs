@@ -95,7 +95,7 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
         ),
         (
             "effigy container",
-            "Operate manifest-defined Colima-backed container environments",
+            "Operate manifest-defined local container environments",
             Some("container"),
         ),
         (
