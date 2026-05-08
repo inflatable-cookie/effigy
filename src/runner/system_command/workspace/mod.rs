@@ -284,7 +284,7 @@ pub(super) fn cleanup_workspace_session(
     run_container(ContainerArgs {
         subcommand: ContainerSubcommand::Down {
             name: container_name,
-            all: false,
+            global: false,
         },
         repo_override,
         output_json: false,

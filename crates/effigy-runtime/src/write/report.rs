@@ -12,13 +12,13 @@ pub(super) struct StoppedContainerEnvironment {
     pub(super) runtime_was_running: bool,
 }
 
-pub(super) fn render_container_down_all_report(
+pub(super) fn render_container_down_global_report(
     stopped: &[StoppedContainerEnvironment],
     output_json: bool,
 ) -> Result<String, EffigyRuntimeError> {
     if output_json {
         return serde_json::to_string_pretty(&serde_json::json!({
-            "schema": "effigy.container.down-all.v1",
+            "schema": "effigy.container.down-global.v1",
             "schema_version": 1,
             "ok": true,
             "count": stopped.len(),
@@ -136,10 +136,10 @@ pub(super) fn annotate_left_running_shared_services(
 
 #[cfg(test)]
 mod tests {
-    use super::{render_container_down_all_report, StoppedContainerEnvironment};
+    use super::{render_container_down_global_report, StoppedContainerEnvironment};
 
     #[test]
-    fn container_down_all_report_renders_text_and_json() {
+    fn container_down_global_report_renders_text_and_json() {
         let stopped = vec![StoppedContainerEnvironment {
             repo_root: "/tmp/alpha".to_owned(),
             container: "web".to_owned(),
@@ -150,15 +150,17 @@ mod tests {
             runtime_was_running: true,
         }];
 
-        let text = render_container_down_all_report(&stopped, false).expect("render text report");
+        let text =
+            render_container_down_global_report(&stopped, false).expect("render text report");
         assert!(text.contains("[ok] stopped 1 running Effigy-managed container environment"));
         assert!(text.contains("/tmp/alpha (web) [effigy]"));
         assert!(text.contains("[info] removed gateway routes: alpha.test"));
         assert!(text.contains("[warn] shared services left running: db"));
 
-        let json = render_container_down_all_report(&stopped, true).expect("render json report");
+        let json =
+            render_container_down_global_report(&stopped, true).expect("render json report");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse json report");
-        assert_eq!(parsed["schema"], "effigy.container.down-all.v1");
+        assert_eq!(parsed["schema"], "effigy.container.down-global.v1");
         assert_eq!(parsed["count"], 1);
         assert_eq!(parsed["environments"][0]["repo_root"], "/tmp/alpha");
         assert_eq!(parsed["environments"][0]["container"], "web");

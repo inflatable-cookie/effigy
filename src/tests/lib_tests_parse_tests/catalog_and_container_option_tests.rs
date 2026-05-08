@@ -193,11 +193,11 @@ fn parse_container_eject_is_supported() {
 }
 
 #[test]
-fn parse_container_status_all_is_supported() {
+fn parse_container_status_global_is_supported() {
     let cmd = parse_command(vec![
         "container".to_owned(),
         "status".to_owned(),
-        "--all".to_owned(),
+        "--global".to_owned(),
         "--json".to_owned(),
     ])
     .expect("parse should succeed");
@@ -206,7 +206,7 @@ fn parse_container_status_all_is_supported() {
         Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Status {
                 name: None,
-                all: true,
+                global: true,
             },
             repo_override: None,
             output_json: true,
@@ -215,11 +215,11 @@ fn parse_container_status_all_is_supported() {
 }
 
 #[test]
-fn parse_container_down_all_is_supported() {
+fn parse_container_down_global_is_supported() {
     let cmd = parse_command(vec![
         "container".to_owned(),
         "down".to_owned(),
-        "--all".to_owned(),
+        "--global".to_owned(),
         "--json".to_owned(),
     ])
     .expect("parse should succeed");
@@ -228,7 +228,7 @@ fn parse_container_down_all_is_supported() {
         Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Down {
                 name: None,
-                all: true,
+                global: true,
             },
             repo_override: None,
             output_json: true,
@@ -261,18 +261,18 @@ fn parse_defer_command_is_supported() {
 }
 
 #[test]
-fn parse_container_stats_all_is_supported() {
+fn parse_container_stats_global_is_supported() {
     let cmd = parse_command(vec![
         "container".to_owned(),
         "stats".to_owned(),
-        "--all".to_owned(),
+        "--global".to_owned(),
         "--json".to_owned(),
     ])
     .expect("parse should succeed");
     assert_eq!(
         cmd,
         Command::Container(ContainerArgs {
-            subcommand: ContainerSubcommand::Stats { all: true },
+            subcommand: ContainerSubcommand::Stats { global: true },
             repo_override: None,
             output_json: true,
         })
@@ -368,7 +368,7 @@ fn parse_container_cache_list_is_supported() {
             subcommand: ContainerSubcommand::Cache {
                 name: None,
                 subcommand: ContainerCacheSubcommand::List {
-                    all: false,
+                    global: false,
                     project: None,
                     kind: None,
                 },
@@ -380,12 +380,12 @@ fn parse_container_cache_list_is_supported() {
 }
 
 #[test]
-fn parse_container_cache_list_all_is_supported() {
+fn parse_container_cache_list_global_is_supported() {
     let cmd = parse_command(vec![
         "container".to_owned(),
         "cache".to_owned(),
         "list".to_owned(),
-        "--all".to_owned(),
+        "--global".to_owned(),
     ])
     .expect("parse should succeed");
     assert_eq!(
@@ -394,7 +394,7 @@ fn parse_container_cache_list_all_is_supported() {
             subcommand: ContainerSubcommand::Cache {
                 name: None,
                 subcommand: ContainerCacheSubcommand::List {
-                    all: true,
+                    global: true,
                     project: None,
                     kind: None,
                 },
@@ -406,7 +406,7 @@ fn parse_container_cache_list_all_is_supported() {
 }
 
 #[test]
-fn parse_container_cache_list_all_accepts_project_and_kind_filters() {
+fn parse_container_cache_list_global_accepts_project_and_kind_filters() {
     let parsed = parse_command(vec![
         "container".to_owned(),
         "cache".to_owned(),
@@ -424,7 +424,7 @@ fn parse_container_cache_list_all_accepts_project_and_kind_filters() {
             subcommand: ContainerSubcommand::Cache {
                 name: None,
                 subcommand: ContainerCacheSubcommand::List {
-                    all: true,
+                    global: true,
                     project: Some("acowtancy-dev".to_owned()),
                     kind: Some("rust-target".to_owned()),
                 },
@@ -436,7 +436,7 @@ fn parse_container_cache_list_all_accepts_project_and_kind_filters() {
 }
 
 #[test]
-fn parse_container_cache_list_project_implies_all() {
+fn parse_container_cache_list_project_implies_global() {
     let parsed = parse_command(vec![
         "container".to_owned(),
         "cache".to_owned(),
@@ -452,7 +452,7 @@ fn parse_container_cache_list_project_implies_all() {
             subcommand: ContainerSubcommand::Cache {
                 name: None,
                 subcommand: ContainerCacheSubcommand::List {
-                    all: true,
+                    global: true,
                     project: Some("acowtancy-dev".to_owned()),
                     kind: None,
                 },
@@ -479,7 +479,7 @@ fn parse_container_cache_prune_is_supported() {
             subcommand: ContainerSubcommand::Cache {
                 name: None,
                 subcommand: ContainerCacheSubcommand::Prune {
-                    all: false,
+                    global: false,
                     yes: true,
                     project: None,
                     kind: None,
@@ -492,12 +492,12 @@ fn parse_container_cache_prune_is_supported() {
 }
 
 #[test]
-fn parse_container_cache_prune_all_is_supported() {
+fn parse_container_cache_prune_global_is_supported() {
     let parsed = parse_command(vec![
         "container".to_owned(),
         "cache".to_owned(),
         "prune".to_owned(),
-        "--all".to_owned(),
+        "--global".to_owned(),
         "--yes".to_owned(),
         "--json".to_owned(),
     ])
@@ -509,7 +509,7 @@ fn parse_container_cache_prune_all_is_supported() {
             subcommand: ContainerSubcommand::Cache {
                 name: None,
                 subcommand: ContainerCacheSubcommand::Prune {
-                    all: true,
+                    global: true,
                     yes: true,
                     project: None,
                     kind: None,
@@ -522,7 +522,7 @@ fn parse_container_cache_prune_all_is_supported() {
 }
 
 #[test]
-fn parse_container_cache_prune_all_accepts_project_and_kind_filters() {
+fn parse_container_cache_prune_global_accepts_project_and_kind_filters() {
     let parsed = parse_command(vec![
         "container".to_owned(),
         "cache".to_owned(),
@@ -541,7 +541,7 @@ fn parse_container_cache_prune_all_accepts_project_and_kind_filters() {
             subcommand: ContainerSubcommand::Cache {
                 name: None,
                 subcommand: ContainerCacheSubcommand::Prune {
-                    all: true,
+                    global: true,
                     yes: true,
                     project: Some("acowtancy-dev".to_owned()),
                     kind: Some("rust-target".to_owned()),
@@ -554,7 +554,7 @@ fn parse_container_cache_prune_all_accepts_project_and_kind_filters() {
 }
 
 #[test]
-fn parse_container_cache_prune_project_implies_all() {
+fn parse_container_cache_prune_project_implies_global() {
     let parsed = parse_command(vec![
         "container".to_owned(),
         "cache".to_owned(),
@@ -571,7 +571,7 @@ fn parse_container_cache_prune_project_implies_all() {
             subcommand: ContainerSubcommand::Cache {
                 name: None,
                 subcommand: ContainerCacheSubcommand::Prune {
-                    all: true,
+                    global: true,
                     yes: true,
                     project: Some("acowtancy-dev".to_owned()),
                     kind: None,
@@ -596,7 +596,11 @@ fn parse_container_volume_list_is_supported() {
         cmd,
         Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Volume {
-                subcommand: ContainerVolumeSubcommand::List { orphans: false },
+                subcommand: ContainerVolumeSubcommand::List {
+                    global: false,
+                    orphans: false,
+                    dormant: false,
+                },
             },
             repo_override: None,
             output_json: true,
@@ -605,11 +609,63 @@ fn parse_container_volume_list_is_supported() {
 }
 
 #[test]
-fn parse_container_volume_list_accepts_orphans_filter() {
+fn parse_container_volume_list_accepts_dormant_filter() {
     let cmd = parse_command(vec![
         "container".to_owned(),
         "volume".to_owned(),
         "list".to_owned(),
+        "--dormant".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Volume {
+                subcommand: ContainerVolumeSubcommand::List {
+                    global: false,
+                    orphans: false,
+                    dormant: true,
+                },
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_container_volume_list_accepts_global_filter() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "volume".to_owned(),
+        "list".to_owned(),
+        "--global".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Volume {
+                subcommand: ContainerVolumeSubcommand::List {
+                    global: true,
+                    orphans: false,
+                    dormant: false,
+                },
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_container_volume_list_accepts_orphans_filter_with_global() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "volume".to_owned(),
+        "list".to_owned(),
+        "--global".to_owned(),
         "--orphans".to_owned(),
         "--json".to_owned(),
     ])
@@ -618,12 +674,47 @@ fn parse_container_volume_list_accepts_orphans_filter() {
         cmd,
         Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Volume {
-                subcommand: ContainerVolumeSubcommand::List { orphans: true },
+                subcommand: ContainerVolumeSubcommand::List {
+                    global: true,
+                    orphans: true,
+                    dormant: false,
+                },
             },
             repo_override: None,
             output_json: true,
         })
     );
+}
+
+#[test]
+fn parse_container_volume_list_rejects_orphans_without_global() {
+    let error = parse_command(vec![
+        "container".to_owned(),
+        "volume".to_owned(),
+        "list".to_owned(),
+        "--orphans".to_owned(),
+    ])
+    .expect_err("parse should fail");
+
+    assert!(error
+        .to_string()
+        .contains("`effigy container volume list --orphans` requires `--global`"));
+}
+
+#[test]
+fn parse_container_volume_list_rejects_dormant_with_global() {
+    let error = parse_command(vec![
+        "container".to_owned(),
+        "volume".to_owned(),
+        "list".to_owned(),
+        "--global".to_owned(),
+        "--dormant".to_owned(),
+    ])
+    .expect_err("parse should fail");
+
+    assert!(error
+        .to_string()
+        .contains("`effigy container volume list --dormant` does not accept `--global`"));
 }
 
 #[test]

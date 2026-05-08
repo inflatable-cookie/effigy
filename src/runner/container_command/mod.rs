@@ -5,6 +5,7 @@ use effigy_runtime::data::{
     run_container_cache_list, run_container_cache_list_all, run_container_cache_list_under_path,
     run_container_cache_prune, run_container_cache_prune_all, run_container_data_export,
     run_container_data_import, run_container_data_list, run_container_volume_list,
+    run_container_volume_list_for_repo,
 };
 use effigy_runtime::read::{
     run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
@@ -54,26 +55,26 @@ pub(super) fn render_container_report(report: ContainerCommandReport, output_jso
 }
 
 pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, RunnerError> {
-    if let ContainerSubcommand::Status { name: _, all: true } = &args.subcommand {
+    if let ContainerSubcommand::Status { name: _, global: true } = &args.subcommand {
         if args.repo_override.is_some() {
             return Err(RunnerError::task_invocation(
-                "`effigy container status --all` does not accept `--repo`; it discovers running environments across repos",
+                "`effigy container status --global` does not accept `--repo`; it discovers running environments across repos",
             ));
         }
         return run_container_status_all(args.output_json).map_err(Into::into);
     }
-    if let ContainerSubcommand::Stats { all: true } = &args.subcommand {
+    if let ContainerSubcommand::Stats { global: true } = &args.subcommand {
         if args.repo_override.is_some() {
             return Err(RunnerError::task_invocation(
-                "`effigy container stats --all` does not accept `--repo`; it discovers running environments across repos",
+                "`effigy container stats --global` does not accept `--repo`; it discovers running environments across repos",
             ));
         }
         return run_container_stats_all(args.output_json).map_err(Into::into);
     }
-    if let ContainerSubcommand::Down { name: _, all: true } = &args.subcommand {
+    if let ContainerSubcommand::Down { name: _, global: true } = &args.subcommand {
         if args.repo_override.is_some() {
             return Err(RunnerError::task_invocation(
-                "`effigy container down --all` does not accept `--repo`; it discovers running environments across repos",
+                "`effigy container down --global` does not accept `--repo`; it discovers running environments across repos",
             ));
         }
         return run_container_down_all_with_hook(
@@ -89,7 +90,7 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         name: _,
         subcommand:
             ContainerCacheSubcommand::List {
-                all: true,
+                global: true,
                 project,
                 kind,
             },
@@ -97,8 +98,8 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
     {
         if args.repo_override.is_some() {
             return Err(RunnerError::task_invocation(
-                "`effigy container cache list --all` does not accept `--repo`; it inspects the Effigy Colima profile's named-volume inventory",
-            ));
+                    "`effigy container cache list --global` does not accept `--repo`; it inspects the Effigy Colima profile's named-volume inventory",
+                ));
         }
         let cwd = crate::runner::command_context::active_invocation_cwd()?;
         return run_container_cache_list_all(
@@ -115,7 +116,7 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         name: _,
         subcommand:
             ContainerCacheSubcommand::Prune {
-                all: true,
+                global: true,
                 yes,
                 project,
                 kind,
@@ -124,11 +125,11 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
     {
         if args.repo_override.is_some() {
             return Err(RunnerError::task_invocation(
-                "`effigy container cache prune --all` does not accept `--repo`; it prunes cache volumes from the Effigy Colima profile inventory",
-            ));
+                    "`effigy container cache prune --global` does not accept `--repo`; it prunes cache volumes from the Effigy Colima profile inventory",
+                ));
         }
         data::maybe_confirm_destructive_container_action(
-            "`effigy container cache prune --all`",
+            "`effigy container cache prune --global`",
             "Purge safe cache volumes across the Effigy Colima profile. Running projects will be skipped.",
             args.output_json,
             *yes,
@@ -145,17 +146,37 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         .map_err(Into::into);
     }
     if let ContainerSubcommand::Volume {
-        subcommand: ContainerVolumeSubcommand::List { orphans },
+        subcommand:
+            ContainerVolumeSubcommand::List {
+                global,
+                orphans,
+                dormant,
+            },
     } = &args.subcommand
     {
-        if args.repo_override.is_some() {
-            return Err(RunnerError::task_invocation(
-                "`effigy container volume list` does not accept `--repo`; it inspects Effigy-managed named volumes across available runtimes",
-            ));
-        }
-        let cwd = crate::runner::command_context::active_invocation_cwd()?;
-        return run_container_volume_list(&cwd, *orphans, args.output_json, runtime_volume_capture)
+        if *global {
+            if args.repo_override.is_some() {
+                return Err(RunnerError::task_invocation(
+                    "`effigy container volume list --global` does not accept `--repo`; use `effigy container volume list` for one repo or omit `--repo` for cross-runtime inventory",
+                ));
+            }
+            let cwd = crate::runner::command_context::active_invocation_cwd()?;
+            return run_container_volume_list(
+                &cwd,
+                *orphans,
+                args.output_json,
+                runtime_volume_capture,
+            )
             .map_err(Into::into);
+        }
+        let context = resolve_active_command_context(args.repo_override.clone())?;
+        return run_container_volume_list_for_repo(
+            &context.resolved.resolved_root,
+            *dormant,
+            args.output_json,
+            runtime_volume_capture,
+        )
+        .map_err(Into::into);
     }
     match args.subcommand {
         ContainerSubcommand::Up {
@@ -172,20 +193,20 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
                 args.output_json,
             )
         }
-        ContainerSubcommand::Down { name, all: false } => run_container_down_fallback(
+        ContainerSubcommand::Down { name, global: false } => run_container_down_fallback(
             args.repo_override.clone(),
             name.as_deref(),
             args.output_json,
         ),
-        ContainerSubcommand::Down { all: true, .. } => unreachable!("handled above"),
-        ContainerSubcommand::Status { name, all: false } => run_container_status_fallback(
+        ContainerSubcommand::Down { global: true, .. } => unreachable!("handled above"),
+        ContainerSubcommand::Status { name, global: false } => run_container_status_fallback(
             args.repo_override.clone(),
             name.as_deref(),
             args.output_json,
         ),
-        ContainerSubcommand::Status { all: true, .. } => unreachable!("handled above"),
-        ContainerSubcommand::Stats { all: false } => unreachable!("parser rejects this shape"),
-        ContainerSubcommand::Stats { all: true } => unreachable!("handled above"),
+        ContainerSubcommand::Status { global: true, .. } => unreachable!("handled above"),
+        ContainerSubcommand::Stats { global: false } => unreachable!("parser rejects this shape"),
+        ContainerSubcommand::Stats { global: true } => unreachable!("handled above"),
         ContainerSubcommand::Logs {
             name,
             service,
@@ -246,7 +267,7 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             name,
             subcommand:
                 ContainerCacheSubcommand::List {
-                    all: false,
+                    global: false,
                     project: _,
                     kind: _,
                 },
@@ -258,7 +279,7 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         ContainerSubcommand::Cache {
             subcommand:
                 ContainerCacheSubcommand::List {
-                    all: true,
+                    global: true,
                     project: _,
                     kind: _,
                 },
@@ -268,7 +289,7 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             name,
             subcommand:
                 ContainerCacheSubcommand::Prune {
-                    all: false,
+                    global: false,
                     yes,
                     project: _,
                     kind: _,
@@ -297,7 +318,7 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         ContainerSubcommand::Cache {
             subcommand:
                 ContainerCacheSubcommand::Prune {
-                    all: true,
+                    global: true,
                     yes: _,
                     project: _,
                     kind: _,
@@ -676,15 +697,15 @@ mod tests {
     #[test]
     fn container_stats_all_rejects_repo_override() {
         let error = run_container(ContainerArgs {
-            subcommand: ContainerSubcommand::Stats { all: true },
+            subcommand: ContainerSubcommand::Stats { global: true },
             repo_override: Some(std::path::PathBuf::from("/tmp/demo")),
             output_json: false,
         })
-        .expect_err("stats --all should reject --repo");
+        .expect_err("stats --global should reject --repo");
 
         assert!(error
             .to_string()
-            .contains("`effigy container stats --all` does not accept `--repo`"));
+            .contains("`effigy container stats --global` does not accept `--repo`"));
     }
 
     #[test]
@@ -692,16 +713,36 @@ mod tests {
         let error = run_container(ContainerArgs {
             subcommand: ContainerSubcommand::Down {
                 name: None,
-                all: true,
+                global: true,
             },
             repo_override: Some(std::path::PathBuf::from("/tmp/demo")),
             output_json: false,
         })
-        .expect_err("down --all should reject --repo");
+        .expect_err("down --global should reject --repo");
 
         assert!(error
             .to_string()
-            .contains("`effigy container down --all` does not accept `--repo`"));
+            .contains("`effigy container down --global` does not accept `--repo`"));
+    }
+
+    #[test]
+    fn container_volume_list_all_rejects_repo_override() {
+        let error = run_container(ContainerArgs {
+            subcommand: ContainerSubcommand::Volume {
+                subcommand: ContainerVolumeSubcommand::List {
+                    global: true,
+                    orphans: false,
+                    dormant: false,
+                },
+            },
+            repo_override: Some(std::path::PathBuf::from("/tmp/demo")),
+            output_json: false,
+        })
+        .expect_err("volume list --global should reject --repo");
+
+        assert!(error
+            .to_string()
+            .contains("`effigy container volume list --global` does not accept `--repo`"));
     }
 
     #[test]

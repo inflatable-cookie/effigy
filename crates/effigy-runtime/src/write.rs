@@ -22,7 +22,7 @@ use planning::{
 };
 use report::{
     annotate_left_running_shared_services, annotate_removed_gateway_routes,
-    render_container_down_all_report, render_container_report, StoppedContainerEnvironment,
+    render_container_down_global_report, render_container_report, StoppedContainerEnvironment,
 };
 
 pub fn run_container_down<F>(
@@ -135,7 +135,7 @@ where
         });
     }
 
-    render_container_down_all_report(&stopped, output_json)
+    render_container_down_global_report(&stopped, output_json)
 }
 
 pub fn run_container_down_under_path_with_hook<F, H>(
@@ -193,7 +193,7 @@ where
         });
     }
 
-    render_container_down_all_report(&stopped, output_json)
+    render_container_down_global_report(&stopped, output_json)
 }
 
 pub fn run_container_reset<FDeregister, FRemoveVolumes>(

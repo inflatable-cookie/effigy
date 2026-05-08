@@ -182,7 +182,7 @@ fn should_show_transient_spinner(context: &CliExecutionContext<'_>, command: &Co
             subcommand: effigy_cli::ContainerSubcommand::Cache {
                 name: _,
                 subcommand: effigy_cli::ContainerCacheSubcommand::List {
-                    all: true,
+                    global: true,
                     project: _,
                     kind: _,
                 },

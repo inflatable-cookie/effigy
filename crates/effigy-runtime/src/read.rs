@@ -20,7 +20,7 @@ use effigy_containers::{
     validate_container_policy,
 };
 use effigy_containers::{
-    stats_all_report, status_all_report, ContainerStatsAllEntry, ContainerStatsService,
+    stats_global_report, status_global_report, ContainerStatsAllEntry, ContainerStatsService,
     ContainerStatusService, EffectiveContainerPolicy,
 };
 
@@ -188,7 +188,7 @@ pub fn run_container_status_all(output_json: bool) -> Result<String, EffigyRunti
         .collect::<Vec<_>>();
 
     Ok(render_container_report(
-        status_all_report(&environments),
+        status_global_report(&environments),
         output_json,
     ))
 }
@@ -208,7 +208,7 @@ pub fn run_container_status_under_path(
         );
     }
     Ok(render_container_report(
-        status_all_report(
+        status_global_report(
             &environments
                 .iter()
                 .map(environment_status_entry)
@@ -299,7 +299,7 @@ pub fn run_container_stats_all(output_json: bool) -> Result<String, EffigyRuntim
         Some(stats_warning_lines.join("; "))
     };
     Ok(render_container_report(
-        stats_all_report(&environments, stats_warning.as_deref()),
+        stats_global_report(&environments, stats_warning.as_deref()),
         output_json,
     ))
 }

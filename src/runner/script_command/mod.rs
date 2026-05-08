@@ -19,6 +19,8 @@ use effigy_cli::{
 };
 use serde_json::Value;
 
+use effigy_runtime_plan::RuntimeActivationRoute;
+
 use super::command_context::active_runtime_context;
 use super::command_context::EmbeddedRepoOverrideMode;
 use super::container_runtime_prep::{activate_container_runtime_for_task, ActivationRequest};
@@ -126,12 +128,12 @@ fn host_callbacks() -> HostCallbacks {
             )
             .map_err(|error| error.to_string())
         }),
-        container_down: Arc::new(|repo_root, name, all| {
+        container_down: Arc::new(|repo_root, name, global| {
             run_container_helper(
                 repo_root,
                 ContainerSubcommand::Down {
-                    name: if all { None } else { Some(name.to_owned()) },
-                    all,
+                    name: if global { None } else { Some(name.to_owned()) },
+                    global,
                 },
             )
             .map_err(|error| error.to_string())
@@ -206,6 +208,7 @@ fn activate_rhai_container_exec(repo_root: &Path, name: Option<&str>) -> Result<
         ActivationRequest {
             container_name: name,
             repo_override: Some(repo_root.to_path_buf()),
+            route: RuntimeActivationRoute::Rhai,
             session_context: current_runtime_session_context(),
         },
     )?;
@@ -257,7 +260,7 @@ fn run_rhai_feature(
                     repo_root,
                     ContainerSubcommand::Status {
                         name: Some(name),
-                        all: false,
+                        global: false,
                     },
                 )
             } else if bool_option(&options, "all")?.unwrap_or(false) {
@@ -266,7 +269,7 @@ fn run_rhai_feature(
                     effigy_cli::Command::Container(ContainerArgs {
                         subcommand: ContainerSubcommand::Status {
                             name: None,
-                            all: true,
+                            global: true,
                         },
                         repo_override: None,
                         output_json: true,
@@ -354,7 +357,7 @@ fn run_rhai_feature(
         FEATURE_CONTAINER_STATS => run_typed_command(
             repo_root,
             effigy_cli::Command::Container(ContainerArgs {
-                subcommand: ContainerSubcommand::Stats { all: true },
+                subcommand: ContainerSubcommand::Stats { global: true },
                 repo_override: None,
                 output_json: true,
             }),

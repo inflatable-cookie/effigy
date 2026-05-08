@@ -92,26 +92,26 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
-    let mut all = false;
+    let mut global = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
-            "--all" => all = true,
+            "--global" => global = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
     }
 
-    if all && name.is_some() {
+    if global && name.is_some() {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container <NAME> down` does not accept `--all`; use `effigy container down --all` for cross-project shutdown".to_owned(),
+            "`effigy container <NAME> down` does not accept `--global`; use `effigy container down --global` for cross-project shutdown".to_owned(),
         ));
     }
 
     Ok(Command::Container(ContainerArgs {
-        subcommand: ContainerSubcommand::Down { name, all },
+        subcommand: ContainerSubcommand::Down { name, global },
         repo_override,
         output_json,
     }))
@@ -124,26 +124,26 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
-    let mut all = false;
+    let mut global = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
-            "--all" => all = true,
+            "--global" => global = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
     }
 
-    if all && name.is_some() {
+    if global && name.is_some() {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container <NAME> status` does not accept `--all`; use `effigy container status --all` for cross-project discovery".to_owned(),
+            "`effigy container <NAME> status` does not accept `--global`; use `effigy container status --global` for cross-project discovery".to_owned(),
         ));
     }
 
     Ok(Command::Container(ContainerArgs {
-        subcommand: ContainerSubcommand::Status { name, all },
+        subcommand: ContainerSubcommand::Status { name, global },
         repo_override,
         output_json,
     }))
@@ -197,13 +197,13 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
-    let mut all = false;
+    let mut global = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
-            "--all" => all = true,
+            "--global" => global = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
@@ -211,17 +211,17 @@ where
 
     if name.is_some() {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container <NAME> stats` is not supported yet; use `effigy container stats --all` for the bounded cross-project resource view".to_owned(),
+            "`effigy container <NAME> stats` is not supported yet; use `effigy container stats --global` for the bounded cross-project resource view".to_owned(),
         ));
     }
-    if !all {
+    if !global {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container stats` currently requires `--all`; use `effigy container stats --all` for cross-project resource discovery".to_owned(),
+            "`effigy container stats` currently requires `--global`; use `effigy container stats --global` for cross-project resource discovery".to_owned(),
         ));
     }
 
     Ok(Command::Container(ContainerArgs {
-        subcommand: ContainerSubcommand::Stats { all },
+        subcommand: ContainerSubcommand::Stats { global },
         repo_override,
         output_json,
     }))
@@ -284,21 +284,48 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
+    let mut global = false;
     let mut orphans = false;
+    let mut dormant = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
+            "--global" => global = true,
             "--orphans" => orphans = true,
+            "--dormant" => dormant = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
     }
 
+    if orphans && !global {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container volume list --orphans` requires `--global`; use `--dormant` for repo-scoped stale volumes"
+                .to_owned(),
+        ));
+    }
+    if dormant && global {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container volume list --dormant` does not accept `--global`; use `--orphans` for global ownerless volumes"
+                .to_owned(),
+        ));
+    }
+    if dormant && orphans {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container volume list` does not accept both `--orphans` and `--dormant`"
+                .to_owned(),
+        ));
+    }
+
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Volume {
-            subcommand: ContainerVolumeSubcommand::List { orphans },
+            subcommand: ContainerVolumeSubcommand::List {
+                global,
+                orphans,
+                dormant,
+            },
         },
         repo_override,
         output_json,
@@ -312,7 +339,7 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
-    let mut all = false;
+    let mut global = false;
     let mut project: Option<String> = None;
     let mut kind: Option<String> = None;
 
@@ -320,7 +347,7 @@ where
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
-            "--all" => all = true,
+            "--global" => global = true,
             "--project" => {
                 project = Some(next_required_value(
                     &mut args,
@@ -343,19 +370,19 @@ where
     }
 
     if project.is_some() || kind.is_some() {
-        all = true;
+        global = true;
     }
 
-    if all && name.is_some() {
+    if global && name.is_some() {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container <NAME> cache list` does not accept `--all`; use `effigy container cache list --all` for cross-project cache discovery".to_owned(),
+            "`effigy container <NAME> cache list` does not accept `--global`; use `effigy container cache list --global` for cross-project cache discovery".to_owned(),
         ));
     }
 
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Cache {
             name,
-            subcommand: ContainerCacheSubcommand::List { all, project, kind },
+            subcommand: ContainerCacheSubcommand::List { global, project, kind },
         },
         repo_override,
         output_json,
@@ -369,7 +396,7 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
-    let mut all = false;
+    let mut global = false;
     let mut yes = false;
     let mut project: Option<String> = None;
     let mut kind: Option<String> = None;
@@ -378,7 +405,7 @@ where
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
-            "--all" => all = true,
+            "--global" => global = true,
             "--yes" => yes = true,
             "--project" => {
                 project = Some(next_required_value(
@@ -402,12 +429,12 @@ where
     }
 
     if project.is_some() || kind.is_some() {
-        all = true;
+        global = true;
     }
 
-    if all && name.is_some() {
+    if global && name.is_some() {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container <NAME> cache prune` does not accept `--all`; use `effigy container cache prune --all` for profile-wide cache cleanup".to_owned(),
+            "`effigy container <NAME> cache prune` does not accept `--global`; use `effigy container cache prune --global` for profile-wide cache cleanup".to_owned(),
         ));
     }
 
@@ -415,7 +442,7 @@ where
         subcommand: ContainerSubcommand::Cache {
             name,
             subcommand: ContainerCacheSubcommand::Prune {
-                all,
+                global,
                 yes,
                 project,
                 kind,

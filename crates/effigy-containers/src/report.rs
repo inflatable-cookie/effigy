@@ -126,6 +126,7 @@ pub struct ContainerVolumeGlobalEntry {
     pub mount_target: Option<String>,
     pub persist: Option<bool>,
     pub size_bytes: Option<u64>,
+    pub in_use: bool,
     pub orphaned: bool,
     pub orphan_reason: Option<String>,
 }
@@ -423,10 +424,10 @@ pub fn status_report(
     }
 }
 
-/// Build the `container status --all` report.
-pub fn status_all_report(entries: &[ContainerStatusAllEntry]) -> ContainerCommandReport {
+/// Build the `container status --global` report.
+pub fn status_global_report(entries: &[ContainerStatusAllEntry]) -> ContainerCommandReport {
     let json = json!({
-        "schema": "effigy.container.status-all.v1",
+        "schema": "effigy.container.status-global.v1",
         "schema_version": 1,
         "ok": true,
         "environment_count": entries.len(),
@@ -519,13 +520,13 @@ pub fn status_all_report(entries: &[ContainerStatusAllEntry]) -> ContainerComman
     }
 }
 
-/// Build the `container stats --all` report.
-pub fn stats_all_report(
+/// Build the `container stats --global` report.
+pub fn stats_global_report(
     entries: &[ContainerStatsAllEntry],
     stats_warning: Option<&str>,
 ) -> ContainerCommandReport {
     let json = json!({
-        "schema": "effigy.container.stats-all.v1",
+        "schema": "effigy.container.stats-global.v1",
         "schema_version": 1,
         "ok": true,
         "environment_count": entries.len(),
@@ -775,7 +776,7 @@ pub fn cache_list_report(
     }
 }
 
-pub fn cache_list_all_report(
+pub fn cache_list_global_report(
     profile: &str,
     scope_label: &str,
     volumes: &[ContainerCacheGlobalEntry],
@@ -794,7 +795,7 @@ pub fn cache_list_all_report(
             .push(volume);
     }
     let json = json!({
-        "schema": "effigy.container.cache-list-all.v1",
+        "schema": "effigy.container.cache-list-global.v1",
         "schema_version": 1,
         "ok": true,
         "profile": profile,
@@ -878,18 +879,21 @@ pub fn cache_list_all_report(
 
 pub fn volume_list_report(
     scope_label: &str,
-    orphans_only: bool,
+    filter_label: Option<&str>,
     volumes: &[ContainerVolumeGlobalEntry],
 ) -> ContainerCommandReport {
     let orphan_count = volumes.iter().filter(|volume| volume.orphaned).count();
+    let in_use_count = volumes.iter().filter(|volume| volume.in_use).count();
     let json = json!({
         "schema": "effigy.container.volume-list.v1",
         "schema_version": 1,
         "ok": true,
         "scope": scope_label,
-        "orphans_only": orphans_only,
+        "filter": filter_label,
         "volume_count": volumes.len(),
         "orphan_count": orphan_count,
+        "in_use_count": in_use_count,
+        "inactive_count": volumes.len().saturating_sub(in_use_count),
         "volumes": volumes.iter().map(|volume| {
             json!({
                 "name": volume.name,
@@ -907,6 +911,7 @@ pub fn volume_list_report(
                 },
                 "size_bytes": volume.size_bytes,
                 "size_available": volume.size_bytes.is_some(),
+                "in_use": volume.in_use,
                 "orphaned": volume.orphaned,
                 "orphan_reason": volume.orphan_reason,
             })
@@ -916,10 +921,16 @@ pub fn volume_list_report(
     if volumes.is_empty() {
         return ContainerCommandReport {
             json,
-            success_text: if orphans_only {
-                format!("[info] no orphaned Effigy-managed volumes found in {scope_label}")
-            } else {
-                format!("[info] no Effigy-managed volumes found in {scope_label}")
+            success_text: match filter_label {
+                Some("orphans") => {
+                    format!("[info] no orphaned Effigy-managed volumes found in {scope_label}")
+                }
+                Some("dormant") => {
+                    format!("[info] no dormant Effigy-managed volumes found in {scope_label}")
+                }
+                _ => {
+                    format!("[info] no Effigy-managed volumes found in {scope_label}")
+                }
             },
         };
     }
@@ -936,10 +947,12 @@ pub fn volume_list_report(
     }
 
     let mut lines = vec![format!(
-        "[ok] {} Effigy-managed volume{} in {} (orphans={})",
+        "[ok] {} Effigy-managed volume{} in {} (in_use={}, inactive={}, orphans={})",
         volumes.len(),
         if volumes.len() == 1 { "" } else { "s" },
         scope_label,
+        in_use_count,
+        volumes.len().saturating_sub(in_use_count),
         orphan_count
     )];
     for (index, (heading, entries)) in grouped.into_iter().enumerate() {
@@ -965,8 +978,10 @@ pub fn volume_list_report(
                     "orphaned:{}",
                     volume.orphan_reason.as_deref().unwrap_or("unknown")
                 )
+            } else if volume.in_use {
+                "in-use".to_owned()
             } else {
-                "owned".to_owned()
+                "inactive".to_owned()
             };
             lines.push(format!(
                 "- {} [{}:{}] {} {} (size={}, {})",

@@ -21,6 +21,7 @@ const LABEL_REPO_ROOT: &str = "com.effigy.repo-root";
 const LABEL_SERVICE: &str = "com.effigy.service";
 const LABEL_MOUNT_TARGET: &str = "com.effigy.mount-target";
 const LABEL_PERSIST: &str = "com.effigy.persist";
+const LABEL_VOLUME_NAME: &str = "com.effigy.volume-name";
 const LABEL_COMPOSE_PROJECT: &str = "com.docker.compose.project";
 const LABEL_COMPOSE_VOLUME: &str = "com.docker.compose.volume";
 
@@ -37,6 +38,12 @@ struct LegacyVolumeInference {
     service: Option<String>,
     mount_target: Option<String>,
     persist: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProjectVolumeState {
+    repo_root: String,
+    mounted_names: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -66,6 +73,7 @@ where
     let mut entries = Vec::new();
     let mut ownership_cache = BTreeMap::<String, RepoOwnershipState>::new();
     let ownership_hints = collect_running_volume_ownership_hints(cwd, run_runtime_volume_capture)?;
+    let project_states = collect_project_volume_states(cwd, run_runtime_volume_capture)?;
     let mut runtime_profiles = vec![DOCKER_RUNTIME_PROFILE.to_owned()];
     runtime_profiles.extend(running_colima_profiles(cwd).unwrap_or_default());
 
@@ -109,6 +117,9 @@ where
             let legacy_inference = project_name
                 .as_deref()
                 .map(|project_name| infer_legacy_volume_details(project_name, &metadata.name));
+            let project_state = project_name.as_ref().and_then(|project_name| {
+                project_states.get(&(profile.clone(), project_name.clone()))
+            });
             let ownership_hint = project_name.as_ref().and_then(|project_name| {
                 ownership_hints.get(&(profile.clone(), project_name.clone(), metadata.name.clone()))
             });
@@ -116,11 +127,19 @@ where
                 .labels
                 .get(LABEL_REPO_ROOT)
                 .cloned()
-                .or_else(|| ownership_hint.map(|hint| hint.repo_root.clone()));
+                .or_else(|| ownership_hint.map(|hint| hint.repo_root.clone()))
+                .or_else(|| project_state.map(|state| state.repo_root.clone()));
+            let logical_volume_name = metadata
+                .labels
+                .get(LABEL_VOLUME_NAME)
+                .map(String::as_str)
+                .unwrap_or(metadata.name.as_str());
             let orphan_reason = repo_root.as_deref().and_then(|repo_root| {
-                orphan_reason(repo_root, &metadata.name, &mut ownership_cache)
+                orphan_reason(repo_root, logical_volume_name, &mut ownership_cache)
             });
             let orphaned = orphan_reason.is_some();
+            let in_use =
+                project_state.is_some_and(|state| state.mounted_names.contains(&metadata.name));
             if orphans_only && !orphaned {
                 continue;
             }
@@ -173,6 +192,7 @@ where
                 mount_target,
                 persist,
                 size_bytes,
+                in_use,
                 orphaned,
                 orphan_reason,
             });
@@ -183,6 +203,38 @@ where
         left.repo_root
             .cmp(&right.repo_root)
             .then_with(|| left.project_name.cmp(&right.project_name))
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.profile.cmp(&right.profile))
+    });
+    Ok(entries)
+}
+
+pub(super) fn collect_repo_volume_entries<F>(
+    repo_root: &Path,
+    orphans_only: bool,
+    run_runtime_volume_capture: &F,
+) -> Result<Vec<ContainerVolumeGlobalEntry>, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let mut declared = DeclaredRepoVolumes::load(repo_root)?;
+    let all_entries = collect_global_volume_entries(repo_root, false, run_runtime_volume_capture)?;
+    declared.running_projects = all_entries
+        .iter()
+        .filter(|entry| entry.in_use)
+        .filter_map(|entry| entry.project_name.clone())
+        .collect();
+    let mut entries = all_entries
+        .into_iter()
+        .filter(|entry| declared.matches_entry(entry))
+        .map(|entry| declared.reconcile_entry(entry))
+        .collect::<Vec<_>>();
+    if orphans_only {
+        entries.retain(|entry| entry.orphaned);
+    }
+    entries.sort_by(|left, right| {
+        left.project_name
+            .cmp(&right.project_name)
             .then_with(|| left.name.cmp(&right.name))
             .then_with(|| left.profile.cmp(&right.profile))
     });
@@ -257,6 +309,39 @@ where
         }
     }
     Ok(hints)
+}
+
+fn collect_project_volume_states<F>(
+    cwd: &Path,
+    run_runtime_volume_capture: &F,
+) -> Result<BTreeMap<(String, String), ProjectVolumeState>, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let mut states = BTreeMap::new();
+    for environment in discover_running_environments()? {
+        let mut mounted_names = BTreeSet::new();
+        for service in &environment.services {
+            let mounts = inspect_runtime_volume_mounts(
+                cwd,
+                &environment.runtime_profile,
+                &service.container_name,
+                run_runtime_volume_capture,
+            )?;
+            mounted_names.extend(mounts.into_iter().map(|mount| mount.name));
+        }
+        states.insert(
+            (
+                environment.runtime_profile.clone(),
+                environment.policy.project_name.clone(),
+            ),
+            ProjectVolumeState {
+                repo_root: environment.repo_root,
+                mounted_names,
+            },
+        );
+    }
+    Ok(states)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -401,6 +486,108 @@ fn should_skip_legacy_noise_volume(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct DeclaredRepoVolumes {
+    repo_root: String,
+    by_project: BTreeMap<String, DeclaredProjectVolumes>,
+    running_projects: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeclaredProjectVolumes {
+    runtime_names: BTreeSet<String>,
+    mount_keys: BTreeSet<DeclaredMountKey>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct DeclaredMountKey {
+    service: String,
+    mount_target: Option<String>,
+    persist: bool,
+}
+
+impl DeclaredRepoVolumes {
+    fn load(repo_root: &Path) -> Result<Self, EffigyRuntimeError> {
+        let policies = load_all_container_policies(repo_root).map_err(|error| {
+            EffigyRuntimeError::task_invocation(format!(
+                "failed to load container policies for `{}`: {error}",
+                repo_root.display()
+            ))
+        })?;
+        let mut by_project = BTreeMap::<String, DeclaredProjectVolumes>::new();
+        for policy in policies {
+            let declared = by_project
+                .entry(policy.project_name.clone())
+                .or_insert_with(|| DeclaredProjectVolumes {
+                    runtime_names: BTreeSet::new(),
+                    mount_keys: BTreeSet::new(),
+                });
+            for volume in policy.managed_volumes {
+                declared.runtime_names.insert(volume.name);
+                declared.mount_keys.insert(DeclaredMountKey {
+                    service: volume.service,
+                    mount_target: volume.mount_target,
+                    persist: volume.persist,
+                });
+            }
+        }
+        Ok(Self {
+            repo_root: repo_root.display().to_string(),
+            by_project,
+            running_projects: BTreeSet::new(),
+        })
+    }
+
+    fn matches_entry(&self, entry: &ContainerVolumeGlobalEntry) -> bool {
+        entry.repo_root.as_deref() == Some(self.repo_root.as_str())
+            || entry
+                .project_name
+                .as_deref()
+                .is_some_and(|project| self.by_project.contains_key(project))
+    }
+
+    fn reconcile_entry(&self, mut entry: ContainerVolumeGlobalEntry) -> ContainerVolumeGlobalEntry {
+        let Some(project_name) = entry.project_name.as_deref() else {
+            return entry;
+        };
+        let Some(declared) = self.by_project.get(project_name) else {
+            return entry;
+        };
+
+        if entry.repo_root.is_none() {
+            entry.repo_root = Some(self.repo_root.clone());
+        }
+        if entry.in_use {
+            return entry;
+        }
+        let declared_match = declared.runtime_names.contains(&entry.name)
+            || entry
+                .mount_target
+                .as_ref()
+                .zip(entry.service.as_deref())
+                .map(|(mount_target, service)| DeclaredMountKey {
+                    service: service.to_owned(),
+                    mount_target: Some(mount_target.clone()),
+                    persist: entry.persist.unwrap_or(false),
+                })
+                .is_some_and(|key| declared.mount_keys.contains(&key));
+        if declared_match {
+            entry.orphaned = false;
+            entry.orphan_reason = None;
+            return entry;
+        }
+
+        let can_mark_stale = entry.service.is_some()
+            || entry.mount_target.is_some()
+            || self.running_projects.contains(project_name);
+        if can_mark_stale {
+            entry.orphaned = true;
+            entry.orphan_reason = Some("no-longer-declared".to_owned());
+        }
+        entry
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum RepoOwnershipState {
     RepoMissing,
     ManifestMissing,
@@ -453,10 +640,12 @@ fn load_repo_ownership(repo_root: &str) -> RepoOwnershipState {
 mod tests {
     use super::{
         infer_legacy_volume_details, parse_runtime_volume_mounts, should_skip_legacy_noise_volume,
-        volume_has_effigy_ownership_signal, volume_project_name,
+        volume_has_effigy_ownership_signal, volume_project_name, DeclaredMountKey,
+        DeclaredProjectVolumes, DeclaredRepoVolumes,
     };
     use effigy_catalog::volumes::RuntimeVolumeMetadata;
-    use std::collections::BTreeMap;
+    use effigy_containers::ContainerVolumeGlobalEntry;
+    use std::collections::{BTreeMap, BTreeSet};
 
     #[test]
     fn legacy_compose_labeled_volume_counts_as_owned_signal() {
@@ -547,5 +736,84 @@ mod tests {
         assert_eq!(mounts[0].destination, "/var/www/cbs/vendor");
         assert_eq!(mounts[1].name, "cbs-dev-db-data");
         assert_eq!(mounts[1].destination, "/var/lib/mysql");
+    }
+
+    #[test]
+    fn repo_scope_marks_running_unmounted_legacy_volume_as_stale() {
+        let declared = DeclaredRepoVolumes {
+            repo_root: "/tmp/underlay-reference".to_owned(),
+            by_project: BTreeMap::from([(
+                "underlay-reference-dev".to_owned(),
+                DeclaredProjectVolumes {
+                    runtime_names: BTreeSet::from([
+                        "underlay-reference-dev-postgres-data".to_owned()
+                    ]),
+                    mount_keys: BTreeSet::new(),
+                },
+            )]),
+            running_projects: BTreeSet::from(["underlay-reference-dev".to_owned()]),
+        };
+        let reconciled = declared.reconcile_entry(ContainerVolumeGlobalEntry {
+            name: "efv-f1958972bdd653b9".to_owned(),
+            backend: "containerd".to_owned(),
+            profile: "effigy".to_owned(),
+            project_name: Some("underlay-reference-dev".to_owned()),
+            repo_root: None,
+            service: None,
+            mount_target: None,
+            persist: None,
+            size_bytes: Some(5_700_000_000),
+            in_use: false,
+            orphaned: false,
+            orphan_reason: None,
+        });
+
+        assert_eq!(
+            reconciled.repo_root.as_deref(),
+            Some("/tmp/underlay-reference")
+        );
+        assert!(reconciled.orphaned);
+        assert_eq!(
+            reconciled.orphan_reason.as_deref(),
+            Some("no-longer-declared")
+        );
+    }
+
+    #[test]
+    fn repo_scope_keeps_current_runtime_name_declared() {
+        let declared = DeclaredRepoVolumes {
+            repo_root: "/tmp/underlay-reference".to_owned(),
+            by_project: BTreeMap::from([(
+                "underlay-reference-dev".to_owned(),
+                DeclaredProjectVolumes {
+                    runtime_names: BTreeSet::from([
+                        "underlay-reference-dev-postgres-data".to_owned()
+                    ]),
+                    mount_keys: BTreeSet::from([DeclaredMountKey {
+                        service: "postgres".to_owned(),
+                        mount_target: Some("/var/lib/postgresql/data".to_owned()),
+                        persist: true,
+                    }]),
+                },
+            )]),
+            running_projects: BTreeSet::new(),
+        };
+        let reconciled = declared.reconcile_entry(ContainerVolumeGlobalEntry {
+            name: "underlay-reference-dev-postgres-data".to_owned(),
+            backend: "containerd".to_owned(),
+            profile: "effigy".to_owned(),
+            project_name: Some("underlay-reference-dev".to_owned()),
+            repo_root: None,
+            service: Some("postgres".to_owned()),
+            mount_target: None,
+            persist: Some(true),
+            size_bytes: Some(65_000_000),
+            in_use: false,
+            orphaned: true,
+            orphan_reason: Some("no-longer-declared".to_owned()),
+        });
+
+        assert!(!reconciled.orphaned);
+        assert_eq!(reconciled.orphan_reason, None);
     }
 }

@@ -159,8 +159,8 @@ primary_service = "jobs"
 }
 
 #[test]
-fn status_all_report_renders_environment_inventory() {
-    let report = status_all_report(&[ContainerStatusAllEntry {
+fn status_global_report_renders_environment_inventory() {
+    let report = status_global_report(&[ContainerStatusAllEntry {
         repo_root: "/tmp/demo".to_owned(),
         container: "web".to_owned(),
         project_name: "demo-web-dev".to_owned(),
@@ -193,8 +193,8 @@ fn status_all_report_renders_environment_inventory() {
 }
 
 #[test]
-fn stats_all_report_renders_resource_inventory_and_warning() {
-    let report = stats_all_report(
+fn stats_global_report_renders_resource_inventory_and_warning() {
+    let report = stats_global_report(
         &[ContainerStatsAllEntry {
             repo_root: "/tmp/demo".to_owned(),
             container: "web".to_owned(),
@@ -223,7 +223,7 @@ fn stats_all_report_renders_resource_inventory_and_warning() {
         Some("runtime stats were unavailable for: demo-web-1"),
     );
 
-    assert_eq!(report.json["schema"], "effigy.container.stats-all.v1");
+    assert_eq!(report.json["schema"], "effigy.container.stats-global.v1");
     assert_eq!(report.json["environment_count"], 1);
     assert_eq!(
         report.json["stats_warning"],
@@ -562,8 +562,8 @@ primary_service = "app"
 }
 
 #[test]
-fn cache_list_all_report_groups_by_project_in_text() {
-    let report = crate::cache_list_all_report(
+fn cache_list_global_report_groups_by_project_in_text() {
+    let report = crate::cache_list_global_report(
         "effigy",
         "profile-wide cache inventory",
         &[
@@ -586,7 +586,7 @@ fn cache_list_all_report_groups_by_project_in_text() {
         ],
     );
 
-    assert_eq!(report.json["schema"], "effigy.container.cache-list-all.v1");
+    assert_eq!(report.json["schema"], "effigy.container.cache-list-global.v1");
     assert_eq!(report.json["scope"], "profile-wide cache inventory");
     assert_eq!(report.json["projects"].as_array().map(Vec::len), Some(2));
     assert!(report.success_text.contains("contact-patch-dev:\n- "));
@@ -600,7 +600,7 @@ fn cache_list_all_report_groups_by_project_in_text() {
 fn volume_list_report_renders_orphan_contract() {
     let report = crate::volume_list_report(
         "global runtime volume inventory",
-        true,
+        Some("orphans"),
         &[
             crate::ContainerVolumeGlobalEntry {
                 name: "dtn-dev-web-vendor".to_owned(),
@@ -612,6 +612,7 @@ fn volume_list_report_renders_orphan_contract() {
                 mount_target: Some("/var/www/dtn/vendor".to_owned()),
                 persist: Some(false),
                 size_bytes: Some(4096),
+                in_use: false,
                 orphaned: true,
                 orphan_reason: Some("repo-missing".to_owned()),
             },
@@ -625,6 +626,7 @@ fn volume_list_report_renders_orphan_contract() {
                 mount_target: Some("/var/lib/mysql".to_owned()),
                 persist: Some(true),
                 size_bytes: None,
+                in_use: true,
                 orphaned: false,
                 orphan_reason: None,
             },
@@ -632,13 +634,17 @@ fn volume_list_report_renders_orphan_contract() {
     );
 
     assert_eq!(report.json["schema"], "effigy.container.volume-list.v1");
-    assert_eq!(report.json["orphans_only"], true);
+    assert_eq!(report.json["filter"], "orphans");
     assert_eq!(report.json["volume_count"], 2);
     assert_eq!(report.json["orphan_count"], 1);
+    assert_eq!(report.json["in_use_count"], 1);
+    assert_eq!(report.json["inactive_count"], 1);
     assert!(report.success_text.contains("/tmp/missing-dtn:"));
     assert!(report.success_text.contains("orphaned:repo-missing"));
     assert!(report.success_text.contains("docker ephemeral"));
     assert!(report.success_text.contains("containerd persistent"));
+    assert!(report.success_text.contains("in-use"));
+    assert!(report.success_text.contains("inactive"));
 }
 
 #[test]

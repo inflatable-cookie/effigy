@@ -606,14 +606,14 @@ pub enum ContainerSubcommand {
     },
     Down {
         name: Option<String>,
-        all: bool,
+        global: bool,
     },
     Status {
         name: Option<String>,
-        all: bool,
+        global: bool,
     },
     Stats {
-        all: bool,
+        global: bool,
     },
     Logs {
         name: Option<String>,
@@ -660,12 +660,12 @@ pub enum SystemSubcommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerCacheSubcommand {
     List {
-        all: bool,
+        global: bool,
         project: Option<String>,
         kind: Option<String>,
     },
     Prune {
-        all: bool,
+        global: bool,
         yes: bool,
         project: Option<String>,
         kind: Option<String>,
@@ -674,7 +674,11 @@ pub enum ContainerCacheSubcommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerVolumeSubcommand {
-    List { orphans: bool },
+    List {
+        global: bool,
+        orphans: bool,
+        dormant: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

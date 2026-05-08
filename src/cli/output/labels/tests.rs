@@ -120,7 +120,7 @@ fn command_kind_and_name_maps_command_variants() {
     let container = Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Status {
             name: None,
-            all: false,
+            global: false,
         },
         repo_override: None,
         output_json: false,

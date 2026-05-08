@@ -207,8 +207,8 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("container Help"));
     assert!(rendered.contains("effigy container up"));
     assert!(rendered.contains("effigy container <NAME> up"));
-    assert!(rendered.contains("effigy container status --all"));
-    assert!(rendered.contains("effigy container stats --all"));
+    assert!(rendered.contains("effigy container status --global"));
+    assert!(rendered.contains("effigy container stats --global"));
     assert!(rendered.contains("effigy container volume list"));
     assert!(rendered.contains("effigy container cache list"));
     assert!(rendered.contains("effigy container cache prune"));
@@ -223,7 +223,7 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("effigy container <NAME> eject"));
     assert!(rendered.contains("--attach"));
     assert!(rendered.contains("--detach"));
-    assert!(rendered.contains("--all"));
+    assert!(rendered.contains("--global"));
     assert!(rendered.contains("--orphans"));
     assert!(rendered.contains("--service <NAME>"));
     assert!(rendered.contains("--command <CMD>"));
@@ -233,12 +233,12 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered.contains("--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>"));
     assert!(rendered.contains("--no-prompt"));
     assert!(rendered.contains("effigy container web data list"));
-    assert!(rendered.contains("effigy container volume list --orphans"));
-    assert!(rendered.contains("effigy container cache list --all"));
+    assert!(rendered.contains("effigy container volume list --global --orphans"));
+    assert!(rendered.contains("effigy container cache list --global"));
     assert!(rendered.contains("effigy container cache list --project acowtancy-dev"));
     assert!(rendered.contains("effigy container cache list --kind rust-target"));
     assert!(rendered.contains("effigy container cache prune --project acowtancy-dev --yes"));
-    assert!(rendered.contains("effigy container cache prune --all --yes"));
+    assert!(rendered.contains("effigy container cache prune --global --yes"));
     assert!(rendered.contains("--project <NAME>"));
     assert!(rendered.contains("--kind <KIND>"));
     assert!(rendered.contains("effigy container web data export"));

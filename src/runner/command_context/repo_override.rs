@@ -177,7 +177,7 @@ mod tests {
         let command = Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Status {
                 name: None,
-                all: true,
+                global: true,
             },
             repo_override: None,
             output_json: false,

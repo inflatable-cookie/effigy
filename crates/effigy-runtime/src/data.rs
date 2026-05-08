@@ -10,9 +10,11 @@ use std::process::Output;
 
 use effigy_catalog::volumes::{remove_volume_command, DockerCommand, ManagedVolume};
 use effigy_container_manager::ContainerAction;
-use effigy_container_ops::{ContainerCacheOperation, ContainerDataOperation};
+use effigy_container_ops::{
+    ContainerCacheOperation, ContainerDataOperation, ContainerVolumeOperation,
+};
 use effigy_containers::{
-    cache_list_all_report, cache_list_report, cache_prune_report, data_list_report,
+    cache_list_global_report, cache_list_report, cache_prune_report, data_list_report,
     data_transfer_report,
     exec::{runtime_backend_is_running, selected_backend_label},
     load_container_policy, user_global_colima_profile, validate_compose_backend_runtime,
@@ -24,7 +26,10 @@ use effigy_containers::{
 use crate::EffigyRuntimeError;
 use cache::{collect_global_cache_entries, project_is_running};
 use planning::{cache_kind_label, cache_scope_label, ensure_cache_prune_target_is_stopped};
-pub use planning::{cache_operation_plan, data_operation_plan, global_cache_operation_plan};
+pub use planning::{
+    cache_operation_plan, data_operation_plan, global_cache_operation_plan,
+    global_volume_operation_plan,
+};
 pub use report::RegisteredGatewayRoute;
 use report::{
     annotate_registered_gateway_routes, annotate_shared_service_notes, annotate_warning_lines,
@@ -32,7 +37,7 @@ use report::{
 };
 use transfer::{ensure_generated_data_path, resolve_managed_volume, validate_transfer_path};
 use volume_io::{hydrate_managed_volumes, run_volume_transfer};
-use volumes::collect_global_volume_entries;
+use volumes::{collect_global_volume_entries, collect_repo_volume_entries};
 
 pub fn run_container_data_list<F>(
     repo_root: &Path,
@@ -178,7 +183,7 @@ where
         cache_scope_label("profile-wide cache inventory", project_filter, kind_filter);
 
     Ok(render_container_report(
-        cache_list_all_report(&resolved_profile, &scope_label, &caches),
+        cache_list_global_report(&resolved_profile, &scope_label, &caches),
         output_json,
     ))
 }
@@ -308,9 +313,46 @@ pub fn run_container_volume_list<F>(
 where
     F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
 {
+    let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
+    let _operation_plan = global_volume_operation_plan(
+        cwd,
+        &profile,
+        ContainerVolumeOperation::list(orphans_only, Some(profile.clone())),
+    );
     let volumes = collect_global_volume_entries(cwd, orphans_only, &run_runtime_volume_capture)?;
     Ok(render_container_report(
-        volume_list_report("global runtime volume inventory", orphans_only, &volumes),
+        volume_list_report(
+            "global runtime volume inventory",
+            orphans_only.then_some("orphans"),
+            &volumes,
+        ),
+        output_json,
+    ))
+}
+
+pub fn run_container_volume_list_for_repo<F>(
+    repo_root: &Path,
+    orphans_only: bool,
+    output_json: bool,
+    run_runtime_volume_capture: F,
+) -> Result<String, EffigyRuntimeError>
+where
+    F: Fn(&Path, &str, &DockerCommand) -> Result<Output, EffigyRuntimeError>,
+{
+    let profile = user_global_colima_profile().unwrap_or_else(|| "effigy".to_owned());
+    let _operation_plan = global_volume_operation_plan(
+        repo_root,
+        &profile,
+        ContainerVolumeOperation::list(orphans_only, Some(profile.clone())),
+    );
+    let volumes =
+        collect_repo_volume_entries(repo_root, orphans_only, &run_runtime_volume_capture)?;
+    Ok(render_container_report(
+        volume_list_report(
+            &format!("repo volume inventory for {}", repo_root.display()),
+            orphans_only.then_some("dormant"),
+            &volumes,
+        ),
         output_json,
     ))
 }
