@@ -6,6 +6,7 @@ pub struct RuntimeActivationRequest {
     pub policy_name: String,
     pub container_name: Option<String>,
     pub repo_override: Option<PathBuf>,
+    pub route: RuntimeActivationRoute,
     pub lease_policy: RuntimeLeasePolicy,
 }
 
@@ -16,6 +17,7 @@ impl RuntimeActivationRequest {
             policy_name: policy_name.into(),
             container_name: None,
             repo_override: None,
+            route: RuntimeActivationRoute::Task,
             lease_policy: RuntimeLeasePolicy::Skip,
         }
     }
@@ -27,6 +29,11 @@ impl RuntimeActivationRequest {
 
     pub fn repo_override(mut self, repo_override: PathBuf) -> Self {
         self.repo_override = Some(repo_override);
+        self
+    }
+
+    pub fn route(mut self, route: RuntimeActivationRoute) -> Self {
+        self.route = route;
         self
     }
 
@@ -52,6 +59,7 @@ pub struct RuntimeActivationPlan {
 
 impl RuntimeActivationPlan {
     pub fn from_request(request: RuntimeActivationRequest) -> Self {
+        let route = request.route;
         let lease = RuntimeLeasePlan {
             policy: request.lease_policy,
         };
@@ -70,7 +78,7 @@ impl RuntimeActivationPlan {
 
         Self {
             request,
-            route: RuntimeActivationRoute::Task,
+            route,
             readiness: RuntimeReadinessPlan {
                 probe_primary_service_exec: true,
                 restart_on_failed_probe: true,
@@ -105,10 +113,13 @@ impl RuntimeActivationPlan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeActivationRoute {
     Task,
+    Managed,
     Exec,
     Workspace,
     Bootstrap,
     Rhai,
+    Deferral,
+    DataSeed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,9 +205,20 @@ mod tests {
             ]
         );
         assert_eq!(plan.request.container_name.as_deref(), Some("web"));
+        assert_eq!(plan.route, RuntimeActivationRoute::Task);
         assert_eq!(plan.lease.policy, RuntimeLeasePolicy::RefreshOnActivation);
         assert!(plan.readiness.probe_primary_service_exec);
         assert!(plan.aliases.reconcile_primary_service_aliases);
+    }
+
+    #[test]
+    fn activation_request_can_set_route() {
+        let plan = RuntimeActivationRequest::new(PathBuf::from("/tmp/repo"), "web")
+            .route(RuntimeActivationRoute::Exec)
+            .plan();
+
+        assert_eq!(plan.request.route, RuntimeActivationRoute::Exec);
+        assert_eq!(plan.route, RuntimeActivationRoute::Exec);
     }
 
     #[test]

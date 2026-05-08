@@ -67,5 +67,5 @@ The repo now has:
 
 ## Next Task
 
-Execute `docs/specs/batch-cards/106-decide-colima-container-v1-contract.md`
+Execute `docs/roadmaps/g02/batch-cards/106-decide-colima-container-v1-contract.md`
 to settle the v1 `effigy container` contract before implementation starts.

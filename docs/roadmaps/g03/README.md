@@ -77,3 +77,6 @@ Rules:
 ## Next Task
 
 Continue in [`../g04/README.md`](../g04/README.md).
+
+
+Batch cards live in `g03/batch-cards/` when strict posture uses them.

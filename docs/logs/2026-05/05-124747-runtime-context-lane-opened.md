@@ -30,7 +30,7 @@ Those were not part of this batch.
 
 - `CARGO_TARGET_DIR=/tmp/effigy-context-target cargo test -p effigy-context -- --nocapture`
 - `CARGO_TARGET_DIR=/tmp/effigy-main-check-target cargo check -p effigy`
-- `./target/debug/effigy docs check-links docs/contracts/README.md docs/contracts/011-runtime-context-contract.md docs/roadmaps/README.md docs/roadmaps/g03/README.md docs/roadmaps/g03/030-universal-runtime-context-and-path-authority.md docs/specs/036-universal-runtime-context-and-path-authority-strict-lane.md docs/specs/batch-cards/374-plan-runtime-context-contract-and-crate-boundary.md`
+- `./target/debug/effigy docs check-links docs/contracts/README.md docs/contracts/011-runtime-context-contract.md docs/roadmaps/README.md docs/roadmaps/g03/README.md docs/roadmaps/g03/030-universal-runtime-context-and-path-authority.md docs/specs/036-universal-runtime-context-and-path-authority-strict-lane.md docs/roadmaps/g03/batch-cards/374-plan-runtime-context-contract-and-crate-boundary.md`
 - `git diff --check`
 
 ## Next

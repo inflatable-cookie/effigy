@@ -28,8 +28,9 @@ Historical command-reference rule:
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
 
-No active strict lane. The next roadmap is `g04.012`; open a strict lane before
-implementation.
+No active strict lane.
+
+The current g04 follow-up set is complete.
 
 Paused but still useful:
 
@@ -37,6 +38,12 @@ Paused but still useful:
 
 Recently completed:
 
+- [`059-planning-crate-decomposition-strict-lane.md`](./059-planning-crate-decomposition-strict-lane.md)
+- [`058-architecture-guard-integration-strict-lane.md`](./058-architecture-guard-integration-strict-lane.md)
+- [`057-container-volume-operation-pipeline-strict-lane.md`](./057-container-volume-operation-pipeline-strict-lane.md)
+- [`056-data-seed-dump-plan-consumption-strict-lane.md`](./056-data-seed-dump-plan-consumption-strict-lane.md)
+- [`055-runtime-activation-route-and-plan-authority-strict-lane.md`](./055-runtime-activation-route-and-plan-authority-strict-lane.md)
+- [`054-runtime-pipeline-integration-audit-and-debt-map-strict-lane.md`](./054-runtime-pipeline-integration-audit-and-debt-map-strict-lane.md)
 - [`053-contract-promotion-and-g04-closeout-strict-lane.md`](./053-contract-promotion-and-g04-closeout-strict-lane.md)
 - [`052-drift-guards-and-architecture-proof-matrix-strict-lane.md`](./052-drift-guards-and-architecture-proof-matrix-strict-lane.md)
 - [`051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md`](./051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md)
@@ -82,4 +89,4 @@ Recently completed:
 
 ## Next Task
 
-Open a strict lane and first ready card for `g04.012`.
+No ready card. The next move is a human-selected `g04` roadmap or planning stop.

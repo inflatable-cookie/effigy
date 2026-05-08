@@ -1221,7 +1221,7 @@ That post-`212` boundary decision is now made too:
     ~6k lines) — core task-runtime infrastructure with no dedicated crate
     home despite `effigy-tasks` existing
 - `242` opened _and completed_ the decide card
-  (`docs/specs/batch-cards/238-decide-effigy-managed-extraction-shape.md`).
+  (`docs/roadmaps/g02/batch-cards/238-decide-effigy-managed-extraction-shape.md`).
   The five decisions (crate shape, error boundary, catalog boundary,
   scope shape, consumer adapter) resolved to:
   - new `effigy-managed` crate (not folded into `effigy-tasks`)

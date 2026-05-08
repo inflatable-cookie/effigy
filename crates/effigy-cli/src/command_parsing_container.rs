@@ -447,7 +447,11 @@ where
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Cache {
             name,
-            subcommand: ContainerCacheSubcommand::List { global, project, kind },
+            subcommand: ContainerCacheSubcommand::List {
+                global,
+                project,
+                kind,
+            },
         },
         repo_override,
         output_json,

@@ -13,11 +13,12 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   generation before rollover is even worth discussing.
 - Treat rollover as full generation closeout, not a convenience reset:
   close, supersede, or rehome every roadmap in the current generation first,
-  then purge stale generation-specific specs and batch cards from
+  then purge stale generation-specific specs from
   `docs/specs/` before opening the next generation.
 
 ## Layout
 
+- `gNN/batch-cards/` optional per-generation execution cards
 - `g04/` current runtime architecture simplification generation
 - `g03/` previous production export and runtime hardening generation
 - `g02/` previous release and local-runtime expansion generation
@@ -37,11 +38,12 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   contract closeout roadmaps. The next queued set starts at
   [`g04.012`](./g04/012-runtime-pipeline-integration-audit-and-debt-map.md)
   and focuses on integration debt, route authority, data-plan consumption,
-  volume operations, guards, and planning-crate decomposition.
+  volume operations, guards, and planning-crate decomposition. `g04.012` is
+  complete through `g04.017`.
 
 ## Active Strict Lane
 
-None yet. The next step is to open a strict lane for `g04.012`.
+No active strict lane. The current g04 follow-up set is complete.
 
 ## Research Program
 
@@ -77,8 +79,7 @@ Before rollover:
 
 ## Next Task
 
-Open a strict lane and first ready card for
-[`g04.012`](./g04/012-runtime-pipeline-integration-audit-and-debt-map.md).
+Planning stop, unless a human selects the next `g04` roadmap.
 
 ## Historical language boundary
 

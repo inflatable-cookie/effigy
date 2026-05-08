@@ -8,7 +8,7 @@ use super::super::super::managed_shell::{
     render_inline_managed_shell_command, render_inline_managed_standard_exec_command,
 };
 use super::super::super::runtime_session_context::{
-    current_runtime_session_context, LeaseRefreshPolicy,
+    current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
 };
 use super::super::super::system_command::run_workspace_with_repo_root_and_cleanup_override;
 use super::super::api::{
@@ -16,6 +16,7 @@ use super::super::api::{
     ContainerExecutionBinding, InlineWorkspaceCapabilitySurface,
 };
 use super::super::planning::ExecutionPreflight;
+use crate::runner::container_runtime_prep::build_runtime_activation_plan;
 use crate::runner::error::RunnerError;
 use crate::runner::execute::workspace_seeded::{
     inside_container_handoff, run_workspace_seeded_task_session,
@@ -32,7 +33,7 @@ use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
 use effigy_managed::{managed_execution_mode, ManagedExecutionMode};
 use effigy_manifest::TaskSelection;
-use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
+use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -281,16 +282,17 @@ fn managed_runtime_activation_plan(
     container_name: Option<&str>,
     lease_refresh_policy: LeaseRefreshPolicy,
 ) -> RuntimeActivationPlan {
-    let mut request = RuntimeActivationRequest::new(repo_root.to_path_buf(), policy.name.clone())
-        .repo_override(repo_root.to_path_buf())
-        .lease_policy(match lease_refresh_policy {
-            LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
-            LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
-        });
-    if let Some(container_name) = container_name {
-        request = request.container_name(container_name.to_owned());
-    }
-    request.plan()
+    build_runtime_activation_plan(
+        repo_root,
+        &policy.name,
+        container_name,
+        Some(repo_root.to_path_buf()),
+        RuntimeActivationRoute::Managed,
+        RuntimeSessionContext {
+            lease_refresh_policy,
+            ..RuntimeSessionContext::default()
+        },
+    )
 }
 
 fn build_managed_lifecycle_cleanup_command(
@@ -684,7 +686,7 @@ mod tests {
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
         ManifestContainerStartup,
     };
-    use effigy_runtime_plan::RuntimeLeasePolicy;
+    use effigy_runtime_plan::{RuntimeActivationRoute, RuntimeLeasePolicy};
     use std::path::Path;
 
     #[test]
@@ -813,6 +815,7 @@ mod tests {
             plan.request.repo_override.as_deref(),
             Some(Path::new("/tmp/repo"))
         );
+        assert_eq!(plan.route, RuntimeActivationRoute::Managed);
         assert_eq!(plan.lease.policy, RuntimeLeasePolicy::RefreshOnActivation);
     }
 
@@ -840,6 +843,7 @@ mod tests {
         assert_eq!(plan.request.repo_root, Path::new("/tmp/repo"));
         assert_eq!(plan.request.policy_name, "stack");
         assert_eq!(plan.request.container_name, None);
+        assert_eq!(plan.route, RuntimeActivationRoute::Managed);
         assert_eq!(
             plan.request.repo_override.as_deref(),
             Some(Path::new("/tmp/repo"))

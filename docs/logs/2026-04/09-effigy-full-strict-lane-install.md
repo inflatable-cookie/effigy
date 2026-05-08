@@ -39,5 +39,5 @@ batch card for the next release-readiness decision.
 ## Next Task
 
 Execute the active ready card in
-`docs/specs/batch-cards/001-decide-bootstrap-release-readiness-from-live-proof.md`,
+`docs/roadmaps/g02/batch-cards/001-decide-bootstrap-release-readiness-from-live-proof.md`,
 then leave the next bootstrap move explicit.

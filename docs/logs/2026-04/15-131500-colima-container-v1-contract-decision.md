@@ -3,7 +3,7 @@
 Date: 2026-04-15
 Roadmap: `g02.006`
 Spec: `docs/specs/006-colima-container-environment-strict-lane.md`
-Batch Card: `docs/specs/batch-cards/106-decide-colima-container-v1-contract.md`
+Batch Card: `docs/roadmaps/g02/batch-cards/106-decide-colima-container-v1-contract.md`
 
 ## Decision
 
@@ -62,5 +62,5 @@ first implementation batch.
 
 ## Next Task
 
-Execute `docs/specs/batch-cards/107-implement-colima-container-foundation.md`
+Execute `docs/roadmaps/g02/batch-cards/107-implement-colima-container-foundation.md`
 to build the first bounded Colima container foundation batch.

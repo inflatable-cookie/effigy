@@ -37,7 +37,7 @@ During v0.x, MINOR bumps may include breaking changes.
   **`[bundle].databases`**.
 - **`effigy container cache list`** inventories purge-safe isolated build
   cache volumes from repo scope or from the Effigy Colima profile's named-volume
-  inventory with **`--all`**, including stopped projects. The first supported
+  inventory with **`--global`**, including stopped projects. The first supported
   kinds are Rust **`target`**, package-manager **`node_modules`**, and shared
   Cargo cache volumes.
 

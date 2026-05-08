@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on:
@@ -54,4 +54,4 @@ the modularisation does not recreate single-file god crates.
 
 ## Next Task
 
-Start after the integration roadmaps prove the crate seams.
+Planning stop. Select the next `g04` roadmap only after reviewing this batch.

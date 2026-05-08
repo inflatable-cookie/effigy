@@ -3,7 +3,7 @@
 Date: 2026-04-14
 Roadmap: `g02.005`
 Spec: `docs/specs/005-optional-distribution-surface-strict-lane.md`
-Batch Card: `docs/specs/batch-cards/102-decide-post-distribution-policy-widening-slice.md`
+Batch Card: `docs/roadmaps/g02/batch-cards/102-decide-post-distribution-policy-widening-slice.md`
 
 ## Decision
 
@@ -47,5 +47,5 @@ one real consumer proof of the optional distribution surface.
 
 ## Next Task
 
-Execute `docs/specs/batch-cards/103-implement-consumer-proof-of-optional-distribution-surface.md`
+Execute `docs/roadmaps/g02/batch-cards/103-implement-consumer-proof-of-optional-distribution-surface.md`
 to prove the optional distribution surface in one real consumer repo.

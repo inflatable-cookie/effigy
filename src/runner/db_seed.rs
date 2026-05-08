@@ -13,29 +13,27 @@ use effigy_bootstrap::BootstrapStagedDbSeed;
 use effigy_cli::BootstrapDbSeedInput;
 use effigy_data::{
     collect_manifest_data_targets, database_seed_import_command, database_seed_reset_command,
-    normalize_seed_source_path, seed_artifact_handoff, seed_artifact_staging_plan,
-    select_data_targets, select_database_service, ArtifactDataHandoff, DataSeedSource,
-    DataTargetManifestEntry, DataTargetManifestInput, DataTargetSelectionError, DatabaseService,
-    DatabaseServiceKind, DatabaseServiceSelectionError, ResolvedDataTarget,
+    normalize_seed_source_path, seed_artifact_staging_plan, select_data_targets,
+    select_database_service, ArtifactDataHandoff, DataSeedInput, DataSeedPlan, DataSeedSource,
+    DataTargetManifestEntry, DataTargetManifestInput, DataTargetRef, DataTargetSelectionError,
+    DatabaseService, DatabaseServiceKind, DatabaseServiceSelectionError, ResolvedDataTarget,
     SeedArtifactStagingPlan,
 };
 use effigy_execution::ExecutionSurface;
 use effigy_manifest::{ManifestContainerServiceConfig, TASK_MANIFEST_FILE};
-use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
+use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 use serde_json::json;
 
 use crate::runner::artifact_transport::{infer_kind_from_primary_files, OrasCliArtifactAdapter};
 use crate::runner::container_command::run_container_exec_capture_with_options;
 use crate::runner::container_runtime_prep::{
-    activate_container_runtime_for_task, ActivationRequest,
+    activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
 };
 use crate::runner::execute::api::{
     resolve_execution_binding_resolution, run_manifest_task_with_surface_and_env,
 };
 use crate::runner::manifest::load_task_manifest;
-use crate::runner::runtime_session_context::{
-    with_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
-};
+use crate::runner::runtime_session_context::{with_runtime_session_context, RuntimeSessionContext};
 
 use super::error::RunnerError;
 use effigy_cli::TaskInvocation;
@@ -262,7 +260,7 @@ fn stage_db_seed_files_with_adapter(
     adapter: &dyn OciArtifactAdapter,
 ) -> Result<Vec<BootstrapStagedDbSeed>, RunnerError> {
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
-    let resolved_seeds = resolve_db_seed_targets(repo_root, &manifest, db_seeds)?;
+    let seed_plans = bootstrap_db_seed_plans(repo_root, &manifest, db_seeds)?;
     let staging_dir = repo_root.join(DB_SEEDS_DIR);
     std::fs::create_dir_all(&staging_dir).map_err(|error| {
         RunnerError::task_invocation(format!(
@@ -272,10 +270,10 @@ fn stage_db_seed_files_with_adapter(
     })?;
 
     let mut seen_names = BTreeSet::new();
-    let mut staged = Vec::with_capacity(resolved_seeds.len());
-    for seed in &resolved_seeds {
-        let source = seed.path.as_os_str().to_string_lossy().to_string();
-        let artifact_report = stage_seed_artifact(repo_root, &source, adapter)?;
+    let mut staged = Vec::with_capacity(seed_plans.len());
+    for plan in &seed_plans {
+        let source = data_seed_source_display(&plan.input.source);
+        let artifact_report = stage_seed_artifact(repo_root, plan, adapter)?;
         let staged_artifact_file =
             artifact_report
                 .metadata
@@ -293,7 +291,7 @@ fn stage_db_seed_files_with_adapter(
             )));
         };
         let base_name = file_name.to_string_lossy().to_string();
-        let staged_name = match seed.target.as_deref() {
+        let staged_name = match plan.input.target.as_ref() {
             Some(target) => format!("{target}--{base_name}"),
             None => base_name.clone(),
         };
@@ -310,7 +308,7 @@ fn stage_db_seed_files_with_adapter(
             ))
         })?;
         staged.push(BootstrapStagedDbSeed {
-            target: seed.target.clone(),
+            target: plan.input.target.as_ref().map(ToString::to_string),
             source_path: PathBuf::from(artifact_report.metadata.source),
             staged_path: destination,
         });
@@ -353,10 +351,12 @@ fn stage_db_seed_files_with_adapter(
 
 fn stage_seed_artifact(
     repo_root: &Path,
-    source: &str,
+    plan: &DataSeedPlan,
     adapter: &dyn OciArtifactAdapter,
 ) -> Result<effigy_artifacts::StagedArtifactReport, RunnerError> {
-    let handoff = seed_artifact_handoff(&DataSeedSource::from_raw_path(PathBuf::from(source)));
+    let handoff = plan.artifact_handoff.as_ref().ok_or_else(|| {
+        RunnerError::task_invocation("db seed plan is missing an artifact handoff")
+    })?;
     match handoff {
         ArtifactDataHandoff::StageSource { ref source, .. } => {
             match ArtifactSourceRef::parse(source)
@@ -592,6 +592,7 @@ fn prepare_db_seed_runtime(
         ActivationRequest {
             container_name: plan.request.container_name.as_deref(),
             repo_override: plan.request.repo_override.clone(),
+            route: plan.route,
             session_context,
         },
     )?;
@@ -604,17 +605,14 @@ fn db_seed_runtime_activation_plan(
     container_name: Option<String>,
     session_context: RuntimeSessionContext,
 ) -> RuntimeActivationPlan {
-    let mut request =
-        RuntimeActivationRequest::new(repo_root.to_path_buf(), policy_name.to_owned())
-            .repo_override(repo_root.to_path_buf())
-            .lease_policy(match session_context.lease_refresh_policy {
-                LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
-                LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
-            });
-    if let Some(container_name) = container_name {
-        request = request.container_name(container_name);
-    }
-    request.plan()
+    build_runtime_activation_plan(
+        repo_root,
+        policy_name,
+        container_name.as_deref(),
+        Some(repo_root.to_path_buf()),
+        RuntimeActivationRoute::DataSeed,
+        session_context,
+    )
 }
 
 fn resolve_db_seed_targets(
@@ -640,6 +638,42 @@ fn resolve_db_seed_targets(
             path: seed.path.clone(),
         })
         .collect())
+}
+
+fn bootstrap_db_seed_plans(
+    repo_root: &Path,
+    manifest: &effigy_manifest::TaskManifest,
+    db_seeds: &[BootstrapDbSeedInput],
+) -> Result<Vec<DataSeedPlan>, RunnerError> {
+    let resolved_seeds = resolve_db_seed_targets(repo_root, manifest, db_seeds)?;
+    let declared_targets = logical_database_targets(manifest);
+
+    Ok(resolved_seeds
+        .into_iter()
+        .map(|seed| {
+            let mut input = DataSeedInput::new(DataSeedSource::from_raw_path(seed.path));
+            if let Some(target) = seed.target {
+                input = input.target(DataTargetRef::from(target));
+            }
+            let mut plan = DataSeedPlan::new(input);
+            if let Some(target) = plan.input.target.as_ref() {
+                if let Some(declared) = declared_targets
+                    .iter()
+                    .find(|declared| declared.name.as_str() == target.as_str())
+                {
+                    plan = plan.resolved_target(declared.clone());
+                }
+            }
+            plan
+        })
+        .collect())
+}
+
+fn data_seed_source_display(source: &DataSeedSource) -> String {
+    match source {
+        DataSeedSource::Local(path) => path.display().to_string(),
+        DataSeedSource::Oci(reference) => reference.clone(),
+    }
 }
 
 fn db_seed_target_selection_error(
@@ -789,13 +823,29 @@ fn run_builtin_db_seed_task(
         let stdin_file = repo_root.join(&seed.staged_path);
         let kind = DatabaseServiceKind::from_catalog(catalog)
             .expect("unsupported seed catalog should be filtered before rendering");
-        let reset_command =
-            database_seed_reset_command(&service_name, kind, &password, &declared.database).argv;
+        let seed_plan = DataSeedPlan::new(DataSeedInput::new(DataSeedSource::Local(
+            stdin_file.clone(),
+        )))
+        .resolved_target(declared.clone())
+        .reset_command(database_seed_reset_command(
+            &service_name,
+            kind,
+            &password,
+            &declared.database,
+        ))
+        .command(
+            database_seed_import_command(&service_name, kind, &password, &declared.database)
+                .stdin(stdin_file.clone()),
+        );
+        let reset_command = seed_plan
+            .reset_command
+            .as_ref()
+            .expect("builtin seed plan should include reset command");
         let reset_output = run_container_exec_capture_with_options(
             repo_root,
             Some(container_name),
-            Some(&service_name),
-            &reset_command,
+            Some(&reset_command.service),
+            &reset_command.argv,
             None,
         )?;
         if !reset_output.status.success() {
@@ -809,14 +859,16 @@ fn run_builtin_db_seed_task(
                 "[error] database reset failed\nstdout:\n{stdout}\n\nstderr:\n{stderr}"
             )));
         }
-        let command =
-            database_seed_import_command(&service_name, kind, &password, &declared.database).argv;
+        let command = seed_plan
+            .command
+            .as_ref()
+            .expect("builtin seed plan should include import command");
         let output = run_container_exec_capture_with_options(
             repo_root,
             Some(container_name),
-            Some(&service_name),
-            &command,
-            Some(&stdin_file),
+            Some(&command.service),
+            &command.argv,
+            command.stdin.as_deref(),
         )?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -996,7 +1048,7 @@ mod tests {
     };
     use effigy_cli::BootstrapDbSeedInput;
     use effigy_manifest::TaskManifest;
-    use effigy_runtime_plan::RuntimeLeasePolicy;
+    use effigy_runtime_plan::{RuntimeActivationRoute, RuntimeLeasePolicy};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1056,6 +1108,7 @@ database = "acowtancy"
         assert_eq!(plan.request.policy_name, "web");
         assert_eq!(plan.request.container_name.as_deref(), Some("db"));
         assert_eq!(plan.request.repo_override, Some(PathBuf::from("/tmp/repo")));
+        assert_eq!(plan.route, RuntimeActivationRoute::DataSeed);
         assert_eq!(
             plan.request.lease_policy,
             RuntimeLeasePolicy::RefreshOnActivation

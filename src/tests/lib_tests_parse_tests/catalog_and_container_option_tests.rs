@@ -783,9 +783,9 @@ fn parse_container_volume_prune_requires_explicit_filter() {
     ])
     .expect_err("parse should fail");
 
-    assert!(error
-        .to_string()
-        .contains("`effigy container volume prune` requires either `--dormant` or `--global --orphans`"));
+    assert!(error.to_string().contains(
+        "`effigy container volume prune` requires either `--dormant` or `--global --orphans`"
+    ));
 }
 
 #[test]

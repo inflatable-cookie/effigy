@@ -137,7 +137,7 @@ When g02.010 finishes:
 - `docs/roadmaps/g02/011-016` — six roadmap files
 - `docs/specs/011-*` — catalog strict lane spec (complete)
 - `docs/specs/012-*` — exec strict lane spec (integration path)
-- `docs/specs/batch-cards/200-*` — fragment format decision
+- `docs/roadmaps/g04/batch-cards/200-*` — fragment format decision
 
 ## Parallel modularization work
 

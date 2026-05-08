@@ -12,8 +12,6 @@ the active `docs/specs/` tree.
 ## Layout
 
 - `NNN-<slug>.md` for archived strict-lane specs
-- `batch-cards/NNN-<slug>.md` for archived batch cards from closed or paused
-  lanes
 
 ## Next Task
 

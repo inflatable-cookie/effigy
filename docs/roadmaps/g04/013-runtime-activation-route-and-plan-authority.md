@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`012-runtime-pipeline-integration-audit-and-debt-map.md`](./012-runtime-pipeline-integration-audit-and-debt-map.md)
@@ -54,4 +54,5 @@ thin identity object that callers duplicate.
 
 ## Next Task
 
-Start after the integration audit selects the first activation slice.
+Continue with
+[`g04.014`](./014-data-seed-dump-plan-consumption.md).

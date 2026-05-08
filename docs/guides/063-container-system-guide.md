@@ -87,8 +87,8 @@ effigy container up
 effigy container <NAME> up
 effigy container down
 effigy container <NAME> down
-effigy container status --all
-effigy container stats --all
+effigy container status --global
+effigy container stats --global
 effigy container <NAME> status
 effigy container <NAME> logs
 effigy container <NAME> shell
@@ -109,7 +109,7 @@ Useful flags:
 
 - `--attach` / `--detach` override manifest startup mode for `up`
 - `--service <NAME>` focuses `logs` or `shell` on one service
-- `--all` turns `status` and `stats` into cross-project views
+- `--global` turns `status` and `stats` into cross-project views
 - `--command <CMD>` runs one command string inside the service via `sh -lc`
 - `reset` preserves persistent named volumes by default
 - `--wipe-data` deletes persistent named volumes during `reset`
@@ -270,8 +270,8 @@ Attached mode behavior:
 
 Cross-project views:
 
-- `effigy container status --all`
-- `effigy container stats --all`
+- `effigy container status --global`
+- `effigy container stats --global`
 
 ## Task Activation
 
@@ -423,7 +423,7 @@ instead of reusing one with stale absolute-path metadata.
 effigy container cache list
 
 # List caches across all projects on the Colima profile
-effigy container cache list --all
+effigy container cache list --global
 
 # Filter by project or kind
 effigy container cache list --project acowtancy-dev
@@ -432,14 +432,57 @@ effigy container cache list --kind rust-target
 # Prune (requires confirmation)
 effigy container cache prune --yes
 effigy container cache prune --kind node-modules --yes
-effigy container cache prune --all --yes
+effigy container cache prune --global --yes
 ```
 
 Safety rules:
 
-- running projects are skipped in `--all` mode
+- running projects are skipped in `--global` mode
 - prune requires confirmation unless `--yes` is passed
 - cache volumes are recreated automatically on the next build
+
+## Volume Lifecycle
+
+`effigy container volume list` and `volume prune` manage Effigy-managed named
+volumes, including persistent app data and orphaned volumes.
+
+`volume list` is read-only. By default it shows volumes for the current repo:
+
+```sh
+# List volumes for the current repo
+effigy container volume list
+
+# Show repo-scoped volumes that are no longer declared (superseded)
+effigy container volume list --dormant
+```
+
+Add `--global` for a machine-wide view across all runtimes:
+
+```sh
+# List all Effigy-managed volumes across repos
+effigy container volume list --global
+
+# Show only orphaned volumes whose owning repo is gone or no longer declares them
+effigy container volume list --global --orphans
+```
+
+`volume prune` removes volumes. It requires either `--dormant` for repo-scoped
+cleanup or `--global --orphans` for machine-wide orphan cleanup:
+
+```sh
+# Remove superseded volumes for the current repo
+effigy container volume prune --dormant --yes
+
+# Remove orphaned volumes across all repos
+effigy container volume prune --global --orphans --yes
+```
+
+Safety rules:
+
+- `--orphans` is only valid with `--global`
+- `--dormant` and `--global` are mutually exclusive
+- prune requires confirmation unless `--yes` is passed
+- persistent app data volumes are never included in orphan or dormant cleanup
 
 ## DNS and Gateway
 

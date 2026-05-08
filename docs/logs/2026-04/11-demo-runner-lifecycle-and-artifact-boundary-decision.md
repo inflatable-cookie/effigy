@@ -48,6 +48,6 @@ runner owns artifact rendering itself.
 ## Next Task
 
 Execute the active ready card in
-`docs/specs/batch-cards/009-decide-demo-coverage-and-gap-model.md`, then leave
+`docs/roadmaps/g02/batch-cards/009-decide-demo-coverage-and-gap-model.md`, then leave
 the next move explicit as either browser/TUI contract shaping or pilot
 reconciliation against Signal.

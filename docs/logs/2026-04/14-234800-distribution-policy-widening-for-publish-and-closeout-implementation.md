@@ -3,7 +3,7 @@
 Date: 2026-04-14
 Roadmap: `g02.005`
 Spec: `docs/specs/005-optional-distribution-surface-strict-lane.md`
-Batch Card: `docs/specs/batch-cards/101-implement-distribution-policy-widening-for-publish-and-closeout.md`
+Batch Card: `docs/roadmaps/g02/batch-cards/101-implement-distribution-policy-widening-for-publish-and-closeout.md`
 
 ## Summary
 
@@ -55,6 +55,6 @@ internal policy gap still needs to be closed first.
 
 ## Next Task
 
-Execute `docs/specs/batch-cards/102-decide-post-distribution-policy-widening-slice.md`
+Execute `docs/roadmaps/g02/batch-cards/102-decide-post-distribution-policy-widening-slice.md`
 to decide whether the widened optional distribution surface is now honest
 enough for one consumer-proof adoption batch.

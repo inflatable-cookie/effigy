@@ -51,6 +51,6 @@ That means `g02.001` is complete and the next active lane becomes `g02.002`.
 ## Next Task
 
 Execute the active `g02.002` ready card in
-`docs/specs/batch-cards/002-decide-composition-contract-shape.md`, then leave
+`docs/roadmaps/g02/batch-cards/002-decide-composition-contract-shape.md`, then leave
 the next composition move explicit enough that `g02.003` can plan demos against
 one general config model.

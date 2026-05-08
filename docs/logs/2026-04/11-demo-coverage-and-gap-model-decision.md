@@ -47,6 +47,6 @@ browser needs to show proof coverage honestly.
 ## Next Task
 
 Execute the active ready card in
-`docs/specs/batch-cards/010-decide-demo-browser-and-tui-contract.md`, then
+`docs/roadmaps/g02/batch-cards/010-decide-demo-browser-and-tui-contract.md`, then
 leave the next move explicit as either pilot reconciliation against Signal or
 the first bounded implementation-planning lane.

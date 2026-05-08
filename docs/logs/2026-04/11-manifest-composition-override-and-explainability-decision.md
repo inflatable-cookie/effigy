@@ -42,6 +42,6 @@ conflict failure elsewhere.
 ## Next Task
 
 Execute the active ready card in
-`docs/specs/batch-cards/004-decide-composition-implementation-slice-and-proof-boundary.md`,
+`docs/roadmaps/g02/batch-cards/004-decide-composition-implementation-slice-and-proof-boundary.md`,
 then leave the first implementation move explicit enough that composition can
 start without under-scoping explainability or proof.

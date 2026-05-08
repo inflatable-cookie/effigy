@@ -46,6 +46,6 @@ bounded planning batch.
 ## Next Task
 
 Execute the active ready card in
-`docs/specs/batch-cards/003-decide-override-conflict-and-explainability.md`,
+`docs/roadmaps/g02/batch-cards/003-decide-override-conflict-and-explainability.md`,
 then leave the override/explainability move explicit enough that implementation
 planning can start without silent merge folklore.

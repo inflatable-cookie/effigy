@@ -35,7 +35,7 @@ This lane delivered:
 Batches 1–6 are complete:
 
 - Batch 1 (fragment format decision) settled in
-  `docs/specs/batch-cards/200-decide-service-catalog-fragment-format.md`:
+  `docs/roadmaps/g02/batch-cards/200-decide-service-catalog-fragment-format.md`:
   Jinja2 syntax via minijinja, `service.toml` for parameter schema,
   assembly engine context with sibling services, config variant selection.
 - Batch 2 (crate foundation) shipped: `crates/effigy-catalog` exists as an

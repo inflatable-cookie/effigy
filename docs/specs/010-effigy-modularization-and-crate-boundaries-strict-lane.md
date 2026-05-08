@@ -975,7 +975,7 @@ That post-`212` boundary decision is now made too:
   managed task orchestration (~2.7k lines before test files; ~4.1k with
   tests), built-in tasks (~9.5k lines), and task routing core (~6k lines)
 - `242` opened and completed the decide card for the managed extraction
-  shape (`docs/specs/batch-cards/238-decide-effigy-managed-extraction-shape.md`).
+  shape (`docs/roadmaps/g02/batch-cards/238-decide-effigy-managed-extraction-shape.md`).
   Grep-anchored coupling review produced five decisions:
   - (1) new `effigy-managed` crate (not folded into `effigy-tasks`,
     which is intentionally thin and has no `effigy-manifest` dep)

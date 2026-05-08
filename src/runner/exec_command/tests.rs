@@ -654,6 +654,7 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
                 plan.request.repo_override.clone(),
                 plan.request.container_name.clone(),
                 plan.request.policy_name.clone(),
+                plan.route,
                 plan.lease.policy,
             ));
             Ok(ContainerTaskActivation {
@@ -672,6 +673,7 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
             Some(PathBuf::from("/tmp/repo")),
             Some("web".to_owned()),
             "web".to_owned(),
+            effigy_runtime_plan::RuntimeActivationRoute::Exec,
             effigy_runtime_plan::RuntimeLeasePolicy::RefreshOnActivation,
         ))
     );
@@ -697,6 +699,7 @@ fn activate_exec_surface_preserves_skip_lease_policy_for_handoff_sessions() {
                 *captured_clone.lock().expect("capture lock") = Some((
                     plan.request.repo_override.clone(),
                     plan.request.container_name.clone(),
+                    plan.route,
                     plan.lease.policy,
                 ));
                 Ok(ContainerTaskActivation {
@@ -713,6 +716,7 @@ fn activate_exec_surface_preserves_skip_lease_policy_for_handoff_sessions() {
         Some((
             Some(PathBuf::from("/tmp/repo")),
             Some("web".to_owned()),
+            effigy_runtime_plan::RuntimeActivationRoute::Exec,
             effigy_runtime_plan::RuntimeLeasePolicy::Skip,
         ))
     );

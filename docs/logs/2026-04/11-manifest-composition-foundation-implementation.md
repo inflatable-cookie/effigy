@@ -46,6 +46,6 @@ is no longer task-only doctrine.
 ## Next Task
 
 Execute the active ready card in
-`docs/specs/batch-cards/006-harden-composition-explainability-and-operator-ux.md`,
+`docs/roadmaps/g02/batch-cards/006-harden-composition-explainability-and-operator-ux.md`,
 then decide whether one final composition hardening/proof batch is needed
 before `g02.003` starts depending on this surface.

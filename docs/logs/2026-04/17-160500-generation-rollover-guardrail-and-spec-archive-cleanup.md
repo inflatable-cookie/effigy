@@ -18,10 +18,10 @@ history.
   closeout event rather than a convenience reset
 - added the healthy-generation scale guardrail: roughly `20` to `40` roadmap
   files before rollover is even worth discussing
-- added `docs/specs/archive/` and `docs/specs/archive/batch-cards/` as the
+- added `docs/specs/archive/` and `docs/roadmaps/g04/batch-cards/` as the
   explicit home for closed or paused strict-lane history
 - moved specs `001` through `006` plus their batch cards into that archive
-- rewrote `docs/specs/batch-cards/README.md` so it points at the real live
+- rewrote `docs/roadmaps/g04/batch-cards/README.md` so it points at the real live
   chain (`245` -> `246`, with `115` complete but deferred) instead of dumping
   the whole historical card corpus into the active front door
 

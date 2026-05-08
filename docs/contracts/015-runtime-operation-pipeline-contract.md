@@ -155,6 +155,21 @@ and Rhai container-sensitive bypasses outside allowlisted debt.
 Allowances must stay path-scoped and documented in the active strict lane or
 the follow-up contract/roadmap that owns their removal.
 
+The guard is part of normal validation through `qa:gates`, `qa:ci`, and
+`prepush:ci`. Day-to-day `qa` remains focused on tests, docs, and JSON unless
+that task is deliberately promoted to gates later.
+
+Suppression rules:
+
+- prefer moving code behind the proper request/plan/adapter seam
+- allow a match only when the file is an intentional adapter boundary or a
+  named migration debt item
+- keep allowlist comments path-scoped in the guard script
+- include the owning roadmap/card in the comment when the allowance is
+  migration debt
+- do not add broad regex suppressions for whole directories unless that
+  directory is itself the adapter boundary
+
 ## Proof Expectations
 
 Minimum proof areas:

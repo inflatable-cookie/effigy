@@ -56,7 +56,11 @@ pub(super) fn render_container_report(report: ContainerCommandReport, output_jso
 }
 
 pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, RunnerError> {
-    if let ContainerSubcommand::Status { name: _, global: true } = &args.subcommand {
+    if let ContainerSubcommand::Status {
+        name: _,
+        global: true,
+    } = &args.subcommand
+    {
         if args.repo_override.is_some() {
             return Err(RunnerError::task_invocation(
                 "`effigy container status --global` does not accept `--repo`; it discovers running environments across repos",
@@ -72,7 +76,11 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
         }
         return run_container_stats_all(args.output_json).map_err(Into::into);
     }
-    if let ContainerSubcommand::Down { name: _, global: true } = &args.subcommand {
+    if let ContainerSubcommand::Down {
+        name: _,
+        global: true,
+    } = &args.subcommand
+    {
         if args.repo_override.is_some() {
             return Err(RunnerError::task_invocation(
                 "`effigy container down --global` does not accept `--repo`; it discovers running environments across repos",
@@ -239,13 +247,19 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
                 args.output_json,
             )
         }
-        ContainerSubcommand::Down { name, global: false } => run_container_down_fallback(
+        ContainerSubcommand::Down {
+            name,
+            global: false,
+        } => run_container_down_fallback(
             args.repo_override.clone(),
             name.as_deref(),
             args.output_json,
         ),
         ContainerSubcommand::Down { global: true, .. } => unreachable!("handled above"),
-        ContainerSubcommand::Status { name, global: false } => run_container_status_fallback(
+        ContainerSubcommand::Status {
+            name,
+            global: false,
+        } => run_container_status_fallback(
             args.repo_override.clone(),
             name.as_deref(),
             args.output_json,

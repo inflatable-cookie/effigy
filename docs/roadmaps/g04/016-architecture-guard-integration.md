@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`012-runtime-pipeline-integration-audit-and-debt-map.md`](./012-runtime-pipeline-integration-audit-and-debt-map.md)
@@ -47,4 +47,5 @@ optional side task.
 
 ## Next Task
 
-Start after the integration audit confirms the guard policy.
+Continue with
+[`g04.017`](./017-planning-crate-decomposition.md).

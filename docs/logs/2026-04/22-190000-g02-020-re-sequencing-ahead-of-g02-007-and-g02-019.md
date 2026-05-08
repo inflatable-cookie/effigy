@@ -50,7 +50,7 @@ stack to collide with `contact-patch` and `compli-me`).
   post-audit alignment batch.
 - `docs/roadmaps/g02/020-multi-project-gateway-expansion-and-service-dns.md` —
   `Status: Planned` → `Status: Active`; `Next Task` repointed at `303`.
-- `docs/specs/batch-cards/303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md`
+- `docs/roadmaps/g02/batch-cards/303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md`
   — `Status: staged` → `Status: next`; `Next Task` repointed at immediate
   execution.
 
@@ -88,4 +88,4 @@ Execute `303` — land loopback-IP allocation and gateway setup integration on
 the bounded macOS path.
 
 See
-`docs/specs/batch-cards/303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md`.
+`docs/roadmaps/g02/batch-cards/303-implement-loopback-ip-allocation-and-gateway-setup-foundation.md`.

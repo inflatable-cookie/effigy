@@ -157,8 +157,7 @@ mod tests {
         assert!(text.contains("[info] removed gateway routes: alpha.test"));
         assert!(text.contains("[warn] shared services left running: db"));
 
-        let json =
-            render_container_down_global_report(&stopped, true).expect("render json report");
+        let json = render_container_down_global_report(&stopped, true).expect("render json report");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse json report");
         assert_eq!(parsed["schema"], "effigy.container.down-global.v1");
         assert_eq!(parsed["count"], 1);

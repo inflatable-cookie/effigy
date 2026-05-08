@@ -3,7 +3,7 @@
 Date: 2026-04-15
 Roadmap: `g02.005`
 Spec: `docs/specs/005-optional-distribution-surface-strict-lane.md`
-Batch Card: `docs/specs/batch-cards/105-decide-post-consumer-gap-widening-boundary.md`
+Batch Card: `docs/roadmaps/g02/batch-cards/105-decide-post-consumer-gap-widening-boundary.md`
 
 ## Decision
 

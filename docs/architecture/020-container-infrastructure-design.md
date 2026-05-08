@@ -611,7 +611,7 @@ assigns from the pool. Explicit `host.ports` always wins.
 ### Cross-project visibility
 
 ```bash
-effigy container status --all    # all running containers across repos
+effigy container status --global    # all running containers across repos
 effigy gateway status            # all registered routes
 effigy container stats           # CPU/memory per project
 ```

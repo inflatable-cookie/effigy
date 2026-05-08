@@ -13,7 +13,9 @@ use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
 use effigy_cli::{ContainerArgs, ContainerSubcommand};
 use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute};
-use effigy_runtime_plan::{RuntimeActivationStage, RuntimeCleanupResult, RuntimeLeasePolicy};
+use effigy_runtime_plan::{
+    RuntimeActivationRoute, RuntimeActivationStage, RuntimeCleanupResult, RuntimeLeasePolicy,
+};
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::process::ExitStatusExt;
@@ -585,6 +587,7 @@ fn runtime_lease_refresh_stage_runs_when_policy_requests_refresh() {
         ActivationRequest {
             container_name: Some("web"),
             repo_override: Some(repo_root.to_path_buf()),
+            route: RuntimeActivationRoute::Task,
             session_context: RuntimeSessionContext::default(),
         },
     );
@@ -611,6 +614,25 @@ fn runtime_lease_refresh_stage_runs_when_policy_requests_refresh() {
 }
 
 #[test]
+fn runtime_activation_plan_from_request_preserves_non_task_route() {
+    let repo_root = Path::new("/tmp/demo-repo");
+    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let plan = runtime_activation_plan_from_request(
+        repo_root,
+        &policy,
+        ActivationRequest {
+            container_name: Some("web"),
+            repo_override: Some(repo_root.to_path_buf()),
+            route: RuntimeActivationRoute::Rhai,
+            session_context: RuntimeSessionContext::default(),
+        },
+    );
+
+    assert_eq!(plan.request.route, RuntimeActivationRoute::Rhai);
+    assert_eq!(plan.route, RuntimeActivationRoute::Rhai);
+}
+
+#[test]
 fn runtime_lease_refresh_stage_skips_when_policy_requests_skip() {
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
@@ -620,6 +642,7 @@ fn runtime_lease_refresh_stage_skips_when_policy_requests_skip() {
         ActivationRequest {
             container_name: Some("web"),
             repo_override: Some(repo_root.to_path_buf()),
+            route: RuntimeActivationRoute::Task,
             session_context: RuntimeSessionContext {
                 lease_refresh_policy: LeaseRefreshPolicy::SkipRefresh,
                 ..RuntimeSessionContext::default()
@@ -983,6 +1006,7 @@ fn task_activation_side_effects_run_in_shared_order() {
         ActivationRequest {
             container_name: Some("web"),
             repo_override: Some(repo_root.to_path_buf()),
+            route: RuntimeActivationRoute::Task,
             session_context: RuntimeSessionContext::default(),
         },
     );
@@ -1065,6 +1089,7 @@ fn task_activation_can_skip_lease_refresh_without_skipping_gateway_readiness() {
         ActivationRequest {
             container_name: Some("web"),
             repo_override: Some(repo_root.to_path_buf()),
+            route: RuntimeActivationRoute::Task,
             session_context: RuntimeSessionContext {
                 lease_refresh_policy: LeaseRefreshPolicy::SkipRefresh,
                 ..RuntimeSessionContext::default()
@@ -1136,6 +1161,7 @@ fn reused_runtime_activation_matrix_keeps_gateway_parity_across_lease_modes() {
             ActivationRequest {
                 container_name: Some("web"),
                 repo_override: Some(repo_root.to_path_buf()),
+                route: RuntimeActivationRoute::Task,
                 session_context: RuntimeSessionContext {
                     lease_refresh_policy,
                     ..RuntimeSessionContext::default()

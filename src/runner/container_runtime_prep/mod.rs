@@ -13,7 +13,9 @@ mod validation;
 use effigy_containers::compose::compose_args;
 use effigy_containers::exec::{ensure_colima_running, run_compose_capture};
 use effigy_containers::{load_container_exec_working_dir, EffectiveContainerPolicy};
-use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
+use effigy_runtime_plan::{
+    RuntimeActivationPlan, RuntimeActivationRequest, RuntimeActivationRoute, RuntimeLeasePolicy,
+};
 #[cfg(test)]
 use effigy_runtime_plan::{RuntimeActivationReport, RuntimeCleanupResult};
 
@@ -48,6 +50,7 @@ pub(in crate::runner) struct ContainerTaskActivation {
 pub(in crate::runner) struct ActivationRequest<'a> {
     pub(in crate::runner) container_name: Option<&'a str>,
     pub(in crate::runner) repo_override: Option<PathBuf>,
+    pub(in crate::runner) route: RuntimeActivationRoute,
     pub(in crate::runner) session_context: RuntimeSessionContext,
 }
 
@@ -89,26 +92,45 @@ pub(in crate::runner) fn activate_container_runtime_for_task(
     )
 }
 
+pub(in crate::runner) fn build_runtime_activation_plan(
+    repo_root: &Path,
+    policy_name: &str,
+    container_name: Option<&str>,
+    repo_override: Option<PathBuf>,
+    route: RuntimeActivationRoute,
+    session_context: RuntimeSessionContext,
+) -> RuntimeActivationPlan {
+    let mut plan_request =
+        RuntimeActivationRequest::new(repo_root.to_path_buf(), policy_name.to_owned())
+            .repo_override(repo_override.unwrap_or_else(|| repo_root.to_path_buf()))
+            .route(route)
+            .lease_policy(runtime_lease_policy(session_context));
+    if let Some(container_name) = container_name {
+        plan_request = plan_request.container_name(container_name.to_owned());
+    }
+    plan_request.plan()
+}
+
 fn runtime_activation_plan_from_request(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     request: ActivationRequest<'_>,
 ) -> RuntimeActivationPlan {
-    let mut plan_request =
-        RuntimeActivationRequest::new(repo_root.to_path_buf(), policy.name.clone())
-            .repo_override(
-                request
-                    .repo_override
-                    .unwrap_or_else(|| repo_root.to_path_buf()),
-            )
-            .lease_policy(match request.session_context.lease_refresh_policy {
-                LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
-                LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
-            });
-    if let Some(container_name) = request.container_name {
-        plan_request = plan_request.container_name(container_name.to_owned());
+    build_runtime_activation_plan(
+        repo_root,
+        &policy.name,
+        request.container_name,
+        request.repo_override,
+        request.route,
+        request.session_context,
+    )
+}
+
+fn runtime_lease_policy(session_context: RuntimeSessionContext) -> RuntimeLeasePolicy {
+    match session_context.lease_refresh_policy {
+        LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
+        LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
     }
-    plan_request.plan()
 }
 
 fn activate_container_runtime_plan_for_task_using(

@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`012-runtime-pipeline-integration-audit-and-debt-map.md`](./012-runtime-pipeline-integration-audit-and-debt-map.md)
@@ -52,4 +52,5 @@ typed container operation pipeline.
 
 ## Next Task
 
-Start after the integration audit maps the recent named-volume work.
+Continue with
+[`g04.016`](./016-architecture-guard-integration.md).

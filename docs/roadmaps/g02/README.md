@@ -72,3 +72,6 @@ Rules:
 
 Move to [`../g04/README.md`](../g04/README.md) and continue the live `g04`
 queue instead of reopening `g02`.
+
+
+Batch cards live in `g02/batch-cards/` when strict posture uses them.

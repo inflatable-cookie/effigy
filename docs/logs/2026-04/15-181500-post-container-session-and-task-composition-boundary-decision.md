@@ -3,7 +3,7 @@
 Date: 2026-04-15
 Roadmap: `g02.006`
 Spec: `docs/specs/006-colima-container-environment-strict-lane.md`
-Batch Card: `docs/specs/batch-cards/109-decide-post-container-session-and-task-composition-boundary.md`
+Batch Card: `docs/roadmaps/g02/batch-cards/109-decide-post-container-session-and-task-composition-boundary.md`
 
 ## Decision
 

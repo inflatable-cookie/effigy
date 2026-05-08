@@ -22,7 +22,7 @@ released demo/browser lane closed.
 
 - `docs/roadmaps/g02/004-rust-native-scripting-surface-contract.md`
 - `docs/specs/004-rust-native-scripting-strict-lane.md`
-- `docs/specs/batch-cards/086-decide-rust-native-scripting-boundary-and-pilot-slice.md`
+- `docs/roadmaps/g02/batch-cards/086-decide-rust-native-scripting-boundary-and-pilot-slice.md`
 
 ## Next Task
 

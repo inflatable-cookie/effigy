@@ -6,18 +6,17 @@ use effigy_containers::EffectiveContainerPolicy;
 use effigy_env::secret::SecretString;
 use effigy_exec::detection::determine_strategy;
 use effigy_manifest::ManifestContainerConfig;
-use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
+use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 use effigy_tasks::{render_task_selector, TaskSelector};
 
 use super::command_context::resolve_active_command_context;
 use super::container_runtime_prep::{
-    activate_container_runtime_for_task, ActivationRequest, ContainerTaskActivation,
+    activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
+    ContainerTaskActivation,
 };
 use super::error::RunnerError;
 use super::host_container_lease::emit_host_container_lease_notice;
-use super::runtime_session_context::{
-    current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
-};
+use super::runtime_session_context::{current_runtime_session_context, RuntimeSessionContext};
 use super::system_command::ensure_workspace_effigy_available_for_policy;
 use surface::{
     build_alias_table, build_raw_exec_args, ensure_container_running, exec_alias_surface_absent,
@@ -232,6 +231,7 @@ fn activate_exec_surface(
             ActivationRequest {
                 container_name: Some(surface.container_name.as_str()),
                 repo_override: plan.request.repo_override.clone(),
+                route: plan.route,
                 session_context: current_runtime_session_context(),
             },
         )
@@ -256,14 +256,14 @@ fn exec_runtime_activation_plan(
     surface: &ResolvedExecSurface,
     session_context: RuntimeSessionContext,
 ) -> RuntimeActivationPlan {
-    RuntimeActivationRequest::new(repo_root.to_path_buf(), surface.policy.name.clone())
-        .container_name(surface.container_name.clone())
-        .repo_override(repo_root.to_path_buf())
-        .lease_policy(match session_context.lease_refresh_policy {
-            LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
-            LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
-        })
-        .plan()
+    build_runtime_activation_plan(
+        repo_root,
+        &surface.policy.name,
+        Some(surface.container_name.as_str()),
+        Some(repo_root.to_path_buf()),
+        RuntimeActivationRoute::Exec,
+        session_context,
+    )
 }
 
 fn maybe_emit_exec_activation_notice(

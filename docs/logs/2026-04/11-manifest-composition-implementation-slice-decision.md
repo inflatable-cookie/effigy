@@ -40,6 +40,6 @@ that is still honest:
 ## Next Task
 
 Execute the active ready card in
-`docs/specs/batch-cards/005-implement-composed-manifest-loading-and-inspection-foundation.md`,
+`docs/roadmaps/g02/batch-cards/005-implement-composed-manifest-loading-and-inspection-foundation.md`,
 then leave the next move explicit as either composition hardening or activation
 of `g02.003` planning.

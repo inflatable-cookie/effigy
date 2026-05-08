@@ -18,7 +18,7 @@ use super::super::routing::{
 };
 use super::{super::process_run, command};
 use crate::runner::container_runtime_prep::{
-    activate_container_runtime_for_task, ActivationRequest,
+    activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::execute::nested;
@@ -42,7 +42,7 @@ use effigy_env::schema_support::{
 use effigy_env::secret::SecretString;
 use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
 use effigy_manifest::TaskSelection;
-use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
+use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 
 pub(in crate::runner) fn run_standard_task(
     preflight: &ExecutionPreflight,
@@ -298,6 +298,7 @@ fn activate_routed_container_runtime_with(
         ActivationRequest {
             container_name: plan.request.container_name.as_deref(),
             repo_override: plan.request.repo_override.clone(),
+            route: plan.route,
             session_context,
         },
         &plan,
@@ -310,17 +311,14 @@ fn standard_runtime_activation_plan(
     container_name: Option<String>,
     session_context: RuntimeSessionContext,
 ) -> RuntimeActivationPlan {
-    let mut request =
-        RuntimeActivationRequest::new(repo_root.to_path_buf(), policy_name.to_owned())
-            .repo_override(repo_root.to_path_buf())
-            .lease_policy(match session_context.lease_refresh_policy {
-                LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
-                LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
-            });
-    if let Some(container_name) = container_name {
-        request = request.container_name(container_name);
-    }
-    request.plan()
+    build_runtime_activation_plan(
+        repo_root,
+        policy_name,
+        container_name.as_deref(),
+        Some(repo_root.to_path_buf()),
+        RuntimeActivationRoute::Task,
+        session_context,
+    )
 }
 
 fn should_stay_in_workspace_shell(
@@ -466,6 +464,7 @@ fn activate_inline_workspace_container_runtime_with(
         ActivationRequest {
             container_name: plan.request.container_name.as_deref(),
             repo_override: plan.request.repo_override.clone(),
+            route: plan.route,
             session_context,
         },
         &plan,

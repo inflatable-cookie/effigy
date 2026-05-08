@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`012-runtime-pipeline-integration-audit-and-debt-map.md`](./012-runtime-pipeline-integration-audit-and-debt-map.md)
@@ -51,4 +51,5 @@ used by runner glue.
 
 ## Next Task
 
-Start after the integration audit confirms the data-plan migration order.
+Continue with
+[`g04.015`](./015-container-volume-operation-pipeline.md).

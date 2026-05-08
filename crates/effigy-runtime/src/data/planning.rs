@@ -4,7 +4,7 @@ use std::path::Path;
 use effigy_catalog::volumes::{CacheVolumeKind, RuntimeVolumeMetadata};
 use effigy_container_ops::{
     ContainerCacheOperation, ContainerDataOperation, ContainerOperationKind,
-    ContainerOperationPlan, ContainerOperationRequest,
+    ContainerOperationPlan, ContainerOperationRequest, ContainerVolumeOperation,
 };
 use effigy_containers::{ContainerCacheGlobalEntry, EffectiveContainerPolicy};
 
@@ -47,6 +47,20 @@ pub fn global_cache_operation_plan(
         cwd.to_path_buf(),
         format!("profile:{profile}"),
         ContainerOperationKind::cache(operation),
+    )
+    .backend_id("colima")
+    .plan()
+}
+
+pub fn global_volume_operation_plan(
+    cwd: &Path,
+    profile: &str,
+    operation: ContainerVolumeOperation,
+) -> ContainerOperationPlan {
+    ContainerOperationRequest::new(
+        cwd.to_path_buf(),
+        format!("profile:{profile}"),
+        ContainerOperationKind::volume(operation),
     )
     .backend_id("colima")
     .plan()

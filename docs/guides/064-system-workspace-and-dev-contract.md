@@ -293,7 +293,7 @@ Reach for `container` directly when:
 
 - the repo only has a simple compose environment
 - you need data export, import, reset, or eject surfaces
-- you need cross-project compose views such as `status --all`
+- you need cross-project compose views such as `status --global`
 
 ## Expected User Flows
 

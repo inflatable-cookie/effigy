@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 use effigy_cli::{BootstrapDbSeedInput, ContainerDbDumpInput};
 use effigy_container_ops::ContainerDataOperation;
 use effigy_data::{
-    database_dump_command, dump_artifact_handoff, is_oci_artifact_ref_path,
-    normalize_dump_destination_path, select_data_targets, select_database_service,
-    ArtifactDataHandoff, DataDumpDestination, DataTargetRef, DataTargetSelectionError,
-    DatabaseService, DatabaseServiceKind, DatabaseServiceSelectionError,
+    database_dump_command, dump_artifact_handoff, normalize_dump_destination_path,
+    select_data_targets, select_database_service, ArtifactDataHandoff, DataDumpDestination,
+    DataDumpInput, DataDumpPlan, DataTargetRef, DataTargetSelectionError, DatabaseService,
+    DatabaseServiceKind, DatabaseServiceSelectionError, ResolvedDataTarget,
 };
 use effigy_manifest::{ManifestContainerServiceConfig, TASK_MANIFEST_FILE};
 
@@ -193,12 +193,8 @@ pub(super) fn run_container_data_dump(
     }
 
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
-    let plans = resolve_db_dump_plans(repo_root, &manifest, &policy.name, db_dumps)?;
-    if push
-        && !plans
-            .iter()
-            .any(|plan| is_oci_artifact_ref_path(&plan.output_path))
-    {
+    let plans = resolve_db_dump_plans(repo_root, &manifest, &policy.name, db_dumps, push)?;
+    if push && !plans.iter().any(|plan| plan.input.destination.is_oci()) {
         return Err(RunnerError::task_invocation(
             "`container data dump --push` requires at least one explicit `oci://` dump destination",
         ));
@@ -206,20 +202,13 @@ pub(super) fn run_container_data_dump(
 
     let mut dump_reports = Vec::with_capacity(plans.len());
     for plan in &plans {
-        let destination = DataDumpDestination::from_raw_path(plan.output_path.clone());
-        let target = plan.target.as_deref().map(DataTargetRef::from);
-        let artifact_handoff = dump_artifact_handoff(
-            repo_root,
-            target.as_ref(),
-            &plan.database,
-            &destination,
-            push,
-        );
-        let write_path = match artifact_handoff.as_ref() {
+        let output_path = data_dump_output_path(plan);
+        let artifact_handoff = plan.artifact_handoff.as_ref();
+        let write_path = match artifact_handoff {
             Some(ArtifactDataHandoff::CaptureDestination { source_path, .. }) => {
                 source_path.clone()
             }
-            _ => plan.output_path.clone(),
+            _ => output_path.clone(),
         };
         if let Some(parent) = write_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
@@ -233,8 +222,8 @@ pub(super) fn run_container_data_dump(
         let output = run_container_exec_capture(
             repo_root,
             Some(&policy.name),
-            Some(&plan.service_name),
-            &plan.command,
+            Some(&plan.command.service),
+            &plan.command.argv,
         )?;
         fs::write(&write_path, &output.stdout).map_err(|error| {
             RunnerError::task_invocation(format!(
@@ -269,11 +258,11 @@ pub(super) fn run_container_data_dump(
             "dumps": dump_reports
                 .iter()
                 .map(|(plan, write_path, artifact_capture)| serde_json::json!({
-                    "target": plan.target,
-                    "database": plan.database,
-                    "service": plan.service_name,
-                    "catalog": plan.catalog,
-                    "path": plan.output_path.display().to_string(),
+                    "target": plan.input.target.as_ref().map(ToString::to_string),
+                    "database": plan.resolved_target.database,
+                    "service": plan.command.service,
+                    "catalog": plan.command.kind.catalog(),
+                    "path": data_dump_output_path(plan).display().to_string(),
                     "local_path": write_path.display().to_string(),
                     "artifact_capture": artifact_capture,
                 }))
@@ -284,21 +273,21 @@ pub(super) fn run_container_data_dump(
         let detail = dump_reports
             .iter()
             .map(
-                |(plan, write_path, artifact_capture)| match plan.target.as_deref() {
+                |(plan, write_path, artifact_capture)| match plan.input.target.as_ref() {
                     Some(target) if artifact_capture.is_some() => format!(
                         "{target}={} ({} artifact from {})",
-                        plan.output_path.display(),
+                        data_dump_output_path(plan).display(),
                         artifact_capture_status(artifact_capture.as_ref()),
                         write_path.display()
                     ),
-                    Some(target) => format!("{target}={}", plan.output_path.display()),
+                    Some(target) => format!("{target}={}", data_dump_output_path(plan).display()),
                     None if artifact_capture.is_some() => format!(
                         "{} ({} artifact from {})",
-                        plan.output_path.display(),
+                        data_dump_output_path(plan).display(),
                         artifact_capture_status(artifact_capture.as_ref()),
                         write_path.display()
                     ),
-                    None => plan.output_path.display().to_string(),
+                    None => data_dump_output_path(plan).display().to_string(),
                 },
             )
             .collect::<Vec<_>>()
@@ -424,22 +413,13 @@ fn ensure_dump_target(
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DbDumpPlan {
-    target: Option<String>,
-    database: String,
-    service_name: String,
-    catalog: String,
-    output_path: PathBuf,
-    command: Vec<String>,
-}
-
 fn resolve_db_dump_plans(
     repo_root: &Path,
     manifest: &effigy_manifest::TaskManifest,
     container_name: &str,
     db_dumps: &[ContainerDbDumpInput],
-) -> Result<Vec<DbDumpPlan>, RunnerError> {
+    push: bool,
+) -> Result<Vec<DataDumpPlan>, RunnerError> {
     let containers = manifest.containers.as_ref().ok_or_else(|| {
         RunnerError::task_invocation("manifest does not define a `[containers]` registry")
     })?;
@@ -498,19 +478,47 @@ fn resolve_db_dump_plans(
                 .and_then(|target| target.service.as_deref()),
             &database,
         )?;
+        let destination = DataDumpDestination::from_raw_path(dump.path);
+        let mut input = DataDumpInput::new(database.clone(), destination.clone());
+        if let Some(target) = dump.target {
+            input = input.target(DataTargetRef::from(target));
+        }
+        let resolved_target = declared_target.unwrap_or_else(|| {
+            ResolvedDataTarget::new(
+                input
+                    .target
+                    .clone()
+                    .unwrap_or_else(|| DataTargetRef::from(database.clone())),
+                database.clone(),
+            )
+            .service(service.name.clone())
+            .service_kind(service.kind)
+        });
         let command =
-            database_dump_command(&service.name, service.kind, &service.password, &database).argv;
-        plans.push(DbDumpPlan {
-            target: dump.target,
-            database,
-            service_name: service.name.clone(),
-            catalog: service.kind.catalog().to_owned(),
-            output_path: dump.path,
+            database_dump_command(&service.name, service.kind, &service.password, &database);
+        let artifact_handoff = dump_artifact_handoff(
+            repo_root,
+            input.target.as_ref(),
+            &database,
+            &destination,
+            push,
+        );
+        plans.push(DataDumpPlan {
+            input,
+            resolved_target,
             command,
+            artifact_handoff,
         });
     }
 
     Ok(plans)
+}
+
+fn data_dump_output_path(plan: &DataDumpPlan) -> PathBuf {
+    match &plan.input.destination {
+        DataDumpDestination::Local(path) => path.clone(),
+        DataDumpDestination::Oci(reference) => PathBuf::from(reference),
+    }
 }
 
 fn collect_db_dump_services(
@@ -900,14 +908,15 @@ database = "acowtancy"
                     path: PathBuf::from("/tmp/acowtancy_test.sql"),
                 },
             ],
+            false,
         )
         .expect("plans");
 
         assert_eq!(plans.len(), 2);
-        assert_eq!(plans[0].service_name, "postgres");
-        assert_eq!(plans[0].catalog, "postgres");
-        assert!(plans[0].command.iter().any(|arg| arg == "pg_dump"));
-        assert_eq!(plans[1].service_name, "postgres");
+        assert_eq!(plans[0].command.service, "postgres");
+        assert_eq!(plans[0].command.kind.catalog(), "postgres");
+        assert!(plans[0].command.argv.iter().any(|arg| arg == "pg_dump"));
+        assert_eq!(plans[1].command.service, "postgres");
     }
 
     #[test]
@@ -949,13 +958,17 @@ database = "acowtancy"
                 target: Some("legacy_mysql".to_owned()),
                 path: PathBuf::from("/tmp/legacy.sql"),
             }],
+            false,
         )
         .expect("plans");
 
         assert_eq!(plans.len(), 1);
-        assert_eq!(plans[0].service_name, "mysql");
-        assert_eq!(plans[0].database, "acowtancy");
-        assert_eq!(plans[0].target.as_deref(), Some("legacy_mysql"));
+        assert_eq!(plans[0].command.service, "mysql");
+        assert_eq!(plans[0].resolved_target.database, "acowtancy");
+        assert_eq!(
+            plans[0].input.target.as_ref().map(|target| target.as_str()),
+            Some("legacy_mysql")
+        );
     }
 
     #[test]

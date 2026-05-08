@@ -45,6 +45,6 @@ their own include mechanism.
 ## Next Task
 
 Execute the active ready card in
-`docs/specs/batch-cards/008-decide-demo-runner-lifecycle-and-artifact-boundaries.md`,
+`docs/roadmaps/g02/batch-cards/008-decide-demo-runner-lifecycle-and-artifact-boundaries.md`,
 then leave the next move explicit as either coverage/gap modeling or browser/TUI
 contract planning.

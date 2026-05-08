@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-07
 Depends on: [`011-contract-promotion-and-closeout.md`](./011-contract-promotion-and-closeout.md)
@@ -63,4 +63,5 @@ runtime/container refactor work.
 
 ## Next Task
 
-Open a strict lane and first ready card for this roadmap.
+Continue with
+[`g04.013`](./013-runtime-activation-route-and-plan-authority.md).

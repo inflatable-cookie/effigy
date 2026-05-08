@@ -1134,7 +1134,9 @@ pub fn volume_prune_report(
     if entries.is_empty() {
         return ContainerCommandReport {
             json,
-            success_text: format!("[info] no {filter_label} Effigy-managed volumes matched {scope_label}"),
+            success_text: format!(
+                "[info] no {filter_label} Effigy-managed volumes matched {scope_label}"
+            ),
         };
     }
 

@@ -7,14 +7,14 @@ use effigy_cli::TaskInvocation;
 
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
 use effigy_manifest::{load_task_manifest, ManifestTask, ManifestTaskRunIn};
-use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRequest, RuntimeLeasePolicy};
+use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 
 use super::policy::DEFER_DEPTH_ENV;
 use super::trace::render_deferral_trace;
 use crate::runner::command_context::active_runtime_context;
 use crate::runner::container_command::support::validate_running_container_runtime_match;
 use crate::runner::container_runtime_prep::{
-    activate_container_runtime_for_task, ActivationRequest,
+    activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::append_color_exec_env;
@@ -24,7 +24,7 @@ use crate::runner::execute::api::{
 };
 use crate::runner::host_container_lease::emit_host_container_lease_notice;
 use crate::runner::runtime_session_context::{
-    current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
+    current_runtime_session_context, RuntimeSessionContext,
 };
 use effigy_manifest::DeferredCommand;
 use effigy_tasks::TaskRuntimeArgs;
@@ -269,6 +269,7 @@ fn run_deferred_request_with_binding(
                 ActivationRequest {
                     container_name: plan.request.container_name.as_deref(),
                     repo_override: plan.request.repo_override.clone(),
+                    route: plan.route,
                     session_context,
                 },
             )?;
@@ -320,17 +321,14 @@ fn deferral_runtime_activation_plan(
     container_name: Option<String>,
     session_context: RuntimeSessionContext,
 ) -> RuntimeActivationPlan {
-    let mut request =
-        RuntimeActivationRequest::new(repo_root.to_path_buf(), policy_name.to_owned())
-            .repo_override(repo_root.to_path_buf())
-            .lease_policy(match session_context.lease_refresh_policy {
-                LeaseRefreshPolicy::RefreshOnActivation => RuntimeLeasePolicy::RefreshOnActivation,
-                LeaseRefreshPolicy::SkipRefresh => RuntimeLeasePolicy::Skip,
-            });
-    if let Some(container_name) = container_name {
-        request = request.container_name(container_name);
-    }
-    request.plan()
+    build_runtime_activation_plan(
+        repo_root,
+        policy_name,
+        container_name.as_deref(),
+        Some(repo_root.to_path_buf()),
+        RuntimeActivationRoute::Deferral,
+        session_context,
+    )
 }
 
 fn build_deferred_container_command_args(
@@ -396,7 +394,7 @@ fn build_deferred_command(
 mod tests {
     use std::path::PathBuf;
 
-    use effigy_runtime_plan::RuntimeLeasePolicy;
+    use effigy_runtime_plan::{RuntimeActivationRoute, RuntimeLeasePolicy};
 
     use super::deferral_runtime_activation_plan;
     use crate::runner::runtime_session_context::RuntimeSessionContext;
@@ -415,6 +413,7 @@ mod tests {
         assert_eq!(plan.request.policy_name, "web");
         assert_eq!(plan.request.container_name.as_deref(), Some("web"));
         assert_eq!(plan.request.repo_override, Some(PathBuf::from("/tmp/repo")));
+        assert_eq!(plan.route, RuntimeActivationRoute::Deferral);
         assert_eq!(
             plan.request.lease_policy,
             RuntimeLeasePolicy::RefreshOnActivation

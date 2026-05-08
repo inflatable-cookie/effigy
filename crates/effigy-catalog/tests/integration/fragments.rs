@@ -201,7 +201,9 @@ fn assemble_php_mariadb_redis_stack() {
         result.compose_yaml
     );
     assert!(
-        result.compose_yaml.contains("test-project-redis-data:/data"),
+        result
+            .compose_yaml
+            .contains("test-project-redis-data:/data"),
         "missing named Redis data volume:\n{}",
         result.compose_yaml
     );
@@ -211,8 +213,10 @@ fn assemble_php_mariadb_redis_stack() {
     assert!(result.dockerfiles["app"].contains("PHP_VERSION"));
 
     assert_eq!(result.volumes.len(), 2);
-    assert!(result.volumes.iter().any(|volume| volume.name == "test-project-db-data"
-        && volume.persist));
+    assert!(result
+        .volumes
+        .iter()
+        .any(|volume| volume.name == "test-project-db-data" && volume.persist));
     assert!(result
         .volumes
         .iter()

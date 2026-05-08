@@ -18,6 +18,8 @@ pub(super) fn run_workspace_container_session(
     session_intent: InteractiveSessionIntent,
     cleanup_override: Option<PublicWorkspaceCleanupOverride>,
 ) -> Result<String, RunnerError> {
+    use effigy_runtime_plan::RuntimeActivationRoute;
+
     let repo_override = workspace::effective_workspace_repo_override(repo_root, repo_override);
     let container_name = container_name.map(str::to_owned);
     let policy = workspace::load_workspace_session_policy(repo_root, container_name.as_deref())?;
@@ -29,6 +31,7 @@ pub(super) fn run_workspace_container_session(
         crate::runner::container_runtime_prep::ActivationRequest {
             container_name: container_name.as_deref(),
             repo_override: repo_override.clone(),
+            route: RuntimeActivationRoute::Workspace,
             session_context: workspace_activation_session_context(),
         },
     )?;

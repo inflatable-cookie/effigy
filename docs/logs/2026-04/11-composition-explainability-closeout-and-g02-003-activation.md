@@ -46,6 +46,6 @@ demo-harness model itself.
 ## Next Task
 
 Execute the active ready card in
-`docs/specs/batch-cards/007-decide-demo-model-boundaries-and-registry-shape.md`,
+`docs/roadmaps/g02/batch-cards/007-decide-demo-model-boundaries-and-registry-shape.md`,
 then leave the next move explicit as either runner/lifecycle semantics or
 coverage/gap modeling for `g02.003`.

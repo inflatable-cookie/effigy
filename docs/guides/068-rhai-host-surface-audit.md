@@ -272,7 +272,7 @@ Effigy owns the path and handoff decision.
 
 - `container::shell(name, command)` — shell in the default service
 - `container::shell(name, service, command)` — shell in a specific service
-- `container::down_all()` — stop all containers (equivalent to `effigy container --all down`)
+- `container::down_all()` — stop all containers (equivalent to `effigy container down --global`)
 
 ### Crypto and Random
 

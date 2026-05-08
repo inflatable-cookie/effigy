@@ -77,7 +77,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion | `check-links`, `check-json-examples`, `check-headings`, `check-paths`, `check-contains`, `check-forbidden`, `check-index`, `check-next-action`, `check-workflow-paths`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1` | `029-docs-qa-checklist-and-validation.md` |
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
 | `effigy distribution` | Run distribution preflight, GLIBC floor validation, first-publish evidence capture, artifact validation, and closeout generation | `preflight`, `validate-metadata`, `check-glibc-floor`, `first-publish`, `validate-artifacts`, `generate-closeout`, `write-summary`, `--repo`, `--tag`, `--skip-docs`, `--skip-smoke`, `--skip-homebrew`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `062-distribution-system-guide.md` |
-| `effigy container` | Operate manifest-defined Colima-backed local environments, data lifecycle, shared-service reuse, and cross-project status views | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `--repo`, `--attach`, `--detach`, `--service`, `--command`, `--follow`, `--all`, `--keep-data`, `--wipe-data`, `--yes`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1` | `063-container-system-guide.md` |
+| `effigy container` | Operate manifest-defined Colima-backed local environments, data lifecycle, shared-service reuse, and cross-project status views | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `volume`, `cache`, `--repo`, `--attach`, `--detach`, `--service`, `--command`, `--follow`, `--global`, `--keep-data`, `--wipe-data`, `--yes`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1` | `063-container-system-guide.md` |
 | `effigy system` | Operate the manifest's declared default system substrate (VM + compose + gateway) with lifecycle, log streaming, and recovery surfaces | `up`, `down`, `status`, `logs`, `repair`, `reset-runtime`, `--system`, `--repo`, `--follow`, `--json` | `effigy.system.recover.v1` | `064-system-workspace-and-dev-contract.md` |
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
 | `effigy bundle` | Discover, inspect, and export shipped top-level bundles referenced from `[bundle]` in `effigy.toml` | `list`, `inspect`, `export`, `--path`, `--json` | `effigy.bundle.list.v1`, `effigy.bundle.inspect.v1`, `effigy.bundle.export.v1` | `065-underlay-starter.md` |
@@ -162,7 +162,9 @@ effigy service extract <SERVICE> [--dir <PATH>] [--json]
 effigy exec [--service <NAME>] [--json] <COMMAND> [ARGS...]
 effigy gateway <up|down|status|setup-tls> [--json]
 effigy container [<NAME>] <up|down|status|logs|shell|reset|eject> [FLAGS...]
-effigy container [<NAME>] cache list [--repo <PATH>] [--all] [--json]
+effigy container [<NAME>] cache list [--repo <PATH>] [--global] [--json]
+effigy container [<NAME>] volume list [--repo <PATH>] [--dormant] [--json]
+effigy container volume list --global [--orphans] [--json]
 effigy container [<NAME>] data <list|export> [ARGS...] [--json]
 effigy container [<NAME>] data dump [<FILE>|<TARGET>|<TARGET>=<FILE>]... [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>]... [--repo <PATH>] [--json]
 effigy container [<NAME>] data <import|pull-production> [ARGS...] [--yes] [--json]
@@ -174,8 +176,11 @@ effigy workspace [<WORKSPACE>] [--system <NAME>]
 `effigy container data seed` currently targets the repo default container only
 and stays on the generated-compose path.
 `effigy container cache list` inventories purge-safe isolated build caches such
-as Rust `target` and `node_modules` named volumes. `--all` follows the same
-cross-project running-environment discovery boundary as `container status --all`.
+as Rust `target` and `node_modules` named volumes. `--global` follows the same
+cross-project running-environment discovery boundary as `container status --global`.
+`effigy container volume list` inventories Effigy-managed named volumes. `--dormant`
+shows repo-scoped superseded volumes; `--global` shows volumes across all repos
+and `--orphans` narrows to ownerless volumes.
 `effigy container data dump` exports logical SQL dumps from generated-compose
 database services; `data export` still exports raw named-volume archives.
 Use `[data.targets.<name>]` when a sidecar DB should participate in
@@ -236,7 +241,7 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   listener is available
 - `container shell` and `workspace` are interactive and intentionally do not
   support `--json`
-- `container status --all` and `container stats --all` are cross-project views
+- `container status --global` and `container stats --global` are cross-project views
 - generated-compose data lifecycle stays on the product-owned path and does not
   widen direct `compose_file` ownership
 - `system logs` is streaming and intentionally does not support `--json`

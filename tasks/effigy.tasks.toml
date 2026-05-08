@@ -76,8 +76,13 @@ container = "linux-release"
   { task = "qa:ci:docs-links" },
   { task = "qa:ci:json" },
 ]
-"qa:gates" = [{ task = "qa:docs" }, { task = "qa:json" }]
-"qa:ci" = [{ task = "qa:docs" }, { task = "qa:json:ci" }, { task = "qa:released-surface" }]
+"qa:gates" = [{ task = "qa:docs" }, { task = "qa:json" }, { task = "qa:architecture" }]
+"qa:ci" = [
+  { task = "qa:docs" },
+  { task = "qa:json:ci" },
+  { task = "qa:released-surface" },
+  { task = "qa:architecture" },
+]
 "prepush:test:json-mode" = "cargo test --test cli_output_tests cli_json_mode"
 "prepush:test:lib" = "cargo test --lib"
 "prepush:test:cli-output" = "cargo test --test cli_output_tests"
@@ -87,6 +92,7 @@ container = "linux-release"
   { task = "prepush:test:lib" },
   { task = "prepush:test:cli-output" },
   { task = "qa:docs" },
+  { task = "qa:architecture" },
 ]
 "dist:preflight:smoke" = "cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture"
 health = [{ task = "qa:docs" }, { task = "qa:json" }]

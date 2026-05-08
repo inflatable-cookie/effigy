@@ -57,3 +57,6 @@ Continue in the current generation front door:
 - New roadmaps and actively maintained roadmap updates must use roadmap IDs and batch language.
 - Older imported roadmap bodies may retain internal `Phase X.Y` execution headings as historical record.
 - Leave those historical headings alone unless that roadmap is reopened for active work, then normalize it in the same batch.
+
+
+Batch cards live in `g01/batch-cards/` when strict posture uses them.
