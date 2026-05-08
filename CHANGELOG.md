@@ -45,6 +45,11 @@ During v0.x, MINOR bumps may include breaking changes.
   staying on the current LTS line.
 
 ### Fixed
+- **Release prepare gate reruns** now build the current Effigy binary and run
+  it directly for self-hosted `qa`, `smoke`, and metadata checks, avoiding the
+  nested `cargo run --bin effigy` wrapper stalls that could leave
+  `prepare --yes --check-gates` half-applied without writing prepared release
+  state.
 - **OCI artifact failures** now add operator-facing remediation for common
   `oras` failure classes such as missing auth, denied push access, malformed
   refs, and registry reachability, so inspect/pull/push errors say what to do

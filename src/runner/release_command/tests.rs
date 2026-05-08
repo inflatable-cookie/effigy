@@ -548,10 +548,16 @@ fn current_repo_release_config_matches_self_hosting_release_surfaces() {
             ("format", "cargo fmt --all -- --check"),
             (
                 "metadata",
-                "cargo run --bin effigy -- distribution validate-metadata"
+                "cargo build --bin effigy && ./target/debug/effigy distribution validate-metadata"
             ),
-            ("qa", "cargo run --bin effigy -- qa:ci"),
-            ("smoke", "cargo run --bin effigy -- smoke:release"),
+            (
+                "qa",
+                "cargo build --bin effigy && ./target/debug/effigy qa:ci"
+            ),
+            (
+                "smoke",
+                "cargo build --bin effigy && ./target/debug/effigy smoke:release"
+            ),
             ("test", "cargo test"),
         ]
     );
