@@ -366,7 +366,7 @@ fn stage_seed_artifact(
                     let Some(SeedArtifactStagingPlan::Local {
                         source_path: path,
                         artifact_root,
-                    }) = seed_artifact_staging_plan(repo_root, &handoff)
+                    }) = seed_artifact_staging_plan(repo_root, handoff)
                     else {
                         unreachable!("local seed handoff should produce local staging plan")
                     };
@@ -393,7 +393,7 @@ fn stage_seed_artifact(
                         artifact_root,
                         pull_destination_root,
                         ..
-                    }) = seed_artifact_staging_plan(repo_root, &handoff)
+                    }) = seed_artifact_staging_plan(repo_root, handoff)
                     else {
                         unreachable!("OCI seed handoff should produce OCI staging plan")
                     };

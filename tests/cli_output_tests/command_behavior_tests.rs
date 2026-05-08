@@ -6784,7 +6784,7 @@ case "$*" in
     subcmd=""
     for arg in "$@"; do
       case "$arg" in
-        up|down|ps|logs|exec|kill)
+        up|down|ps|logs|exec|kill|run|volume)
           subcmd="$arg"
           break
           ;;
@@ -6828,6 +6828,66 @@ case "$*" in
         ;;
       kill)
         printf "compose-kill\n"
+        ;;
+      run)
+        case "$*" in
+          *" czf "*)
+            output_dir=""
+            output_file=""
+            for arg in "$@"; do
+              case "$arg" in
+                *:/output)
+                  output_dir="${arg%:/output}"
+                  ;;
+                /output/*)
+                  output_file="${arg#/output/}"
+                  ;;
+              esac
+            done
+            : > "$output_dir/$output_file"
+            printf "export-ok\n"
+            ;;
+          *" xzf "*)
+            printf "import-ok\n"
+            ;;
+          *)
+            printf "unexpected colima nerdctl run invocation: %s\n" "$*" >&2
+            exit 1
+            ;;
+        esac
+        ;;
+      volume)
+        case "$*" in
+          *" volume ls "*)
+            printf "fixture-web-dev-app-node-modules\tlocal\t\n"
+            printf "fixture-web-dev-app-pnpm-store\tlocal\t\n"
+            printf "fixture-web-dev-db-data\tlocal\t\n"
+            ;;
+          *" volume inspect "*)
+            last_arg=""
+            for arg in "$@"; do
+              last_arg="$arg"
+            done
+            case "$last_arg" in
+              fixture-web-dev-db-data)
+                printf '[{"Name":"fixture-web-dev-db-data","Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-db-data/_data","UsageData":{"Size":4096}}]\n'
+                ;;
+              fixture-web-dev-app-node-modules)
+                printf '[{"Name":"fixture-web-dev-app-node-modules","Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-app-node-modules/_data","UsageData":{"Size":1024}}]\n'
+                ;;
+              fixture-web-dev-app-pnpm-store)
+                printf '[{"Name":"fixture-web-dev-app-pnpm-store","Mountpoint":"/var/lib/docker/volumes/fixture-web-dev-app-pnpm-store/_data","UsageData":{"Size":2048}}]\n'
+                ;;
+              *)
+                printf "[]\n"
+                ;;
+            esac
+            ;;
+          *)
+            printf "unexpected colima nerdctl volume invocation: %s\n" "$*" >&2
+            exit 1
+            ;;
+        esac
         ;;
       *)
         printf "unexpected colima nerdctl invocation: %s\n" "$*" >&2
@@ -6982,7 +7042,8 @@ fn cli_container_status_json_reports_default_container_contract() {
     assert_eq!(parsed["result"]["schema"], "effigy.container.status.v1");
     assert_eq!(parsed["result"]["container"], "web");
     assert_eq!(parsed["result"]["primary_service"], "app");
-    assert_eq!(parsed["result"]["colima_running"], false);
+    assert_eq!(parsed["result"]["backend"], "containerd");
+    assert_eq!(parsed["result"]["runtime_running"], false);
     assert_eq!(parsed["result"]["ports"][0], "8080:80");
     // Host mounts are canonicalised under the repo root at policy
     // resolve time, so the JSON contract surfaces the absolute path
@@ -7033,20 +7094,18 @@ fn cli_container_data_list_json_reports_managed_volumes() {
     assert_eq!(parsed["result"]["schema"], "effigy.container.data-list.v1");
     assert_eq!(parsed["result"]["container"], "web");
     assert_eq!(parsed["result"]["project_name"], "fixture-web-dev");
-    assert_eq!(parsed["result"]["volume_count"], 2);
-    assert_eq!(
-        parsed["result"]["volumes"][0]["classification"],
-        "ephemeral"
-    );
-    assert_eq!(
-        parsed["result"]["volumes"][1]["classification"],
-        "persistent"
-    );
-    assert_eq!(parsed["result"]["volumes"][0]["size_bytes"], 1024);
-    assert_eq!(parsed["result"]["volumes"][1]["size_bytes"], 4096);
-    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
-    assert!(docker_invocations.contains("volume ls"));
-    assert!(docker_invocations.contains("volume inspect fixture-web-dev-db-data"));
+    assert_eq!(parsed["result"]["volume_count"], 3);
+    let volumes = parsed["result"]["volumes"]
+        .as_array()
+        .expect("volumes array");
+    assert!(volumes.iter().any(|volume| {
+        volume["name"] == "fixture-web-dev-db-data"
+            && volume["classification"] == "persistent"
+            && volume["size_bytes"] == 4096
+    }));
+    let colima_invocations = fs::read_to_string(&colima_args).expect("read colima args");
+    assert!(colima_invocations.contains("volume ls"));
+    assert!(colima_invocations.contains("volume inspect"));
 }
 
 #[test]
@@ -7084,12 +7143,14 @@ fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["schema"], "effigy.container.cache-list.v1");
     assert_eq!(parsed["result"]["container"], "web");
-    assert_eq!(parsed["result"]["cache_count"], 1);
-    assert_eq!(parsed["result"]["caches"][0]["kind"], "node-modules");
-    assert_eq!(
-        parsed["result"]["caches"][0]["name"],
-        "fixture-web-dev-app-node-modules"
-    );
+    assert_eq!(parsed["result"]["cache_count"], 2);
+    let caches = parsed["result"]["caches"].as_array().expect("cache array");
+    assert!(caches.iter().any(|cache| {
+        cache["kind"] == "node-modules" && cache["name"] == "fixture-web-dev-app-node-modules"
+    }));
+    assert!(caches
+        .iter()
+        .all(|cache| { cache["safe_to_purge"] == true && cache["size_available"].is_boolean() }));
 }
 
 #[test]
@@ -7188,9 +7249,9 @@ fn cli_container_data_export_json_reports_transfer_contract() {
         parsed["result"]["output_path"],
         archive.display().to_string()
     );
-    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
-    assert!(docker_invocations.contains("run --rm"));
-    assert!(docker_invocations.contains("fixture-web-dev-db-data:/source:ro"));
+    let colima_invocations = fs::read_to_string(&colima_args).expect("read colima args");
+    assert!(colima_invocations.contains("run --rm"));
+    assert!(colima_invocations.contains("fixture-web-dev-db-data:/source:ro"));
 }
 
 #[test]
@@ -7245,9 +7306,9 @@ fn cli_container_data_import_json_reports_transfer_contract() {
         parsed["result"]["input_path"],
         archive.display().to_string()
     );
-    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
-    assert!(docker_invocations.contains("run --rm"));
-    assert!(docker_invocations.contains("fixture-web-dev-db-data:/target"));
+    let colima_invocations = fs::read_to_string(&colima_args).expect("read colima args");
+    assert!(colima_invocations.contains("run --rm"));
+    assert!(colima_invocations.contains("fixture-web-dev-db-data:/target"));
 }
 
 #[test]
@@ -7297,10 +7358,10 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
         fs::read_to_string(root.join("pull-production.txt")).expect("read marker"),
         "web"
     );
-    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
+    let colima_invocations = fs::read_to_string(&colima_args).expect("read colima args");
     assert!(
-        docker_invocations.contains(" up -d"),
-        "got: {docker_invocations}"
+        colima_invocations.contains(" up -d"),
+        "got: {colima_invocations}"
     );
 }
 
@@ -7399,9 +7460,9 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
     assert_eq!(parsed["result"]["attach_mode"], "detached");
     assert_eq!(parsed["result"]["colima_started"], true);
     assert_eq!(parsed["result"]["health"], "ready");
-    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
-    assert!(docker_invocations.contains("compose -f"));
-    assert!(docker_invocations.contains(" up -d"));
+    let colima_invocations = fs::read_to_string(&colima_args).expect("read colima args");
+    assert!(colima_invocations.contains("nerdctl --profile dev -- compose -f"));
+    assert!(colima_invocations.contains(" up -d"));
 }
 
 #[test]
@@ -7733,7 +7794,7 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["schema"], "effigy.container.up.v1");
     let invocations = fs::read_to_string(&colima_args).expect("read colima args");
-    assert!(invocations.contains("start --profile dev --runtime containerd"));
+    assert!(invocations.contains("start --profile dev"));
     assert!(invocations.contains("nerdctl --profile dev -- compose"));
 }
 
@@ -7770,18 +7831,18 @@ fn cli_container_shell_command_runs_via_sh_lc() {
         .expect("run effigy");
 
     assert!(output.status.success(), "shell failed: {output:?}");
-    let docker_invocations = fs::read_to_string(&docker_args).expect("read docker args");
+    let colima_invocations = fs::read_to_string(&colima_args).expect("read colima args");
     assert!(
-        docker_invocations.contains("exec -T -w /workspace"),
-        "got: {docker_invocations}"
+        colima_invocations.contains("exec -w /workspace"),
+        "got: {colima_invocations}"
     );
     assert!(
-        docker_invocations.contains("app sh -lc "),
-        "got: {docker_invocations}"
+        colima_invocations.contains("sh -lc "),
+        "got: {colima_invocations}"
     );
     assert!(
-        docker_invocations.contains("printf shell-ok"),
-        "got: {docker_invocations}"
+        colima_invocations.contains("printf shell-ok"),
+        "got: {colima_invocations}"
     );
 }
 
