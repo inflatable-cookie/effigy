@@ -1015,13 +1015,25 @@ pub fn cache_prune_report(
 ) -> ContainerCommandReport {
     let removed_count = entries.iter().filter(|entry| entry.removed).count();
     let skipped_count = entries.len().saturating_sub(removed_count);
+    let removed_size_bytes: u64 = entries
+        .iter()
+        .filter(|entry| entry.removed)
+        .filter_map(|entry| entry.size_bytes)
+        .sum();
+    let skipped_size_bytes: u64 = entries
+        .iter()
+        .filter(|entry| !entry.removed)
+        .filter_map(|entry| entry.size_bytes)
+        .sum();
     let json = json!({
         "schema": "effigy.container.cache-prune.v1",
         "schema_version": 1,
         "ok": true,
         "scope": scope_label,
         "removed_count": removed_count,
+        "removed_size_bytes": removed_size_bytes,
         "skipped_count": skipped_count,
+        "skipped_size_bytes": skipped_size_bytes,
         "caches": entries.iter().map(|entry| {
             json!({
                 "name": entry.name,
@@ -1042,10 +1054,12 @@ pub fn cache_prune_report(
     }
 
     let mut lines = vec![format!(
-        "[ok] removed {} cache volume{} and skipped {} for {}",
+        "[ok] removed {} cache volume{} ({}) and skipped {} ({}) for {}",
         removed_count,
         if removed_count == 1 { "" } else { "s" },
+        format_bytes(removed_size_bytes),
         skipped_count,
+        format_bytes(skipped_size_bytes),
         scope_label
     )];
     for entry in entries {

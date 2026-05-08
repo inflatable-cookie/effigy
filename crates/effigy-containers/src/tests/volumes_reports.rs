@@ -690,6 +690,41 @@ fn volume_prune_report_renders_contract() {
 }
 
 #[test]
+fn cache_prune_report_renders_size_totals() {
+    let report = crate::cache_prune_report(
+        "profile-wide cache inventory",
+        &[
+            crate::ContainerCachePruneEntry {
+                name: "workspace-cargo-registry".to_owned(),
+                kind: "cargo-registry".to_owned(),
+                size_bytes: Some(2048),
+                project_name: Some("underlay-reference-dev".to_owned()),
+                removed: true,
+                in_use: false,
+            },
+            crate::ContainerCachePruneEntry {
+                name: "workspace-target".to_owned(),
+                kind: "rust-target".to_owned(),
+                size_bytes: Some(4096),
+                project_name: Some("dtn-dev".to_owned()),
+                removed: false,
+                in_use: true,
+            },
+        ],
+    );
+
+    assert_eq!(report.json["schema"], "effigy.container.cache-prune.v1");
+    assert_eq!(report.json["removed_count"], 1);
+    assert_eq!(report.json["removed_size_bytes"], 2048);
+    assert_eq!(report.json["skipped_count"], 1);
+    assert_eq!(report.json["skipped_size_bytes"], 4096);
+    assert!(report.success_text.contains("removed 1 cache volume"));
+    assert!(report.success_text.contains("(2.0 KiB)"));
+    assert!(report.success_text.contains("workspace-cargo-registry"));
+    assert!(report.success_text.contains("skipped: in-use"));
+}
+
+#[test]
 fn data_transfer_report_renders_export_contract() {
     let root = temp_repo("data-transfer-report");
     fs::write(
