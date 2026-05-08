@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-08
+
 ### Breaking
 - **Container machine-scope flags** now use **`--global`** instead of
   **`--all`** on container status, stats, down, cache, and volume surfaces.
