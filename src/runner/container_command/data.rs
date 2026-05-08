@@ -179,6 +179,48 @@ pub(super) fn run_container_data_dump(
     push: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    run_container_data_dump_with_hooks(
+        repo_root,
+        name,
+        db_dumps,
+        push,
+        output_json,
+        |repo_root, container_name, service, argv| {
+            run_container_exec_capture(repo_root, container_name, service, argv)
+        },
+        |source, destination, repo_root, push| {
+            capture_artifact_report(
+                source,
+                destination,
+                Some("sql-dump"),
+                None,
+                repo_root,
+                repo_root,
+                false,
+                push,
+            )
+        },
+    )
+}
+
+fn run_container_data_dump_with_hooks<ExecFn, CaptureFn>(
+    repo_root: &Path,
+    name: Option<&str>,
+    db_dumps: &[ContainerDbDumpInput],
+    push: bool,
+    output_json: bool,
+    exec_capture: ExecFn,
+    capture_artifact: CaptureFn,
+) -> Result<String, RunnerError>
+where
+    ExecFn: Fn(
+        &Path,
+        Option<&str>,
+        Option<&str>,
+        &[String],
+    ) -> Result<std::process::Output, RunnerError>,
+    CaptureFn: Fn(&str, &str, &Path, bool) -> Result<serde_json::Value, RunnerError>,
+{
     let policy = effigy_containers::load_container_policy(repo_root, name)?;
     ensure_dump_target(&policy)?;
     let _operation_plan = effigy_runtime::data::data_operation_plan(
@@ -219,7 +261,7 @@ pub(super) fn run_container_data_dump(
             })?;
         }
 
-        let output = run_container_exec_capture(
+        let output = exec_capture(
             repo_root,
             Some(&policy.name),
             Some(&plan.command.service),
@@ -234,14 +276,10 @@ pub(super) fn run_container_data_dump(
         let artifact_capture = match artifact_handoff.as_ref() {
             Some(ArtifactDataHandoff::CaptureDestination {
                 destination, push, ..
-            }) => Some(capture_artifact_report(
+            }) => Some(capture_artifact(
                 &write_path.display().to_string(),
                 destination,
-                Some("sql-dump"),
-                None,
                 repo_root,
-                repo_root,
-                false,
                 *push,
             )?),
             _ => None,
@@ -679,7 +717,8 @@ mod tests {
     };
     use super::{
         resolve_db_dump_output_paths, resolve_db_dump_plans, run_container_data_dump,
-        run_container_data_pull_production, run_container_data_seed,
+        run_container_data_dump_with_hooks, run_container_data_pull_production,
+        run_container_data_seed,
     };
     use effigy_bootstrap::BootstrapStagedDbSeed;
     use effigy_cli::{BootstrapDbSeedInput, ContainerDbDumpInput};
@@ -696,6 +735,7 @@ mod tests {
     use std::fs;
     use std::io::Cursor;
     use std::path::{Path, PathBuf};
+    use std::process::Output;
 
     fn temp_repo(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -865,6 +905,122 @@ database = "app"
         .expect_err("should fail before container exec");
         let message = error.to_string();
         assert!(message.contains("`container data dump --push` requires"));
+    }
+
+    #[test]
+    fn run_container_data_dump_reports_planned_oci_artifact_capture() {
+        let root = temp_repo("data-dump-oci-planned");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[bundle]
+base = "underlay"
+host = "app.test"
+project_name = "data-dump-oci-planned-dev"
+workspace_subdir = "data-dump-oci-planned"
+databases = ["app"]
+"#,
+        )
+        .expect("write manifest");
+
+        let rendered = run_container_data_dump_with_hooks(
+            &root,
+            None,
+            &[ContainerDbDumpInput {
+                target: Some("app".to_owned()),
+                path: PathBuf::from("oci://ghcr.io/acme/uat-content:2026-05-07"),
+            }],
+            false,
+            true,
+            |_, _, _, _| {
+                Ok(Output {
+                    status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                    stdout: b"select 1;".to_vec(),
+                    stderr: Vec::new(),
+                })
+            },
+            |source, destination, _, push| {
+                Ok(serde_json::json!({
+                    "schema": "effigy.artifact.capture.v1",
+                    "destination": {
+                        "source": destination,
+                        "planned": !push,
+                        "pushed": push,
+                        "digest": serde_json::Value::Null,
+                    },
+                    "metadata": {
+                        "source": source,
+                    }
+                }))
+            },
+        )
+        .expect("dump");
+        let report: serde_json::Value = serde_json::from_str(&rendered).expect("json");
+        let dump = &report["dumps"][0];
+        assert_eq!(dump["path"], "oci://ghcr.io/acme/uat-content:2026-05-07");
+        assert!(dump["local_path"]
+            .as_str()
+            .is_some_and(|value| value.contains(".effigy/local/data-dumps")));
+        assert_eq!(dump["artifact_capture"]["destination"]["planned"], true);
+        assert_eq!(dump["artifact_capture"]["destination"]["pushed"], false);
+    }
+
+    #[test]
+    fn run_container_data_dump_reports_pushed_oci_artifact_capture() {
+        let root = temp_repo("data-dump-oci-pushed");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[bundle]
+base = "underlay"
+host = "app.test"
+project_name = "data-dump-oci-pushed-dev"
+workspace_subdir = "data-dump-oci-pushed"
+databases = ["app"]
+"#,
+        )
+        .expect("write manifest");
+
+        let rendered = run_container_data_dump_with_hooks(
+            &root,
+            None,
+            &[ContainerDbDumpInput {
+                target: Some("app".to_owned()),
+                path: PathBuf::from("oci://ghcr.io/acme/uat-content:2026-05-07"),
+            }],
+            true,
+            true,
+            |_, _, _, _| {
+                Ok(Output {
+                    status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                    stdout: b"select 1;".to_vec(),
+                    stderr: Vec::new(),
+                })
+            },
+            |source, destination, _, push| {
+                Ok(serde_json::json!({
+                    "schema": "effigy.artifact.capture.v1",
+                    "destination": {
+                        "source": destination,
+                        "planned": !push,
+                        "pushed": push,
+                        "digest": "sha256:pushdigest",
+                    },
+                    "metadata": {
+                        "source": source,
+                    }
+                }))
+            },
+        )
+        .expect("dump");
+        let report: serde_json::Value = serde_json::from_str(&rendered).expect("json");
+        let dump = &report["dumps"][0];
+        assert_eq!(dump["artifact_capture"]["destination"]["planned"], false);
+        assert_eq!(dump["artifact_capture"]["destination"]["pushed"], true);
+        assert_eq!(
+            dump["artifact_capture"]["destination"]["digest"],
+            "sha256:pushdigest"
+        );
     }
 
     #[test]

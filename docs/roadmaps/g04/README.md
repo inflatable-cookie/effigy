@@ -29,6 +29,7 @@ Current milestones:
 - [`015-container-volume-operation-pipeline.md`](./015-container-volume-operation-pipeline.md) (complete; volume inventory has a typed operation plan)
 - [`016-architecture-guard-integration.md`](./016-architecture-guard-integration.md) (complete; architecture guards are wired into normal validation)
 - [`017-planning-crate-decomposition.md`](./017-planning-crate-decomposition.md) (complete; first planning-crate decomposition pass landed)
+- [`018-oci-artifact-closeout-and-proof-matrix.md`](./018-oci-artifact-closeout-and-proof-matrix.md) (active; OCI support needs proof, remediation, and contract closeout before it can be called done)
 
 Architecture anchors:
 
@@ -53,7 +54,8 @@ Rules:
 
 ## Next Task
 
-Planning stop. The current g04 follow-up set is complete.
+Continue with
+[`g04.018`](./018-oci-artifact-closeout-and-proof-matrix.md).
 
 
 Batch cards live in `g04/batch-cards/` when strict posture uses them.

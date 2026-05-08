@@ -38,6 +38,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`060-oci-artifact-closeout-and-proof-matrix-strict-lane.md`](./060-oci-artifact-closeout-and-proof-matrix-strict-lane.md)
 - [`059-planning-crate-decomposition-strict-lane.md`](./059-planning-crate-decomposition-strict-lane.md)
 - [`058-architecture-guard-integration-strict-lane.md`](./058-architecture-guard-integration-strict-lane.md)
 - [`057-container-volume-operation-pipeline-strict-lane.md`](./057-container-volume-operation-pipeline-strict-lane.md)
