@@ -143,6 +143,26 @@ Deep dive:
 - [`012-dev-process-manager-tui.md`](./012-dev-process-manager-tui.md)
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 
+### Runtime cleanup
+
+Once a repo has been around for a while, two cleanup questions show up:
+
+- what disposable build caches can I drop safely?
+- which old named volumes are no longer part of the current repo shape?
+
+Use the built-in inventory surfaces instead of raw runtime commands:
+
+```sh
+effigy container cache list --global
+effigy container cache prune --project my-app-dev --yes
+effigy container volume list --dormant
+effigy container volume prune --dormant --yes
+```
+
+Use `cache` for safe disposable build artifacts such as `target`,
+`node_modules`, `pnpm-store`, and Cargo caches. Use `volume` when you need to
+inspect or remove stale repo-owned named volumes.
+
 ## 5) Use Artifacts for Data Lifecycle
 
 When a repo needs versioned database seeds, snapshots, or UAT content, use the
@@ -251,8 +271,8 @@ default path should be native:
 ```sh
 effigy release status --check-gates
 effigy release prepare --plan
-effigy distribution preflight --tag v0.3.3
-effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.3.3
+effigy distribution preflight --tag vX.Y.Z
+effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-vX.Y.Z
 ```
 
 Use `release` for release readiness and mutation flow. Use

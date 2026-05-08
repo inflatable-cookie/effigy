@@ -35,7 +35,7 @@ If you are approaching the release flow for the first time, start with:
 effigy release simulate
 effigy release status --check-gates
 effigy release prepare --plan
-cargo run --bin effigy -- release:linux:rehearse
+effigy release gates
 ```
 
 Use the commands by intent:
@@ -46,8 +46,8 @@ Use the commands by intent:
 - `prepare` / `execute` text mode when a human is actively reviewing the flow
 - `prepare --yes` / `execute --yes` when non-interactive operation is required
 - `resume` when a prepared release needs to be inspected or recovered
-- `release:linux:rehearse` when pre-release prep should prove the Linux build
-  path locally before CI
+- `release gates` when you want the same local release-gate verdict CI should
+  reach before you mutate anything
 
 ## 1) Core Commands
 
@@ -242,6 +242,14 @@ effigy release execute --plan
 effigy release execute --yes
 effigy release verify-install --tag vX.Y.Z
 ```
+
+For Effigy's own release prep, the useful pre-cut habit is:
+
+```sh
+effigy release gates
+```
+
+Treat a red gate as a fix-the-repo signal, not something to work around.
 
 `verify-install` can auto-detect the repo URL from `origin`, or you can pass
 `--repo-url <URL>` explicitly. Both paths accept normal HTTPS/file URLs, and

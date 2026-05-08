@@ -61,9 +61,9 @@ Companion references:
   "ok": true,
   "binary": {
     "name": "effigy",
-    "version": "0.3.3",
-    "active_version": "v0.3.3+local.abc123",
-    "display_version": "v0.3.3+local.abc123"
+    "version": "0.5.0",
+    "active_version": "v0.5.0+local.abc123",
+    "display_version": "v0.5.0+local.abc123"
   },
   "command": {
     "kind": "tasks",

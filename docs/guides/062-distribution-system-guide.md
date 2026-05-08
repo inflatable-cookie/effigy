@@ -29,6 +29,14 @@ If you are deciding where to start:
 - setting CI install policy or binary channel rules: read `049`
 - extracting or validating release notes: read `052`
 
+For Effigy's own repo, the normal sequence is:
+
+1. `effigy release gates`
+2. `effigy release prepare --plan`
+3. `effigy distribution preflight --tag vX.Y.Z`
+4. the remaining distribution evidence commands after the release mutation path
+   is ready
+
 ## Start With The Right Level
 
 - Need one focused check or report: use a single `distribution` subcommand.
@@ -75,6 +83,12 @@ Typical full distribution cycle:
 `first-publish` already runs `effigy release verify-install`, writes
 `distribution-summary.env`, and validates captured artifacts before succeeding.
 The later validate/closeout steps are for evidence and sign-off.
+
+If you only need a quick readiness proof before a cut, start smaller:
+
+```sh
+effigy distribution preflight --tag vX.Y.Z
+```
 
 ## Minimal Manifest Contract
 

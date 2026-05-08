@@ -21,7 +21,7 @@ The default **`minimal`** `init` also drops a root **`README.md`** when that pat
 is empty; if you already have a project README there, Effigy **skips** it unless
 you pass **`--force`**.
 
-`--version` shows the installed version (for example `v0.3.3`). Use it to confirm
+`--version` shows the installed version (for example `v0.4.0`). Use it to confirm
 you have a recent binary or when reporting issues.
 
 If `effigy.toml` already exists, skip `init` and ask the repo what it knows
@@ -126,9 +126,15 @@ macOS prerequisites (Homebrew):
 brew install colima
 ```
 
-If Docker Desktop is also installed, Effigy prefers Colima by default. Use
-`effigy config set containers.backend docker` to switch globally, or
-`--backend docker` on individual `bootstrap` or `container` commands.
+If Docker Desktop is also installed, Effigy can use either backend. Common
+paths:
+
+- keep Colima/containerd as the machine default:
+  `effigy config set containers.backend containerd`
+- switch the machine default to Docker Desktop:
+  `effigy config set containers.backend docker`
+- force one bootstrap session:
+  `effigy bootstrap <git-url> --backend docker`
 
 If the repo uses local HTTPS routes (`tls = true`), also install `mkcert` and
 run the one-time trust-store install:
@@ -141,6 +147,13 @@ mkcert -install
 ```sh
 effigy container up      # Start the local environment
 effigy dev               # Run the repo's dev task inside it
+```
+
+When old local runtime state starts to pile up:
+
+```sh
+effigy container cache list --global
+effigy container volume list --dormant
 ```
 
 Read more: [`063-container-system-guide.md`](./063-container-system-guide.md)

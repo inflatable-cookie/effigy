@@ -45,7 +45,11 @@ installing them directly on your machine.
 **Then go deeper:**
 - [`guides/065-underlay-starter.md`](./guides/065-underlay-starter.md) — shipped bundle for Rust + Bun stacks
 - [`guides/067-catalog-services-reference.md`](./guides/067-catalog-services-reference.md) — postgres, redis, and more
-- [`guides/069-workspace-host-integration.md`](./guides/069-workspace-host-integration.md) — sibling repo mounts
+- [`guides/069-workspace-host-integration.md`](./guides/069-workspace-host-integration.md) — sibling repo mounts and Docker/Colima coexistence
+
+**Use these when cleanup starts to matter:**
+- [`guides/063-container-system-guide.md`](./guides/063-container-system-guide.md) — `container cache list/prune`, `container volume list/prune`
+- [`guides/057-bootstrap-repo-bringup.md`](./guides/057-bootstrap-repo-bringup.md) — backend choice during repo bring-up
 
 ### I want to automate, integrate, or go deeper
 
@@ -55,6 +59,10 @@ installing them directly on your machine.
 
 **For demos and proofs:**
 - [`guides/058-demo-system-guide.md`](./guides/058-demo-system-guide.md)
+
+**For data artifacts, OCI, and bootstrap seed flows:**
+- [`guides/072-artifact-commands-guide.md`](./guides/072-artifact-commands-guide.md)
+- [`guides/057-bootstrap-repo-bringup.md`](./guides/057-bootstrap-repo-bringup.md)
 
 **For release workflows:**
 - [`guides/051-release-orchestration.md`](./guides/051-release-orchestration.md)

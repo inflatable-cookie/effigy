@@ -49,9 +49,9 @@ effigy --json test --plan
   "ok": true,
   "binary": {
     "name": "effigy",
-    "version": "0.3.3",
-    "active_version": "v0.3.3+local.abc123",
-    "display_version": "v0.3.3+local.abc123"
+    "version": "0.5.0",
+    "active_version": "v0.5.0+local.abc123",
+    "display_version": "v0.5.0+local.abc123"
   },
   "command": {
     "kind": "task",
@@ -71,9 +71,9 @@ Failure envelope shape:
   "ok": false,
   "binary": {
     "name": "effigy",
-    "version": "0.3.3",
-    "active_version": "v0.3.3+local.abc123",
-    "display_version": "v0.3.3+local.abc123"
+    "version": "0.5.0",
+    "active_version": "v0.5.0+local.abc123",
+    "display_version": "v0.5.0+local.abc123"
   },
   "command": {
     "kind": "task",
@@ -140,7 +140,8 @@ effigy --json scan generated-assets
 effigy --json scan generated-in-src
 effigy --json scan attention-markers
 effigy --json scan stale-suppressions
-effigy --json config
+effigy --json config path
+effigy --json config get containers.backend
 effigy --json config --schema --target test
 effigy --json deploy model --repo /path/to/workspace
 effigy --json deploy export render --repo /path/to/workspace --path infra/render --plan

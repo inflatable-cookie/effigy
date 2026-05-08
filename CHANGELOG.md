@@ -6,6 +6,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+Release direction for the next cut:
+
+- first-class Docker/Desktop support alongside Colima/containerd
+- backend-aware bootstrap, status, doctor, and workspace handoff behavior
+- OCI-backed dump, seed, inspect, stage, and capture flows
+- cache and volume inventory/prune surfaces with reclaimed-size reporting
+
 ### Breaking
 - **Container machine-scope flags** now use **`--global`** instead of
   **`--all`** on container status, stats, down, cache, and volume surfaces.
@@ -41,10 +48,11 @@ During v0.x, MINOR bumps may include breaking changes.
   **`effigy container data dump`** address sidecar databases without overloading
   **`[bundle].databases`**.
 - **`effigy container cache list`** inventories purge-safe isolated build
-  cache volumes from repo scope or from the Effigy Colima profile's named-volume
-  inventory with **`--global`**, including stopped projects. The first supported
-  kinds are Rust **`target`**, package-manager **`node_modules`**, and shared
-  Cargo cache volumes.
+  cache volumes from repo scope or from machine-level runtime inventory with
+  **`--global`**, including stopped projects where runtime metadata is
+  available. The first supported kinds are Rust **`target`**,
+  package-manager **`node_modules`**, **`pnpm-store`**, and shared Cargo cache
+  volumes.
 
 ### Changed
 - **Container backend selection** now prefers manifest-declared Colima drivers

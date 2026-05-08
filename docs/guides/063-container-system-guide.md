@@ -33,7 +33,14 @@ require.
 
 ### Containers (required)
 
-Effigy’s v1 container driver is **Colima**.
+Effigy supports two local backends today:
+
+- Colima/containerd
+- Docker Desktop
+
+Repo manifests still declare their runtime intent, so many repos remain
+Colima-first. Docker/Desktop is now a first-class override and bootstrap path,
+not a side escape hatch.
 
 ```bash
 brew install colima
@@ -47,11 +54,20 @@ colima list
 colima stop --profile <profile>
 ```
 
-Docker is optional. If you want `docker` available on your host (or your team
-standardizes on it), install it via Homebrew:
+Docker Desktop is optional. Install it when a repo or bootstrap session should
+run through the Docker backend:
 
 ```bash
-brew install docker docker-compose
+brew install --cask docker
+```
+
+Useful backend controls:
+
+```sh
+effigy config set containers.backend containerd
+effigy config set containers.backend docker
+effigy bootstrap <git-url> --backend docker
+effigy doctor --verbose
 ```
 
 ### OCI artifacts (optional)
@@ -98,6 +114,8 @@ effigy container <NAME> data import <VOLUME> <PATH>
 effigy container <NAME> data pull-production
 effigy container <NAME> reset --keep-data
 effigy container <NAME> eject
+effigy container cache list --global
+effigy container volume list --dormant
 ```
 
 Default resolution:
@@ -208,8 +226,10 @@ Use this when:
 
 Current v1 rules:
 
-- `driver` defaults to Colima for repo-bound operations; Docker is available
-  through user-global preferences (see [`069-workspace-host-integration.md`](./069-workspace-host-integration.md))
+- repo-bound operations follow the manifest driver unless a stronger
+  session-scoped override is active
+- Docker/Desktop is a supported backend for bootstrap and runtime use, not just
+  an ambient CLI fallback
 - `primary_service` is required
 - `compose_file`, when used, must stay repo-relative
 - repo-relative `host.mounts` may not escape the repo root unless they use the
@@ -272,6 +292,17 @@ Cross-project views:
 
 - `effigy container status --global`
 - `effigy container stats --global`
+- `effigy container cache list --global`
+- `effigy container volume list --global`
+
+Repo-local cleanup views:
+
+- `effigy container cache list`
+- `effigy container volume list`
+- `effigy container volume list --dormant`
+
+Use `cache` for disposable build/install artifacts. Use `volume` for named
+volume ownership, dormant repo leftovers, and global orphan discovery.
 
 ## Task Activation
 

@@ -37,7 +37,8 @@ Short answer:
 
 ## Prereqs and feature-scoped dependencies (macOS)
 
-- **Containers / systems** require **Colima**:
+- **Containers / systems** require **Colima** when the repo is using the
+  Colima/containerd backend:
 
 ```bash
 brew install colima
@@ -51,10 +52,11 @@ brew install mkcert
 mkcert -install
 ```
 
-Docker is optional; install it only when you want the `docker` CLI on the host:
+Docker Desktop is optional; install it only when you want to run a repo or a
+bootstrap session through the Docker backend:
 
 ```bash
-brew install docker docker-compose
+brew install --cask docker
 ```
 
 ## The Model

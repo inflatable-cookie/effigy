@@ -381,8 +381,20 @@ Fix:
 - pin a global preference with `effigy config set containers.backend docker` or
   `effigy config set containers.backend containerd`
 - for one-shot override, pass `--backend docker` or `--backend containerd` to
-  `bootstrap` or `container` commands
+  `bootstrap`
 - clear a pinned preference with `effigy config unset containers.backend`
+
+When the repo is already bootstrapped and you are trying to understand what it
+will use next, also check:
+
+```sh
+effigy container status
+```
+
+That shows both:
+
+- the manifest driver the repo declares
+- the effective backend the current runtime is actually using
 
 ### Symptom: container environment is half-up or unresponsive
 
@@ -412,6 +424,29 @@ Use `system reset-runtime` when:
 - compose state is corrupted or inconsistent
 - multiple services are stuck in a bad state
 - `repair` did not resolve the issue
+
+### Symptom: caches or named volumes are piling up
+
+Diagnosis:
+
+```sh
+effigy container cache list --global
+effigy container volume list --dormant
+```
+
+Fix:
+
+```sh
+# drop only safe disposable build caches
+effigy container cache prune --project <project-name> --yes
+
+# drop repo-scoped stale named volumes the current repo no longer declares
+effigy container volume prune --dormant --yes
+```
+
+Use `cache` for disposable artifacts such as `target`, `node_modules`,
+`pnpm-store`, and Cargo caches. Use `volume` for repo-owned named volumes that
+have gone stale as the repo evolved.
 
 ### Symptom: need to extract a bundled service for customization
 

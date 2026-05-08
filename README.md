@@ -79,7 +79,7 @@ Linux note: release binaries currently target an Ubuntu 22.04 baseline and expec
 From source:
 
 ```bash
-cargo install --git https://github.com/inflatable-cookie/effigy --tag v0.3.3
+cargo install --git https://github.com/inflatable-cookie/effigy --tag <released-tag>
 ```
 
 ## Start Fast
@@ -169,16 +169,33 @@ brew install mkcert   # only needed when using HTTPS gateway routes
 mkcert -install       # one-time host trust-store install (may prompt)
 ```
 
-Docker is optional. If you want `docker` available on your host too:
+Docker Desktop is optional. Install it only when you want to run a repo
+through the Docker backend instead of Colima/containerd:
 
 ```bash
-brew install docker docker-compose
+brew install --cask docker
 ```
 
 ```bash
 effigy container up
 effigy gateway status
 effigy dev   # still the repo's dev task; containers are started separately
+```
+
+When both backends are available:
+
+- repo-bound Colima manifests keep their declared runtime by default
+- `effigy bootstrap --backend docker` or `--backend containerd` pins one
+  bootstrap session explicitly
+- `effigy config set containers.backend <docker|containerd>` sets the
+  machine-local default for unscoped runtime commands
+- `effigy doctor --verbose` shows which backend Effigy selected and why
+
+Cleanup paths now live alongside the runtime commands:
+
+```bash
+effigy container cache list --global
+effigy container volume list --dormant
 ```
 
 Read next:

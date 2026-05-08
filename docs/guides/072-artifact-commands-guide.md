@@ -42,6 +42,14 @@ oras login ghcr.io
 Effigy uses the normal registry-client auth store. It does not accept tokens in
 artifact refs or env files.
 
+When a push or pull fails because auth is missing or stale, Effigy now reports
+the registry-side remediation directly instead of leaving you with a raw
+adapter failure. The normal fix is still:
+
+```sh
+oras login <registry-host>
+```
+
 ## Artifact Commands
 
 ### Inspect
@@ -143,6 +151,14 @@ effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push 
 
 ```sh
 effigy bootstrap git@github.com:acme/app.git --db-seed app=oci://ghcr.io/acme/seed:v1.0.0
+```
+
+If the bootstrap flow also needs a specific runtime, combine the two:
+
+```sh
+effigy bootstrap git@github.com:acme/app.git \
+  --backend docker \
+  --db-seed app=oci://ghcr.io/acme/seed:v1.0.0
 ```
 
 OCI refs must use the explicit `oci://` prefix. Unprefixed registry-looking refs

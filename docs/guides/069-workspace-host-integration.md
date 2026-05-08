@@ -132,8 +132,15 @@ the container at:
 
 ## User-Global Container Preferences
 
-The same `~/.effigy/config.toml` file can also pin the default container
-backend and Colima profile for machine-local Effigy usage.
+Effigy can pin the default container backend and Colima profile for
+machine-local usage. The normal operator path is the CLI:
+
+```sh
+effigy config set containers.backend containerd
+effigy config set containers.profile effigy
+```
+
+The same values live in `~/.effigy/config.toml` underneath that CLI surface.
 
 Use this when:
 
@@ -151,13 +158,17 @@ backend = "containerd"
 profile = "effigy"
 ```
 
-Or set the same values through the CLI:
+Equivalent file shape:
+
+```toml
+[containers]
+backend = "containerd"
+profile = "effigy"
+```
+
+One-shot override example:
 
 ```sh
-effigy config set containers.backend containerd
-effigy config set containers.profile effigy
-
-# one-shot Docker bootstrap on a machine that normally defaults to Colima
 effigy bootstrap git@github.com:inflatable-cookie/loophole.git --backend docker --fresh
 ```
 
@@ -166,6 +177,7 @@ Inspect or clear them with:
 ```sh
 effigy config path
 effigy config get containers.backend
+effigy config get containers.profile
 effigy config unset containers.backend
 effigy config unset containers.profile
 ```

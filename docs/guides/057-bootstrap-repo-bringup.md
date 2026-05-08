@@ -79,6 +79,27 @@ What each flag means:
 Use `effigy bootstrap teardown --yes` afterward to remove the fresh-session
 runtime and generated-compose volumes recorded during a `--fresh` bootstrap.
 
+## Backend Choice During Bootstrap
+
+Use `--backend` when you already know the runtime you want:
+
+```sh
+effigy bootstrap <git-url> --backend docker --fresh
+effigy bootstrap <git-url> --backend containerd
+```
+
+If both Docker Desktop and Colima are available and bootstrap reaches a
+container-sensitive step, Effigy prompts on a real TTY even when you have a
+saved machine preference. The saved preference becomes the default, so Enter
+keeps it and an explicit choice overrides it for that one bootstrap session.
+
+The prompt is lazy on purpose:
+
+- clone and root setup happen first
+- the backend question appears only when bootstrap is actually about to use a
+  container-backed step such as DB seed or `[bootstrap].start`
+- pure host-only bootstrap flows never ask
+
 ## Bootstrap DB Seeds
 
 When a repo supports one-command database bring-up, pass one or more SQL dumps
