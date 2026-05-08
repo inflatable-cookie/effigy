@@ -202,7 +202,8 @@ fn compose_backend_detection_for_policy(
 ) -> ContainerBackendDetection {
     let mut detection = compose_backend_detection();
     if detection.backend_override.is_none() {
-        detection.backend_override = load_runtime_backend_override(repo_root);
+        detection.backend_override =
+            load_runtime_backend_override(repo_root, Some(policy.name.as_str()));
     }
     if detection.backend_override.is_none() {
         detection.backend_override = crate::user_global_backend_preference();

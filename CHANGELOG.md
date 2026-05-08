@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- **Scoped runtime backend persistence** now stores container backend overrides
+  per container policy instead of one repo-wide backend value, so helper
+  containers like Effigy's `linux-release` rehearsal container no longer drift
+  onto stale Docker metadata from unrelated repo-local runtime sessions.
+
 ## [0.5.0] - 2026-05-08
 
 ### Breaking

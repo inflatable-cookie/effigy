@@ -1,5 +1,8 @@
 use super::*;
-use crate::{EffectiveComposeSource, EffectiveContainerPolicy};
+use crate::{
+    load_runtime_backend_override, write_runtime_backend_override, EffectiveComposeSource,
+    EffectiveContainerPolicy,
+};
 use effigy_manifest::{
     with_test_user_config_home, ManifestContainerDriver, ManifestContainerOnTaskExit,
     ManifestContainerShutdownMode, ManifestContainerStartup,
@@ -146,6 +149,44 @@ fn resolve_compose_backend_honors_user_global_containerd_preference() {
         },
     }
     assert_eq!(backend, ComposeBackend::ColimaNerdctl);
+}
+
+#[test]
+fn scoped_runtime_backend_override_ignores_legacy_repo_wide_backend() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo_root = temp.path().join("repo");
+    std::fs::create_dir_all(repo_root.join(".effigy/runtime/compose")).expect("mkdir runtime dir");
+    std::fs::write(
+        repo_root.join(".effigy/runtime/compose/.effigy-runtime.json"),
+        "backend = \"docker-compose\"\n",
+    )
+    .expect("write legacy metadata");
+
+    assert_eq!(load_runtime_backend_override(&repo_root, Some("web")), None);
+    assert_eq!(
+        load_runtime_backend_override(&repo_root, None),
+        Some(effigy_container_manager::BackendId::docker_compose())
+    );
+}
+
+#[test]
+fn write_runtime_backend_override_scopes_backend_to_container_name() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo_root = temp.path().join("repo");
+    std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+
+    write_runtime_backend_override(
+        &repo_root,
+        Some("linux-release"),
+        &effigy_container_manager::BackendId::colima_nerdctl(),
+    )
+    .expect("write scoped metadata");
+
+    assert_eq!(
+        load_runtime_backend_override(&repo_root, Some("linux-release")),
+        Some(effigy_container_manager::BackendId::colima_nerdctl())
+    );
+    assert_eq!(load_runtime_backend_override(&repo_root, Some("web")), None);
 }
 
 #[test]

@@ -36,7 +36,7 @@ pub(super) fn run_runtime_compose_up_stage(
         ComposeBackend::Docker => BackendId::docker_compose(),
         ComposeBackend::ColimaNerdctl => BackendId::colima_nerdctl(),
     };
-    let _ = write_runtime_backend_override(repo_root, &backend_id);
+    let _ = write_runtime_backend_override(repo_root, Some(policy.name.as_str()), &backend_id);
 }
 
 pub(super) fn ensure_runtime_exec_readiness_stage(

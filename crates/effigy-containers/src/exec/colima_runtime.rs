@@ -674,7 +674,7 @@ mod tests {
             "[containers]\nbackend = \"containerd\"\n",
         )
         .expect("write config");
-        write_runtime_backend_override(&repo_root, &BackendId::docker_compose())
+        write_runtime_backend_override(&repo_root, Some("web"), &BackendId::docker_compose())
             .expect("write runtime backend metadata");
 
         let detection = with_test_user_config_home(&home, || {

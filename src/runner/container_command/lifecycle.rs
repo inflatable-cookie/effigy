@@ -117,7 +117,7 @@ pub(super) fn run_container_up(
         ComposeBackend::Docker => effigy_container_manager::BackendId::docker_compose(),
         ComposeBackend::ColimaNerdctl => effigy_container_manager::BackendId::colima_nerdctl(),
     };
-    let _ = write_runtime_backend_override(repo_root, &backend_id);
+    let _ = write_runtime_backend_override(repo_root, Some(policy.name.as_str()), &backend_id);
     if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
         return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
     }

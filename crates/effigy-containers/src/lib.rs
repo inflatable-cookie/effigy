@@ -43,6 +43,7 @@ pub(crate) use policy_support::with_test_effigy_home;
 #[cfg(test)]
 pub(crate) use workspace::with_test_host_composer_home;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
@@ -121,28 +122,61 @@ pub fn user_global_colima_profile() -> Option<String> {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct RuntimeBackendMetadata {
+    #[serde(default)]
+    backend: Option<String>,
+    #[serde(default)]
+    containers: BTreeMap<String, RuntimeBackendContainerMetadata>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct RuntimeBackendContainerMetadata {
     backend: String,
 }
 
-pub fn load_runtime_backend_override(repo_root: &Path) -> Option<BackendId> {
+pub fn load_runtime_backend_override(
+    repo_root: &Path,
+    container_name: Option<&str>,
+) -> Option<BackendId> {
     let path = repo_root.join(RUNTIME_BACKEND_METADATA_FILE);
     let source = fs::read_to_string(path).ok()?;
     let parsed = toml::from_str::<RuntimeBackendMetadata>(&source).ok()?;
-    Some(BackendId::new(parsed.backend))
+    if let Some(name) = container_name {
+        return parsed
+            .containers
+            .get(name)
+            .map(|entry| BackendId::new(entry.backend.clone()));
+    }
+    parsed.backend.map(BackendId::new)
 }
 
 pub fn write_runtime_backend_override(
     repo_root: &Path,
+    container_name: Option<&str>,
     backend_id: &BackendId,
 ) -> Result<(), io::Error> {
     let path = repo_root.join(RUNTIME_BACKEND_METADATA_FILE);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let rendered = toml::to_string_pretty(&RuntimeBackendMetadata {
-        backend: backend_id.as_str().to_owned(),
-    })
-    .map_err(io::Error::other)?;
+    let mut metadata = fs::read_to_string(&path)
+        .ok()
+        .and_then(|source| toml::from_str::<RuntimeBackendMetadata>(&source).ok())
+        .unwrap_or(RuntimeBackendMetadata {
+            backend: None,
+            containers: BTreeMap::new(),
+        });
+    if let Some(name) = container_name {
+        metadata.containers.insert(
+            name.to_owned(),
+            RuntimeBackendContainerMetadata {
+                backend: backend_id.as_str().to_owned(),
+            },
+        );
+        metadata.backend = None;
+    } else {
+        metadata.backend = Some(backend_id.as_str().to_owned());
+    }
+    let rendered = toml::to_string_pretty(&metadata).map_err(io::Error::other)?;
     fs::write(path, rendered)
 }
 
