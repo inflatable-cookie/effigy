@@ -740,8 +740,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn capture_push_surfaces_auth_remediation_from_adapter_failures() {
+        let repo = temp_dir("repo-capture-push-auth-fail");
+        let cwd = temp_dir("cwd-capture-push-auth-fail");
+        fs::write(cwd.join("uat.sql.gz"), "select 1;").expect("write source");
+
+        let error = capture_artifact_report_with_adapter(
+            "uat.sql.gz",
+            "oci://ghcr.io/acme/uat-content:2026-05-06",
+            None,
+            None,
+            &repo,
+            &cwd,
+            false,
+            true,
+            &FailingPushOciArtifactAdapter,
+        )
+        .expect_err("push should fail");
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("failed to push OCI artifact"));
+        assert!(rendered.contains("authenticate first with `oras login ghcr.io`"));
+    }
+
     #[derive(Default)]
     struct FakeOciArtifactAdapter;
+
+    struct FailingPushOciArtifactAdapter;
 
     impl OciArtifactAdapter for FakeOciArtifactAdapter {
         fn inspect(
@@ -782,6 +808,33 @@ mod tests {
                 pushed_ref: request.reference.redacted(),
                 digest: descriptor.digest.clone(),
                 descriptor,
+            })
+        }
+    }
+
+    impl OciArtifactAdapter for FailingPushOciArtifactAdapter {
+        fn inspect(
+            &self,
+            request: &OciArtifactInspectRequest,
+        ) -> Result<OciArtifactDescriptor, OciArtifactError> {
+            Ok(OciArtifactDescriptor::new(&request.reference))
+        }
+
+        fn pull(
+            &self,
+            _request: &OciArtifactPullRequest,
+        ) -> Result<OciArtifactPullReport, OciArtifactError> {
+            unreachable!("capture push test should not pull")
+        }
+
+        fn push(
+            &self,
+            request: &OciArtifactPushRequest,
+        ) -> Result<OciArtifactPushReport, OciArtifactError> {
+            Err(OciArtifactError::PushFailed {
+                reference: request.reference.redacted(),
+                message: "unauthorized; authenticate first with `oras login ghcr.io` and retry"
+                    .to_owned(),
             })
         }
     }

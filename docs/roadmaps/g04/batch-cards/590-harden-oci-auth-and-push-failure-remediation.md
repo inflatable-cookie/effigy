@@ -2,7 +2,7 @@
 
 Lane: [`060-oci-artifact-closeout-and-proof-matrix-strict-lane.md`](../060-oci-artifact-closeout-and-proof-matrix-strict-lane.md)
 
-Status: Pending
+Status: In Progress
 Owner: Platform
 Created: 2026-05-08
 

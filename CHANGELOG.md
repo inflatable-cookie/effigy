@@ -57,6 +57,10 @@ During v0.x, MINOR bumps may include breaking changes.
   staying on the current LTS line.
 
 ### Fixed
+- **OCI artifact failures** now add operator-facing remediation for common
+  `oras` failure classes such as missing auth, denied push access, malformed
+  refs, and registry reachability, so inspect/pull/push errors say what to do
+  next instead of only echoing raw registry stderr.
 - **Path-sensitive isolated volumes** now include the container workspace path
   in their generated volume names, so moving a repo mount like
   **`/var/www/html`** to **`/var/www/inventors`** gets a fresh

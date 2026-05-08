@@ -14,6 +14,13 @@ pub(super) struct OrasCliArtifactAdapter {
     executable: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OciOperation {
+    Inspect,
+    Pull,
+    Push,
+}
+
 impl Default for OrasCliArtifactAdapter {
     fn default() -> Self {
         Self {
@@ -39,12 +46,16 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
             .output()
             .map_err(|error| OciArtifactError::InspectFailed {
                 reference: request.reference.redacted(),
-                message: format!("failed to run `oras`: {error}; install ORAS and authenticate with the registry before using live OCI artifacts"),
+                message: oras_invocation_error_message(OciOperation::Inspect, error),
             })?;
         if !output.status.success() {
             return Err(OciArtifactError::InspectFailed {
                 reference: request.reference.redacted(),
-                message: sanitize_process_output(&request.reference, &output.stderr),
+                message: remediate_oras_failure(
+                    OciOperation::Inspect,
+                    &request.reference,
+                    &output.stderr,
+                ),
             });
         }
         parse_oras_descriptor(&request.reference, &output.stdout).map_err(|message| {
@@ -80,12 +91,16 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
             .output()
             .map_err(|error| OciArtifactError::PullFailed {
                 reference: request.reference.redacted(),
-                message: format!("failed to run `oras`: {error}; install ORAS and authenticate with the registry before using live OCI artifacts"),
+                message: oras_invocation_error_message(OciOperation::Pull, error),
             })?;
         if !output.status.success() {
             return Err(OciArtifactError::PullFailed {
                 reference: request.reference.redacted(),
-                message: sanitize_process_output(&request.reference, &output.stderr),
+                message: remediate_oras_failure(
+                    OciOperation::Pull,
+                    &request.reference,
+                    &output.stderr,
+                ),
             });
         }
 
@@ -129,12 +144,16 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
         command.arg("--format").arg("json");
         let output = command.output().map_err(|error| OciArtifactError::PushFailed {
             reference: request.reference.redacted(),
-            message: format!("failed to run `oras`: {error}; install ORAS and authenticate with the registry before pushing OCI artifacts"),
+            message: oras_invocation_error_message(OciOperation::Push, error),
         })?;
         if !output.status.success() {
             return Err(OciArtifactError::PushFailed {
                 reference: request.reference.redacted(),
-                message: sanitize_process_output(&request.reference, &output.stderr),
+                message: remediate_oras_failure(
+                    OciOperation::Push,
+                    &request.reference,
+                    &output.stderr,
+                ),
             });
         }
 
@@ -206,6 +225,95 @@ pub(super) fn sanitize_process_output(
         .to_owned()
 }
 
+fn oras_invocation_error_message(operation: OciOperation, error: std::io::Error) -> String {
+    format!(
+        "failed to run `oras`: {error}; install ORAS and authenticate with the registry before {} OCI artifacts",
+        operation_verb(operation)
+    )
+}
+
+fn remediate_oras_failure(
+    operation: OciOperation,
+    reference: &effigy_artifacts::OciArtifactRef,
+    bytes: &[u8],
+) -> String {
+    let detail = sanitize_process_output(reference, bytes);
+    let lower = detail.to_ascii_lowercase();
+
+    let remediation = if looks_like_auth_failure(&lower) {
+        let registry = registry_host(reference.reference()).unwrap_or("the target registry");
+        format!("authenticate first with `oras login {registry}` and retry")
+    } else if operation == OciOperation::Push && looks_like_push_denial(&lower) {
+        "authenticate with push access for the target repository tag and retry".to_owned()
+    } else if looks_like_registry_reachability_failure(&lower) {
+        "check the registry hostname, network reachability, and TLS setup, then retry".to_owned()
+    } else if looks_like_reference_shape_failure(&lower) {
+        "check the explicit `oci://` reference shape and verify it manually with `oras manifest fetch <ref>`".to_owned()
+    } else {
+        format!(
+            "check the registry response above and retry the {} once the underlying issue is fixed",
+            operation_label(operation)
+        )
+    };
+
+    format!("{detail}; {remediation}")
+}
+
+fn operation_verb(operation: OciOperation) -> &'static str {
+    match operation {
+        OciOperation::Inspect => "inspecting",
+        OciOperation::Pull => "pulling",
+        OciOperation::Push => "pushing",
+    }
+}
+
+fn operation_label(operation: OciOperation) -> &'static str {
+    match operation {
+        OciOperation::Inspect => "inspect",
+        OciOperation::Pull => "pull",
+        OciOperation::Push => "push",
+    }
+}
+
+fn looks_like_auth_failure(lower: &str) -> bool {
+    lower.contains("unauthorized")
+        || lower.contains("authentication required")
+        || lower.contains("not logged in")
+        || lower.contains("no basic auth credentials")
+        || lower.contains("token has expired")
+}
+
+fn looks_like_push_denial(lower: &str) -> bool {
+    lower.contains("denied")
+        || lower.contains("requested access to the resource is denied")
+        || lower.contains("insufficient_scope")
+        || lower.contains("permission_denied")
+}
+
+fn looks_like_registry_reachability_failure(lower: &str) -> bool {
+    lower.contains("no such host")
+        || lower.contains("dial tcp")
+        || lower.contains("connection refused")
+        || lower.contains("i/o timeout")
+        || lower.contains("timeout")
+        || lower.contains("tls handshake timeout")
+        || lower.contains("server misbehaving")
+        || lower.contains("temporary failure in name resolution")
+}
+
+fn looks_like_reference_shape_failure(lower: &str) -> bool {
+    lower.contains("invalid reference")
+        || lower.contains("invalid repository")
+        || lower.contains("invalid tag")
+        || lower.contains("bad reference")
+        || lower.contains("invalid checksum digest")
+        || lower.contains("invalid artifact reference")
+}
+
+fn registry_host(reference: &str) -> Option<&str> {
+    reference.split('/').next().and_then(|authority| authority.rsplit_once('@').map(|(_, host)| host).or(Some(authority)))
+}
+
 fn discover_pulled_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     collect_files(root, root, &mut files)?;
@@ -267,5 +375,91 @@ mod tests {
 
         assert!(!sanitized.contains("token:secret"));
         assert!(sanitized.contains("***@ghcr.io/acowtancy/private:uat"));
+    }
+
+    #[test]
+    fn oras_failure_remediation_points_to_registry_login_for_auth_errors() {
+        let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private:uat")
+            .expect("parse");
+        let ArtifactSourceRef::Oci(oci) = parsed else {
+            panic!("expected oci");
+        };
+
+        let message = remediate_oras_failure(
+            OciOperation::Pull,
+            &oci,
+            b"Error response from registry: unauthorized",
+        );
+
+        assert!(message.contains("unauthorized"));
+        assert!(message.contains("oras login ghcr.io"));
+    }
+
+    #[test]
+    fn oras_failure_remediation_calls_out_push_access_for_denied_pushes() {
+        let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private:uat")
+            .expect("parse");
+        let ArtifactSourceRef::Oci(oci) = parsed else {
+            panic!("expected oci");
+        };
+
+        let message = remediate_oras_failure(
+            OciOperation::Push,
+            &oci,
+            b"push denied: requested access to the resource is denied",
+        );
+
+        assert!(message.contains("requested access to the resource is denied"));
+        assert!(message.contains("push access"));
+    }
+
+    #[test]
+    fn oras_failure_remediation_calls_out_reference_shape_errors() {
+        let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private:uat")
+            .expect("parse");
+        let ArtifactSourceRef::Oci(oci) = parsed else {
+            panic!("expected oci");
+        };
+
+        let message = remediate_oras_failure(
+            OciOperation::Inspect,
+            &oci,
+            b"invalid reference: invalid tag",
+        );
+
+        assert!(message.contains("invalid reference"));
+        assert!(message.contains("oci://"));
+        assert!(message.contains("oras manifest fetch <ref>"));
+    }
+
+    #[test]
+    fn oras_failure_remediation_calls_out_registry_reachability_errors() {
+        let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/private:uat")
+            .expect("parse");
+        let ArtifactSourceRef::Oci(oci) = parsed else {
+            panic!("expected oci");
+        };
+
+        let message = remediate_oras_failure(
+            OciOperation::Inspect,
+            &oci,
+            b"dial tcp: lookup ghcr.io: no such host",
+        );
+
+        assert!(message.contains("no such host"));
+        assert!(message.contains("network reachability"));
+    }
+
+    #[test]
+    fn oras_invocation_error_mentions_install_and_authenticate() {
+        let message = oras_invocation_error_message(
+            OciOperation::Push,
+            std::io::Error::new(std::io::ErrorKind::NotFound, "No such file or directory"),
+        );
+
+        assert!(message.contains("failed to run `oras`"));
+        assert!(message.contains("install ORAS"));
+        assert!(message.contains("authenticate with the registry"));
+        assert!(message.contains("pushing OCI artifacts"));
     }
 }
