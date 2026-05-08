@@ -90,7 +90,7 @@ where
             run_runtime_volume_capture,
         )?
         .into_iter()
-        .filter(|metadata| volume_has_effigy_ownership_signal(metadata))
+        .filter(volume_has_effigy_ownership_signal)
         .collect::<Vec<_>>();
         let missing_mount_points = metadata
             .iter()
