@@ -749,6 +749,25 @@ mod tests {
         root
     }
 
+    struct HomeGuard(Option<std::ffi::OsString>);
+
+    impl HomeGuard {
+        fn set(path: &Path) -> Self {
+            let original = std::env::var_os("HOME");
+            std::env::set_var("HOME", path);
+            Self(original)
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
     fn test_policy() -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
             name: "web".to_owned(),
@@ -910,6 +929,8 @@ database = "app"
     #[test]
     fn run_container_data_dump_reports_planned_oci_artifact_capture() {
         let root = temp_repo("data-dump-oci-planned");
+        let home = temp_repo("data-dump-oci-planned-home");
+        let _home = HomeGuard::set(&home);
         fs::write(
             root.join("effigy.toml"),
             r#"
@@ -968,6 +989,8 @@ databases = ["app"]
     #[test]
     fn run_container_data_dump_reports_pushed_oci_artifact_capture() {
         let root = temp_repo("data-dump-oci-pushed");
+        let home = temp_repo("data-dump-oci-pushed-home");
+        let _home = HomeGuard::set(&home);
         fs::write(
             root.join("effigy.toml"),
             r#"
