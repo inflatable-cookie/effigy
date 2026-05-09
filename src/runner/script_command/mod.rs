@@ -10,12 +10,14 @@ use effigy_rhai::{
 };
 
 use effigy_cli::{
-    BundleArgs, BundleSubcommand, ChangelogArgs, ChangelogSubcommand, ContainerArgs,
-    ContainerDataSubcommand, ContainerSubcommand, ContractsArgs, ContractsCheckMode,
-    ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoListQuery, DemoSubcommand,
-    DeployArgs, DeployExportProvider, DeploySubcommand, DocsArgs, DocsBlockRequirement,
-    DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, InternalRhaiArgs, ServiceArgs,
-    ServiceSubcommand, SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs,
+    ArtifactArgs, ArtifactSubcommand, BootstrapDbSeedInput, BundleArgs, BundleSubcommand,
+    ChangelogArgs, ChangelogSubcommand, ContainerArgs, ContainerCacheSubcommand,
+    ContainerDataSubcommand, ContainerDbDumpInput, ContainerSubcommand, ContainerVolumeSubcommand,
+    ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs,
+    DemoListQuery, DemoSubcommand, DeployArgs, DeployExportProvider, DeploySubcommand, DocsArgs,
+    DocsBlockRequirement, DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand,
+    InternalRhaiArgs, ServiceArgs, ServiceSubcommand, StateArgs, StateSubcommand, SystemArgs,
+    SystemSubcommand, TaskInvocation, TasksArgs,
 };
 use serde_json::Value;
 
@@ -234,6 +236,26 @@ fn run_rhai_feature(
         FEATURE_CONFIG_EFFECTIVE => run_config_effective(repo_root),
         FEATURE_CONFIG_RAW => run_config_raw(repo_root),
         FEATURE_CONFIG_GET => run_config_get(repo_root, &required_string(&options, "path")?),
+        FEATURE_CONFIG_USER_PATH => run_builtin_json(repo_root, "config", vec!["path".to_owned()]),
+        FEATURE_CONFIG_USER_GET => run_builtin_json(
+            repo_root,
+            "config",
+            vec!["get".to_owned(), required_string(&options, "key")?],
+        ),
+        FEATURE_CONFIG_USER_SET => run_builtin_json(
+            repo_root,
+            "config",
+            vec![
+                "set".to_owned(),
+                required_string(&options, "key")?,
+                required_string(&options, "value")?,
+            ],
+        ),
+        FEATURE_CONFIG_USER_UNSET => run_builtin_json(
+            repo_root,
+            "config",
+            vec!["unset".to_owned(), required_string(&options, "key")?],
+        ),
         FEATURE_TASKS_RESOLVE => run_typed_command(
             repo_root,
             effigy_cli::Command::Tasks(TasksArgs {
@@ -252,6 +274,64 @@ fn run_rhai_feature(
                 resolve_selector: None,
                 output_json: true,
                 pretty_json: false,
+            }),
+        ),
+        FEATURE_STATE_PLAN => run_typed_command(
+            repo_root,
+            effigy_cli::Command::State(StateArgs {
+                subcommand: StateSubcommand::Plan {
+                    manifest: path_option(&options, "manifest")?,
+                    stack: string_option(&options, "stack")?,
+                    write_report: bool_option(&options, "write_report")?.unwrap_or(false),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_STATE_APPLY => run_typed_command(
+            repo_root,
+            effigy_cli::Command::State(StateArgs {
+                subcommand: StateSubcommand::Apply {
+                    manifest: path_option(&options, "manifest")?,
+                    stack: string_option(&options, "stack")?,
+                    yes: bool_option(&options, "yes")?.unwrap_or(true),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_STATE_CAPTURE => run_typed_command(
+            repo_root,
+            effigy_cli::Command::State(StateArgs {
+                subcommand: StateSubcommand::Capture {
+                    manifest: path_option(&options, "manifest")?,
+                    stack: string_option(&options, "stack")?,
+                    profile: string_option(&options, "profile")?,
+                    role: string_option(&options, "role")?,
+                    source_env: string_option(&options, "source_env")?,
+                    key: string_option(&options, "key")?,
+                    source: string_option(&options, "source")?,
+                    destination_ref: string_option(&options, "destination_ref")?,
+                    hook: string_option(&options, "hook")?,
+                    task: string_option(&options, "task")?,
+                    yes: bool_option(&options, "yes")?.unwrap_or(true),
+                    push: bool_option(&options, "push")?.unwrap_or(false),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_STATE_HISTORY => run_typed_command(
+            repo_root,
+            effigy_cli::Command::State(StateArgs {
+                subcommand: StateSubcommand::History {
+                    stack: required_string(&options, "stack")?,
+                    kind: string_option(&options, "kind")?,
+                    limit: usize_option(&options, "limit")?,
+                    lineage: string_option(&options, "lineage")?,
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
             }),
         ),
         FEATURE_CONTAINER_STATUS => {
@@ -348,6 +428,80 @@ fn run_rhai_feature(
                 ))),
             }
         }
+        FEATURE_CONTAINER_DATA_DUMP => run_container_json(
+            repo_root,
+            ContainerSubcommand::Data {
+                name: string_option(&options, "name")?,
+                subcommand: ContainerDataSubcommand::Dump {
+                    db_dumps: container_db_dump_inputs(&options, "db_dumps")?,
+                    push: bool_option(&options, "push")?.unwrap_or(false),
+                },
+            },
+        ),
+        FEATURE_CONTAINER_DATA_SEED => run_container_json(
+            repo_root,
+            ContainerSubcommand::Data {
+                name: None,
+                subcommand: ContainerDataSubcommand::Seed {
+                    db_seeds: bootstrap_db_seed_inputs(&options, "db_seeds")?,
+                    no_prompt: bool_option(&options, "no_prompt")?.unwrap_or(true),
+                    yes: bool_option(&options, "yes")?.unwrap_or(true),
+                },
+            },
+        ),
+        FEATURE_CONTAINER_DATA_PULL_PRODUCTION => run_container_json(
+            repo_root,
+            ContainerSubcommand::Data {
+                name: Some(required_string(&options, "name")?),
+                subcommand: ContainerDataSubcommand::PullProduction {
+                    yes: bool_option(&options, "yes")?.unwrap_or(true),
+                },
+            },
+        ),
+        FEATURE_CONTAINER_CACHE_LIST => run_container_json(
+            repo_root,
+            ContainerSubcommand::Cache {
+                name: string_option(&options, "name")?,
+                subcommand: ContainerCacheSubcommand::List {
+                    global: bool_option(&options, "global")?.unwrap_or(false),
+                    project: string_option(&options, "project")?,
+                    kind: string_option(&options, "kind")?,
+                },
+            },
+        ),
+        FEATURE_CONTAINER_CACHE_PRUNE => run_container_json(
+            repo_root,
+            ContainerSubcommand::Cache {
+                name: string_option(&options, "name")?,
+                subcommand: ContainerCacheSubcommand::Prune {
+                    global: bool_option(&options, "global")?.unwrap_or(false),
+                    yes: bool_option(&options, "yes")?.unwrap_or(true),
+                    project: string_option(&options, "project")?,
+                    kind: string_option(&options, "kind")?,
+                },
+            },
+        ),
+        FEATURE_CONTAINER_VOLUME_LIST => run_container_json(
+            repo_root,
+            ContainerSubcommand::Volume {
+                subcommand: ContainerVolumeSubcommand::List {
+                    global: bool_option(&options, "global")?.unwrap_or(false),
+                    orphans: bool_option(&options, "orphans")?.unwrap_or(false),
+                    dormant: bool_option(&options, "dormant")?.unwrap_or(false),
+                },
+            },
+        ),
+        FEATURE_CONTAINER_VOLUME_PRUNE => run_container_json(
+            repo_root,
+            ContainerSubcommand::Volume {
+                subcommand: ContainerVolumeSubcommand::Prune {
+                    global: bool_option(&options, "global")?.unwrap_or(false),
+                    yes: bool_option(&options, "yes")?.unwrap_or(true),
+                    orphans: bool_option(&options, "orphans")?.unwrap_or(false),
+                    dormant: bool_option(&options, "dormant")?.unwrap_or(false),
+                },
+            },
+        ),
         FEATURE_CONTAINER_EJECT => run_container_json(
             repo_root,
             ContainerSubcommand::Eject {
@@ -673,6 +827,43 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
+        FEATURE_ARTIFACT_INSPECT => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Artifact(ArtifactArgs {
+                subcommand: ArtifactSubcommand::Inspect {
+                    source: required_string(&options, "source")?,
+                    farmyard_handoff: bool_option(&options, "farmyard_handoff")?.unwrap_or(false),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_ARTIFACT_STAGE => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Artifact(ArtifactArgs {
+                subcommand: ArtifactSubcommand::Stage {
+                    source: required_string(&options, "source")?,
+                    farmyard_handoff: bool_option(&options, "farmyard_handoff")?.unwrap_or(false),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_ARTIFACT_CAPTURE => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Artifact(ArtifactArgs {
+                subcommand: ArtifactSubcommand::Capture {
+                    source: required_string(&options, "source")?,
+                    destination: required_string(&options, "destination")?,
+                    kind: string_option(&options, "kind")?,
+                    environment_label: string_option(&options, "environment_label")?,
+                    farmyard_handoff: bool_option(&options, "farmyard_handoff")?.unwrap_or(false),
+                    push: bool_option(&options, "push")?.unwrap_or(false),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
         FEATURE_UNLOCK_SCOPES => {
             let mut args = vec!["unlock".to_owned()];
             if bool_option(&options, "all")?.unwrap_or(false) {
@@ -707,14 +898,32 @@ fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_CONFIG_EFFECTIVE
             | FEATURE_CONFIG_RAW
             | FEATURE_CONFIG_GET
+            | FEATURE_CONFIG_USER_PATH
+            | FEATURE_CONFIG_USER_GET
+            | FEATURE_CONFIG_USER_SET
+            | FEATURE_CONFIG_USER_UNSET
             | FEATURE_TASKS_RESOLVE
             | FEATURE_TASKS_INFO
+            | FEATURE_STATE_PLAN
+            | FEATURE_STATE_APPLY
+            | FEATURE_STATE_CAPTURE
+            | FEATURE_STATE_HISTORY
             | FEATURE_CONTAINER_STATUS
             | FEATURE_CONTAINER_LOGS
             | FEATURE_CONTAINER_RESET
             | FEATURE_CONTAINER_DATA
+            | FEATURE_CONTAINER_DATA_DUMP
+            | FEATURE_CONTAINER_DATA_SEED
+            | FEATURE_CONTAINER_DATA_PULL_PRODUCTION
+            | FEATURE_CONTAINER_CACHE_LIST
+            | FEATURE_CONTAINER_CACHE_PRUNE
+            | FEATURE_CONTAINER_VOLUME_LIST
+            | FEATURE_CONTAINER_VOLUME_PRUNE
             | FEATURE_CONTAINER_EJECT
             | FEATURE_CONTAINER_STATS
+            | FEATURE_ARTIFACT_INSPECT
+            | FEATURE_ARTIFACT_STAGE
+            | FEATURE_ARTIFACT_CAPTURE
             | FEATURE_DOCS_CHECK_LINKS
             | FEATURE_DOCS_CHECK_JSON_EXAMPLES
             | FEATURE_DOCS_CHECK_HEADINGS
@@ -1009,6 +1218,26 @@ fn path_option(options: &Value, key: &str) -> Result<Option<PathBuf>, RunnerErro
     Ok(string_option(options, key)?.map(PathBuf::from))
 }
 
+fn container_db_dump_inputs(
+    options: &Value,
+    key: &str,
+) -> Result<Vec<ContainerDbDumpInput>, RunnerError> {
+    string_array(options, key)?
+        .into_iter()
+        .map(parse_container_db_dump_input)
+        .collect()
+}
+
+fn bootstrap_db_seed_inputs(
+    options: &Value,
+    key: &str,
+) -> Result<Vec<BootstrapDbSeedInput>, RunnerError> {
+    string_array(options, key)?
+        .into_iter()
+        .map(parse_bootstrap_db_seed_input)
+        .collect()
+}
+
 fn string_array(options: &Value, key: &str) -> Result<Vec<String>, RunnerError> {
     let Some(value) = options.get(key) else {
         return Ok(Vec::new());
@@ -1067,6 +1296,34 @@ fn usize_option(options: &Value, key: &str) -> Result<Option<usize>, RunnerError
 fn required_usize(options: &Value, key: &str) -> Result<usize, RunnerError> {
     usize_option(options, key)?
         .ok_or_else(|| RunnerError::task_invocation(format!("`{key}` is required")))
+}
+
+fn parse_container_db_dump_input(value: String) -> Result<ContainerDbDumpInput, RunnerError> {
+    let (target, path) = split_targeted_path(value)?;
+    Ok(ContainerDbDumpInput { target, path })
+}
+
+fn parse_bootstrap_db_seed_input(value: String) -> Result<BootstrapDbSeedInput, RunnerError> {
+    let (target, path) = split_targeted_path(value)?;
+    Ok(BootstrapDbSeedInput { target, path })
+}
+
+fn split_targeted_path(value: String) -> Result<(Option<String>, PathBuf), RunnerError> {
+    if let Some((target, path)) = value.split_once('=') {
+        let target = target.trim();
+        let path = path.trim();
+        if target.is_empty() || path.is_empty() {
+            return Err(RunnerError::task_invocation(format!(
+                "invalid targeted path `{value}`"
+            )));
+        }
+        return Ok((Some(target.to_owned()), PathBuf::from(path)));
+    }
+    let path = value.trim();
+    if path.is_empty() {
+        return Err(RunnerError::task_invocation("path value must not be empty"));
+    }
+    Ok((None, PathBuf::from(path)))
 }
 
 fn run_effigy_command(

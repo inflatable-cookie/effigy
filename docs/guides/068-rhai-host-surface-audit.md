@@ -37,14 +37,18 @@ Policy:
 
 | Surface | Rhai helpers | Status |
 | --- | --- | --- |
-| Runtime context | planned universal context helper backed by `EffigyRuntimeContext` | Planned |
-| Execution request | planned execution helper backed by `TaskExecutionRequestBuilder` | Planned |
-| Config | `config::raw`, `config::effective`, `config::get`, `config::get_or` | Exposed |
+| Runtime context | `runtime::context` backed by `EffigyRuntimeContext` | Exposed |
+| Execution request | `exec::run` backed by Effigy's routed execution helpers | Exposed |
+| Config | `config::raw`, `config::effective`, `config::get`, `config::get_or`, `config::user_path`, `config::user_get`, `config::user_set`, `config::user_unset` | Exposed |
 | Tasks | `task::run`, `task::run_json`, `task::list`, `task::resolve`, `task::info`, `catalog::tasks` | Exposed |
 | Container lifecycle | `container::up`, `container::down`, `container::down_all`, `container::shell`, `container::shell` (with service), `container::exec` | Exposed |
 | Container inspection | `container::status`, `container::logs`, `container::stats` | Exposed |
-| Container data | `container::data` | Exposed |
+| Container cleanup | `container::cache_list`, `container::cache_prune`, `container::volume_list`, `container::volume_prune` | Exposed |
+| Container data | `container::data`, `container::data_dump`, `container::data_seed`, `container::data_pull_production` | Exposed |
 | Container reset/eject | `container::reset`, `container::eject` | Exposed |
+| State stack orchestration | `state::plan`, `state::apply`, `state::capture`, `state::history` | Exposed |
+| State capture context | `state::capture_context`, `state::capture_context_path`, `state::capture_source`, `state::capture_destination_ref` | Exposed |
+| Artifacts | `artifact::inspect`, `artifact::stage`, `artifact::capture` | Exposed |
 | Docs checks | `docs::check_links`, `docs::check_json_examples`, `docs::check_headings`, `docs::check_paths`, `docs::check_contains`, `docs::check_forbidden`, `docs::check_index`, `docs::check_next_action`, `docs::check_workflow_paths`, `docs::add_log_index` | Exposed |
 | Bundles | `bundle::list`, `bundle::inspect`, `bundle::emit` | Exposed |
 | Services | `service::list`, `service::extract` | Exposed |
@@ -144,15 +148,15 @@ HTTP helpers return:
 - `http::post(url, body)` — POST with a plain string body; equivalent to
   `http::post(url, #{ body: "..." })`.
 
-## Planned Runtime/Execution Surface
+## Runtime and Execution Surface
 
-The runtime/container/execution modularisation lane will add a typed helper for
-scripts that need Effigy to choose the correct execution route from declared
-intent.
+Effigy already exposes a typed runtime context helper and a routed execution
+helper for scripts that need Effigy to choose the correct host-versus-container
+path from declared intent.
 
 ### Runtime Context
 
-Target shape:
+Shape:
 
 ```rhai
 let ctx = runtime::context();
@@ -187,7 +191,7 @@ Rules:
 
 ### Execution Helper
 
-Target shape:
+Shape:
 
 ```rhai
 let result = exec::run(

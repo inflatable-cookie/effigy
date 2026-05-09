@@ -249,5 +249,81 @@ fn build_container_module(context: Arc<ScriptContext>, callbacks: HostCallbacks)
         context.clone(),
         callbacks.clone(),
     );
+    module_feature_no_args(
+        &mut module,
+        "cache_list",
+        FEATURE_CONTAINER_CACHE_LIST,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "cache_list",
+        FEATURE_CONTAINER_CACHE_LIST,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "cache_prune",
+        FEATURE_CONTAINER_CACHE_PRUNE,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_no_args(
+        &mut module,
+        "volume_list",
+        FEATURE_CONTAINER_VOLUME_LIST,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "volume_list",
+        FEATURE_CONTAINER_VOLUME_LIST,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "volume_prune",
+        FEATURE_CONTAINER_VOLUME_PRUNE,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "data_dump",
+        FEATURE_CONTAINER_DATA_DUMP,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_options(
+        &mut module,
+        "data_seed",
+        FEATURE_CONTAINER_DATA_SEED,
+        context.clone(),
+        callbacks.clone(),
+    );
+    let data_pull_context = context.clone();
+    let data_pull_callbacks = callbacks.clone();
+    module.set_native_fn(
+        "data_pull_production",
+        move |name: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
+            run_feature_dynamic(
+                &data_pull_context,
+                &data_pull_callbacks,
+                FEATURE_CONTAINER_DATA_PULL_PRODUCTION,
+                json!({ "name": name.as_str() }),
+            )
+        },
+    );
+    module_feature_options(
+        &mut module,
+        "data_pull_production",
+        FEATURE_CONTAINER_DATA_PULL_PRODUCTION,
+        context.clone(),
+        callbacks.clone(),
+    );
     module
 }

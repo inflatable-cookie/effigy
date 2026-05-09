@@ -10,8 +10,10 @@ pub const MODULE_TOML: &str = "toml";
 pub const MODULE_STR: &str = "str";
 pub const MODULE_RANDOM: &str = "random";
 pub const MODULE_SEARCH: &str = "search";
+pub const MODULE_ARTIFACT: &str = "artifact";
 pub const MODULE_CONFIG: &str = "config";
 pub const MODULE_TASK: &str = "task";
+pub const MODULE_STATE: &str = "state";
 pub const MODULE_CONTAINER: &str = "container";
 pub const MODULE_SCAN: &str = "scan";
 pub const MODULE_DOCS: &str = "docs";
@@ -43,8 +45,10 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_STR,
     MODULE_RANDOM,
     MODULE_SEARCH,
+    MODULE_ARTIFACT,
     MODULE_CONFIG,
     MODULE_TASK,
+    MODULE_STATE,
     MODULE_CONTAINER,
     MODULE_SCAN,
     MODULE_DOCS,
@@ -71,12 +75,30 @@ pub const FEATURE_CATALOG_TASKS: &str = "catalog.tasks";
 pub const FEATURE_CONFIG_EFFECTIVE: &str = "config.effective";
 pub const FEATURE_CONFIG_RAW: &str = "config.raw";
 pub const FEATURE_CONFIG_GET: &str = "config.get";
+pub const FEATURE_CONFIG_USER_PATH: &str = "config.user_path";
+pub const FEATURE_CONFIG_USER_GET: &str = "config.user_get";
+pub const FEATURE_CONFIG_USER_SET: &str = "config.user_set";
+pub const FEATURE_CONFIG_USER_UNSET: &str = "config.user_unset";
+pub const FEATURE_STATE_PLAN: &str = "state.plan";
+pub const FEATURE_STATE_APPLY: &str = "state.apply";
+pub const FEATURE_STATE_CAPTURE: &str = "state.capture";
+pub const FEATURE_STATE_HISTORY: &str = "state.history";
 pub const FEATURE_CONTAINER_STATUS: &str = "container.status";
 pub const FEATURE_CONTAINER_LOGS: &str = "container.logs";
 pub const FEATURE_CONTAINER_RESET: &str = "container.reset";
 pub const FEATURE_CONTAINER_DATA: &str = "container.data";
+pub const FEATURE_CONTAINER_DATA_DUMP: &str = "container.data_dump";
+pub const FEATURE_CONTAINER_DATA_SEED: &str = "container.data_seed";
+pub const FEATURE_CONTAINER_DATA_PULL_PRODUCTION: &str = "container.data_pull_production";
+pub const FEATURE_CONTAINER_CACHE_LIST: &str = "container.cache_list";
+pub const FEATURE_CONTAINER_CACHE_PRUNE: &str = "container.cache_prune";
+pub const FEATURE_CONTAINER_VOLUME_LIST: &str = "container.volume_list";
+pub const FEATURE_CONTAINER_VOLUME_PRUNE: &str = "container.volume_prune";
 pub const FEATURE_CONTAINER_EJECT: &str = "container.eject";
 pub const FEATURE_CONTAINER_STATS: &str = "container.stats";
+pub const FEATURE_ARTIFACT_INSPECT: &str = "artifact.inspect";
+pub const FEATURE_ARTIFACT_STAGE: &str = "artifact.stage";
+pub const FEATURE_ARTIFACT_CAPTURE: &str = "artifact.capture";
 pub const FEATURE_DOCS_CHECK_LINKS: &str = "docs.check_links";
 pub const FEATURE_DOCS_CHECK_JSON_EXAMPLES: &str = "docs.check_json_examples";
 pub const FEATURE_DOCS_CHECK_HEADINGS: &str = "docs.check_headings";
@@ -128,12 +150,30 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_CONFIG_EFFECTIVE,
     FEATURE_CONFIG_RAW,
     FEATURE_CONFIG_GET,
+    FEATURE_CONFIG_USER_PATH,
+    FEATURE_CONFIG_USER_GET,
+    FEATURE_CONFIG_USER_SET,
+    FEATURE_CONFIG_USER_UNSET,
+    FEATURE_STATE_PLAN,
+    FEATURE_STATE_APPLY,
+    FEATURE_STATE_CAPTURE,
+    FEATURE_STATE_HISTORY,
     FEATURE_CONTAINER_STATUS,
     FEATURE_CONTAINER_LOGS,
     FEATURE_CONTAINER_RESET,
     FEATURE_CONTAINER_DATA,
+    FEATURE_CONTAINER_DATA_DUMP,
+    FEATURE_CONTAINER_DATA_SEED,
+    FEATURE_CONTAINER_DATA_PULL_PRODUCTION,
+    FEATURE_CONTAINER_CACHE_LIST,
+    FEATURE_CONTAINER_CACHE_PRUNE,
+    FEATURE_CONTAINER_VOLUME_LIST,
+    FEATURE_CONTAINER_VOLUME_PRUNE,
     FEATURE_CONTAINER_EJECT,
     FEATURE_CONTAINER_STATS,
+    FEATURE_ARTIFACT_INSPECT,
+    FEATURE_ARTIFACT_STAGE,
+    FEATURE_ARTIFACT_CAPTURE,
     FEATURE_DOCS_CHECK_LINKS,
     FEATURE_DOCS_CHECK_JSON_EXAMPLES,
     FEATURE_DOCS_CHECK_HEADINGS,

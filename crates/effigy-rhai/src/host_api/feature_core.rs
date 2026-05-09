@@ -7,8 +7,8 @@ use crate::surface::*;
 
 use super::{
     dynamic_array_to_strings, module_feature_get_value, module_feature_no_args,
-    module_feature_options, module_feature_string, rhai_runtime_error, HostCallbacks,
-    ScriptContext,
+    module_feature_options, module_feature_string, module_feature_two_strings, rhai_runtime_error,
+    HostCallbacks, ScriptContext,
 };
 
 pub(super) fn register_core_feature_modules(
@@ -55,6 +55,37 @@ fn build_config_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) ->
         "get",
         FEATURE_CONFIG_GET,
         "path",
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_no_args(
+        &mut module,
+        "user_path",
+        FEATURE_CONFIG_USER_PATH,
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_string(
+        &mut module,
+        "user_get",
+        FEATURE_CONFIG_USER_GET,
+        "key",
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_two_strings(
+        &mut module,
+        "user_set",
+        FEATURE_CONFIG_USER_SET,
+        ["key", "value"],
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_string(
+        &mut module,
+        "user_unset",
+        FEATURE_CONFIG_USER_UNSET,
+        "key",
         context.clone(),
         callbacks.clone(),
     );

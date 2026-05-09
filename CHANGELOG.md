@@ -32,9 +32,23 @@ During v0.x, MINOR bumps may include breaking changes.
   Named capture profiles under `[state.<stack>.captures.<profile>]` let
   operators run concise captures such as `effigy state capture uat new-content`
   while preserving flag overrides for one-off captures.
+  Rhai tasks can now use the `state` module to read capture context through
+  `state::capture_context()`, `state::capture_context_path()`,
+  `state::capture_source()`, and `state::capture_destination_ref()` without
+  reaching directly into environment variables.
   Task env overrides now propagate through routed workspace-container handoff,
   so state capture context reaches app-owned tasks that execute inside the
   workspace container.
+- **Rhai typed surface closeout:** `.rhai` scripts now expose typed helpers for
+  state orchestration (`state::plan`, `state::apply`, `state::capture`,
+  `state::history`), artifacts (`artifact::inspect`, `artifact::stage`,
+  `artifact::capture`), container cleanup and logical DB flows
+  (`container::cache_*`, `container::volume_*`, `container::data_dump`,
+  `container::data_seed`, `container::data_pull_production`), and user-global
+  config mutation (`config::user_path`, `config::user_get`,
+  `config::user_set`, `config::user_unset`) so first-party scripts no longer
+  need `effigy::run_json(...)` escape hatches for those shipped operator
+  surfaces.
 
 ### Fixed
 - **Scoped runtime backend persistence** now stores container backend overrides

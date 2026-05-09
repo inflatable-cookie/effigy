@@ -5,9 +5,9 @@ use rhai::{Array, Dynamic, Engine, EvalAltResult, Map};
 use crate::surface::*;
 
 use super::{
-    dynamic_array_to_strings, effigy_result_map, module_feature_no_args, module_feature_options,
-    module_feature_string, module_feature_string_options, module_feature_two_strings,
-    rhai_runtime_error, HostCallbacks, ScriptContext,
+    dynamic_array_to_strings, effigy_result_map, map_to_json, module_feature_no_args,
+    module_feature_options, module_feature_string, module_feature_string_options,
+    module_feature_two_strings, rhai_runtime_error, HostCallbacks, ScriptContext,
 };
 
 pub(super) fn register_misc_feature_modules(
@@ -15,6 +15,10 @@ pub(super) fn register_misc_feature_modules(
     context: Arc<ScriptContext>,
     callbacks: HostCallbacks,
 ) {
+    engine.register_static_module(
+        MODULE_ARTIFACT,
+        std::rc::Rc::new(build_artifact_module(context.clone(), callbacks.clone())),
+    );
     engine.register_static_module(
         MODULE_DEPLOY,
         std::rc::Rc::new(build_deploy_module(context.clone(), callbacks.clone())),
@@ -71,6 +75,68 @@ pub(super) fn register_misc_feature_modules(
         MODULE_EFFIGY,
         std::rc::Rc::new(build_effigy_module(context, callbacks)),
     );
+}
+
+fn build_artifact_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
+    let mut module = rhai::Module::new();
+    module_feature_string_options(
+        &mut module,
+        "inspect",
+        FEATURE_ARTIFACT_INSPECT,
+        "source",
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_string_options(
+        &mut module,
+        "stage",
+        FEATURE_ARTIFACT_STAGE,
+        "source",
+        context.clone(),
+        callbacks.clone(),
+    );
+    let capture_context = context.clone();
+    let capture_callbacks = callbacks.clone();
+    module.set_native_fn(
+        "capture",
+        move |source: rhai::ImmutableString,
+              destination: rhai::ImmutableString|
+              -> Result<Dynamic, Box<rhai::EvalAltResult>> {
+            super::run_feature_dynamic(
+                &capture_context,
+                &capture_callbacks,
+                FEATURE_ARTIFACT_CAPTURE,
+                serde_json::json!({
+                    "source": source.as_str(),
+                    "destination": destination.as_str(),
+                }),
+            )
+        },
+    );
+    module.set_native_fn(
+        "capture",
+        move |source: rhai::ImmutableString,
+              destination: rhai::ImmutableString,
+              options: Map|
+              -> Result<Dynamic, Box<rhai::EvalAltResult>> {
+            let mut options = match map_to_json(options)? {
+                serde_json::Value::Object(options) => options,
+                _ => unreachable!("Rhai map_to_json must produce a JSON object"),
+            };
+            options.insert("source".to_owned(), serde_json::json!(source.as_str()));
+            options.insert(
+                "destination".to_owned(),
+                serde_json::json!(destination.as_str()),
+            );
+            super::run_feature_dynamic(
+                &context,
+                &callbacks,
+                FEATURE_ARTIFACT_CAPTURE,
+                serde_json::Value::Object(options),
+            )
+        },
+    );
+    module
 }
 
 fn build_deploy_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {

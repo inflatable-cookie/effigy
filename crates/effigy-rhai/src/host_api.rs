@@ -30,6 +30,8 @@ mod http;
 mod process;
 #[path = "host_api/search.rs"]
 mod search;
+#[path = "host_api/state.rs"]
+mod state;
 #[path = "host_api/utility.rs"]
 mod utility;
 
@@ -60,6 +62,7 @@ pub(super) fn register_host_api(
     exec::register_exec_module(engine, context.clone(), callbacks.clone());
     http::register_http_module(engine, context.clone());
     search::register_search_module(engine, context.clone());
+    state::register_state_module(engine, context.clone(), callbacks.clone());
     feature_core::register_core_feature_modules(engine, context.clone(), callbacks.clone());
     container::register_container_module(engine, context.clone(), callbacks.clone());
     feature_misc::register_misc_feature_modules(engine, context.clone(), callbacks.clone());

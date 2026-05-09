@@ -376,6 +376,16 @@ Environment aliases:
 - `EFFIGY_STATE_CAPTURE_DESTINATION_REF` when supplied
 - `EFFIGY_STATE_CAPTURE_CONTEXT` when a task context file is written
 
+Rhai capture helpers:
+
+- `state::capture_context()` returns the parsed capture context map
+- `state::capture_context_path()` returns the context JSON path
+- `state::capture_source()` returns the target payload path
+- `state::capture_destination_ref()` returns the planned destination ref when
+  supplied
+
+Rhai tasks should prefer the `state` module over direct environment access.
+
 App-owned semantics:
 
 - selecting which rows/files belong in an overlay
