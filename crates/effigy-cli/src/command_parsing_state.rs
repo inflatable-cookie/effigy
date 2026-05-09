@@ -331,7 +331,13 @@ where
             "--push" => push = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::State)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
-            _ if stack.is_none() && manifest.is_none() => stack = Some(arg),
+            _ if stack.is_none() && manifest.is_none() => {
+                if looks_like_manifest_path(&arg) {
+                    manifest = Some(PathBuf::from(arg));
+                } else {
+                    stack = Some(arg);
+                }
+            }
             _ if profile.is_none() => profile = Some(arg),
             other => {
                 return Err(CliParseError::InvalidArguments(format!(

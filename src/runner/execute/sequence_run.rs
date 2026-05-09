@@ -356,7 +356,7 @@ fn run_single_step(
             let _env_guard = ScopedEnvOverride::set(&step.env);
             let output = run_embedded_command(
                 &selection.catalog.catalog_root,
-                command.clone(),
+                *command.clone(),
                 cwd,
                 EmbeddedRepoOverrideMode::Force,
             )?;
@@ -383,7 +383,7 @@ enum StepAction {
         cwd: PathBuf,
     },
     Builtin {
-        command: Command,
+        command: Box<Command>,
         cwd: PathBuf,
     },
     Rhai {
@@ -483,7 +483,7 @@ fn resolve_task_step(
             &selection.catalog.catalog_root,
         )?;
         return Ok(StepAction::Builtin {
-            command,
+            command: Box::new(command),
             cwd: selection.catalog.catalog_root.clone(),
         });
     }

@@ -337,6 +337,51 @@ fn parse_state_capture_with_stack_and_profile() {
 }
 
 #[test]
+fn parse_state_capture_with_positional_manifest() {
+    let cmd = parse_command(vec![
+        "state".to_owned(),
+        "capture".to_owned(),
+        "docs/contracts/fixtures/state-stack/acowtancy-uat.toml".to_owned(),
+        "--role".to_owned(),
+        "uat-capture".to_owned(),
+        "--source-env".to_owned(),
+        "uat".to_owned(),
+        "--key".to_owned(),
+        "uat-capture-2026-05-08".to_owned(),
+        "--ref".to_owned(),
+        "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::State(StateArgs {
+            subcommand: StateSubcommand::Capture {
+                manifest: Some(PathBuf::from(
+                    "docs/contracts/fixtures/state-stack/acowtancy-uat.toml",
+                )),
+                stack: None,
+                profile: None,
+                role: Some("uat-capture".to_owned()),
+                source_env: Some("uat".to_owned()),
+                key: Some("uat-capture-2026-05-08".to_owned()),
+                source: None,
+                destination_ref: Some(
+                    "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08".to_owned()
+                ),
+                hook: None,
+                task: None,
+                yes: false,
+                push: false,
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_state_capture_with_push() {
     let cmd = parse_command(vec![
         "state".to_owned(),

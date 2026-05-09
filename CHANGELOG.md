@@ -51,6 +51,12 @@ During v0.x, MINOR bumps may include breaking changes.
   surfaces.
 
 ### Fixed
+- **State capture standalone manifest parsing** now treats a positional
+  `*.toml` argument the same way across `state plan`, `state apply`, and
+  `state capture`, so JSON contract and operator flows like
+  `effigy state capture path/to/state-stack.toml ...` no longer misroute the
+  manifest path into the stack selector. Ambiguous manifest-stack errors also
+  again point users at `--stack <NAME>`.
 - **Scoped runtime backend persistence** now stores container backend overrides
   per container policy instead of one repo-wide backend value, so helper
   containers like Effigy's `linux-release` rehearsal container no longer drift

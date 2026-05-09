@@ -457,10 +457,8 @@ fn build_routed_task_exec_args_forwards_task_env_to_handoff() {
         "workspace",
         "/workspace-root/repo",
     );
-    assert!(args
-        .windows(2)
-        .any(|window| window[0] == OsString::from("-e")
-            && window[1] == OsString::from("EFFIGY_STATE_CAPTURE_CONTEXT=.effigy/context.json")));
+    assert!(args.windows(2).any(|window| window[0] == "-e"
+        && window[1] == "EFFIGY_STATE_CAPTURE_CONTEXT=.effigy/context.json"));
 }
 
 #[test]

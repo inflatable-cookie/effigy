@@ -407,7 +407,7 @@ fn select_manifest_state_stack(
         ));
     } else {
         return Err(RunnerError::task_invocation(format!(
-            "multiple state stacks are defined; set `state.default` or pass a stack name: {}",
+            "multiple state stacks are defined; set `state.default` or pass `--stack <NAME>`: {}",
             stacks.keys().cloned().collect::<Vec<_>>().join(", ")
         )));
     };
