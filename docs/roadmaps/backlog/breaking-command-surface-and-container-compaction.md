@@ -215,3 +215,36 @@ Promotion signals:
   two container crates without introducing a new circular or confused boundary
 - the active generation has a real execution window for this cleanup instead of
   treating it as open-ended background work
+
+## 11) Pickup Note
+
+Current state of Batch 1:
+
+- partial command-surface implementation is already in the worktree
+- root parser and builtin registry have been shifted toward:
+  - `tasks migrate`
+  - `tasks unlock`
+  - `tasks cache`
+  - `config completion`
+- root `catalogs` alias has been removed from parser and builtin dispatch
+- help, command matrix, completion index, and a wide set of tests have been
+  partially updated to the new shapes
+
+Not done yet:
+
+- broad validation has not been completed
+- crate compaction has not started
+- expect more fallout in parser/help/JSON-contract/CLI-output tests before this
+  batch is stable
+
+Resume sequence:
+
+- run `cargo fmt --all`
+- run `git diff --check`
+- run focused validation first, not full gates:
+  - parser/help tests
+  - builtin/help contract tests
+  - CLI output tests touching `tasks`, `config completion`, and removed
+    `catalogs`
+- only start the container-crate merge after the command-surface batch is
+  green
