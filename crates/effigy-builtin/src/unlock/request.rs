@@ -46,12 +46,12 @@ pub(super) fn parse_unlock_request(
 
     if unlock_all_flag && !scopes.is_empty() {
         return Err(BuiltinError::task_invocation(
-            "`unlock` accepts either `--all` or explicit scope values, not both",
+            "`tasks unlock` accepts either `--all` or explicit scope values, not both",
         ));
     }
     if !unlock_all_flag && scopes.is_empty() {
         return Err(BuiltinError::task_invocation(
-            "`unlock` requires at least one scope (or `--all`)",
+            "`tasks unlock` requires at least one scope (or `--all`)",
         ));
     }
 

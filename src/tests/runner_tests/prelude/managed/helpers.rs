@@ -65,7 +65,9 @@ pub(in crate::runner::tests) fn run_unlock_with_repo(
     root: &Path,
     scopes: &[&str],
 ) -> Result<String, RunnerError> {
-    run_named_task_with_repo(root, "unlock", scopes)
+    let mut args = vec!["unlock"];
+    args.extend_from_slice(scopes);
+    run_named_task_with_repo(root, "tasks", &args)
 }
 
 pub(in crate::runner::tests) fn run_task_with_repo(

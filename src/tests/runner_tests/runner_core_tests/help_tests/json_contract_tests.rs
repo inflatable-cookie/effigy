@@ -9,15 +9,15 @@ fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_an
             "builtin-cache-help-json-contract",
             "cache",
             &["--help", "--json", "--wat"],
-            "cache",
-            "effigy cache inspect [<selector>] [--json]",
+            "tasks-cache",
+            "effigy tasks cache inspect [<selector>] [--json]",
         ),
         builtin_help_json_case(
             "builtin-completion-help-json-contract",
             "completion",
             &["--help", "--json", "--wat"],
             "completion",
-            "effigy completion <bash|zsh|fish> [--json]",
+            "effigy config completion <bash|zsh|fish> [--json]",
         ),
         builtin_help_json_case(
             "builtin-config-help-json-contract",
@@ -44,8 +44,8 @@ fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_an
             "builtin-migrate-help-json-contract",
             "migrate",
             &["--help", "--json", "--wat"],
-            "migrate",
-            "effigy migrate [--from <PATH>]",
+            "tasks-migrate",
+            "effigy tasks migrate [--from <PATH>]",
         ),
         builtin_help_json_case(
             "builtin-doctor-help-json-contract",
@@ -72,8 +72,8 @@ fn run_manifest_task_builtin_help_json_contract_table_has_stable_schema_topic_an
             "builtin-unlock-help-json-contract",
             "unlock",
             &["--help", "--json", "--wat"],
-            "unlock",
-            "effigy unlock [--all | <scope>...] [--yes] [--json]",
+            "tasks-unlock",
+            "effigy tasks unlock [--all | <scope>...] [--yes] [--json]",
         ),
     ];
 

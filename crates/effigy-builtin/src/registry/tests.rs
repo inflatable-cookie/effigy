@@ -3,19 +3,7 @@ use super::builtin_registry_entry;
 #[test]
 fn builtin_registry_contract_is_stable() {
     let names = [
-        "doctor",
-        "catalogs",
-        "tasks",
-        "config",
-        "help",
-        "watch",
-        "init",
-        "migrate",
-        "unlock",
-        "cache",
-        "completion",
-        "scan",
-        "test",
+        "doctor", "tasks", "config", "help", "watch", "init", "scan", "test",
     ];
 
     for name in names {

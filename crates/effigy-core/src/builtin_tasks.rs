@@ -7,11 +7,11 @@ pub const BUILTIN_TASKS: &[(&str, &str)] = &[
     ("help", "Show general help (same as --help)"),
     (
         "config",
-        "Show supported project effigy.toml configuration keys and examples",
+        "Show supported project effigy.toml configuration keys/examples and machine-level config helpers",
     ),
     (
         "container",
-        "Operate manifest-defined Colima-backed container environments",
+        "Operate manifest-defined local container environments",
     ),
     (
         "doctor",
@@ -29,22 +29,6 @@ pub const BUILTIN_TASKS: &[(&str, &str)] = &[
     (
         "init",
         "Initialize baseline effigy.toml scaffold with dry-run/force controls",
-    ),
-    (
-        "migrate",
-        "Migrate package scripts into [tasks] with preview/apply flow",
-    ),
-    (
-        "unlock",
-        "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)",
-    ),
-    (
-        "cache",
-        "Inspect and invalidate phase-1 task cache metadata (`inspect`, `invalidate`)",
-    ),
-    (
-        "completion",
-        "Generate shell completion scripts (`bash`, `zsh`, `fish`)",
     ),
     (
         "scan",

@@ -25,9 +25,9 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy test"));
     assert!(rendered.contains("effigy watch"));
     assert!(rendered.contains("effigy init"));
-    assert!(rendered.contains("effigy migrate"));
-    assert!(rendered.contains("effigy cache"));
-    assert!(rendered.contains("effigy completion"));
+    assert!(rendered.contains("effigy tasks migrate"));
+    assert!(rendered.contains("effigy tasks cache"));
+    assert!(rendered.contains("effigy config completion"));
     assert!(rendered.contains("<catalog>/test fallback"));
     assert!(!rendered.contains("effigy test --plan"));
     assert!(rendered.contains("Use `effigy <built-in-task> --help`"));
@@ -430,10 +430,9 @@ fn render_init_help_shows_phase_scope() {
 #[test]
 fn render_migrate_help_shows_phase_scope() {
     let rendered = render_help_text(HelpTopic::Migrate);
-    assert!(rendered.contains("migrate Help"));
-    assert!(
-        rendered.contains("effigy migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]")
-    );
+    assert!(rendered.contains("tasks migrate Help"));
+    assert!(rendered
+        .contains("effigy tasks migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]"));
     assert!(rendered.contains("import package.json scripts only"));
     assert!(rendered.contains("--apply"));
     assert!(rendered.contains("--script <NAME>"));

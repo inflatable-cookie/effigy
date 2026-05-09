@@ -61,7 +61,8 @@ pub(super) fn parse_completion_request(
         shell = CompletionShell::parse(arg);
         if shell.is_none() {
             return Err(BuiltinError::task_invocation(format!(
-                "invalid shell `{arg}` for `completion` (expected {COMPLETION_TARGETS_WITH_CANDIDATES_QUOTED})"
+                "invalid shell `{arg}` for `{}` (expected {COMPLETION_TARGETS_WITH_CANDIDATES_QUOTED})",
+                task.name,
             )));
         }
         Ok(ParseLoopAction::Handled)

@@ -47,7 +47,7 @@ pub(in crate::runner::tests) fn builtin_shared_unknown_argument_cases(
             cache_workspace,
             "cache",
             &["inspect", "--wat"],
-            &["unknown argument(s) for built-in `cache`: --wat"],
+            &["unknown argument(s) for built-in `tasks cache`: --wat"],
         ),
         builtin_contract_error_case(
             completion_workspace,
@@ -71,7 +71,7 @@ pub(in crate::runner::tests) fn builtin_shared_unknown_argument_cases(
             unlock_workspace,
             "unlock",
             &["--wat"],
-            &["unknown argument(s) for built-in `unlock`: --wat"],
+            &["unknown argument(s) for built-in `tasks unlock`: --wat"],
         ),
     ]
 }

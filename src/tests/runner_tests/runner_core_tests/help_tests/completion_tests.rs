@@ -28,7 +28,7 @@ fn run_manifest_task_builtin_help_topics_render_expected_content() {
             &["--help"],
             &[
                 "completion Help",
-                "effigy completion <bash|zsh|fish> [--json]",
+                "effigy config completion <bash|zsh|fish> [--json]",
             ],
         ),
     ];
@@ -64,7 +64,7 @@ fn run_manifest_task_builtin_completion_argument_validation_table() {
         builtin_invocation_case(
             "builtin-completion-shell-required",
             &[],
-            &["`completion` requires a shell target (`bash`, `zsh`, or `fish`)"],
+            &["`config completion` requires a shell target (`bash`, `zsh`, or `fish`)"],
         ),
         builtin_invocation_case(
             "builtin-completion-multiple-shell-targets",

@@ -217,13 +217,14 @@ fn cli_json_mode_unlock_watch_lock_reports_unlock_payload() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("--json")
+        .arg("tasks")
         .arg("unlock")
         .arg("task:watch:build")
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
         .output()
-        .expect("run unlock");
+        .expect("run tasks unlock");
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
@@ -231,7 +232,7 @@ fn cli_json_mode_unlock_watch_lock_reports_unlock_payload() {
     assert_eq!(parsed["schema"], "effigy.command.v1");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["command"]["kind"], "task");
-    assert_eq!(parsed["command"]["name"], "unlock");
+    assert_eq!(parsed["command"]["name"], "tasks");
     assert_eq!(parsed["result"]["schema"], "effigy.unlock.v1");
     assert_eq!(parsed["result"]["all"], false);
     assert!(parsed["result"]["removed"]

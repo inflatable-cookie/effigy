@@ -35,8 +35,8 @@ For narrative workflow guidance instead of lookup, start with:
 
 - Need to discover tasks or inspect routing: use `effigy tasks`.
 - Need health checks or routing diagnosis for one selector: use `effigy doctor`.
-- Need tests, watch mode, init, or migrate: use `effigy test`, `watch`,
-  `init`, or `migrate`.
+- Need tests, watch mode, repo init, or package-script import: use
+  `effigy test`, `watch`, `init`, or `tasks migrate`.
 - Need to inspect bundled service fragments or take local ownership: use
   `effigy service`.
 - Need one ad-hoc command inside the dev container without opening a shell:
@@ -70,7 +70,7 @@ For narrative workflow guidance instead of lookup, start with:
 | Command | Purpose | Key Flags | JSON Schema(s) | Deep Dive |
 | --- | --- | --- | --- | --- |
 | `effigy help` / `effigy --help` | Show CLI help and topic guidance | `--json` | `effigy.help.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
-| `effigy tasks` / `effigy catalogs` | List discovered catalogs/tasks and probe routing | `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1` | `016-task-routing-precedence.md` |
+| `effigy tasks` | List discovered catalogs/tasks and probe routing | `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1` | `016-task-routing-precedence.md` |
 | `effigy defer` | Run the configured `[defer]` fallback explicitly (same routing container semantics as selector-miss deferral) | `--repo`, `--json` | command envelope; payload follows the deferred execution path | `015-deferral-fallback-migration.md` |
 | `effigy service` | Inspect the layered service catalog and extract bundled fragments into repo-owned overrides | `list`, `extract`, `--repo`, `--dir`, `--json` | service commands render command-envelope JSON with catalog payloads | `063-container-system-guide.md` |
 | `effigy exec` | Run one ad-hoc command inside the manifest's dev-context container | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
@@ -90,12 +90,12 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy test` | Run built-in or explicit `tasks.test` test orchestration | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
 | `effigy init` | Scaffold baseline `effigy.toml` (and any extra starter files such as root `README.md`) from a named starter (e.g. `minimal`, `underlay`, `northstar`) or list available starters | `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-foundation.md` |
-| `effigy migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-foundation.md` |
+| `effigy tasks migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy config` | Render config reference/schema snippets, inspect the effective composed manifest, or manage user-global container defaults | `inspect`, `schema`, `path`, `get`, `set`, `unset`, `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--user-inspect`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
-| `effigy unlock` | Clear lock scopes manually | `--all`, `--yes`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
+| `effigy tasks unlock` | Clear lock scopes manually | `--all`, `--yes`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
 | `effigy artifact` | Inspect, stage, capture, and push versioned data artifacts to OCI registries or local staging | `inspect`, `stage`, `capture`, `--ref`, `--kind`, `--environment`, `--push`, `--farmyard-handoff`, `--json` | `effigy.artifact.inspect.v1`, `effigy.artifact.stage.v1`, `effigy.artifact.capture.v1` | `072-artifact-commands-guide.md` |
-| `effigy cache` | Inspect and invalidate phase-1 cache metadata | `inspect`, `invalidate`, `--all`, `--json` | `effigy.cache.v1` | `022-manifest-cookbook.md` |
-| `effigy completion` | Generate shell completion scripts and selector candidates | `bash\|zsh\|fish`, `candidates`, `--repo`, `--prefix`, `--json` | `effigy.completion.v1`, `effigy.completion.candidates.v1` | `021-quick-start-and-command-cookbook.md` |
+| `effigy tasks cache` | Inspect and invalidate phase-1 cache metadata | `inspect`, `invalidate`, `--all`, `--json` | `effigy.cache.v1` | `022-manifest-cookbook.md` |
+| `effigy config completion` | Generate shell completion scripts and selector candidates | `bash\|zsh\|fish`, `candidates`, `--repo`, `--prefix`, `--json` | `effigy.completion.v1`, `effigy.completion.candidates.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy changelog` | Validate, format, analyze, and extract Northstar changelog content | `validate`, `format`, `analyze`, `extract`, `--write`, `--preview`, `--version`, `--json` | changelog subcommands render direct output; some results can be wrapped in `effigy.command.v1` with global JSON mode | `052-changelog-workflows-and-northstar-profile.md` |
 | `effigy release` | Inspect release readiness, run gates, preview or apply release mutations, resume prepared-state review, execute release flow, and verify tagged installs | `status`, `gates`, `resume`, `simulate`, `prepare`, `execute`, `verify-install`, `--check-gates`, `--plan`, `--dry-run`, `--yes`, `--version`, `--allow-stale`, `--tag`, `--repo-url`, `--json` | `effigy.release.status.v1`, `effigy.release.gates.v1`, `effigy.release.resume.v1`, `effigy.release.simulate.v1`, `effigy.release.prepare.plan.v1`, `effigy.release.prepare.v1`, `effigy.release.execute.plan.v1`, `effigy.release.execute.v1`, `effigy.release.verify-install.v1` | `051-release-orchestration.md` |
 | `effigy state` | Plan, apply, capture, and inspect layered state-stack reports without moving app semantics into Effigy | `plan [<STACK>]`, `apply [<STACK>]`, `capture <STACK> <PROFILE>`, `history [<STACK>]`, `--manifest`, `--stack`, `--write-report`, `--yes`, `--repo`, `--json` | `effigy.state-stack.lineage.v1`, `effigy.state-stack.apply.v1`, `effigy.state-stack.capture.v1`, `effigy.state-stack.history.v1` | [`../contracts/016-state-stack-and-layered-seed-framework-contract.md`](../contracts/016-state-stack-and-layered-seed-framework-contract.md) |
@@ -213,7 +213,7 @@ effigy test [--plan] [--verbose-results] [--tui] [suite] [runner args]
 effigy watch --owner <effigy|external> [--debounce-ms <MS>] [--include <GLOB>] [--exclude <GLOB>] <task> [task args]
 effigy init [<name>] [--dry-run] [--force] [--json]
 effigy init --list [--json]
-effigy migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]
+effigy tasks migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]
 effigy <task> [task args]
 effigy <catalog>/<task> [task args]
 ```
@@ -221,11 +221,11 @@ effigy <catalog>/<task> [task args]
 ### Cache, Completion, Changelog, and Release
 
 ```sh
-effigy unlock [--all | <scope>...] [--yes] [--json]
-effigy cache inspect [<selector>] [--json]
-effigy cache invalidate [<selector>...] [--all] [--json]
-effigy completion <bash|zsh|fish> [--json]
-effigy completion candidates [--prefix <value>] [--json]
+effigy tasks unlock [--all | <scope>...] [--yes] [--json]
+effigy tasks cache inspect [<selector>] [--json]
+effigy tasks cache invalidate [<selector>...] [--all] [--json]
+effigy config completion <bash|zsh|fish> [--json]
+effigy config completion candidates [--prefix <value>] [--json]
 effigy changelog <validate|format|analyze|extract> [ARGS...] [--json]
 effigy release <status|gates|resume|simulate|prepare|execute|verify-install> [ARGS...] [--json]
 effigy distribution <preflight|validate-metadata|check-glibc-floor|first-publish|validate-artifacts|generate-closeout|write-summary> [ARGS...] [--json]
@@ -286,15 +286,15 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - `config --inspect` cannot be combined with `--schema`
 - `config --path` requires `--inspect`
 - `config --runner` requires `--schema --target test`
-- `unlock` accepts either explicit scopes or `--all`, not both
-- `cache invalidate` accepts selectors or `--all`, not both
+- `tasks unlock` accepts either explicit scopes or `--all`, not both
+- `tasks cache invalidate` accepts selectors or `--all`, not both
 - release operator flows should prefer built-in `effigy release ...` commands,
   not wrapper scripts
 - top-level `[env]`, task-local `env`, and run-array env directives all
   participate in task execution; use the env guide for the full fallback and
   indirection rules
-- completion candidates are cached and include both built-ins and discovered
-  task selectors
+- config completion candidates are cached and include both built-ins and
+  discovered task selectors
 - `init` never replaces an existing **root** `README.md` unless `--force`; other
   declared paths still fail fast when present without `--force`
 - `state plan` is plan-only: it validates the manifest, reports ordered lineage,

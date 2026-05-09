@@ -27,7 +27,7 @@ pub(super) fn run_builtin_unlock(
 ) -> Result<Option<String>, BuiltinError> {
     run_builtin_command(
         args,
-        |output_json| render_builtin_help_text("unlock", render_unlock_help(), output_json),
+        |output_json| render_builtin_help_text("tasks-unlock", render_unlock_help(), output_json),
         || parse_unlock_request(task, args),
         |request: UnlockRequest| run_unlock_request(ports, request, target_root),
     )
@@ -59,7 +59,7 @@ fn render_unlock_help() -> String {
         &[
             HelpSection::Plain {
                 heading: "Usage",
-                lines: &["effigy unlock [--all | <scope>...] [--yes] [--json]"],
+                lines: &["effigy tasks unlock [--all | <scope>...] [--yes] [--json]"],
             },
             HelpSection::Plain {
                 heading: "Prompting",
@@ -80,10 +80,10 @@ fn render_unlock_help() -> String {
             HelpSection::Bulleted {
                 heading: "Examples",
                 items: &[
-                    "effigy unlock workspace",
-                    "effigy unlock shared:dev-stack task:dev profile:dev/admin",
-                    "effigy unlock --all",
-                    "effigy unlock --all --yes --json",
+                    "effigy tasks unlock workspace",
+                    "effigy tasks unlock shared:dev-stack task:dev profile:dev/admin",
+                    "effigy tasks unlock --all",
+                    "effigy tasks unlock --all --yes --json",
                 ],
             },
         ],

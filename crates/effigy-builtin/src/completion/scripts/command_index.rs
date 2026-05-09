@@ -24,10 +24,13 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
     match command {
         "help" => &["--json", "--help", "-h"],
         "version" => &["--json", "--help", "-h"],
-        "tasks" | "catalogs" => &[
+        "tasks" => &[
             "--repo",
             "--task",
             "--resolve",
+            "migrate",
+            "unlock",
+            "cache",
             "--json",
             "--pretty",
             "--help",
@@ -56,6 +59,11 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
         "init" => &["--dry-run", "--force", "--json", "--help", "-h"],
         "migrate" => &["--from", "--script", "--apply", "--json", "--help", "-h"],
         "config" => &[
+            "path",
+            "get",
+            "set",
+            "unset",
+            "completion",
             "--schema",
             "--minimal",
             "--target",

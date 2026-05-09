@@ -209,10 +209,12 @@ fn main() {{
         }}
         [cmd] if cmd == "version" => println!("effigy v{version}"),
         [cmd] if cmd == "help" => println!("Effigy Help"),
-        [cmd, shell] if cmd == "completion" && shell == "bash" => {{
+        [cmd, subcmd, shell] if cmd == "config" && subcmd == "completion" && shell == "bash" => {{
             println!("complete -F _effigy effigy");
         }}
-        [cmd, action, ..] if cmd == "completion" && action == "candidates" => {{
+        [cmd, subcmd, action, ..]
+            if cmd == "config" && subcmd == "completion" && action == "candidates" =>
+        {{
             println!("noop");
         }}
         [cmd, ..] if cmd == "tasks" || cmd == "catalog_a/tasks" => {{

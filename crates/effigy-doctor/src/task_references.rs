@@ -4,10 +4,7 @@ use crate::contracts::{check_id, remediation};
 use crate::FindingSink;
 
 pub fn is_builtin_selector(task_name: &str) -> bool {
-    matches!(
-        task_name,
-        "help" | "config" | "doctor" | "test" | "tasks" | "catalogs"
-    )
+    matches!(task_name, "help" | "config" | "doctor" | "test" | "tasks")
 }
 
 pub fn add_invalid_reference_syntax(

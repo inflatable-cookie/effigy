@@ -30,8 +30,10 @@ pub(super) fn run_builtin_cache(
     run_passthrough_builtin_command(
         &task.name,
         runtime_args,
-        |output_json| render_builtin_help_text("cache", render_cache_help(), output_json),
-        parse_cache_request,
+        |output_json| {
+            render_builtin_help_text("tasks-cache", render_cache_help(&task.name), output_json)
+        },
+        |args| parse_cache_request(&task.name, args),
         |request: CacheRequest| match request {
             CacheRequest::Inspect(request) => {
                 dispatch::run_inspect(ports, target_root, catalogs, invocation_cwd, request)

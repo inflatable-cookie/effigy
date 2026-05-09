@@ -5,7 +5,7 @@ Use this folder for planning threads that are important but not yet scheduled in
 
 ## Current Backlog Items
 
-None right now.
+- [Breaking Command Surface and Container Compaction](./breaking-command-surface-and-container-compaction.md)
 
 The earlier release/distribution backlog items were promoted into the active
 generation as:

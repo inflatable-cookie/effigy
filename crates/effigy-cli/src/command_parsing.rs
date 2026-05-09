@@ -80,7 +80,7 @@ where
         "bootstrap" => parse_bootstrap_command(args),
         "release" => parse_release_command(args),
         "doctor" => parse_doctor(args),
-        "tasks" | "catalogs" => parse_tasks(args),
+        "tasks" => parse_tasks(args),
         "__rhai-step" => parse_internal_rhai_command(args),
         "__gateway-run" => Ok(Command::InternalGateway(InternalGatewayArgs)),
         "__container-lease-reaper" => parse_internal_container_lease_reaper_command(args),
@@ -449,7 +449,6 @@ fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
         "test" => Some(HelpTopic::Test),
         "watch" => Some(HelpTopic::Watch),
         "init" => Some(HelpTopic::Init),
-        "migrate" => Some(HelpTopic::Migrate),
         "defer" => Some(HelpTopic::Defer),
         "exec" => Some(HelpTopic::Exec),
         "bundle" => Some(HelpTopic::Bundle),
@@ -699,6 +698,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
+    let mut passthrough: Vec<String> = Vec::new();
     let mut repo_override: Option<PathBuf> = None;
     let mut task_name: Option<String> = None;
     let mut resolve_selector: Option<String> = None;
@@ -706,26 +706,43 @@ where
     let mut pretty_json = true;
 
     while let Some(arg) = args.next() {
+        if matches!(arg.as_str(), "migrate" | "unlock" | "cache") {
+            passthrough.push(arg);
+            passthrough.extend(args);
+            return Ok(Command::Task(TaskInvocation {
+                name: "tasks".to_owned(),
+                args: passthrough,
+            }));
+        }
         match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--repo" => {
+                passthrough.push(arg);
+                let path = parse_repo_path(&mut args)?;
+                passthrough.push(path.display().to_string());
+                repo_override = Some(path);
+            }
             "--task" => {
-                task_name = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingTaskNameValue,
-                )?);
+                passthrough.push(arg);
+                let value = next_required_value(&mut args, CliParseError::MissingTaskNameValue)?;
+                passthrough.push(value.clone());
+                task_name = Some(value);
             }
             "--resolve" => {
-                resolve_selector = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingResolveSelectorValue,
-                )?);
+                passthrough.push(arg);
+                let value =
+                    next_required_value(&mut args, CliParseError::MissingResolveSelectorValue)?;
+                passthrough.push(value.clone());
+                resolve_selector = Some(value);
             }
             "--json" => {
+                passthrough.push(arg);
                 output_json = true;
             }
             "--pretty" => {
                 let value = next_required_value(&mut args, CliParseError::MissingPrettyValue)?;
-                pretty_json = parse_pretty_bool(value)?;
+                pretty_json = parse_pretty_bool(value.clone())?;
+                passthrough.push(arg);
+                passthrough.push(value);
             }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
             other => return Err(unknown_argument(other)),

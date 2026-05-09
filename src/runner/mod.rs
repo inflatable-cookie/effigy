@@ -71,10 +71,6 @@ pub(in crate::runner) use tasks_command::run_tasks;
 mod tests;
 
 #[cfg(test)]
-#[path = "../tests/catalogs_contract_tests.rs"]
-mod catalogs_contract_tests;
-
-#[cfg(test)]
 #[path = "../tests/json_contract_tests/mod.rs"]
 mod json_contract_tests;
 

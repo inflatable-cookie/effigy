@@ -65,13 +65,6 @@ fn parse_tasks_help_is_scoped() {
 }
 
 #[test]
-fn parse_catalogs_help_is_tasks_help_alias() {
-    let cmd = parse_command(vec!["catalogs".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Tasks));
-}
-
-#[test]
 fn parse_doctor_help_is_scoped() {
     let cmd = parse_command(vec!["doctor".to_owned(), "--help".to_owned()])
         .expect("parse should succeed");
@@ -199,6 +192,57 @@ fn parse_help_command_alias_is_general_help() {
 }
 
 #[test]
+fn parse_tasks_migrate_routes_through_nested_builtin_entrypoint() {
+    let cmd = parse_command(vec![
+        "tasks".to_owned(),
+        "migrate".to_owned(),
+        "--apply".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Task(TaskInvocation {
+            name: "tasks".to_owned(),
+            args: vec!["migrate".to_owned(), "--apply".to_owned()],
+        })
+    );
+}
+
+#[test]
+fn parse_tasks_unlock_routes_through_nested_builtin_entrypoint() {
+    let cmd = parse_command(vec![
+        "tasks".to_owned(),
+        "unlock".to_owned(),
+        "--all".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Task(TaskInvocation {
+            name: "tasks".to_owned(),
+            args: vec!["unlock".to_owned(), "--all".to_owned()],
+        })
+    );
+}
+
+#[test]
+fn parse_tasks_cache_routes_through_nested_builtin_entrypoint() {
+    let cmd = parse_command(vec![
+        "tasks".to_owned(),
+        "cache".to_owned(),
+        "inspect".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Task(TaskInvocation {
+            name: "tasks".to_owned(),
+            args: vec!["cache".to_owned(), "inspect".to_owned()],
+        })
+    );
+}
+
+#[test]
 fn parse_version_flag_is_version_command() {
     let cmd = parse_command(vec!["--version".to_owned()]).expect("parse should succeed");
     assert_eq!(cmd, Command::Version);
@@ -235,5 +279,11 @@ fn parse_init_help_is_scoped() {
 fn parse_migrate_help_is_scoped() {
     let cmd = parse_command(vec!["migrate".to_owned(), "--help".to_owned()])
         .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Migrate));
+    assert_eq!(
+        cmd,
+        Command::Task(TaskInvocation {
+            name: "migrate".to_owned(),
+            args: vec!["--help".to_owned()],
+        })
+    );
 }

@@ -13,13 +13,16 @@ pub(in crate::runner::tests) fn builtin_shared_help_precedence_cases(
             cache_workspace,
             "cache",
             &["--wat", "--help"],
-            &["cache Help", "effigy cache inspect"],
+            &["tasks cache Help", "effigy tasks cache inspect"],
         ),
         builtin_help_case(
             completion_workspace,
             "completion",
             &["--help", "--wat"],
-            &["completion Help", "effigy completion <bash|zsh|fish>"],
+            &[
+                "completion Help",
+                "effigy config completion <bash|zsh|fish>",
+            ],
         ),
         builtin_help_case(
             completion_candidates_workspace,
@@ -27,7 +30,7 @@ pub(in crate::runner::tests) fn builtin_shared_help_precedence_cases(
             &["candidates", "--help", "--wat"],
             &[
                 "completion candidates Help",
-                "effigy completion candidates [--repo <path>] [--prefix <value>] [--json]",
+                "effigy config completion candidates [--repo <path>] [--prefix <value>] [--json]",
             ],
         ),
     ]

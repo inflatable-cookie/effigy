@@ -24,10 +24,10 @@ pub(super) fn render_completion_help() -> String {
             HelpSection::Bulleted {
                 heading: "Examples",
                 items: &[
-                    "effigy completion bash > ~/.local/share/bash-completion/completions/effigy",
-                    "effigy completion zsh > ~/.zfunc/_effigy",
-                    "effigy completion fish > ~/.config/fish/completions/effigy.fish",
-                    "effigy completion zsh --json",
+                    "effigy config completion bash > ~/.local/share/bash-completion/completions/effigy",
+                    "effigy config completion zsh > ~/.zfunc/_effigy",
+                    "effigy config completion fish > ~/.config/fish/completions/effigy.fish",
+                    "effigy config completion zsh --json",
                     COMPLETION_CANDIDATES_EXAMPLE_LINE,
                 ],
             },
@@ -54,9 +54,9 @@ pub(super) fn render_completion_candidates_help() -> String {
             HelpSection::Bulleted {
                 heading: "Examples",
                 items: &[
-                    "effigy completion candidates",
-                    "effigy completion candidates --prefix api",
-                    "effigy completion candidates --repo /path/to/other-repo --json",
+                    "effigy config completion candidates",
+                    "effigy config completion candidates --prefix api",
+                    "effigy config completion candidates --repo /path/to/other-repo --json",
                 ],
             },
         ],

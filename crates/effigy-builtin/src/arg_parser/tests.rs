@@ -15,21 +15,21 @@ fn context_string_flag_value_missing_message_contract_is_stable() {
 fn context_bool_literal_flag_value_message_contract_is_stable() {
     let mut parser = BuiltinArgParser::new(&[]);
     let err = parser
-        .context_bool_literal_flag_value("catalogs", "--pretty")
+        .context_bool_literal_flag_value("tasks", "--pretty")
         .expect_err("missing bool literal should fail");
     assert_task_invocation(
         err,
-        "catalogs argument --pretty requires a value (`true` or `false`)",
+        "tasks argument --pretty requires a value (`true` or `false`)",
     );
 
     let args = vec!["invalid".to_owned()];
     let mut invalid_parser = BuiltinArgParser::new(&args);
     let err = invalid_parser
-        .context_bool_literal_flag_value("catalogs", "--pretty")
+        .context_bool_literal_flag_value("tasks", "--pretty")
         .expect_err("invalid bool literal should fail");
     assert_task_invocation(
         err,
-        "catalogs argument --pretty value `invalid` is invalid (expected `true` or `false`)",
+        "tasks argument --pretty value `invalid` is invalid (expected `true` or `false`)",
     );
 }
 

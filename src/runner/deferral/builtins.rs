@@ -42,7 +42,6 @@ fn is_top_level_builtin_command(name: &str) -> bool {
         "artifact"
             | "bootstrap"
             | "bundle"
-            | "catalogs"
             | "changelog"
             | "container"
             | "contracts"

@@ -48,9 +48,10 @@ pub(super) fn run_builtin_completion(
             }
             CompletionParsedRequest::Shell(request) => {
                 let shell = request.shell.ok_or_else(|| {
-                    BuiltinError::task_invocation(
-                        "`completion` requires a shell target (`bash`, `zsh`, or `fish`)",
-                    )
+                    BuiltinError::task_invocation(format!(
+                        "`{}` requires a shell target (`bash`, `zsh`, or `fish`)",
+                        task.name
+                    ))
                 })?;
 
                 let script = render_completion_script(shell);

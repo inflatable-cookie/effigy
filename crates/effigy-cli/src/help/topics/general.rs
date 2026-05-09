@@ -24,6 +24,21 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
             Some("tasks"),
         ),
         (
+            "effigy tasks migrate",
+            "Import package scripts into `[tasks]` with preview/apply flow",
+            None,
+        ),
+        (
+            "effigy tasks unlock",
+            "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)",
+            None,
+        ),
+        (
+            "effigy tasks cache",
+            "Inspect/invalidate phase-1 task cache metadata (`inspect`, `invalidate`)",
+            None,
+        ),
+        (
             "effigy service",
             "Inspect the layered service catalog and extract bundled fragments for override ownership",
             Some("service"),
@@ -61,6 +76,11 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
         (
             "effigy config",
             "Show config keys/examples, bundle schema guidance, or inspect the effective composed manifest and focused path sources",
+            None,
+        ),
+        (
+            "effigy config completion",
+            "Generate shell completion scripts and selector candidates",
             None,
         ),
         (
@@ -129,26 +149,6 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
             None,
         ),
         (
-            "effigy migrate",
-            "Migrate package scripts into `[tasks]` with preview/apply flow",
-            None,
-        ),
-        (
-            "effigy unlock",
-            "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)",
-            None,
-        ),
-        (
-            "effigy cache",
-            "Inspect/invalidate phase-1 task cache metadata (`inspect`, `invalidate`)",
-            None,
-        ),
-        (
-            "effigy completion",
-            "Generate shell completion scripts and selector candidates",
-            None,
-        ),
-        (
             "effigy scan",
             "Run built-in repository scanners such as `god-files` and `attention-markers`",
             None,
@@ -172,7 +172,7 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
     renderer.text("")?;
     renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy <built-in-task> --help` for task-specific flags and examples.",
+        "Use `effigy <built-in-task> --help`, `effigy tasks <helper> --help`, or `effigy config completion --help` for task-specific flags and examples.",
     )?;
     renderer.notice(
         NoticeLevel::Info,

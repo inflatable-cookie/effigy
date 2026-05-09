@@ -21,24 +21,27 @@ pub(super) struct InvalidateRequest {
     pub(super) selectors: Vec<String>,
 }
 
-pub(super) fn parse_cache_request(args: &[String]) -> Result<CacheRequest, BuiltinError> {
+pub(super) fn parse_cache_request(
+    command_label: &str,
+    args: &[String],
+) -> Result<CacheRequest, BuiltinError> {
     let mut parser = BuiltinArgParser::new(args);
-    let command_raw = parser.required_subcommand("cache", "`inspect` or `invalidate`")?;
-    match parse_cache_command(command_raw)? {
-        CacheCommand::Inspect => parse_inspect_request(parser),
-        CacheCommand::Invalidate => parse_invalidate_request(parser),
+    let command_raw = parser.required_subcommand(command_label, "`inspect` or `invalidate`")?;
+    match parse_cache_command(command_label, command_raw)? {
+        CacheCommand::Inspect => parse_inspect_request(command_label, parser),
+        CacheCommand::Invalidate => parse_invalidate_request(command_label, parser),
     }
 }
 
-pub(super) fn render_cache_help() -> String {
+pub(super) fn render_cache_help(command_label: &str) -> String {
     render_titled_help(
-        "cache",
+        command_label,
         &[
             HelpSection::Plain {
                 heading: "Usage",
                 lines: &[
-                    "effigy cache inspect [<selector>] [--json]",
-                    "effigy cache invalidate [<selector>...] [--all] [--json]",
+                    "effigy tasks cache inspect [<selector>] [--json]",
+                    "effigy tasks cache invalidate [<selector>...] [--all] [--json]",
                 ],
             },
             HelpSection::Bulleted {
@@ -51,27 +54,30 @@ pub(super) fn render_cache_help() -> String {
             HelpSection::Bulleted {
                 heading: "Examples",
                 items: &[
-                    "effigy cache inspect",
-                    "effigy cache inspect build",
-                    "effigy cache invalidate build",
-                    "effigy cache invalidate --all",
-                    "effigy cache inspect --json",
+                    "effigy tasks cache inspect",
+                    "effigy tasks cache inspect build",
+                    "effigy tasks cache invalidate build",
+                    "effigy tasks cache invalidate --all",
+                    "effigy tasks cache inspect --json",
                 ],
             },
         ],
     )
 }
 
-fn parse_inspect_request(mut parser: BuiltinArgParser<'_>) -> Result<CacheRequest, BuiltinError> {
+fn parse_inspect_request(
+    command_label: &str,
+    mut parser: BuiltinArgParser<'_>,
+) -> Result<CacheRequest, BuiltinError> {
     let mut output_json = false;
     let mut selectors = Vec::<String>::new();
-    parser.parse_loop_require_no_unknown("cache", |parser, arg| {
+    parser.parse_loop_require_no_unknown(command_label, |parser, arg| {
         if parser.consume_json_flag(arg, &mut output_json) {
             return Ok(ParseLoopAction::Handled);
         }
         if arg == "--all" {
             return Err(BuiltinError::task_invocation(
-                "`cache inspect` does not support `--all`; use `cache invalidate --all`",
+                "`tasks cache inspect` does not support `--all`; use `tasks cache invalidate --all`",
             ));
         }
         if arg.starts_with('-') {
@@ -83,7 +89,7 @@ fn parse_inspect_request(mut parser: BuiltinArgParser<'_>) -> Result<CacheReques
 
     if selectors.len() > 1 {
         return Err(BuiltinError::task_invocation(
-            "`cache inspect` accepts at most one selector",
+            "`tasks cache inspect` accepts at most one selector",
         ));
     }
 
@@ -94,12 +100,13 @@ fn parse_inspect_request(mut parser: BuiltinArgParser<'_>) -> Result<CacheReques
 }
 
 fn parse_invalidate_request(
+    command_label: &str,
     mut parser: BuiltinArgParser<'_>,
 ) -> Result<CacheRequest, BuiltinError> {
     let mut output_json = false;
     let mut invalidate_all = false;
     let mut selectors = Vec::<String>::new();
-    parser.parse_loop_require_no_unknown("cache", |parser, arg| {
+    parser.parse_loop_require_no_unknown(command_label, |parser, arg| {
         if parser.consume_json_flag(arg, &mut output_json) {
             return Ok(ParseLoopAction::Handled);
         }
@@ -118,12 +125,12 @@ fn parse_invalidate_request(
 
     if invalidate_all && !selectors.is_empty() {
         return Err(BuiltinError::task_invocation(
-            "`cache invalidate` accepts either `--all` or selectors, not both",
+            "`tasks cache invalidate` accepts either `--all` or selectors, not both",
         ));
     }
     if !invalidate_all && selectors.is_empty() {
         return Err(BuiltinError::task_invocation(
-            "`cache invalidate` requires one or more selectors (or `--all`)",
+            "`tasks cache invalidate` requires one or more selectors (or `--all`)",
         ));
     }
 
@@ -140,13 +147,16 @@ enum CacheCommand {
     Invalidate,
 }
 
-fn parse_cache_command(command_raw: &str) -> Result<CacheCommand, BuiltinError> {
+fn parse_cache_command(
+    command_label: &str,
+    command_raw: &str,
+) -> Result<CacheCommand, BuiltinError> {
     match command_raw {
         "inspect" => Ok(CacheCommand::Inspect),
         "invalidate" => Ok(CacheCommand::Invalidate),
         other => Err(BuiltinError::task_invocation(
             BuiltinArgParser::builtin_unknown_subcommand_message(
-                "cache",
+                command_label,
                 other,
                 "`inspect` or `invalidate`",
             ),

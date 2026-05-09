@@ -7,7 +7,7 @@ use super::prelude::{
 #[test]
 fn apply_global_json_flag_injects_task_arg_when_missing() {
     let cmd = Command::Task(TaskInvocation {
-        name: "catalogs".to_owned(),
+        name: "tasks".to_owned(),
         args: vec!["--resolve".to_owned(), "catalog-a/api".to_owned()],
     });
     let applied = apply_global_json_flag(cmd, true);
@@ -23,7 +23,7 @@ fn apply_global_json_flag_injects_task_arg_when_missing() {
 fn command_requests_json_checks_task_or_global_mode() {
     let version_cmd = Command::Version;
     let cmd = Command::Task(TaskInvocation {
-        name: "catalogs".to_owned(),
+        name: "tasks".to_owned(),
         args: vec!["--resolve".to_owned(), "catalog-a/api".to_owned()],
     });
     assert!(!command_requests_json(&version_cmd, false));
@@ -32,7 +32,7 @@ fn command_requests_json_checks_task_or_global_mode() {
     assert!(command_requests_json(&cmd, true));
 
     let cmd_with_json = Command::Task(TaskInvocation {
-        name: "catalogs".to_owned(),
+        name: "tasks".to_owned(),
         args: vec!["--json".to_owned()],
     });
     assert!(command_requests_json(&cmd_with_json, false));

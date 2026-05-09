@@ -33,7 +33,15 @@ pub(super) fn run_task(root: &Path, name: &str) -> String {
 }
 
 pub(super) fn run_cache_builtin(root: &Path, args: &[&str]) -> Result<String, RunnerError> {
-    run_manifest_task_with_cwd(&task_invocation("cache", args), root.to_path_buf())
+    let mut task_args = vec!["cache".to_owned()];
+    task_args.extend(args.iter().map(|arg| (*arg).to_owned()));
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "tasks".to_owned(),
+            args: task_args,
+        },
+        root.to_path_buf(),
+    )
 }
 
 pub(super) fn assert_cache_task_invocation(err: RunnerError, expected: &str) {

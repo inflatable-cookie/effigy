@@ -1,6 +1,7 @@
 use effigy_cli::TaskInvocation;
 
 use super::command_spec::run_builtin_command;
+use super::completion;
 use crate::BuiltinError;
 
 mod docs;
@@ -20,6 +21,20 @@ pub(super) fn run_builtin_config(
     args: &[String],
     target_root: &std::path::Path,
 ) -> Result<Option<String>, BuiltinError> {
+    if matches!(args.first().map(String::as_str), Some("completion")) {
+        let nested_task = TaskInvocation {
+            name: "config completion".to_owned(),
+            args: Vec::new(),
+        };
+        let runtime_args = effigy_tasks::TaskRuntimeArgs {
+            repo_override: None,
+            verbose_root: false,
+            env_schema_override: None,
+            passthrough: args[1..].to_vec(),
+        };
+        return completion::run_builtin_completion(&nested_task, &runtime_args, target_root);
+    }
+
     run_builtin_command(
         args,
         render_config_help_payload,

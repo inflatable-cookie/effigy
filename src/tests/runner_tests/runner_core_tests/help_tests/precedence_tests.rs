@@ -31,8 +31,8 @@ fn run_manifest_task_builtin_help_precedence_contract_table() {
             "unlock",
             &["--wat", "--help"],
             &[
-                "unlock Help",
-                "effigy unlock [--all | <scope>...] [--yes] [--json]",
+                "tasks unlock Help",
+                "effigy tasks unlock [--all | <scope>...] [--yes] [--json]",
             ],
         ),
     ]);

@@ -61,14 +61,25 @@ pub(crate) fn assert_schema_v1(parsed: &serde_json::Value, schema: &str) {
 }
 
 pub(crate) fn run_invocation_json(root: PathBuf, name: &str, args: &[&str]) -> serde_json::Value {
-    let out = run_manifest_task_with_cwd(
-        &TaskInvocation {
+    let invocation = match name {
+        "migrate" | "unlock" | "cache" => TaskInvocation {
+            name: "tasks".to_owned(),
+            args: std::iter::once(name.to_owned())
+                .chain(args.iter().map(|arg| (*arg).to_owned()))
+                .collect(),
+        },
+        "completion" => TaskInvocation {
+            name: "config".to_owned(),
+            args: std::iter::once("completion".to_owned())
+                .chain(args.iter().map(|arg| (*arg).to_owned()))
+                .collect(),
+        },
+        _ => TaskInvocation {
             name: name.to_owned(),
             args: args.iter().map(|arg| (*arg).to_owned()).collect(),
         },
-        root,
-    )
-    .expect("run invocation");
+    };
+    let out = run_manifest_task_with_cwd(&invocation, root).expect("run invocation");
     parse_json(&out)
 }
 
@@ -100,8 +111,10 @@ pub(crate) fn run_completion_task(
 ) -> Result<String, runtime::RunnerError> {
     run_manifest_task_with_cwd(
         &TaskInvocation {
-            name: "completion".to_owned(),
-            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+            name: "config".to_owned(),
+            args: std::iter::once("completion".to_owned())
+                .chain(args.iter().map(|arg| (*arg).to_owned()))
+                .collect(),
         },
         root,
     )

@@ -4,14 +4,14 @@ use super::shared::{
 };
 
 pub(crate) fn render_migrate_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
-    renderer.section("migrate Help")?;
+    renderer.section("tasks migrate Help")?;
     render_info_notices(
         renderer,
         &["Import `package.json` scripts into `[tasks]` with preview-first, explicit apply flow."],
     )?;
     render_usage_section(
         renderer,
-        &["effigy migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]"],
+        &["effigy tasks migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]"],
     )?;
     render_options_section(
         renderer,
