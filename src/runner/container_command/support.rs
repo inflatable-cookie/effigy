@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use effigy_catalog::volumes::{reset_commands, DockerCommand, VolumeClassification};
@@ -21,6 +21,37 @@ use super::gateway_registration::{
     resolve_gateway_tcp_alias_routes_for_container, RegisteredGatewayRoute,
 };
 use super::RunnerError;
+use crate::runner::command_context::{active_invocation_cwd, resolve_active_command_context};
+
+pub(super) enum ContainerRepoScope {
+    RepoRoot(PathBuf),
+    InvocationCwd(PathBuf),
+}
+
+pub(super) fn resolve_repo_root_or_invocation_cwd_scope(
+    repo_override: Option<PathBuf>,
+) -> Result<ContainerRepoScope, RunnerError> {
+    match resolve_active_command_context(repo_override.clone()) {
+        Ok(context) if repo_root_has_effigy_manifest(&context.resolved.resolved_root) => Ok(
+            ContainerRepoScope::RepoRoot(context.resolved.resolved_root.clone()),
+        ),
+        Ok(_) if repo_override.is_none() => {
+            Ok(ContainerRepoScope::InvocationCwd(active_invocation_cwd()?))
+        }
+        Ok(context) => Err(RunnerError::task_invocation(format!(
+            "`--repo {}` does not point to an Effigy repo",
+            context.resolved.resolved_root.display()
+        ))),
+        Err(RunnerError::Resolve(_)) if repo_override.is_none() => {
+            Ok(ContainerRepoScope::InvocationCwd(active_invocation_cwd()?))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+pub(super) fn repo_root_has_effigy_manifest(repo_root: &Path) -> bool {
+    repo_root.join("effigy.toml").is_file()
+}
 
 pub(super) fn wait_for_container_ready(
     policy: &EffectiveContainerPolicy,

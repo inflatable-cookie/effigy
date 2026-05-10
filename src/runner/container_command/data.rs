@@ -1,4 +1,7 @@
 use effigy_runtime::data::{
+    run_container_data_export as run_runtime_container_data_export,
+    run_container_data_import as run_runtime_container_data_import,
+    run_container_data_list as run_runtime_container_data_list,
     run_container_data_pull_production as run_runtime_container_data_pull_production,
     RegisteredGatewayRoute,
 };
@@ -7,7 +10,7 @@ use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
-use effigy_cli::{BootstrapDbSeedInput, ContainerDbDumpInput};
+use effigy_cli::{BootstrapDbSeedInput, ContainerDataSubcommand, ContainerDbDumpInput};
 use effigy_containers::ContainerDataOperation;
 use effigy_data::{
     database_dump_command, dump_artifact_handoff, normalize_dump_destination_path,
@@ -19,13 +22,14 @@ use effigy_manifest::{ManifestContainerServiceConfig, TASK_MANIFEST_FILE};
 
 use super::gateway_registration::register_gateway_routes_for_container;
 use super::lifecycle::run_container_exec_capture;
-use super::runtime_error_from_runner;
 use super::support::{ensure_shared_services_running, wait_for_container_ready};
 use super::RunnerError;
+use super::{runtime_error_from_runner, runtime_volume_capture};
 use crate::runner::artifact_command::capture_artifact_report;
+use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::db_seed::{
-    db_seed_env, logical_database_targets, maybe_prompt_db_seed_inputs, run_db_seed_task,
-    stage_db_seed_files,
+    db_seed_env, logical_database_targets, maybe_prompt_db_seed_inputs,
+    resolve_db_seed_input_paths, run_db_seed_task, stage_db_seed_files,
 };
 use crate::runner::manifest::load_task_manifest;
 
@@ -39,6 +43,75 @@ use prompts::{
     container_data_import_prompt_required, destructive_container_action_prompt_required,
     maybe_confirm_container_data_pull_production, maybe_confirm_container_data_seed,
 };
+
+pub(super) fn run_container_data_command(
+    repo_override: Option<PathBuf>,
+    name: Option<&str>,
+    subcommand: &ContainerDataSubcommand,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    match subcommand {
+        ContainerDataSubcommand::List => {
+            let context = resolve_active_command_context(repo_override)?;
+            run_container_data_list_adapter(&context.resolved.resolved_root, name, output_json)
+        }
+        ContainerDataSubcommand::Export { volume, path } => {
+            let context = resolve_active_command_context(repo_override)?;
+            run_container_data_export_adapter(
+                &context.resolved.resolved_root,
+                name,
+                volume,
+                &resolve_archive_path(&context.invocation_cwd, path),
+                output_json,
+            )
+        }
+        ContainerDataSubcommand::Dump { db_dumps, push } => {
+            let context = resolve_active_command_context(repo_override)?;
+            run_container_data_dump(
+                &context.resolved.resolved_root,
+                name,
+                &resolve_db_dump_output_paths(&context.invocation_cwd, db_dumps),
+                *push,
+                output_json,
+            )
+        }
+        ContainerDataSubcommand::Import { volume, path, yes } => {
+            let context = resolve_active_command_context(repo_override)?;
+            run_container_data_import_adapter(
+                &context.resolved.resolved_root,
+                name,
+                volume,
+                &resolve_archive_path(&context.invocation_cwd, path),
+                output_json,
+                *yes,
+            )
+        }
+        ContainerDataSubcommand::PullProduction { yes } => {
+            let context = resolve_active_command_context(repo_override)?;
+            run_container_data_pull_production(
+                &context.resolved.resolved_root,
+                name,
+                output_json,
+                *yes,
+            )
+        }
+        ContainerDataSubcommand::Seed {
+            db_seeds,
+            no_prompt,
+            yes,
+        } => {
+            let context = resolve_active_command_context(repo_override)?;
+            run_container_data_seed(
+                &context.resolved.resolved_root,
+                name,
+                &resolve_db_seed_input_paths(&context.invocation_cwd, db_seeds),
+                output_json,
+                *no_prompt,
+                *yes,
+            )
+        }
+    }
+}
 
 pub(super) fn run_container_data_pull_production(
     repo_root: &Path,
@@ -79,6 +152,68 @@ pub(super) fn run_container_data_pull_production(
             hooks::execute_pull_production_hook(repo_root, policy, hook)
                 .map_err(runtime_error_from_runner)
         },
+    )
+    .map_err(Into::into)
+}
+
+fn resolve_archive_path(cwd: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    }
+}
+
+fn run_container_data_list_adapter(
+    repo_root: &Path,
+    name: Option<&str>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    run_runtime_container_data_list(repo_root, name, output_json, runtime_volume_capture)
+        .map_err(Into::into)
+}
+
+fn run_container_data_export_adapter(
+    repo_root: &Path,
+    name: Option<&str>,
+    volume_name: &str,
+    archive_path: &Path,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    run_runtime_container_data_export(
+        repo_root,
+        name,
+        volume_name,
+        archive_path,
+        output_json,
+        runtime_volume_capture,
+    )
+    .map_err(Into::into)
+}
+
+fn run_container_data_import_adapter(
+    repo_root: &Path,
+    name: Option<&str>,
+    volume_name: &str,
+    archive_path: &Path,
+    output_json: bool,
+    yes: bool,
+) -> Result<String, RunnerError> {
+    maybe_confirm_container_data_import(
+        repo_root,
+        name,
+        volume_name,
+        archive_path,
+        output_json,
+        yes,
+    )?;
+    run_runtime_container_data_import(
+        repo_root,
+        name,
+        volume_name,
+        archive_path,
+        output_json,
+        runtime_volume_capture,
     )
     .map_err(Into::into)
 }

@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -125,6 +125,10 @@ down, cache list, and volume list.
 - `cargo clippy` passes
 - `git diff --check`
 
-## Next Task
+## Outcome
 
-Execute `648` to extract the lifecycle command family out of `mod.rs`.
+- `cache`, `volume`, `lifecycle`, and `data` dispatch now live under focused
+  module owners
+- the shared repo-root versus cwd fallback seam is owned in support code
+- `src/runner/container_command/mod.rs` is down to thin-dispatch shape
+- no CLI or JSON contract changes were introduced while decomposing the module

@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.025`](../roadmaps/g04/025-container-command-decomposition.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -19,10 +19,6 @@ changing the shipped container behavior.
 - no `.github/workflows/` edits
 - no release execution
 
-## Current Ready Card
-
-- `648` extract the lifecycle command family out of `mod.rs`
-
 ## Execution Chain
 
 - `644` complete: opened the lane, promoted the contract anchor, and selected
@@ -33,15 +29,15 @@ changing the shipped container behavior.
   with focused container-command proof coverage
 - `647` complete: extracted `volume list` and `volume prune` into `volume.rs`
   with focused container-command proof coverage
-- `648` ready: extract the lifecycle family out of `mod.rs` with focused
-  lifecycle proof coverage
+- `648` complete: moved the lifecycle command family out of `mod.rs` and kept
+  the shipped fallback behavior unchanged
+- `649` complete: extracted the shared repo-root versus cwd fallback helper for
+  status, down, and cache inventory
+- `650` complete: moved the remaining data-family dispatch into `data.rs` and
+  closed the thin-dispatcher target for `mod.rs`
 
 ## Exit Condition
 
 This lane is complete when cache, volume, lifecycle, and shared scope helpers
 are extracted behind stable module owners, `mod.rs` is a thin dispatcher, and
 focused container tests show no user-facing drift.
-
-## Next Task
-
-Execute `648` to extract the lifecycle command family out of `mod.rs`.

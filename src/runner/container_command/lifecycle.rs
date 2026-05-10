@@ -18,23 +18,35 @@ use effigy_containers::{
     ContainerCapturedExecOperation, ContainerExecOperation, ContainerLifecycleOperation,
     ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
 };
+use effigy_runtime::read::{
+    run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
+    run_container_status_under_path,
+};
 use effigy_runtime::session::run_attached_container_session_with_hook;
 use effigy_runtime::shell::run_container_shell as run_runtime_container_shell;
 use effigy_runtime::signals::{
     install_stop_requested_flag, run_compose_plan_inherit_with_stop_flag, ComposeRunOutcome,
 };
+use effigy_runtime::write::{
+    run_container_down, run_container_down_all_with_hook, run_container_down_under_path_with_hook,
+    run_container_reset,
+};
 
+use super::deregister_runtime_gateway_routes;
 use super::gateway_registration::{
     deregister_gateway_routes_for_container, register_gateway_routes_for_container,
 };
 use super::runtime_error_from_runner;
+use super::support;
 use super::support::{
     annotate_registered_gateway_routes, annotate_shared_service_notes,
     annotate_tcp_alias_host_notes, annotate_warning_lines, ensure_shared_services_running,
-    reconcile_primary_service_tcp_alias_hosts, rewrite_manifest_for_ejected_compose,
-    validate_running_container_runtime_match, wait_for_container_ready,
+    reconcile_primary_service_tcp_alias_hosts, resolve_repo_root_or_invocation_cwd_scope,
+    rewrite_manifest_for_ejected_compose, validate_running_container_runtime_match,
+    wait_for_container_ready, ContainerRepoScope,
 };
 use super::{render_container_report, RunnerError};
+use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::container_runtime_prep::ensure_primary_service_exec_ready_for_runtime;
 use crate::runner::exec_command::{
@@ -192,6 +204,108 @@ pub(super) fn run_container_up(
     .map_err(Into::into)
 }
 
+pub(super) fn run_container_down_command(
+    repo_override: Option<std::path::PathBuf>,
+    name: Option<&str>,
+    global: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if global {
+        if repo_override.is_some() {
+            return Err(RunnerError::task_invocation(
+                "`effigy container down --global` does not accept `--repo`; it discovers running environments across repos",
+            ));
+        }
+        return run_container_down_all_with_hook(
+            output_json,
+            deregister_runtime_gateway_routes,
+            |repo_root, policy| {
+                let _ = crate::runner::host_process::stop_host_processes_for_container(
+                    repo_root, policy,
+                );
+            },
+        )
+        .map_err(Into::into);
+    }
+
+    match resolve_repo_root_or_invocation_cwd_scope(repo_override)? {
+        ContainerRepoScope::RepoRoot(repo_root) => {
+            run_container_down_adapter(&repo_root, name, output_json)
+        }
+        ContainerRepoScope::InvocationCwd(cwd) => run_container_down_under_path_with_hook(
+            &cwd,
+            name,
+            output_json,
+            deregister_runtime_gateway_routes,
+            |repo_root, policy| {
+                let _ = crate::runner::host_process::stop_host_processes_for_container(
+                    repo_root, policy,
+                );
+            },
+        )
+        .map_err(Into::into),
+    }
+}
+
+pub(super) fn run_container_status_command(
+    repo_override: Option<std::path::PathBuf>,
+    name: Option<&str>,
+    global: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if global {
+        if repo_override.is_some() {
+            return Err(RunnerError::task_invocation(
+                "`effigy container status --global` does not accept `--repo`; it discovers running environments across repos",
+            ));
+        }
+        return run_container_status_all(output_json).map_err(Into::into);
+    }
+
+    match resolve_repo_root_or_invocation_cwd_scope(repo_override)? {
+        ContainerRepoScope::RepoRoot(repo_root) => {
+            run_container_status(&repo_root, name, output_json).map_err(Into::into)
+        }
+        ContainerRepoScope::InvocationCwd(cwd) => {
+            run_container_status_under_path(&cwd, name, output_json).map_err(Into::into)
+        }
+    }
+}
+
+pub(super) fn run_container_stats_command(
+    repo_override: Option<std::path::PathBuf>,
+    global: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if !global {
+        unreachable!("parser rejects local container stats");
+    }
+    if repo_override.is_some() {
+        return Err(RunnerError::task_invocation(
+            "`effigy container stats --global` does not accept `--repo`; it discovers running environments across repos",
+        ));
+    }
+    run_container_stats_all(output_json).map_err(Into::into)
+}
+
+pub(super) fn run_container_logs_command(
+    repo_override: Option<std::path::PathBuf>,
+    name: Option<&str>,
+    service: Option<&str>,
+    follow: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let context = resolve_active_command_context(repo_override)?;
+    run_container_logs(
+        &context.resolved.resolved_root,
+        name,
+        service,
+        follow,
+        output_json,
+    )
+    .map_err(Into::into)
+}
+
 pub(in crate::runner) fn lifecycle_operation_plan(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -255,6 +369,89 @@ fn finish_container_up_failure(
     }
 }
 
+fn run_container_down_adapter(
+    repo_root: &Path,
+    name: Option<&str>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    stop_host_processes_best_effort(repo_root, name);
+    let policy = load_container_policy(repo_root, name)?;
+    let _operation_plan =
+        lifecycle_operation_plan(repo_root, &policy, ContainerLifecycleOperation::down(false));
+    run_container_down(
+        repo_root,
+        name,
+        output_json,
+        deregister_runtime_gateway_routes,
+    )
+    .map_err(Into::into)
+}
+
+pub(in crate::runner) fn run_container_reset_adapter(
+    repo_root: &Path,
+    name: Option<&str>,
+    keep_data: bool,
+    wipe_data: bool,
+    yes: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    stop_host_processes_best_effort(repo_root, name);
+    let policy = load_container_policy(repo_root, name)?;
+    let operation_plan = lifecycle_operation_plan(
+        repo_root,
+        &policy,
+        ContainerLifecycleOperation::reset(keep_data, wipe_data, yes),
+    );
+    maybe_confirm_container_reset_wipe_data(
+        &policy,
+        operation_plan.confirmation,
+        output_json,
+        yes,
+    )?;
+    run_container_reset(
+        repo_root,
+        name,
+        keep_data,
+        wipe_data,
+        output_json,
+        deregister_runtime_gateway_routes,
+        |repo_root, policy, classification| {
+            support::remove_reset_volumes(repo_root, policy, classification)
+                .map_err(runtime_error_from_runner)
+        },
+    )
+    .map_err(Into::into)
+}
+
+fn maybe_confirm_container_reset_wipe_data(
+    policy: &EffectiveContainerPolicy,
+    confirmation: effigy_containers::ContainerConfirmationPolicy,
+    output_json: bool,
+    yes: bool,
+) -> Result<(), RunnerError> {
+    if matches!(
+        confirmation,
+        effigy_containers::ContainerConfirmationPolicy::NoConfirmationRequired
+    ) {
+        return Ok(());
+    }
+    super::data::maybe_confirm_destructive_container_action(
+        &format!("`effigy container {} reset --wipe-data`", policy.name),
+        &format!(
+            "Reset container `{}` and delete persistent generated-compose data volumes.",
+            policy.name
+        ),
+        output_json,
+        yes,
+    )
+}
+
+fn stop_host_processes_best_effort(repo_root: &Path, name: Option<&str>) {
+    if let Ok(policy) = load_container_policy(repo_root, name) {
+        let _ = crate::runner::host_process::stop_host_processes_for_container(repo_root, &policy);
+    }
+}
+
 /// Render a clean closeout when the user interrupts `effigy container up`
 /// (via Ctrl+C / SIGTERM). We always stop the containers and deregister
 /// gateway routes regardless of `on_task_exit`, because the user
@@ -315,6 +512,25 @@ pub(super) fn run_container_eject(
         eject_report(&policy, &result),
         output_json,
     ))
+}
+
+pub(in crate::runner) fn run_container_reset_command(
+    repo_override: Option<std::path::PathBuf>,
+    name: Option<&str>,
+    keep_data: bool,
+    wipe_data: bool,
+    yes: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let context = resolve_active_command_context(repo_override)?;
+    run_container_reset_adapter(
+        &context.resolved.resolved_root,
+        name,
+        keep_data,
+        wipe_data,
+        yes,
+        output_json,
+    )
 }
 
 pub(super) fn run_container_shell(

@@ -7,7 +7,8 @@ use crate::runner::command_context::{active_invocation_cwd, resolve_active_comma
 use crate::runner::error::RunnerError;
 
 use super::data::maybe_confirm_destructive_container_action;
-use super::{repo_root_has_effigy_manifest, runtime_volume_capture};
+use super::runtime_volume_capture;
+use super::support::{resolve_repo_root_or_invocation_cwd_scope, ContainerRepoScope};
 
 pub(super) fn run_container_cache_command(
     repo_override: Option<std::path::PathBuf>,
@@ -103,24 +104,13 @@ fn run_container_cache_list_fallback(
     name: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    match resolve_active_command_context(repo_override.clone()) {
-        Ok(context) if repo_root_has_effigy_manifest(&context.resolved.resolved_root) => {
-            run_container_cache_list_adapter(&context.resolved.resolved_root, name, output_json)
+    match resolve_repo_root_or_invocation_cwd_scope(repo_override)? {
+        ContainerRepoScope::RepoRoot(repo_root) => {
+            run_container_cache_list_adapter(&repo_root, name, output_json)
         }
-        Ok(_) if repo_override.is_none() => {
-            let cwd = active_invocation_cwd()?;
+        ContainerRepoScope::InvocationCwd(cwd) => {
             run_container_cache_list_under_path(&cwd, name, output_json, runtime_volume_capture)
                 .map_err(Into::into)
         }
-        Ok(context) => Err(RunnerError::task_invocation(format!(
-            "`--repo {}` does not point to an Effigy repo",
-            context.resolved.resolved_root.display()
-        ))),
-        Err(RunnerError::Resolve(_)) if repo_override.is_none() => {
-            let cwd = active_invocation_cwd()?;
-            run_container_cache_list_under_path(&cwd, name, output_json, runtime_volume_capture)
-                .map_err(Into::into)
-        }
-        Err(error) => Err(error),
     }
 }
