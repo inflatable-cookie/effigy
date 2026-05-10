@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use effigy_artifacts::{
+    ArtifactSourceRef, OciArtifactAdapter, OciArtifactPullRequest, OrasCliArtifactAdapter,
+};
 use sha2::{Digest, Sha256};
 use toml::Value;
 
@@ -158,10 +161,7 @@ fn resolve_materialized_bundle_source(
         BundleSelection::Git { url, reference } => {
             resolve_git_bundle_source(manifest_path, url, reference.as_deref())
         }
-        BundleSelection::Oci { url } => Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!("remote OCI bundle sources are not implemented yet for `{url}`"),
-        }),
+        BundleSelection::Oci { url } => resolve_oci_bundle_source(manifest_path, url),
     }
 }
 
@@ -213,6 +213,77 @@ fn resolve_git_bundle_source(
         source_path: PathBuf::from(url),
         version_hint,
         stale: false,
+    })
+}
+
+fn resolve_oci_bundle_source(
+    manifest_path: &Path,
+    url: &str,
+) -> Result<ResolvedBundleSource, ManifestError> {
+    #[cfg(test)]
+    if let Some(adapter) = test_oci_artifact_adapter() {
+        return resolve_oci_bundle_source_with_adapter(manifest_path, url, adapter.as_ref());
+    }
+    let adapter = OrasCliArtifactAdapter::default();
+    resolve_oci_bundle_source_with_adapter(manifest_path, url, &adapter)
+}
+
+fn resolve_oci_bundle_source_with_adapter(
+    manifest_path: &Path,
+    url: &str,
+    adapter: &dyn OciArtifactAdapter,
+) -> Result<ResolvedBundleSource, ManifestError> {
+    let parsed = ArtifactSourceRef::parse(format!("oci://{url}")).map_err(|error| {
+        ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!("invalid OCI bundle source `{url}`: {error}"),
+        }
+    })?;
+    let ArtifactSourceRef::Oci(reference) = parsed else {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!("invalid OCI bundle source `{url}`"),
+        });
+    };
+
+    let descriptor = adapter
+        .inspect(&effigy_artifacts::OciArtifactInspectRequest {
+            reference: reference.clone(),
+        })
+        .map_err(|error| ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: error.to_string(),
+        })?;
+    let digest = descriptor.digest.clone();
+    let local_path = oci_bundle_cache_path(manifest_path, reference.reference())?;
+    let metadata_path = oci_bundle_metadata_path(&local_path);
+    let cached_digest = read_cached_oci_bundle_digest(&metadata_path)?;
+    let needs_pull = !local_path.is_dir() || cached_digest.is_none();
+    let stale = !needs_pull && cached_digest.as_ref() != digest.as_ref();
+
+    if needs_pull {
+        let report = adapter
+            .pull(&OciArtifactPullRequest {
+                reference: reference.clone(),
+                destination_root: local_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .to_path_buf(),
+            })
+            .map_err(|error| ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: error.to_string(),
+            })?;
+        replace_bundle_cache_root(&report.pulled_root, &local_path, manifest_path)?;
+        write_cached_oci_bundle_digest(&metadata_path, digest.as_deref())?;
+    }
+
+    Ok(ResolvedBundleSource {
+        source_type: BundleSourceType::Oci,
+        local_path,
+        source_path: PathBuf::from(format!("oci://{url}")),
+        version_hint: digest,
+        stale,
     })
 }
 
@@ -375,6 +446,148 @@ fn sanitize_bundle_cache_segment(value: &str) -> String {
         .collect()
 }
 
+fn oci_bundle_cache_path(manifest_path: &Path, reference: &str) -> Result<PathBuf, ManifestError> {
+    let locator = oci_bundle_cache_locator(reference);
+    Ok(bundle_cache_home_dir(manifest_path)?
+        .join("cache/bundles/oci")
+        .join(locator.registry)
+        .join(locator.repository_path)
+        .join(locator.version_segment))
+}
+
+fn oci_bundle_metadata_path(local_path: &Path) -> PathBuf {
+    local_path.join(".effigy-bundle-source.digest")
+}
+
+fn read_cached_oci_bundle_digest(metadata_path: &Path) -> Result<Option<String>, ManifestError> {
+    let Ok(raw) = std::fs::read_to_string(metadata_path) else {
+        return Ok(None);
+    };
+    let digest = raw.trim().to_owned();
+    if digest.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(digest))
+}
+
+fn write_cached_oci_bundle_digest(
+    metadata_path: &Path,
+    digest: Option<&str>,
+) -> Result<(), ManifestError> {
+    let Some(parent) = metadata_path.parent() else {
+        return Ok(());
+    };
+    std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
+        path: parent.to_path_buf(),
+        error,
+    })?;
+    std::fs::write(metadata_path, digest.unwrap_or_default()).map_err(|error| ManifestError::Read {
+        path: metadata_path.to_path_buf(),
+        error,
+    })
+}
+
+fn replace_bundle_cache_root(
+    pulled_root: &Path,
+    local_path: &Path,
+    manifest_path: &Path,
+) -> Result<(), ManifestError> {
+    if let Some(parent) = local_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
+            path: parent.to_path_buf(),
+            error,
+        })?;
+    }
+    if local_path.exists() {
+        std::fs::remove_dir_all(local_path).map_err(|error| ManifestError::Read {
+            path: local_path.to_path_buf(),
+            error,
+        })?;
+    }
+    copy_dir_all(pulled_root, local_path, manifest_path)?;
+    std::fs::remove_dir_all(pulled_root).map_err(|error| ManifestError::Read {
+        path: pulled_root.to_path_buf(),
+        error,
+    })
+}
+
+fn copy_dir_all(
+    source: &Path,
+    destination: &Path,
+    manifest_path: &Path,
+) -> Result<(), ManifestError> {
+    std::fs::create_dir_all(destination).map_err(|error| ManifestError::Read {
+        path: destination.to_path_buf(),
+        error,
+    })?;
+    for entry in std::fs::read_dir(source).map_err(|error| ManifestError::Read {
+        path: source.to_path_buf(),
+        error,
+    })? {
+        let entry = entry.map_err(|error| ManifestError::Read {
+            path: source.to_path_buf(),
+            error,
+        })?;
+        let entry_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if entry_path.is_dir() {
+            copy_dir_all(&entry_path, &destination_path, manifest_path)?;
+        } else if entry_path.is_file() {
+            std::fs::copy(&entry_path, &destination_path).map_err(|error| {
+                ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "failed to materialize OCI bundle cache file {}: {error}",
+                        destination_path.display()
+                    ),
+                }
+            })?;
+        }
+    }
+    Ok(())
+}
+
+struct OciBundleCacheLocator {
+    registry: String,
+    repository_path: String,
+    version_segment: String,
+}
+
+fn oci_bundle_cache_locator(reference: &str) -> OciBundleCacheLocator {
+    let (without_digest, version_segment) = if let Some((path, digest)) = reference.rsplit_once('@')
+    {
+        (path, sanitize_bundle_cache_segment(digest))
+    } else {
+        let slash_index = reference.rfind('/').unwrap_or(0);
+        let tag_index = reference[slash_index..]
+            .rfind(':')
+            .map(|index| slash_index + index);
+        if let Some(tag_index) = tag_index {
+            (
+                &reference[..tag_index],
+                sanitize_bundle_cache_segment(&reference[tag_index + 1..]),
+            )
+        } else {
+            (reference, "latest".to_owned())
+        }
+    };
+
+    let (registry, repository_path) = without_digest
+        .split_once('/')
+        .map(|(registry, path)| (registry.to_owned(), path.to_owned()))
+        .unwrap_or_else(|| ("oci".to_owned(), without_digest.to_owned()));
+
+    OciBundleCacheLocator {
+        registry: sanitize_bundle_cache_segment(&registry),
+        repository_path: repository_path
+            .split('/')
+            .map(sanitize_bundle_cache_segment)
+            .collect::<Vec<_>>()
+            .join("/"),
+        version_segment,
+    }
+}
+
 fn sha256_hex(input: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input);
@@ -397,11 +610,21 @@ thread_local! {
     static TEST_BUNDLE_HOME: std::cell::RefCell<Option<PathBuf>> = const {
         std::cell::RefCell::new(None)
     };
+    static TEST_OCI_ARTIFACT_ADAPTER:
+        std::cell::RefCell<Option<std::rc::Rc<dyn OciArtifactAdapter>>> = const {
+            std::cell::RefCell::new(None)
+        };
 }
 
 #[cfg(test)]
 fn test_bundle_home_dir() -> Option<PathBuf> {
     TEST_BUNDLE_HOME.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+fn test_oci_artifact_adapter() -> Option<std::rc::Rc<dyn OciArtifactAdapter>> {
+    TEST_OCI_ARTIFACT_ADAPTER.with(|slot| slot.borrow().clone())
 }
 
 #[cfg(not(test))]
@@ -1428,8 +1651,15 @@ fn collect_value_paths(path: &str, value: &Value, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use effigy_artifacts::{
+        OciArtifactDescriptor, OciArtifactError, OciArtifactInspectRequest, OciArtifactPullReport,
+        OciArtifactPullRequest, OciArtifactPushReport, OciArtifactPushRequest,
+    };
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     struct TestBundleHomeGuard(Option<PathBuf>);
+    struct TestOciArtifactAdapterGuard(Option<Rc<dyn OciArtifactAdapter>>);
 
     impl Drop for TestBundleHomeGuard {
         fn drop(&mut self) {
@@ -1439,9 +1669,22 @@ mod tests {
         }
     }
 
+    impl Drop for TestOciArtifactAdapterGuard {
+        fn drop(&mut self) {
+            TEST_OCI_ARTIFACT_ADAPTER.with(|slot| {
+                *slot.borrow_mut() = self.0.take();
+            });
+        }
+    }
+
     fn with_test_bundle_home(path: &Path) -> TestBundleHomeGuard {
         let previous = TEST_BUNDLE_HOME.with(|slot| slot.borrow_mut().replace(path.to_path_buf()));
         TestBundleHomeGuard(previous)
+    }
+
+    fn with_test_oci_adapter(adapter: Rc<dyn OciArtifactAdapter>) -> TestOciArtifactAdapterGuard {
+        let previous = TEST_OCI_ARTIFACT_ADAPTER.with(|slot| slot.borrow_mut().replace(adapter));
+        TestOciArtifactAdapterGuard(previous)
     }
 
     fn git(args: &[&str], cwd: &Path) {
@@ -1489,6 +1732,105 @@ run = "serve {{ inputs.host }}"
         git(&["branch", "-M", "main"], repo);
     }
 
+    fn write_local_bundle_files(root: &Path) {
+        std::fs::create_dir_all(root).expect("mkdir bundle root");
+        std::fs::write(
+            root.join("bundle.toml"),
+            r#"
+[bundle]
+name = "acme"
+
+[[inputs]]
+name = "host"
+type = "string"
+required = true
+"#,
+        )
+        .expect("write descriptor");
+        std::fs::write(
+            root.join("effigy.toml"),
+            r#"
+[tasks.dev]
+run = "serve {{ inputs.host }}"
+"#,
+        )
+        .expect("write defaults");
+    }
+
+    struct FakeOciBundleAdapter {
+        digest: String,
+        pulls: Cell<u32>,
+    }
+
+    impl OciArtifactAdapter for FakeOciBundleAdapter {
+        fn inspect(
+            &self,
+            request: &OciArtifactInspectRequest,
+        ) -> Result<OciArtifactDescriptor, OciArtifactError> {
+            Ok(OciArtifactDescriptor::new(&request.reference).with_digest(self.digest.clone()))
+        }
+
+        fn pull(
+            &self,
+            _request: &OciArtifactPullRequest,
+        ) -> Result<OciArtifactPullReport, OciArtifactError> {
+            self.pulls.set(self.pulls.get() + 1);
+            let pulled_root = std::env::temp_dir().join(format!(
+                "effigy-oci-bundle-pull-{}-{}",
+                std::process::id(),
+                self.pulls.get()
+            ));
+            write_local_bundle_files(&pulled_root);
+            Ok(OciArtifactPullReport {
+                descriptor: OciArtifactDescriptor {
+                    reference: "oci://ghcr.io/acme/bundle:v1".to_owned(),
+                    redacted_reference: "ghcr.io/acme/bundle:v1".to_owned(),
+                    digest: Some(self.digest.clone()),
+                    media_type: None,
+                    size: None,
+                },
+                pulled_root,
+                primary_files: vec![PathBuf::from("bundle.toml"), PathBuf::from("effigy.toml")],
+            })
+        }
+
+        fn push(
+            &self,
+            _request: &OciArtifactPushRequest,
+        ) -> Result<OciArtifactPushReport, OciArtifactError> {
+            unreachable!("push not used in bundle source tests")
+        }
+    }
+
+    struct FailingPullOciBundleAdapter;
+
+    impl OciArtifactAdapter for FailingPullOciBundleAdapter {
+        fn inspect(
+            &self,
+            request: &OciArtifactInspectRequest,
+        ) -> Result<OciArtifactDescriptor, OciArtifactError> {
+            Ok(OciArtifactDescriptor::new(&request.reference).with_digest("sha256:pullfail"))
+        }
+
+        fn pull(
+            &self,
+            request: &OciArtifactPullRequest,
+        ) -> Result<OciArtifactPullReport, OciArtifactError> {
+            Err(OciArtifactError::PullFailed {
+                reference: request.reference.redacted(),
+                message: "unauthorized; authenticate first with `oras login ghcr.io` and retry"
+                    .to_owned(),
+            })
+        }
+
+        fn push(
+            &self,
+            _request: &OciArtifactPushRequest,
+        ) -> Result<OciArtifactPushReport, OciArtifactError> {
+            unreachable!("push not used in bundle source tests")
+        }
+    }
+
     #[test]
     fn canonical_git_cache_identity_normalizes_common_remote_forms() {
         let ssh = canonical_git_cache_identity("git@github.com:Acme/Bundle.git");
@@ -1529,5 +1871,104 @@ run = "serve {{ inputs.host }}"
         assert!(bundle_root.starts_with(bundle_home.join(".effigy/cache/bundles/git")));
         assert!(bundle_root.join("bundle.toml").exists());
         assert!(bundle_root.join("effigy.toml").exists());
+    }
+
+    #[test]
+    fn oci_bundle_source_materializes_into_shared_cache_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bundle_home = tmp.path().join("bundle-home");
+        let _home = with_test_bundle_home(&bundle_home);
+        let _adapter = with_test_oci_adapter(Rc::new(FakeOciBundleAdapter {
+            digest: "sha256:abc123".to_owned(),
+            pulls: Cell::new(0),
+        }));
+
+        let consumer = tmp.path().join("consumer");
+        std::fs::create_dir_all(&consumer).expect("mkdir consumer");
+        let manifest_path = consumer.join("effigy.toml");
+        std::fs::write(
+            &manifest_path,
+            "[bundle]\nbase = { type = \"oci\", url = \"ghcr.io/acme/bundle:v1\" }\nhost = \"acme.test\"\n",
+        )
+        .expect("write manifest");
+
+        let loaded =
+            crate::load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+        let task = loaded.manifest.tasks.get("dev").expect("task");
+        assert!(matches!(
+            task.run.as_ref().expect("run"),
+            crate::ManifestManagedRun::Command(command) if command == "serve acme.test"
+        ));
+        let bundle_root = loaded.bundle_root.expect("bundle root");
+        assert!(bundle_root
+            .starts_with(bundle_home.join(".effigy/cache/bundles/oci/ghcr.io/acme/bundle/v1")));
+        assert!(bundle_root.join("bundle.toml").exists());
+        assert!(bundle_root.join("effigy.toml").exists());
+    }
+
+    #[test]
+    fn oci_bundle_source_marks_cached_bundle_stale_when_digest_changes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bundle_home = tmp.path().join("bundle-home");
+        let _home = with_test_bundle_home(&bundle_home);
+        let manifest_path = tmp.path().join("consumer.toml");
+        std::fs::write(
+            &manifest_path,
+            "[bundle]\nbase = { type = \"oci\", url = \"ghcr.io/acme/bundle:v1\" }\n",
+        )
+        .expect("write manifest");
+
+        let _adapter = with_test_oci_adapter(Rc::new(FakeOciBundleAdapter {
+            digest: "sha256:abc123".to_owned(),
+            pulls: Cell::new(0),
+        }));
+        let first = resolve_materialized_bundle_source(
+            &manifest_path,
+            &BundleSelection::Oci {
+                url: "ghcr.io/acme/bundle:v1".to_owned(),
+            },
+        )
+        .expect("first resolve");
+        assert!(!first.stale);
+
+        let _adapter = with_test_oci_adapter(Rc::new(FakeOciBundleAdapter {
+            digest: "sha256:def456".to_owned(),
+            pulls: Cell::new(0),
+        }));
+        let second = resolve_materialized_bundle_source(
+            &manifest_path,
+            &BundleSelection::Oci {
+                url: "ghcr.io/acme/bundle:v1".to_owned(),
+            },
+        )
+        .expect("second resolve");
+        assert!(second.stale);
+        assert_eq!(second.version_hint.as_deref(), Some("sha256:def456"));
+        assert_eq!(first.local_path, second.local_path);
+    }
+
+    #[test]
+    fn oci_bundle_source_surfaces_pull_failures() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bundle_home = tmp.path().join("bundle-home");
+        let _home = with_test_bundle_home(&bundle_home);
+        let _adapter = with_test_oci_adapter(Rc::new(FailingPullOciBundleAdapter));
+        let manifest_path = tmp.path().join("consumer.toml");
+        std::fs::write(
+            &manifest_path,
+            "[bundle]\nbase = { type = \"oci\", url = \"ghcr.io/acme/bundle:v1\" }\n",
+        )
+        .expect("write manifest");
+
+        let error = resolve_materialized_bundle_source(
+            &manifest_path,
+            &BundleSelection::Oci {
+                url: "ghcr.io/acme/bundle:v1".to_owned(),
+            },
+        )
+        .expect_err("reject pull failure");
+        let rendered = error.to_string();
+        assert!(rendered.contains("unauthorized"));
+        assert!(rendered.contains("oras login ghcr.io"));
     }
 }

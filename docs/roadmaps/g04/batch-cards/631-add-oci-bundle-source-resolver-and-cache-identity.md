@@ -2,7 +2,7 @@
 
 Lane: [`065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md`](../065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -28,7 +28,15 @@ existing artifact substrate.
 - current shipped/path/git bundle behavior stays unchanged
 - focused OCI resolver tests cover happy path and direct failure modes
 
+## Outcome
+
+- OCI bundle sources now resolve through the shared `ResolvedBundleSource` seam
+- ORAS-backed inspect/pull behavior is reused through the shared artifact
+  transport
+- cache roots are stable for tag and digest forms
+- cached OCI bundle roots record digest-backed version hints and surface stale
+  drift when the remote digest changes
+
 ## Next Task
 
-Implement the OCI bundle-source resolver and cache identity rules, then
-advance the lane to the bundle sync and inspect surface batches.
+Execute [`632-add-bundle-sync-for-remote-sources.md`](./632-add-bundle-sync-for-remote-sources.md).

@@ -24,6 +24,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Git bundle sources:** `[bundle].base = { type = "git", ... }` now resolves
   local or remote git-backed bundle sources into the shared Effigy bundle cache
   and records a commit-sha version hint on the materialized bundle root.
+- **OCI bundle sources:** `[bundle].base = { type = "oci", ... }` now resolves
+  registry-backed bundle sources through the shared artifact/ORAS transport,
+  materializes them into the shared Effigy bundle cache, records digest-backed
+  version hints, and marks cached bundle roots stale when the remote digest
+  drifts.
 - **Task status read surface:** `effigy tasks status <selector>` now resolves
   one task selector through normal routing and reports live-or-last-known task
   status in text or JSON using the persisted active/latest task-status record

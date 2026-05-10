@@ -32,7 +32,7 @@ This lane owns:
 
 ## Current Ready Card
 
-- [`631-add-oci-bundle-source-resolver-and-cache-identity.md`](../roadmaps/g04/batch-cards/631-add-oci-bundle-source-resolver-and-cache-identity.md)
+- [`632-add-bundle-sync-for-remote-sources.md`](../roadmaps/g04/batch-cards/632-add-bundle-sync-for-remote-sources.md)
 
 ## Execution Chain
 
@@ -48,8 +48,11 @@ This lane owns:
   shared defaults-loading seam on top of the materialized source result
 - `630` complete: landed the first git bundle-source resolver, stable git cache
   identity rules, and local git proof coverage
-- `631` ready: add the OCI bundle-source resolver and shared cache identity
-  rules before the later sync/inspect surface batches
+- `631` complete: landed the OCI bundle-source resolver on top of the shared
+  artifact transport, materialized OCI bundle roots into the shared cache, and
+  added digest-backed stale detection on cached bundle roots
+- `632` ready: add explicit `bundle sync` for git/OCI bundle sources before
+  widening the inspect surface
 
 ## Exit Condition
 
@@ -60,4 +63,4 @@ and no longer accepts `base_path`.
 ## Next Task
 
 Execute
-[`631-add-oci-bundle-source-resolver-and-cache-identity.md`](../roadmaps/g04/batch-cards/631-add-oci-bundle-source-resolver-and-cache-identity.md).
+[`632-add-bundle-sync-for-remote-sources.md`](../roadmaps/g04/batch-cards/632-add-bundle-sync-for-remote-sources.md).

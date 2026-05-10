@@ -7,6 +7,7 @@ publish = false
 description = "Shared manifest contracts and composition for Effigy"
 
 [dependencies]
+effigy-artifacts = { path = "../effigy-artifacts" }
 effigy-core = { path = "../effigy-core" }
 indexmap = { version = "2", features = ["serde"] }
 minijinja = "2"
