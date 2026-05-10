@@ -32,7 +32,7 @@ This lane owns:
 
 ## Current Ready Card
 
-- [`633-extend-bundle-inspect-with-source-metadata.md`](../roadmaps/g04/batch-cards/633-extend-bundle-inspect-with-source-metadata.md)
+- [`634-close-remote-bundle-source-docs-and-proof-coverage.md`](../roadmaps/g04/batch-cards/634-close-remote-bundle-source-docs-and-proof-coverage.md)
 
 ## Execution Chain
 
@@ -54,8 +54,11 @@ This lane owns:
 - `632` complete: landed repo-local `bundle sync`, refreshed git/OCI bundle
   sources through the shared resolver seam, and reported bounded source-sync
   outcomes in text/JSON
-- `633` ready: extend `bundle inspect` with source-aware metadata on top of the
-  completed source resolver and sync surfaces
+- `633` complete: widened `bundle inspect` so named inspection stays on the
+  shipped bundle schema/catalog path while bare inspection reports active
+  repo-local bundle source metadata for shipped/path/git/oci sources
+- `634` ready: close the remaining guides/changelog/proof slice and finish the
+  lane
 
 ## Exit Condition
 
@@ -66,4 +69,4 @@ and no longer accepts `base_path`.
 ## Next Task
 
 Execute
-[`633-extend-bundle-inspect-with-source-metadata.md`](../roadmaps/g04/batch-cards/633-extend-bundle-inspect-with-source-metadata.md).
+[`634-close-remote-bundle-source-docs-and-proof-coverage.md`](../roadmaps/g04/batch-cards/634-close-remote-bundle-source-docs-and-proof-coverage.md).

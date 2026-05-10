@@ -2,7 +2,7 @@
 
 Lane: [`065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md`](../065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -25,7 +25,13 @@ current repo, not just the shipped bundle input schema.
 - JSON includes source metadata with stable field names
 - focused inspect proofs cover shipped and remote-source bundle cases
 
+## Result
+
+- bare `effigy bundle inspect` now reports the active repo bundle source
+- shipped named inspection still reports the shipped bundle schema/catalog path
+- JSON keeps one stable schema with explicit `mode`
+
 ## Next Task
 
-Add source-aware inspect reporting on top of the completed shared resolver and
-`bundle sync` surfaces.
+Execute
+[`634-close-remote-bundle-source-docs-and-proof-coverage.md`](./634-close-remote-bundle-source-docs-and-proof-coverage.md).

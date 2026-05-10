@@ -32,6 +32,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - **`effigy bundle sync`:** the bundle surface now adds an explicit repo-local
   refresh command for git and OCI bundle sources, reports whether the cached
   bundle root changed, and returns `effigy.bundle.sync.v1` in JSON mode.
+- **`effigy bundle inspect`:** bare `effigy bundle inspect` now reports the
+  active repo bundle source, including source type, local path, version hint,
+  stale state, and manifest path, while `effigy bundle inspect <name>` keeps
+  the shipped bundle schema/catalog path.
 - **Task status read surface:** `effigy tasks status <selector>` now resolves
   one task selector through normal routing and reports live-or-last-known task
   status in text or JSON using the persisted active/latest task-status record

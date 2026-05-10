@@ -160,10 +160,10 @@ Existing `resolve_local_bundle_defaults` consumes `local_path` unchanged.
    Status: complete
 6. **Extend `effigy bundle inspect`**: show source type, cache path, version,
    stale flag
-   Status: ready next
+   Status: complete
 7. **Update guides and contracts**: local-bundle guide, config reference,
    changelog entry
-   Status: pending
+   Status: ready next
 8. **Proof coverage**: git clone/failure, OCI pull/failure, stale detection,
    backward-compat string form, `base_path` error
    Status: pending
@@ -181,4 +181,4 @@ Existing `resolve_local_bundle_defaults` consumes `local_path` unchanged.
 ## Next Task
 
 Execute
-[`633-extend-bundle-inspect-with-source-metadata.md`](./batch-cards/633-extend-bundle-inspect-with-source-metadata.md).
+[`634-close-remote-bundle-source-docs-and-proof-coverage.md`](./batch-cards/634-close-remote-bundle-source-docs-and-proof-coverage.md).

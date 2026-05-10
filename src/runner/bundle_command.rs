@@ -342,7 +342,7 @@ mod tests {
         let context = EffigyRuntimeContext::builder()
             .cwd_override(Some(tmp.clone()))
             .captured_env(CapturedEnv::default())
-            .capture()
+            .capture_lossy()
             .expect("capture context");
         let error = crate::runner::command_context::with_runtime_context(&context, || {
             run_bundle_sync(false)
@@ -372,7 +372,7 @@ mod tests {
         let context = EffigyRuntimeContext::builder()
             .cwd_override(Some(tmp.clone()))
             .captured_env(CapturedEnv::default())
-            .capture()
+            .capture_lossy()
             .expect("capture context");
         let rendered = crate::runner::command_context::with_runtime_context(&context, || {
             run_bundle_sync(true)
@@ -402,7 +402,7 @@ mod tests {
         let context = EffigyRuntimeContext::builder()
             .cwd_override(Some(tmp.clone()))
             .captured_env(CapturedEnv::default())
-            .capture()
+            .capture_lossy()
             .expect("capture context");
         let rendered = crate::runner::command_context::with_runtime_context(&context, || {
             run_bundle_inspect(None, true)

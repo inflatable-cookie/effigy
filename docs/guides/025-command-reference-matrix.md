@@ -196,7 +196,10 @@ bootstrap/data seed/data dump without becoming part of `[bundle].databases`.
 ### Bundles, Bootstrap, and Demos
 
 ```sh
-effigy bundle <list|inspect|export|sync> [ARGS...] [--json]
+effigy bundle list [--json]
+effigy bundle inspect [<BUNDLE>] [--json]
+effigy bundle export <BUNDLE> --path <DIR> [--json]
+effigy bundle sync [--json]
 effigy deploy model [--repo <PATH>] --json
 effigy deploy export render [--repo <PATH>] --path <DIR> [--plan] [--json]
 effigy deploy export railway [--repo <PATH>] --path <DIR> [--plan] [--json]

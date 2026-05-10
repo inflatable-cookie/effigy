@@ -4,18 +4,18 @@ Local manifest bundles let a repo reference reusable Effigy defaults in
 a directory instead of copying large `[systems]`, `[containers]`, or
 task blocks into every consumer manifest.
 
-Use shipped bundles with `[bundle].base`. Use local bundles with
-`[bundle].base_path`.
+Use shipped bundles with `[bundle].base`. Use local bundles with the typed
+path form.
 
 ```toml
 [bundle]
-base_path = "bundles/acme"
+base = { type = "path", dir = "bundles/acme" }
 host = "acme.test"
 project_name = "acme-dev"
 ```
 
-`base` and `base_path` are mutually exclusive. `name` remains accepted
-as a legacy alias for `base`, but new manifests should use `base`.
+`[bundle].base_path` has been removed. `name` remains accepted as a legacy
+alias for `base`, but new manifests should use `base`.
 
 ## Export a Shipped Bundle
 
@@ -35,11 +35,11 @@ For shipped bundles, the exported `effigy.toml` is not a second hand-maintained
 for repo ownership. Shipped bundle defaults and `bundle export` now come from
 the same template source, so a bundle change only needs to land in one file.
 
-Switch the consuming manifest from `base` to `base_path`:
+Switch the consuming manifest from a shipped bundle to the path form:
 
 ```toml
 [bundle]
-base_path = "bundles/underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "underlay-reference"
@@ -65,10 +65,10 @@ The defaults file name is `effigy.toml` by default. Override it with
 
 For shipped bundles compiled into Effigy, the canonical template source is the
 bundle's `export.toml`. `effigy bundle export` writes that canonical template
-out as `effigy.toml` for local `base_path` ownership.
+out as `effigy.toml` for local path-based ownership.
 
-Paths in `base_path` are resolved relative to the consuming
-`effigy.toml`, unless absolute.
+Paths in `base = { type = "path", dir = "..." }` are resolved relative to the
+consuming `effigy.toml`, unless absolute.
 
 ## `bundle.toml`
 
@@ -106,10 +106,10 @@ Supported input types:
 - `list`
 
 Input names must not collide with reserved `[bundle]` selector keys:
-`base`, `base_path`, or legacy `name`.
+`base` or legacy `name`.
 
 Local bundles are strict. Every key under `[bundle]` other than
-`base_path` must be declared in `bundle.toml`; misspelled inputs fail
+`base` must be declared in `bundle.toml`; misspelled inputs fail
 manifest loading.
 
 ## Defaults Template
@@ -183,7 +183,7 @@ This means a consumer can override a bundle-provided path directly:
 
 ```toml
 [bundle]
-base_path = "bundles/acme"
+base = { type = "path", dir = "bundles/acme" }
 host = "acme.test"
 project_name = "acme-dev"
 
@@ -207,5 +207,6 @@ bundle defaults file as the source.
 
 `effigy bundle list`, `effigy bundle inspect <name>`, and
 `effigy bundle export <name> --path <dir>` operate on shipped bundles.
-Local bundles are repo-owned files, so inspect them through the consuming
-manifest with `effigy config --inspect`.
+Use bare `effigy bundle inspect` to inspect the active bundle source for the
+current repo, including shipped/path/git/oci source metadata, local cache path,
+version hint, and stale state.
