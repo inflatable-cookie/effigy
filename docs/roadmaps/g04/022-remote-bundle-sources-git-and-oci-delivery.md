@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -147,18 +147,26 @@ Existing `resolve_local_bundle_defaults` consumes `local_path` unchanged.
 1. **Promote config boundary**: redesign `ManifestBundleConfig` with unified
    `base` block, remove `base_path`, update serde parsing, update schema
    rendering, update all tests
+   Status: complete for contract boundary
 2. **Add `BundleSourceResolver` trait**: extract shipped/path logic into
    resolver pipeline producing `ResolvedBundleSource`
+   Status: pending
 3. **Implement git resolver**: clone, cache, stale detection, error handling
+   Status: pending
 4. **Implement OCI resolver**: reuse artifact substrate, cache, stale detection
+   Status: pending
 5. **Add `effigy bundle sync`**: resolve repo context, iterate remote sources,
    force refresh
+   Status: pending
 6. **Extend `effigy bundle inspect`**: show source type, cache path, version,
    stale flag
+   Status: pending
 7. **Update guides and contracts**: local-bundle guide, config reference,
    changelog entry
+   Status: pending
 8. **Proof coverage**: git clone/failure, OCI pull/failure, stale detection,
    backward-compat string form, `base_path` error
+   Status: pending
 
 ## Validation
 
@@ -172,4 +180,5 @@ Existing `resolve_local_bundle_defaults` consumes `local_path` unchanged.
 
 ## Next Task
 
-Open the first batch card for the config boundary promotion.
+Execute
+[`628-add-unified-bundle-base-model-and-base-path-removal.md`](./batch-cards/628-add-unified-bundle-base-model-and-base-path-removal.md).

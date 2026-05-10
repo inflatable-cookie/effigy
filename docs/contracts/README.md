@@ -71,6 +71,10 @@ This folder contains both:
   v0.6.0 deployment transaction contract for provider-neutral UAT and
   production deployment orchestration across code refs, state stacks, OCI
   artifacts, release evidence, provider adapters, hooks, reports, and redeploy.
+- [`020-remote-bundle-sources-git-and-oci-delivery-contract.md`](./020-remote-bundle-sources-git-and-oci-delivery-contract.md):
+  unified bundle-source contract for shipped, path, git, and OCI delivery,
+  `base_path` removal, shared source materialization, cache identity, and
+  stale/update detection.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -91,6 +95,7 @@ This folder contains both:
 | `017-task-status-record-and-active-run-model-contract.md` | Platform maintainers | Task-status key fields, normalized state/stage taxonomy, active/completed record layout, stale/live reconciliation rules, covered write-side execution surfaces | Planning review against `g04.020` plus focused task execution and stale-record proofs once implementation starts |
 | `018-task-status-query-surface-and-read-model-contract.md` | Platform maintainers | `tasks status` selector resolution rules, `--all` inventory scope, stale/no-longer-declared row visibility, minimum text/JSON fields, read-side ownership split | Planning review against `g04.021` plus focused task-status query proofs once implementation starts |
 | `019-deployment-transaction-system-contract.md` | Platform maintainers | Deploy env config, transaction stage order, provider adapter boundary, release/state/artifact composition, deployment reports, redeploy rules, provider support scope | Planning review against `g04.027` through `g04.032` plus focused deployment transaction proofs once implementation starts |
+| `020-remote-bundle-sources-git-and-oci-delivery-contract.md` | Platform maintainers | Unified `[bundle].base` grammar, `base_path` removal, source taxonomy, shared materialization boundary, git/OCI cache identity, stale/update detection, `bundle inspect`/`bundle sync` source metadata | Planning review against `g04.022` plus focused bundle parser and source-resolution proofs once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -130,4 +135,6 @@ task-status record contract, and
 `018-task-status-query-surface-and-read-model-contract.md` as the `g04.021`
 task-status query contract, and
 `019-deployment-transaction-system-contract.md` as the `g04.027` to `g04.032`
-deployment transaction contract.
+deployment transaction contract, and
+`020-remote-bundle-sources-git-and-oci-delivery-contract.md` as the `g04.022`
+remote bundle-source contract.
