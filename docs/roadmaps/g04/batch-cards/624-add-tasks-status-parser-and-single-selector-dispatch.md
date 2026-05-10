@@ -2,7 +2,7 @@
 
 Lane: [`063-task-status-query-surface-and-read-model-strict-lane.md`](../063-task-status-query-surface-and-read-model-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -44,5 +44,6 @@ selector in text and JSON form using the shared reconciliation layer.
 
 ## Next Task
 
-Widen the surface to `effigy tasks status --all` repo-plus-descendant
-inventory.
+Execute
+[`625-add-tasks-status-all-repo-and-descendant-inventory.md`](./625-add-tasks-status-all-repo-and-descendant-inventory.md)
+to widen the surface to repo-plus-descendant inventory.

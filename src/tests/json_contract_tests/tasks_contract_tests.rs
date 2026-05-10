@@ -268,9 +268,10 @@ fn sorted_object_keys(value: &serde_json::Value) -> Vec<&str> {
 }
 
 fn seed_latest_task_status(root: &Path, selector: &str) {
+    let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let identity = TaskStatusTargetIdentity::new(
-        root.to_path_buf(),
-        root.to_path_buf(),
+        canonical_root.clone(),
+        canonical_root,
         selector,
         selector,
         None,

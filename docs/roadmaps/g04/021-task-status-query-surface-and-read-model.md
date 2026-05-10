@@ -216,6 +216,8 @@ Docs/reference updates:
 
 1. add parser/dispatch contract for `tasks status`
 2. add single-selector read/report path
+   Status: complete; `effigy tasks status <selector>` now returns active or
+   last-known status in text/JSON on top of the shared reconciliation layer
 3. add `--all` repo-plus-descendant inventory
 4. add JSON contracts and examples
 5. update help, command reference, and troubleshooting guidance

@@ -29,7 +29,7 @@ This lane owns:
 
 ## Current Ready Card
 
-- [`624-add-tasks-status-parser-and-single-selector-dispatch.md`](../roadmaps/g04/batch-cards/624-add-tasks-status-parser-and-single-selector-dispatch.md)
+- [`625-add-tasks-status-all-repo-and-descendant-inventory.md`](../roadmaps/g04/batch-cards/625-add-tasks-status-all-repo-and-descendant-inventory.md)
 
 ## Execution Chain
 
@@ -37,8 +37,10 @@ This lane owns:
   and selected the first contract-shaping card
 - `623` complete: locked selector resolution, `--all` repo inventory scope,
   stale/no-longer-declared row visibility, and minimum text/JSON result fields
-- `624` ready: add parser/dispatch support for one-selector `tasks status`
-  reads before widening to `--all` inventory
+- `624` complete: `effigy tasks status <selector>` now resolves one selector
+  through normal routing and reports live-or-last-known status in text or JSON
+- `625` ready: widen the read surface to `tasks status --all`
+  repo-plus-descendant inventory
 
 ## Exit Condition
 
@@ -49,4 +51,4 @@ stable text/JSON contract set.
 ## Next Task
 
 Execute ready card
-[`624-add-tasks-status-parser-and-single-selector-dispatch.md`](../roadmaps/g04/batch-cards/624-add-tasks-status-parser-and-single-selector-dispatch.md).
+[`625-add-tasks-status-all-repo-and-descendant-inventory.md`](../roadmaps/g04/batch-cards/625-add-tasks-status-all-repo-and-descendant-inventory.md).

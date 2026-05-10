@@ -27,7 +27,7 @@ fn run_tasks_status_json_prefers_live_active_record() {
     assert_eq!(parsed["currently_declared"], true);
     assert_eq!(parsed["active"]["stage"], "executing");
     assert!(parsed["latest"].is_null());
-    assert_eq!(parsed["routing"]["selection_mode"], "root-shallowest");
+    assert_eq!(parsed["routing"]["selection_mode"], "cwd-nearest");
 }
 
 #[test]
@@ -104,9 +104,10 @@ fn seed_latest_task_status(root: &Path, selector: &str) {
 }
 
 fn status_identity(root: &Path, selector: &str) -> TaskStatusTargetIdentity {
+    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     TaskStatusTargetIdentity::new(
-        root.to_path_buf(),
-        root.to_path_buf(),
+        canonical_root.clone(),
+        canonical_root,
         selector,
         selector,
         None,
