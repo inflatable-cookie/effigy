@@ -25,8 +25,7 @@ command decomposition lane:
 
 ## Current Ready Card
 
-- `654` collapse the routed container-exec variants behind one shared internal
-  path
+- `655` extract the shared release stage helper for `prepare` and `execute`
 
 ## Execution Chain
 
@@ -36,8 +35,11 @@ command decomposition lane:
   dispatch, routed container-exec collapse, and release stage reuse
 - `653` complete: landed the shared result-render helper and moved the first
   low-risk command owners onto it
-- `654` ready: collapse the routed container-exec variants behind one internal
-  execution seam
+- `654` complete: collapsed the routed container-exec variants behind one
+  shared internal execution seam while preserving capture versus inherit
+  behavior
+- `655` ready: extract the shared release stage helper for `prepare` and
+  `execute`
 
 ## Exit Condition
 
@@ -48,5 +50,5 @@ user-facing drift.
 
 ## Next Task
 
-Execute `654` to collapse the routed container-exec variants behind one shared
-internal execution seam.
+Execute `655` to extract the shared release stage helper for `prepare` and
+`execute`.

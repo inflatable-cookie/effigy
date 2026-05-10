@@ -91,28 +91,20 @@ pub(in crate::runner) fn run_routed_task_container_exec(
     task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<String, RunnerError> {
-    let output = run_routed_task_exec_internal(
+    let output = run_routed_task_container_exec_variant(
         repo_root,
         invocation_cwd,
         selector,
         task_args,
-        container_name,
+        RoutedTaskExecSurface::Named { container_name },
+        false,
         service,
         command,
         task_env,
         secret_env,
-        false,
     )?;
 
-    if !output.status.success() {
-        return Err(RunnerError::TaskCommandFailure {
-            command: command.to_owned(),
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        });
-    }
-    Ok(String::new())
+    finish_routed_task_exec(command, output)
 }
 
 pub(in crate::runner) fn capture_routed_task_container_exec(
@@ -126,17 +118,17 @@ pub(in crate::runner) fn capture_routed_task_container_exec(
     task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<Output, RunnerError> {
-    run_routed_task_exec_internal(
+    run_routed_task_container_exec_variant(
         repo_root,
         invocation_cwd,
         selector,
         task_args,
-        container_name,
+        RoutedTaskExecSurface::Named { container_name },
+        true,
         service,
         command,
         task_env,
         secret_env,
-        true,
     )
 }
 
@@ -152,29 +144,23 @@ pub(in crate::runner) fn run_routed_task_container_exec_with_policy(
     task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<String, RunnerError> {
-    let output = run_routed_task_exec_internal_with_surface(
+    let output = run_routed_task_container_exec_variant(
         repo_root,
         invocation_cwd,
         selector,
         task_args,
-        policy,
-        working_dir,
+        RoutedTaskExecSurface::ResolvedPolicy {
+            policy,
+            working_dir,
+        },
+        false,
         service,
         command,
         task_env,
         secret_env,
-        false,
     )?;
 
-    if !output.status.success() {
-        return Err(RunnerError::TaskCommandFailure {
-            command: command.to_owned(),
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        });
-    }
-    Ok(String::new())
+    finish_routed_task_exec(command, output)
 }
 
 pub(in crate::runner) fn capture_routed_task_container_exec_with_policy(
@@ -189,18 +175,20 @@ pub(in crate::runner) fn capture_routed_task_container_exec_with_policy(
     task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
 ) -> Result<Output, RunnerError> {
-    run_routed_task_exec_internal_with_surface(
+    run_routed_task_container_exec_variant(
         repo_root,
         invocation_cwd,
         selector,
         task_args,
-        policy,
-        working_dir,
+        RoutedTaskExecSurface::ResolvedPolicy {
+            policy,
+            working_dir,
+        },
+        true,
         service,
         command,
         task_env,
         secret_env,
-        true,
     )
 }
 
@@ -315,70 +303,74 @@ fn run_raw_exec(
     )
 }
 
-fn run_routed_task_exec_internal(
-    repo_root: &Path,
-    invocation_cwd: &Path,
-    selector: &TaskSelector,
-    task_args: &[String],
-    container_name: &str,
-    service: &str,
-    command: &str,
-    task_env: Option<&BTreeMap<String, String>>,
-    secret_env: Option<&[(&str, &SecretString)]>,
-    capture: bool,
-) -> Result<Output, RunnerError> {
-    let surface = resolve_running_named_exec_surface(repo_root, container_name)?;
-
-    let mapped_cwd = map_host_cwd(
-        repo_root,
-        invocation_cwd,
-        &surface.container_name,
-        &surface.config,
-    )?;
-    run_routed_task_exec_internal_with_mapped_cwd(
-        repo_root,
-        selector,
-        task_args,
-        &surface.policy,
-        &mapped_cwd,
-        service,
-        command,
-        task_env,
-        secret_env,
-        capture,
-    )
+enum RoutedTaskExecSurface<'a> {
+    Named {
+        container_name: &'a str,
+    },
+    ResolvedPolicy {
+        policy: &'a EffectiveContainerPolicy,
+        working_dir: &'a Path,
+    },
 }
 
-fn run_routed_task_exec_internal_with_surface(
+fn run_routed_task_container_exec_variant(
     repo_root: &Path,
     invocation_cwd: &Path,
     selector: &TaskSelector,
     task_args: &[String],
-    policy: &EffectiveContainerPolicy,
-    working_dir: &Path,
+    surface: RoutedTaskExecSurface<'_>,
+    capture: bool,
     service: &str,
     command: &str,
     task_env: Option<&BTreeMap<String, String>>,
     secret_env: Option<&[(&str, &SecretString)]>,
-    capture: bool,
 ) -> Result<Output, RunnerError> {
-    let mapper = effigy_exec::CwdMapper::new(repo_root.to_path_buf(), working_dir.to_path_buf());
-    let mapped_cwd = mapper
-        .host_to_container(invocation_cwd)
-        .map(|path| path.to_string_lossy().into_owned())
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    run_routed_task_exec_internal_with_mapped_cwd(
-        repo_root,
-        selector,
-        task_args,
-        policy,
-        &mapped_cwd,
-        service,
-        command,
-        task_env,
-        secret_env,
-        capture,
-    )
+    match surface {
+        RoutedTaskExecSurface::Named { container_name } => {
+            let surface = resolve_running_named_exec_surface(repo_root, container_name)?;
+            let mapped_cwd = map_host_cwd(
+                repo_root,
+                invocation_cwd,
+                &surface.container_name,
+                &surface.config,
+            )?;
+            run_routed_task_exec_internal_with_mapped_cwd(
+                repo_root,
+                selector,
+                task_args,
+                &surface.policy,
+                &mapped_cwd,
+                service,
+                command,
+                task_env,
+                secret_env,
+                capture,
+            )
+        }
+        RoutedTaskExecSurface::ResolvedPolicy {
+            policy,
+            working_dir,
+        } => {
+            let mapper =
+                effigy_exec::CwdMapper::new(repo_root.to_path_buf(), working_dir.to_path_buf());
+            let mapped_cwd = mapper
+                .host_to_container(invocation_cwd)
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            run_routed_task_exec_internal_with_mapped_cwd(
+                repo_root,
+                selector,
+                task_args,
+                policy,
+                &mapped_cwd,
+                service,
+                command,
+                task_env,
+                secret_env,
+                capture,
+            )
+        }
+    }
 }
 
 fn run_routed_task_exec_internal_with_mapped_cwd(
@@ -409,6 +401,18 @@ fn run_routed_task_exec_internal_with_mapped_cwd(
     let args = build_routed_task_exec_args(&strategy, task_env, secret_env, service, mapped_cwd);
 
     run_compose_exec(repo_root, policy, &args, capture, "docker compose exec")
+}
+
+fn finish_routed_task_exec(command: &str, output: Output) -> Result<String, RunnerError> {
+    if !output.status.success() {
+        return Err(RunnerError::TaskCommandFailure {
+            command: command.to_owned(),
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        });
+    }
+    Ok(String::new())
 }
 
 pub(super) fn strategy_requires_workspace_effigy_install(

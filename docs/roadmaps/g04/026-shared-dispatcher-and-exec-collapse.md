@@ -151,5 +151,5 @@ shape. The dispatcher takes a `ReleaseStage` enum and the common flags.
 
 ## Next Task
 
-Execute `654` to collapse the routed container-exec variants behind one shared
-internal execution seam.
+Execute `655` to extract the shared release stage helper for `prepare` and
+`execute`.
