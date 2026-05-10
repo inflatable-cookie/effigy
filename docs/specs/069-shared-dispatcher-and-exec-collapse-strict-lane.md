@@ -25,8 +25,8 @@ command decomposition lane:
 
 ## Current Ready Card
 
-- `653` add the shared result-render helper and migrate the first low-risk
-  command owners
+- `654` collapse the routed container-exec variants behind one shared internal
+  path
 
 ## Execution Chain
 
@@ -34,8 +34,10 @@ command decomposition lane:
   the first real execution slice
 - `652` complete: locked the structural-only boundary for shared render
   dispatch, routed container-exec collapse, and release stage reuse
-- `653` ready: land the shared result-render helper and apply it to the first
-  low-risk command owners
+- `653` complete: landed the shared result-render helper and moved the first
+  low-risk command owners onto it
+- `654` ready: collapse the routed container-exec variants behind one internal
+  execution seam
 
 ## Exit Condition
 
@@ -46,5 +48,5 @@ user-facing drift.
 
 ## Next Task
 
-Execute `653` to land the shared result-render helper and migrate the first
-low-risk command owners.
+Execute `654` to collapse the routed container-exec variants behind one shared
+internal execution seam.

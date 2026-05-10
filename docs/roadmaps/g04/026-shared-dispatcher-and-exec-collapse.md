@@ -151,5 +151,5 @@ shape. The dispatcher takes a `ReleaseStage` enum and the common flags.
 
 ## Next Task
 
-Execute `653` to add the shared result-render helper and migrate the first
-low-risk command owners.
+Execute `654` to collapse the routed container-exec variants behind one shared
+internal execution seam.
