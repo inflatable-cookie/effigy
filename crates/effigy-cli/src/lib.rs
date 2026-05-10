@@ -116,6 +116,7 @@ pub enum HelpTopic {
 pub struct ChangelogArgs {
     pub subcommand: ChangelogSubcommand,
     pub file: Option<PathBuf>,
+    pub repo_override: Option<PathBuf>,
     pub output_json: bool,
 }
 
@@ -434,6 +435,7 @@ pub struct DeferArgs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BundleArgs {
     pub subcommand: BundleSubcommand,
+    pub repo_override: Option<PathBuf>,
     pub output_json: bool,
 }
 

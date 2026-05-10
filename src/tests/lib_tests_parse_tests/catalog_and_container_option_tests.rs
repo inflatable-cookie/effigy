@@ -34,6 +34,7 @@ fn parse_bundle_list_supports_json() {
         cmd,
         Command::Bundle(BundleArgs {
             subcommand: BundleSubcommand::List,
+            repo_override: None,
             output_json: true,
         })
     );
@@ -53,6 +54,7 @@ fn parse_bundle_inspect_is_supported() {
             subcommand: BundleSubcommand::Inspect {
                 bundle: Some("decodelabs".to_owned()),
             },
+            repo_override: None,
             output_json: false,
         })
     );
@@ -70,6 +72,7 @@ fn parse_bundle_inspect_without_name_is_supported() {
         cmd,
         Command::Bundle(BundleArgs {
             subcommand: BundleSubcommand::Inspect { bundle: None },
+            repo_override: None,
             output_json: true,
         })
     );
@@ -93,6 +96,7 @@ fn parse_bundle_export_requires_path() {
                 bundle: "underlay".to_owned(),
                 path: PathBuf::from("bundles/underlay"),
             },
+            repo_override: None,
             output_json: true,
         })
     );
@@ -110,6 +114,27 @@ fn parse_bundle_sync_supports_json() {
         cmd,
         Command::Bundle(BundleArgs {
             subcommand: BundleSubcommand::Sync,
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_bundle_inspect_supports_repo_override() {
+    let cmd = parse_command(vec![
+        "bundle".to_owned(),
+        "inspect".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Bundle(BundleArgs {
+            subcommand: BundleSubcommand::Inspect { bundle: None },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
         })
     );

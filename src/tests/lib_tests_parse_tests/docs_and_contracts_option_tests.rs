@@ -4,6 +4,7 @@ use crate::tests::prelude::{
     DocsArgs, DocsBlockRequirement, DocsSubcommand, PathBuf,
 };
 use effigy_cli::DocsCheckKind;
+use effigy_cli::{ChangelogArgs, ChangelogSubcommand};
 
 #[test]
 fn parse_docs_check_links_with_repo_and_paths() {
@@ -234,6 +235,28 @@ fn parse_docs_check_forbidden_with_requirements() {
                 index: None,
                 policy_name: None,
             },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_changelog_validate_supports_repo_override() {
+    let cmd = parse_command(vec![
+        "changelog".to_owned(),
+        "validate".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Changelog(ChangelogArgs {
+            subcommand: ChangelogSubcommand::Validate,
+            file: None,
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
         })

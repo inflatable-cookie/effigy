@@ -41,6 +41,7 @@ fn command_kind_and_name_maps_command_variants() {
     let version = Command::Version;
     let bundle = Command::Bundle(BundleArgs {
         subcommand: BundleSubcommand::List,
+        repo_override: None,
         output_json: false,
     });
     let help = Command::Help(HelpTopic::Doctor);

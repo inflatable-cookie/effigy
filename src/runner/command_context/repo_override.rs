@@ -5,8 +5,8 @@ use effigy_cli::Command;
 pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf> {
     match cmd {
         Command::Version => None,
-        Command::Bundle(_) => None,
-        Command::Changelog(_) => None,
+        Command::Bundle(args) => args.repo_override.clone(),
+        Command::Changelog(args) => args.repo_override.clone(),
         Command::Deploy(args) => args.repo_override.clone(),
         Command::Defer(args) => args.repo_override.clone(),
         Command::Exec(args) => args.repo_override.clone(),
@@ -66,9 +66,9 @@ pub(in crate::runner) fn apply_repo_target_to_embedded_command(
         Command::Release(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Doctor(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Tasks(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Bundle(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Changelog(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Version
-        | Command::Bundle(_)
-        | Command::Changelog(_)
         | Command::Gateway(_)
         | Command::Bootstrap(_)
         | Command::InternalGateway(_)

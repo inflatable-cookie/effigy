@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.024`](../roadmaps/g04/024-command-reference-completeness-and-flag-consistency.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -22,7 +22,7 @@ support needed for repo-local `changelog` and `bundle` surfaces.
 
 ## Current Ready Card
 
-- `643` add the bounded `--repo` widening for changelog and bundle
+- none; lane complete
 
 ## Execution Chain
 
@@ -33,8 +33,9 @@ support needed for repo-local `changelog` and `bundle` surfaces.
 - `642` complete: audited the live parser/help surface against the command
   matrix, fixed the bounded guide-only drift, and cleaned up the nearby
   `docs check <KIND>` matrix drift left from `g04.023`
-- `643` ready: add the bounded `--repo` widening for `changelog` and `bundle`
-  plus focused parser and runner proofs
+- `643` complete: added the bounded `--repo` widening for `changelog` and
+  `bundle`, updated help/reference surfaces, and landed focused parser and
+  runner proofs
 
 ## Exit Condition
 
@@ -44,5 +45,4 @@ surfaces accept `--repo <PATH>` with focused parser and runner proof coverage.
 
 ## Next Task
 
-Execute `643` to add the bounded `--repo` widening for `changelog` and
-`bundle`.
+Open the next queued `g04` lane.

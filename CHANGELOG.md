@@ -99,6 +99,13 @@ During v0.x, MINOR bumps may include breaking changes.
   bash/zsh startup automatically when `--install` is selected, and upgrades the
   JSON surface to `effigy.completion.v2`.
 
+### Changed
+- **Repo-local bundle and changelog commands** now accept `--repo <PATH>` on
+  the bounded surfaces from `g04.024`: `bundle list|inspect|export` and
+  `changelog validate|format|analyze|extract`. Relative bundle export paths and
+  relative changelog file paths now anchor to the selected repo root when
+  `--repo` is supplied.
+
 ### Fixed
 - **State capture standalone manifest parsing** now treats a positional
   `*.toml` argument the same way across `state plan`, `state apply`, and

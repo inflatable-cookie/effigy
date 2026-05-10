@@ -694,6 +694,7 @@ fn run_rhai_feature(
             repo_root,
             effigy_cli::Command::Bundle(BundleArgs {
                 subcommand: BundleSubcommand::List,
+                repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
             }),
         ),
@@ -703,6 +704,7 @@ fn run_rhai_feature(
                 subcommand: BundleSubcommand::Inspect {
                     bundle: Some(required_string(&options, "bundle")?),
                 },
+                repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
             }),
         ),
@@ -713,6 +715,7 @@ fn run_rhai_feature(
                     bundle: required_string(&options, "bundle")?,
                     path: PathBuf::from(required_string(&options, "path")?),
                 },
+                repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
             }),
         ),
@@ -919,6 +922,7 @@ fn run_rhai_feature(
             effigy_cli::Command::Changelog(ChangelogArgs {
                 subcommand: ChangelogSubcommand::Validate,
                 file: path_option(&options, "file")?,
+                repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
             }),
         ),
@@ -929,6 +933,7 @@ fn run_rhai_feature(
                     version: required_string(&options, "version")?,
                 },
                 file: path_option(&options, "file")?,
+                repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
             }),
         ),

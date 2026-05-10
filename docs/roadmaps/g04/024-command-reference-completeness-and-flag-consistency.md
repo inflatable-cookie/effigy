@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -102,5 +102,5 @@ against the parser definitions in `crates/effigy-cli/src/`.
 
 ## Next Task
 
-Execute `643` to add the bounded `--repo` widening for `changelog` and
-`bundle`, then close the lane with focused parser and runner proofs.
+Open the next queued lane, starting with
+[`025-container-command-decomposition.md`](./025-container-command-decomposition.md).

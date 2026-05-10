@@ -4,9 +4,10 @@ Roadmap: [`../024-command-reference-completeness-and-flag-consistency.md`](../02
 Strict lane: [`../../../specs/067-command-reference-completeness-and-flag-consistency-strict-lane.md`](../../../specs/067-command-reference-completeness-and-flag-consistency-strict-lane.md)
 Contract: [`../../../contracts/022-command-reference-completeness-and-flag-consistency-contract.md`](../../../contracts/022-command-reference-completeness-and-flag-consistency-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
+Completed: 2026-05-10
 
 ## Purpose
 

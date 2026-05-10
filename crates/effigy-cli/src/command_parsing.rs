@@ -491,12 +491,14 @@ fn parse_bundle_list<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
-    let args = args.into_iter();
+    let mut args = args.into_iter();
     let mut output_json = false;
+    let mut repo_override: Option<PathBuf> = None;
 
-    for arg in args {
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => output_json = true,
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),
             other => return Err(unknown_argument(other)),
         }
@@ -504,6 +506,7 @@ where
 
     Ok(Command::Bundle(BundleArgs {
         subcommand: BundleSubcommand::List,
+        repo_override,
         output_json,
     }))
 }
@@ -514,11 +517,13 @@ where
 {
     let mut args = args.into_iter();
     let mut output_json = false;
+    let mut repo_override: Option<PathBuf> = None;
     let mut bundle = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => output_json = true,
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),
             other if other.starts_with('-') => return Err(unknown_argument(other)),
             other => {
@@ -532,6 +537,7 @@ where
 
     Ok(Command::Bundle(BundleArgs {
         subcommand: BundleSubcommand::Inspect { bundle },
+        repo_override,
         output_json,
     }))
 }
@@ -548,11 +554,13 @@ where
     };
 
     let mut output_json = false;
+    let mut repo_override: Option<PathBuf> = None;
     let mut path = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => output_json = true,
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--path" => {
                 let Some(value) = args.next() else {
                     return Err(CliParseError::MissingFlagValue {
@@ -574,6 +582,7 @@ where
 
     Ok(Command::Bundle(BundleArgs {
         subcommand: BundleSubcommand::Export { bundle, path },
+        repo_override,
         output_json,
     }))
 }
@@ -595,6 +604,7 @@ where
 
     Ok(Command::Bundle(BundleArgs {
         subcommand: BundleSubcommand::Sync,
+        repo_override: None,
         output_json,
     }))
 }

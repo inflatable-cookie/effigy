@@ -11,9 +11,9 @@ pub(crate) fn render_bundle_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
             "Bundle export writes the same canonical template shape that shipped bundle defaults use, but as a repo-owned local bundle directory.",
         ],
         &[
-            "effigy bundle list [--json]",
-            "effigy bundle inspect [<BUNDLE>] [--json]",
-            "effigy bundle export <BUNDLE> --path <DIR> [--json]",
+            "effigy bundle list [--repo <PATH>] [--json]",
+            "effigy bundle inspect [--repo <PATH>] [<BUNDLE>] [--json]",
+            "effigy bundle export [--repo <PATH>] <BUNDLE> --path <DIR> [--json]",
             "effigy bundle sync [--json]",
             "effigy --json bundle list",
             "effigy --json bundle inspect",
@@ -21,6 +21,7 @@ pub(crate) fn render_bundle_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
             "effigy --json bundle export underlay --path bundles/underlay",
         ],
         &[
+            ("--repo <PATH>", "Override target repository path"),
             ("--json", "Render machine-readable bundle payloads"),
             (
                 "--path <DIR>",
@@ -31,8 +32,10 @@ pub(crate) fn render_bundle_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
         ],
         &[
             "effigy bundle list",
+            "effigy bundle inspect --repo /path/to/workspace",
             "effigy bundle inspect",
             "effigy bundle inspect decodelabs",
+            "effigy bundle export --repo /path/to/workspace underlay --path bundles/underlay",
             "effigy bundle export underlay --path bundles/underlay",
             "effigy bundle sync",
             "effigy --json bundle inspect decodelabs",

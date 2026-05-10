@@ -5,17 +5,38 @@ use std::path::PathBuf;
 use effigy_changelog as changelog;
 use effigy_cli::{ChangelogArgs, ChangelogSubcommand};
 
+use super::command_context::resolve_active_repo_root;
 use super::error::RunnerError;
 
 /// Execute a changelog subcommand and return the output string.
 pub(super) fn run_changelog(args: ChangelogArgs) -> Result<String, RunnerError> {
-    let file = args.file.unwrap_or_else(|| PathBuf::from("CHANGELOG.md"));
+    let file = resolve_changelog_file(args.repo_override.as_deref(), args.file.as_deref())?;
 
     match args.subcommand {
         ChangelogSubcommand::Validate => run_validate(&file, args.output_json),
         ChangelogSubcommand::Format { write } => run_format(&file, write, args.output_json),
         ChangelogSubcommand::Analyze => run_analyze(&file, args.output_json),
         ChangelogSubcommand::Extract { version } => run_extract(&file, &version, args.output_json),
+    }
+}
+
+fn resolve_changelog_file(
+    repo_override: Option<&std::path::Path>,
+    file: Option<&std::path::Path>,
+) -> Result<PathBuf, RunnerError> {
+    match repo_override {
+        Some(path) => {
+            let resolved = resolve_active_repo_root(Some(path.to_path_buf()))?;
+            let repo_root = resolved.resolved_root;
+            Ok(match file {
+                Some(file) if file.is_absolute() => file.to_path_buf(),
+                Some(file) => repo_root.join(file),
+                None => repo_root.join("CHANGELOG.md"),
+            })
+        }
+        None => Ok(file
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("CHANGELOG.md"))),
     }
 }
 
@@ -197,4 +218,57 @@ fn json_escape_string(s: &str) -> String {
     }
     escaped.push('"');
     escaped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn temp_repo(name: &str) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "effigy-changelog-{name}-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).expect("mkdir");
+        root
+    }
+
+    #[test]
+    fn changelog_repo_override_anchors_default_path_to_repo_root() {
+        let repo = temp_repo("default");
+        fs::write(
+            repo.join("CHANGELOG.md"),
+            "# Changelog\n\n## [Unreleased]\n\n### Added\n- one\n",
+        )
+        .expect("write changelog");
+
+        let resolved = resolve_changelog_file(Some(repo.as_path()), None).expect("resolve");
+        assert!(resolved.ends_with("CHANGELOG.md"));
+
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn changelog_repo_override_anchors_relative_file_to_repo_root() {
+        let repo = temp_repo("relative");
+        fs::create_dir_all(repo.join("notes")).expect("mkdir notes");
+        fs::write(
+            repo.join("notes/CHANGELOG.alt.md"),
+            "# Changelog\n\n## [Unreleased]\n\n### Added\n- one\n",
+        )
+        .expect("write changelog");
+
+        let resolved = resolve_changelog_file(
+            Some(repo.as_path()),
+            Some(std::path::Path::new("notes/CHANGELOG.alt.md")),
+        )
+        .expect("resolve");
+        assert!(resolved.ends_with("notes/CHANGELOG.alt.md"));
+
+        let _ = fs::remove_dir_all(repo);
+    }
 }

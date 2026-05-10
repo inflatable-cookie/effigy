@@ -9,12 +9,13 @@ pub(crate) fn render_changelog_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "Parse, validate, format, analyze, and extract changelogs conforming to the Northstar Changelog Profile.",
         ],
         &[
-            "effigy changelog validate [FILE] [--json]",
-            "effigy changelog format [FILE] [--write|--preview]",
-            "effigy changelog analyze [FILE] [--json]",
-            "effigy changelog extract [FILE] --version <VERSION>",
+            "effigy changelog validate [--repo <PATH>] [FILE] [--json]",
+            "effigy changelog format [--repo <PATH>] [FILE] [--write|--preview]",
+            "effigy changelog analyze [--repo <PATH>] [FILE] [--json]",
+            "effigy changelog extract [--repo <PATH>] [FILE] --version <VERSION>",
         ],
         &[
+            ("--repo <PATH>", "Override target repository path"),
             (
                 "validate",
                 "Check changelog against Northstar Profile rules",
@@ -36,6 +37,7 @@ pub(crate) fn render_changelog_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
         ],
         &[
             "effigy changelog validate",
+            "effigy changelog validate --repo /path/to/workspace",
             "effigy changelog validate CHANGELOG.md",
             "effigy changelog format --write",
             "effigy changelog format --preview",

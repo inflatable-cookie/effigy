@@ -1,3 +1,4 @@
+use super::command_context::resolve_active_repo_root;
 use effigy_cli::{BundleArgs, BundleSubcommand};
 use effigy_manifest::{
     export_bundle, get_bundle, inspect_bundle_source, list_bundle_default_paths, list_bundles,
@@ -11,12 +12,17 @@ use super::error::RunnerError;
 pub(super) fn run_bundle(args: BundleArgs) -> Result<String, RunnerError> {
     match args.subcommand {
         BundleSubcommand::List => run_bundle_list(args.output_json),
-        BundleSubcommand::Inspect { bundle } => {
-            run_bundle_inspect(bundle.as_deref(), args.output_json)
-        }
-        BundleSubcommand::Export { bundle, path } => {
-            run_bundle_export(&bundle, &path, args.output_json)
-        }
+        BundleSubcommand::Inspect { bundle } => run_bundle_inspect(
+            bundle.as_deref(),
+            args.repo_override.as_deref(),
+            args.output_json,
+        ),
+        BundleSubcommand::Export { bundle, path } => run_bundle_export(
+            &bundle,
+            &path,
+            args.repo_override.as_deref(),
+            args.output_json,
+        ),
         BundleSubcommand::Sync => run_bundle_sync(args.output_json),
     }
 }
@@ -50,11 +56,15 @@ fn run_bundle_list(output_json: bool) -> Result<String, RunnerError> {
     Ok(lines.join("\n"))
 }
 
-fn run_bundle_inspect(bundle_name: Option<&str>, output_json: bool) -> Result<String, RunnerError> {
+fn run_bundle_inspect(
+    bundle_name: Option<&str>,
+    repo_override: Option<&Path>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
     if let Some(bundle_name) = bundle_name {
         return run_shipped_bundle_inspect(bundle_name, output_json);
     }
-    run_active_bundle_inspect(output_json)
+    run_active_bundle_inspect(repo_override, output_json)
 }
 
 fn run_shipped_bundle_inspect(bundle_name: &str, output_json: bool) -> Result<String, RunnerError> {
@@ -123,9 +133,17 @@ fn run_shipped_bundle_inspect(bundle_name: &str, output_json: bool) -> Result<St
     Ok(lines.join("\n"))
 }
 
-fn run_active_bundle_inspect(output_json: bool) -> Result<String, RunnerError> {
-    let cwd = crate::runner::command_context::active_invocation_cwd()?;
-    let manifest_path = discover_bundle_manifest_path(&cwd)?;
+fn run_active_bundle_inspect(
+    repo_override: Option<&Path>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let manifest_path = match repo_override {
+        Some(repo_root) => discover_bundle_manifest_path(repo_root)?,
+        None => {
+            let cwd = crate::runner::command_context::active_invocation_cwd()?;
+            discover_bundle_manifest_path(&cwd)?
+        }
+    };
     let Some(report) = inspect_bundle_source(&manifest_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
     else {
@@ -170,9 +188,11 @@ fn run_active_bundle_inspect(output_json: bool) -> Result<String, RunnerError> {
 fn run_bundle_export(
     bundle_name: &str,
     path: &std::path::Path,
+    repo_override: Option<&Path>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let export = export_bundle(bundle_name, path)
+    let export_path = resolve_bundle_export_path(repo_override, path)?;
+    let export = export_bundle(bundle_name, &export_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
 
     if output_json {
@@ -256,8 +276,15 @@ fn run_bundle_sync(output_json: bool) -> Result<String, RunnerError> {
     Ok(lines.join("\n"))
 }
 
-fn discover_bundle_manifest_path(cwd: &Path) -> Result<PathBuf, RunnerError> {
-    for ancestor in cwd.ancestors() {
+fn discover_bundle_manifest_path(root_or_cwd: impl AsRef<Path>) -> Result<PathBuf, RunnerError> {
+    let root_or_cwd = root_or_cwd.as_ref();
+    if root_or_cwd.is_dir() {
+        let direct = root_or_cwd.join("effigy.toml");
+        if direct.is_file() {
+            return Ok(direct);
+        }
+    }
+    for ancestor in root_or_cwd.ancestors() {
         let manifest_path = ancestor.join("effigy.toml");
         if manifest_path.is_file() {
             return Ok(manifest_path);
@@ -265,8 +292,24 @@ fn discover_bundle_manifest_path(cwd: &Path) -> Result<PathBuf, RunnerError> {
     }
     Err(RunnerError::task_invocation(format!(
         "no `effigy.toml` found at or above {}",
-        cwd.display()
+        root_or_cwd.display()
     )))
+}
+
+fn resolve_bundle_export_path(
+    repo_override: Option<&Path>,
+    path: &Path,
+) -> Result<PathBuf, RunnerError> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    match repo_override {
+        Some(path_override) => {
+            let resolved = resolve_active_repo_root(Some(path_override.to_path_buf()))?;
+            Ok(resolved.resolved_root.join(path))
+        }
+        None => Ok(path.to_path_buf()),
+    }
 }
 
 fn source_type_label(source_type: BundleSourceType) -> &'static str {
@@ -293,7 +336,7 @@ mod tests {
 
     #[test]
     fn bundle_inspect_reports_inputs_and_default_paths() {
-        let rendered = run_bundle_inspect(Some("decodelabs"), false).expect("inspect");
+        let rendered = run_bundle_inspect(Some("decodelabs"), None, false).expect("inspect");
         assert!(rendered.contains("Inputs"));
         assert!(rendered.contains("host"));
         assert!(rendered.contains("Default Paths"));
@@ -302,7 +345,7 @@ mod tests {
 
     #[test]
     fn bundle_inspect_reports_underlay_alias_surface() {
-        let rendered = run_bundle_inspect(Some("underlay"), false).expect("inspect");
+        let rendered = run_bundle_inspect(Some("underlay"), None, false).expect("inspect");
         assert!(rendered.contains("workspace_subdir"));
         assert!(rendered.contains("containers.stack.services.postgres.catalog"));
         assert!(rendered.contains("containers.stack.dns.routes"));
@@ -319,7 +362,7 @@ mod tests {
         ));
         let target = tmp.join("underlay");
 
-        let rendered = run_bundle_export("underlay", &target, false).expect("export");
+        let rendered = run_bundle_export("underlay", &target, None, false).expect("export");
 
         assert!(rendered.contains("exported `underlay`"));
         assert!(target.join("bundle.toml").exists());
@@ -405,12 +448,31 @@ mod tests {
             .capture_lossy()
             .expect("capture context");
         let rendered = crate::runner::command_context::with_runtime_context(&context, || {
-            run_bundle_inspect(None, true)
+            run_bundle_inspect(None, None, true)
         })
         .expect("bundle inspect");
         assert!(rendered.contains("\"mode\":\"active-source\""));
         assert!(rendered.contains("\"source_type\":\"shipped\""));
         assert!(rendered.contains("\"stale\":false"));
         let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    #[test]
+    fn bundle_export_repo_override_anchors_relative_path_to_repo_root() {
+        let repo = std::env::temp_dir().join(format!(
+            "effigy-bundle-export-repo-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        let target = std::path::Path::new("bundles/underlay");
+
+        let resolved = resolve_bundle_export_path(Some(repo.as_path()), target).expect("resolve");
+        assert!(resolved.ends_with(target));
+        assert!(resolved.file_name().is_some_and(|name| name == "underlay"));
+
+        let _ = std::fs::remove_dir_all(repo);
     }
 }
