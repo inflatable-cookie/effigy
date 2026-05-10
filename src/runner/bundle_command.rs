@@ -1,7 +1,7 @@
 use effigy_cli::{BundleArgs, BundleSubcommand};
 use effigy_manifest::{
-    export_bundle, get_bundle, list_bundle_default_paths, list_bundles, sync_bundle_source,
-    BundleSourceType,
+    export_bundle, get_bundle, inspect_bundle_source, list_bundle_default_paths, list_bundles,
+    sync_bundle_source, BundleSourceType,
 };
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -11,7 +11,9 @@ use super::error::RunnerError;
 pub(super) fn run_bundle(args: BundleArgs) -> Result<String, RunnerError> {
     match args.subcommand {
         BundleSubcommand::List => run_bundle_list(args.output_json),
-        BundleSubcommand::Inspect { bundle } => run_bundle_inspect(&bundle, args.output_json),
+        BundleSubcommand::Inspect { bundle } => {
+            run_bundle_inspect(bundle.as_deref(), args.output_json)
+        }
         BundleSubcommand::Export { bundle, path } => {
             run_bundle_export(&bundle, &path, args.output_json)
         }
@@ -48,7 +50,14 @@ fn run_bundle_list(output_json: bool) -> Result<String, RunnerError> {
     Ok(lines.join("\n"))
 }
 
-fn run_bundle_inspect(bundle_name: &str, output_json: bool) -> Result<String, RunnerError> {
+fn run_bundle_inspect(bundle_name: Option<&str>, output_json: bool) -> Result<String, RunnerError> {
+    if let Some(bundle_name) = bundle_name {
+        return run_shipped_bundle_inspect(bundle_name, output_json);
+    }
+    run_active_bundle_inspect(output_json)
+}
+
+fn run_shipped_bundle_inspect(bundle_name: &str, output_json: bool) -> Result<String, RunnerError> {
     let bundle = get_bundle(bundle_name)
         .ok_or_else(|| RunnerError::task_invocation(format!("unknown bundle `{bundle_name}`")))?;
     let default_paths = list_bundle_default_paths(bundle_name)
@@ -59,6 +68,7 @@ fn run_bundle_inspect(bundle_name: &str, output_json: bool) -> Result<String, Ru
             "schema": "effigy.bundle.inspect.v1",
             "schema_version": 1,
             "ok": true,
+            "mode": "catalog",
             "bundle": {
                 "name": bundle.name,
                 "description": bundle.description,
@@ -71,7 +81,8 @@ fn run_bundle_inspect(bundle_name: &str, output_json: bool) -> Result<String, Ru
                     "example": input.example,
                 })).collect::<Vec<_>>(),
                 "default_paths": default_paths,
-            }
+            },
+            "source": null,
         })
         .to_string());
     }
@@ -110,6 +121,50 @@ fn run_bundle_inspect(bundle_name: &str, output_json: bool) -> Result<String, Ru
     lines.push(format!("Default Paths ({})", default_paths.len()));
     lines.extend(default_paths.into_iter().map(|path| format!("- {path}")));
     Ok(lines.join("\n"))
+}
+
+fn run_active_bundle_inspect(output_json: bool) -> Result<String, RunnerError> {
+    let cwd = crate::runner::command_context::active_invocation_cwd()?;
+    let manifest_path = discover_bundle_manifest_path(&cwd)?;
+    let Some(report) = inspect_bundle_source(&manifest_path)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+    else {
+        return Err(RunnerError::task_invocation(
+            "current repo does not declare a `[bundle]` source".to_owned(),
+        ));
+    };
+
+    if output_json {
+        return Ok(json!({
+            "schema": "effigy.bundle.inspect.v1",
+            "schema_version": 1,
+            "ok": true,
+            "mode": "active-source",
+            "bundle": null,
+            "source": {
+                "source_type": report.source_type,
+                "source_path": report.source_path,
+                "local_path": report.local_path,
+                "version_hint": report.version_hint,
+                "stale": report.stale,
+                "manifest_path": manifest_path,
+            }
+        })
+        .to_string());
+    }
+
+    Ok([
+        format!("[bundle] source {}", source_type_label(report.source_type)),
+        format!("source={}", report.source_path.display()),
+        format!("manifest={}", manifest_path.display()),
+        format!("local_path={}", report.local_path.display()),
+        format!(
+            "version={}",
+            report.version_hint.as_deref().unwrap_or("unavailable")
+        ),
+        format!("stale={}", report.stale),
+    ]
+    .join("\n"))
 }
 
 fn run_bundle_export(
@@ -238,7 +293,7 @@ mod tests {
 
     #[test]
     fn bundle_inspect_reports_inputs_and_default_paths() {
-        let rendered = run_bundle_inspect("decodelabs", false).expect("inspect");
+        let rendered = run_bundle_inspect(Some("decodelabs"), false).expect("inspect");
         assert!(rendered.contains("Inputs"));
         assert!(rendered.contains("host"));
         assert!(rendered.contains("Default Paths"));
@@ -247,7 +302,7 @@ mod tests {
 
     #[test]
     fn bundle_inspect_reports_underlay_alias_surface() {
-        let rendered = run_bundle_inspect("underlay", false).expect("inspect");
+        let rendered = run_bundle_inspect(Some("underlay"), false).expect("inspect");
         assert!(rendered.contains("workspace_subdir"));
         assert!(rendered.contains("containers.stack.services.postgres.catalog"));
         assert!(rendered.contains("containers.stack.dns.routes"));
@@ -326,6 +381,36 @@ mod tests {
         assert!(rendered.contains("\"schema\":\"effigy.bundle.sync.v1\""));
         assert!(rendered.contains("\"source_type\":\"shipped\""));
         assert!(rendered.contains("\"applicable\":false"));
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    #[test]
+    fn bundle_inspect_without_name_reports_active_source_metadata() {
+        let tmp = std::env::temp_dir().join(format!(
+            "effigy-bundle-inspect-active-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).expect("mkdir");
+        std::fs::write(
+            tmp.join("effigy.toml"),
+            "[bundle]\nbase = \"underlay\"\nhost = \"example.test\"\n",
+        )
+        .expect("write");
+        let context = EffigyRuntimeContext::builder()
+            .cwd_override(Some(tmp.clone()))
+            .captured_env(CapturedEnv::default())
+            .capture()
+            .expect("capture context");
+        let rendered = crate::runner::command_context::with_runtime_context(&context, || {
+            run_bundle_inspect(None, true)
+        })
+        .expect("bundle inspect");
+        assert!(rendered.contains("\"mode\":\"active-source\""));
+        assert!(rendered.contains("\"source_type\":\"shipped\""));
+        assert!(rendered.contains("\"stale\":false"));
         let _ = std::fs::remove_dir_all(tmp);
     }
 }

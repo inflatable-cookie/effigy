@@ -602,7 +602,7 @@ fn run_rhai_feature(
             repo_root,
             effigy_cli::Command::Bundle(BundleArgs {
                 subcommand: BundleSubcommand::Inspect {
-                    bundle: required_string(&options, "bundle")?,
+                    bundle: Some(required_string(&options, "bundle")?),
                 },
                 output_json: true,
             }),

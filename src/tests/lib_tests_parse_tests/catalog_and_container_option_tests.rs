@@ -51,9 +51,26 @@ fn parse_bundle_inspect_is_supported() {
         cmd,
         Command::Bundle(BundleArgs {
             subcommand: BundleSubcommand::Inspect {
-                bundle: "decodelabs".to_owned(),
+                bundle: Some("decodelabs".to_owned()),
             },
             output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_bundle_inspect_without_name_is_supported() {
+    let cmd = parse_command(vec![
+        "bundle".to_owned(),
+        "inspect".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Bundle(BundleArgs {
+            subcommand: BundleSubcommand::Inspect { bundle: None },
+            output_json: true,
         })
     );
 }

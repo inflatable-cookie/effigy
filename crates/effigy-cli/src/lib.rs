@@ -624,7 +624,7 @@ pub enum ServiceSubcommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BundleSubcommand {
     List,
-    Inspect { bundle: String },
+    Inspect { bundle: Option<String> },
     Export { bundle: String, path: PathBuf },
     Sync,
 }

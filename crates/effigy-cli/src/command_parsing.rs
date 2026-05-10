@@ -513,19 +513,20 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
-    let Some(bundle) = args.next() else {
-        return Err(CliParseError::MissingFlagValue {
-            flag: "<BUNDLE>".to_owned(),
-        });
-    };
-
     let mut output_json = false;
+    let mut bundle = None;
 
-    for arg in args {
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => output_json = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),
-            other => return Err(unknown_argument(other)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            other => {
+                if bundle.is_some() {
+                    return Err(unknown_argument(other));
+                }
+                bundle = Some(other.to_owned());
+            }
         }
     }
 

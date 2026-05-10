@@ -28,10 +28,16 @@ Historical command-reference rule:
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
 - [`063-task-status-query-surface-and-read-model-strict-lane.md`](./063-task-status-query-surface-and-read-model-strict-lane.md)
+- [`064-deployment-transaction-system-strict-lane.md`](./064-deployment-transaction-system-strict-lane.md)
 
 Active strict lane:
 
 - `063` for `g04.021` task-status query surface and read model planning
+
+Queued strict lanes:
+
+- `064` for `g04.027` through `g04.032` deployment transaction system planning
+  and implementation after the current coordination point clears
 
 Paused but still useful:
 

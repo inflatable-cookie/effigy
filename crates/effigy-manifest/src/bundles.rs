@@ -85,6 +85,15 @@ pub struct BundleSyncReport {
     pub applicable: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct BundleSourceInspectReport {
+    pub source_type: BundleSourceType,
+    pub source_path: PathBuf,
+    pub local_path: PathBuf,
+    pub version_hint: Option<String>,
+    pub stale: bool,
+}
+
 pub(crate) fn apply_bundle_defaults(
     manifest_path: &Path,
     current: &mut Value,
@@ -694,6 +703,24 @@ pub fn sync_bundle_source(manifest_path: &Path) -> Result<Option<BundleSyncRepor
             }))
         }
     }
+}
+
+pub fn inspect_bundle_source(
+    manifest_path: &Path,
+) -> Result<Option<BundleSourceInspectReport>, ManifestError> {
+    let Some(bundle) = crate::composition::load_manifest_bundle_config(manifest_path)? else {
+        return Ok(None);
+    };
+    let selection = resolve_bundle_selection(manifest_path, &bundle)?;
+    let resolved =
+        resolve_materialized_bundle_source_with_options(manifest_path, &selection, false)?;
+    Ok(Some(BundleSourceInspectReport {
+        source_type: resolved.source_type,
+        source_path: resolved.source_path,
+        local_path: resolved.local_path,
+        version_hint: resolved.version_hint,
+        stale: resolved.stale,
+    }))
 }
 
 fn read_cached_git_bundle_version(

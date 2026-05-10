@@ -12,10 +12,11 @@ pub(crate) fn render_bundle_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
         ],
         &[
             "effigy bundle list [--json]",
-            "effigy bundle inspect <BUNDLE> [--json]",
+            "effigy bundle inspect [<BUNDLE>] [--json]",
             "effigy bundle export <BUNDLE> --path <DIR> [--json]",
             "effigy bundle sync [--json]",
             "effigy --json bundle list",
+            "effigy --json bundle inspect",
             "effigy --json bundle inspect decodelabs",
             "effigy --json bundle export underlay --path bundles/underlay",
         ],
@@ -30,6 +31,7 @@ pub(crate) fn render_bundle_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
         ],
         &[
             "effigy bundle list",
+            "effigy bundle inspect",
             "effigy bundle inspect decodelabs",
             "effigy bundle export underlay --path bundles/underlay",
             "effigy bundle sync",
