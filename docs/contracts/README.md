@@ -59,6 +59,10 @@ This folder contains both:
 - [`016-state-stack-and-layered-seed-framework-contract.md`](./016-state-stack-and-layered-seed-framework-contract.md):
   layered state-stack contract for schema baselines, imported data, overlays,
   lineage, and Acowtancy-style UAT capture/rebase workflows.
+- [`017-task-status-record-and-active-run-model-contract.md`](./017-task-status-record-and-active-run-model-contract.md):
+  task-status record contract for identity, normalized status/stage taxonomy,
+  active/completed persistence, and stale-record reconciliation before the
+  later read/query lane.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -76,6 +80,7 @@ This folder contains both:
 | `014-artifact-substrate-contract.md` | Platform maintainers | Artifact ref syntax, metadata schema, OCI pull/push behavior, seed/dump integration, UAT apply/capture semantics, operation ledger fields | Artifact crate tests plus targeted bootstrap/container data seed and dump integration tests |
 | `015-runtime-operation-pipeline-contract.md` | Platform maintainers | Pipeline ownership, request/plan/report boundaries, runner adapter boundaries, drift guards, runtime/container proof matrix | `bash scripts/check-runtime-container-drift.sh` plus focused runtime/container proof tests |
 | `016-state-stack-and-layered-seed-framework-contract.md` | Platform maintainers | Phase taxonomy, stack-manifest shape, lineage boundary, app hook ownership, apply/capture/rebase semantics | Planning review against `g04.019` plus focused state-stack contract proofs once implementation starts |
+| `017-task-status-record-and-active-run-model-contract.md` | Platform maintainers | Task-status key fields, normalized state/stage taxonomy, active/completed record layout, stale/live reconciliation rules, covered write-side execution surfaces | Planning review against `g04.020` plus focused task execution and stale-record proofs once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -109,4 +114,6 @@ contract, `014-artifact-substrate-contract.md` as the `g03.036` artifact
 substrate contract, and `015-runtime-operation-pipeline-contract.md` as the
 `g04` runtime operation pipeline contract, and
 `016-state-stack-and-layered-seed-framework-contract.md` as the `g04.019`
-state-stack framework contract.
+state-stack framework contract, and
+`017-task-status-record-and-active-run-model-contract.md` as the `g04.020`
+task-status record contract.

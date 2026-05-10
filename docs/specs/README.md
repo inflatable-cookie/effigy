@@ -27,12 +27,11 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
+- [`062-task-status-record-and-active-run-model-strict-lane.md`](./062-task-status-record-and-active-run-model-strict-lane.md)
 
 Active strict lane:
 
-- none
-- `061` is complete
-- open the next strict lane only after selecting the next queued roadmap
+- `062` for `g04.020` task-status record and active-run model planning
 
 Paused but still useful:
 
@@ -93,5 +92,5 @@ Recently completed:
 
 ## Next Task
 
-Select the next queued roadmap and open its strict lane only when execution is
-ready.
+Execute the ready `g04.020` card under
+[`062-task-status-record-and-active-run-model-strict-lane.md`](./062-task-status-record-and-active-run-model-strict-lane.md).

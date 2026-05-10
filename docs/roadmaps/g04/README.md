@@ -31,7 +31,7 @@ Current milestones:
 - [`017-planning-crate-decomposition.md`](./017-planning-crate-decomposition.md) (complete; first planning-crate decomposition pass landed)
 - [`018-oci-artifact-closeout-and-proof-matrix.md`](./018-oci-artifact-closeout-and-proof-matrix.md) (complete; OCI support now has proof, remediation, and contract closeout)
 - [`019-state-stack-and-layered-seed-framework.md`](./019-state-stack-and-layered-seed-framework.md) (complete; state-stack framework, apply/capture/history surfaces, and Acowtancy proof loop landed for the current release boundary)
-- [`020-task-status-record-and-active-run-model.md`](./020-task-status-record-and-active-run-model.md) (queued; define one canonical task-status record model, active/completed persistence layout, and shared write-side ownership)
+- [`020-task-status-record-and-active-run-model.md`](./020-task-status-record-and-active-run-model.md) (active; define one canonical task-status record model, active/completed persistence layout, and shared write-side ownership)
 - [`021-task-status-query-surface-and-read-model.md`](./021-task-status-query-surface-and-read-model.md) (queued; expose `effigy tasks status <selector>` and `--all` on top of the task-status record model)
 
 Architecture anchors:
@@ -43,6 +43,7 @@ Architecture anchors:
 - [`../../contracts/012-container-manager-contract.md`](../../contracts/012-container-manager-contract.md)
 - [`../../contracts/013-task-execution-request-contract.md`](../../contracts/013-task-execution-request-contract.md)
 - [`../../contracts/014-artifact-substrate-contract.md`](../../contracts/014-artifact-substrate-contract.md)
+- [`../../contracts/017-task-status-record-and-active-run-model-contract.md`](../../contracts/017-task-status-record-and-active-run-model-contract.md)
 
 Rules:
 
@@ -60,11 +61,8 @@ Rules:
 
 ## Next Task
 
-Select the next queued `g04` lane before opening a new strict lane.
-
-The first queued follow-on is:
-
-- [`020-task-status-record-and-active-run-model.md`](./020-task-status-record-and-active-run-model.md)
+Execute ready card
+[`618-promote-task-status-identity-persistence-and-state-model-boundary.md`](./batch-cards/618-promote-task-status-identity-persistence-and-state-model-boundary.md).
 
 
 Batch cards live in `g04/batch-cards/` when strict posture uses them.

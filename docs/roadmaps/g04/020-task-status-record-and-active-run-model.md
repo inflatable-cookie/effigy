@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -226,5 +226,5 @@ No final user-facing command contract is introduced here.
 
 ## Next Task
 
-Queue `021-task-status-query-surface-and-read-model.md` behind this lane once
-the write-side truth is locked.
+Execute card
+[`618-promote-task-status-identity-persistence-and-state-model-boundary.md`](./batch-cards/618-promote-task-status-identity-persistence-and-state-model-boundary.md).
