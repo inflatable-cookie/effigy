@@ -14,7 +14,9 @@ pub(super) fn render_bash_completion() -> String {
     doc.blank();
     doc.line("  if [[ ${COMP_CWORD} -eq 1 ]]; then");
     doc.line("    local candidates");
-    doc.line("    candidates=\"$(effigy completion candidates --prefix \"$cur\" 2>/dev/null)\"");
+    doc.line(
+        "    candidates=\"$(effigy config completion candidates --prefix \"$cur\" 2>/dev/null)\"",
+    );
     doc.line("    if [[ -z \"$candidates\" ]]; then");
     doc.line(format!(
         "      COMPREPLY=( $(compgen -W \"{}\" -- \"$cur\") )",

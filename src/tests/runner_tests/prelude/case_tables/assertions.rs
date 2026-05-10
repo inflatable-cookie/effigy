@@ -10,12 +10,11 @@ use super::super::runtime::RunnerError;
 use super::cases::{
     BuiltinArgumentContractCase, BuiltinArgumentContractCommandCase, BuiltinErrorCase,
     BuiltinHelpCase, BuiltinHelpJsonCase, BuiltinInvocationCase, BuiltinInvocationOutcome,
-    BuiltinInvocationSetupCase, ManifestParseRejectionCase,
+    ManifestParseRejectionCase,
 };
 use super::iterators::{
-    assert_builtin_invocation, assert_builtin_invocation_case_table_with_case_setup,
-    assert_builtin_invocation_case_table_with_setup, for_each_manifest_case, invocation_outcome,
-    workspace_with_root_manifest,
+    assert_builtin_invocation, assert_builtin_invocation_case_table_with_setup,
+    for_each_manifest_case, invocation_outcome, workspace_with_root_manifest,
 };
 
 pub(in crate::runner::tests) fn assert_builtin_help_case(case: &BuiltinHelpCase) {
@@ -97,17 +96,6 @@ pub(in crate::runner::tests) fn assert_builtin_ok_case_table_with_setup(
     );
 }
 
-pub(in crate::runner::tests) fn assert_builtin_ok_case_table_with_case_setup(
-    command: &str,
-    cases: &[BuiltinInvocationSetupCase],
-) {
-    assert_builtin_invocation_case_table_with_case_setup(
-        command,
-        cases,
-        BuiltinInvocationOutcome::Success,
-    );
-}
-
 pub(in crate::runner::tests) fn assert_builtin_error_case_table_with_setup(
     command: &str,
     cases: &[BuiltinInvocationCase],
@@ -117,17 +105,6 @@ pub(in crate::runner::tests) fn assert_builtin_error_case_table_with_setup(
         command,
         cases,
         setup,
-        BuiltinInvocationOutcome::Error,
-    );
-}
-
-pub(in crate::runner::tests) fn assert_builtin_error_case_table_with_case_setup(
-    command: &str,
-    cases: &[BuiltinInvocationSetupCase],
-) {
-    assert_builtin_invocation_case_table_with_case_setup(
-        command,
-        cases,
         BuiltinInvocationOutcome::Error,
     );
 }

@@ -6,6 +6,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+- **Helper-style root built-ins** have been tightened into clearer nested
+  homes: use **`effigy tasks migrate`**, **`effigy tasks unlock`**,
+  **`effigy tasks cache`**, and **`effigy config completion`** instead of the
+  old root forms. The legacy **`effigy catalogs`** alias is gone; use
+  **`effigy tasks`** for catalog and task discovery.
+
 ### Added
 - **State stack planning foundation:** `effigy state plan [<STACK>]` now
   validates `effigy.state-stack.v1` manifests and reports ordered lineage in

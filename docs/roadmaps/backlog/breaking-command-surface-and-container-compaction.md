@@ -148,14 +148,14 @@ Leave these alone unless a later audit shows a concrete boundary problem:
 
 ### Batch 1 - Breaking Command Surface
 
-- [ ] add nested homes for `tasks migrate`, `tasks unlock`, `tasks cache`
-- [ ] add `config completion`
-- [ ] remove root `migrate`, `unlock`, `cache`, `completion`, `catalogs`
-- [ ] update root help and migration notes
+- [x] add nested homes for `tasks migrate`, `tasks unlock`, `tasks cache`
+- [x] add `config completion`
+- [x] remove root `migrate`, `unlock`, `cache`, `completion`, `catalogs`
+- [x] update root help and migration notes
 
 ### Batch 2 - Command Contract Cleanup
 
-- [ ] update docs, examples, and shell completion surfaces
+- [x] update docs, examples, and shell completion surfaces
 - [ ] update parser/help/reference tests
 - [ ] update release-note migration guidance
 
@@ -174,10 +174,10 @@ Leave these alone unless a later audit shows a concrete boundary problem:
 
 ## 8) Acceptance Criteria
 
-- [ ] root help no longer advertises helper-style built-ins that have better
+- [x] root help no longer advertises helper-style built-ins that have better
   nested homes
-- [ ] migration notes show exact before/after commands
-- [ ] no surviving `catalogs` alias
+- [x] migration notes show exact before/after commands
+- [x] no surviving `catalogs` alias
 - [ ] container-domain code no longer spans three overlapping crates
 - [ ] workspace metadata and top-level dependencies reflect the smaller crate
   graph

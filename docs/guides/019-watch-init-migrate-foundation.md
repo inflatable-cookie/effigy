@@ -17,7 +17,7 @@ the amount of repo-specific ceremony around common setup and iteration loops.
 Choose the command by the friction you are trying to remove:
 
 - Use `effigy init` when a repo has no `effigy.toml` yet.
-- Use `effigy migrate` when tasks already exist in `package.json` and should
+- Use `effigy tasks migrate` when tasks already exist in `package.json` and should
   move into the manifest.
 - Use `effigy watch` when a task already exists and should rerun on changes.
 
@@ -25,7 +25,7 @@ Common first commands:
 
 ```sh
 effigy init
-effigy migrate --from package.json
+effigy tasks migrate --from package.json
 effigy watch --owner effigy --once test
 ```
 
@@ -55,7 +55,7 @@ effigy watch --owner external test
 - Effigy acquires a watch-owner lock scope per target (`task:watch:<target>`).
 - Concurrent owners for the same target fail fast with lock diagnostics.
 - If a watch lock must be cleared manually, use
-  `effigy unlock task:watch:<target>`.
+  `effigy tasks unlock task:watch:<target>`.
 
 ## `effigy init`
 
@@ -85,7 +85,7 @@ effigy init --json
   overwrite it like any other starter file.
 - `--dry-run` never writes files.
 
-## `effigy migrate`
+## `effigy tasks migrate`
 
 Use `migrate` when a repo already has useful `package.json` scripts and the
 next step is to move them into `[tasks]` without doing the whole rewrite by
@@ -97,10 +97,10 @@ behavior.
 ### Usage
 
 ```sh
-effigy migrate
-effigy migrate --script build --script test
-effigy migrate --apply
-effigy migrate --from ./frontend/package.json --apply --json
+effigy tasks migrate
+effigy tasks migrate --script build --script test
+effigy tasks migrate --apply
+effigy tasks migrate --from ./frontend/package.json --apply --json
 ```
 
 ### Behavior

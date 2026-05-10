@@ -368,8 +368,8 @@ effigy --json release status --check-gates
 Lock recovery:
 
 ```sh
-effigy unlock task:watch:test
-effigy unlock --all --yes
+effigy tasks unlock task:watch:test
+effigy tasks unlock --all --yes
 ```
 
 ## Related Guides

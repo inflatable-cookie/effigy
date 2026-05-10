@@ -130,20 +130,6 @@ pub(in crate::runner::tests) fn setup_doctor_explain_catalog_workspace(name: &st
     root
 }
 
-pub(in crate::runner::tests) fn write_root_and_catalog_a_api_catalog(root: &Path) {
-    let catalog_a = root.join("catalog_a");
-    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
-    write_root_manifest(root, "[tasks.root]\nrun = \"printf root\"\n");
-    write_manifest(
-        &catalog_a.join("effigy.toml"),
-        "[catalog]\nalias = \"catalog_a\"\n[tasks.api]\nrun = \"printf api\"\n",
-    );
-}
-
-pub(in crate::runner::tests) fn run_catalogs_ok(root: PathBuf, args: &[&str]) -> String {
-    run_builtin_ok(root, "catalogs", args)
-}
-
 pub(in crate::runner::tests) fn workspace_with_empty_manifest(name: &str) -> PathBuf {
     let root = temp_workspace(name);
     write_root_manifest(&root, "");

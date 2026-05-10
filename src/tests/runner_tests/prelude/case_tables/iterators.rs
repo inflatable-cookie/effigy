@@ -4,7 +4,7 @@ use super::super::harness_env::temp_workspace;
 use super::super::harness_workspace::write_root_manifest;
 use super::super::output::assert_output_contains_all;
 use super::super::runtime::{Path, PathBuf};
-use super::cases::{BuiltinInvocationCase, BuiltinInvocationOutcome, BuiltinInvocationSetupCase};
+use super::cases::{BuiltinInvocationCase, BuiltinInvocationOutcome};
 
 pub(super) fn workspace_with_root_manifest(workspace: &str, manifest: &str) -> PathBuf {
     let root = temp_workspace(workspace);
@@ -76,21 +76,6 @@ pub(super) fn assert_builtin_invocation_case_table_with_setup(
         cases,
         |case| case.workspace,
         |_case, root| setup(root),
-        |case, root| {
-            assert_builtin_invocation(root, command, case.args, case.expected, expected_outcome)
-        },
-    );
-}
-
-pub(super) fn assert_builtin_invocation_case_table_with_case_setup(
-    command: &str,
-    cases: &[BuiltinInvocationSetupCase],
-    expected_outcome: BuiltinInvocationOutcome,
-) {
-    for_each_workspace_case(
-        cases,
-        |case| case.workspace,
-        |case, root| (case.setup)(root),
         |case, root| {
             assert_builtin_invocation(root, command, case.args, case.expected, expected_outcome)
         },

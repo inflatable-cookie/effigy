@@ -505,7 +505,7 @@ Lock behavior:
 - tasks lock on `task:<name>` by default, so unrelated tasks can run concurrently in the same repo
 - set `tasks.<name>.lock = "<shared-name>"` when multiple tasks should serialize together
 - managed TUI tasks still add `profile:<task>/<profile>` so profile-specific runs stay isolated
-- recover specific collisions with `effigy unlock task:<name>`, `effigy unlock shared:<name>`, or `effigy unlock profile:<task>/<profile>`
+- recover specific collisions with `effigy tasks unlock task:<name>`, `effigy tasks unlock shared:<name>`, or `effigy tasks unlock profile:<task>/<profile>`
 
 ## Testing and Legacy Interop
 
@@ -642,9 +642,9 @@ Phase-1 guardrails:
 - cache hit requires matching fingerprint and declared outputs to exist
 
 Inspection and invalidation:
-- `effigy cache inspect build`
-- `effigy cache invalidate build`
-- `effigy cache invalidate --all`
+- `effigy tasks cache inspect build`
+- `effigy tasks cache invalidate build`
+- `effigy tasks cache invalidate --all`
 
 ## Built-in Scans
 

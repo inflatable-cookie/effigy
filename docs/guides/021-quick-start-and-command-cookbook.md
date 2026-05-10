@@ -194,7 +194,7 @@ Use `--plan` first when you want to confirm what will run before running it.
 
 ```sh
 effigy init
-effigy migrate --from package.json
+effigy tasks migrate --from package.json
 effigy config --schema --minimal
 ```
 

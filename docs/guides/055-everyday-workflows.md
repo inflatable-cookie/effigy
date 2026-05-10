@@ -211,7 +211,7 @@ move that detail into `effigy.toml`.
 
 ```sh
 effigy init
-effigy migrate --from package.json
+effigy tasks migrate --from package.json
 effigy config --schema --minimal
 ```
 

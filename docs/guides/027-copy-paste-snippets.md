@@ -284,13 +284,13 @@ Run:
 
 ```sh
 # Check if the task would be a cache hit or miss
-effigy cache inspect build
+effigy tasks cache inspect build
 
 # Invalidate a specific task cache
-effigy cache invalidate build
+effigy tasks cache invalidate build
 
 # Invalidate all caches
-effigy cache invalidate --all
+effigy tasks cache invalidate --all
 ```
 
 Use when you want deterministic local up-to-date checks for expensive tasks.
@@ -301,20 +301,20 @@ Generate completions for your shell:
 
 ```sh
 # Bash
-effigy completion bash > /usr/local/share/bash-completion/completions/effigy
+effigy config completion bash > /usr/local/share/bash-completion/completions/effigy
 
 # Zsh
-effigy completion zsh > /usr/local/share/zsh/site-functions/_effigy
+effigy config completion zsh > /usr/local/share/zsh/site-functions/_effigy
 
 # Fish
-effigy completion fish > ~/.config/fish/completions/effigy.fish
+effigy config completion fish > ~/.config/fish/completions/effigy.fish
 ```
 
 List available selector candidates (useful for IDE integration):
 
 ```sh
-effigy completion candidates
-effigy completion candidates --prefix app/
+effigy config completion candidates
+effigy config completion candidates --prefix app/
 ```
 
 Use when you want tab-completion for task selectors in your shell.

@@ -5,7 +5,7 @@ pub(super) fn render_fish_completion() -> String {
     let mut doc = TextDoc::new();
     doc.line("# fish completion for effigy");
     doc.line("complete -c effigy -f");
-    doc.line("complete -c effigy -n '__fish_use_subcommand' -a '(effigy completion candidates --prefix (commandline -ct) 2>/dev/null)'");
+    doc.line("complete -c effigy -n '__fish_use_subcommand' -a '(effigy config completion candidates --prefix (commandline -ct) 2>/dev/null)'");
 
     for (name, description) in command_rows() {
         doc.line(format!(

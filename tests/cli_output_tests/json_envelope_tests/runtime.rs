@@ -170,7 +170,7 @@ fn cli_json_mode_watch_lock_conflict_has_unlock_remediation_hint() {
         .is_some_and(|msg| msg.contains("task:watch:build")));
     assert!(parsed["error"]["message"]
         .as_str()
-        .is_some_and(|msg| msg.contains("effigy unlock task:watch:build")));
+        .is_some_and(|msg| msg.contains("effigy tasks unlock task:watch:build")));
 }
 
 #[test]

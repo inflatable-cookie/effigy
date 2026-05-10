@@ -141,7 +141,7 @@ fn unlock_prompt_required(
         PromptDecision::SuppressedByJson
         | PromptDecision::SuppressedByPlan
         | PromptDecision::SuppressedByNonTty => Err(BuiltinError::task_invocation(
-            "`effigy unlock` requires confirmation before clearing broad lock scopes. Rerun from an interactive terminal to confirm, or pass --yes when automation intentionally accepts this action.",
+            "`effigy tasks unlock` requires confirmation before clearing broad lock scopes. Rerun from an interactive terminal to confirm, or pass --yes when automation intentionally accepts this action.",
         )),
     }
 }

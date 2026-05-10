@@ -96,7 +96,7 @@ pub fn probe_task_resolution(
             selection,
         ),
         Err(_error)
-            if is_builtin_or_catalogs_task(&selector_task_name)
+            if is_builtin_task_name(&selector_task_name)
                 && !request.deferred_builtins.contains(&selector_task_name) =>
         {
             TaskResolutionProbe::ok(
@@ -174,10 +174,6 @@ fn render_available_profiles(task: &ManifestTask) -> String {
     } else {
         available.join(", ")
     }
-}
-
-fn is_builtin_or_catalogs_task(task_name: &str) -> bool {
-    is_builtin_task_name(task_name) || task_name == "catalogs"
 }
 
 fn selector_lock_name(selector: &TaskSelector) -> String {

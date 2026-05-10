@@ -90,7 +90,7 @@ pub(super) fn lock_conflict(
         holder_hostname,
         holder_workspace_root,
         remediation: format!(
-            "Resolve the conflicting run or clear lock manually with `effigy unlock {}` (or `effigy unlock --all`) in {}",
+            "Resolve the conflicting run or clear lock manually with `effigy tasks unlock {}` (or `effigy tasks unlock --all`) in {}",
             scope_label,
             workspace_root.display()
         ),

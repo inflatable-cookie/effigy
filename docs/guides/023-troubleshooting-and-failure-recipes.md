@@ -319,9 +319,9 @@ effigy watch --owner effigy --max-runs 2 --json test
 Fix:
 
 ```sh
-effigy unlock task:watch:<target>
+effigy tasks unlock task:watch:<target>
 # if needed
-effigy unlock --all --yes
+effigy tasks unlock --all --yes
 ```
 
 ### Symptom: `lock conflict for <scope> ...`
@@ -329,9 +329,9 @@ effigy unlock --all --yes
 Fix:
 
 ```sh
-effigy unlock shared:<name>
-effigy unlock task:<name>
-effigy unlock profile:<task>/<profile>
+effigy tasks unlock shared:<name>
+effigy tasks unlock task:<name>
+effigy tasks unlock profile:<task>/<profile>
 ```
 
 Use `--all` only when you cannot isolate a safe scope.

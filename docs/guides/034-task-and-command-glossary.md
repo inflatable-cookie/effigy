@@ -148,8 +148,8 @@ Common scopes:
 Recovery command:
 
 ```sh
-effigy unlock shared:dev-stack
-effigy unlock task:watch:test
+effigy tasks unlock shared:dev-stack
+effigy tasks unlock task:watch:test
 ```
 
 ## Explain Mode

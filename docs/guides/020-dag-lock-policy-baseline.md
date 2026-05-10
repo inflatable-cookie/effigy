@@ -65,10 +65,10 @@ Stale locks are auto-reclaimed when the holder PID is no longer alive.
 Use the built-in unlock command:
 
 ```sh
-effigy unlock task:dev
-effigy unlock shared:dev-stack task:dev profile:dev/admin
-effigy unlock --all
-effigy unlock --all --yes --json
+effigy tasks unlock task:dev
+effigy tasks unlock shared:dev-stack task:dev profile:dev/admin
+effigy tasks unlock --all
+effigy tasks unlock --all --yes --json
 ```
 
 `--json` returns `effigy.unlock.v1`. Broad unlock actions such as `--all`,

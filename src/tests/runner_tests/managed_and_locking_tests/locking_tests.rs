@@ -18,7 +18,7 @@ run = "sleep 1"
 "#,
     );
 
-    assert_live_dev_lock_conflict(&root, 120, "task:dev", "effigy unlock task:dev");
+    assert_live_dev_lock_conflict(&root, 120, "task:dev", "effigy tasks unlock task:dev");
 }
 
 #[test]
@@ -256,7 +256,7 @@ lock = "dev-stack"
     crate::runner::tests::prelude::assert_lock_conflict(
         err,
         "shared:dev-stack",
-        "effigy unlock shared:dev-stack",
+        "effigy tasks unlock shared:dev-stack",
     );
 
     join.join()

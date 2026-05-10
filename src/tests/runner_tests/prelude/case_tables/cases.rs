@@ -1,5 +1,3 @@
-use super::super::runtime::Path;
-
 pub(in crate::runner::tests) struct BuiltinErrorCase {
     pub(in crate::runner::tests) workspace: &'static str,
     pub(in crate::runner::tests) command: &'static str,
@@ -57,13 +55,6 @@ pub(in crate::runner::tests) fn builtin_invocation_case(
         args,
         expected,
     }
-}
-
-pub(in crate::runner::tests) struct BuiltinInvocationSetupCase {
-    pub(in crate::runner::tests) workspace: &'static str,
-    pub(in crate::runner::tests) args: &'static [&'static str],
-    pub(in crate::runner::tests) expected: &'static [&'static str],
-    pub(in crate::runner::tests) setup: fn(&Path),
 }
 
 pub(in crate::runner::tests) struct BuiltinHelpJsonCase {

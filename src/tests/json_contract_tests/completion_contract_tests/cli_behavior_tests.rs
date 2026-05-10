@@ -33,7 +33,7 @@ fn builtin_completion_bash_script_uses_dynamic_candidates_probe() {
     write_manifest(&root.join("effigy.toml"), "");
 
     let out = run_completion_task(root, &["bash"]).expect("run completion bash");
-    assert!(out.contains("effigy completion candidates --prefix \"$cur\""));
+    assert!(out.contains("effigy config completion candidates --prefix \"$cur\""));
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn builtin_completion_candidates_unknown_argument_reports_stable_error() {
         RunnerError::TaskInvocation(message) => {
             assert_eq!(
                 message,
-                "unknown argument(s) for built-in `completion`: candidates --wat"
+                "unknown argument(s) for built-in `config completion`: candidates --wat"
             );
         }
         other => panic!("unexpected error: {other}"),
