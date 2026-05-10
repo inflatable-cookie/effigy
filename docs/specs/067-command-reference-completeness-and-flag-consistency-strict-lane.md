@@ -22,7 +22,7 @@ support needed for repo-local `changelog` and `bundle` surfaces.
 
 ## Current Ready Card
 
-- `642` audit the bounded command-reference gaps and land the guide fixes
+- `643` add the bounded `--repo` widening for changelog and bundle
 
 ## Execution Chain
 
@@ -30,8 +30,11 @@ support needed for repo-local `changelog` and `bundle` surfaces.
   the first contract-boundary card
 - `641` complete: locked the missing command/flag set, `version` coverage rule, and
   the bounded `--repo` widening for `changelog` and `bundle`
-- `642` ready: audit the live parser/help surface against the command matrix
-  and land the guide-only reference fixes before repo-targeting widening starts
+- `642` complete: audited the live parser/help surface against the command
+  matrix, fixed the bounded guide-only drift, and cleaned up the nearby
+  `docs check <KIND>` matrix drift left from `g04.023`
+- `643` ready: add the bounded `--repo` widening for `changelog` and `bundle`
+  plus focused parser and runner proofs
 
 ## Exit Condition
 
@@ -41,5 +44,5 @@ surfaces accept `--repo <PATH>` with focused parser and runner proof coverage.
 
 ## Next Task
 
-Execute `642` to land the pure guide/reference fixes before parser or runner
-changes start.
+Execute `643` to add the bounded `--repo` widening for `changelog` and
+`bundle`.

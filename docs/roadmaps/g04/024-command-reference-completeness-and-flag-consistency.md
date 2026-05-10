@@ -102,5 +102,5 @@ against the parser definitions in `crates/effigy-cli/src/`.
 
 ## Next Task
 
-Execute `642` to audit the command matrix against the live parser and land the
-bounded guide-only fixes before `--repo` widening starts.
+Execute `643` to add the bounded `--repo` widening for `changelog` and
+`bundle`, then close the lane with focused parser and runner proofs.

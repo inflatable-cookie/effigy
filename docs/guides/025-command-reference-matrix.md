@@ -72,13 +72,14 @@ For narrative workflow guidance instead of lookup, start with:
 | Command | Purpose | Key Flags | JSON Schema(s) | Deep Dive |
 | --- | --- | --- | --- | --- |
 | `effigy help` / `effigy --help` | Show CLI help and topic guidance | `--json` | `effigy.help.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
+| `effigy version` / `effigy --version` | Print the current Effigy version and active local build identity | `--json` | `effigy.version.v1` (inside command envelope) | `021-quick-start-and-command-cookbook.md` |
 | `effigy tasks` | List discovered catalogs/tasks, probe routing, or inspect repo-scoped task status | `status <SELECTOR>`, `status --all`, `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1`, `effigy.tasks-status.v1`, `effigy.tasks-status-all.v1` | `016-task-routing-precedence.md` |
 | `effigy defer` | Run the configured `[defer]` fallback explicitly (same routing container semantics as selector-miss deferral) | `--repo`, `--json` | command envelope; payload follows the deferred execution path | `015-deferral-fallback-migration.md` |
 | `effigy service` | Inspect the layered service catalog and extract bundled fragments into repo-owned overrides | `list`, `extract`, `--repo`, `--dir`, `--json` | service commands render command-envelope JSON with catalog payloads | `063-container-system-guide.md` |
 | `effigy exec` | Run one ad-hoc command inside the manifest's dev-context container | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
 | `effigy gateway` | Operate the host-native local DNS and reverse-proxy gateway for container-owned routes | `up`, `down`, `status`, `setup-tls`, `--json` | gateway commands render command-envelope JSON with gateway payloads | `063-container-system-guide.md` |
 | `effigy doctor` | Run health checks and optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md` |
-| `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion | `check-links`, `check-json-examples`, `check-headings`, `check-paths`, `check-contains`, `check-forbidden`, `check-index`, `check-next-action`, `check-workflow-paths`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1` | `029-docs-qa-checklist-and-validation.md` |
+| `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion | `check <KIND>`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1` | `029-docs-qa-checklist-and-validation.md` |
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
 | `effigy distribution` | Run distribution preflight, GLIBC floor validation, first-publish evidence capture, artifact validation, and closeout generation | `preflight`, `validate-metadata`, `check-glibc-floor`, `first-publish`, `validate-artifacts`, `generate-closeout`, `write-summary`, `--repo`, `--tag`, `--skip-docs`, `--skip-smoke`, `--skip-homebrew`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `062-distribution-system-guide.md` |
 | `effigy container` | Operate manifest-defined local container environments across Colima/containerd or Docker, along with data lifecycle, cleanup surfaces, shared-service reuse, and cross-project status views | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `volume`, `cache`, `--repo`, `--attach`, `--detach`, `--service`, `--command`, `--follow`, `--global`, `--keep-data`, `--wipe-data`, `--yes`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1` | `063-container-system-guide.md` |
@@ -128,6 +129,7 @@ set.
 ### Core Discovery and Diagnostics
 
 ```sh
+effigy version [--json]
 effigy tasks [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json]
 effigy defer [--repo <PATH>] [--json] <REQUEST> [args...]
 effigy doctor [--fix] [--verbose] [--json]
@@ -144,7 +146,8 @@ effigy config --user-inspect [--json]
 ### Docs, Contracts, and Scans
 
 ```sh
-effigy docs <check> [ARGS...] [--json]
+effigy docs check <kind> [ARGS...] [--json]
+effigy docs add-log-index <LOG_FILE> [--json]
 effigy contracts check-json [--fast|--full] [--changed-only <BASE>] [--print-selected|--print-selected=json] [--json]
 effigy contracts validate-selection [--contract <PATH>] [--artifact <PATH>] [--json]
 effigy scan <scanner> [SCANNER FLAGS...] [--json]
@@ -152,9 +155,8 @@ effigy scan <scanner> [SCANNER FLAGS...] [--json]
 
 Common values:
 
-- docs checks: `check-links`, `check-json-examples`, `check-headings`,
-  `check-paths`, `check-contains`, `check-forbidden`, `check-index`,
-  `check-next-action`, `check-workflow-paths`, `add-log-index`
+- docs check kinds: `links`, `json-examples`, `headings`, `paths`,
+  `contains`, `forbidden`, `index`, `next-action`, `workflow-paths`
 - scanners: `god-files`, `duplicate-blocks`, `comment-ratio`,
   `generated-assets`, `generated-in-src`, `attention-markers`,
   `stale-suppressions`
@@ -167,11 +169,14 @@ effigy service extract <SERVICE> [--dir <PATH>] [--json]
 effigy exec [--service <NAME>] [--json] <COMMAND> [ARGS...]
 effigy gateway <up|down|status|setup-tls> [--json]
 effigy container [<NAME>] <up|down|status|logs|shell|reset|eject> [FLAGS...]
-effigy container [<NAME>] cache list [--repo <PATH>] [--global] [--json]
+effigy container [<NAME>] cache list [--repo <PATH>] [--global] [--project <NAME>] [--kind <KIND>] [--json]
+effigy container [<NAME>] cache prune [--repo <PATH>] [--global] [--project <NAME>] [--kind <KIND>] [--yes] [--json]
 effigy container [<NAME>] volume list [--repo <PATH>] [--dormant] [--json]
+effigy container [<NAME>] volume prune [--repo <PATH>] --dormant [--yes] [--json]
 effigy container volume list --global [--orphans] [--json]
+effigy container volume prune --global --orphans [--yes] [--json]
 effigy container [<NAME>] data <list|export> [ARGS...] [--json]
-effigy container [<NAME>] data dump [<FILE>|<TARGET>|<TARGET>=<FILE>]... [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>]... [--repo <PATH>] [--json]
+effigy container [<NAME>] data dump [<FILE>|<TARGET>|<TARGET>=<FILE>]... [--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>]... [--push] [--repo <PATH>] [--json]
 effigy container [<NAME>] data <import|pull-production> [ARGS...] [--yes] [--json]
 effigy container data seed [--db-seed <FILE>|<TARGET>=<FILE>]... [--no-prompt] [--yes] [--repo <PATH>] [--json]
 effigy system <up|down|status|logs|repair|reset-runtime> [--system <NAME>] [--json]
