@@ -105,6 +105,12 @@ current manifest set:
 - mark it as unresolved / no-longer-declared
 - do not silently drop it
 
+If a task is currently declared but has never run and has no persisted record:
+
+- include it in `--all`
+- classify it as `unknown`
+- keep it distinct from stale/no-longer-declared rows
+
 ### Text Output Shape
 
 For one selector, show:
@@ -141,6 +147,7 @@ Single-selector payload should include:
 - state
 - active record when live
 - latest completed record when present
+- stale active warnings/evidence when present
 - warnings/evidence
 - routing summary
 
@@ -151,6 +158,17 @@ Single-selector payload should include:
 - rows
 - counts by state
 - warnings/evidence
+
+Each row should include at minimum:
+
+- selector
+- selected catalog root
+- state
+- currently-declared boolean
+- active record when live
+- latest completed record when present
+- unresolved/no-longer-declared marker when applicable
+- stale active warnings/evidence when applicable
 
 ### Read-Side Ownership
 
@@ -217,4 +235,4 @@ Docs/reference updates:
 ## Next Task
 
 Execute card
-[`623-promote-task-status-query-scope-and-result-contract.md`](./batch-cards/623-promote-task-status-query-scope-and-result-contract.md).
+[`624-add-tasks-status-parser-and-single-selector-dispatch.md`](./batch-cards/624-add-tasks-status-parser-and-single-selector-dispatch.md).

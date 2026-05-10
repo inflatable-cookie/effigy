@@ -2,9 +2,10 @@
 
 Lane: [`063-task-status-query-surface-and-read-model-strict-lane.md`](../063-task-status-query-surface-and-read-model-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
+Completed: 2026-05-10
 
 ## Goal
 
@@ -40,7 +41,17 @@ visibility decisions.
 - docs path checks for changed roadmap/spec/contract surfaces
 - `git diff --check`
 
+## Closeout
+
+The query-surface contract is now explicit about:
+
+- one-selector routing semantics
+- repo-plus-descendant `--all` inventory scope
+- the distinction between `unknown` declared rows and unresolved stale rows
+- stale active fallback behavior
+- minimum single-selector and `--all` row fields
+
 ## Next Task
 
-Add parser/dispatch support for `effigy tasks status` once the query-surface
-contract is locked.
+Execute
+[`624-add-tasks-status-parser-and-single-selector-dispatch.md`](./624-add-tasks-status-parser-and-single-selector-dispatch.md).

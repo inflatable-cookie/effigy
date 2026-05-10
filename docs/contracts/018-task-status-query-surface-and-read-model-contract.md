@@ -62,6 +62,9 @@ If the selector does not resolve:
 - return the normal not-found failure family
 - do not fabricate an `unknown` status row for a missing task
 
+For one-selector queries, there is no fallback to “closest known status record”
+when routing fails. The read surface must stay aligned with execution routing.
+
 ## `--all` Inventory Scope
 
 `--all` is repo-local. It inventories:
@@ -84,6 +87,13 @@ manifest set:
 - mark it as unresolved / no-longer-declared
 - do not silently drop it
 
+If a selector is currently declared but has never run and has no persisted
+record yet:
+
+- include it in `--all`
+- classify it as `unknown`
+- keep it distinct from stale/no-longer-declared rows
+
 ## Read Model
 
 The query surface merges status truth in this order:
@@ -97,6 +107,14 @@ The read model must surface:
 - stale active record warnings/evidence from the `017` reconciliation layer
 - whether the row still maps to a currently declared task
 - the selected catalog scope for the row
+
+For one-selector queries:
+
+- if a stale active record exists and a latest completed record exists, return
+  the latest completed record plus warnings/evidence about the stale active
+  record
+- if a stale active record exists and no completed record exists, return
+  `unknown` plus the stale-record warnings/evidence
 
 `unknown` is reserved for rows the read model knows about but cannot currently
 classify beyond “no trusted active record and no completed record”.
@@ -132,6 +150,7 @@ Single-selector payload must include at least:
 - resolved/current state
 - trusted active record when live
 - latest completed record when present
+- stale active record warnings/evidence when present
 - warnings/evidence
 - routing summary
 
@@ -142,6 +161,17 @@ Single-selector payload must include at least:
 - rows
 - counts by state
 - warnings/evidence
+
+Each `--all` row must include at least:
+
+- selector
+- selected catalog root
+- state
+- currently-declared boolean
+- trusted active record when live
+- latest completed record when present
+- unresolved/no-longer-declared marker when applicable
+- stale active warnings/evidence when applicable
 
 ## Read-Side Ownership
 

@@ -29,14 +29,16 @@ This lane owns:
 
 ## Current Ready Card
 
-- [`623-promote-task-status-query-scope-and-result-contract.md`](../roadmaps/g04/batch-cards/623-promote-task-status-query-scope-and-result-contract.md)
+- [`624-add-tasks-status-parser-and-single-selector-dispatch.md`](../roadmaps/g04/batch-cards/624-add-tasks-status-parser-and-single-selector-dispatch.md)
 
 ## Execution Chain
 
 - `622` complete: opened the lane, promoted the query-surface contract anchor,
   and selected the first contract-shaping card
-- `623` ready: lock selector resolution, `--all` repo inventory scope, stale
-  row visibility, and minimum text/JSON query result fields before parser work
+- `623` complete: locked selector resolution, `--all` repo inventory scope,
+  stale/no-longer-declared row visibility, and minimum text/JSON result fields
+- `624` ready: add parser/dispatch support for one-selector `tasks status`
+  reads before widening to `--all` inventory
 
 ## Exit Condition
 
@@ -47,4 +49,4 @@ stable text/JSON contract set.
 ## Next Task
 
 Execute ready card
-[`623-promote-task-status-query-scope-and-result-contract.md`](../roadmaps/g04/batch-cards/623-promote-task-status-query-scope-and-result-contract.md).
+[`624-add-tasks-status-parser-and-single-selector-dispatch.md`](../roadmaps/g04/batch-cards/624-add-tasks-status-parser-and-single-selector-dispatch.md).
