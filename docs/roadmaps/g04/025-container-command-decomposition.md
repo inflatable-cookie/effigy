@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -127,4 +127,4 @@ down, cache list, and volume list.
 
 ## Next Task
 
-Extract `cache.rs` boundary.
+Execute `646` to extract the cache command family into `cache.rs`.

@@ -82,6 +82,10 @@ This folder contains both:
   bounded command-reference and repo-targeting contract for `version`
   documentation, missing container shapes/flags, and `--repo` widening on
   changelog and bundle surfaces.
+- [`023-container-command-decomposition-contract.md`](./023-container-command-decomposition-contract.md):
+  structural-only module-boundary contract for splitting
+  `src/runner/container_command/` into cache, volume, lifecycle, data, and
+  thin-dispatch owners without widening container behavior.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -105,6 +109,7 @@ This folder contains both:
 | `020-remote-bundle-sources-git-and-oci-delivery-contract.md` | Platform maintainers | Unified `[bundle].base` grammar, `base_path` removal, source taxonomy, shared materialization boundary, git/OCI cache identity, stale/update detection, `bundle inspect`/`bundle sync` source metadata | Planning review against `g04.022` plus focused bundle parser and source-resolution proofs once implementation starts |
 | `021-docs-check-subcommand-consolidation-contract.md` | Platform maintainers | `docs check <KIND>` grammar, removed `check-*` spellings, migration errors, unchanged `add-log-index` carveout, and no-behavior-change rule for underlying checks | Planning review against `g04.023` plus focused docs parser, runner, and help proofs once implementation starts |
 | `022-command-reference-completeness-and-flag-consistency-contract.md` | Platform maintainers | Missing command/flag coverage in the command matrix, `version` reference rule, bounded `--repo` widening for `changelog` and `bundle`, and the no-behavior-change rule outside repo targeting | Planning review against `g04.024` plus focused parser, runner, and guide proofs once implementation starts |
+| `023-container-command-decomposition-contract.md` | Platform maintainers | Target `container_command` module ownership, structural-only extraction boundary, thin-dispatcher rule for `mod.rs`, and the no-user-facing-change rule during cache/volume/lifecycle splits | Planning review against `g04.025` plus focused container-command proofs once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -150,4 +155,6 @@ remote bundle-source contract, and
 `021-docs-check-subcommand-consolidation-contract.md` as the `g04.023`
 docs-check consolidation contract, and
 `022-command-reference-completeness-and-flag-consistency-contract.md` as the
-`g04.024` command-reference and repo-targeting contract.
+`g04.024` command-reference and repo-targeting contract, and
+`023-container-command-decomposition-contract.md` as the `g04.025`
+container-command decomposition contract.

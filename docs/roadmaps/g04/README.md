@@ -36,7 +36,7 @@ Current milestones:
 - [`022-remote-bundle-sources-git-and-oci-delivery.md`](./022-remote-bundle-sources-git-and-oci-delivery.md) (complete; unified `[bundle].base` typed source forms, removed `base_path`, and landed git/OCI bundle resolution, sync, and inspect)
 - [`023-docs-check-subcommand-consolidation.md`](./023-docs-check-subcommand-consolidation.md) (complete; collapsed the flat `docs check-*` surface into `docs check <KIND>` and removed the old spellings with migration errors)
 - [`024-command-reference-completeness-and-flag-consistency.md`](./024-command-reference-completeness-and-flag-consistency.md) (complete; command matrix gaps are closed and repo-local `changelog`/`bundle` surfaces now accept bounded `--repo` targeting)
-- [`025-container-command-decomposition.md`](./025-container-command-decomposition.md) (queued; split `container_command/` into lifecycle/data/cache/volume submodules)
+- [`025-container-command-decomposition.md`](./025-container-command-decomposition.md) (active; split `container_command/` into cache, volume, lifecycle, and thinner shared dispatch owners without behavior drift)
 - [`026-shared-dispatcher-and-exec-collapse.md`](./026-shared-dispatcher-and-exec-collapse.md) (queued; extract common JSON/text dispatcher, collapse exec variants, share release stage logic)
 - [`027-deployment-transaction-system.md`](./027-deployment-transaction-system.md) (queued; define the v0.6.0 deployment transaction contract and provider-neutral execution posture)
 - [`028-deployment-config-plan-and-reporting.md`](./028-deployment-config-plan-and-reporting.md) (queued; add deploy env config, `deploy plan <env>`, and durable plan reports)
@@ -73,8 +73,8 @@ Rules:
 
 ## Next Task
 
-Open the next queued lane, starting with
-[`025-container-command-decomposition.md`](./025-container-command-decomposition.md).
+Execute the ready `g04.025` card under
+[`068-container-command-decomposition-strict-lane.md`](../../specs/068-container-command-decomposition-strict-lane.md).
 
 
 Batch cards live in `g04/batch-cards/` when strict posture uses them.
