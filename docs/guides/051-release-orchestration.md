@@ -49,6 +49,28 @@ Use the commands by intent:
 - `release gates` when you want the same local release-gate verdict CI should
   reach before you mutate anything
 
+## 1a) Breaking Command Moves In Release Notes
+
+When a breaking release re-homes existing commands, keep the migration note
+short and explicit. Do not make operators infer the new home from a broad CLI
+cleanup summary.
+
+Good shape:
+
+- say which old command is gone
+- show the exact replacement command
+- group related moves into one short section instead of scattering them across
+  multiple bullets
+
+For the current helper-command cleanup, the release-note section should read
+roughly like this:
+
+- `effigy migrate` -> `effigy tasks migrate`
+- `effigy unlock` -> `effigy tasks unlock`
+- `effigy cache ...` -> `effigy tasks cache ...`
+- `effigy completion ...` -> `effigy config completion ...`
+- `effigy catalogs` removed; use `effigy tasks`
+
 ## 1) Core Commands
 
 Current built-in release commands:

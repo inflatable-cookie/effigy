@@ -156,8 +156,8 @@ Leave these alone unless a later audit shows a concrete boundary problem:
 ### Batch 2 - Command Contract Cleanup
 
 - [x] update docs, examples, and shell completion surfaces
-- [ ] update parser/help/reference tests
-- [ ] update release-note migration guidance
+- [x] update parser/help/reference tests
+- [x] update release-note migration guidance
 
 ### Batch 3 - Container Crate Merge
 
@@ -181,7 +181,7 @@ Leave these alone unless a later audit shows a concrete boundary problem:
 - [x] container-domain code no longer spans three overlapping crates
 - [x] workspace metadata and top-level dependencies reflect the smaller crate
   graph
-- [ ] release notes for the next breaking version can explain the command
+- [x] release notes for the next breaking version can explain the command
   changes in one short section
 
 ## 9) Risks and Mitigations
