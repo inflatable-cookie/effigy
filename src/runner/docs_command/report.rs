@@ -1,5 +1,7 @@
 use effigy_docs_policy::{DocsCheckReport, DocsPolicyError};
 
+use crate::runner::render::render_command_result;
+
 use super::RunnerError;
 
 /// Surface a docs-policy check report in the form the user requested.
@@ -11,17 +13,11 @@ pub(super) fn dispatch_docs_report(
     report: DocsCheckReport,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    if output_json {
-        let rendered = report.json.to_string();
-        if report.ok {
-            Ok(rendered)
-        } else {
-            Err(RunnerError::task_invocation(rendered))
-        }
-    } else if report.ok {
-        Ok(report.success_text)
+    let ok = report.ok;
+    if ok {
+        render_command_result(output_json, true, report.json, report.success_text)
     } else {
-        Err(RunnerError::task_invocation(report.failure_text))
+        render_command_result(output_json, false, report.json, report.failure_text)
     }
 }
 

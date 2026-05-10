@@ -86,6 +86,10 @@ This folder contains both:
   structural-only module-boundary contract for splitting
   `src/runner/container_command/` into cache, volume, lifecycle, data, and
   thin-dispatch owners without widening container behavior.
+- [`024-shared-dispatcher-and-exec-collapse-contract.md`](./024-shared-dispatcher-and-exec-collapse-contract.md):
+  structural-only duplication-reduction contract for shared json/text result
+  rendering, routed container-exec collapse, and shared release-stage control
+  flow without changing surfaced behavior.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -110,6 +114,7 @@ This folder contains both:
 | `021-docs-check-subcommand-consolidation-contract.md` | Platform maintainers | `docs check <KIND>` grammar, removed `check-*` spellings, migration errors, unchanged `add-log-index` carveout, and no-behavior-change rule for underlying checks | Planning review against `g04.023` plus focused docs parser, runner, and help proofs once implementation starts |
 | `022-command-reference-completeness-and-flag-consistency-contract.md` | Platform maintainers | Missing command/flag coverage in the command matrix, `version` reference rule, bounded `--repo` widening for `changelog` and `bundle`, and the no-behavior-change rule outside repo targeting | Planning review against `g04.024` plus focused parser, runner, and guide proofs once implementation starts |
 | `023-container-command-decomposition-contract.md` | Platform maintainers | Target `container_command` module ownership, structural-only extraction boundary, thin-dispatcher rule for `mod.rs`, and the no-user-facing-change rule during cache/volume/lifecycle splits | Planning review against `g04.025` plus focused container-command proofs once implementation starts |
+| `024-shared-dispatcher-and-exec-collapse-contract.md` | Platform maintainers | Shared result-render boundary, routed container-exec collapse scope, release prepare/execute shared-control-flow boundary, and the structural-only no-surface-change rule | Planning review against `g04.026` plus focused runner/output proofs once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -157,4 +162,6 @@ docs-check consolidation contract, and
 `022-command-reference-completeness-and-flag-consistency-contract.md` as the
 `g04.024` command-reference and repo-targeting contract, and
 `023-container-command-decomposition-contract.md` as the `g04.025`
-container-command decomposition contract.
+container-command decomposition contract, and
+`024-shared-dispatcher-and-exec-collapse-contract.md` as the `g04.026`
+shared dispatcher and exec collapse contract.

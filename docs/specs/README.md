@@ -27,12 +27,12 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
-- [`068-container-command-decomposition-strict-lane.md`](./068-container-command-decomposition-strict-lane.md)
+- [`069-shared-dispatcher-and-exec-collapse-strict-lane.md`](./069-shared-dispatcher-and-exec-collapse-strict-lane.md)
 - [`064-deployment-transaction-system-strict-lane.md`](./064-deployment-transaction-system-strict-lane.md)
 
 Active strict lane:
 
-- `068` for `g04.025` container command decomposition
+- `069` for `g04.026` shared dispatcher and exec collapse
 
 Queued strict lanes:
 
@@ -44,6 +44,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`068-container-command-decomposition-strict-lane.md`](./068-container-command-decomposition-strict-lane.md)
 - [`067-command-reference-completeness-and-flag-consistency-strict-lane.md`](./067-command-reference-completeness-and-flag-consistency-strict-lane.md)
 - [`066-docs-check-subcommand-consolidation-strict-lane.md`](./066-docs-check-subcommand-consolidation-strict-lane.md)
 - [`063-task-status-query-surface-and-read-model-strict-lane.md`](./063-task-status-query-surface-and-read-model-strict-lane.md)
@@ -102,5 +103,5 @@ Recently completed:
 
 ## Next Task
 
-Execute the ready `g04.025` card under
-[`068-container-command-decomposition-strict-lane.md`](./068-container-command-decomposition-strict-lane.md).
+Execute the ready `g04.026` card under
+[`069-shared-dispatcher-and-exec-collapse-strict-lane.md`](./069-shared-dispatcher-and-exec-collapse-strict-lane.md).

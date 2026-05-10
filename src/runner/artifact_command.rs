@@ -13,6 +13,7 @@ use crate::runner::command_context::resolve_active_command_context;
 
 use super::artifact_transport::{infer_kind_from_primary_files, OrasCliArtifactAdapter};
 use super::error::RunnerError;
+use super::render::render_command_result;
 
 pub(super) fn run_artifact(args: ArtifactArgs) -> Result<String, RunnerError> {
     let context = resolve_active_command_context(args.repo_override.clone())?;
@@ -77,12 +78,12 @@ fn run_artifact_inspect(
         farmyard_handoff,
         Some(&adapter),
     )?;
-
-    if output_json {
-        return Ok(report.to_string());
-    }
-
-    Ok(render_inspect_text(&report))
+    render_command_result(
+        output_json,
+        true,
+        report.clone(),
+        render_inspect_text(&report),
+    )
 }
 
 fn run_artifact_stage(
@@ -100,12 +101,12 @@ fn run_artifact_stage(
         farmyard_handoff,
         &adapter,
     )?;
-
-    if output_json {
-        return Ok(report.to_string());
-    }
-
-    Ok(render_stage_text(&report))
+    render_command_result(
+        output_json,
+        true,
+        report.clone(),
+        render_stage_text(&report),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -130,12 +131,12 @@ fn run_artifact_capture(
         farmyard_handoff,
         push,
     )?;
-
-    if output_json {
-        return Ok(report.to_string());
-    }
-
-    Ok(render_capture_text(&report))
+    render_command_result(
+        output_json,
+        true,
+        report.clone(),
+        render_capture_text(&report),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

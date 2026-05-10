@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -151,4 +151,5 @@ shape. The dispatcher takes a `ReleaseStage` enum and the common flags.
 
 ## Next Task
 
-Add shared `render_result` helper.
+Execute `653` to add the shared result-render helper and migrate the first
+low-risk command owners.

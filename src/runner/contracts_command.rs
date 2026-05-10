@@ -10,6 +10,7 @@ use crate::runner::command_context::resolve_active_repo_root;
 use effigy_cli::{ContractsArgs, ContractsSelectionPrintMode, ContractsSubcommand};
 
 use super::error::RunnerError;
+use super::render::render_command_result;
 
 pub(super) fn run_contracts(args: ContractsArgs) -> Result<String, RunnerError> {
     let resolved = resolve_active_repo_root(args.repo_override.clone())?;
@@ -50,20 +51,13 @@ fn run_validate_selection(
     let report = validate_selection(repo_root, contract_override, artifact_override)
         .map_err(map_contracts_error)?;
     let payload = report.to_json_value();
-
-    if output_json {
-        return if report.ok() {
-            Ok(payload.to_string())
-        } else {
-            Err(RunnerError::task_invocation(payload.to_string()))
-        };
-    }
-
-    if report.ok() {
-        Ok(report.render_success_text())
+    let ok = report.ok();
+    let text = if ok {
+        report.render_success_text()
     } else {
-        Err(RunnerError::task_invocation(report.render_failure_text()))
-    }
+        report.render_failure_text()
+    };
+    render_command_result(output_json, ok, payload, text)
 }
 
 fn run_check_json(
@@ -81,11 +75,11 @@ fn run_check_json(
         let report =
             run_prepared_check_json(repo_root, &prepared, false).map_err(map_contracts_error)?;
         let payload = prepared.build_json_payload(&report);
-        return if report.failures.is_empty() {
-            Ok(payload.to_string())
-        } else {
-            Err(RunnerError::task_invocation(payload.to_string()))
-        };
+        let ok = report.failures.is_empty();
+        let text = report
+            .render_text(prepared.changed_only_base())
+            .map_err(RunnerError::task_invocation)?;
+        return render_command_result(output_json, ok, payload, text);
     }
 
     if let Some(rendered) = prepared.selection().render_for_print_mode(print_selected) {
@@ -94,9 +88,12 @@ fn run_check_json(
 
     let report =
         run_prepared_check_json(repo_root, &prepared, true).map_err(map_contracts_error)?;
-    report
+    let ok = report.failures.is_empty();
+    let payload = prepared.build_json_payload(&report);
+    let text = report
         .render_text(prepared.changed_only_base())
-        .map_err(RunnerError::task_invocation)
+        .map_err(RunnerError::task_invocation)?;
+    render_command_result(output_json, ok, payload, text)
 }
 
 fn map_contracts_error(error: ContractsError) -> RunnerError {
