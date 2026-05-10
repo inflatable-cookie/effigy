@@ -30,7 +30,9 @@ pub(super) fn with_test_compose_backend<T>(backend: ComposeBackend, run: impl Fn
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().expect("lock")
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[test]
@@ -165,7 +167,7 @@ fn scoped_runtime_backend_override_ignores_legacy_repo_wide_backend() {
     assert_eq!(load_runtime_backend_override(&repo_root, Some("web")), None);
     assert_eq!(
         load_runtime_backend_override(&repo_root, None),
-        Some(effigy_container_manager::BackendId::docker_compose())
+        Some(crate::BackendId::docker_compose())
     );
 }
 
@@ -178,13 +180,13 @@ fn write_runtime_backend_override_scopes_backend_to_container_name() {
     write_runtime_backend_override(
         &repo_root,
         Some("linux-release"),
-        &effigy_container_manager::BackendId::colima_nerdctl(),
+        &crate::BackendId::colima_nerdctl(),
     )
     .expect("write scoped metadata");
 
     assert_eq!(
         load_runtime_backend_override(&repo_root, Some("linux-release")),
-        Some(effigy_container_manager::BackendId::colima_nerdctl())
+        Some(crate::BackendId::colima_nerdctl())
     );
     assert_eq!(load_runtime_backend_override(&repo_root, Some("web")), None);
 }

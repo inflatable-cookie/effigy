@@ -3,16 +3,16 @@ use std::path::Path;
 use std::process::Output;
 
 use effigy_catalog::volumes::{reset_commands, DockerCommand, VolumeClassification};
-use effigy_container_manager::{
-    BackendId, ContainerAction, ContainerBackendDetection, ContainerInterruptPolicy,
-    ContainerManager, ContainerManagerRequest,
-};
 use effigy_containers::{
     exec::{
         list_running_compose_containers_for_policy, ContainerExecError, RunningComposeContainer,
     },
     health::wait_for_ready,
     EffectiveContainerPolicy,
+};
+use effigy_containers::{
+    BackendId, ContainerAction, ContainerBackendDetection, ContainerInterruptPolicy,
+    ContainerManager, ContainerManagerRequest,
 };
 use effigy_core::shell::shell_quote;
 use serde_json::json;

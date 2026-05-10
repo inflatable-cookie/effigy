@@ -2,11 +2,6 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Output;
 
-use effigy_container_manager::{ContainerAction, ContainerRuntimeState};
-use effigy_container_ops::{
-    ContainerCapturedExecOperation, ContainerExecOperation, ContainerLifecycleOperation,
-    ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
-};
 use effigy_containers::{
     compose::{resolve_compose_backend_for_repo, ComposeBackend},
     effective_attach_mode, eject_generated_compose, eject_report,
@@ -17,6 +12,11 @@ use effigy_containers::{
     load_container_exec_working_dir, load_container_policy, up_detached_report,
     validate_compose_backend_runtime, validate_container_policy, write_runtime_backend_override,
     EffectiveAttachMode, EffectiveContainerPolicy,
+};
+use effigy_containers::{ContainerAction, ContainerRuntimeState};
+use effigy_containers::{
+    ContainerCapturedExecOperation, ContainerExecOperation, ContainerLifecycleOperation,
+    ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
 };
 use effigy_runtime::session::run_attached_container_session_with_hook;
 use effigy_runtime::shell::run_container_shell as run_runtime_container_shell;
@@ -114,8 +114,8 @@ pub(super) fn run_container_up(
         effigy_runtime::signals::run_compose_plan_capture(&policy, &up_plan)?;
     }
     let backend_id = match resolve_compose_backend_for_repo(repo_root, &policy) {
-        ComposeBackend::Docker => effigy_container_manager::BackendId::docker_compose(),
-        ComposeBackend::ColimaNerdctl => effigy_container_manager::BackendId::colima_nerdctl(),
+        ComposeBackend::Docker => effigy_containers::BackendId::docker_compose(),
+        ComposeBackend::ColimaNerdctl => effigy_containers::BackendId::colima_nerdctl(),
     };
     let _ = write_runtime_backend_override(repo_root, Some(policy.name.as_str()), &backend_id);
     if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
@@ -455,7 +455,7 @@ fn probe_runtime_shell_capability(
 
 fn run_runtime_shell_exec(
     policy: &EffectiveContainerPolicy,
-    plan: &effigy_container_manager::ContainerComposeInvocationPlan,
+    plan: &effigy_containers::ContainerComposeInvocationPlan,
     capture: bool,
 ) -> Result<Output, effigy_runtime::EffigyRuntimeError> {
     run_compose_exec_plan_with_options(policy, plan, capture, None)
@@ -513,13 +513,13 @@ mod tests {
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
     use crate::runner::RunnerError;
-    use effigy_container_ops::{
-        ContainerConfirmationPolicy, ContainerExecOperation, ContainerLifecycleOperation,
-        ContainerOperationKind, ContainerSideEffectClass,
-    };
     use effigy_containers::{
         down_report, load_container_policy, up_detached_report, EffectiveComposeSource,
         EffectiveContainerPolicy, SharedServiceBinding,
+    };
+    use effigy_containers::{
+        ContainerConfirmationPolicy, ContainerExecOperation, ContainerLifecycleOperation,
+        ContainerOperationKind, ContainerSideEffectClass,
     };
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,

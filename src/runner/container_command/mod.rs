@@ -24,7 +24,7 @@ use effigy_cli::{
     ContainerArgs, ContainerCacheSubcommand, ContainerDataSubcommand, ContainerSubcommand,
     ContainerVolumeSubcommand,
 };
-use effigy_container_ops::{ContainerConfirmationPolicy, ContainerLifecycleOperation};
+use effigy_containers::{ContainerConfirmationPolicy, ContainerLifecycleOperation};
 
 use super::error::RunnerError;
 use data::{

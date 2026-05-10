@@ -32,7 +32,7 @@ contracts, architecture ownership, and cleanup-break notes.
   behavior
 - add `013-task-execution-request-contract.md`
 - update the architecture package map for `effigy-context`,
-  `effigy-container-manager`, and `effigy-execution`
+  `effigy-containers`, and `effigy-execution`
 - decide whether any cleanup breaks need `CHANGELOG.md`
 
 ## Current Ready Card

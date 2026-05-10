@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use effigy_container_manager::BackendId;
 use effigy_containers::compose::{compose_args, resolve_compose_backend_for_repo, ComposeBackend};
+use effigy_containers::BackendId;
 use effigy_containers::{write_runtime_backend_override, EffectiveContainerPolicy};
 
 use crate::runner::container_command::support::reconcile_primary_service_tcp_alias_hosts;

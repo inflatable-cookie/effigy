@@ -4,12 +4,12 @@ mod report;
 use std::path::Path;
 
 use effigy_catalog::volumes::classify_for_reset;
-use effigy_container_manager::{ContainerAction, ContainerCleanupResult, ContainerRuntimeState};
 use effigy_containers::{
     down_report, exec::runtime_backend_is_running, load_container_policy, reset_report,
     validate_compose_backend_runtime, validate_container_policy, EffectiveComposeSource,
     EffectiveContainerPolicy,
 };
+use effigy_containers::{ContainerAction, ContainerCleanupResult, ContainerRuntimeState};
 
 use crate::container_manager::{compose_invocation_plan, lifecycle_operation_report};
 use crate::read::{discover_running_environments, filter_running_environments_for_scope};

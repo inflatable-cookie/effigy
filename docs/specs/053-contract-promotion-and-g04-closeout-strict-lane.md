@@ -60,7 +60,7 @@ None. This lane is complete.
 missing several shipped `g04` ownership boundaries:
 
 - `effigy-runtime-plan`: runtime activation request/plan/report substrate
-- `effigy-container-ops`: typed container operation request/plan/report model
+- `effigy-containers`: typed container operation request/plan/report model
 - `effigy-data`: seed/dump target, artifact handoff, and database command
   planning
 - `effigy-artifacts`: artifact refs, OCI adapter, staging, apply, and capture

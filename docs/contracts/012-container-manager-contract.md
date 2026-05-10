@@ -17,7 +17,7 @@ Colima/nerdctl.
 
 ## Manager Owner
 
-The canonical facade crate is `effigy_container_manager`.
+The canonical facade crate is `effigy_containers`.
 
 It owns:
 
@@ -33,8 +33,8 @@ It owns:
 Static registration is enough for this round. Dynamic plugin loading is out of
 scope.
 
-Container command intent is planned by `effigy-container-ops`. Backend work
-then routes through `effigy-container-manager` and, where compatibility still
+Container command intent is planned inside `effigy-containers`. Backend work
+then routes through `effigy-containers` and, where compatibility still
 requires it, `effigy-runtime` adapter helpers. The cross-pipeline boundary is
 defined in `015-runtime-operation-pipeline-contract.md`.
 
@@ -58,7 +58,7 @@ Backend-owned details include:
 ## Runner Rules
 
 Runner code must call `ContainerManager` or an approved
-`effigy-container-ops`/`effigy-runtime` adapter for container operations.
+`effigy-containers`/`effigy-runtime` adapter for container operations.
 
 Runner code must not:
 

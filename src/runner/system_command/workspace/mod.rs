@@ -316,7 +316,7 @@ fn probe_workspace_shell_capability(
 
 fn run_workspace_shell_exec(
     policy: &EffectiveContainerPolicy,
-    plan: &effigy_container_manager::ContainerComposeInvocationPlan,
+    plan: &effigy_containers::ContainerComposeInvocationPlan,
     capture: bool,
 ) -> Result<std::process::Output, effigy_runtime::EffigyRuntimeError> {
     crate::runner::exec_command::run_compose_exec_plan_with_options(policy, plan, capture, None)

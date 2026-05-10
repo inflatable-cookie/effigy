@@ -8,7 +8,7 @@ use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 
 use effigy_cli::{BootstrapDbSeedInput, ContainerDbDumpInput};
-use effigy_container_ops::ContainerDataOperation;
+use effigy_containers::ContainerDataOperation;
 use effigy_data::{
     database_dump_command, dump_artifact_handoff, normalize_dump_destination_path,
     select_data_targets, select_database_service, ArtifactDataHandoff, DataDumpDestination,

@@ -22,7 +22,7 @@ Effigy has four runtime operation pipeline families.
 | --- | --- | --- |
 | Execution pipeline | `effigy-execution` plus runner dispatch adapters | Task and command request construction, surface identity, runtime policy, output mode, environment plan, and resolved route. |
 | Runtime activation pipeline | `effigy-runtime-plan` plus `src/runner/container_runtime_prep/*` side-effect stages | Runtime prep identity, readiness, gateway/alias reconciliation, lease policy, and activation report shape. |
-| Container operation pipeline | `effigy-container-ops`, `effigy-container-manager`, `effigy-runtime` adapters | Lifecycle, read, exec/shell, data/cache operation intent, safety policy, backend invocation boundary, and operation reports. |
+| Container operation pipeline | `effigy-containers` plus `effigy-runtime` adapters | Lifecycle, read, exec/shell, data/cache operation intent, safety policy, backend invocation boundary, and operation reports. |
 | Artifact/data pipeline | `effigy-data` and `effigy-artifacts` plus runner command adapters | DB target resolution, seed/dump source and destination normalization, database command plans, OCI/local artifact staging, capture, and apply handoff. |
 
 These pipelines are composition seams, not dynamic plugins. Adding a feature
@@ -95,7 +95,7 @@ gateway, or lease behavior.
 
 ## Container Operation Rules
 
-Container operation planning belongs to `effigy-container-ops`.
+Container operation planning belongs to `effigy-containers`.
 
 Operation plans must carry:
 

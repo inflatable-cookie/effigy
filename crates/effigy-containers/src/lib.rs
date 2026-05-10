@@ -2,7 +2,9 @@ pub mod colima;
 pub mod compose;
 pub mod exec;
 pub mod health;
+pub mod manager;
 mod mount_spec;
+pub mod ops;
 pub mod policy;
 mod policy_support;
 pub mod report;
@@ -10,6 +12,18 @@ mod runtime;
 pub mod session;
 mod workspace;
 
+pub use manager::*;
+pub use ops::{
+    ContainerCacheListOperation, ContainerCacheOperation, ContainerCachePruneOperation,
+    ContainerCapturedExecOperation, ContainerConfirmationPolicy, ContainerDataOperation,
+    ContainerDataTransferOperation, ContainerDownOperation, ContainerDumpOperation,
+    ContainerExecOperation, ContainerLifecycleOperation, ContainerLogsOperation,
+    ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
+    ContainerOperationResult, ContainerPromptedOperation, ContainerReadOperation,
+    ContainerResetOperation, ContainerShellOperation, ContainerSideEffectClass,
+    ContainerStatsOperation, ContainerStatusOperation, ContainerUpOperation,
+    ContainerVolumeListOperation, ContainerVolumeOperation, ContainerVolumePruneOperation,
+};
 pub use policy::inline_workspace::{
     load_inline_workspace_container_policy, resolve_inline_workspace_exec_working_dir,
 };
@@ -48,7 +62,6 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use effigy_catalog::CatalogResolver;
-use effigy_container_manager::BackendId;
 use effigy_manifest::user_config::UserContainerBackendPreference;
 use effigy_manifest::ManifestContainerDriver;
 

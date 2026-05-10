@@ -24,7 +24,7 @@ Fold named-volume inventory into the typed container operation model.
 
 ## Outcome
 
-`ContainerVolumeOperation::list(...)` now exists in `effigy-container-ops`, and
+`ContainerVolumeOperation::list(...)` now exists in `effigy-containers`, and
 runtime global volume listing creates a read-only volume operation plan before
 collecting inventory.
 

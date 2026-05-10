@@ -1,7 +1,0 @@
-[package]
-name = "effigy-container-manager"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]

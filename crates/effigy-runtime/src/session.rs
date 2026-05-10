@@ -2,7 +2,7 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-use effigy_container_manager::ContainerAction;
+use effigy_containers::ContainerAction;
 use effigy_containers::{
     colima::shutdown_compose_commands,
     session::{

@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use effigy_container_manager::{ContainerComposeInvocationPlan, ContainerRuntimeInvocationPlan};
 use effigy_containers::{exec::run_compose_invocation_capture, EffectiveContainerPolicy};
+use effigy_containers::{ContainerComposeInvocationPlan, ContainerRuntimeInvocationPlan};
 #[cfg(unix)]
 use nix::libc;
 #[cfg(unix)]

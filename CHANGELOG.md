@@ -12,6 +12,10 @@ During v0.x, MINOR bumps may include breaking changes.
   **`effigy tasks cache`**, and **`effigy config completion`** instead of the
   old root forms. The legacy **`effigy catalogs`** alias is gone; use
   **`effigy tasks`** for catalog and task discovery.
+- **Container crate sprawl** has been collapsed into **`effigy-containers`**:
+  the old **`effigy-container-manager`** and **`effigy-container-ops`** crates
+  are gone, and backend selection plus typed container operation planning now
+  live in one canonical container-domain crate.
 
 ### Added
 - **State stack planning foundation:** `effigy state plan [<STACK>]` now

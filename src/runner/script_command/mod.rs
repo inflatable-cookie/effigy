@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use effigy_container_ops::ContainerCapturedExecOperation;
+use effigy_containers::ContainerCapturedExecOperation;
 use effigy_execution::ExecutionSurface;
 use effigy_rhai::{
     execute_rhai_script_with_runtime_context, install_stop_requested_flag, load_script,

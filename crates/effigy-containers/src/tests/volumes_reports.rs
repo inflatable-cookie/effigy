@@ -677,7 +677,7 @@ fn volume_list_report_renders_dormant_contract() {
     assert_eq!(report.json["dormant_count"], 1);
     assert_eq!(report.json.get("orphan_count"), None);
     assert!(report.success_text.contains("dormant=1"));
-    assert!(report.success_text.contains("inactive:no-longer-declared"));
+    assert!(report.success_text.contains("orphaned:no-longer-declared"));
 }
 
 #[test]

@@ -380,7 +380,7 @@ mod tests {
 
         let error = run_command_capture_with_timeout(
             &root,
-            "sh",
+            "/bin/sh",
             &["-c", script.as_str()],
             "descendant test",
             Duration::from_millis(200),

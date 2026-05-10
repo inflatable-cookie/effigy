@@ -150,10 +150,9 @@ fn collect_runtime_diagnostics(
 fn docker_context_mismatch_warning(
     context: &str,
     has_colima_profiles: bool,
-    user_backend: Option<effigy_container_manager::BackendId>,
+    user_backend: Option<effigy_containers::BackendId>,
 ) -> Option<String> {
-    if !has_colima_profiles
-        || user_backend == Some(effigy_container_manager::BackendId::colima_nerdctl())
+    if !has_colima_profiles || user_backend == Some(effigy_containers::BackendId::colima_nerdctl())
     {
         return None;
     }
@@ -206,7 +205,7 @@ fn docker_context_name() -> Result<Option<String>, DoctorError> {
 #[cfg(test)]
 mod tests {
     use super::docker_context_mismatch_warning;
-    use effigy_container_manager::BackendId;
+    use effigy_containers::BackendId;
 
     #[test]
     fn docker_context_warning_shows_when_colima_repo_has_no_pinned_containerd_preference() {

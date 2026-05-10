@@ -5,8 +5,6 @@ use std::process::{Command, Output};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use effigy_container_manager::{BackendId, ContainerBackendDetection, ContainerManager};
-
 use super::implementation::ContainerExecError;
 use super::parse::docker_failure_looks_like_colima_runtime_state_loss;
 use super::process::{
@@ -19,7 +17,8 @@ use crate::{
         managed_colima_profile_resources, parse_colima_running, prepare_managed_colima_profile,
     },
     compose::{resolve_compose_backend_for_repo, resolve_host_cli_program, ComposeBackend},
-    user_global_backend_preference, user_global_colima_profile, EffectiveContainerPolicy,
+    user_global_backend_preference, user_global_colima_profile, BackendId,
+    ContainerBackendDetection, ContainerManager, ContainerManagerError, EffectiveContainerPolicy,
     DEFAULT_COLIMA_PROFILE,
 };
 
@@ -374,9 +373,7 @@ fn runtime_detection_for_policy(
     detection
 }
 
-fn container_manager_error(
-    error: effigy_container_manager::ContainerManagerError,
-) -> ContainerExecError {
+fn container_manager_error(error: ContainerManagerError) -> ContainerExecError {
     ContainerExecError::Failure {
         command: "container manager backend selection".to_owned(),
         code: None,

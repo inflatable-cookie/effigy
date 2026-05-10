@@ -25,7 +25,7 @@ No ready card.
 
 ## Execution Chain
 
-- `587` complete: split `effigy-container-ops` by operation owner
+- `587` complete: split the container operation planning surface by operation owner
 - `588` complete: extract `effigy-data` tests and close the lane
 
 ## Exit Condition

@@ -9,10 +9,7 @@ use std::path::Path;
 use std::process::Output;
 
 use effigy_catalog::volumes::{remove_volume_command, DockerCommand, ManagedVolume};
-use effigy_container_manager::ContainerAction;
-use effigy_container_ops::{
-    ContainerCacheOperation, ContainerDataOperation, ContainerVolumeOperation,
-};
+use effigy_containers::ContainerAction;
 use effigy_containers::{
     cache_list_global_report, cache_list_report, cache_prune_report, data_list_report,
     data_transfer_report,
@@ -21,6 +18,9 @@ use effigy_containers::{
     validate_container_policy, volume_list_report, volume_prune_report, ContainerCachePruneEntry,
     ContainerCacheVolumeEntry, ContainerDataTransferAction, ContainerDataVolumeEntry,
     ContainerVolumePruneEntry, EffectiveContainerPolicy,
+};
+use effigy_containers::{
+    ContainerCacheOperation, ContainerDataOperation, ContainerVolumeOperation,
 };
 
 use crate::EffigyRuntimeError;

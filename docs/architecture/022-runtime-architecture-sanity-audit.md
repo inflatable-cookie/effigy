@@ -13,7 +13,8 @@ The important crates already exist:
 
 - `effigy-context` owns boot-time path and host/container facts.
 - `effigy-execution` owns task execution request and route intent.
-- `effigy-container-manager` owns the backend facade.
+- `effigy-containers` owns the backend facade and typed container operation
+  plans.
 - `effigy-artifacts` owns artifact references, staging, and OCI transport
   boundaries.
 - `effigy-runtime` owns runtime data/read/write helpers.
@@ -36,7 +37,7 @@ Runtime/container critical-path crates:
 | --- | --- | --- |
 | `effigy-context` | boot-time context | good authority surface; new runner code should continue consuming it |
 | `effigy-execution` | task request and route intent | needs promotion into full execution planning authority |
-| `effigy-container-manager` | backend facade and operation reports | needs broader operation methods so old compose helpers stop leaking upward |
+| `effigy-containers` | backend facade, operation plans, and compatibility helpers | needs continued ownership tightening in `lib.rs`, `workspace.rs`, `exec.rs`, and `policy_support.rs` |
 | `effigy-containers` | effective policy and compose assembly | too much mixed ownership in `lib.rs`, `workspace.rs`, `exec.rs`, and `policy_support.rs` |
 | `effigy-runtime` | runtime data/read/write/shell helpers | still constructs compose/runtime commands directly |
 | `effigy-artifacts` | artifact source/destination model | solid substrate; data pipeline should consume it rather than re-owning staging details |
@@ -301,7 +302,7 @@ Stages:
 
 ### Container Operation Pipeline
 
-Owner: new `effigy-container-ops`
+Owner: `effigy-containers`
 
 Responsibilities:
 
@@ -360,7 +361,7 @@ Runner responsibility:
 New crates:
 
 - `crates/effigy-runtime-plan`
-- `crates/effigy-container-ops`
+- `crates/effigy-containers`
 - `crates/effigy-data`
 - `crates/effigy-rhai-host`, only if splitting inside `effigy-rhai` is not
   enough

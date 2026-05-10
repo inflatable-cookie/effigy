@@ -6,8 +6,6 @@ use std::path::Path;
 use std::process::Output;
 use std::time::Duration;
 
-use effigy_container_manager::{BackendId, ContainerBackendDetection, ContainerManager};
-
 use super::colima_runtime::{
     default_runtime_profile, detect_container_backend, repair_colima_runtime,
     run_runtime_command_capture_for_policy, running_colima_profiles,
@@ -21,8 +19,8 @@ use super::parse::{
 use super::process::{run_command_capture_os, run_command_capture_with_timeout};
 
 use crate::{
-    colima::shutdown_compose_commands, compose::compose_invocation_for_repo,
-    EffectiveContainerPolicy,
+    colima::shutdown_compose_commands, compose::compose_invocation_for_repo, BackendId,
+    ContainerBackendDetection, ContainerManager, ContainerManagerError, EffectiveContainerPolicy,
 };
 
 const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}";
@@ -44,9 +42,7 @@ pub enum ContainerExecError {
     },
 }
 
-fn container_manager_error(
-    error: effigy_container_manager::ContainerManagerError,
-) -> ContainerExecError {
+fn container_manager_error(error: ContainerManagerError) -> ContainerExecError {
     ContainerExecError::Failure {
         command: "container manager backend selection".to_owned(),
         code: None,

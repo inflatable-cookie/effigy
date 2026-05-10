@@ -70,9 +70,7 @@ Current authority surfaces:
 | Crate | Responsibility |
 | --- | --- |
 | `effigy-context` | boot-time runtime context, cwd/repo target authority, host facts, and container handoff capture |
-| `effigy-container-manager` | plugin-ready container manager facade, backend ids, backend operation requests, and operation reports |
-| `effigy-container-ops` | typed container operation request, plan, side-effect class, safety policy, and report substrate |
-| `effigy-containers` | effective container policy, compose assembly, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
+| `effigy-containers` | effective container policy, backend facade, typed container operation planning, compose assembly, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
 | `effigy-catalog` | shipped and user/project service catalogs, compose assembly inputs, catalog schema |
 | `effigy-gateway` | local gateway loopback and host-port registry primitives |
 | `effigy-runtime-plan` | typed runtime activation request, activation plan, readiness/alias/lease plan, and activation report substrate |
@@ -197,7 +195,7 @@ of owning every runtime/container decision locally.
 | Crate | Main types | Responsibility |
 | --- | --- | --- |
 | [`effigy-runtime-plan`](../../crates/effigy-runtime-plan/src/lib.rs) | `RuntimeActivationRequest`, `RuntimeActivationPlan`, `RuntimeReadinessPlan`, `RuntimeAliasPlan`, `RuntimeLeasePlan`, `RuntimeActivationReport` | Pure runtime activation planning and report shape. Side effects remain in runner/runtime adapters. |
-| [`effigy-container-ops`](../../crates/effigy-container-ops/src/lib.rs) | `ContainerOperationRequest`, `ContainerOperationPlan`, operation kind structs, side-effect and safety policy models | Container operation planning for lifecycle, read, exec/shell, data, and cache surfaces. Backend work routes through manager/runtime adapters. |
+| [`effigy-containers`](../../crates/effigy-containers/src/lib.rs) | `ContainerManager`, `ContainerOperationRequest`, `ContainerOperationPlan`, `BackendId`, operation kind structs, and side-effect/safety models | Canonical container-domain crate for backend selection, typed lifecycle/read/exec/data/cache/volume planning, compose/runtime compatibility helpers, and workspace-aware container policy handling. |
 | [`effigy-data`](../../crates/effigy-data/src/lib.rs) | `DataTargetRef`, `ResolvedDataTarget`, `DataSeedPlan`, `DataDumpPlan`, `DatabaseCommandPlan`, `ArtifactDataHandoff` | Data seed/dump planning, logical target resolution, database command rendering, and artifact handoff normalization. |
 | [`effigy-artifacts`](../../crates/effigy-artifacts/src/lib.rs) | artifact refs, OCI refs, staging/capture/apply requests and reports | Artifact transport/staging substrate used by seed/dump and artifact commands. |
 
@@ -211,14 +209,14 @@ The important live hardening seams are now:
 - typed runtime/session context instead of bootstrap-only env steering
 - captured `effigy-context` authority instead of direct cwd/root rediscovery in
   new runner code
-- `effigy-container-manager` facade for runner-facing backend selection and
-  operation reports
+- `effigy-containers` facade for runner-facing backend selection, operation
+  planning, and operation reports
 - `effigy-execution` request builder for direct and embedded task plan
   construction
 - `effigy-runtime-plan` activation requests/plans for runtime prep identity,
   lease policy, and report shape
-- `effigy-container-ops` operation plans for lifecycle, read, exec/shell, data,
-  and cache command intent
+- `effigy-containers` operation plans for lifecycle, read, exec/shell, data,
+  cache, and volume command intent
 - `effigy-data` seed/dump planning for DB targets, artifact handoff, and
   database command rendering
 - `effigy-artifacts` artifact transport/staging/capture substrate for OCI and

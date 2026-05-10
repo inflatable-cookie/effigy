@@ -5,8 +5,8 @@
 //! actual process execution.
 
 use crate::compose::compose_args;
+use crate::{ContainerBackendDetection, ContainerManager};
 use crate::{EffectiveContainerPolicy, DEFAULT_COLIMA_PROFILE};
-use effigy_container_manager::{ContainerBackendDetection, ContainerManager};
 use effigy_manifest::ManifestContainerShutdownMode;
 use serde_yaml::{Mapping, Number, Value};
 use std::ffi::OsString;

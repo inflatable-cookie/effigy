@@ -19,7 +19,7 @@ use effigy_cli::{
     BootstrapArgs, BootstrapBackendOverride, BootstrapDbSeedInput, BootstrapSubcommand,
     TaskInvocation,
 };
-use effigy_container_manager::BackendId;
+use effigy_containers::BackendId;
 use effigy_containers::{colima::parse_colima_running, user_global_backend_preference};
 use effigy_manifest::ManifestManagedRun;
 use effigy_ui::theme::{is_ci_environment, resolve_color_enabled, Theme};

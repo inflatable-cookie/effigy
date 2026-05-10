@@ -8,7 +8,6 @@ description = "Container policy contracts for Effigy"
 
 [dependencies]
 effigy-catalog = { path = "../effigy-catalog" }
-effigy-container-manager = { path = "../effigy-container-manager" }
 effigy-core = { path = "../effigy-core" }
 effigy-gateway = { path = "../effigy-gateway" }
 effigy-manifest = { path = "../effigy-manifest" }

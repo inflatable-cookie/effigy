@@ -5,12 +5,12 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-use effigy_container_manager::{ContainerAction, ContainerComposeInvocationPlan};
 use effigy_containers::{
     exec::{runtime_backend_is_running, selected_backend_label},
     load_container_exec_working_dir, load_container_policy, validate_compose_backend_runtime,
     validate_container_policy, EffectiveContainerPolicy,
 };
+use effigy_containers::{ContainerAction, ContainerComposeInvocationPlan};
 use effigy_core::shell::shell_quote;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;

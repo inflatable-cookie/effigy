@@ -5,15 +5,15 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command as ProcessCommand, Output, Stdio};
 
-use effigy_container_manager::{
-    BackendId, ContainerBackendDetection, ContainerComposeInvocationPlan, ContainerManager,
-};
 use effigy_containers::{
     compose::{
         compose_args, compose_invocation_for_repo, resolve_compose_backend_for_repo,
         resolve_host_cli_program, ComposeBackend,
     },
     EffectiveContainerPolicy,
+};
+use effigy_containers::{
+    BackendId, ContainerBackendDetection, ContainerComposeInvocationPlan, ContainerManager,
 };
 use effigy_env::secret::SecretString;
 use effigy_exec::detection::{build_capabilities_from_results, standard_probe_spec, ProbeResult};
@@ -101,7 +101,7 @@ pub(in crate::runner) fn run_compose_exec_with_options(
         backend_id: active_backend_id_for_policy(repo_root, policy),
         repo_root: repo_root.to_path_buf(),
         profile: policy.profile.clone(),
-        action: effigy_container_manager::ContainerAction::Exec,
+        action: effigy_containers::ContainerAction::Exec,
         program: OsString::from(program),
         args: resolved_args,
         label: label.to_owned(),
@@ -220,7 +220,7 @@ pub(super) fn copy_file_into_service_invocation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     args: &[OsString],
-) -> Result<(OsString, Vec<OsString>), effigy_container_manager::ContainerManagerError> {
+) -> Result<(OsString, Vec<OsString>), effigy_containers::ContainerManagerError> {
     let mut detection = ContainerBackendDetection::from_env_and_path();
     detection.backend_override = Some(match resolve_compose_backend_for_repo(repo_root, policy) {
         ComposeBackend::Docker => BackendId::docker_compose(),

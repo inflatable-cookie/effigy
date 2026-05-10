@@ -1,9 +1,0 @@
-[package]
-name = "effigy-container-ops"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-publish = false
-description = "Typed container operation planning substrate for Effigy"
-
-[dependencies]

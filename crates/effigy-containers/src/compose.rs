@@ -10,9 +10,9 @@ use std::path::Path;
 use crate::load_runtime_backend_override;
 use crate::EffectiveContainerPolicy;
 
-use effigy_container_manager::{
+use crate::{
     resolve_host_cli_program as manager_resolve_host_cli_program, BackendId,
-    ContainerBackendDetection, ContainerBackendRegistry,
+    ContainerBackendDetection, ContainerBackendRegistry, ContainerManager,
 };
 use effigy_manifest::{
     ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
@@ -38,7 +38,10 @@ pub fn resolve_compose_backend() -> ComposeBackend {
     if let Some(backend) = tests::test_compose_backend_override() {
         return backend;
     }
-    let detection = compose_backend_detection();
+    let mut detection = compose_backend_detection();
+    if detection.backend_override.is_none() {
+        detection.backend_override = crate::user_global_backend_preference();
+    }
     let backend_id = ContainerBackendRegistry::defaults()
         .detect_backend(&detection)
         .unwrap_or_else(|_| BackendId::colima_nerdctl());
@@ -135,7 +138,7 @@ pub fn compose_invocation_for_repo(
 ) -> (&'static str, Vec<OsString>) {
     let normalized_args = normalize_compose_command_args(policy, args);
     let detection = compose_backend_detection_for_policy(repo_root, policy);
-    let (program, resolved_args) = effigy_container_manager::ContainerManager::defaults()
+    let (program, resolved_args) = ContainerManager::defaults()
         .compose_process_invocation(&detection, policy.profile.as_str(), &normalized_args)
         .unwrap_or_else(|_| {
             (

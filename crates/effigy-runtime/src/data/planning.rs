@@ -2,11 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use effigy_catalog::volumes::{CacheVolumeKind, RuntimeVolumeMetadata};
-use effigy_container_ops::{
+use effigy_containers::{ContainerCacheGlobalEntry, EffectiveContainerPolicy};
+use effigy_containers::{
     ContainerCacheOperation, ContainerDataOperation, ContainerOperationKind,
     ContainerOperationPlan, ContainerOperationRequest, ContainerVolumeOperation,
 };
-use effigy_containers::{ContainerCacheGlobalEntry, EffectiveContainerPolicy};
 
 use crate::EffigyRuntimeError;
 
@@ -185,7 +185,7 @@ fn project_name_from_volume_name(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use effigy_container_ops::{
+    use effigy_containers::{
         ContainerCacheOperation, ContainerConfirmationPolicy, ContainerDataOperation,
         ContainerOperationKind, ContainerSideEffectClass,
     };

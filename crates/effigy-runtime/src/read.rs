@@ -4,11 +4,6 @@ mod report;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use effigy_container_manager::{ContainerAction, ContainerRuntimeState};
-use effigy_container_ops::{
-    ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
-    ContainerReadOperation,
-};
 use effigy_containers::{
     exec::{
         capture_running_container_stats_for_profile, colima_is_running, colima_profile_warnings,
@@ -22,6 +17,11 @@ use effigy_containers::{
 use effigy_containers::{
     stats_global_report, status_global_report, ContainerStatsAllEntry, ContainerStatsService,
     ContainerStatusService, EffectiveContainerPolicy,
+};
+use effigy_containers::{ContainerAction, ContainerRuntimeState};
+use effigy_containers::{
+    ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
+    ContainerReadOperation,
 };
 
 use crate::container_manager::{compose_invocation_plan, lifecycle_operation_report};
@@ -348,10 +348,10 @@ fn discover_running_services_for_policy(
 #[cfg(test)]
 mod tests {
     use super::read_operation_plan;
-    use effigy_container_ops::{
+    use effigy_containers::EffectiveContainerPolicy;
+    use effigy_containers::{
         ContainerOperationKind, ContainerReadOperation, ContainerSideEffectClass,
     };
-    use effigy_containers::EffectiveContainerPolicy;
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
         ManifestContainerStartup,

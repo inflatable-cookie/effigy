@@ -53,7 +53,7 @@ surface.
 | operation plans discarded | `_operation_plan` appears across read/data/cache/lifecycle/exec paths; plans prove intent but often do not govern execution/reporting | migration debt | `g04.015` and later manager cleanup |
 | volume operations | recent `container volume list`, orphan filtering, and volume inventory are runtime/data-adjacent, not first-class container ops | migration debt | `g04.015` |
 | architecture guard coverage | `qa:architecture` exists but is not wired into `qa:gates`, `qa:ci`, `qa`, or `prepush:ci` | migration debt | `g04.016` |
-| new planning crate size | `effigy-data`, `effigy-container-manager`, `effigy-execution`, `effigy-artifacts`, and `effigy-container-ops` are large single-file crates | structural debt; split after integration is real | `g04.017` |
+| new planning crate size | `effigy-data`, `effigy-containers`, `effigy-execution`, and `effigy-artifacts` are large single-file crates | structural debt; split after integration is real | `g04.017` |
 
 ## Selected Implementation Order
 

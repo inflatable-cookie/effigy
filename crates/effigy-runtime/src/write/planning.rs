@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use effigy_container_manager::ContainerAction;
+use effigy_containers::ContainerAction;
 use effigy_containers::{
     colima::shutdown_compose_commands, EffectiveComposeSource, EffectiveContainerPolicy,
 };

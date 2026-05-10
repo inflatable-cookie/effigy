@@ -161,10 +161,10 @@ Leave these alone unless a later audit shows a concrete boundary problem:
 
 ### Batch 3 - Container Crate Merge
 
-- [ ] fold `effigy-container-manager` into `effigy-containers`
-- [ ] fold `effigy-container-ops` into `effigy-containers`
-- [ ] remove old crate references from the workspace graph
-- [ ] keep the merge behavior-preserving
+- [x] fold `effigy-container-manager` into `effigy-containers`
+- [x] fold `effigy-container-ops` into `effigy-containers`
+- [x] remove old crate references from the workspace graph
+- [x] keep the merge behavior-preserving
 
 ### Batch 4 - Post-Merge Audit
 
@@ -178,8 +178,8 @@ Leave these alone unless a later audit shows a concrete boundary problem:
   nested homes
 - [x] migration notes show exact before/after commands
 - [x] no surviving `catalogs` alias
-- [ ] container-domain code no longer spans three overlapping crates
-- [ ] workspace metadata and top-level dependencies reflect the smaller crate
+- [x] container-domain code no longer spans three overlapping crates
+- [x] workspace metadata and top-level dependencies reflect the smaller crate
   graph
 - [ ] release notes for the next breaking version can explain the command
   changes in one short section
