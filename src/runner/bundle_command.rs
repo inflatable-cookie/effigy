@@ -133,7 +133,7 @@ fn run_bundle_export(
             export.bundle,
             export.path.display()
         ),
-        "Use it from a manifest with `[bundle].base_path`.".to_owned(),
+        "Use it from a manifest with `[bundle].base = { type = \"path\", dir = ... }`.".to_owned(),
         String::new(),
         format!("Files ({})", export.files.len()),
     ];

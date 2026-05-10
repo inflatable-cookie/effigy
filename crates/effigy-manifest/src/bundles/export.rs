@@ -140,7 +140,7 @@ pub(super) fn render_export_descriptor(spec: &BundleSpec) -> String {
 
 pub(super) fn render_export_readme(spec: &BundleSpec) -> String {
     format!(
-        "# {} bundle\n\n{}\n\nUse from a consuming manifest with:\n\n```toml\n[bundle]\nbase_path = \"path/to/{}\"\n# set the inputs from bundle.toml here\n```\n",
+        "# {} bundle\n\n{}\n\nUse from a consuming manifest with:\n\n```toml\n[bundle]\nbase = {{ type = \"path\", dir = \"path/to/{}\" }}\n# set the inputs from bundle.toml here\n```\n",
         spec.name, spec.description, spec.name
     )
 }

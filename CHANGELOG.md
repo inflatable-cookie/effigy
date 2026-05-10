@@ -16,6 +16,9 @@ During v0.x, MINOR bumps may include breaking changes.
   the old **`effigy-container-manager`** and **`effigy-container-ops`** crates
   are gone, and backend selection plus typed container operation planning now
   live in one canonical container-domain crate.
+- **Bundle base config** no longer accepts **`[bundle].base_path`**. Local
+  bundle directories must now use **`base = { type = "path", dir = "..." }`**,
+  and the `[bundle].base` surface is widened for later git/OCI source forms.
 
 ### Added
 - **Task status read surface:** `effigy tasks status <selector>` now resolves

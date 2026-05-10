@@ -34,7 +34,7 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "Use `[bundle].base_path` for repo-local bundle directories that carry `bundle.toml` metadata plus an `effigy.toml` defaults template.",
+        "Use `[bundle].base = { type = \"path\", dir = \"...\" }` for repo-local bundle directories that carry `bundle.toml` metadata plus an `effigy.toml` defaults template.",
     )?;
     renderer.text("")?;
 
@@ -46,13 +46,13 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
             "[bundle]",
             "# Optional top-level bundle resolver for shipped or local manifest presets.",
             "base = \"decodelabs\"",
-            "# Or use a local bundle directory instead of `base`:",
-            "# base_path = \"bundles/acme\"",
+            "# Or use a typed local bundle source block instead of a shipped preset:",
+            "# base = { type = \"path\", dir = \"bundles/acme\" }",
             "# Bundle-defined inputs depend on the selected preset.",
             "# Discover bundles: `effigy bundle list`",
             "# Inspect one bundle: `effigy bundle inspect decodelabs`",
             "# Render bundle config schema: `effigy config --schema --target bundle --bundle decodelabs`",
-            "# Define local bundles with `bundle.toml` and `effigy.toml` in the `base_path` directory.",
+            "# Define local bundles with `bundle.toml` and `effigy.toml` in the chosen `dir`.",
             "# Local bundle templates can reference bundled scripts and assets with `{{ bundle.root }}`.",
             "# Repo-owned run steps can also reference the active bundle root with `{{ bundle.root }}`.",
             "",

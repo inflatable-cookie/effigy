@@ -44,7 +44,8 @@ fn resolve_library_mounts(
     let Some(bundle_name) = manifest
         .bundle
         .as_ref()
-        .and_then(|bundle| bundle.base.as_deref())
+        .and_then(|bundle| bundle.base.as_ref())
+        .and_then(effigy_manifest::ManifestBundleBase::shipped_name)
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {

@@ -12,11 +12,30 @@ pub(super) fn derive_deploy_model(repo_root: &Path) -> Result<DeployModel, Runne
     let bundle = loaded.manifest.bundle.as_ref().ok_or_else(|| {
         RunnerError::task_invocation("`deploy model` requires a bundle-backed repo".to_owned())
     })?;
-    let base = bundle.base.as_deref().ok_or_else(|| {
-        RunnerError::task_invocation(
-            "`deploy model` does not support `[bundle].base_path` yet".to_owned(),
-        )
-    })?;
+    let base = match bundle.base.as_ref() {
+        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) => name.as_str(),
+        Some(effigy_manifest::ManifestBundleBase::Path { .. }) => {
+            return Err(RunnerError::task_invocation(
+                "`deploy model` does not support `[bundle].base = { type = \"path\", ... }` yet"
+                    .to_owned(),
+            ));
+        }
+        Some(effigy_manifest::ManifestBundleBase::Git { .. }) => {
+            return Err(RunnerError::task_invocation(
+                "`deploy model` does not support git bundle sources yet".to_owned(),
+            ));
+        }
+        Some(effigy_manifest::ManifestBundleBase::Oci { .. }) => {
+            return Err(RunnerError::task_invocation(
+                "`deploy model` does not support OCI bundle sources yet".to_owned(),
+            ));
+        }
+        None => {
+            return Err(RunnerError::task_invocation(
+                "`deploy model` requires a bundle base selection".to_owned(),
+            ));
+        }
+    };
 
     match base {
         "underlay" => derive_underlay_model(repo_root, bundle),

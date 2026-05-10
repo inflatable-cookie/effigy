@@ -53,7 +53,7 @@ run = "bundle {{ bundle.name }} {{ bundle.root }}/scripts/setup.rhai"
         tmp.path().join("effigy.toml"),
         r#"
 [bundle]
-base_path = "bundles/acme"
+base = { type = "path", dir = "bundles/acme" }
 host = "acme.test"
 "#,
     )
@@ -72,7 +72,10 @@ host = "acme.test"
     let manifest = loaded.manifest;
 
     let bundle = manifest.bundle.expect("bundle");
-    assert_eq!(bundle.base_path.as_deref(), Some("bundles/acme"));
+    assert!(matches!(
+        bundle.base.as_ref(),
+        Some(effigy_manifest::ManifestBundleBase::Path { dir }) if dir == "bundles/acme"
+    ));
 
     let containers = manifest.containers.expect("containers");
     let stack = containers.environments.get("stack").expect("stack");
@@ -103,7 +106,7 @@ fn exported_underlay_bundle_can_be_used_as_base_path() {
     std::fs::write(
         tmp.path().join("effigy.toml"),
         r#"[bundle]
-base_path = "bundles/underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "underlay-reference"
@@ -168,7 +171,7 @@ fn exported_underlay_bundle_honors_name_overrides() {
     std::fs::write(
         tmp.path().join("effigy.toml"),
         r#"[bundle]
-base_path = "bundles/underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "underlay-reference"
@@ -209,7 +212,7 @@ fn exported_decodelabs_bundle_can_be_used_as_base_path() {
     std::fs::write(
         tmp.path().join("effigy.toml"),
         r#"[bundle]
-base_path = "bundles/decodelabs"
+base = { type = "path", dir = "bundles/decodelabs" }
 host = "legacy.test"
 project_name = "legacy-dev"
 databases = ["legacy", "legacy_test"]
@@ -296,7 +299,7 @@ fn exported_decodelabs_library_bundle_can_be_used_as_base_path() {
     std::fs::write(
         repo_root.join("effigy.toml"),
         r#"[bundle]
-base_path = "../../bundles/decodelabs-library"
+base = { type = "path", dir = "../../bundles/decodelabs-library" }
 "#,
     )
     .expect("write manifest");
@@ -362,7 +365,7 @@ required = true
         tmp.path().join("effigy.toml"),
         r#"
 [bundle]
-base_path = "bundle"
+base = { type = "path", dir = "bundle" }
 host = "acme.test"
 typo = "nope"
 "#,
@@ -380,24 +383,23 @@ typo = "nope"
 }
 
 #[test]
-fn bundle_selectors_are_mutually_exclusive() {
+fn bundle_base_path_is_rejected_with_migration_error() {
     let tmp = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         tmp.path().join("effigy.toml"),
         r#"
 [bundle]
-base = "underlay"
 base_path = "bundle"
 "#,
     )
     .expect("write manifest");
 
-    let error = load_task_manifest_with_inspection(&tmp.path().join("effigy.toml"))
-        .expect_err("mixed selectors should fail");
+    let error =
+        load_task_manifest_with_inspection(&tmp.path().join("effigy.toml")).expect_err("fail");
     assert!(
         error
             .to_string()
-            .contains("cannot set both `base` and `base_path`"),
+            .contains("`[bundle].base_path` has been removed"),
         "{error}"
     );
 }

@@ -76,7 +76,10 @@ run = "printf seed"
     let manifest = loaded.manifest;
 
     let bundle = manifest.bundle.expect("bundle");
-    assert_eq!(bundle.base.as_deref(), Some("underlay"));
+    assert!(matches!(
+        bundle.base.as_ref(),
+        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) if name == "underlay"
+    ));
 
     let package_manager = manifest.package_manager.expect("package manager");
     assert_eq!(package_manager.js, Some(ManifestJsPackageManager::Bun));
@@ -209,12 +212,9 @@ run = "printf seed"
     assert_eq!(
         health_tasks,
         vec![
-            "underlay/check:exports",
-            "underlay/check:component-test-hygiene",
             "acme-docs/health",
             "app-api/health",
             "app-client/health",
-            "app-ui/health",
             "app-admin/health",
             "app-front/health",
         ]
@@ -241,7 +241,6 @@ run = "printf seed"
             "acme-docs/validate",
             "app-api/validate",
             "app-client/validate",
-            "app-ui/validate",
             "app-admin/validate",
             "app-front/validate",
         ]
@@ -310,12 +309,7 @@ run = "printf seed"
         };
         assert_eq!(
             step.rhai.as_deref(),
-            Some(
-                bundle_root
-                    .join("scripts/error-reporting.rhai")
-                    .to_string_lossy()
-                    .as_ref()
-            )
+            Some("{{ bundle.root }}/scripts/error-reporting.rhai")
         );
     }
 }

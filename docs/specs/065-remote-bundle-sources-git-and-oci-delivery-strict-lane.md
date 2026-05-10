@@ -32,7 +32,7 @@ This lane owns:
 
 ## Current Ready Card
 
-- [`628-add-unified-bundle-base-model-and-base-path-removal.md`](../roadmaps/g04/batch-cards/628-add-unified-bundle-base-model-and-base-path-removal.md)
+- [`629-add-shared-bundle-source-resolver-and-path-source-materialization.md`](../roadmaps/g04/batch-cards/629-add-shared-bundle-source-resolver-and-path-source-materialization.md)
 
 ## Execution Chain
 
@@ -41,8 +41,11 @@ This lane owns:
 - `627` complete: locked the unified `base` grammar, `base_path` removal
   behavior, source taxonomy, shared materialization boundary, and first-round
   git/OCI cache/update rules in the active contract
-- `628` ready: land the typed bundle-source manifest model and remove
-  `base_path` before resolver work starts
+- `628` complete: landed the typed bundle-source manifest model, kept string
+  sugar plus legacy shipped `name`, removed `base_path`, and updated the
+  direct config/export surfaces around the new `path` block form
+- `629` ready: extract shared shipped/path source materialization before the
+  remote resolver batches start
 
 ## Exit Condition
 
@@ -53,4 +56,4 @@ and no longer accepts `base_path`.
 ## Next Task
 
 Execute
-[`628-add-unified-bundle-base-model-and-base-path-removal.md`](../roadmaps/g04/batch-cards/628-add-unified-bundle-base-model-and-base-path-removal.md).
+[`629-add-shared-bundle-source-resolver-and-path-source-materialization.md`](../roadmaps/g04/batch-cards/629-add-shared-bundle-source-resolver-and-path-source-materialization.md).

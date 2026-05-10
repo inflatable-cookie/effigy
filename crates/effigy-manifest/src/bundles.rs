@@ -71,7 +71,9 @@ pub(crate) fn apply_bundle_defaults(
     let mut normalized_inputs = bundle.inputs.clone();
     let bundle_name = match &selection {
         BundleSelection::Shipped { name } => name.as_str(),
-        BundleSelection::Local { .. } => "",
+        BundleSelection::Path { .. } => "",
+        BundleSelection::Git { .. } => "",
+        BundleSelection::Oci { .. } => "",
     };
     if !bundle_name.is_empty() {
         normalize_database_bundle_inputs(manifest_path, bundle_name, &mut normalized_inputs)?;
@@ -82,8 +84,26 @@ pub(crate) fn apply_bundle_defaults(
             resolve_bundle_defaults(manifest_path, current, name, &normalized_inputs)?,
             bundle_source_path(name),
         ),
-        BundleSelection::Local { path } => {
+        BundleSelection::Path { path } => {
             resolve_local_bundle_defaults(manifest_path, path, &normalized_inputs)?
+        }
+        BundleSelection::Git { url, reference } => {
+            let ref_suffix = reference
+                .as_deref()
+                .map(|value| format!(" at ref `{value}`"))
+                .unwrap_or_default();
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "remote git bundle sources are not implemented yet for `{url}`{ref_suffix}"
+                ),
+            });
+        }
+        BundleSelection::Oci { url } => {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!("remote OCI bundle sources are not implemented yet for `{url}`"),
+            });
         }
     };
     let bundle_extend_paths = take_bundle_extend_paths(manifest_path, &mut defaults)?;
@@ -96,7 +116,8 @@ pub(crate) fn apply_bundle_defaults(
         BundleSelection::Shipped { name } => {
             materialize_shipped_bundle_assets(manifest_path, name)?
         }
-        BundleSelection::Local { path } => path.clone(),
+        BundleSelection::Path { path } => path.clone(),
+        BundleSelection::Git { .. } | BundleSelection::Oci { .. } => unreachable!(),
     };
     merge_missing_values(current, &defaults);
     apply_bundle_extend_paths(
@@ -123,35 +144,62 @@ pub(crate) struct AppliedBundleDefaults {
 }
 
 enum BundleSelection {
-    Shipped { name: String },
-    Local { path: PathBuf },
+    Shipped {
+        name: String,
+    },
+    Path {
+        path: PathBuf,
+    },
+    Git {
+        url: String,
+        reference: Option<String>,
+    },
+    Oci {
+        url: String,
+    },
 }
 
 fn resolve_bundle_selection(
     manifest_path: &Path,
     bundle: &crate::config_sections::ManifestBundleConfig,
 ) -> Result<BundleSelection, ManifestError> {
-    match (bundle.base.as_deref(), bundle.base_path.as_deref()) {
-        (Some(_), Some(_)) => Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: "`[bundle]` cannot set both `base` and `base_path`".to_owned(),
-        }),
-        (Some(base), None) if !base.trim().is_empty() => Ok(BundleSelection::Shipped {
-            name: base.trim().to_owned(),
-        }),
-        (None, Some(path)) if !path.trim().is_empty() => {
+    match bundle.base.as_ref() {
+        Some(crate::config_sections::ManifestBundleBase::Shipped { name })
+            if !name.trim().is_empty() =>
+        {
+            Ok(BundleSelection::Shipped {
+                name: name.trim().to_owned(),
+            })
+        }
+        Some(crate::config_sections::ManifestBundleBase::Path { dir })
+            if !dir.trim().is_empty() =>
+        {
             let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
-            let path = Path::new(path.trim());
+            let path = Path::new(dir.trim());
             let resolved = if path.is_absolute() {
                 path.to_path_buf()
             } else {
                 manifest_dir.join(path)
             };
-            Ok(BundleSelection::Local { path: resolved })
+            Ok(BundleSelection::Path { path: resolved })
+        }
+        Some(crate::config_sections::ManifestBundleBase::Git { url, r#ref })
+            if !url.trim().is_empty() =>
+        {
+            Ok(BundleSelection::Git {
+                url: url.trim().to_owned(),
+                reference: r#ref.clone().filter(|value| !value.trim().is_empty()),
+            })
+        }
+        Some(crate::config_sections::ManifestBundleBase::Oci { url }) if !url.trim().is_empty() => {
+            Ok(BundleSelection::Oci {
+                url: url.trim().to_owned(),
+            })
         }
         _ => Err(ManifestError::Compose {
             path: manifest_path.to_path_buf(),
-            detail: "`[bundle]` must set either `base` for a shipped bundle or `base_path` for a local bundle directory".to_owned(),
+            detail: "`[bundle]` must set `base` to a shipped preset or a typed bundle source block"
+                .to_owned(),
         }),
     }
 }
@@ -358,7 +406,7 @@ fn resolve_local_bundle_defaults(
         return Err(ManifestError::Compose {
             path: manifest_path.to_path_buf(),
             detail: format!(
-                "`[bundle].base_path` must point at a directory, got {}",
+                "`[bundle].base = {{ type = \"path\", dir = ... }}` must point at a directory, got {}",
                 bundle_dir.display()
             ),
         });
@@ -421,7 +469,7 @@ fn validate_local_bundle_descriptor(
                 detail: format!("local bundle `{name}` has an empty input name"),
             });
         }
-        if matches!(input_name, "base" | "base_path") {
+        if matches!(input_name, "base" | "name" | "base_path") {
             return Err(ManifestError::Compose {
                 path: manifest_path.to_path_buf(),
                 detail: format!(

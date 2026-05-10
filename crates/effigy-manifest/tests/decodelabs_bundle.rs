@@ -48,7 +48,10 @@ version = "11.0"
     let manifest = loaded.manifest;
 
     let bundle = manifest.bundle.expect("bundle");
-    assert_eq!(bundle.base.as_deref(), Some("decodelabs"));
+    assert!(matches!(
+        bundle.base.as_ref(),
+        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) if name == "decodelabs"
+    ));
 
     let containers = manifest.containers.expect("containers");
     assert_eq!(containers.default.as_deref(), Some("web"));
@@ -323,14 +326,12 @@ databases = ["contactpatch"]
     )
     .expect("write manifest");
 
-    let error =
-        load_task_manifest_with_inspection(&manifest_path).expect_err("legacy name should fail");
-    assert!(
-        error
-            .to_string()
-            .contains("must set either `base` for a shipped bundle or `base_path` for a local bundle directory"),
-        "got: {error}"
-    );
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("legacy name loads");
+    let bundle = loaded.manifest.bundle.expect("bundle");
+    assert!(matches!(
+        bundle.base.as_ref(),
+        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) if name == "decodelabs"
+    ));
 }
 
 #[test]
@@ -639,7 +640,10 @@ base = "decodelabs-library"
     let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
     let manifest = loaded.manifest;
     let bundle = manifest.bundle.expect("bundle");
-    assert_eq!(bundle.base.as_deref(), Some("decodelabs-library"));
+    assert!(matches!(
+        bundle.base.as_ref(),
+        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) if name == "decodelabs-library"
+    ));
 
     let containers = manifest.containers.expect("containers");
     let web = containers.environments.get("web").expect("web container");

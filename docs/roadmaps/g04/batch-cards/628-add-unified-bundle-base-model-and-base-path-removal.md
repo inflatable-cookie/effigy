@@ -2,9 +2,10 @@
 
 Lane: [`065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md`](../065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
+Completed: 2026-05-10
 
 ## Goal
 
@@ -28,7 +29,17 @@ for unified bundle sources.
 - schema/config docs reflect the new grammar
 - parser and serde round-trip coverage exists for all accepted forms
 
+## Closeout
+
+This batch landed:
+
+- one typed bundle-source manifest model
+- string shipped sugar plus legacy shipped `name` alias
+- typed `path`, `git`, and `oci` block parsing
+- hard `base_path` rejection with migration guidance
+- direct config/export/help surface updates for the new path form
+
 ## Next Task
 
-Implement the typed bundle-source manifest model and `base_path` removal, then
-advance the lane to the shared source-materialization batch.
+Execute
+[`629-add-shared-bundle-source-resolver-and-path-source-materialization.md`](./629-add-shared-bundle-source-resolver-and-path-source-materialization.md).

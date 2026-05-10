@@ -28,10 +28,10 @@ fn run_manifest_task_builtin_config_reference_mentions_bundle_discovery_and_name
         &[
             "Use `effigy bundle list` to discover shipped `[bundle]` presets",
             "Use `effigy config --schema --target bundle` for the generic `[bundle]` shape",
-            "Use `[bundle].base_path` for repo-local bundle directories",
+            "Use `[bundle].base = { type = \"path\", dir = \"...\" }` for repo-local bundle directories",
             "[bundle]",
             "base = \"decodelabs\"",
-            "# base_path = \"bundles/acme\"",
+            "# base = { type = \"path\", dir = \"bundles/acme\" }",
             "Inspect one bundle: `effigy bundle inspect decodelabs`",
             "Render bundle config schema: `effigy config --schema --target bundle --bundle decodelabs`",
         ],

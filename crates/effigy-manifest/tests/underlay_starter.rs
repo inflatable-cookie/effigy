@@ -57,7 +57,10 @@ fn starter_composes_into_single_manifest() {
     let (_tmp, manifest) = load_starter_manifest();
 
     let bundle = manifest.bundle.expect("starter root carries [bundle]");
-    assert_eq!(bundle.base.as_deref(), Some("underlay"));
+    assert!(matches!(
+        bundle.base.as_ref(),
+        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) if name == "underlay"
+    ));
 
     // Catalog alias is declared in the root.
     let catalog = manifest.catalog.expect("starter root carries [catalog]");

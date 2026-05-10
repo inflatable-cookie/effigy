@@ -4,14 +4,109 @@ use std::path::Path;
 use crate::ManifestError;
 use crate::{ManifestManagedRun, ManifestTaskRunIn};
 
-#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManifestBundleBase {
+    Shipped { name: String },
+    Path { dir: String },
+    Git { url: String, r#ref: Option<String> },
+    Oci { url: String },
+}
+
+impl ManifestBundleBase {
+    pub fn shipped_name(&self) -> Option<&str> {
+        match self {
+            Self::Shipped { name } => Some(name.as_str()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct ManifestBundleConfig {
-    #[serde(default)]
-    pub base: Option<String>,
-    #[serde(default)]
-    pub base_path: Option<String>,
-    #[serde(flatten)]
+    pub base: Option<ManifestBundleBase>,
     pub inputs: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+enum ManifestBundleBaseRepr {
+    ShippedName(String),
+    Typed(ManifestBundleBaseTable),
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+enum ManifestBundleBaseTable {
+    Shipped {
+        name: String,
+    },
+    Path {
+        dir: String,
+    },
+    Git {
+        url: String,
+        #[serde(default)]
+        r#ref: Option<String>,
+    },
+    Oci {
+        url: String,
+    },
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+struct ManifestBundleConfigRepr {
+    #[serde(default)]
+    base: Option<ManifestBundleBaseRepr>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    base_path: Option<String>,
+    #[serde(flatten)]
+    inputs: BTreeMap<String, toml::Value>,
+}
+
+impl From<ManifestBundleBaseRepr> for ManifestBundleBase {
+    fn from(value: ManifestBundleBaseRepr) -> Self {
+        match value {
+            ManifestBundleBaseRepr::ShippedName(name) => Self::Shipped { name },
+            ManifestBundleBaseRepr::Typed(table) => match table {
+                ManifestBundleBaseTable::Shipped { name } => Self::Shipped { name },
+                ManifestBundleBaseTable::Path { dir } => Self::Path { dir },
+                ManifestBundleBaseTable::Git { url, r#ref } => Self::Git { url, r#ref },
+                ManifestBundleBaseTable::Oci { url } => Self::Oci { url },
+            },
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ManifestBundleConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let repr = ManifestBundleConfigRepr::deserialize(deserializer)?;
+        if repr.base_path.is_some() {
+            return Err(serde::de::Error::custom(
+                "`[bundle].base_path` has been removed. Use `base = { type = \"path\", dir = \"...\" }` instead.",
+            ));
+        }
+
+        let base = match (repr.base, repr.name) {
+            (Some(_), Some(_)) => {
+                return Err(serde::de::Error::custom(
+                    "`[bundle]` cannot set both `base` and legacy `name`",
+                ));
+            }
+            (Some(base), None) => Some(base.into()),
+            (None, Some(name)) => Some(ManifestBundleBase::Shipped { name }),
+            (None, None) => None,
+        };
+
+        Ok(Self {
+            base,
+            inputs: repr.inputs,
+        })
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
