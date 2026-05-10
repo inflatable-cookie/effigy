@@ -2,9 +2,10 @@
 
 Lane: [`065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md`](../065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
+Completed: 2026-05-10
 
 ## Goal
 
@@ -27,7 +28,17 @@ Land the first remote bundle-source resolver: git.
 - current shipped/path bundle behavior stays unchanged
 - focused git resolver tests cover happy path and direct failure modes
 
+## Closeout
+
+This batch landed:
+
+- the first git bundle-source resolver behind the shared source seam
+- stable git cache identity normalization for common remote forms
+- git bundle materialization into the shared cache root
+- commit-sha version hints on resolved git bundle sources
+- focused local git resolver coverage without touching a real user home
+
 ## Next Task
 
-Implement the git bundle-source resolver and cache identity rules, then
-advance the lane to the OCI source batch.
+Execute
+[`631-add-oci-bundle-source-resolver-and-cache-identity.md`](./631-add-oci-bundle-source-resolver-and-cache-identity.md).

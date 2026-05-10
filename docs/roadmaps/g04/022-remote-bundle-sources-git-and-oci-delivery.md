@@ -152,9 +152,9 @@ Existing `resolve_local_bundle_defaults` consumes `local_path` unchanged.
    resolver pipeline producing `ResolvedBundleSource`
    Status: complete
 3. **Implement git resolver**: clone, cache, stale detection, error handling
-   Status: ready next
+   Status: complete
 4. **Implement OCI resolver**: reuse artifact substrate, cache, stale detection
-   Status: pending
+   Status: ready next
 5. **Add `effigy bundle sync`**: resolve repo context, iterate remote sources,
    force refresh
    Status: pending
@@ -181,4 +181,4 @@ Existing `resolve_local_bundle_defaults` consumes `local_path` unchanged.
 ## Next Task
 
 Execute
-[`630-add-git-bundle-source-resolver-and-cache-identity.md`](./batch-cards/630-add-git-bundle-source-resolver-and-cache-identity.md).
+[`631-add-oci-bundle-source-resolver-and-cache-identity.md`](./batch-cards/631-add-oci-bundle-source-resolver-and-cache-identity.md).

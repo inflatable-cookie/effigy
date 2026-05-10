@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
+use sha2::{Digest, Sha256};
 use toml::Value;
 
 use crate::ManifestError;
@@ -154,16 +156,7 @@ fn resolve_materialized_bundle_source(
             stale: false,
         }),
         BundleSelection::Git { url, reference } => {
-            let ref_suffix = reference
-                .as_deref()
-                .map(|value| format!(" at ref `{value}`"))
-                .unwrap_or_default();
-            Err(ManifestError::Compose {
-                path: manifest_path.to_path_buf(),
-                detail: format!(
-                    "remote git bundle sources are not implemented yet for `{url}`{ref_suffix}"
-                ),
-            })
+            resolve_git_bundle_source(manifest_path, url, reference.as_deref())
         }
         BundleSelection::Oci { url } => Err(ManifestError::Compose {
             path: manifest_path.to_path_buf(),
@@ -184,17 +177,236 @@ fn resolve_bundle_defaults_from_source(
             resolve_bundle_defaults(manifest_path, current, name, normalized_inputs)?,
             source.source_path.clone(),
         )),
-        (BundleSelection::Path { .. }, BundleSourceType::Path) => {
+        (BundleSelection::Path { .. }, BundleSourceType::Path)
+        | (BundleSelection::Git { .. }, BundleSourceType::Git)
+        | (BundleSelection::Oci { .. }, BundleSourceType::Oci) => {
             resolve_local_bundle_defaults(manifest_path, &source.local_path, normalized_inputs)
         }
-        (BundleSelection::Git { .. }, BundleSourceType::Git)
-        | (BundleSelection::Oci { .. }, BundleSourceType::Oci) => unreachable!(),
         _ => Err(ManifestError::Compose {
             path: manifest_path.to_path_buf(),
             detail: "bundle source resolution mismatch between selection and materialization"
                 .to_owned(),
         }),
     }
+}
+
+fn resolve_git_bundle_source(
+    manifest_path: &Path,
+    url: &str,
+    reference: Option<&str>,
+) -> Result<ResolvedBundleSource, ManifestError> {
+    let cache_root = bundle_cache_home_dir(manifest_path)?.join("cache/bundles/git");
+    let identity = canonical_git_cache_identity(url);
+    let cache_key = sha256_hex(identity.as_bytes());
+    let reference = reference
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("main");
+    let local_path = cache_root
+        .join(cache_key)
+        .join(sanitize_bundle_cache_segment(reference));
+    ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
+    let version_hint = Some(git_head_revision(manifest_path, &local_path)?);
+    Ok(ResolvedBundleSource {
+        source_type: BundleSourceType::Git,
+        local_path,
+        source_path: PathBuf::from(url),
+        version_hint,
+        stale: false,
+    })
+}
+
+fn ensure_git_bundle_checkout(
+    manifest_path: &Path,
+    url: &str,
+    reference: &str,
+    local_path: &Path,
+) -> Result<(), ManifestError> {
+    if !local_path.join(".git").is_dir() {
+        if local_path.exists() && !local_path.is_dir() {
+            return Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "git bundle cache path exists but is not a directory: {}",
+                    local_path.display()
+                ),
+            });
+        }
+        if let Some(parent) = local_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
+                path: parent.to_path_buf(),
+                error,
+            })?;
+        }
+        let destination = local_path.to_string_lossy().to_string();
+        run_git(
+            manifest_path,
+            None,
+            &["clone", "--no-checkout", url, &destination],
+            local_path.parent(),
+        )?;
+    }
+
+    run_git(
+        manifest_path,
+        Some(local_path),
+        &["remote", "set-url", "origin", url],
+        None,
+    )?;
+    run_git(
+        manifest_path,
+        Some(local_path),
+        &["fetch", "--depth", "1", "origin", reference],
+        None,
+    )?;
+    run_git(
+        manifest_path,
+        Some(local_path),
+        &["checkout", "--detach", "FETCH_HEAD"],
+        None,
+    )?;
+    Ok(())
+}
+
+fn git_head_revision(manifest_path: &Path, local_path: &Path) -> Result<String, ManifestError> {
+    let output = run_git(
+        manifest_path,
+        Some(local_path),
+        &["rev-parse", "HEAD"],
+        None,
+    )?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn run_git(
+    manifest_path: &Path,
+    cwd: Option<&Path>,
+    args: &[&str],
+    create_dir: Option<&Path>,
+) -> Result<std::process::Output, ManifestError> {
+    if let Some(dir) = create_dir {
+        std::fs::create_dir_all(dir).map_err(|error| ManifestError::Read {
+            path: dir.to_path_buf(),
+            error,
+        })?;
+    }
+    let mut command = Command::new("git");
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command.args(args);
+    let output = command.output().map_err(|error| ManifestError::Read {
+        path: manifest_path.to_path_buf(),
+        error,
+    })?;
+    if output.status.success() {
+        return Ok(output);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let detail = if stderr.is_empty() {
+        format!("git {} failed", args.join(" "))
+    } else {
+        format!("git {} failed: {stderr}", args.join(" "))
+    };
+    Err(ManifestError::Compose {
+        path: manifest_path.to_path_buf(),
+        detail,
+    })
+}
+
+fn canonical_git_cache_identity(url: &str) -> String {
+    let trimmed = url.trim();
+    if let Some(rest) = trimmed.strip_prefix("git@") {
+        if let Some((host, path)) = rest.split_once(':') {
+            return format!(
+                "{}/{}",
+                host.to_ascii_lowercase(),
+                normalize_git_repo_path(path)
+            );
+        }
+    }
+
+    for prefix in ["ssh://", "https://", "http://", "git://"] {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            let rest = rest.split('@').next_back().unwrap_or(rest);
+            if let Some((host, path)) = rest.split_once('/') {
+                return format!(
+                    "{}/{}",
+                    host.to_ascii_lowercase(),
+                    normalize_git_repo_path(path)
+                );
+            }
+        }
+    }
+
+    if let Some(path) = trimmed.strip_prefix("file://") {
+        return format!("local/{}", normalize_local_git_path(path));
+    }
+
+    format!("local/{}", normalize_local_git_path(trimmed))
+}
+
+fn normalize_git_repo_path(path: &str) -> String {
+    path.trim_start_matches('/')
+        .trim_end_matches(".git")
+        .trim_end_matches('/')
+        .to_ascii_lowercase()
+        .to_owned()
+}
+
+fn normalize_local_git_path(path: &str) -> String {
+    let raw = Path::new(path);
+    std::fs::canonicalize(raw)
+        .unwrap_or_else(|_| raw.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn sanitize_bundle_cache_segment(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn sha256_hex(input: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(input);
+    format!("{:x}", hasher.finalize())
+}
+
+fn bundle_cache_home_dir(manifest_path: &Path) -> Result<PathBuf, ManifestError> {
+    if let Some(path) = test_bundle_home_dir() {
+        return Ok(path.join(".effigy"));
+    }
+    let home = std::env::var_os("HOME").ok_or_else(|| ManifestError::Compose {
+        path: manifest_path.to_path_buf(),
+        detail: "HOME is not set; cannot resolve bundle cache path".to_owned(),
+    })?;
+    Ok(PathBuf::from(home).join(".effigy"))
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_BUNDLE_HOME: std::cell::RefCell<Option<PathBuf>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+fn test_bundle_home_dir() -> Option<PathBuf> {
+    TEST_BUNDLE_HOME.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(not(test))]
+fn test_bundle_home_dir() -> Option<PathBuf> {
+    None
 }
 
 #[derive(Debug, Clone)]
@@ -1210,5 +1422,112 @@ fn collect_value_paths(path: &str, value: &Value, out: &mut Vec<String>) {
             };
             collect_value_paths(&child_path, child, out);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestBundleHomeGuard(Option<PathBuf>);
+
+    impl Drop for TestBundleHomeGuard {
+        fn drop(&mut self) {
+            TEST_BUNDLE_HOME.with(|slot| {
+                *slot.borrow_mut() = self.0.take();
+            });
+        }
+    }
+
+    fn with_test_bundle_home(path: &Path) -> TestBundleHomeGuard {
+        let previous = TEST_BUNDLE_HOME.with(|slot| slot.borrow_mut().replace(path.to_path_buf()));
+        TestBundleHomeGuard(previous)
+    }
+
+    fn git(args: &[&str], cwd: &Path) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .expect("run git");
+        assert!(
+            status.success(),
+            "git {:?} failed in {}",
+            args,
+            cwd.display()
+        );
+    }
+
+    fn write_local_bundle_repo(repo: &Path) {
+        std::fs::create_dir_all(repo).expect("mkdir repo");
+        std::fs::write(
+            repo.join("bundle.toml"),
+            r#"
+[bundle]
+name = "acme"
+
+[[inputs]]
+name = "host"
+type = "string"
+required = true
+"#,
+        )
+        .expect("write descriptor");
+        std::fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[tasks.dev]
+run = "serve {{ inputs.host }}"
+"#,
+        )
+        .expect("write defaults");
+        git(&["init"], repo);
+        git(&["config", "user.email", "effigy@example.test"], repo);
+        git(&["config", "user.name", "Effigy Tests"], repo);
+        git(&["add", "."], repo);
+        git(&["commit", "-m", "init"], repo);
+        git(&["branch", "-M", "main"], repo);
+    }
+
+    #[test]
+    fn canonical_git_cache_identity_normalizes_common_remote_forms() {
+        let ssh = canonical_git_cache_identity("git@github.com:Acme/Bundle.git");
+        let https = canonical_git_cache_identity("https://github.com/acme/bundle.git");
+        assert_eq!(ssh, https);
+        assert_eq!(ssh, "github.com/acme/bundle");
+    }
+
+    #[test]
+    fn git_bundle_source_materializes_into_shared_cache_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bundle_home = tmp.path().join("bundle-home");
+        let _home = with_test_bundle_home(&bundle_home);
+
+        let source_repo = tmp.path().join("bundle-source");
+        write_local_bundle_repo(&source_repo);
+
+        let consumer = tmp.path().join("consumer");
+        std::fs::create_dir_all(&consumer).expect("mkdir consumer");
+        let manifest_path = consumer.join("effigy.toml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                "[bundle]\nbase = {{ type = \"git\", url = {:?}, ref = \"main\" }}\nhost = \"acme.test\"\n",
+                source_repo.display().to_string()
+            ),
+        )
+        .expect("write manifest");
+
+        let loaded =
+            crate::load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+        let task = loaded.manifest.tasks.get("dev").expect("task");
+        assert!(matches!(
+            task.run.as_ref().expect("run"),
+            crate::ManifestManagedRun::Command(command) if command == "serve acme.test"
+        ));
+        let bundle_root = loaded.bundle_root.expect("bundle root");
+        assert!(bundle_root.starts_with(bundle_home.join(".effigy/cache/bundles/git")));
+        assert!(bundle_root.join("bundle.toml").exists());
+        assert!(bundle_root.join("effigy.toml").exists());
     }
 }

@@ -32,7 +32,7 @@ This lane owns:
 
 ## Current Ready Card
 
-- [`630-add-git-bundle-source-resolver-and-cache-identity.md`](../roadmaps/g04/batch-cards/630-add-git-bundle-source-resolver-and-cache-identity.md)
+- [`631-add-oci-bundle-source-resolver-and-cache-identity.md`](../roadmaps/g04/batch-cards/631-add-oci-bundle-source-resolver-and-cache-identity.md)
 
 ## Execution Chain
 
@@ -46,8 +46,10 @@ This lane owns:
   direct config/export surfaces around the new `path` block form
 - `629` complete: extracted shared shipped/path source materialization and one
   shared defaults-loading seam on top of the materialized source result
-- `630` ready: add the first git bundle-source resolver and stable cache
-  identity rules before the OCI batch
+- `630` complete: landed the first git bundle-source resolver, stable git cache
+  identity rules, and local git proof coverage
+- `631` ready: add the OCI bundle-source resolver and shared cache identity
+  rules before the later sync/inspect surface batches
 
 ## Exit Condition
 
@@ -58,4 +60,4 @@ and no longer accepts `base_path`.
 ## Next Task
 
 Execute
-[`630-add-git-bundle-source-resolver-and-cache-identity.md`](../roadmaps/g04/batch-cards/630-add-git-bundle-source-resolver-and-cache-identity.md).
+[`631-add-oci-bundle-source-resolver-and-cache-identity.md`](../roadmaps/g04/batch-cards/631-add-oci-bundle-source-resolver-and-cache-identity.md).

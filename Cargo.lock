@@ -903,6 +903,7 @@ dependencies = [
  "indexmap",
  "minijinja",
  "serde",
+ "sha2",
  "tempfile",
  "toml",
 ]

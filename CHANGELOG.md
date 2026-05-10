@@ -21,6 +21,9 @@ During v0.x, MINOR bumps may include breaking changes.
   and the `[bundle].base` surface is widened for later git/OCI source forms.
 
 ### Added
+- **Git bundle sources:** `[bundle].base = { type = "git", ... }` now resolves
+  local or remote git-backed bundle sources into the shared Effigy bundle cache
+  and records a commit-sha version hint on the materialized bundle root.
 - **Task status read surface:** `effigy tasks status <selector>` now resolves
   one task selector through normal routing and reports live-or-last-known task
   status in text or JSON using the persisted active/latest task-status record
