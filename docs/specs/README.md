@@ -27,16 +27,15 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
-- [`069-shared-dispatcher-and-exec-collapse-strict-lane.md`](./069-shared-dispatcher-and-exec-collapse-strict-lane.md)
 - [`064-deployment-transaction-system-strict-lane.md`](./064-deployment-transaction-system-strict-lane.md)
 
 Active strict lane:
 
-- `069` for `g04.026` shared dispatcher and exec collapse
+- `064` for `g04.027` through `g04.032` deployment transaction system planning
 
 Queued strict lanes:
 
-- `064` for `g04.027` through `g04.032` deployment transaction system planning
+- none
 
 Paused but still useful:
 
@@ -44,6 +43,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`069-shared-dispatcher-and-exec-collapse-strict-lane.md`](./069-shared-dispatcher-and-exec-collapse-strict-lane.md)
 - [`068-container-command-decomposition-strict-lane.md`](./068-container-command-decomposition-strict-lane.md)
 - [`067-command-reference-completeness-and-flag-consistency-strict-lane.md`](./067-command-reference-completeness-and-flag-consistency-strict-lane.md)
 - [`066-docs-check-subcommand-consolidation-strict-lane.md`](./066-docs-check-subcommand-consolidation-strict-lane.md)
@@ -103,5 +103,4 @@ Recently completed:
 
 ## Next Task
 
-Execute the ready `g04.026` card under
-[`069-shared-dispatcher-and-exec-collapse-strict-lane.md`](./069-shared-dispatcher-and-exec-collapse-strict-lane.md).
+No active next task in `g04` before the separately-running deployment lane.

@@ -41,6 +41,76 @@ mod ops;
 const RELEASE_PREPARED_STATE_FILE: &str = ".release-prepared.json";
 const RELEASE_STATE_STALE_THRESHOLD_SECS: i64 = 60 * 60;
 
+struct ReleaseStageRendered {
+    ok: bool,
+    json: String,
+    text: String,
+}
+
+fn render_release_rendered_result(
+    output_json: bool,
+    rendered: ReleaseStageRendered,
+) -> Result<String, RunnerError> {
+    if output_json {
+        if rendered.ok {
+            Ok(rendered.json)
+        } else {
+            Err(RunnerError::CommandJsonFailure {
+                rendered: rendered.json,
+            })
+        }
+    } else if rendered.ok {
+        Ok(rendered.text)
+    } else {
+        Err(RunnerError::task_invocation(rendered.text))
+    }
+}
+
+fn reject_conflicting_release_stage_flags(
+    command_name: &str,
+    plan: bool,
+    yes: bool,
+) -> Result<(), RunnerError> {
+    if plan && yes {
+        return Err(RunnerError::task_invocation(format!(
+            "`release {command_name}` cannot combine `--plan`/`--dry-run` and `--yes`"
+        )));
+    }
+    Ok(())
+}
+
+fn run_release_stage<PlanFn, YesFn, InteractiveFn>(
+    command_name: &str,
+    plan: bool,
+    yes: bool,
+    output_json: bool,
+    interactive_json_error: &str,
+    render_plan: PlanFn,
+    render_yes: YesFn,
+    interactive: InteractiveFn,
+) -> Result<String, RunnerError>
+where
+    PlanFn: FnOnce() -> Result<ReleaseStageRendered, RunnerError>,
+    YesFn: FnOnce() -> Result<ReleaseStageRendered, RunnerError>,
+    InteractiveFn: FnOnce() -> Result<String, RunnerError>,
+{
+    reject_conflicting_release_stage_flags(command_name, plan, yes)?;
+    if plan {
+        return render_plan()
+            .and_then(|rendered| render_release_rendered_result(output_json, rendered));
+    }
+    if yes {
+        return render_yes()
+            .and_then(|rendered| render_release_rendered_result(output_json, rendered));
+    }
+    if output_json {
+        return Err(RunnerError::task_invocation(
+            interactive_json_error.to_owned(),
+        ));
+    }
+    interactive()
+}
+
 pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
     let resolved = resolve_active_repo_root(args.repo_override)?;
 
@@ -147,118 +217,81 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
             yes,
             version_override,
         } => {
-            if plan && yes {
-                return Err(RunnerError::task_invocation(
-                    "`release prepare` cannot combine `--plan`/`--dry-run` and `--yes`".to_owned(),
-                ));
-            }
             let requested_version_override = parse_release_version_override(
                 &resolved.resolved_root,
                 version_override.as_deref(),
                 "prepare",
             )?;
-            if plan {
-                let prepare_plan = collect_release_prepare_plan(
-                    &resolved,
-                    check_gates,
-                    requested_version_override,
-                )?;
-                if args.output_json {
-                    let rendered = render_release_prepare_plan_json_payload(&prepare_plan);
-                    if prepare_plan.ready {
-                        return Ok(rendered);
+            let requested_version_override_for_plan = requested_version_override.clone();
+            let requested_version_override_for_yes = requested_version_override.clone();
+            run_release_stage(
+                "prepare",
+                plan,
+                yes,
+                args.output_json,
+                "interactive release preparation is only available in text mode; use `effigy release prepare --plan` or `effigy release prepare --yes` when `--json` is enabled",
+                || {
+                    let prepare_plan = collect_release_prepare_plan(
+                        &resolved,
+                        check_gates,
+                        requested_version_override_for_plan.clone(),
+                    )?;
+                    Ok(ReleaseStageRendered {
+                        ok: prepare_plan.ready,
+                        json: render_release_prepare_plan_json_payload(&prepare_plan),
+                        text: render_release_prepare_plan_text(&prepare_plan),
+                    })
+                },
+                || {
+                    let prepared = execute_release_prepare(
+                        &resolved,
+                        check_gates,
+                        requested_version_override_for_yes.clone(),
+                    )?;
+                    Ok(ReleaseStageRendered {
+                        ok: prepared.prepared,
+                        json: render_release_prepared_json_payload(&prepared),
+                        text: render_release_prepared_text(&prepared),
+                    })
+                },
+                || {
+                    if version_override.is_some() {
+                        return Err(RunnerError::task_invocation(
+                            "`release prepare --version` is only supported with `--plan` or `--yes`; plain interactive `release prepare` already supports custom version review".to_owned(),
+                        ));
                     }
-                    return Err(RunnerError::CommandJsonFailure { rendered });
-                }
-
-                let rendered = render_release_prepare_plan_text(&prepare_plan);
-                if prepare_plan.ready {
-                    Ok(rendered)
-                } else {
-                    Err(RunnerError::task_invocation(rendered))
-                }
-            } else if yes {
-                let prepared =
-                    execute_release_prepare(&resolved, check_gates, requested_version_override)?;
-                if args.output_json {
-                    let rendered = render_release_prepared_json_payload(&prepared);
-                    if prepared.prepared {
-                        return Ok(rendered);
-                    }
-                    return Err(RunnerError::CommandJsonFailure { rendered });
-                }
-
-                let rendered = render_release_prepared_text(&prepared);
-                if prepared.prepared {
-                    Ok(rendered)
-                } else {
-                    Err(RunnerError::task_invocation(rendered))
-                }
-            } else if args.output_json {
-                Err(RunnerError::task_invocation(
-                    "interactive release preparation is only available in text mode; use `effigy release prepare --plan` or `effigy release prepare --yes` when `--json` is enabled"
-                        .to_owned(),
-                ))
-            } else {
-                if version_override.is_some() {
-                    return Err(RunnerError::task_invocation(
-                        "`release prepare --version` is only supported with `--plan` or `--yes`; plain interactive `release prepare` already supports custom version review".to_owned(),
-                    ));
-                }
-                run_interactive_release_prepare(&resolved, check_gates)
-            }
+                    run_interactive_release_prepare(&resolved, check_gates)
+                },
+            )
         }
         ReleaseSubcommand::Execute {
             plan,
             yes,
             allow_stale,
-        } => {
-            if plan && yes {
-                return Err(RunnerError::task_invocation(
-                    "`release execute` cannot combine `--plan`/`--dry-run` and `--yes`".to_owned(),
-                ));
-            }
-            if plan {
+        } => run_release_stage(
+            "execute",
+            plan,
+            yes,
+            args.output_json,
+            "interactive release execution is only available in text mode; use `effigy release execute --plan` or `effigy release execute --yes` when `--json` is enabled",
+            || {
                 let execute_plan = collect_release_execute_plan(&resolved, allow_stale)?;
-                if args.output_json {
-                    let rendered = render_release_execute_plan_json_payload(&execute_plan);
-                    if execute_plan.ready {
-                        return Ok(rendered);
-                    }
-                    return Err(RunnerError::CommandJsonFailure { rendered });
-                }
-
-                let rendered = render_release_execute_plan_text(&execute_plan);
-                if execute_plan.ready {
-                    Ok(rendered)
-                } else {
-                    Err(RunnerError::task_invocation(rendered))
-                }
-            } else if yes {
+                Ok(ReleaseStageRendered {
+                    ok: execute_plan.ready,
+                    json: render_release_execute_plan_json_payload(&execute_plan),
+                    text: render_release_execute_plan_text(&execute_plan),
+                })
+            },
+            || {
                 let executed = execute_release(&resolved, allow_stale)?;
-                if args.output_json {
-                    let rendered = render_release_executed_json_payload(&executed);
-                    if executed.executed {
-                        return Ok(rendered);
-                    }
-                    return Err(RunnerError::CommandJsonFailure { rendered });
-                }
-
-                let rendered = render_release_executed_text(&executed);
-                if executed.executed {
-                    Ok(rendered)
-                } else {
-                    Err(RunnerError::task_invocation(rendered))
-                }
-            } else if args.output_json {
-                Err(RunnerError::task_invocation(
-                    "interactive release execution is only available in text mode; use `effigy release execute --plan` or `effigy release execute --yes` when `--json` is enabled"
-                        .to_owned(),
-                ))
-            } else {
-                run_interactive_release_execute(&resolved, allow_stale)
-            }
-        }
+                Ok(ReleaseStageRendered {
+                    ok: executed.executed,
+                    json: render_release_executed_json_payload(&executed),
+                    text: render_release_executed_text(&executed),
+                })
+            },
+            || run_interactive_release_execute(&resolved, allow_stale),
+        ),
     }
 }
 

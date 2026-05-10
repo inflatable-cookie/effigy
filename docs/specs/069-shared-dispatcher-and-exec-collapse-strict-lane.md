@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.026`](../roadmaps/g04/026-shared-dispatcher-and-exec-collapse.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -23,10 +23,6 @@ command decomposition lane:
 - no `.github/workflows/` edits
 - no release execution
 
-## Current Ready Card
-
-- `655` extract the shared release stage helper for `prepare` and `execute`
-
 ## Execution Chain
 
 - `651` complete: opened the lane, promoted the contract anchor, and selected
@@ -38,8 +34,10 @@ command decomposition lane:
 - `654` complete: collapsed the routed container-exec variants behind one
   shared internal execution seam while preserving capture versus inherit
   behavior
-- `655` ready: extract the shared release stage helper for `prepare` and
-  `execute`
+- `655` complete: extracted the shared release stage helper for `prepare` and
+  `execute` without changing release behavior
+- `656` complete: closed the lane once the shared render, exec-collapse, and
+  release-stage slices were all landed and proven
 
 ## Exit Condition
 
@@ -50,5 +48,4 @@ user-facing drift.
 
 ## Next Task
 
-Execute `655` to extract the shared release stage helper for `prepare` and
-`execute`.
+No active next task. `g04.026` is complete.

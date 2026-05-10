@@ -37,7 +37,7 @@ Current milestones:
 - [`023-docs-check-subcommand-consolidation.md`](./023-docs-check-subcommand-consolidation.md) (complete; collapsed the flat `docs check-*` surface into `docs check <KIND>` and removed the old spellings with migration errors)
 - [`024-command-reference-completeness-and-flag-consistency.md`](./024-command-reference-completeness-and-flag-consistency.md) (complete; command matrix gaps are closed and repo-local `changelog`/`bundle` surfaces now accept bounded `--repo` targeting)
 - [`025-container-command-decomposition.md`](./025-container-command-decomposition.md) (complete; split `container_command/` into cache, volume, lifecycle, data, and thin shared dispatch owners without behavior drift)
-- [`026-shared-dispatcher-and-exec-collapse.md`](./026-shared-dispatcher-and-exec-collapse.md) (active; extract common JSON/text dispatcher, collapse exec variants, share release stage logic)
+- [`026-shared-dispatcher-and-exec-collapse.md`](./026-shared-dispatcher-and-exec-collapse.md) (complete; landed the shared render helper, collapsed routed container-exec duplication, and shared the release stage control flow)
 - [`027-deployment-transaction-system.md`](./027-deployment-transaction-system.md) (queued; define the v0.6.0 deployment transaction contract and provider-neutral execution posture)
 - [`028-deployment-config-plan-and-reporting.md`](./028-deployment-config-plan-and-reporting.md) (queued; add deploy env config, `deploy plan <env>`, and durable plan reports)
 - [`029-railway-deployment-adapter.md`](./029-railway-deployment-adapter.md) (queued; add the first live deployment adapter through Railway preflight/apply)
@@ -73,8 +73,7 @@ Rules:
 
 ## Next Task
 
-Execute the ready `g04.026` card under
-[`069-shared-dispatcher-and-exec-collapse-strict-lane.md`](../../specs/069-shared-dispatcher-and-exec-collapse-strict-lane.md).
+No active next task in `g04` before the separately-running `027+` planning lane.
 
 
 Batch cards live in `g04/batch-cards/` when strict posture uses them.

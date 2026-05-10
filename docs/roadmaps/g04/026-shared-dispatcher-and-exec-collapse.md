@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -149,7 +149,11 @@ shape. The dispatcher takes a `ReleaseStage` enum and the common flags.
 - `git diff --check`
 - Net line count reduced
 
-## Next Task
+## Outcome
 
-Execute `655` to extract the shared release stage helper for `prepare` and
-`execute`.
+- shared json/text result rendering now exists as a normal runner seam
+- routed container-exec duplication is collapsed behind one shared internal
+  path
+- release `prepare` and `execute` now share one bounded stage helper
+- no user-facing behavior changes were introduced while removing the internal
+  duplication
