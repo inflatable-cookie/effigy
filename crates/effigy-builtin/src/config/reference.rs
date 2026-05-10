@@ -26,7 +26,7 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy bundle list` to discover shipped `[bundle]` presets and `effigy bundle inspect <name>` to inspect one shipped bundle's accepted inputs plus default manifest paths.",
+        "Use `effigy bundle list` to discover shipped `[bundle]` presets, `effigy bundle inspect <name>` to inspect one shipped bundle's accepted inputs plus default manifest paths, or bare `effigy bundle inspect` to inspect the active repo bundle source.",
     )?;
     renderer.notice(
         NoticeLevel::Info,
@@ -50,7 +50,8 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
             "# base = { type = \"path\", dir = \"bundles/acme\" }",
             "# Bundle-defined inputs depend on the selected preset.",
             "# Discover bundles: `effigy bundle list`",
-            "# Inspect one bundle: `effigy bundle inspect decodelabs`",
+            "# Inspect one shipped bundle: `effigy bundle inspect decodelabs`",
+            "# Inspect the active repo bundle source: `effigy bundle inspect`",
             "# Render bundle config schema: `effigy config --schema --target bundle --bundle decodelabs`",
             "# Define local bundles with `bundle.toml` and `effigy.toml` in the chosen `dir`.",
             "# Local bundle templates can reference bundled scripts and assets with `{{ bundle.root }}`.",

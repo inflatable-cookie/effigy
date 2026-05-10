@@ -38,13 +38,13 @@ effigy bundle export underlay --path bundles/underlay
 - you want automatic updates when Effigy ships new bundle versions
 - your overrides are small (host name, project name, ports)
 
-**Export (`base_path = "bundles/underlay"`) when:**
+**Export (`base = { type = "path", dir = "bundles/underlay" }`) when:**
 - you need to modify service definitions, tasks, or scripts
 - you want version-controlled bundle changes
 - you need to fork a bundle for multiple similar repos
 
 If the shipped shape is close but needs repo-owned changes, export it and
-switch the manifest to `base_path`:
+switch the manifest to the path form:
 
 ```sh
 effigy bundle export underlay --path bundles/underlay
@@ -383,8 +383,9 @@ own `scripts/` directory and point the task at the local path instead of
 ### Adoption checklist
 
 1. Write the `[bundle]` block above into the repo's `effigy.toml`.
-2. Run `effigy bundle inspect decodelabs` to confirm the bundle resolved
-   with the expected inputs.
+2. Run `effigy bundle inspect decodelabs` to confirm the shipped bundle inputs,
+   then run bare `effigy bundle inspect` to confirm the active repo bundle
+   source resolved the way you expect.
 3. Run `effigy container up` (or `effigy system up` if the manifest declares
    `[systems.<name>]`) to bring the stack online.
 4. Use `effigy workspace` or `effigy exec` for app-level work inside the

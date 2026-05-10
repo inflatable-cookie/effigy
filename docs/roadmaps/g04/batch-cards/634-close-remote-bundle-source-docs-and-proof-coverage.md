@@ -2,7 +2,7 @@
 
 Lane: [`065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md`](../065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -26,6 +26,13 @@ close `g04.022`.
 - focused remote-bundle proofs are green
 - `g04.022` can be marked complete
 
+## Result
+
+- visible bundle docs now reflect typed path sources and bare `bundle inspect`
+- focused remote-bundle proof coverage is green across parser, manifest, and
+  runner seams
+- `g04.022` is complete
+
 ## Next Task
 
-Close the remaining docs/proof slice and finish the lane.
+Select the next queued `g04` roadmap and open its strict lane.

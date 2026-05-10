@@ -32,7 +32,8 @@ fn run_manifest_task_builtin_config_reference_mentions_bundle_discovery_and_name
             "[bundle]",
             "base = \"decodelabs\"",
             "# base = { type = \"path\", dir = \"bundles/acme\" }",
-            "Inspect one bundle: `effigy bundle inspect decodelabs`",
+            "Inspect one shipped bundle: `effigy bundle inspect decodelabs`",
+            "Inspect the active repo bundle source: `effigy bundle inspect`",
             "Render bundle config schema: `effigy config --schema --target bundle --bundle decodelabs`",
         ],
     );

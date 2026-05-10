@@ -27,17 +27,15 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
-- [`063-task-status-query-surface-and-read-model-strict-lane.md`](./063-task-status-query-surface-and-read-model-strict-lane.md)
 - [`064-deployment-transaction-system-strict-lane.md`](./064-deployment-transaction-system-strict-lane.md)
 
 Active strict lane:
 
-- `063` for `g04.021` task-status query surface and read model planning
+- `064` for `g04.027` through `g04.032` deployment transaction system planning
 
 Queued strict lanes:
 
-- `064` for `g04.027` through `g04.032` deployment transaction system planning
-  and implementation after the current coordination point clears
+- none; select the next queued roadmap before opening another strict lane
 
 Paused but still useful:
 
@@ -45,6 +43,8 @@ Paused but still useful:
 
 Recently completed:
 
+- [`065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md`](./065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md)
+- [`063-task-status-query-surface-and-read-model-strict-lane.md`](./063-task-status-query-surface-and-read-model-strict-lane.md)
 - [`062-task-status-record-and-active-run-model-strict-lane.md`](./062-task-status-record-and-active-run-model-strict-lane.md)
 - [`061-state-stack-and-layered-seed-framework-strict-lane.md`](./061-state-stack-and-layered-seed-framework-strict-lane.md)
 - [`060-oci-artifact-closeout-and-proof-matrix-strict-lane.md`](./060-oci-artifact-closeout-and-proof-matrix-strict-lane.md)
@@ -99,5 +99,6 @@ Recently completed:
 
 ## Next Task
 
-Execute the ready `g04.021` card under
-[`063-task-status-query-surface-and-read-model-strict-lane.md`](./063-task-status-query-surface-and-read-model-strict-lane.md).
+Keep the active deployment strict lane aligned with its ready card, and open
+the next queued non-deployment roadmap only when that coordination point says
+to do so.

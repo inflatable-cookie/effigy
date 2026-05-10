@@ -202,7 +202,11 @@ fn bundle_schema_lines(bundle: Option<&BundleSpec>, default_paths: &[String]) ->
         }
         None => {
             lines.push("# Use `effigy bundle list` to discover bundles.".to_owned());
-            lines.push("# Use `effigy bundle inspect <name>` or `effigy config --schema --target bundle --bundle <name>` for the full input surface.".to_owned());
+            lines.push("# Use `effigy bundle inspect <name>` or `effigy config --schema --target bundle --bundle <name>` for one shipped bundle's full input surface.".to_owned());
+            lines.push(
+                "# Use bare `effigy bundle inspect` to inspect the active repo bundle source."
+                    .to_owned(),
+            );
         }
     }
 

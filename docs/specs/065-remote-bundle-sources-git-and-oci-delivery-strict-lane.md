@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.022`](../roadmaps/g04/022-remote-bundle-sources-git-and-oci-delivery.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -32,7 +32,7 @@ This lane owns:
 
 ## Current Ready Card
 
-- [`634-close-remote-bundle-source-docs-and-proof-coverage.md`](../roadmaps/g04/batch-cards/634-close-remote-bundle-source-docs-and-proof-coverage.md)
+- none; lane complete
 
 ## Execution Chain
 
@@ -57,8 +57,8 @@ This lane owns:
 - `633` complete: widened `bundle inspect` so named inspection stays on the
   shipped bundle schema/catalog path while bare inspection reports active
   repo-local bundle source metadata for shipped/path/git/oci sources
-- `634` ready: close the remaining guides/changelog/proof slice and finish the
-  lane
+- `634` complete: closed the remaining guides/help/changelog/proof slice and
+  finished the lane
 
 ## Exit Condition
 
@@ -68,5 +68,4 @@ and no longer accepts `base_path`.
 
 ## Next Task
 
-Execute
-[`634-close-remote-bundle-source-docs-and-proof-coverage.md`](../roadmaps/g04/batch-cards/634-close-remote-bundle-source-docs-and-proof-coverage.md).
+Select the next queued `g04` roadmap and open its strict lane.
