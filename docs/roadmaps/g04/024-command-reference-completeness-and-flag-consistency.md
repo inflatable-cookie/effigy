@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -102,4 +102,5 @@ against the parser definitions in `crates/effigy-cli/src/`.
 
 ## Next Task
 
-Audit parser definitions against guide.
+Execute `642` to audit the command matrix against the live parser and land the
+bounded guide-only fixes before `--repo` widening starts.

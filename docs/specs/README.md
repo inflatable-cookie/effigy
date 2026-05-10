@@ -27,11 +27,12 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
+- [`067-command-reference-completeness-and-flag-consistency-strict-lane.md`](./067-command-reference-completeness-and-flag-consistency-strict-lane.md)
 - [`064-deployment-transaction-system-strict-lane.md`](./064-deployment-transaction-system-strict-lane.md)
 
 Active strict lane:
 
-- none; select the next queued `g04` lane before opening another strict lane
+- `067` for `g04.024` command reference completeness and flag consistency
 
 Queued strict lanes:
 
@@ -100,5 +101,5 @@ Recently completed:
 
 ## Next Task
 
-Open the next queued `g04` lane, starting with the roadmap for
-`024-command-reference-completeness-and-flag-consistency`.
+Execute the ready `g04.024` card under
+[`067-command-reference-completeness-and-flag-consistency-strict-lane.md`](./067-command-reference-completeness-and-flag-consistency-strict-lane.md).

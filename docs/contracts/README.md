@@ -78,6 +78,10 @@ This folder contains both:
 - [`021-docs-check-subcommand-consolidation-contract.md`](./021-docs-check-subcommand-consolidation-contract.md):
   docs-command consolidation contract for `docs check <KIND>`, removed
   `check-*` spellings, and the unchanged `add-log-index` carveout.
+- [`022-command-reference-completeness-and-flag-consistency-contract.md`](./022-command-reference-completeness-and-flag-consistency-contract.md):
+  bounded command-reference and repo-targeting contract for `version`
+  documentation, missing container shapes/flags, and `--repo` widening on
+  changelog and bundle surfaces.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -100,6 +104,7 @@ This folder contains both:
 | `019-deployment-transaction-system-contract.md` | Platform maintainers | Deploy env config, transaction stage order, provider adapter boundary, release/state/artifact composition, deployment reports, redeploy rules, provider support scope | Planning review against `g04.027` through `g04.032` plus focused deployment transaction proofs once implementation starts |
 | `020-remote-bundle-sources-git-and-oci-delivery-contract.md` | Platform maintainers | Unified `[bundle].base` grammar, `base_path` removal, source taxonomy, shared materialization boundary, git/OCI cache identity, stale/update detection, `bundle inspect`/`bundle sync` source metadata | Planning review against `g04.022` plus focused bundle parser and source-resolution proofs once implementation starts |
 | `021-docs-check-subcommand-consolidation-contract.md` | Platform maintainers | `docs check <KIND>` grammar, removed `check-*` spellings, migration errors, unchanged `add-log-index` carveout, and no-behavior-change rule for underlying checks | Planning review against `g04.023` plus focused docs parser, runner, and help proofs once implementation starts |
+| `022-command-reference-completeness-and-flag-consistency-contract.md` | Platform maintainers | Missing command/flag coverage in the command matrix, `version` reference rule, bounded `--repo` widening for `changelog` and `bundle`, and the no-behavior-change rule outside repo targeting | Planning review against `g04.024` plus focused parser, runner, and guide proofs once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -143,4 +148,6 @@ deployment transaction contract, and
 `020-remote-bundle-sources-git-and-oci-delivery-contract.md` as the `g04.022`
 remote bundle-source contract, and
 `021-docs-check-subcommand-consolidation-contract.md` as the `g04.023`
-docs-check consolidation contract.
+docs-check consolidation contract, and
+`022-command-reference-completeness-and-flag-consistency-contract.md` as the
+`g04.024` command-reference and repo-targeting contract.
