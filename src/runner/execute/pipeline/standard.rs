@@ -16,6 +16,10 @@ use super::super::routing::{
     route_standard_task_execution, routed_container_target, routed_not_running_container,
     RoutedTaskExecution,
 };
+use super::super::task_status::{
+    container_route_summary, host_route_summary, inline_route_summary, pending_route_summary,
+    TaskStatusTracker,
+};
 use super::{super::process_run, command};
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
@@ -40,7 +44,7 @@ use effigy_env::schema_support::{
     SchemaSupportError,
 };
 use effigy_env::secret::SecretString;
-use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
+use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan, TaskStatusStage};
 use effigy_manifest::TaskSelection;
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 
@@ -61,12 +65,43 @@ pub(in crate::runner) fn run_standard_task(
         command::build_task_command(preflight, selection, &env_schema_resolved)?,
     );
 
+    let lock_scope = crate::runner::manifest::task_lock_scope(selection.task, &preflight.selector);
+    let mut status = TaskStatusTracker::start(preflight, selection_plan, vec![lock_scope.label()])?;
+    status.update_stage(TaskStatusStage::WaitingForLock, pending_route_summary())?;
+
+    let result = run_standard_task_inner(
+        preflight,
+        selection,
+        selection_plan,
+        &context,
+        &env_schema_resolved,
+        &lock_scope,
+        &mut status,
+    );
+    match result {
+        Ok((output, summary)) => {
+            status.finish_success(summary)?;
+            Ok(output)
+        }
+        Err(error) => {
+            status.finish_error(&error)?;
+            Err(error)
+        }
+    }
+}
+
+fn run_standard_task_inner(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+    selection_plan: &ExecutionSelectionPlan,
+    context: &ExecutionTaskContext<'_>,
+    env_schema_resolved: &Option<ResolvedEnv>,
+    lock_scope: &crate::runner::locking::model::LockScope,
+    status: &mut TaskStatusTracker,
+) -> Result<(String, String), RunnerError> {
     let _lock_guards = acquire_scopes(
         &preflight.resolved.resolved_root,
-        &[crate::runner::manifest::task_lock_scope(
-            selection.task,
-            &preflight.selector,
-        )],
+        std::slice::from_ref(lock_scope),
     )?;
 
     let cache_check = check_task_cache(
@@ -78,13 +113,14 @@ pub(in crate::runner) fn run_standard_task(
         context.command(),
     )?;
     if cache_check.enabled && cache_check.hit {
-        return render::render_cache_hit_output(
+        let output = render::render_cache_hit_output(
             preflight.output_json,
             preflight.runtime_args_raw.verbose_root,
-            &context,
+            context,
             &cache_check.reason,
             &cache_check.fingerprint,
-        );
+        )?;
+        return Ok((output, format!("cache hit ({})", cache_check.reason)));
     }
 
     let secret_pairs: Option<Vec<(&str, &SecretString)>> =
@@ -109,17 +145,26 @@ pub(in crate::runner) fn run_standard_task(
         "standard task execution",
     ));
     let container_binding = binding_resolution.binding();
-    if let ContainerExecutionBinding::Inline { .. } = container_binding {
-        return run_inline_workspace_standard_task(
+    if let ContainerExecutionBinding::Inline { synthetic_name, .. } = container_binding {
+        status.update_stage(
+            TaskStatusStage::Handoff,
+            inline_route_summary(synthetic_name),
+        )?;
+        let output = run_inline_workspace_standard_task(
             preflight,
             selection,
-            &context,
+            context,
             secret_ref,
             &binding_resolution,
-        );
+        )?;
+        return Ok((output, "inline workspace task completed".to_owned()));
     }
 
     let routed = route_with_running_check(preflight, selection)?;
+    let initial_route = routed_container_target(&routed.decision)
+        .map(|(container, service)| container_route_summary(container, service))
+        .unwrap_or_else(host_route_summary);
+    status.update_stage(TaskStatusStage::RuntimePrep, initial_route)?;
 
     let mut task_activation = None;
     let routed = if let Some(container_name) = routed_not_running_container(&routed.decision) {
@@ -146,17 +191,28 @@ pub(in crate::runner) fn run_standard_task(
     };
 
     if should_stay_in_workspace_shell(preflight.output_json, selection.task, container_binding) {
-        return run_workspace_seeded_task_session(
+        status.update_stage(
+            TaskStatusStage::ManagedSession,
+            routed_container_target(&routed.decision)
+                .map(|(container, service)| container_route_summary(container, service))
+                .unwrap_or_else(host_route_summary),
+        )?;
+        let output = run_workspace_seeded_task_session(
             &selection.catalog.catalog_root,
             container_binding,
             preflight.runtime_args_raw.repo_override.clone(),
             &preflight.selector.task_name,
             &preflight.runtime_args_exec.passthrough,
             Some(current_runtime_session_context().public_workspace_cleanup),
-        );
+        )?;
+        return Ok((output, "workspace-seeded task session completed".to_owned()));
     }
 
     if let Some((container, service)) = routed_container_target(&routed.decision) {
+        status.update_stage(
+            TaskStatusStage::Executing,
+            container_route_summary(container, service),
+        )?;
         if preflight.output_json {
             let output = capture_routed_task_container_exec(
                 &selection.catalog.catalog_root,
@@ -186,7 +242,7 @@ pub(in crate::runner) fn run_standard_task(
                 {
                     emit_host_container_lease_notice(container);
                 }
-                return Ok(rendered);
+                return Ok((rendered, "container task completed".to_owned()));
             }
             return Err(RunnerError::CommandJsonFailure { rendered });
         }
@@ -206,27 +262,32 @@ pub(in crate::runner) fn run_standard_task(
             emit_host_container_lease_notice(container);
         }
         if preflight.runtime_args_raw.verbose_root {
-            return Ok(context.render_resolution_trace());
+            return Ok((
+                context.render_resolution_trace(),
+                "container task completed".to_owned(),
+            ));
         }
-        return Ok(String::new());
+        return Ok((String::new(), "container task completed".to_owned()));
     }
 
+    status.update_stage(TaskStatusStage::Executing, host_route_summary())?;
     if let Some(output) = nested::maybe_run_in_process_sequence(
         preflight,
         selection,
-        &context,
+        context,
         &env_schema_resolved,
         secret_ref,
     )? {
-        return Ok(output);
+        return Ok((output, "nested task sequence completed".to_owned()));
     }
 
-    process_run::run_task_process(
+    let output = process_run::run_task_process(
         preflight.output_json,
         preflight.runtime_args_raw.verbose_root,
-        &context,
+        context,
         secret_ref,
-    )
+    )?;
+    Ok((output, "host task completed".to_owned()))
 }
 
 fn route_with_running_check(

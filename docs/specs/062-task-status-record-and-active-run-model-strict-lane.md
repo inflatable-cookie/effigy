@@ -26,7 +26,7 @@ inspection or caller-local runtime guesses.
 
 ## Current Ready Card
 
-- [`618-promote-task-status-identity-persistence-and-state-model-boundary.md`](../roadmaps/g04/batch-cards/618-promote-task-status-identity-persistence-and-state-model-boundary.md)
+- [`621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md`](../roadmaps/g04/batch-cards/621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md)
 
 ## Execution Chain
 
@@ -37,8 +37,10 @@ inspection or caller-local runtime guesses.
   implementation
 - `619` complete: added typed task-status key/record types and runtime/report
   path helpers
-- `620` ready: wire the shared task-status writer into the canonical execution
-  path before widening to more caller surfaces
+- `620` complete: wired the shared task-status writer into the canonical direct
+  execution path and proved succeeded, failed, cancelled, and blocked outcomes
+- `621` ready: add active-record liveness and stale-reconciliation helpers
+  before the read/query lane starts consuming task-status truth
 
 ## Exit Condition
 
@@ -50,4 +52,4 @@ truth.
 ## Next Task
 
 Execute ready card
-[`620-wire-task-status-writer-into-canonical-execution-path.md`](../roadmaps/g04/batch-cards/620-wire-task-status-writer-into-canonical-execution-path.md).
+[`621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md`](../roadmaps/g04/batch-cards/621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md).

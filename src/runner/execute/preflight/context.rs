@@ -14,6 +14,7 @@ use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
 pub(in crate::runner) struct ExecutionPreflight {
     pub(in crate::runner) invocation_cwd: PathBuf,
+    pub(in crate::runner) execution_surface: ExecutionSurface,
     pub(in crate::runner) runtime_args_raw: TaskRuntimeArgs,
     pub(in crate::runner) runtime_args_exec: TaskRuntimeArgs,
     pub(in crate::runner) output_json: bool,
@@ -48,6 +49,7 @@ pub(in crate::runner) fn build_execution_preflight_from_input(
     let discovery_plan = discovery.plan;
     Ok(ExecutionPreflight {
         invocation_cwd: discovery_plan.invocation_cwd.clone(),
+        execution_surface: input.surface,
         runtime_args_raw,
         runtime_args_exec,
         output_json,

@@ -257,4 +257,4 @@ No final user-facing command contract is introduced here.
 ## Next Task
 
 Execute card
-[`620-wire-task-status-writer-into-canonical-execution-path.md`](./batch-cards/620-wire-task-status-writer-into-canonical-execution-path.md).
+[`621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md`](./batch-cards/621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md).

@@ -30,5 +30,7 @@ mod routing;
 mod selection;
 #[path = "execute/sequence_run.rs"]
 mod sequence_run;
+#[path = "execute/task_status.rs"]
+mod task_status;
 #[path = "execute/workspace_seeded.rs"]
 mod workspace_seeded;

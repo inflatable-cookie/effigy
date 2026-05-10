@@ -2,9 +2,10 @@
 
 Lane: [`062-task-status-record-and-active-run-model-strict-lane.md`](../062-task-status-record-and-active-run-model-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
+Completed: 2026-05-10
 
 ## Goal
 
@@ -45,8 +46,22 @@ shows direct execution status truth without caller-local divergence.
 - `cargo fmt --all -- --check`
 - `git diff --check`
 
+## Closeout
+
+Direct canonical task execution now writes:
+
+- active records before lock acquisition
+- completed records for `succeeded`, `failed`, `cancelled`, and `blocked`
+  outcomes
+- latest and history reports under the canonical task-status paths
+
+The first implementation slice stays intentionally narrow:
+
+- it covers the converged direct execution path
+- it does not widen into managed-session-specific write hooks yet
+- it leaves live/stale active-record reconciliation for the next card
+
 ## Next Task
 
-Widen task-status writer coverage to additional converged execution surfaces if
-needed, or move to stale/live reconciliation helpers if the direct path is
-already representative.
+Execute
+[`621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md`](./621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md).
