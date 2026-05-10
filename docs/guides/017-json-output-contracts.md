@@ -99,6 +99,8 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.help.v1`
 - `effigy.tasks.v1`
 - `effigy.tasks.filtered.v1`
+- `effigy.tasks-status.v1`
+- `effigy.tasks-status-all.v1`
 - `effigy.doctor.v1`
 - `effigy.doctor.explain.v1`
 - `effigy.scan.god-files.v1`
@@ -133,6 +135,8 @@ Examples:
 effigy --json tasks
 effigy --json tasks --task test
 effigy --json tasks --resolve catalog-a/api
+effigy --json tasks status test
+effigy --json tasks status --all
 effigy --json doctor
 effigy --json doctor --repo /path/to/workspace catalog-a/build -- --watch
 effigy --json scan god-files

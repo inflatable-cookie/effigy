@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 Started: 2026-05-10
@@ -219,8 +219,13 @@ Docs/reference updates:
    Status: complete; `effigy tasks status <selector>` now returns active or
    last-known status in text/JSON on top of the shared reconciliation layer
 3. add `--all` repo-plus-descendant inventory
+   Status: complete; declared tasks, stale no-longer-declared rows, grouped
+   text output, and `effigy.tasks-status-all.v1` JSON inventory are landed
 4. add JSON contracts and examples
+   Status: complete; both task-status schemas are now covered in the JSON
+   contracts guide and payload examples
 5. update help, command reference, and troubleshooting guidance
+   Status: complete for the shipped task-status read surfaces
 6. close with proof matrix and contract promotion if stable
 
 ## Validation
@@ -236,5 +241,5 @@ Docs/reference updates:
 
 ## Next Task
 
-Execute card
-[`624-add-tasks-status-parser-and-single-selector-dispatch.md`](./batch-cards/624-add-tasks-status-parser-and-single-selector-dispatch.md).
+Open the next queued strict lane for
+[`022-remote-bundle-sources-git-and-oci-delivery.md`](./022-remote-bundle-sources-git-and-oci-delivery.md).

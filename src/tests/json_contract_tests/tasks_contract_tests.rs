@@ -27,6 +27,7 @@ fn tasks_json_contract_has_versioned_top_level_shape() {
             task_name: None,
             resolve_selector: None,
             status_selector: None,
+            status_all: false,
             output_json: true,
             pretty_json: true,
         })
@@ -49,6 +50,7 @@ fn tasks_filtered_json_contract_has_versioned_shape_and_filter_fields() {
             task_name: Some("test".to_owned()),
             resolve_selector: None,
             status_selector: None,
+            status_all: false,
             output_json: true,
             pretty_json: true,
         })
@@ -73,6 +75,7 @@ fn tasks_json_contract_catalog_payload_uses_expected_top_level_fields() {
             task_name: None,
             resolve_selector: None,
             status_selector: None,
+            status_all: false,
             output_json: true,
             pretty_json: true,
         })
@@ -106,6 +109,7 @@ fn tasks_json_contract_filtered_payload_uses_expected_top_level_fields() {
             task_name: Some("test".to_owned()),
             resolve_selector: None,
             status_selector: None,
+            status_all: false,
             output_json: true,
             pretty_json: true,
         })
@@ -149,6 +153,7 @@ fn tasks_json_contract_with_resolve_has_diagnostics_and_probe_fields() {
             task_name: None,
             resolve_selector: Some("catalog_a/api".to_owned()),
             status_selector: None,
+            status_all: false,
             output_json: true,
             pretty_json: true,
         })
@@ -182,6 +187,7 @@ fn tasks_filtered_json_contract_with_resolve_has_diagnostics_and_probe_fields() 
             task_name: Some("build".to_owned()),
             resolve_selector: Some("catalog_a/build".to_owned()),
             status_selector: None,
+            status_all: false,
             output_json: true,
             pretty_json: true,
         })
@@ -213,6 +219,7 @@ fn tasks_json_contract_excludes_explicitly_deferred_builtins() {
             task_name: None,
             resolve_selector: None,
             status_selector: None,
+            status_all: false,
             output_json: true,
             pretty_json: true,
         })
@@ -240,6 +247,7 @@ fn tasks_status_json_contract_has_versioned_top_level_shape() {
             task_name: None,
             resolve_selector: None,
             status_selector: Some("test".to_owned()),
+            status_all: false,
             output_json: true,
             pretty_json: true,
         })
@@ -256,6 +264,49 @@ fn tasks_status_json_contract_has_versioned_top_level_shape() {
     assert!(parsed["routing"].is_object());
 }
 
+#[test]
+fn tasks_status_all_json_contract_has_versioned_top_level_shape() {
+    let root = temp_workspace("tasks-status-all-json-contract");
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog_a");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.test]\nrun = \"printf test\"\n",
+    );
+    write_manifest(
+        &catalog_a.join("effigy.toml"),
+        "[catalog]\nalias = \"catalog_a\"\n[tasks.build]\nrun = \"printf build\"\n",
+    );
+    seed_latest_task_status(&root, "catalog_a/build");
+
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: None,
+            resolve_selector: None,
+            status_selector: None,
+            status_all: true,
+            output_json: true,
+            pretty_json: true,
+        })
+    })
+    .expect("run task status all json");
+
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.tasks-status-all.v1");
+    assert_eq!(
+        parsed["scope_root"],
+        fs::canonicalize(&root)
+            .unwrap_or(root.clone())
+            .display()
+            .to_string()
+    );
+    assert!(parsed["catalog_scopes"].is_array());
+    assert!(parsed["rows"].is_array());
+    assert!(parsed["counts_by_state"].is_object());
+    assert!(parsed["warnings"].is_array());
+}
+
 fn sorted_object_keys(value: &serde_json::Value) -> Vec<&str> {
     let mut keys = value
         .as_object()
@@ -269,11 +320,15 @@ fn sorted_object_keys(value: &serde_json::Value) -> Vec<&str> {
 
 fn seed_latest_task_status(root: &Path, selector: &str) {
     let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let selected_catalog_root = selector
+        .split_once('/')
+        .map(|(prefix, _)| canonical_root.join(prefix))
+        .unwrap_or_else(|| canonical_root.clone());
     let identity = TaskStatusTargetIdentity::new(
         canonical_root.clone(),
-        canonical_root,
+        selected_catalog_root,
         selector,
-        selector,
+        selector.rsplit('/').next().unwrap_or(selector),
         None,
     );
     let key = identity.status_key();

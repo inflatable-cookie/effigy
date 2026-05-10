@@ -56,6 +56,7 @@ pub(super) fn run_builtin_tasks(
                     task_name: request.task_name,
                     resolve_selector: request.resolve_selector,
                     status_selector: request.status_selector,
+                    status_all: request.status_all,
                     output_json: request.output_json,
                     pretty_json: request.pretty_json,
                 })

@@ -2,7 +2,7 @@
 
 Lane: [`063-task-status-query-surface-and-read-model-strict-lane.md`](../063-task-status-query-surface-and-read-model-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -42,5 +42,5 @@ no-longer-declared rows.
 
 ## Next Task
 
-Add the final docs/examples pass for the task-status query surface once
-`--all` inventory is landed.
+The task-status query lane is now complete. The next move is to open the next
+queued strict lane for `g04.022`.

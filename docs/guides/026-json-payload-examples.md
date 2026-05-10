@@ -26,7 +26,7 @@ Use this page in two passes:
 Start with the family that matches your job:
 
 - task discovery or routing:
-  `Tasks`, `Doctor Explain`, `Task Run`
+  `Tasks`, `Task Status`, `Doctor Explain`, `Task Run`
 - health, repo checks, or diagnostics:
   `Doctor` and the `Scan *` payloads
 - test automation:
@@ -247,6 +247,211 @@ Companion references:
   "warnings": [],
   "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-apply.json",
   "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143013Z-apply-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+}
+```
+
+### 3) Task Status (`effigy.tasks-status.v1`)
+
+```json
+{
+  "schema": "effigy.tasks-status.v1",
+  "schema_version": 1,
+  "resolved_selector": "catalog_a/build",
+  "selected_catalog_root": "/workspace/app/catalog_a",
+  "state": "succeeded",
+  "currently_declared": true,
+  "active": null,
+  "latest": {
+    "status_key": "catalog-a-build-2db43d3e62fd7311",
+    "identity": {
+      "repo_root": "/workspace/app",
+      "selected_catalog_root": "/workspace/app/catalog_a",
+      "resolved_selector": "catalog_a/build",
+      "resolved_task_name": "build"
+    },
+    "state": "succeeded",
+    "stage": "finishing",
+    "execution_surface": "direct-cli",
+    "runtime_route": {
+      "route": "host"
+    },
+    "started_at": "20260510T190000Z",
+    "finished_at": "20260510T190005Z",
+    "duration_ms": 5000,
+    "lock_scopes": [
+      "task:catalog_a/build"
+    ],
+    "outcome": {
+      "summary": "task completed"
+    },
+    "latest_report_path": ".effigy/reports/tasks/catalog-a-build-2db43d3e62fd7311/latest.json",
+    "history_report_path": ".effigy/reports/tasks/catalog-a-build-2db43d3e62fd7311/history/20260510t190005z-succeeded.json"
+  },
+  "stale_active": null,
+  "warnings": [],
+  "routing": {
+    "repo_root": "/workspace/app",
+    "catalog_alias": "catalog_a",
+    "catalog_root": "/workspace/app/catalog_a",
+    "catalog_manifest_path": "/workspace/app/catalog_a/effigy.toml",
+    "selection_mode": "explicit-prefix",
+    "evidence": [
+      "selected catalog `catalog_a` by explicit prefix"
+    ]
+  }
+}
+```
+
+### 4) Task Status Inventory (`effigy.tasks-status-all.v1`)
+
+```json
+{
+  "schema": "effigy.tasks-status-all.v1",
+  "schema_version": 1,
+  "scope_root": "/workspace/app",
+  "catalog_scopes": [
+    {
+      "alias": "root",
+      "root": "/workspace/app",
+      "manifest": "/workspace/app/effigy.toml",
+      "depth": 0
+    },
+    {
+      "alias": "catalog_a",
+      "root": "/workspace/app/catalog_a",
+      "manifest": "/workspace/app/catalog_a/effigy.toml",
+      "depth": 1
+    }
+  ],
+  "counts_by_state": {
+    "running": 1,
+    "succeeded": 1,
+    "unknown": 1,
+    "failed": 1
+  },
+  "warnings": [],
+  "rows": [
+    {
+      "selector": "test",
+      "selected_catalog_root": "root",
+      "state": "running",
+      "currently_declared": true,
+      "last_updated": "20260510T190000Z",
+      "route": "host",
+      "active": {
+        "status_key": "root-test-4f5e64bf373f4d3c",
+        "identity": {
+          "repo_root": "/workspace/app",
+          "selected_catalog_root": "/workspace/app",
+          "resolved_selector": "test",
+          "resolved_task_name": "test"
+        },
+        "state": "running",
+        "stage": "executing",
+        "execution_surface": "direct-cli",
+        "runtime_route": {
+          "route": "host"
+        },
+        "owner_pid": 12345,
+        "started_at": "20260510T185955Z",
+        "updated_at": "20260510T190000Z",
+        "lock_scopes": [
+          "task:test"
+        ],
+        "active_record_path": ".effigy/runtime/tasks/active/root-test-4f5e64bf373f4d3c.json"
+      },
+      "latest": null,
+      "stale_active": null,
+      "warnings": []
+    },
+    {
+      "selector": "catalog_a/build",
+      "selected_catalog_root": "catalog_a",
+      "state": "succeeded",
+      "currently_declared": true,
+      "last_updated": "20260510T185930Z",
+      "route": "host",
+      "active": null,
+      "latest": {
+        "status_key": "catalog-a-build-2db43d3e62fd7311",
+        "identity": {
+          "repo_root": "/workspace/app",
+          "selected_catalog_root": "/workspace/app/catalog_a",
+          "resolved_selector": "catalog_a/build",
+          "resolved_task_name": "build"
+        },
+        "state": "succeeded",
+        "stage": "finishing",
+        "execution_surface": "direct-cli",
+        "runtime_route": {
+          "route": "host"
+        },
+        "started_at": "20260510T185925Z",
+        "finished_at": "20260510T185930Z",
+        "duration_ms": 5000,
+        "lock_scopes": [
+          "task:catalog_a/build"
+        ],
+        "outcome": {
+          "summary": "task completed"
+        },
+        "latest_report_path": ".effigy/reports/tasks/catalog-a-build-2db43d3e62fd7311/latest.json",
+        "history_report_path": ".effigy/reports/tasks/catalog-a-build-2db43d3e62fd7311/history/20260510t185930z-succeeded.json"
+      },
+      "stale_active": null,
+      "warnings": []
+    },
+    {
+      "selector": "idle",
+      "selected_catalog_root": "root",
+      "state": "unknown",
+      "currently_declared": true,
+      "last_updated": null,
+      "route": null,
+      "active": null,
+      "latest": null,
+      "stale_active": null,
+      "warnings": []
+    },
+    {
+      "selector": "old-task",
+      "selected_catalog_root": "root",
+      "state": "failed",
+      "currently_declared": false,
+      "no_longer_declared": true,
+      "last_updated": "20260510T185900Z",
+      "route": "host",
+      "active": null,
+      "latest": {
+        "status_key": "root-old-task-1513d23936e3152d",
+        "identity": {
+          "repo_root": "/workspace/app",
+          "selected_catalog_root": "/workspace/app",
+          "resolved_selector": "old-task",
+          "resolved_task_name": "old-task"
+        },
+        "state": "failed",
+        "stage": "finishing",
+        "execution_surface": "direct-cli",
+        "runtime_route": {
+          "route": "host"
+        },
+        "started_at": "20260510T185855Z",
+        "finished_at": "20260510T185900Z",
+        "duration_ms": 5000,
+        "lock_scopes": [
+          "task:old-task"
+        ],
+        "outcome": {
+          "summary": "old task failed"
+        },
+        "latest_report_path": ".effigy/reports/tasks/root-old-task-1513d23936e3152d/latest.json",
+        "history_report_path": ".effigy/reports/tasks/root-old-task-1513d23936e3152d/history/20260510t185900z-failed.json"
+      },
+      "stale_active": null,
+      "warnings": []
+    }
+  ]
 }
 ```
 

@@ -703,6 +703,8 @@ where
     let mut task_name: Option<String> = None;
     let mut resolve_selector: Option<String> = None;
     let mut status_selector: Option<String> = None;
+    let mut status_mode = false;
+    let mut status_all = false;
     let mut output_json = false;
     let mut pretty_json = true;
     let mut pretty_seen = false;
@@ -721,6 +723,8 @@ where
                 if task_name.is_some()
                     || resolve_selector.is_some()
                     || status_selector.is_some()
+                    || status_all
+                    || status_mode
                     || pretty_seen
                 {
                     return Err(CliParseError::InvalidArguments(
@@ -728,12 +732,7 @@ where
                             .to_owned(),
                     ));
                 }
-                let value =
-                    next_required_value(&mut args, CliParseError::MissingStatusSelectorValue)?;
-                if value.starts_with('-') {
-                    return Err(CliParseError::MissingStatusSelectorValue);
-                }
-                status_selector = Some(value);
+                status_mode = true;
             }
             "--repo" => {
                 passthrough.push(arg);
@@ -742,7 +741,7 @@ where
                 repo_override = Some(path);
             }
             "--task" => {
-                if status_selector.is_some() {
+                if status_selector.is_some() || status_all {
                     return Err(CliParseError::InvalidArguments(
                         "`--task` is not supported together with `tasks status`".to_owned(),
                     ));
@@ -753,7 +752,7 @@ where
                 task_name = Some(value);
             }
             "--resolve" => {
-                if status_selector.is_some() {
+                if status_selector.is_some() || status_all {
                     return Err(CliParseError::InvalidArguments(
                         "`--resolve` is not supported together with `tasks status`".to_owned(),
                     ));
@@ -768,8 +767,17 @@ where
                 passthrough.push(arg);
                 output_json = true;
             }
-            "--pretty" => {
+            "--all" if status_mode => {
                 if status_selector.is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`tasks status` accepts either `--all` or one selector, not both"
+                            .to_owned(),
+                    ));
+                }
+                status_all = true;
+            }
+            "--pretty" => {
+                if status_selector.is_some() || status_all {
                     return Err(CliParseError::InvalidArguments(
                         "`--pretty` is not supported together with `tasks status`".to_owned(),
                     ));
@@ -780,9 +788,22 @@ where
                 passthrough.push(arg);
                 passthrough.push(value);
             }
+            other if status_mode && !other.starts_with('-') && status_selector.is_none() => {
+                if status_all {
+                    return Err(CliParseError::InvalidArguments(
+                        "`tasks status` accepts either `--all` or one selector, not both"
+                            .to_owned(),
+                    ));
+                }
+                status_selector = Some(other.to_owned());
+            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Tasks)),
             other => return Err(unknown_argument(other)),
         }
+    }
+
+    if status_mode && !status_all && status_selector.is_none() {
+        return Err(CliParseError::MissingStatusSelectorValue);
     }
 
     Ok(Command::Tasks(TasksArgs {
@@ -790,6 +811,7 @@ where
         task_name,
         resolve_selector,
         status_selector,
+        status_all,
         output_json,
         pretty_json,
     }))

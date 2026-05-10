@@ -29,6 +29,7 @@ fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
         task_name: Some("ping".to_owned()),
         resolve_selector: None,
         status_selector: None,
+        status_all: false,
         output_json: false,
         pretty_json: true,
     })

@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -121,6 +122,13 @@ pub fn reconcile_task_status_records(
     })
 }
 
+pub fn list_task_status_keys(repo_root: &Path) -> Result<Vec<TaskStatusKey>, EffigyRuntimeError> {
+    let mut keys = BTreeSet::new();
+    collect_active_task_status_keys(repo_root, &mut keys)?;
+    collect_latest_task_status_keys(repo_root, &mut keys)?;
+    Ok(keys.into_iter().collect())
+}
+
 fn task_status_history_dir(repo_root: &Path, key: &TaskStatusKey) -> PathBuf {
     repo_root
         .join(".effigy")
@@ -128,6 +136,88 @@ fn task_status_history_dir(repo_root: &Path, key: &TaskStatusKey) -> PathBuf {
         .join("tasks")
         .join(key.as_str())
         .join("history")
+}
+
+fn collect_active_task_status_keys(
+    repo_root: &Path,
+    keys: &mut BTreeSet<TaskStatusKey>,
+) -> Result<(), EffigyRuntimeError> {
+    let active_root = repo_root
+        .join(".effigy")
+        .join("runtime")
+        .join("tasks")
+        .join("active");
+    let entries = match fs::read_dir(&active_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(EffigyRuntimeError::task_invocation(format!(
+                "failed to read active task-status directory `{}`: {error}",
+                active_root.display()
+            )))
+        }
+    };
+
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            EffigyRuntimeError::task_invocation(format!(
+                "failed to read active task-status directory entry `{}`: {error}",
+                active_root.display()
+            ))
+        })?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !stem.is_empty() {
+            keys.insert(TaskStatusKey::from_storage_name(stem.to_owned()));
+        }
+    }
+    Ok(())
+}
+
+fn collect_latest_task_status_keys(
+    repo_root: &Path,
+    keys: &mut BTreeSet<TaskStatusKey>,
+) -> Result<(), EffigyRuntimeError> {
+    let reports_root = repo_root.join(".effigy").join("reports").join("tasks");
+    let entries = match fs::read_dir(&reports_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(EffigyRuntimeError::task_invocation(format!(
+                "failed to read task-status reports directory `{}`: {error}",
+                reports_root.display()
+            )))
+        }
+    };
+
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            EffigyRuntimeError::task_invocation(format!(
+                "failed to read task-status reports directory entry `{}`: {error}",
+                reports_root.display()
+            ))
+        })?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let latest = path.join("latest.json");
+        if !latest.exists() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !name.is_empty() {
+            keys.insert(TaskStatusKey::from_storage_name(name.to_owned()));
+        }
+    }
+    Ok(())
 }
 
 fn classify_active_record_staleness(record: &TaskStatusActiveRecord) -> Vec<TaskStatusWarning> {
@@ -255,7 +345,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        load_task_status_active_record, load_task_status_latest_record,
+        list_task_status_keys, load_task_status_active_record, load_task_status_latest_record,
         reconcile_task_status_records, task_status_active_record_path,
         task_status_history_record_path, task_status_latest_record_path, task_status_storage_paths,
         TASK_STATUS_ACTIVE_STALE_MS,
@@ -478,5 +568,19 @@ mod tests {
         assert_eq!(snapshot.stale_active, Some(active));
         assert_eq!(snapshot.warnings.len(), 1);
         assert_eq!(snapshot.warnings[0].code, "stale-active-heartbeat");
+    }
+
+    #[test]
+    fn list_task_status_keys_collects_active_and_latest_without_duplicates() {
+        let temp = tempdir().expect("tempdir");
+        let repo_root = temp.path();
+        let key = key();
+        let active = active_record(repo_root, &key, &now_timestamp(), std::process::id());
+        let latest = completed_record(repo_root, &key);
+        write_active(repo_root, &key, &active);
+        write_latest(repo_root, &key, &latest);
+
+        let keys = list_task_status_keys(repo_root).expect("list task status keys");
+        assert_eq!(keys, vec![key]);
     }
 }

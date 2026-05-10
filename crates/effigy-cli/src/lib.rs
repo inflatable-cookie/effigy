@@ -842,6 +842,7 @@ pub struct TasksArgs {
     pub task_name: Option<String>,
     pub resolve_selector: Option<String>,
     pub status_selector: Option<String>,
+    pub status_all: bool,
     pub output_json: bool,
     pub pretty_json: bool,
 }

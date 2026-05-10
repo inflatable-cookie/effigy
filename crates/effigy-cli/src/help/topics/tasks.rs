@@ -9,6 +9,7 @@ pub(crate) fn render_tasks_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult
         &[
             "effigy tasks [--repo <PATH>] [--task <TASK_NAME>] [--resolve <SELECTOR>] [--json] [--pretty true|false]",
             "effigy tasks status <SELECTOR> [--repo <PATH>] [--json]",
+            "effigy tasks status --all [--repo <PATH>] [--json]",
         ],
         &[
             ("--repo <PATH>", "Override target repository path"),
@@ -26,6 +27,10 @@ pub(crate) fn render_tasks_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult
                 "status <SELECTOR>",
                 "Show live-or-last-known status for one resolved task selector",
             ),
+            (
+                "status --all",
+                "Show repo-plus-descendant task status inventory, including unknown and stale rows",
+            ),
             ("-h, --help", "Print command help"),
         ],
         &[
@@ -34,6 +39,7 @@ pub(crate) fn render_tasks_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult
             "effigy tasks --repo /path/to/workspace --task db:reset",
             "effigy tasks status test",
             "effigy tasks status catalog-a/build --json",
+            "effigy tasks status --all",
             "effigy tasks --resolve <catalog>/<task>",
             "effigy tasks --json --resolve test",
             "effigy --json tasks --repo /path/to/workspace --task test",

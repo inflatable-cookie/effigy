@@ -136,6 +136,7 @@ fn command_kind_and_name_maps_command_variants() {
         task_name: None,
         resolve_selector: None,
         status_selector: None,
+        status_all: false,
         output_json: false,
         pretty_json: true,
     });

@@ -60,6 +60,10 @@ impl TaskStatusKey {
         Self(format!("{catalog_slug}-{selector_slug}-{digest:016x}"))
     }
 
+    pub fn from_storage_name(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

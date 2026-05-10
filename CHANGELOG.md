@@ -21,7 +21,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Task status read surface:** `effigy tasks status <selector>` now resolves
   one task selector through normal routing and reports live-or-last-known task
   status in text or JSON using the persisted active/latest task-status record
-  model.
+  model, and `effigy tasks status --all` now inventories the current repo plus
+  descendants, including declared unknown rows and stale no-longer-declared
+  rows.
 - **v0.6.0 deployment transaction planning:** added the g04 deployment roadmap
   suite and contract for provider-neutral UAT/production deployment
   transactions across code refs, state stacks, OCI artifacts, release evidence,

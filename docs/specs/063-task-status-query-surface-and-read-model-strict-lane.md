@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.021`](../roadmaps/g04/021-task-status-query-surface-and-read-model.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -29,7 +29,7 @@ This lane owns:
 
 ## Current Ready Card
 
-- [`625-add-tasks-status-all-repo-and-descendant-inventory.md`](../roadmaps/g04/batch-cards/625-add-tasks-status-all-repo-and-descendant-inventory.md)
+- none; lane complete
 
 ## Execution Chain
 
@@ -39,16 +39,16 @@ This lane owns:
   stale/no-longer-declared row visibility, and minimum text/JSON result fields
 - `624` complete: `effigy tasks status <selector>` now resolves one selector
   through normal routing and reports live-or-last-known status in text or JSON
-- `625` ready: widen the read surface to `tasks status --all`
-  repo-plus-descendant inventory
+- `625` complete: `effigy tasks status --all` now inventories declared tasks
+  plus stale record rows across the current repo and descendants in text and
+  `effigy.tasks-status-all.v1` JSON form
 
 ## Exit Condition
 
-This lane is complete when Effigy can answer task status for one selector or
-the current repo/descendant inventory through one stable read model and one
-stable text/JSON contract set.
+This lane is complete: Effigy can answer task status for one selector or the
+current repo/descendant inventory through one stable read model and one stable
+text/JSON contract set.
 
 ## Next Task
 
-Execute ready card
-[`625-add-tasks-status-all-repo-and-descendant-inventory.md`](../roadmaps/g04/batch-cards/625-add-tasks-status-all-repo-and-descendant-inventory.md).
+Open the next queued strict lane for `g04.022`.
