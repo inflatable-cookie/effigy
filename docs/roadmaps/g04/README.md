@@ -31,6 +31,8 @@ Current milestones:
 - [`017-planning-crate-decomposition.md`](./017-planning-crate-decomposition.md) (complete; first planning-crate decomposition pass landed)
 - [`018-oci-artifact-closeout-and-proof-matrix.md`](./018-oci-artifact-closeout-and-proof-matrix.md) (complete; OCI support now has proof, remediation, and contract closeout)
 - [`019-state-stack-and-layered-seed-framework.md`](./019-state-stack-and-layered-seed-framework.md) (active; next planning lane for layered seed/migration state, lineage, and Acowtancy-style UAT capture/rebase loops)
+- [`020-task-status-record-and-active-run-model.md`](./020-task-status-record-and-active-run-model.md) (queued; define one canonical task-status record model, active/completed persistence layout, and shared write-side ownership)
+- [`021-task-status-query-surface-and-read-model.md`](./021-task-status-query-surface-and-read-model.md) (queued; expose `effigy tasks status <selector>` and `--all` on top of the task-status record model)
 
 Architecture anchors:
 
@@ -52,6 +54,9 @@ Rules:
   seams rather than caller-local branches
 - public compatibility is preferred, but intentional cleanup breaks are allowed
   only with a roadmap card, changelog entry, guide update, and focused tests
+- queued follow-on lanes may be opened while one strict lane remains active,
+  but do not open a second active strict lane until the current one closes or
+  is deliberately paused
 
 ## Next Task
 
