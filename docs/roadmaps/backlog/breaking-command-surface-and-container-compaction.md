@@ -168,9 +168,9 @@ Leave these alone unless a later audit shows a concrete boundary problem:
 
 ### Batch 4 - Post-Merge Audit
 
-- [ ] reassess `effigy-context`, `effigy-execution`, `effigy-runtime-plan`
-- [ ] decide whether one more compaction lane is justified
-- [ ] stop if the remaining seams still represent real boundaries
+- [x] reassess `effigy-context`, `effigy-execution`, `effigy-runtime-plan`
+- [x] decide whether one more compaction lane is justified
+- [x] stop if the remaining seams still represent real boundaries
 
 ## 8) Acceptance Criteria
 
@@ -215,6 +215,30 @@ Promotion signals:
   two container crates without introducing a new circular or confused boundary
 - the active generation has a real execution window for this cleanup instead of
   treating it as open-ended background work
+
+## 12) Batch 4 Audit Result
+
+Post-merge reassessment conclusion:
+
+- keep `effigy-context`
+- keep `effigy-execution`
+- keep `effigy-runtime-plan`
+
+Why:
+
+- `effigy-context` is still a small, clean authority seam for cwd/root capture,
+  host facts, and container-handoff detection
+- `effigy-runtime-plan` is still a small, clean activation-plan seam for route,
+  readiness, alias, and lease policy
+- `effigy-execution` is larger, but it is also broadly consumed across runner,
+  Rhai, and CLI dispatch surfaces, so it still represents a real boundary
+  rather than namespace churn
+
+Current judgment:
+
+- no immediate follow-on compaction lane is justified for these three crates
+- if `effigy-execution` grows materially beyond its current dispatch/request
+  role, reassess it separately instead of bundling it into a broad crate merge
 
 ## 11) Pickup Note
 
