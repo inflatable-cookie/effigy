@@ -8,6 +8,7 @@ description = "Runtime session and orchestration helpers for Effigy"
 
 [dependencies]
 anstyle = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 effigy-catalog = { path = "../effigy-catalog" }
 effigy-containers = { path = "../effigy-containers" }
 effigy-core = { path = "../effigy-core" }

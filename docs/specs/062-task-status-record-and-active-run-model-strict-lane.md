@@ -2,9 +2,10 @@
 
 Roadmap: [`g04.020`](../roadmaps/g04/020-task-status-record-and-active-run-model.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
+Completed: 2026-05-10
 
 ## Purpose
 
@@ -24,10 +25,6 @@ inspection or caller-local runtime guesses.
 - no `.github/workflows/` edits
 - no release execution
 
-## Current Ready Card
-
-- [`621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md`](../roadmaps/g04/batch-cards/621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md)
-
 ## Execution Chain
 
 - `617` complete: opened the lane, promoted the first task-status contract
@@ -39,8 +36,8 @@ inspection or caller-local runtime guesses.
   path helpers
 - `620` complete: wired the shared task-status writer into the canonical direct
   execution path and proved succeeded, failed, cancelled, and blocked outcomes
-- `621` ready: add active-record liveness and stale-reconciliation helpers
-  before the read/query lane starts consuming task-status truth
+- `621` complete: added typed active/latest read helpers plus active-record
+  liveness and stale-reconciliation results for the later read/query lane
 
 ## Exit Condition
 
@@ -51,5 +48,5 @@ truth.
 
 ## Next Task
 
-Execute ready card
-[`621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md`](../roadmaps/g04/batch-cards/621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md).
+Open the next strict lane under `g04.021` and build the read/query surface on
+top of this completed task-status record model.

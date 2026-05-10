@@ -2,9 +2,10 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
+Completed: 2026-05-10
 Depends on:
 - [`019-state-stack-and-layered-seed-framework.md`](./019-state-stack-and-layered-seed-framework.md)
 - [`013-task-execution-request-contract.md`](../../contracts/013-task-execution-request-contract.md)
@@ -254,7 +255,22 @@ No final user-facing command contract is introduced here.
 - docs path/link checks for changed roadmap/contract surfaces
 - `git diff --check`
 
+## Closeout
+
+This lane now has:
+
+- one typed task-status identity and record model
+- canonical active/latest/history task-status paths
+- one shared write-side owner on the converged direct execution path
+- active-record liveness and stale-reconciliation helpers for later read-side
+  query surfaces
+
+The next product step is the separate read/query lane in `g04.021`.
+
 ## Next Task
 
-Execute card
-[`621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md`](./batch-cards/621-add-task-status-active-record-liveness-and-stale-reconciliation-helpers.md).
+Open the `g04.021` strict lane for:
+
+- `effigy tasks status <selector>`
+- `effigy tasks status --all`
+- text/JSON task-status query contracts

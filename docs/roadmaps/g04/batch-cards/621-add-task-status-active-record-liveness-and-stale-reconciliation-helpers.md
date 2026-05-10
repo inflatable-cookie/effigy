@@ -2,9 +2,10 @@
 
 Lane: [`062-task-status-record-and-active-run-model-strict-lane.md`](../062-task-status-record-and-active-run-model-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
+Completed: 2026-05-10
 
 ## Goal
 
@@ -44,7 +45,20 @@ local lock inspection.
 - `cargo fmt --all -- --check`
 - `git diff --check`
 
+## Closeout
+
+The runtime task-status layer can now:
+
+- load active records by key
+- load latest completed records by key
+- reconcile live active state versus stale active state
+- fall back to latest completed status without deleting stale active files
+- surface stale-record warning codes and messages for the later query/report
+  layer
+
 ## Next Task
 
-Use the new reconciliation helpers to open the read-side query lane behind
-`effigy tasks status <selector>` and `effigy tasks status --all`.
+Open the read-side query lane behind:
+
+- `effigy tasks status <selector>`
+- `effigy tasks status --all`
