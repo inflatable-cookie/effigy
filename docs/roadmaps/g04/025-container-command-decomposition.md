@@ -127,4 +127,4 @@ down, cache list, and volume list.
 
 ## Next Task
 
-Execute `647` to extract the volume command family into `volume.rs`.
+Execute `648` to extract the lifecycle command family out of `mod.rs`.

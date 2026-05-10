@@ -21,7 +21,7 @@ changing the shipped container behavior.
 
 ## Current Ready Card
 
-- `647` extract the volume command family into `volume.rs`
+- `648` extract the lifecycle command family out of `mod.rs`
 
 ## Execution Chain
 
@@ -31,8 +31,10 @@ changing the shipped container behavior.
   extraction order, and thin-dispatcher rule for `mod.rs`
 - `646` complete: extracted `cache list` and `cache prune` into `cache.rs`
   with focused container-command proof coverage
-- `647` ready: extract `volume list` and `volume prune` into `volume.rs`
+- `647` complete: extracted `volume list` and `volume prune` into `volume.rs`
   with focused container-command proof coverage
+- `648` ready: extract the lifecycle family out of `mod.rs` with focused
+  lifecycle proof coverage
 
 ## Exit Condition
 
@@ -42,4 +44,4 @@ focused container tests show no user-facing drift.
 
 ## Next Task
 
-Execute `647` to extract the volume command family into `volume.rs`.
+Execute `648` to extract the lifecycle command family out of `mod.rs`.

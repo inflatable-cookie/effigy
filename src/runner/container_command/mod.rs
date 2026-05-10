@@ -3,8 +3,6 @@
 use effigy_containers::ContainerCommandReport;
 use effigy_runtime::data::{
     run_container_data_export, run_container_data_import, run_container_data_list,
-    run_container_volume_list, run_container_volume_list_for_repo,
-    run_container_volume_prune_for_repo, run_container_volume_prune_global,
 };
 use effigy_runtime::read::{
     run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
@@ -18,9 +16,7 @@ use effigy_runtime::EffigyRuntimeError;
 
 use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::db_seed::resolve_db_seed_input_paths;
-use effigy_cli::{
-    ContainerArgs, ContainerDataSubcommand, ContainerSubcommand, ContainerVolumeSubcommand,
-};
+use effigy_cli::{ContainerArgs, ContainerDataSubcommand, ContainerSubcommand};
 use effigy_containers::{ContainerConfirmationPolicy, ContainerLifecycleOperation};
 
 use super::error::RunnerError;
@@ -32,6 +28,7 @@ use data::{
 use lifecycle::{
     lifecycle_operation_plan, run_container_eject, run_container_shell, run_container_up,
 };
+use volume::run_container_volume_command;
 
 pub(in crate::runner) use gateway_registration::{
     gateway_routes_registered_for_container, register_gateway_routes_for_container,
@@ -45,6 +42,7 @@ mod data;
 mod gateway_registration;
 mod lifecycle;
 pub(in crate::runner) mod support;
+mod volume;
 
 pub(super) fn render_container_report(report: ContainerCommandReport, output_json: bool) -> String {
     if output_json {
@@ -91,84 +89,6 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             |repo_root, policy| {
                 let _ = super::host_process::stop_host_processes_for_container(repo_root, policy);
             },
-        )
-        .map_err(Into::into);
-    }
-    if let ContainerSubcommand::Volume {
-        subcommand:
-            ContainerVolumeSubcommand::List {
-                global,
-                orphans,
-                dormant,
-            },
-    } = &args.subcommand
-    {
-        if *global {
-            if args.repo_override.is_some() {
-                return Err(RunnerError::task_invocation(
-                    "`effigy container volume list --global` does not accept `--repo`; use `effigy container volume list` for one repo or omit `--repo` for cross-runtime inventory",
-                ));
-            }
-            let cwd = crate::runner::command_context::active_invocation_cwd()?;
-            return run_container_volume_list(
-                &cwd,
-                *orphans,
-                args.output_json,
-                runtime_volume_capture,
-            )
-            .map_err(Into::into);
-        }
-        let context = resolve_active_command_context(args.repo_override.clone())?;
-        return run_container_volume_list_for_repo(
-            &context.resolved.resolved_root,
-            *dormant,
-            args.output_json,
-            runtime_volume_capture,
-        )
-        .map_err(Into::into);
-    }
-    if let ContainerSubcommand::Volume {
-        subcommand:
-            ContainerVolumeSubcommand::Prune {
-                global,
-                yes,
-                orphans,
-                dormant,
-            },
-    } = &args.subcommand
-    {
-        if *global {
-            if args.repo_override.is_some() {
-                return Err(RunnerError::task_invocation(
-                    "`effigy container volume prune --global` does not accept `--repo`; use `effigy container volume prune --dormant` for one repo or omit `--repo` for global orphan cleanup",
-                ));
-            }
-            data::maybe_confirm_destructive_container_action(
-                "`effigy container volume prune --global --orphans`",
-                "Purge ownerless Effigy-managed volumes across available runtimes.",
-                args.output_json,
-                *yes,
-            )?;
-            let cwd = crate::runner::command_context::active_invocation_cwd()?;
-            return run_container_volume_prune_global(
-                &cwd,
-                args.output_json,
-                runtime_volume_capture,
-            )
-            .map_err(Into::into);
-        }
-        debug_assert!(!orphans && *dormant);
-        data::maybe_confirm_destructive_container_action(
-            "`effigy container volume prune --dormant`",
-            "Purge dormant Effigy-managed volumes that the current repo no longer declares or mounts.",
-            args.output_json,
-            *yes,
-        )?;
-        let context = resolve_active_command_context(args.repo_override.clone())?;
-        return run_container_volume_prune_for_repo(
-            &context.resolved.resolved_root,
-            args.output_json,
-            runtime_volume_capture,
         )
         .map_err(Into::into);
     }
@@ -269,12 +189,9 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             &subcommand,
             args.output_json,
         ),
-        ContainerSubcommand::Volume {
-            subcommand: ContainerVolumeSubcommand::List { .. },
-        } => unreachable!("handled above"),
-        ContainerSubcommand::Volume {
-            subcommand: ContainerVolumeSubcommand::Prune { .. },
-        } => unreachable!("handled above"),
+        ContainerSubcommand::Volume { subcommand } => {
+            run_container_volume_command(args.repo_override.clone(), &subcommand, args.output_json)
+        }
         ContainerSubcommand::Data {
             name,
             subcommand: ContainerDataSubcommand::Export { volume, path },
@@ -603,7 +520,7 @@ pub(in crate::runner) fn runtime_error_from_runner(error: RunnerError) -> Effigy
 #[cfg(test)]
 mod tests {
     use super::*;
-    use effigy_cli::ContainerSubcommand;
+    use effigy_cli::{ContainerSubcommand, ContainerVolumeSubcommand};
 
     #[test]
     fn container_stats_all_rejects_repo_override() {
