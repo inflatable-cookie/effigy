@@ -21,7 +21,8 @@ pub const TASK_MANIFEST_FILE: &str = "effigy.toml";
 
 pub use bundles::{
     export_bundle, get_bundle, list_bundle_default_paths, list_bundles, render_bundle_defaults,
-    BundleExport, BundleInputSpec, BundleInputType, BundleSpec,
+    sync_bundle_source, BundleExport, BundleInputSpec, BundleInputType, BundleSourceType,
+    BundleSpec, BundleSyncReport,
 };
 pub use composition::{
     load_task_manifest_with_inspection, LoadedTaskManifest, ManifestCompositionEdge,

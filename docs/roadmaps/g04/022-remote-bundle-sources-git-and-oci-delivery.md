@@ -157,10 +157,10 @@ Existing `resolve_local_bundle_defaults` consumes `local_path` unchanged.
    Status: complete
 5. **Add `effigy bundle sync`**: resolve repo context, iterate remote sources,
    force refresh
-   Status: ready next
+   Status: complete
 6. **Extend `effigy bundle inspect`**: show source type, cache path, version,
    stale flag
-   Status: pending
+   Status: ready next
 7. **Update guides and contracts**: local-bundle guide, config reference,
    changelog entry
    Status: pending
@@ -181,4 +181,4 @@ Existing `resolve_local_bundle_defaults` consumes `local_path` unchanged.
 ## Next Task
 
 Execute
-[`632-add-bundle-sync-for-remote-sources.md`](./batch-cards/632-add-bundle-sync-for-remote-sources.md).
+[`633-extend-bundle-inspect-with-source-metadata.md`](./batch-cards/633-extend-bundle-inspect-with-source-metadata.md).

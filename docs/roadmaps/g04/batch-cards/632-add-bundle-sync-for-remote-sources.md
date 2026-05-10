@@ -2,7 +2,7 @@
 
 Lane: [`065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md`](../065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -28,7 +28,14 @@ into bundle inspect yet.
 - shipped/path bundle sources stay bounded and clearly reported
 - focused CLI and source-refresh proofs cover both remote source kinds
 
+## Outcome
+
+- `effigy bundle sync` now refreshes repo-local git and OCI bundle sources
+- shipped/path bundle sources stay bounded as not-applicable
+- sync reports whether the cached bundle root changed and returns
+  `effigy.bundle.sync.v1` in JSON mode
+- remote-source refresh proofs now cover both git and OCI source kinds
+
 ## Next Task
 
-Add the `bundle sync` parser, dispatch, and remote-source refresh behavior on
-top of the completed shared bundle-source resolver seam.
+Execute [`633-extend-bundle-inspect-with-source-metadata.md`](./633-extend-bundle-inspect-with-source-metadata.md).

@@ -14,6 +14,7 @@ pub(crate) fn render_bundle_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
             "effigy bundle list [--json]",
             "effigy bundle inspect <BUNDLE> [--json]",
             "effigy bundle export <BUNDLE> --path <DIR> [--json]",
+            "effigy bundle sync [--json]",
             "effigy --json bundle list",
             "effigy --json bundle inspect decodelabs",
             "effigy --json bundle export underlay --path bundles/underlay",
@@ -24,12 +25,14 @@ pub(crate) fn render_bundle_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
                 "--path <DIR>",
                 "Export a shipped bundle as a local bundle directory",
             ),
+            ("sync", "Refresh the current repo's remote git or OCI bundle source"),
             ("-h, --help", "Print command help"),
         ],
         &[
             "effigy bundle list",
             "effigy bundle inspect decodelabs",
             "effigy bundle export underlay --path bundles/underlay",
+            "effigy bundle sync",
             "effigy --json bundle inspect decodelabs",
         ],
     )

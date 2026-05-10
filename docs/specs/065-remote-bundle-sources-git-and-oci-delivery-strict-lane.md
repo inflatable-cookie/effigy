@@ -32,7 +32,7 @@ This lane owns:
 
 ## Current Ready Card
 
-- [`632-add-bundle-sync-for-remote-sources.md`](../roadmaps/g04/batch-cards/632-add-bundle-sync-for-remote-sources.md)
+- [`633-extend-bundle-inspect-with-source-metadata.md`](../roadmaps/g04/batch-cards/633-extend-bundle-inspect-with-source-metadata.md)
 
 ## Execution Chain
 
@@ -51,8 +51,11 @@ This lane owns:
 - `631` complete: landed the OCI bundle-source resolver on top of the shared
   artifact transport, materialized OCI bundle roots into the shared cache, and
   added digest-backed stale detection on cached bundle roots
-- `632` ready: add explicit `bundle sync` for git/OCI bundle sources before
-  widening the inspect surface
+- `632` complete: landed repo-local `bundle sync`, refreshed git/OCI bundle
+  sources through the shared resolver seam, and reported bounded source-sync
+  outcomes in text/JSON
+- `633` ready: extend `bundle inspect` with source-aware metadata on top of the
+  completed source resolver and sync surfaces
 
 ## Exit Condition
 
@@ -63,4 +66,4 @@ and no longer accepts `base_path`.
 ## Next Task
 
 Execute
-[`632-add-bundle-sync-for-remote-sources.md`](../roadmaps/g04/batch-cards/632-add-bundle-sync-for-remote-sources.md).
+[`633-extend-bundle-inspect-with-source-metadata.md`](../roadmaps/g04/batch-cards/633-extend-bundle-inspect-with-source-metadata.md).

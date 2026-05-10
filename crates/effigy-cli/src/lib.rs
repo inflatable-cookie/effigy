@@ -626,6 +626,7 @@ pub enum BundleSubcommand {
     List,
     Inspect { bundle: String },
     Export { bundle: String, path: PathBuf },
+    Sync,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

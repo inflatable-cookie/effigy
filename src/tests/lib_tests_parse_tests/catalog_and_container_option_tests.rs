@@ -82,6 +82,23 @@ fn parse_bundle_export_requires_path() {
 }
 
 #[test]
+fn parse_bundle_sync_supports_json() {
+    let cmd = parse_command(vec![
+        "bundle".to_owned(),
+        "sync".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Bundle(BundleArgs {
+            subcommand: BundleSubcommand::Sync,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_exec_supports_repo_service_and_json() {
     let cmd = parse_command(vec![
         "exec".to_owned(),

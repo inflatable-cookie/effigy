@@ -410,7 +410,7 @@ description = "Database names used for bootstrap db seed target validation."
     fs::write(
         worktree.join("effigy.toml"),
         r#"[bundle]
-base_path = "bundles/plain"
+base = { type = "path", dir = "bundles/plain" }
 databases = ["contactpatch"]
 
 [tasks."bootstrap:db-seed"]
@@ -477,7 +477,7 @@ description = "Database names used for bootstrap db seed target validation."
     fs::write(
         worktree.join("effigy.toml"),
         r#"[bundle]
-base_path = "bundles/plain"
+base = { type = "path", dir = "bundles/plain" }
 databases = ["cbs", "cbs-mortcalc"]
 
 [bootstrap]

@@ -54,9 +54,9 @@ pub struct BundleExport {
 
 // The remote-source variants are introduced here so later git/OCI batches can
 // widen the same source seam without another model break.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BundleSourceType {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BundleSourceType {
     Shipped,
     Path,
     Git,
@@ -73,6 +73,16 @@ pub(crate) struct ResolvedBundleSource {
     pub source_path: PathBuf,
     pub version_hint: Option<String>,
     pub stale: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct BundleSyncReport {
+    pub source_type: BundleSourceType,
+    pub source_path: PathBuf,
+    pub local_path: Option<PathBuf>,
+    pub version_hint: Option<String>,
+    pub changed: bool,
+    pub applicable: bool,
 }
 
 pub(crate) fn apply_bundle_defaults(
@@ -143,6 +153,14 @@ fn resolve_materialized_bundle_source(
     manifest_path: &Path,
     selection: &BundleSelection,
 ) -> Result<ResolvedBundleSource, ManifestError> {
+    resolve_materialized_bundle_source_with_options(manifest_path, selection, false)
+}
+
+fn resolve_materialized_bundle_source_with_options(
+    manifest_path: &Path,
+    selection: &BundleSelection,
+    refresh_remote: bool,
+) -> Result<ResolvedBundleSource, ManifestError> {
     match selection {
         BundleSelection::Shipped { name } => Ok(ResolvedBundleSource {
             source_type: BundleSourceType::Shipped,
@@ -159,9 +177,11 @@ fn resolve_materialized_bundle_source(
             stale: false,
         }),
         BundleSelection::Git { url, reference } => {
-            resolve_git_bundle_source(manifest_path, url, reference.as_deref())
+            resolve_git_bundle_source(manifest_path, url, reference.as_deref(), refresh_remote)
         }
-        BundleSelection::Oci { url } => resolve_oci_bundle_source(manifest_path, url),
+        BundleSelection::Oci { url } => {
+            resolve_oci_bundle_source(manifest_path, url, refresh_remote)
+        }
     }
 }
 
@@ -194,17 +214,13 @@ fn resolve_git_bundle_source(
     manifest_path: &Path,
     url: &str,
     reference: Option<&str>,
+    _refresh_remote: bool,
 ) -> Result<ResolvedBundleSource, ManifestError> {
-    let cache_root = bundle_cache_home_dir(manifest_path)?.join("cache/bundles/git");
-    let identity = canonical_git_cache_identity(url);
-    let cache_key = sha256_hex(identity.as_bytes());
+    let local_path = git_bundle_cache_path(manifest_path, url, reference)?;
     let reference = reference
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("main");
-    let local_path = cache_root
-        .join(cache_key)
-        .join(sanitize_bundle_cache_segment(reference));
     ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
     let version_hint = Some(git_head_revision(manifest_path, &local_path)?);
     Ok(ResolvedBundleSource {
@@ -219,19 +235,26 @@ fn resolve_git_bundle_source(
 fn resolve_oci_bundle_source(
     manifest_path: &Path,
     url: &str,
+    refresh_remote: bool,
 ) -> Result<ResolvedBundleSource, ManifestError> {
     #[cfg(test)]
     if let Some(adapter) = test_oci_artifact_adapter() {
-        return resolve_oci_bundle_source_with_adapter(manifest_path, url, adapter.as_ref());
+        return resolve_oci_bundle_source_with_adapter(
+            manifest_path,
+            url,
+            adapter.as_ref(),
+            refresh_remote,
+        );
     }
     let adapter = OrasCliArtifactAdapter::default();
-    resolve_oci_bundle_source_with_adapter(manifest_path, url, &adapter)
+    resolve_oci_bundle_source_with_adapter(manifest_path, url, &adapter, refresh_remote)
 }
 
 fn resolve_oci_bundle_source_with_adapter(
     manifest_path: &Path,
     url: &str,
     adapter: &dyn OciArtifactAdapter,
+    refresh_remote: bool,
 ) -> Result<ResolvedBundleSource, ManifestError> {
     let parsed = ArtifactSourceRef::parse(format!("oci://{url}")).map_err(|error| {
         ManifestError::Compose {
@@ -261,7 +284,7 @@ fn resolve_oci_bundle_source_with_adapter(
     let needs_pull = !local_path.is_dir() || cached_digest.is_none();
     let stale = !needs_pull && cached_digest.as_ref() != digest.as_ref();
 
-    if needs_pull {
+    if needs_pull || (refresh_remote && stale) {
         let report = adapter
             .pull(&OciArtifactPullRequest {
                 reference: reference.clone(),
@@ -283,7 +306,7 @@ fn resolve_oci_bundle_source_with_adapter(
         local_path,
         source_path: PathBuf::from(format!("oci://{url}")),
         version_hint: digest,
-        stale,
+        stale: stale && !refresh_remote,
     })
 }
 
@@ -446,6 +469,23 @@ fn sanitize_bundle_cache_segment(value: &str) -> String {
         .collect()
 }
 
+fn git_bundle_cache_path(
+    manifest_path: &Path,
+    url: &str,
+    reference: Option<&str>,
+) -> Result<PathBuf, ManifestError> {
+    let cache_root = bundle_cache_home_dir(manifest_path)?.join("cache/bundles/git");
+    let identity = canonical_git_cache_identity(url);
+    let cache_key = sha256_hex(identity.as_bytes());
+    let reference = reference
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("main");
+    Ok(cache_root
+        .join(cache_key)
+        .join(sanitize_bundle_cache_segment(reference)))
+}
+
 fn oci_bundle_cache_path(manifest_path: &Path, reference: &str) -> Result<PathBuf, ManifestError> {
     let locator = oci_bundle_cache_locator(reference);
     Ok(bundle_cache_home_dir(manifest_path)?
@@ -603,6 +643,80 @@ fn bundle_cache_home_dir(manifest_path: &Path) -> Result<PathBuf, ManifestError>
         detail: "HOME is not set; cannot resolve bundle cache path".to_owned(),
     })?;
     Ok(PathBuf::from(home).join(".effigy"))
+}
+
+pub fn sync_bundle_source(manifest_path: &Path) -> Result<Option<BundleSyncReport>, ManifestError> {
+    let Some(bundle) = crate::composition::load_manifest_bundle_config(manifest_path)? else {
+        return Ok(None);
+    };
+    let selection = resolve_bundle_selection(manifest_path, &bundle)?;
+    match &selection {
+        BundleSelection::Shipped { name } => Ok(Some(BundleSyncReport {
+            source_type: BundleSourceType::Shipped,
+            source_path: bundle_source_path(name),
+            local_path: None,
+            version_hint: None,
+            changed: false,
+            applicable: false,
+        })),
+        BundleSelection::Path { path } => Ok(Some(BundleSyncReport {
+            source_type: BundleSourceType::Path,
+            source_path: path.clone(),
+            local_path: Some(path.clone()),
+            version_hint: None,
+            changed: false,
+            applicable: false,
+        })),
+        BundleSelection::Git { url, reference } => {
+            let before = read_cached_git_bundle_version(manifest_path, url, reference.as_deref())?;
+            let resolved =
+                resolve_materialized_bundle_source_with_options(manifest_path, &selection, true)?;
+            Ok(Some(BundleSyncReport {
+                source_type: BundleSourceType::Git,
+                source_path: resolved.source_path,
+                local_path: Some(resolved.local_path),
+                changed: before != resolved.version_hint,
+                version_hint: resolved.version_hint,
+                applicable: true,
+            }))
+        }
+        BundleSelection::Oci { .. } => {
+            let before = read_cached_oci_bundle_version(manifest_path, &selection)?;
+            let resolved =
+                resolve_materialized_bundle_source_with_options(manifest_path, &selection, true)?;
+            Ok(Some(BundleSyncReport {
+                source_type: BundleSourceType::Oci,
+                source_path: resolved.source_path,
+                local_path: Some(resolved.local_path),
+                changed: before != resolved.version_hint,
+                version_hint: resolved.version_hint,
+                applicable: true,
+            }))
+        }
+    }
+}
+
+fn read_cached_git_bundle_version(
+    manifest_path: &Path,
+    url: &str,
+    reference: Option<&str>,
+) -> Result<Option<String>, ManifestError> {
+    let local_path = git_bundle_cache_path(manifest_path, url, reference)?;
+    if !local_path.join(".git").is_dir() {
+        return Ok(None);
+    }
+    git_head_revision(manifest_path, &local_path).map(Some)
+}
+
+fn read_cached_oci_bundle_version(
+    manifest_path: &Path,
+    selection: &BundleSelection,
+) -> Result<Option<String>, ManifestError> {
+    let BundleSelection::Oci { url } = selection else {
+        return Ok(None);
+    };
+    let local_path = oci_bundle_cache_path(manifest_path, url)?;
+    read_cached_oci_bundle_digest(&oci_bundle_metadata_path(&local_path))
 }
 
 #[cfg(test)]
@@ -1657,6 +1771,7 @@ mod tests {
     };
     use std::cell::Cell;
     use std::rc::Rc;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     struct TestBundleHomeGuard(Option<PathBuf>);
     struct TestOciArtifactAdapterGuard(Option<Rc<dyn OciArtifactAdapter>>);
@@ -1774,10 +1889,12 @@ run = "serve {{ inputs.host }}"
             &self,
             _request: &OciArtifactPullRequest,
         ) -> Result<OciArtifactPullReport, OciArtifactError> {
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
             self.pulls.set(self.pulls.get() + 1);
             let pulled_root = std::env::temp_dir().join(format!(
-                "effigy-oci-bundle-pull-{}-{}",
+                "effigy-oci-bundle-pull-{}-{}-{}",
                 std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed),
                 self.pulls.get()
             ));
             write_local_bundle_files(&pulled_root);
@@ -1970,5 +2087,91 @@ run = "serve {{ inputs.host }}"
         let rendered = error.to_string();
         assert!(rendered.contains("unauthorized"));
         assert!(rendered.contains("oras login ghcr.io"));
+    }
+
+    #[test]
+    fn sync_git_bundle_source_reports_ref_changes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bundle_home = tmp.path().join("bundle-home");
+        let _home = with_test_bundle_home(&bundle_home);
+
+        let source_repo = tmp.path().join("bundle-source");
+        write_local_bundle_repo(&source_repo);
+
+        let manifest_path = tmp.path().join("consumer.toml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                "[bundle]\nbase = {{ type = \"git\", url = {:?}, ref = \"main\" }}\n",
+                source_repo.display().to_string()
+            ),
+        )
+        .expect("write manifest");
+
+        let first = sync_bundle_source(&manifest_path)
+            .expect("sync source")
+            .expect("bundle sync report");
+        assert!(first.applicable);
+        assert!(first.changed);
+
+        std::fs::write(source_repo.join("README.md"), "next").expect("write next revision");
+        git(&["add", "."], &source_repo);
+        git(&["commit", "-m", "next"], &source_repo);
+
+        let second = sync_bundle_source(&manifest_path)
+            .expect("sync source")
+            .expect("bundle sync report");
+        assert!(second.applicable);
+        assert!(second.changed);
+        assert_ne!(first.version_hint, second.version_hint);
+
+        let third = sync_bundle_source(&manifest_path)
+            .expect("sync source")
+            .expect("bundle sync report");
+        assert!(third.applicable);
+        assert!(!third.changed);
+        assert_eq!(third.version_hint, second.version_hint);
+    }
+
+    #[test]
+    fn sync_oci_bundle_source_refreshes_stale_cache_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bundle_home = tmp.path().join("bundle-home");
+        let _home = with_test_bundle_home(&bundle_home);
+        let manifest_path = tmp.path().join("consumer.toml");
+        std::fs::write(
+            &manifest_path,
+            "[bundle]\nbase = { type = \"oci\", url = \"ghcr.io/acme/bundle:v1\" }\n",
+        )
+        .expect("write manifest");
+
+        let _adapter = with_test_oci_adapter(Rc::new(FakeOciBundleAdapter {
+            digest: "sha256:abc123".to_owned(),
+            pulls: Cell::new(0),
+        }));
+        let first = sync_bundle_source(&manifest_path)
+            .expect("sync source")
+            .expect("bundle sync report");
+        assert!(first.applicable);
+        assert!(first.changed);
+        assert_eq!(first.version_hint.as_deref(), Some("sha256:abc123"));
+
+        let _adapter = with_test_oci_adapter(Rc::new(FakeOciBundleAdapter {
+            digest: "sha256:def456".to_owned(),
+            pulls: Cell::new(0),
+        }));
+        let second = sync_bundle_source(&manifest_path)
+            .expect("sync source")
+            .expect("bundle sync report");
+        assert!(second.applicable);
+        assert!(second.changed);
+        assert_eq!(second.version_hint.as_deref(), Some("sha256:def456"));
+
+        let third = sync_bundle_source(&manifest_path)
+            .expect("sync source")
+            .expect("bundle sync report");
+        assert!(third.applicable);
+        assert!(!third.changed);
+        assert_eq!(third.version_hint.as_deref(), Some("sha256:def456"));
     }
 }

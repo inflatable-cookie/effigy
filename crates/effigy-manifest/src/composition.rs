@@ -6,6 +6,7 @@ use toml::Value;
 
 use super::TaskManifest;
 use crate::bundles::apply_bundle_defaults;
+use crate::config_sections::ManifestBundleConfig;
 use crate::ManifestError;
 
 #[derive(Debug)]
@@ -138,6 +139,25 @@ pub fn load_task_manifest_with_inspection(
         effective_manifest,
         bundle_root: bundle_defaults.map(|defaults| defaults.bundle_root),
     })
+}
+
+pub(crate) fn load_manifest_bundle_config(
+    manifest_path: &Path,
+) -> Result<Option<ManifestBundleConfig>, ManifestError> {
+    let mut session = CompositionSession::default();
+    let composed = load_composed_value(manifest_path, &mut session)?;
+    composed
+        .value
+        .as_table()
+        .and_then(|table| table.get("bundle"))
+        .cloned()
+        .map(|value| {
+            value.try_into().map_err(|error| ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!("invalid `[bundle]` section: {error}"),
+            })
+        })
+        .transpose()
 }
 
 fn load_composed_value(

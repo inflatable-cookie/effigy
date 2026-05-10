@@ -482,6 +482,7 @@ where
         "list" => parse_bundle_list(args),
         "inspect" => parse_bundle_inspect(args),
         "export" => parse_bundle_export(args),
+        "sync" => parse_bundle_sync(args),
         other => Err(unknown_argument(other)),
     }
 }
@@ -572,6 +573,27 @@ where
 
     Ok(Command::Bundle(BundleArgs {
         subcommand: BundleSubcommand::Export { bundle, path },
+        output_json,
+    }))
+}
+
+fn parse_bundle_sync<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let args = args.into_iter();
+    let mut output_json = false;
+
+    for arg in args {
+        match arg.as_str() {
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Bundle(BundleArgs {
+        subcommand: BundleSubcommand::Sync,
         output_json,
     }))
 }

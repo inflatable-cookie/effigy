@@ -111,6 +111,7 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.scan.attention-markers.v1`
 - `effigy.scan.stale-suppressions.v1`
 - `effigy.config.v1`
+- `effigy.bundle.sync.v1`
 - `effigy.test.plan.v1`
 - `effigy.test.results.v1`
 - `effigy.watch.v1`
