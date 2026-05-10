@@ -96,14 +96,14 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
-      "command": "effigy --json completion bash",
+      "command": "effigy --json config completion bash --export",
       "surface": "built-in task",
       "status": "active"
     },
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
-      "command": "effigy --json completion candidates --prefix farm",
+      "command": "effigy --json config completion candidates --prefix farm",
       "surface": "built-in task",
       "status": "active"
     },

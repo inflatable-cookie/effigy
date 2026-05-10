@@ -5,14 +5,38 @@ use effigy_cli::TaskInvocation;
 use super::super::arg_parser::{BuiltinArgParser, ParseLoopAction};
 use super::scripts::CompletionShell;
 use super::surface::{
-    COMPLETION_CANDIDATES_SUBCOMMAND, COMPLETION_SHELL_TARGETS_QUOTED,
-    COMPLETION_TARGETS_WITH_CANDIDATES_QUOTED,
+    COMPLETION_ACTION_TARGETS_QUOTED, COMPLETION_CANDIDATES_SUBCOMMAND,
+    COMPLETION_SHELL_TARGETS_QUOTED, COMPLETION_TARGETS_WITH_CANDIDATES_QUOTED,
 };
 use crate::BuiltinError;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CompletionAction {
+    Install,
+    Export,
+}
+
+impl CompletionAction {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Install => "install",
+            Self::Export => "export",
+        }
+    }
+
+    fn parse_flag(raw: &str) -> Option<Self> {
+        match raw {
+            "--install" => Some(Self::Install),
+            "--export" => Some(Self::Export),
+            _ => None,
+        }
+    }
+}
 
 pub(super) struct CompletionRequest {
     pub(super) output_json: bool,
     pub(super) shell: Option<CompletionShell>,
+    pub(super) action: Option<CompletionAction>,
 }
 
 pub(super) struct CompletionCandidatesRequest {
@@ -47,10 +71,27 @@ pub(super) fn parse_completion_request(
     let mut parser = BuiltinArgParser::new(args);
     let mut output_json = false;
     let mut shell: Option<CompletionShell> = None;
+    let mut action: Option<CompletionAction> = None;
 
     parser.parse_loop_collect_unknown(|parser, arg| {
         if parser.consume_json_flag(arg, &mut output_json) {
             return Ok(ParseLoopAction::Handled);
+        }
+        if let Some(parsed_action) = CompletionAction::parse_flag(arg) {
+            if action.is_some() {
+                return Err(BuiltinError::task_invocation(format!(
+                    "`{}` accepts exactly one completion action ({COMPLETION_ACTION_TARGETS_QUOTED})",
+                    task.name,
+                )));
+            }
+            action = Some(parsed_action);
+            return Ok(ParseLoopAction::Handled);
+        }
+        if arg == "--install" || arg == "--export" {
+            return Err(BuiltinError::task_invocation(format!(
+                "`{}` accepts exactly one completion action ({COMPLETION_ACTION_TARGETS_QUOTED})",
+                task.name,
+            )));
         }
         if shell.is_some() {
             return Err(BuiltinError::task_invocation(format!(
@@ -68,7 +109,20 @@ pub(super) fn parse_completion_request(
         Ok(ParseLoopAction::Handled)
     })?;
 
-    Ok(CompletionRequest { output_json, shell })
+    if matches!(action, Some(CompletionAction::Install)) && args.iter().any(|arg| arg == "--export")
+        || matches!(action, Some(CompletionAction::Export))
+            && args.iter().any(|arg| arg == "--install")
+    {
+        return Err(BuiltinError::task_invocation(
+            "`config completion` accepts either `--install` or `--export`, not both",
+        ));
+    }
+
+    Ok(CompletionRequest {
+        output_json,
+        shell,
+        action,
+    })
 }
 
 pub(super) fn parse_completion_candidates_request(

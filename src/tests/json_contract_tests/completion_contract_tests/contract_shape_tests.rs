@@ -7,9 +7,12 @@ use crate::runner::json_contract_tests::prelude::{
 fn builtin_completion_json_contract_has_versioned_shape() {
     let root = temp_workspace("completion-json-contract");
     write_manifest(&root.join("effigy.toml"), "");
-    let parsed = run_invocation_json(root, "completion", &["bash", "--json"]);
-    assert_schema_v1(&parsed, "effigy.completion.v1");
+    let parsed = run_invocation_json(root, "completion", &["bash", "--export", "--json"]);
+    assert_schema_v1(&parsed, "effigy.completion.v2");
     assert_eq!(parsed["shell"], "bash");
+    assert_eq!(parsed["action"], "export");
+    assert_eq!(parsed["prompted_shell"], false);
+    assert_eq!(parsed["prompted_action"], false);
     assert!(parsed["script"].is_string());
     assert!(parsed["commands"].is_array());
 }

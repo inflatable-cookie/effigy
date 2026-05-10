@@ -18,18 +18,24 @@ fn builtin_completion_parser_contracts_are_stable() {
         }
     }
 
-    let shell = parse_completion_contract_request(&task, &string_args(&["zsh", "--json"]))
-        .expect("completion parse");
+    let shell =
+        parse_completion_contract_request(&task, &string_args(&["zsh", "--export", "--json"]))
+            .expect("completion parse");
     match shell {
         CompletionParseContract::Candidates => panic!("expected completion shell parser mode"),
-        CompletionParseContract::Shell { output_json, shell } => {
+        CompletionParseContract::Shell {
+            output_json,
+            shell,
+            action,
+        } => {
             assert!(output_json);
             assert_eq!(shell, Some("zsh"));
+            assert_eq!(action, Some("export"));
         }
     }
 
     assert_parser_task_invocation_error(
         parse_completion_contract_request(&task, &string_args(&["wat"])),
-        "invalid shell `wat` for `completion` (expected `bash`, `zsh`, `fish`, or `candidates`)",
+        "invalid shell `wat` for `builtin-parse` (expected `bash`, `zsh`, `fish`, or `candidates`)",
     );
 }

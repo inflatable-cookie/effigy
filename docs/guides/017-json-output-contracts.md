@@ -118,7 +118,7 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.init.list.v1`
 - `effigy.migrate.v1`
 - `effigy.unlock.v1`
-- `effigy.completion.v1`
+- `effigy.completion.v2`
 - `effigy.completion.candidates.v1`
 - `effigy.task.run.v1`
 - `effigy.artifact.inspect.v1`
@@ -152,10 +152,10 @@ effigy --json test --plan
 effigy --json test
 effigy --json watch --owner effigy --once test
 effigy --json init --dry-run
-effigy --json migrate --apply
-effigy --json unlock --all --yes
-effigy --json completion bash
-effigy --json completion candidates --prefix farm
+effigy --json tasks migrate --apply
+effigy --json tasks unlock --all --yes
+effigy --json config completion bash --export
+effigy --json config completion candidates --prefix farm
 effigy --json state plan ./state/acowtancy-uat.toml
 effigy --json state plan uat --write-report
 effigy --json state apply uat
@@ -171,7 +171,7 @@ See `026-json-payload-examples.md` for realistic sample responses for each schem
 
 ### Completion Candidates Telemetry (`effigy.completion.candidates.v1`)
 
-`effigy --json completion candidates` includes cache diagnostics for selector memoization:
+`effigy --json config completion candidates` includes cache diagnostics for selector memoization:
 
 - `cache_hit` (boolean): whether candidates were served from in-process cache.
 - `cache_state` (string): `miss_initial`, `hit`, `miss_ttl`, or `miss_manifest_change`.

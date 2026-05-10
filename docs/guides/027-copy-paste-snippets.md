@@ -300,14 +300,16 @@ Use when you want deterministic local up-to-date checks for expensive tasks.
 Generate completions for your shell:
 
 ```sh
-# Bash
-effigy config completion bash > /usr/local/share/bash-completion/completions/effigy
+# Interactive setup
+effigy config completion
 
-# Zsh
-effigy config completion zsh > /usr/local/share/zsh/site-functions/_effigy
+# Explicit user-local installs
+effigy config completion bash --install
+effigy config completion zsh --install
+effigy config completion fish --install
 
-# Fish
-effigy config completion fish > ~/.config/fish/completions/effigy.fish
+# Raw script export
+effigy config completion bash --export > ~/.local/share/bash-completion/completions/effigy
 ```
 
 List available selector candidates (useful for IDE integration):

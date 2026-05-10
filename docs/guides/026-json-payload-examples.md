@@ -915,14 +915,17 @@ Notes:
 
 ## Completion
 
-### 18) Completion (`effigy.completion.v1`)
+### 18) Completion (`effigy.completion.v2`)
 
 ```json
 {
-  "schema": "effigy.completion.v1",
+  "schema": "effigy.completion.v2",
   "schema_version": 1,
   "ok": true,
   "shell": "bash",
+  "action": "export",
+  "prompted_shell": false,
+  "prompted_action": false,
   "script": "# bash completion for effigy\n...",
   "commands": [
     "help",

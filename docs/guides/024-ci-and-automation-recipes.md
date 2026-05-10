@@ -374,7 +374,7 @@ Use this when CI needs deterministic completion-cache policy behavior.
     EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS: "750"
   run: |
     set -euo pipefail
-    effigy --json completion candidates --prefix farm > completion-candidates.json
+    effigy --json config completion candidates --prefix farm > completion-candidates.json
     jq -e '.schema == "effigy.command.v1"' completion-candidates.json >/dev/null
     jq -e '.result.schema == "effigy.completion.candidates.v1"' completion-candidates.json >/dev/null
     jq -e '.result.effective_cache_ttl_ms == 750' completion-candidates.json >/dev/null
@@ -389,7 +389,7 @@ Invalid env fallback check:
     EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS: "not-a-number"
   run: |
     set -euo pipefail
-    effigy --json completion candidates --prefix farm > completion-candidates-invalid.json
+    effigy --json config completion candidates --prefix farm > completion-candidates-invalid.json
     jq -e '.result.effective_cache_ttl_ms == 2000' completion-candidates-invalid.json >/dev/null
     jq -e '.result.cache_ttl_source == "env_invalid"' completion-candidates-invalid.json >/dev/null
 ```
@@ -400,7 +400,7 @@ Miss-path nullability check:
 - name: Assert miss telemetry keeps hit-only ttl field null
   run: |
     set -euo pipefail
-    effigy --json completion candidates --prefix farm > completion-candidates-miss.json
+    effigy --json config completion candidates --prefix farm > completion-candidates-miss.json
     jq -e '.result.cache_state != "hit"' completion-candidates-miss.json >/dev/null
     jq -e '.result.cache_age_ms == null' completion-candidates-miss.json >/dev/null
     jq -e '.result.cache_ttl_ms == null' completion-candidates-miss.json >/dev/null
@@ -414,8 +414,8 @@ Warm-hit consistency check:
     EFFIGY_COMPLETION_CANDIDATES_CACHE_TTL_MS: "750"
   run: |
     set -euo pipefail
-    effigy --json completion candidates --prefix farm > completion-candidates-first.json
-    effigy --json completion candidates --prefix farm > completion-candidates-second.json
+    effigy --json config completion candidates --prefix farm > completion-candidates-first.json
+    effigy --json config completion candidates --prefix farm > completion-candidates-second.json
     jq -e '.result.cache_state == "hit"' completion-candidates-second.json >/dev/null
     jq -e '.result.cache_ttl_ms != null' completion-candidates-second.json >/dev/null
     jq -e '.result.cache_ttl_ms == .result.effective_cache_ttl_ms' completion-candidates-second.json >/dev/null

@@ -60,6 +60,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `config::user_set`, `config::user_unset`) so first-party scripts no longer
   need `effigy::run_json(...)` escape hatches for those shipped operator
   surfaces.
+- **Interactive completion setup:** `effigy config completion` now supports
+  `--install` and `--export`, prompts for shell and action on a real TTY when
+  omitted, installs user-local completion files for bash/zsh/fish, wires
+  bash/zsh startup automatically when `--install` is selected, and upgrades the
+  JSON surface to `effigy.completion.v2`.
 
 ### Fixed
 - **State capture standalone manifest parsing** now treats a positional

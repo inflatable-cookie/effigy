@@ -21,7 +21,7 @@ pub(in crate::runner::tests) fn builtin_shared_help_precedence_cases(
             &["--help", "--wat"],
             &[
                 "completion Help",
-                "effigy config completion <bash|zsh|fish>",
+                "effigy config completion [<bash|zsh|fish>] [--install|--export]",
             ],
         ),
         builtin_help_case(

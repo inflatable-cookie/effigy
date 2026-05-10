@@ -32,7 +32,7 @@ fn builtin_completion_bash_script_uses_dynamic_candidates_probe() {
     let root = temp_workspace("completion-bash-dynamic-candidates");
     write_manifest(&root.join("effigy.toml"), "");
 
-    let out = run_completion_task(root, &["bash"]).expect("run completion bash");
+    let out = run_completion_task(root, &["bash", "--export"]).expect("run completion bash");
     assert!(out.contains("effigy config completion candidates --prefix \"$cur\""));
 }
 

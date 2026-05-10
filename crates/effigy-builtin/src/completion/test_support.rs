@@ -1,5 +1,6 @@
 use effigy_cli::TaskInvocation;
 
+use super::request::CompletionAction;
 use super::request::{parse_completion_parsed_request, CompletionParsedRequest};
 use crate::BuiltinError;
 
@@ -8,6 +9,7 @@ pub enum CompletionParseContract {
     Shell {
         output_json: bool,
         shell: Option<&'static str>,
+        action: Option<&'static str>,
     },
 }
 
@@ -20,6 +22,7 @@ pub fn parse_completion_contract_request(
         CompletionParsedRequest::Shell(request) => Ok(CompletionParseContract::Shell {
             output_json: request.output_json,
             shell: request.shell.map(|value| value.as_str()),
+            action: request.action.map(CompletionAction::as_str),
         }),
     }
 }

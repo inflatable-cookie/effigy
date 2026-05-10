@@ -28,7 +28,7 @@ fn run_manifest_task_builtin_help_topics_render_expected_content() {
             &["--help"],
             &[
                 "completion Help",
-                "effigy config completion <bash|zsh|fish> [--json]",
+                "effigy config completion [<bash|zsh|fish>] [--install|--export] [--json]",
             ],
         ),
     ];
@@ -41,15 +41,19 @@ fn run_manifest_task_builtin_completion_ok_contract_table() {
     let cases = [
         builtin_invocation_case(
             "builtin-completion-bash",
-            &["bash"],
-            &["complete -F _effigy effigy", "cache completion"],
+            &["bash", "--export"],
+            &[
+                "complete -F _effigy effigy",
+                "effigy config completion candidates --prefix \"$cur\"",
+            ],
         ),
         builtin_invocation_case(
             "builtin-completion-json",
-            &["zsh", "--json"],
+            &["zsh", "--export", "--json"],
             &[
-                "\"schema\": \"effigy.completion.v1\"",
+                "\"schema\": \"effigy.completion.v2\"",
                 "\"shell\": \"zsh\"",
+                "\"action\": \"export\"",
                 "\"commands\"",
             ],
         ),
@@ -64,12 +68,22 @@ fn run_manifest_task_builtin_completion_argument_validation_table() {
         builtin_invocation_case(
             "builtin-completion-shell-required",
             &[],
-            &["`config completion` requires a shell target (`bash`, `zsh`, or `fish`)"],
+            &["`config completion` requires a shell target (`bash`, `zsh`, or `fish`) when prompting is unavailable"],
         ),
         builtin_invocation_case(
             "builtin-completion-multiple-shell-targets",
             &["bash", "zsh"],
-            &["`completion` accepts exactly one shell target (`bash`, `zsh`, or `fish`)"],
+            &["`config completion` accepts exactly one shell target (`bash`, `zsh`, or `fish`)"],
+        ),
+        builtin_invocation_case(
+            "builtin-completion-action-required",
+            &["bash"],
+            &["`config completion` requires an action (`--install` or `--export`) when prompting is unavailable"],
+        ),
+        builtin_invocation_case(
+            "builtin-completion-conflicting-actions",
+            &["bash", "--install", "--export"],
+            &["`config completion` accepts exactly one completion action (`--install` or `--export`)"],
         ),
         builtin_invocation_case(
             "builtin-completion-candidates-missing-prefix-value",
