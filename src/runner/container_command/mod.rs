@@ -2,11 +2,9 @@
 
 use effigy_containers::ContainerCommandReport;
 use effigy_runtime::data::{
-    run_container_cache_list, run_container_cache_list_all, run_container_cache_list_under_path,
-    run_container_cache_prune, run_container_cache_prune_all, run_container_data_export,
-    run_container_data_import, run_container_data_list, run_container_volume_list,
-    run_container_volume_list_for_repo, run_container_volume_prune_for_repo,
-    run_container_volume_prune_global,
+    run_container_data_export, run_container_data_import, run_container_data_list,
+    run_container_volume_list, run_container_volume_list_for_repo,
+    run_container_volume_prune_for_repo, run_container_volume_prune_global,
 };
 use effigy_runtime::read::{
     run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
@@ -21,12 +19,12 @@ use effigy_runtime::EffigyRuntimeError;
 use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::db_seed::resolve_db_seed_input_paths;
 use effigy_cli::{
-    ContainerArgs, ContainerCacheSubcommand, ContainerDataSubcommand, ContainerSubcommand,
-    ContainerVolumeSubcommand,
+    ContainerArgs, ContainerDataSubcommand, ContainerSubcommand, ContainerVolumeSubcommand,
 };
 use effigy_containers::{ContainerConfirmationPolicy, ContainerLifecycleOperation};
 
 use super::error::RunnerError;
+use cache::run_container_cache_command;
 use data::{
     maybe_confirm_container_data_import, resolve_db_dump_output_paths, run_container_data_dump,
     run_container_data_pull_production, run_container_data_seed,
@@ -42,6 +40,7 @@ pub(in crate::runner) use lifecycle::{
     run_container_exec_capture_with_options, run_container_exec_operation_capture,
 };
 
+mod cache;
 mod data;
 mod gateway_registration;
 mod lifecycle;
@@ -92,65 +91,6 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
             |repo_root, policy| {
                 let _ = super::host_process::stop_host_processes_for_container(repo_root, policy);
             },
-        )
-        .map_err(Into::into);
-    }
-    if let ContainerSubcommand::Cache {
-        name: _,
-        subcommand:
-            ContainerCacheSubcommand::List {
-                global: true,
-                project,
-                kind,
-            },
-    } = &args.subcommand
-    {
-        if args.repo_override.is_some() {
-            return Err(RunnerError::task_invocation(
-                    "`effigy container cache list --global` does not accept `--repo`; it inspects the Effigy Colima profile's named-volume inventory",
-                ));
-        }
-        let cwd = crate::runner::command_context::active_invocation_cwd()?;
-        return run_container_cache_list_all(
-            &cwd,
-            None,
-            project.as_deref(),
-            kind.as_deref(),
-            args.output_json,
-            runtime_volume_capture,
-        )
-        .map_err(Into::into);
-    }
-    if let ContainerSubcommand::Cache {
-        name: _,
-        subcommand:
-            ContainerCacheSubcommand::Prune {
-                global: true,
-                yes,
-                project,
-                kind,
-            },
-    } = &args.subcommand
-    {
-        if args.repo_override.is_some() {
-            return Err(RunnerError::task_invocation(
-                    "`effigy container cache prune --global` does not accept `--repo`; it prunes cache volumes from the Effigy Colima profile inventory",
-                ));
-        }
-        data::maybe_confirm_destructive_container_action(
-            "`effigy container cache prune --global`",
-            "Purge safe cache volumes across the Effigy Colima profile. Running projects will be skipped.",
-            args.output_json,
-            *yes,
-        )?;
-        let cwd = crate::runner::command_context::active_invocation_cwd()?;
-        return run_container_cache_prune_all(
-            &cwd,
-            None,
-            project.as_deref(),
-            kind.as_deref(),
-            args.output_json,
-            runtime_volume_capture,
         )
         .map_err(Into::into);
     }
@@ -323,68 +263,12 @@ pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, Ru
                 args.output_json,
             )
         }
-        ContainerSubcommand::Cache {
-            name,
-            subcommand:
-                ContainerCacheSubcommand::List {
-                    global: false,
-                    project: _,
-                    kind: _,
-                },
-        } => run_container_cache_list_fallback(
+        ContainerSubcommand::Cache { name, subcommand } => run_container_cache_command(
             args.repo_override.clone(),
             name.as_deref(),
+            &subcommand,
             args.output_json,
         ),
-        ContainerSubcommand::Cache {
-            subcommand:
-                ContainerCacheSubcommand::List {
-                    global: true,
-                    project: _,
-                    kind: _,
-                },
-            ..
-        } => unreachable!("handled above"),
-        ContainerSubcommand::Cache {
-            name,
-            subcommand:
-                ContainerCacheSubcommand::Prune {
-                    global: false,
-                    yes,
-                    project: _,
-                    kind: _,
-                },
-        } => {
-            let context = resolve_active_command_context(args.repo_override.clone())?;
-            let repo_root = &context.resolved.resolved_root;
-            let policy = effigy_containers::load_container_policy(repo_root, name.as_deref())?;
-            data::maybe_confirm_destructive_container_action(
-                &format!("`effigy container {} cache prune`", policy.name),
-                &format!(
-                    "Purge safe cache volumes for container `{}`. The container must be stopped first.",
-                    policy.name
-                ),
-                args.output_json,
-                yes,
-            )?;
-            run_container_cache_prune(
-                repo_root,
-                name.as_deref(),
-                args.output_json,
-                runtime_volume_capture,
-            )
-            .map_err(Into::into)
-        }
-        ContainerSubcommand::Cache {
-            subcommand:
-                ContainerCacheSubcommand::Prune {
-                    global: true,
-                    yes: _,
-                    project: _,
-                    kind: _,
-                },
-            ..
-        } => unreachable!("handled above"),
         ContainerSubcommand::Volume {
             subcommand: ContainerVolumeSubcommand::List { .. },
         } => unreachable!("handled above"),
@@ -570,7 +454,7 @@ fn run_container_down_fallback(
     }
 }
 
-fn repo_root_has_effigy_manifest(repo_root: &std::path::Path) -> bool {
+pub(super) fn repo_root_has_effigy_manifest(repo_root: &std::path::Path) -> bool {
     repo_root.join("effigy.toml").is_file()
 }
 
@@ -649,42 +533,6 @@ fn run_container_data_list_adapter(
 ) -> Result<String, RunnerError> {
     run_container_data_list(repo_root, name, output_json, runtime_volume_capture)
         .map_err(Into::into)
-}
-
-fn run_container_cache_list_adapter(
-    repo_root: &std::path::Path,
-    name: Option<&str>,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    run_container_cache_list(repo_root, name, output_json, runtime_volume_capture)
-        .map_err(Into::into)
-}
-
-fn run_container_cache_list_fallback(
-    repo_override: Option<std::path::PathBuf>,
-    name: Option<&str>,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    match resolve_active_command_context(repo_override.clone()) {
-        Ok(context) if repo_root_has_effigy_manifest(&context.resolved.resolved_root) => {
-            run_container_cache_list_adapter(&context.resolved.resolved_root, name, output_json)
-        }
-        Ok(_) if repo_override.is_none() => {
-            let cwd = crate::runner::command_context::active_invocation_cwd()?;
-            run_container_cache_list_under_path(&cwd, name, output_json, runtime_volume_capture)
-                .map_err(Into::into)
-        }
-        Ok(context) => Err(RunnerError::task_invocation(format!(
-            "`--repo {}` does not point to an Effigy repo",
-            context.resolved.resolved_root.display()
-        ))),
-        Err(RunnerError::Resolve(_)) if repo_override.is_none() => {
-            let cwd = crate::runner::command_context::active_invocation_cwd()?;
-            run_container_cache_list_under_path(&cwd, name, output_json, runtime_volume_capture)
-                .map_err(Into::into)
-        }
-        Err(error) => Err(error),
-    }
 }
 
 fn run_container_data_export_adapter(

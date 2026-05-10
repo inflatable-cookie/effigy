@@ -21,7 +21,7 @@ changing the shipped container behavior.
 
 ## Current Ready Card
 
-- `646` extract the cache command family into `cache.rs`
+- `647` extract the volume command family into `volume.rs`
 
 ## Execution Chain
 
@@ -29,8 +29,10 @@ changing the shipped container behavior.
   the first real extraction slice
 - `645` complete: locked the structural-only boundary, target module ownership,
   extraction order, and thin-dispatcher rule for `mod.rs`
-- `646` ready: extract `cache list` and `cache prune` into `cache.rs` with
-  focused container-command proof coverage
+- `646` complete: extracted `cache list` and `cache prune` into `cache.rs`
+  with focused container-command proof coverage
+- `647` ready: extract `volume list` and `volume prune` into `volume.rs`
+  with focused container-command proof coverage
 
 ## Exit Condition
 
@@ -40,4 +42,4 @@ focused container tests show no user-facing drift.
 
 ## Next Task
 
-Execute `646` to extract the cache command family into `cache.rs`.
+Execute `647` to extract the volume command family into `volume.rs`.
