@@ -42,6 +42,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   complete through `g04.018`. The next active roadmap is
   [`g04.019`](./g04/019-state-stack-and-layered-seed-framework.md) for layered
   seed/migration state above the OCI artifact substrate.
+- [`g04.022`](./g04/022-remote-bundle-sources-git-and-oci-delivery.md) is queued
+  for remote bundle sources (git and OCI delivery) after the task-status lanes
+  close.
+- [`g04.023`](./g04/023-docs-check-subcommand-consolidation.md) through
+  [`g04.026`](./g04/026-shared-dispatcher-and-exec-collapse.md) are queued for
+  command surface consolidation: docs check subcommand collapse, reference
+  guide completeness, container command decomposition, and shared dispatcher
+  extraction.
 
 ## Active Strict Lane
 

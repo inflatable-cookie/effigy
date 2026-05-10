@@ -33,6 +33,11 @@ Current milestones:
 - [`019-state-stack-and-layered-seed-framework.md`](./019-state-stack-and-layered-seed-framework.md) (complete; state-stack framework, apply/capture/history surfaces, and Acowtancy proof loop landed for the current release boundary)
 - [`020-task-status-record-and-active-run-model.md`](./020-task-status-record-and-active-run-model.md) (active; define one canonical task-status record model, active/completed persistence layout, and shared write-side ownership)
 - [`021-task-status-query-surface-and-read-model.md`](./021-task-status-query-surface-and-read-model.md) (queued; expose `effigy tasks status <selector>` and `--all` on top of the task-status record model)
+- [`022-remote-bundle-sources-git-and-oci-delivery.md`](./022-remote-bundle-sources-git-and-oci-delivery.md) (queued; unify `base`/`base_path` into an extensible block supporting git and OCI remote bundle sources with automatic update detection)
+- [`023-docs-check-subcommand-consolidation.md`](./023-docs-check-subcommand-consolidation.md) (queued; collapse 10 `docs check-*` subcommands into `docs check <KIND>`)
+- [`024-command-reference-completeness-and-flag-consistency.md`](./024-command-reference-completeness-and-flag-consistency.md) (queued; document missing commands, fix container flag gaps, add `--repo` to changelog and bundle)
+- [`025-container-command-decomposition.md`](./025-container-command-decomposition.md) (queued; split `container_command/` into lifecycle/data/cache/volume submodules)
+- [`026-shared-dispatcher-and-exec-collapse.md`](./026-shared-dispatcher-and-exec-collapse.md) (queued; extract common JSON/text dispatcher, collapse exec variants, share release stage logic)
 
 Architecture anchors:
 
