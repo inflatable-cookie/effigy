@@ -27,11 +27,12 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
-- [`061-state-stack-and-layered-seed-framework-strict-lane.md`](./061-state-stack-and-layered-seed-framework-strict-lane.md)
 
 Active strict lane:
 
-- `061` for `g04.019` state-stack and layered seed framework planning
+- none
+- `061` is complete
+- open the next strict lane only after selecting the next queued roadmap
 
 Paused but still useful:
 
@@ -39,6 +40,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`061-state-stack-and-layered-seed-framework-strict-lane.md`](./061-state-stack-and-layered-seed-framework-strict-lane.md)
 - [`060-oci-artifact-closeout-and-proof-matrix-strict-lane.md`](./060-oci-artifact-closeout-and-proof-matrix-strict-lane.md)
 - [`059-planning-crate-decomposition-strict-lane.md`](./059-planning-crate-decomposition-strict-lane.md)
 - [`058-architecture-guard-integration-strict-lane.md`](./058-architecture-guard-integration-strict-lane.md)
@@ -91,5 +93,5 @@ Recently completed:
 
 ## Next Task
 
-Execute the ready `g04.019` card under
-[`061-state-stack-and-layered-seed-framework-strict-lane.md`](./061-state-stack-and-layered-seed-framework-strict-lane.md).
+Select the next queued roadmap and open its strict lane only when execution is
+ready.

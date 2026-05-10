@@ -30,7 +30,7 @@ Current milestones:
 - [`016-architecture-guard-integration.md`](./016-architecture-guard-integration.md) (complete; architecture guards are wired into normal validation)
 - [`017-planning-crate-decomposition.md`](./017-planning-crate-decomposition.md) (complete; first planning-crate decomposition pass landed)
 - [`018-oci-artifact-closeout-and-proof-matrix.md`](./018-oci-artifact-closeout-and-proof-matrix.md) (complete; OCI support now has proof, remediation, and contract closeout)
-- [`019-state-stack-and-layered-seed-framework.md`](./019-state-stack-and-layered-seed-framework.md) (active; next planning lane for layered seed/migration state, lineage, and Acowtancy-style UAT capture/rebase loops)
+- [`019-state-stack-and-layered-seed-framework.md`](./019-state-stack-and-layered-seed-framework.md) (complete; state-stack framework, apply/capture/history surfaces, and Acowtancy proof loop landed for the current release boundary)
 - [`020-task-status-record-and-active-run-model.md`](./020-task-status-record-and-active-run-model.md) (queued; define one canonical task-status record model, active/completed persistence layout, and shared write-side ownership)
 - [`021-task-status-query-surface-and-read-model.md`](./021-task-status-query-surface-and-read-model.md) (queued; expose `effigy tasks status <selector>` and `--all` on top of the task-status record model)
 
@@ -60,8 +60,11 @@ Rules:
 
 ## Next Task
 
-Execute ready card
-[`598-add-state-stack-json-contract-examples.md`](./batch-cards/598-add-state-stack-json-contract-examples.md).
+Select the next queued `g04` lane before opening a new strict lane.
+
+The first queued follow-on is:
+
+- [`020-task-status-record-and-active-run-model.md`](./020-task-status-record-and-active-run-model.md)
 
 
 Batch cards live in `g04/batch-cards/` when strict posture uses them.
