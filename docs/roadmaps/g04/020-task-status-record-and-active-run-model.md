@@ -77,6 +77,10 @@ The public query identity remains the selector the operator runs. The internal
 status key must include catalog-root authority so descendant scopes do not
 collide.
 
+The first implementation should derive a deterministic filesystem-safe status
+key from normalized identity fields rather than from caller-local temp paths or
+runtime-only ids.
+
 ### Status Model
 
 Task status is a merged view of:
@@ -132,6 +136,24 @@ Completed records:
 
 No retention policy in the first round.
 
+Minimum active record fields:
+
+- status key
+- `running` state
+- current stage
+- repo root
+- selected catalog root
+- resolved selector
+- resolved task name
+- resolved profile when present
+- execution surface
+- runtime route summary
+- owner pid
+- started timestamp
+- last heartbeat/update timestamp
+- lock scopes when known
+- active record path
+
 ### Active Truth Rules
 
 A task is only considered actively running when:
@@ -146,6 +168,14 @@ If an active record is stale:
 - fall back to latest completed status if present
 - surface a warning/evidence note for the later query surface
 - leave cleanup or repair to a later bounded follow-up
+
+The first-round reconciliation order is:
+
+1. load active record by status key
+2. verify recorded pid liveness
+3. verify heartbeat/update freshness when heartbeat evidence exists
+4. verify Effigy-owned execution evidence when available
+5. trust the record as live only when those checks pass
 
 ### Write-Side Ownership
 
@@ -227,4 +257,4 @@ No final user-facing command contract is introduced here.
 ## Next Task
 
 Execute card
-[`618-promote-task-status-identity-persistence-and-state-model-boundary.md`](./batch-cards/618-promote-task-status-identity-persistence-and-state-model-boundary.md).
+[`619-add-task-status-record-types-and-path-helpers.md`](./batch-cards/619-add-task-status-record-types-and-path-helpers.md).

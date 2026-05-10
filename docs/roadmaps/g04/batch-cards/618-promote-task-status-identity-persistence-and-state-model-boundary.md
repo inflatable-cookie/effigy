@@ -2,7 +2,7 @@
 
 Lane: [`062-task-status-record-and-active-run-model-strict-lane.md`](../062-task-status-record-and-active-run-model-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -40,7 +40,15 @@ without reopening identity, persistence, or stale-record semantics.
 - docs path checks for changed roadmap/spec/contract surfaces
 - `git diff --check`
 
+## Closeout
+
+- locked the deterministic status-key boundary
+- locked minimum active and completed record fields
+- locked first-round stale/live reconciliation order
+- bounded the first implementation slice to typed record/path helpers before
+  write-side hook wiring
+
 ## Next Task
 
-Choose the first implementation card for typed task-status records and shared
-write-side hooks once this boundary is locked.
+Card
+[`619-add-task-status-record-types-and-path-helpers.md`](./619-add-task-status-record-types-and-path-helpers.md).

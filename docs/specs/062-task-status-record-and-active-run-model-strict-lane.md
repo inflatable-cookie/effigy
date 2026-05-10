@@ -32,9 +32,11 @@ inspection or caller-local runtime guesses.
 
 - `617` complete: opened the lane, promoted the first task-status contract
   anchor, and selected the first contract-shaping card
-- `618` ready: lock task-status identity, state/stage taxonomy, active/completed
+- `618` complete: locked task-status identity, state/stage taxonomy, active/completed
   persistence layout, and stale-record reconciliation boundary before
   implementation
+- `619` ready: add typed task-status key/record types and runtime/report path
+  helpers before write-side execution hooks
 
 ## Exit Condition
 
@@ -46,4 +48,4 @@ truth.
 ## Next Task
 
 Execute ready card
-[`618-promote-task-status-identity-persistence-and-state-model-boundary.md`](../roadmaps/g04/batch-cards/618-promote-task-status-identity-persistence-and-state-model-boundary.md).
+[`619-add-task-status-record-types-and-path-helpers.md`](../roadmaps/g04/batch-cards/619-add-task-status-record-types-and-path-helpers.md).
