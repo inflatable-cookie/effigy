@@ -91,15 +91,15 @@ fn render_demo_help_shows_discovery_and_inspection_options() {
 fn render_docs_help_shows_validation_options() {
     let rendered = render_help_text(HelpTopic::Docs);
     assert!(rendered.contains("docs Help"));
-    assert!(rendered.contains("effigy docs check-links"));
-    assert!(rendered.contains("effigy docs check-json-examples"));
-    assert!(rendered.contains("effigy docs check-headings"));
-    assert!(rendered.contains("effigy docs check-paths"));
-    assert!(rendered.contains("effigy docs check-contains"));
-    assert!(rendered.contains("effigy docs check-forbidden"));
-    assert!(rendered.contains("effigy docs check-index"));
-    assert!(rendered.contains("effigy docs check-next-action"));
-    assert!(rendered.contains("effigy docs check-workflow-paths"));
+    assert!(rendered.contains("effigy docs check links"));
+    assert!(rendered.contains("effigy docs check json-examples"));
+    assert!(rendered.contains("effigy docs check headings"));
+    assert!(rendered.contains("effigy docs check paths"));
+    assert!(rendered.contains("effigy docs check contains"));
+    assert!(rendered.contains("effigy docs check forbidden"));
+    assert!(rendered.contains("effigy docs check index"));
+    assert!(rendered.contains("effigy docs check next-action"));
+    assert!(rendered.contains("effigy docs check workflow-paths"));
     assert!(rendered.contains("effigy docs add-log-index"));
     assert!(rendered.contains("--file <PATH>"));
     assert!(rendered.contains("--section <TITLE>"));

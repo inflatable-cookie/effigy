@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 
-use crate::{Command, DocsArgs, DocsBlockRequirement, DocsSubcommand, HelpTopic};
-
 use crate::value_parsing::{next_required_value, parse_repo_path};
+use crate::{Command, DocsArgs, DocsBlockRequirement, DocsCheckKind, DocsSubcommand, HelpTopic};
 
 use super::{unknown_argument, CliParseError};
 
@@ -17,21 +16,72 @@ where
 
     match subcmd.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Docs)),
-        "check-links" => parse_docs_check_links(args),
-        "check-json-examples" => parse_docs_check_json_examples(args),
-        "check-headings" => parse_docs_check_headings(args),
-        "check-paths" => parse_docs_check_paths(args),
-        "check-contains" => parse_docs_check_contains(args),
-        "check-forbidden" => parse_docs_check_forbidden(args),
-        "check-index" => parse_docs_check_index(args),
-        "check-next-action" => parse_docs_check_next_action(args),
-        "check-workflow-paths" => parse_docs_check_workflow_paths(args),
+        "check" => parse_docs_check(args),
+        "check-links" => Err(removed_docs_check_spelling_error("check-links", "links")),
+        "check-json-examples" => Err(removed_docs_check_spelling_error(
+            "check-json-examples",
+            "json-examples",
+        )),
+        "check-headings" => Err(removed_docs_check_spelling_error(
+            "check-headings",
+            "headings",
+        )),
+        "check-paths" => Err(removed_docs_check_spelling_error("check-paths", "paths")),
+        "check-contains" => Err(removed_docs_check_spelling_error(
+            "check-contains",
+            "contains",
+        )),
+        "check-forbidden" => Err(removed_docs_check_spelling_error(
+            "check-forbidden",
+            "forbidden",
+        )),
+        "check-index" => Err(removed_docs_check_spelling_error("check-index", "index")),
+        "check-next-action" => Err(removed_docs_check_spelling_error(
+            "check-next-action",
+            "next-action",
+        )),
+        "check-workflow-paths" => Err(removed_docs_check_spelling_error(
+            "check-workflow-paths",
+            "workflow-paths",
+        )),
         "add-log-index" => parse_docs_add_log_index(args),
         other => Err(unknown_argument(other)),
     }
 }
 
-fn parse_docs_check_links<I>(args: I) -> Result<Command, CliParseError>
+fn parse_docs_check<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(kind_raw) = args.next() else {
+        return Err(CliParseError::InvalidArguments(
+            "`docs check` requires a kind (`links`, `json-examples`, `headings`, `paths`, `contains`, `forbidden`, `index`, `next-action`, or `workflow-paths`)".to_owned(),
+        ));
+    };
+
+    let kind = match kind_raw.as_str() {
+        "links" => DocsCheckKind::Links,
+        "json-examples" => DocsCheckKind::JsonExamples,
+        "headings" => DocsCheckKind::Headings,
+        "paths" => DocsCheckKind::Paths,
+        "contains" => DocsCheckKind::Contains,
+        "forbidden" => DocsCheckKind::Forbidden,
+        "index" => DocsCheckKind::Index,
+        "next-action" => DocsCheckKind::NextAction,
+        "workflow-paths" => DocsCheckKind::WorkflowPaths,
+        "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
+        other => {
+            return Err(CliParseError::InvalidArguments(format!(
+                "`docs check` kind `{other}` is invalid (expected `links`, `json-examples`, `headings`, `paths`, `contains`, `forbidden`, `index`, `next-action`, or `workflow-paths`)"
+            )))
+        }
+    };
+
+    parse_docs_check_kind(kind, args)
+}
+
+fn parse_docs_check_kind<I>(kind: DocsCheckKind, args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
@@ -39,36 +89,17 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut paths = Vec::new();
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            _ => paths.push(PathBuf::from(arg)),
-        }
-    }
-
-    Ok(Command::Docs(DocsArgs {
-        subcommand: DocsSubcommand::CheckLinks { paths },
-        repo_override,
-        output_json,
-    }))
-}
-
-fn parse_docs_check_json_examples<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
     let mut file: Option<PathBuf> = None;
     let mut section: Option<String> = None;
     let mut min_blocks: Option<usize> = None;
-    let mut required = Vec::new();
+    let mut required_text = Vec::new();
     let mut required_blocks = Vec::new();
+    let mut required_headings = Vec::new();
+    let mut forbidden_text = Vec::new();
+    let mut policy_index: Option<String> = None;
+    let mut dir: Option<PathBuf> = None;
+    let mut index: Option<PathBuf> = None;
+    let mut policy_name: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -109,7 +140,7 @@ where
                     );
             }
             "--require" => {
-                required.push(next_required_value(
+                required_text.push(next_required_value(
                     &mut args,
                     CliParseError::MissingFlagValue {
                         flag: "--require".to_owned(),
@@ -143,38 +174,6 @@ where
                     needle: needle.to_owned(),
                 });
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    Ok(Command::Docs(DocsArgs {
-        subcommand: DocsSubcommand::CheckJsonExamples {
-            file,
-            section,
-            min_blocks,
-            required,
-            required_blocks,
-        },
-        repo_override,
-        output_json,
-    }))
-}
-
-fn parse_docs_check_headings<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
-    let mut paths = Vec::new();
-    let mut required_headings = Vec::new();
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--require-heading" => {
                 required_headings.push(next_required_value(
                     &mut args,
@@ -183,100 +182,6 @@ where
                     },
                 )?);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            _ => paths.push(PathBuf::from(arg)),
-        }
-    }
-
-    Ok(Command::Docs(DocsArgs {
-        subcommand: DocsSubcommand::CheckHeadings {
-            paths,
-            required_headings,
-        },
-        repo_override,
-        output_json,
-    }))
-}
-
-fn parse_docs_check_contains<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
-    let mut paths = Vec::new();
-    let mut required_text = Vec::new();
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--require" => {
-                required_text.push(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--require".to_owned(),
-                    },
-                )?);
-            }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            _ => paths.push(PathBuf::from(arg)),
-        }
-    }
-
-    Ok(Command::Docs(DocsArgs {
-        subcommand: DocsSubcommand::CheckContains {
-            paths,
-            required_text,
-        },
-        repo_override,
-        output_json,
-    }))
-}
-
-fn parse_docs_check_paths<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
-    let mut paths = Vec::new();
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            _ => paths.push(PathBuf::from(arg)),
-        }
-    }
-
-    Ok(Command::Docs(DocsArgs {
-        subcommand: DocsSubcommand::CheckPaths { paths },
-        repo_override,
-        output_json,
-    }))
-}
-
-fn parse_docs_check_forbidden<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
-    let mut paths = Vec::new();
-    let mut forbidden_text = Vec::new();
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--forbid" => {
                 forbidden_text.push(next_required_value(
                     &mut args,
@@ -285,37 +190,6 @@ where
                     },
                 )?);
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            _ => paths.push(PathBuf::from(arg)),
-        }
-    }
-
-    Ok(Command::Docs(DocsArgs {
-        subcommand: DocsSubcommand::CheckForbidden {
-            paths,
-            forbidden_text,
-        },
-        repo_override,
-        output_json,
-    }))
-}
-
-fn parse_docs_check_index<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
-    let mut policy_index: Option<String> = None;
-    let mut dir: Option<PathBuf> = None;
-    let mut index: Option<PathBuf> = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--policy-index" => {
                 policy_index = Some(next_required_value(
                     &mut args,
@@ -340,35 +214,6 @@ where
                     },
                 )?));
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    Ok(Command::Docs(DocsArgs {
-        subcommand: DocsSubcommand::CheckIndex {
-            policy_index,
-            dir,
-            index,
-        },
-        repo_override,
-        output_json,
-    }))
-}
-
-fn parse_docs_check_next_action<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
-    let mut policy_name: Option<String> = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--policy" => {
                 policy_name = Some(next_required_value(
                     &mut args,
@@ -378,12 +223,27 @@ where
                 )?);
             }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
-            other => return Err(unknown_argument(other)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => paths.push(PathBuf::from(arg)),
         }
     }
 
     Ok(Command::Docs(DocsArgs {
-        subcommand: DocsSubcommand::CheckNextAction { policy_name },
+        subcommand: DocsSubcommand::Check {
+            kind,
+            paths,
+            file,
+            section,
+            min_blocks,
+            required_text,
+            required_blocks,
+            required_headings,
+            forbidden_text,
+            policy_index,
+            dir,
+            index,
+            policy_name,
+        },
         repo_override,
         output_json,
     }))
@@ -424,35 +284,8 @@ where
     }))
 }
 
-fn parse_docs_check_workflow_paths<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
-    let mut dir: Option<PathBuf> = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--dir" => {
-                dir = Some(PathBuf::from(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--dir".to_owned(),
-                    },
-                )?));
-            }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Docs)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    Ok(Command::Docs(DocsArgs {
-        subcommand: DocsSubcommand::CheckWorkflowPaths { dir },
-        repo_override,
-        output_json,
-    }))
+fn removed_docs_check_spelling_error(old: &str, kind: &str) -> CliParseError {
+    CliParseError::InvalidArguments(format!(
+        "`docs {old}` has been replaced by `docs check {kind}`"
+    ))
 }

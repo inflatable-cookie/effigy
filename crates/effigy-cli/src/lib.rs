@@ -354,45 +354,53 @@ impl DemoHistoryOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocsSubcommand {
-    CheckLinks {
+    Check {
+        kind: DocsCheckKind,
         paths: Vec<PathBuf>,
-    },
-    CheckJsonExamples {
         file: Option<PathBuf>,
         section: Option<String>,
         min_blocks: Option<usize>,
-        required: Vec<String>,
-        required_blocks: Vec<DocsBlockRequirement>,
-    },
-    CheckHeadings {
-        paths: Vec<PathBuf>,
-        required_headings: Vec<String>,
-    },
-    CheckPaths {
-        paths: Vec<PathBuf>,
-    },
-    CheckContains {
-        paths: Vec<PathBuf>,
         required_text: Vec<String>,
-    },
-    CheckForbidden {
-        paths: Vec<PathBuf>,
+        required_blocks: Vec<DocsBlockRequirement>,
+        required_headings: Vec<String>,
         forbidden_text: Vec<String>,
-    },
-    CheckIndex {
         policy_index: Option<String>,
         dir: Option<PathBuf>,
         index: Option<PathBuf>,
-    },
-    CheckNextAction {
         policy_name: Option<String>,
-    },
-    CheckWorkflowPaths {
-        dir: Option<PathBuf>,
     },
     AddLogIndex {
         log_path: PathBuf,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocsCheckKind {
+    Links,
+    JsonExamples,
+    Headings,
+    Paths,
+    Contains,
+    Forbidden,
+    Index,
+    NextAction,
+    WorkflowPaths,
+}
+
+impl DocsCheckKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Links => "links",
+            Self::JsonExamples => "json-examples",
+            Self::Headings => "headings",
+            Self::Paths => "paths",
+            Self::Contains => "contains",
+            Self::Forbidden => "forbidden",
+            Self::Index => "index",
+            Self::NextAction => "next-action",
+            Self::WorkflowPaths => "workflow-paths",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

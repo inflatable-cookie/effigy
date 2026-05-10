@@ -75,6 +75,9 @@ This folder contains both:
   unified bundle-source contract for shipped, path, git, and OCI delivery,
   `base_path` removal, shared source materialization, cache identity, and
   stale/update detection.
+- [`021-docs-check-subcommand-consolidation-contract.md`](./021-docs-check-subcommand-consolidation-contract.md):
+  docs-command consolidation contract for `docs check <KIND>`, removed
+  `check-*` spellings, and the unchanged `add-log-index` carveout.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -96,6 +99,7 @@ This folder contains both:
 | `018-task-status-query-surface-and-read-model-contract.md` | Platform maintainers | `tasks status` selector resolution rules, `--all` inventory scope, stale/no-longer-declared row visibility, minimum text/JSON fields, read-side ownership split | Planning review against `g04.021` plus focused task-status query proofs once implementation starts |
 | `019-deployment-transaction-system-contract.md` | Platform maintainers | Deploy env config, transaction stage order, provider adapter boundary, release/state/artifact composition, deployment reports, redeploy rules, provider support scope | Planning review against `g04.027` through `g04.032` plus focused deployment transaction proofs once implementation starts |
 | `020-remote-bundle-sources-git-and-oci-delivery-contract.md` | Platform maintainers | Unified `[bundle].base` grammar, `base_path` removal, source taxonomy, shared materialization boundary, git/OCI cache identity, stale/update detection, `bundle inspect`/`bundle sync` source metadata | Planning review against `g04.022` plus focused bundle parser and source-resolution proofs once implementation starts |
+| `021-docs-check-subcommand-consolidation-contract.md` | Platform maintainers | `docs check <KIND>` grammar, removed `check-*` spellings, migration errors, unchanged `add-log-index` carveout, and no-behavior-change rule for underlying checks | Planning review against `g04.023` plus focused docs parser, runner, and help proofs once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -137,4 +141,6 @@ task-status query contract, and
 `019-deployment-transaction-system-contract.md` as the `g04.027` to `g04.032`
 deployment transaction contract, and
 `020-remote-bundle-sources-git-and-oci-delivery-contract.md` as the `g04.022`
-remote bundle-source contract.
+remote bundle-source contract, and
+`021-docs-check-subcommand-consolidation-contract.md` as the `g04.023`
+docs-check consolidation contract.

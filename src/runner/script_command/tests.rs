@@ -1,5 +1,5 @@
 use super::{is_runner_dispatch_feature, parse_rhai_embedded_command};
-use effigy_cli::{Command, DocsArgs, DocsSubcommand};
+use effigy_cli::{Command, DocsArgs, DocsCheckKind, DocsSubcommand};
 use effigy_rhai::surface::FEATURE_NAMES;
 use std::path::Path;
 
@@ -15,7 +15,10 @@ fn parse_rhai_embedded_command_defaults_repo_override_when_missing() {
     assert!(matches!(
         command,
         Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::CheckLinks { .. },
+            subcommand: DocsSubcommand::Check {
+                kind: DocsCheckKind::Links,
+                ..
+            },
             repo_override: Some(path),
             output_json: false,
         }) if path == Path::new("/tmp/repo")
@@ -39,7 +42,10 @@ fn parse_rhai_embedded_command_preserves_explicit_repo_override() {
     assert!(matches!(
         command,
         Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::CheckLinks { .. },
+            subcommand: DocsSubcommand::Check {
+                kind: DocsCheckKind::Links,
+                ..
+            },
             repo_override: Some(path),
             output_json: false,
         }) if path == Path::new("/tmp/other")

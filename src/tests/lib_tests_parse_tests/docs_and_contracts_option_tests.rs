@@ -3,12 +3,14 @@ use crate::tests::prelude::{
     ContractsSelectionPrintMode, ContractsSubcommand, DistributionArgs, DistributionSubcommand,
     DocsArgs, DocsBlockRequirement, DocsSubcommand, PathBuf,
 };
+use effigy_cli::DocsCheckKind;
 
 #[test]
 fn parse_docs_check_links_with_repo_and_paths() {
     let cmd = parse_command(vec![
         "docs".to_owned(),
-        "check-links".to_owned(),
+        "check".to_owned(),
+        "links".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "README.md".to_owned(),
@@ -20,11 +22,23 @@ fn parse_docs_check_links_with_repo_and_paths() {
     assert_eq!(
         cmd,
         Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::CheckLinks {
+            subcommand: DocsSubcommand::Check {
+                kind: DocsCheckKind::Links,
                 paths: vec![
                     PathBuf::from("README.md"),
                     PathBuf::from("docs/guides/README.md"),
                 ],
+                file: None,
+                section: None,
+                min_blocks: None,
+                required_text: Vec::new(),
+                required_blocks: Vec::new(),
+                required_headings: Vec::new(),
+                forbidden_text: Vec::new(),
+                policy_index: None,
+                dir: None,
+                index: None,
+                policy_name: None,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
@@ -36,7 +50,8 @@ fn parse_docs_check_links_with_repo_and_paths() {
 fn parse_docs_check_json_examples_with_overrides() {
     let cmd = parse_command(vec![
         "docs".to_owned(),
-        "check-json-examples".to_owned(),
+        "check".to_owned(),
+        "json-examples".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "--file".to_owned(),
@@ -56,15 +71,23 @@ fn parse_docs_check_json_examples_with_overrides() {
     assert_eq!(
         cmd,
         Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::CheckJsonExamples {
+            subcommand: DocsSubcommand::Check {
+                kind: DocsCheckKind::JsonExamples,
+                paths: Vec::new(),
                 file: Some(PathBuf::from("docs/guides/examples.md")),
                 section: Some("Examples".to_owned()),
                 min_blocks: Some(3),
-                required: vec!["\"schema\": \"example\"".to_owned()],
+                required_text: vec!["\"schema\": \"example\"".to_owned()],
                 required_blocks: vec![DocsBlockRequirement {
                     block_index: 2,
                     needle: "\"cache_state\": \"miss\"".to_owned(),
                 }],
+                required_headings: Vec::new(),
+                forbidden_text: Vec::new(),
+                policy_index: None,
+                dir: None,
+                index: None,
+                policy_name: None,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
@@ -76,7 +99,8 @@ fn parse_docs_check_json_examples_with_overrides() {
 fn parse_docs_check_index_with_overrides() {
     let cmd = parse_command(vec![
         "docs".to_owned(),
-        "check-index".to_owned(),
+        "check".to_owned(),
+        "index".to_owned(),
         "--policy-index".to_owned(),
         "vision".to_owned(),
         "--dir".to_owned(),
@@ -90,10 +114,20 @@ fn parse_docs_check_index_with_overrides() {
     assert_eq!(
         cmd,
         Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::CheckIndex {
+            subcommand: DocsSubcommand::Check {
+                kind: DocsCheckKind::Index,
+                paths: Vec::new(),
+                file: None,
+                section: None,
+                min_blocks: None,
+                required_text: Vec::new(),
+                required_blocks: Vec::new(),
+                required_headings: Vec::new(),
+                forbidden_text: Vec::new(),
                 policy_index: Some("vision".to_owned()),
                 dir: Some(PathBuf::from("docs/logs")),
                 index: Some(PathBuf::from("docs/logs/README.md")),
+                policy_name: None,
             },
             repo_override: None,
             output_json: true,
@@ -129,7 +163,8 @@ fn parse_docs_add_log_index_with_repo_override() {
 fn parse_docs_check_next_action_with_policy() {
     let cmd = parse_command(vec![
         "docs".to_owned(),
-        "check-next-action".to_owned(),
+        "check".to_owned(),
+        "next-action".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "--policy".to_owned(),
@@ -141,7 +176,19 @@ fn parse_docs_check_next_action_with_policy() {
     assert_eq!(
         cmd,
         Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::CheckNextAction {
+            subcommand: DocsSubcommand::Check {
+                kind: DocsCheckKind::NextAction,
+                paths: Vec::new(),
+                file: None,
+                section: None,
+                min_blocks: None,
+                required_text: Vec::new(),
+                required_blocks: Vec::new(),
+                required_headings: Vec::new(),
+                forbidden_text: Vec::new(),
+                policy_index: None,
+                dir: None,
+                index: None,
                 policy_name: Some("vision".to_owned()),
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
@@ -154,7 +201,8 @@ fn parse_docs_check_next_action_with_policy() {
 fn parse_docs_check_forbidden_with_requirements() {
     let cmd = parse_command(vec![
         "docs".to_owned(),
-        "check-forbidden".to_owned(),
+        "check".to_owned(),
+        "forbidden".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "AGENTS.md".to_owned(),
@@ -168,12 +216,23 @@ fn parse_docs_check_forbidden_with_requirements() {
     assert_eq!(
         cmd,
         Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::CheckForbidden {
+            subcommand: DocsSubcommand::Check {
+                kind: DocsCheckKind::Forbidden,
                 paths: vec![
                     PathBuf::from("AGENTS.md"),
                     PathBuf::from("setup-effigy/README.md"),
                 ],
+                file: None,
+                section: None,
+                min_blocks: None,
+                required_text: Vec::new(),
+                required_blocks: Vec::new(),
+                required_headings: Vec::new(),
                 forbidden_text: vec!["--repo .".to_owned()],
+                policy_index: None,
+                dir: None,
+                index: None,
+                policy_name: None,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
@@ -185,7 +244,8 @@ fn parse_docs_check_forbidden_with_requirements() {
 fn parse_docs_check_headings_with_requirements() {
     let cmd = parse_command(vec![
         "docs".to_owned(),
-        "check-headings".to_owned(),
+        "check".to_owned(),
+        "headings".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "docs/guides/024-ci-and-automation-recipes.md".to_owned(),
@@ -198,11 +258,22 @@ fn parse_docs_check_headings_with_requirements() {
     assert_eq!(
         cmd,
         Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::CheckHeadings {
+            subcommand: DocsSubcommand::Check {
+                kind: DocsCheckKind::Headings,
                 paths: vec![PathBuf::from(
                     "docs/guides/024-ci-and-automation-recipes.md"
                 )],
+                file: None,
+                section: None,
+                min_blocks: None,
+                required_text: Vec::new(),
+                required_blocks: Vec::new(),
                 required_headings: vec!["## Vision Alignment".to_owned()],
+                forbidden_text: Vec::new(),
+                policy_index: None,
+                dir: None,
+                index: None,
+                policy_name: None,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
@@ -214,7 +285,8 @@ fn parse_docs_check_headings_with_requirements() {
 fn parse_docs_check_paths_with_repo_and_json() {
     let cmd = parse_command(vec![
         "docs".to_owned(),
-        "check-paths".to_owned(),
+        "check".to_owned(),
+        "paths".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "README.md".to_owned(),
@@ -226,8 +298,20 @@ fn parse_docs_check_paths_with_repo_and_json() {
     assert_eq!(
         cmd,
         Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::CheckPaths {
+            subcommand: DocsSubcommand::Check {
+                kind: DocsCheckKind::Paths,
                 paths: vec![PathBuf::from("README.md"), PathBuf::from("docs/README.md")],
+                file: None,
+                section: None,
+                min_blocks: None,
+                required_text: Vec::new(),
+                required_blocks: Vec::new(),
+                required_headings: Vec::new(),
+                forbidden_text: Vec::new(),
+                policy_index: None,
+                dir: None,
+                index: None,
+                policy_name: None,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
@@ -239,7 +323,8 @@ fn parse_docs_check_paths_with_repo_and_json() {
 fn parse_docs_check_workflow_paths_with_dir_override() {
     let cmd = parse_command(vec![
         "docs".to_owned(),
-        "check-workflow-paths".to_owned(),
+        "check".to_owned(),
+        "workflow-paths".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "--dir".to_owned(),
@@ -251,12 +336,35 @@ fn parse_docs_check_workflow_paths_with_dir_override() {
     assert_eq!(
         cmd,
         Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::CheckWorkflowPaths {
+            subcommand: DocsSubcommand::Check {
+                kind: DocsCheckKind::WorkflowPaths,
+                paths: Vec::new(),
+                file: None,
+                section: None,
+                min_blocks: None,
+                required_text: Vec::new(),
+                required_blocks: Vec::new(),
+                required_headings: Vec::new(),
+                forbidden_text: Vec::new(),
+                policy_index: None,
                 dir: Some(PathBuf::from("docs/guides")),
+                index: None,
+                policy_name: None,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
         })
+    );
+}
+
+#[test]
+fn parse_docs_removed_flat_check_spelling_reports_migration_error() {
+    let error = parse_command(vec!["docs".to_owned(), "check-links".to_owned()])
+        .expect_err("old docs check spelling should fail");
+
+    assert_eq!(
+        error.to_string(),
+        "`docs check-links` has been replaced by `docs check links`"
     );
 }
 

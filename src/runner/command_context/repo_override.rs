@@ -101,8 +101,8 @@ fn assign_repo_override(
 mod tests {
     use super::{apply_repo_target_to_embedded_command, EmbeddedRepoOverrideMode};
     use effigy_cli::{
-        Command, ContainerArgs, ContainerSubcommand, DeferArgs, DocsArgs, DocsSubcommand,
-        TaskInvocation, WorkspaceArgs,
+        Command, ContainerArgs, ContainerSubcommand, DeferArgs, DocsArgs, DocsCheckKind,
+        DocsSubcommand, TaskInvocation, WorkspaceArgs,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -110,7 +110,21 @@ mod tests {
     #[test]
     fn embedded_force_overrides_existing_repo_target() {
         let command = Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::CheckLinks { paths: Vec::new() },
+            subcommand: DocsSubcommand::Check {
+                kind: DocsCheckKind::Links,
+                paths: Vec::new(),
+                file: None,
+                section: None,
+                min_blocks: None,
+                required_text: Vec::new(),
+                required_blocks: Vec::new(),
+                required_headings: Vec::new(),
+                forbidden_text: Vec::new(),
+                policy_index: None,
+                dir: None,
+                index: None,
+                policy_name: None,
+            },
             repo_override: Some(PathBuf::from("/tmp/original")),
             output_json: false,
         });

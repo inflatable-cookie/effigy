@@ -1,7 +1,7 @@
 use crate::runner::entrypoints::run_command;
 use crate::runner::tests::prelude::assert_output_contains_all;
 use crate::runner::tests::prelude::{temp_workspace, write_manifest, write_root_manifest};
-use effigy_cli::{Command, DocsArgs, DocsSubcommand};
+use effigy_cli::{Command, DocsArgs, DocsCheckKind, DocsSubcommand};
 
 #[test]
 fn run_manifest_task_uses_docs_policy_loaded_from_composed_manifest() {
@@ -37,10 +37,20 @@ section = "Vision Artifacts"
     );
 
     let out = run_command(Command::Docs(DocsArgs {
-        subcommand: DocsSubcommand::CheckIndex {
+        subcommand: DocsSubcommand::Check {
+            kind: DocsCheckKind::Index,
+            paths: Vec::new(),
+            file: None,
+            section: None,
+            min_blocks: None,
+            required_text: Vec::new(),
+            required_blocks: Vec::new(),
+            required_headings: Vec::new(),
+            forbidden_text: Vec::new(),
             policy_index: Some("vision".to_owned()),
             dir: None,
             index: None,
+            policy_name: None,
         },
         repo_override: Some(root.clone()),
         output_json: false,

@@ -6,7 +6,7 @@ use effigy_docs_policy::{resolve_repo_input as resolve_docs_repo_input, DocsPoli
 
 use crate::runner::command_context::resolve_active_repo_root;
 use crate::runner::manifest::{load_task_manifest, ManifestDocsPolicyConfig};
-use effigy_cli::{DocsArgs, DocsSubcommand};
+use effigy_cli::{DocsArgs, DocsCheckKind, DocsSubcommand};
 
 use super::error::RunnerError;
 
@@ -23,56 +23,55 @@ pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
     let repo_root = resolved.resolved_root;
 
     match args.subcommand {
-        DocsSubcommand::CheckLinks { paths } => {
-            checks::run_check_links(&repo_root, &paths, args.output_json)
-        }
-        DocsSubcommand::CheckJsonExamples {
+        DocsSubcommand::Check {
+            kind,
+            paths,
             file,
             section,
             min_blocks,
-            required,
-            required_blocks,
-        } => checks::run_check_json_examples(
-            &repo_root,
-            file.as_ref(),
-            section.as_deref(),
-            min_blocks,
-            &required,
-            &required_blocks,
-            args.output_json,
-        ),
-        DocsSubcommand::CheckHeadings {
-            paths,
-            required_headings,
-        } => checks::run_check_headings(&repo_root, &paths, &required_headings, args.output_json),
-        DocsSubcommand::CheckPaths { paths } => {
-            checks::run_check_paths(&repo_root, &paths, args.output_json)
-        }
-        DocsSubcommand::CheckContains {
-            paths,
             required_text,
-        } => checks::run_check_contains(&repo_root, &paths, &required_text, args.output_json),
-        DocsSubcommand::CheckForbidden {
-            paths,
+            required_blocks,
+            required_headings,
             forbidden_text,
-        } => checks::run_check_forbidden(&repo_root, &paths, &forbidden_text, args.output_json),
-        DocsSubcommand::CheckIndex {
             policy_index,
             dir,
             index,
-        } => checks::run_check_index(
-            &repo_root,
-            policy_index.as_deref(),
-            dir.as_ref(),
-            index.as_ref(),
-            args.output_json,
-        ),
-        DocsSubcommand::CheckNextAction { policy_name } => {
-            checks::run_check_next_action(&repo_root, policy_name.as_deref(), args.output_json)
-        }
-        DocsSubcommand::CheckWorkflowPaths { dir } => {
-            checks::run_check_workflow_paths(&repo_root, dir.as_ref(), args.output_json)
-        }
+            policy_name,
+        } => match kind {
+            DocsCheckKind::Links => checks::run_check_links(&repo_root, &paths, args.output_json),
+            DocsCheckKind::JsonExamples => checks::run_check_json_examples(
+                &repo_root,
+                file.as_ref(),
+                section.as_deref(),
+                min_blocks,
+                &required_text,
+                &required_blocks,
+                args.output_json,
+            ),
+            DocsCheckKind::Headings => {
+                checks::run_check_headings(&repo_root, &paths, &required_headings, args.output_json)
+            }
+            DocsCheckKind::Paths => checks::run_check_paths(&repo_root, &paths, args.output_json),
+            DocsCheckKind::Contains => {
+                checks::run_check_contains(&repo_root, &paths, &required_text, args.output_json)
+            }
+            DocsCheckKind::Forbidden => {
+                checks::run_check_forbidden(&repo_root, &paths, &forbidden_text, args.output_json)
+            }
+            DocsCheckKind::Index => checks::run_check_index(
+                &repo_root,
+                policy_index.as_deref(),
+                dir.as_ref(),
+                index.as_ref(),
+                args.output_json,
+            ),
+            DocsCheckKind::NextAction => {
+                checks::run_check_next_action(&repo_root, policy_name.as_deref(), args.output_json)
+            }
+            DocsCheckKind::WorkflowPaths => {
+                checks::run_check_workflow_paths(&repo_root, dir.as_ref(), args.output_json)
+            }
+        },
         DocsSubcommand::AddLogIndex { log_path } => {
             checks::run_add_log_index(&repo_root, &log_path, args.output_json)
         }

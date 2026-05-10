@@ -19,6 +19,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Bundle base config** no longer accepts **`[bundle].base_path`**. Local
   bundle directories must now use **`base = { type = "path", dir = "..." }`**,
   and the `[bundle].base` surface is widened for later git/OCI source forms.
+- **Docs check commands** are now consolidated under **`effigy docs check
+  <KIND>`**. Old flat forms such as **`docs check-links`** and
+  **`docs check-paths`** are removed and fail with migration guidance.
 
 ### Added
 - **Git bundle sources:** `[bundle].base = { type = "git", ... }` now resolves

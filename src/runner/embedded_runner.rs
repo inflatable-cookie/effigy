@@ -51,7 +51,7 @@ pub(in crate::runner) fn run_embedded_task(
 mod tests {
     use super::parse_embedded_command;
     use crate::runner::command_context::EmbeddedRepoOverrideMode;
-    use effigy_cli::{Command, DocsArgs, DocsSubcommand};
+    use effigy_cli::{Command, DocsArgs, DocsCheckKind, DocsSubcommand};
     use std::path::Path;
 
     #[test]
@@ -67,7 +67,10 @@ mod tests {
         assert!(matches!(
             command,
             Command::Docs(DocsArgs {
-                subcommand: DocsSubcommand::CheckLinks { .. },
+                subcommand: DocsSubcommand::Check {
+                    kind: DocsCheckKind::Links,
+                    ..
+                },
                 repo_override: Some(path),
                 output_json: false,
             }) if path == Path::new("/tmp/repo")

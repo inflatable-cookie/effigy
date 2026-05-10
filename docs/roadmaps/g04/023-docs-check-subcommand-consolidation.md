@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -113,4 +113,5 @@ match subcommand {
 
 ## Next Task
 
-Open batch card for CLI parser boundary.
+Execute
+[`639-close-docs-check-runner-docs-and-completions.md`](./batch-cards/639-close-docs-check-runner-docs-and-completions.md).
