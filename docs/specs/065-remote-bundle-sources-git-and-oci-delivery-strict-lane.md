@@ -32,7 +32,7 @@ This lane owns:
 
 ## Current Ready Card
 
-- [`629-add-shared-bundle-source-resolver-and-path-source-materialization.md`](../roadmaps/g04/batch-cards/629-add-shared-bundle-source-resolver-and-path-source-materialization.md)
+- [`630-add-git-bundle-source-resolver-and-cache-identity.md`](../roadmaps/g04/batch-cards/630-add-git-bundle-source-resolver-and-cache-identity.md)
 
 ## Execution Chain
 
@@ -44,8 +44,10 @@ This lane owns:
 - `628` complete: landed the typed bundle-source manifest model, kept string
   sugar plus legacy shipped `name`, removed `base_path`, and updated the
   direct config/export surfaces around the new `path` block form
-- `629` ready: extract shared shipped/path source materialization before the
-  remote resolver batches start
+- `629` complete: extracted shared shipped/path source materialization and one
+  shared defaults-loading seam on top of the materialized source result
+- `630` ready: add the first git bundle-source resolver and stable cache
+  identity rules before the OCI batch
 
 ## Exit Condition
 
@@ -56,4 +58,4 @@ and no longer accepts `base_path`.
 ## Next Task
 
 Execute
-[`629-add-shared-bundle-source-resolver-and-path-source-materialization.md`](../roadmaps/g04/batch-cards/629-add-shared-bundle-source-resolver-and-path-source-materialization.md).
+[`630-add-git-bundle-source-resolver-and-cache-identity.md`](../roadmaps/g04/batch-cards/630-add-git-bundle-source-resolver-and-cache-identity.md).

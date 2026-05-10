@@ -2,9 +2,10 @@
 
 Lane: [`065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md`](../065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
+Completed: 2026-05-10
 
 ## Goal
 
@@ -28,7 +29,16 @@ OCI sources land.
 - the lane is ready for git and OCI resolver batches without another manifest
   model rewrite
 
+## Closeout
+
+This batch landed:
+
+- the first shared `ResolvedBundleSource` code shape
+- one shared materialized-source resolver for shipped and path sources
+- one shared defaults-loading seam on top of the materialized source result
+- stable current behavior for shipped bundles and local path bundles
+
 ## Next Task
 
-Implement the shared shipped/path resolver seam, then advance to the first
-git-source batch.
+Execute
+[`630-add-git-bundle-source-resolver-and-cache-identity.md`](./630-add-git-bundle-source-resolver-and-cache-identity.md).

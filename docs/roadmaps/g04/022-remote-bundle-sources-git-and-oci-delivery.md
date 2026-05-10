@@ -150,9 +150,9 @@ Existing `resolve_local_bundle_defaults` consumes `local_path` unchanged.
    Status: complete for contract boundary
 2. **Add `BundleSourceResolver` trait**: extract shipped/path logic into
    resolver pipeline producing `ResolvedBundleSource`
-   Status: ready next
+   Status: complete
 3. **Implement git resolver**: clone, cache, stale detection, error handling
-   Status: pending
+   Status: ready next
 4. **Implement OCI resolver**: reuse artifact substrate, cache, stale detection
    Status: pending
 5. **Add `effigy bundle sync`**: resolve repo context, iterate remote sources,
@@ -181,4 +181,4 @@ Existing `resolve_local_bundle_defaults` consumes `local_path` unchanged.
 ## Next Task
 
 Execute
-[`629-add-shared-bundle-source-resolver-and-path-source-materialization.md`](./batch-cards/629-add-shared-bundle-source-resolver-and-path-source-materialization.md).
+[`630-add-git-bundle-source-resolver-and-cache-identity.md`](./batch-cards/630-add-git-bundle-source-resolver-and-cache-identity.md).

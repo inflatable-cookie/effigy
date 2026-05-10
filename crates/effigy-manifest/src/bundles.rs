@@ -47,6 +47,29 @@ pub struct BundleExport {
     pub files: Vec<String>,
 }
 
+// The remote-source variants are introduced here so later git/OCI batches can
+// widen the same source seam without another model break.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BundleSourceType {
+    Shipped,
+    Path,
+    Git,
+    Oci,
+}
+
+// `version_hint` and `stale` are part of the locked source-materialization
+// shape but are not consumed until the remote resolver and inspect/sync batches.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedBundleSource {
+    pub source_type: BundleSourceType,
+    pub local_path: PathBuf,
+    pub source_path: PathBuf,
+    pub version_hint: Option<String>,
+    pub stale: bool,
+}
+
 pub(crate) fn apply_bundle_defaults(
     manifest_path: &Path,
     current: &mut Value,
@@ -79,46 +102,20 @@ pub(crate) fn apply_bundle_defaults(
         normalize_database_bundle_inputs(manifest_path, bundle_name, &mut normalized_inputs)?;
         normalize_bundle_specific_inputs(manifest_path, bundle_name, &mut normalized_inputs)?;
     }
-    let (mut defaults, source_path) = match &selection {
-        BundleSelection::Shipped { name } => (
-            resolve_bundle_defaults(manifest_path, current, name, &normalized_inputs)?,
-            bundle_source_path(name),
-        ),
-        BundleSelection::Path { path } => {
-            resolve_local_bundle_defaults(manifest_path, path, &normalized_inputs)?
-        }
-        BundleSelection::Git { url, reference } => {
-            let ref_suffix = reference
-                .as_deref()
-                .map(|value| format!(" at ref `{value}`"))
-                .unwrap_or_default();
-            return Err(ManifestError::Compose {
-                path: manifest_path.to_path_buf(),
-                detail: format!(
-                    "remote git bundle sources are not implemented yet for `{url}`{ref_suffix}"
-                ),
-            });
-        }
-        BundleSelection::Oci { url } => {
-            return Err(ManifestError::Compose {
-                path: manifest_path.to_path_buf(),
-                detail: format!("remote OCI bundle sources are not implemented yet for `{url}`"),
-            });
-        }
-    };
+    let resolved_source = resolve_materialized_bundle_source(manifest_path, &selection)?;
+    let (mut defaults, source_path) = resolve_bundle_defaults_from_source(
+        manifest_path,
+        current,
+        &selection,
+        &resolved_source,
+        &normalized_inputs,
+    )?;
     let bundle_extend_paths = take_bundle_extend_paths(manifest_path, &mut defaults)?;
     let existing_extend_paths = combined_bundle_extend_paths(extend_paths, &bundle_extend_paths);
     let existing_bundle_values = existing_extend_paths
         .iter()
         .map(|path| (path.clone(), lookup_value_at_path(current, path).is_some()))
         .collect::<BTreeMap<_, _>>();
-    let bundle_root = match &selection {
-        BundleSelection::Shipped { name } => {
-            materialize_shipped_bundle_assets(manifest_path, name)?
-        }
-        BundleSelection::Path { path } => path.clone(),
-        BundleSelection::Git { .. } | BundleSelection::Oci { .. } => unreachable!(),
-    };
     merge_missing_values(current, &defaults);
     apply_bundle_extend_paths(
         manifest_path,
@@ -129,12 +126,75 @@ pub(crate) fn apply_bundle_defaults(
     )?;
     Ok(Some(AppliedBundleDefaults {
         source_path,
-        bundle_root,
+        bundle_root: resolved_source.local_path,
     }))
 }
 
 pub(crate) fn bundle_source_path(name: &str) -> PathBuf {
     PathBuf::from(format!("<bundle:{name}>"))
+}
+
+fn resolve_materialized_bundle_source(
+    manifest_path: &Path,
+    selection: &BundleSelection,
+) -> Result<ResolvedBundleSource, ManifestError> {
+    match selection {
+        BundleSelection::Shipped { name } => Ok(ResolvedBundleSource {
+            source_type: BundleSourceType::Shipped,
+            local_path: materialize_shipped_bundle_assets(manifest_path, name)?,
+            source_path: bundle_source_path(name),
+            version_hint: None,
+            stale: false,
+        }),
+        BundleSelection::Path { path } => Ok(ResolvedBundleSource {
+            source_type: BundleSourceType::Path,
+            local_path: path.clone(),
+            source_path: path.clone(),
+            version_hint: None,
+            stale: false,
+        }),
+        BundleSelection::Git { url, reference } => {
+            let ref_suffix = reference
+                .as_deref()
+                .map(|value| format!(" at ref `{value}`"))
+                .unwrap_or_default();
+            Err(ManifestError::Compose {
+                path: manifest_path.to_path_buf(),
+                detail: format!(
+                    "remote git bundle sources are not implemented yet for `{url}`{ref_suffix}"
+                ),
+            })
+        }
+        BundleSelection::Oci { url } => Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!("remote OCI bundle sources are not implemented yet for `{url}`"),
+        }),
+    }
+}
+
+fn resolve_bundle_defaults_from_source(
+    manifest_path: &Path,
+    current: &Value,
+    selection: &BundleSelection,
+    source: &ResolvedBundleSource,
+    normalized_inputs: &BTreeMap<String, Value>,
+) -> Result<(Value, PathBuf), ManifestError> {
+    match (selection, source.source_type) {
+        (BundleSelection::Shipped { name }, BundleSourceType::Shipped) => Ok((
+            resolve_bundle_defaults(manifest_path, current, name, normalized_inputs)?,
+            source.source_path.clone(),
+        )),
+        (BundleSelection::Path { .. }, BundleSourceType::Path) => {
+            resolve_local_bundle_defaults(manifest_path, &source.local_path, normalized_inputs)
+        }
+        (BundleSelection::Git { .. }, BundleSourceType::Git)
+        | (BundleSelection::Oci { .. }, BundleSourceType::Oci) => unreachable!(),
+        _ => Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: "bundle source resolution mismatch between selection and materialization"
+                .to_owned(),
+        }),
+    }
 }
 
 #[derive(Debug, Clone)]
