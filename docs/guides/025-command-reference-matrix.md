@@ -59,6 +59,8 @@ For narrative workflow guidance instead of lookup, start with:
   `effigy bundle`.
 - Need a provider-neutral production model derived from the effective manifest
   and bundle: use `effigy deploy model --json`.
+- Need the planned v0.6.0 UAT/production deployment transaction surface: start
+  from the deployment contract and planned `effigy deploy plan <env>` flow.
 - Need release workflows: use `effigy release`.
 - Need distribution validation, GLIBC checks, artifact validation, or
   first-publish evidence: use `effigy distribution`.
@@ -83,7 +85,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy system` | Operate the manifest's declared default system substrate (VM + compose + gateway) with lifecycle, log streaming, and recovery surfaces | `up`, `down`, `status`, `logs`, `repair`, `reset-runtime`, `--system`, `--repo`, `--follow`, `--json` | `effigy.system.recover.v1` | `064-system-workspace-and-dev-contract.md` |
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
 | `effigy bundle` | Discover, inspect, and export shipped top-level bundles referenced from `[bundle]` in `effigy.toml` | `list`, `inspect`, `export`, `--path`, `--json` | `effigy.bundle.list.v1`, `effigy.bundle.inspect.v1`, `effigy.bundle.export.v1` | `065-underlay-starter.md` |
-| `effigy deploy` | Derive a provider-neutral production deployment model and export the first bounded provider files from the effective manifest and bundle | `model`, `export render`, `export railway`, `--repo`, `--path`, `--plan`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1` | [`../contracts/002-production-deployment-model.md`](../contracts/002-production-deployment-model.md) |
+| `effigy deploy` | Derive a provider-neutral production deployment model and export the first bounded provider files from the effective manifest and bundle. Planned v0.6.0 work adds live deployment transactions through `plan`, `apply`, `status`, `history`, and `redeploy`. | `model`, `export render`, `export railway`, `--repo`, `--path`, `--plan`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`; planned: `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | [`../contracts/002-production-deployment-model.md`](../contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../contracts/019-deployment-transaction-system-contract.md) |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, optionally stage DB seed dumps and run the standard `bootstrap:db-seed` task, optionally prompt for missing bundle DB dumps on a real TTY, optionally isolate generated-compose runtime state with `--fresh`, optionally pin this bootstrap session to `containerd` or `docker` with `--backend`, run `[bootstrap].start` after setup by default (`--no-start` to skip), and expose `bootstrap deps sync`, `bootstrap children status/sync`, and `bootstrap teardown` for typed dependency hydration, child checkout inspection/refresh, and fresh-session cleanup | `<git-url>`, `teardown`, `deps sync`, `children status`, `children sync`, `--path`, `--branch`, `--backend <containerd|docker>`, `--db-seed <FILE>|<TARGET>=<FILE>`, `--fresh`, `--no-prompt`, `--reuse-path`, `--no-start`, `--start`, `--plan`, `--yes`, `--js-only`, `--rust-only`, `--fetch-only`, `--checkout`, `--json` | `effigy.bootstrap.v1`, `effigy.bootstrap.deps.v1`, `effigy.bootstrap.children-status.v1`, `effigy.bootstrap.children-sync.v1`, `effigy.bootstrap-teardown.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--json`, `--markdown`, `--out`, `--fail-on-findings`, `--show-warnings` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
@@ -198,6 +200,12 @@ effigy bundle <list|inspect|export> [ARGS...] [--json]
 effigy deploy model [--repo <PATH>] --json
 effigy deploy export render [--repo <PATH>] --path <DIR> [--plan] [--json]
 effigy deploy export railway [--repo <PATH>] --path <DIR> [--plan] [--json]
+# planned v0.6.0 deployment transaction surface:
+effigy deploy plan <ENV> [--repo <PATH>] [--write-report] [--json]
+effigy deploy apply <ENV> [--repo <PATH>] --yes [--json]
+effigy deploy status <ENV> [--repo <PATH>] [--json]
+effigy deploy history <ENV> [--repo <PATH>] [--limit <N>] [--json]
+effigy deploy redeploy <ENV> [--repo <PATH>] --deployment <ID> --yes [--json]
 effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--backend <containerd|docker>] [--db-seed <FILE>|<TARGET>=<FILE>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--start] [--plan] [--json]
 effigy bootstrap teardown [--yes] [--json]
 effigy bootstrap deps sync [<path>...] [--js-only|--rust-only] [--json]
@@ -267,6 +275,16 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   currently generates only `render.yaml`
 - `deploy export railway` is intentionally Underlay-first in the first batch
   and currently generates service-local `railway.toml` files plus `report.json`
+- planned v0.6.0 deployment transactions are separate from `deploy export`:
+  `deploy plan/apply/status/history/redeploy` will compose code refs, provider
+  targets, state stacks, OCI artifact policy, release evidence, hooks, health
+  checks, and reports; Railway is the first planned live adapter and Render is
+  required before the v0.6.0 deployment suite closes
+- planned `deploy apply` must validate provider setup and block with
+  remediation instead of creating provider projects, services, resources,
+  domains, variables, or secrets
+- planned `deploy redeploy` is evidence-backed replay of recorded immutable
+  inputs, not automatic database or media rollback
 - `bootstrap` runs `[bootstrap].start` after setup by default; pass `--no-start`
   to skip that phase; it fails fast on dirty existing checkouts or remote
   mismatches

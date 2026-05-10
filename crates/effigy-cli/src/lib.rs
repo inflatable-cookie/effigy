@@ -841,6 +841,7 @@ pub struct TasksArgs {
     pub repo_override: Option<PathBuf>,
     pub task_name: Option<String>,
     pub resolve_selector: Option<String>,
+    pub status_selector: Option<String>,
     pub output_json: bool,
     pub pretty_json: bool,
 }
@@ -856,6 +857,7 @@ pub enum CliParseError {
     MissingRepoValue,
     MissingTaskNameValue,
     MissingResolveSelectorValue,
+    MissingStatusSelectorValue,
     MissingPrettyValue,
     MissingFlagValue {
         flag: String,
@@ -876,6 +878,9 @@ impl std::fmt::Display for CliParseError {
             CliParseError::MissingRepoValue => write!(f, "--repo requires a value"),
             CliParseError::MissingTaskNameValue => write!(f, "--task requires a value"),
             CliParseError::MissingResolveSelectorValue => write!(f, "--resolve requires a value"),
+            CliParseError::MissingStatusSelectorValue => {
+                write!(f, "`tasks status` requires a selector")
+            }
             CliParseError::MissingPrettyValue => {
                 write!(f, "--pretty requires a value (`true` or `false`)")
             }

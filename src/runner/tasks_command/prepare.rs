@@ -10,6 +10,7 @@ use super::super::command_context::{
     resolve_active_command_context, task_selection_precedence_notes,
 };
 use super::super::deferred_builtins_from_catalogs;
+use super::status::run_task_status;
 use crate::runner::error::RunnerError;
 use effigy_manifest::LoadedCatalog;
 use effigy_routing::discover_catalogs_allow_missing;
@@ -47,6 +48,9 @@ impl PreparedTasksCommand {
 }
 
 pub(in crate::runner) fn run_tasks(args: TasksArgs) -> Result<String, RunnerError> {
+    if let Some(selector) = args.status_selector.as_deref() {
+        return run_task_status(&args, selector);
+    }
     prepare_tasks_command(&args)?.render(&args)
 }
 

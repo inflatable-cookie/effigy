@@ -1,4 +1,11 @@
 use crate::runner::json_contract_tests::prelude::{harness::*, json::*, runtime::*};
+use chrono::Utc;
+use effigy_execution::{
+    ExecutionSurface, TaskStatusCompletedRecord, TaskStatusOutcome, TaskStatusRuntimeRouteSummary,
+    TaskStatusStage, TaskStatusState, TaskStatusTargetIdentity,
+};
+use effigy_runtime::task_status::task_status_latest_record_path;
+use std::path::Path;
 
 #[test]
 fn tasks_json_contract_has_versioned_top_level_shape() {
@@ -19,6 +26,7 @@ fn tasks_json_contract_has_versioned_top_level_shape() {
             repo_override: None,
             task_name: None,
             resolve_selector: None,
+            status_selector: None,
             output_json: true,
             pretty_json: true,
         })
@@ -40,6 +48,7 @@ fn tasks_filtered_json_contract_has_versioned_shape_and_filter_fields() {
             repo_override: None,
             task_name: Some("test".to_owned()),
             resolve_selector: None,
+            status_selector: None,
             output_json: true,
             pretty_json: true,
         })
@@ -63,6 +72,7 @@ fn tasks_json_contract_catalog_payload_uses_expected_top_level_fields() {
             repo_override: None,
             task_name: None,
             resolve_selector: None,
+            status_selector: None,
             output_json: true,
             pretty_json: true,
         })
@@ -95,6 +105,7 @@ fn tasks_json_contract_filtered_payload_uses_expected_top_level_fields() {
             repo_override: None,
             task_name: Some("test".to_owned()),
             resolve_selector: None,
+            status_selector: None,
             output_json: true,
             pretty_json: true,
         })
@@ -137,6 +148,7 @@ fn tasks_json_contract_with_resolve_has_diagnostics_and_probe_fields() {
             repo_override: None,
             task_name: None,
             resolve_selector: Some("catalog_a/api".to_owned()),
+            status_selector: None,
             output_json: true,
             pretty_json: true,
         })
@@ -169,6 +181,7 @@ fn tasks_filtered_json_contract_with_resolve_has_diagnostics_and_probe_fields() 
             repo_override: None,
             task_name: Some("build".to_owned()),
             resolve_selector: Some("catalog_a/build".to_owned()),
+            status_selector: None,
             output_json: true,
             pretty_json: true,
         })
@@ -199,6 +212,7 @@ fn tasks_json_contract_excludes_explicitly_deferred_builtins() {
             repo_override: None,
             task_name: None,
             resolve_selector: None,
+            status_selector: None,
             output_json: true,
             pretty_json: true,
         })
@@ -211,6 +225,37 @@ fn tasks_json_contract_excludes_explicitly_deferred_builtins() {
     assert!(builtin_tasks.iter().any(|item| item["task"] == "doctor"));
 }
 
+#[test]
+fn tasks_status_json_contract_has_versioned_top_level_shape() {
+    let root = temp_workspace("tasks-status-json-contract");
+    write_manifest(
+        &root.join("effigy.toml"),
+        "[tasks.test]\nrun = \"printf test\"\n",
+    );
+    seed_latest_task_status(&root, "test");
+
+    let out = with_cwd(&root, || {
+        run_tasks(TasksArgs {
+            repo_override: None,
+            task_name: None,
+            resolve_selector: None,
+            status_selector: Some("test".to_owned()),
+            output_json: true,
+            pretty_json: true,
+        })
+    })
+    .expect("run task status json");
+
+    let parsed = parse_json(&out);
+    assert_schema_v1(&parsed, "effigy.tasks-status.v1");
+    assert_eq!(parsed["resolved_selector"], "test");
+    assert_eq!(parsed["state"], "succeeded");
+    assert!(parsed["active"].is_null());
+    assert!(parsed["latest"].is_object());
+    assert!(parsed["warnings"].is_array());
+    assert!(parsed["routing"].is_object());
+}
+
 fn sorted_object_keys(value: &serde_json::Value) -> Vec<&str> {
     let mut keys = value
         .as_object()
@@ -220,4 +265,52 @@ fn sorted_object_keys(value: &serde_json::Value) -> Vec<&str> {
         .collect::<Vec<&str>>();
     keys.sort_unstable();
     keys
+}
+
+fn seed_latest_task_status(root: &Path, selector: &str) {
+    let identity = TaskStatusTargetIdentity::new(
+        root.to_path_buf(),
+        root.to_path_buf(),
+        selector,
+        selector,
+        None,
+    );
+    let key = identity.status_key();
+    let path = task_status_latest_record_path(root, &key);
+    let record = TaskStatusCompletedRecord {
+        status_key: key,
+        identity,
+        state: TaskStatusState::Succeeded,
+        stage: Some(TaskStatusStage::Finishing),
+        execution_surface: ExecutionSurface::DirectCli,
+        runtime_route: TaskStatusRuntimeRouteSummary {
+            route: "host".to_owned(),
+            container: None,
+            service: None,
+        },
+        started_at: timestamp_now(),
+        finished_at: timestamp_now(),
+        duration_ms: Some(42),
+        lock_scopes: vec!["task:test".to_owned()],
+        outcome: TaskStatusOutcome {
+            summary: "task completed".to_owned(),
+            error_family: None,
+            error_code: None,
+        },
+        latest_report_path: path.display().to_string(),
+        history_report_path: root
+            .join(".effigy/reports/tasks/history-placeholder.json")
+            .display()
+            .to_string(),
+    };
+    fs::create_dir_all(path.parent().expect("latest parent")).expect("create status dir");
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&record).expect("encode latest status"),
+    )
+    .expect("write latest status");
+}
+
+fn timestamp_now() -> String {
+    Utc::now().format("%Y%m%dT%H%M%SZ").to_string()
 }

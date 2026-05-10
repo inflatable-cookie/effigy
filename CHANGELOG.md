@@ -18,6 +18,12 @@ During v0.x, MINOR bumps may include breaking changes.
   live in one canonical container-domain crate.
 
 ### Added
+- **v0.6.0 deployment transaction planning:** added the g04 deployment roadmap
+  suite and contract for provider-neutral UAT/production deployment
+  transactions across code refs, state stacks, OCI artifacts, release evidence,
+  provider adapters, hooks, reports, status/history, and evidence-backed
+  redeploy. Railway is the first planned apply adapter and Render must follow
+  before the v0.6.0 deployment suite closes.
 - **State stack planning foundation:** `effigy state plan [<STACK>]` now
   validates `effigy.state-stack.v1` manifests and reports ordered lineage in
   text or JSON without executing app hooks. When no standalone manifest is

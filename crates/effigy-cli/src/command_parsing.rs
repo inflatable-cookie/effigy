@@ -702,8 +702,10 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut task_name: Option<String> = None;
     let mut resolve_selector: Option<String> = None;
+    let mut status_selector: Option<String> = None;
     let mut output_json = false;
     let mut pretty_json = true;
+    let mut pretty_seen = false;
 
     while let Some(arg) = args.next() {
         if matches!(arg.as_str(), "migrate" | "unlock" | "cache") {
@@ -715,6 +717,24 @@ where
             }));
         }
         match arg.as_str() {
+            "status" => {
+                if task_name.is_some()
+                    || resolve_selector.is_some()
+                    || status_selector.is_some()
+                    || pretty_seen
+                {
+                    return Err(CliParseError::InvalidArguments(
+                        "`tasks status` cannot be combined with task listing filters or probes"
+                            .to_owned(),
+                    ));
+                }
+                let value =
+                    next_required_value(&mut args, CliParseError::MissingStatusSelectorValue)?;
+                if value.starts_with('-') {
+                    return Err(CliParseError::MissingStatusSelectorValue);
+                }
+                status_selector = Some(value);
+            }
             "--repo" => {
                 passthrough.push(arg);
                 let path = parse_repo_path(&mut args)?;
@@ -722,12 +742,22 @@ where
                 repo_override = Some(path);
             }
             "--task" => {
+                if status_selector.is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`--task` is not supported together with `tasks status`".to_owned(),
+                    ));
+                }
                 passthrough.push(arg);
                 let value = next_required_value(&mut args, CliParseError::MissingTaskNameValue)?;
                 passthrough.push(value.clone());
                 task_name = Some(value);
             }
             "--resolve" => {
+                if status_selector.is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`--resolve` is not supported together with `tasks status`".to_owned(),
+                    ));
+                }
                 passthrough.push(arg);
                 let value =
                     next_required_value(&mut args, CliParseError::MissingResolveSelectorValue)?;
@@ -739,8 +769,14 @@ where
                 output_json = true;
             }
             "--pretty" => {
+                if status_selector.is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`--pretty` is not supported together with `tasks status`".to_owned(),
+                    ));
+                }
                 let value = next_required_value(&mut args, CliParseError::MissingPrettyValue)?;
                 pretty_json = parse_pretty_bool(value.clone())?;
+                pretty_seen = true;
                 passthrough.push(arg);
                 passthrough.push(value);
             }
@@ -753,6 +789,7 @@ where
         repo_override,
         task_name,
         resolve_selector,
+        status_selector,
         output_json,
         pretty_json,
     }))

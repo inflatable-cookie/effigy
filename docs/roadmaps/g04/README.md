@@ -38,6 +38,12 @@ Current milestones:
 - [`024-command-reference-completeness-and-flag-consistency.md`](./024-command-reference-completeness-and-flag-consistency.md) (queued; document missing commands, fix container flag gaps, add `--repo` to changelog and bundle)
 - [`025-container-command-decomposition.md`](./025-container-command-decomposition.md) (queued; split `container_command/` into lifecycle/data/cache/volume submodules)
 - [`026-shared-dispatcher-and-exec-collapse.md`](./026-shared-dispatcher-and-exec-collapse.md) (queued; extract common JSON/text dispatcher, collapse exec variants, share release stage logic)
+- [`027-deployment-transaction-system.md`](./027-deployment-transaction-system.md) (queued; define the v0.6.0 deployment transaction contract and provider-neutral execution posture)
+- [`028-deployment-config-plan-and-reporting.md`](./028-deployment-config-plan-and-reporting.md) (queued; add deploy env config, `deploy plan <env>`, and durable plan reports)
+- [`029-railway-deployment-adapter.md`](./029-railway-deployment-adapter.md) (queued; add the first live deployment adapter through Railway preflight/apply)
+- [`030-render-deployment-adapter.md`](./030-render-deployment-adapter.md) (queued; add Render support behind the same provider-neutral deployment adapter boundary)
+- [`031-deployment-status-history-and-redeploy.md`](./031-deployment-status-history-and-redeploy.md) (queued; add deployment status, history, and evidence-backed redeploy)
+- [`032-acowtancy-deployment-proof-and-closeout.md`](./032-acowtancy-deployment-proof-and-closeout.md) (queued; prove the v0.6.0 deployment loop against Acowtancy and close the suite)
 
 Architecture anchors:
 
@@ -49,6 +55,7 @@ Architecture anchors:
 - [`../../contracts/013-task-execution-request-contract.md`](../../contracts/013-task-execution-request-contract.md)
 - [`../../contracts/014-artifact-substrate-contract.md`](../../contracts/014-artifact-substrate-contract.md)
 - [`../../contracts/017-task-status-record-and-active-run-model-contract.md`](../../contracts/017-task-status-record-and-active-run-model-contract.md)
+- [`../../contracts/019-deployment-transaction-system-contract.md`](../../contracts/019-deployment-transaction-system-contract.md)
 
 Rules:
 

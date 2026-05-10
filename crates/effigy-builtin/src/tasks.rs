@@ -55,6 +55,7 @@ pub(super) fn run_builtin_tasks(
                     repo_override: Some(target_root.to_path_buf()),
                     task_name: request.task_name,
                     resolve_selector: request.resolve_selector,
+                    status_selector: request.status_selector,
                     output_json: request.output_json,
                     pretty_json: request.pretty_json,
                 })

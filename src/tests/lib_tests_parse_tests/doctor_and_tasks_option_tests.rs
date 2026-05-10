@@ -82,6 +82,7 @@ fn parse_tasks_with_filters() {
             repo_override: Some(PathBuf::from("/tmp/repo")),
             task_name: Some("db:reset".to_owned()),
             resolve_selector: None,
+            status_selector: None,
             output_json: false,
             pretty_json: true,
         })
@@ -98,10 +99,44 @@ fn parse_tasks_supports_json_flag() {
             repo_override: None,
             task_name: None,
             resolve_selector: None,
+            status_selector: None,
             output_json: true,
             pretty_json: true,
         })
     );
+}
+
+#[test]
+fn parse_tasks_status_with_selector_and_json() {
+    let cmd = parse_command(vec![
+        "tasks".to_owned(),
+        "status".to_owned(),
+        "catalog_a/api".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Tasks(TasksArgs {
+            repo_override: None,
+            task_name: None,
+            resolve_selector: None,
+            status_selector: Some("catalog_a/api".to_owned()),
+            output_json: true,
+            pretty_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_tasks_status_requires_selector() {
+    let error = parse_command(vec![
+        "tasks".to_owned(),
+        "status".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect_err("parse should fail");
+    assert_eq!(error.to_string(), "`tasks status` requires a selector");
 }
 
 #[test]

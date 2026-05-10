@@ -271,6 +271,114 @@ Companion references:
 }
 ```
 
+### Planned v0.6.0 Deploy Plan (`effigy.deploy.plan.v1`)
+
+```json
+{
+  "schema": "effigy.deploy.plan.v1",
+  "schema_version": 1,
+  "env": "uat",
+  "provider": "railway",
+  "app": {
+    "name": "acowtancy",
+    "project_name": "acowtancy-uat"
+  },
+  "code": {
+    "requested_ref": "branch:main",
+    "resolved_commit": "abc1234"
+  },
+  "release_policy": {
+    "mode": "optional",
+    "required": false,
+    "gates_required": false
+  },
+  "state": {
+    "stack": "uat",
+    "lineage_id": "acowtancy-uat-Uat-structure-baseline-seed-legacy-import",
+    "planned_report_path": ".effigy/reports/state/acowtancy-uat/latest-plan.json"
+  },
+  "artifact_policy": {
+    "mode": "digest-preferred",
+    "blockers": []
+  },
+  "provider_preflight": {
+    "status": "planned",
+    "checks": [
+      {
+        "name": "project",
+        "status": "pending",
+        "target": "acowtancy-uat"
+      }
+    ]
+  },
+  "hooks": [
+    {
+      "stage": "after_deploy",
+      "task": "deploy:uat:smoke"
+    }
+  ],
+  "health_checks": [
+    {
+      "service": "api",
+      "kind": "http",
+      "path": "/v1/health"
+    }
+  ],
+  "warnings": [],
+  "blockers": []
+}
+```
+
+### Planned v0.6.0 Deploy Apply (`effigy.deploy.apply.v1`)
+
+```json
+{
+  "schema": "effigy.deploy.apply.v1",
+  "schema_version": 1,
+  "deployment_id": "20260510T183000Z-acowtancy-uat-abc1234",
+  "env": "uat",
+  "provider": "railway",
+  "status": "succeeded",
+  "started_at": "2026-05-10T18:30:00Z",
+  "finished_at": "2026-05-10T18:37:42Z",
+  "code": {
+    "requested_ref": "branch:main",
+    "resolved_commit": "abc1234"
+  },
+  "state": {
+    "status": "succeeded",
+    "lineage_id": "acowtancy-uat-Uat-structure-baseline-seed-legacy-import",
+    "apply_report_path": ".effigy/reports/state/acowtancy-uat/latest-apply.json"
+  },
+  "provider_operation": {
+    "status": "succeeded",
+    "provider_deployment_id": "railway-deploy-123",
+    "services": [
+      "front",
+      "admin",
+      "api",
+      "jobs"
+    ]
+  },
+  "hooks": [
+    {
+      "stage": "after_deploy",
+      "task": "deploy:uat:smoke",
+      "status": "succeeded"
+    }
+  ],
+  "health_checks": [
+    {
+      "service": "api",
+      "status": "succeeded",
+      "path": "/v1/health"
+    }
+  ],
+  "written_report_path": ".effigy/reports/deploy/uat/latest.json",
+  "written_history_path": ".effigy/reports/deploy/uat/history/20260510T183000Z-acowtancy-uat-abc1234.json"
+}
+```
+
 ## Health and Diagnostics
 
 ### 5) Doctor (`effigy.doctor.v1`)

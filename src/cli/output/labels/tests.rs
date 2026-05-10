@@ -135,6 +135,7 @@ fn command_kind_and_name_maps_command_variants() {
         repo_override: None,
         task_name: None,
         resolve_selector: None,
+        status_selector: None,
         output_json: false,
         pretty_json: true,
     });

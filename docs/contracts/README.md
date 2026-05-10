@@ -67,6 +67,10 @@ This folder contains both:
   task-status query contract for selector resolution, repo-plus-descendant
   inventory scope, stale-row visibility, and minimum text/JSON read-side
   result shape.
+- [`019-deployment-transaction-system-contract.md`](./019-deployment-transaction-system-contract.md):
+  v0.6.0 deployment transaction contract for provider-neutral UAT and
+  production deployment orchestration across code refs, state stacks, OCI
+  artifacts, release evidence, provider adapters, hooks, reports, and redeploy.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -86,6 +90,7 @@ This folder contains both:
 | `016-state-stack-and-layered-seed-framework-contract.md` | Platform maintainers | Phase taxonomy, stack-manifest shape, lineage boundary, app hook ownership, apply/capture/rebase semantics | Planning review against `g04.019` plus focused state-stack contract proofs once implementation starts |
 | `017-task-status-record-and-active-run-model-contract.md` | Platform maintainers | Task-status key fields, normalized state/stage taxonomy, active/completed record layout, stale/live reconciliation rules, covered write-side execution surfaces | Planning review against `g04.020` plus focused task execution and stale-record proofs once implementation starts |
 | `018-task-status-query-surface-and-read-model-contract.md` | Platform maintainers | `tasks status` selector resolution rules, `--all` inventory scope, stale/no-longer-declared row visibility, minimum text/JSON fields, read-side ownership split | Planning review against `g04.021` plus focused task-status query proofs once implementation starts |
+| `019-deployment-transaction-system-contract.md` | Platform maintainers | Deploy env config, transaction stage order, provider adapter boundary, release/state/artifact composition, deployment reports, redeploy rules, provider support scope | Planning review against `g04.027` through `g04.032` plus focused deployment transaction proofs once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -123,4 +128,6 @@ state-stack framework contract, and
 `017-task-status-record-and-active-run-model-contract.md` as the `g04.020`
 task-status record contract, and
 `018-task-status-query-surface-and-read-model-contract.md` as the `g04.021`
-task-status query contract.
+task-status query contract, and
+`019-deployment-transaction-system-contract.md` as the `g04.027` to `g04.032`
+deployment transaction contract.

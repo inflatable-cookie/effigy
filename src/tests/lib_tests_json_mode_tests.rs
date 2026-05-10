@@ -41,6 +41,7 @@ fn command_requests_json_checks_task_or_global_mode() {
         repo_override: None,
         task_name: None,
         resolve_selector: None,
+        status_selector: None,
         output_json: true,
         pretty_json: true,
     });
@@ -104,6 +105,7 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         repo_override: None,
         task_name: None,
         resolve_selector: None,
+        status_selector: None,
         output_json: false,
         pretty_json: true,
     });
