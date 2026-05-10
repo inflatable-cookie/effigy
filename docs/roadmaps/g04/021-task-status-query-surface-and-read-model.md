@@ -2,9 +2,10 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Active
 Owner: Platform
 Created: 2026-05-10
+Started: 2026-05-10
 Depends on:
 - [`020-task-status-record-and-active-run-model.md`](./020-task-status-record-and-active-run-model.md)
 - [`019-state-stack-and-layered-seed-framework.md`](./019-state-stack-and-layered-seed-framework.md)
@@ -215,4 +216,5 @@ Docs/reference updates:
 
 ## Next Task
 
-After `020` stabilizes, make this the next active query-surface lane.
+Execute card
+[`623-promote-task-status-query-scope-and-result-contract.md`](./batch-cards/623-promote-task-status-query-scope-and-result-contract.md).

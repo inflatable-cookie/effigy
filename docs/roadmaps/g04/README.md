@@ -31,8 +31,8 @@ Current milestones:
 - [`017-planning-crate-decomposition.md`](./017-planning-crate-decomposition.md) (complete; first planning-crate decomposition pass landed)
 - [`018-oci-artifact-closeout-and-proof-matrix.md`](./018-oci-artifact-closeout-and-proof-matrix.md) (complete; OCI support now has proof, remediation, and contract closeout)
 - [`019-state-stack-and-layered-seed-framework.md`](./019-state-stack-and-layered-seed-framework.md) (complete; state-stack framework, apply/capture/history surfaces, and Acowtancy proof loop landed for the current release boundary)
-- [`020-task-status-record-and-active-run-model.md`](./020-task-status-record-and-active-run-model.md) (active; define one canonical task-status record model, active/completed persistence layout, and shared write-side ownership)
-- [`021-task-status-query-surface-and-read-model.md`](./021-task-status-query-surface-and-read-model.md) (queued; expose `effigy tasks status <selector>` and `--all` on top of the task-status record model)
+- [`020-task-status-record-and-active-run-model.md`](./020-task-status-record-and-active-run-model.md) (complete; canonical task-status identity, active/completed persistence, direct-path write-side ownership, and stale reconciliation helpers landed)
+- [`021-task-status-query-surface-and-read-model.md`](./021-task-status-query-surface-and-read-model.md) (active; expose `effigy tasks status <selector>` and `--all` on top of the completed task-status record model)
 - [`022-remote-bundle-sources-git-and-oci-delivery.md`](./022-remote-bundle-sources-git-and-oci-delivery.md) (queued; unify `base`/`base_path` into an extensible block supporting git and OCI remote bundle sources with automatic update detection)
 - [`023-docs-check-subcommand-consolidation.md`](./023-docs-check-subcommand-consolidation.md) (queued; collapse 10 `docs check-*` subcommands into `docs check <KIND>`)
 - [`024-command-reference-completeness-and-flag-consistency.md`](./024-command-reference-completeness-and-flag-consistency.md) (queued; document missing commands, fix container flag gaps, add `--repo` to changelog and bundle)
@@ -67,7 +67,7 @@ Rules:
 ## Next Task
 
 Execute ready card
-[`618-promote-task-status-identity-persistence-and-state-model-boundary.md`](./batch-cards/618-promote-task-status-identity-persistence-and-state-model-boundary.md).
+[`623-promote-task-status-query-scope-and-result-contract.md`](./batch-cards/623-promote-task-status-query-scope-and-result-contract.md).
 
 
 Batch cards live in `g04/batch-cards/` when strict posture uses them.

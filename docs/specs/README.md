@@ -27,11 +27,11 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
-- [`062-task-status-record-and-active-run-model-strict-lane.md`](./062-task-status-record-and-active-run-model-strict-lane.md)
+- [`063-task-status-query-surface-and-read-model-strict-lane.md`](./063-task-status-query-surface-and-read-model-strict-lane.md)
 
 Active strict lane:
 
-- `062` for `g04.020` task-status record and active-run model planning
+- `063` for `g04.021` task-status query surface and read model planning
 
 Paused but still useful:
 
@@ -39,6 +39,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`062-task-status-record-and-active-run-model-strict-lane.md`](./062-task-status-record-and-active-run-model-strict-lane.md)
 - [`061-state-stack-and-layered-seed-framework-strict-lane.md`](./061-state-stack-and-layered-seed-framework-strict-lane.md)
 - [`060-oci-artifact-closeout-and-proof-matrix-strict-lane.md`](./060-oci-artifact-closeout-and-proof-matrix-strict-lane.md)
 - [`059-planning-crate-decomposition-strict-lane.md`](./059-planning-crate-decomposition-strict-lane.md)
@@ -92,5 +93,5 @@ Recently completed:
 
 ## Next Task
 
-Execute the ready `g04.020` card under
-[`062-task-status-record-and-active-run-model-strict-lane.md`](./062-task-status-record-and-active-run-model-strict-lane.md).
+Execute the ready `g04.021` card under
+[`063-task-status-query-surface-and-read-model-strict-lane.md`](./063-task-status-query-surface-and-read-model-strict-lane.md).
