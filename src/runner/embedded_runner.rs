@@ -58,7 +58,7 @@ mod tests {
     fn parse_embedded_command_defaults_repo_override_when_missing() {
         let command = parse_embedded_command(
             Path::new("/tmp/repo"),
-            &["docs".to_owned(), "check-links".to_owned()],
+            &["docs".to_owned(), "check".to_owned(), "links".to_owned()],
             false,
             EmbeddedRepoOverrideMode::DefaultIfMissing,
         )
@@ -81,7 +81,7 @@ mod tests {
     fn parse_embedded_command_applies_forced_json_flag() {
         let command = parse_embedded_command(
             Path::new("/tmp/repo"),
-            &["docs".to_owned(), "check-links".to_owned()],
+            &["docs".to_owned(), "check".to_owned(), "links".to_owned()],
             true,
             EmbeddedRepoOverrideMode::DefaultIfMissing,
         )
@@ -103,7 +103,8 @@ mod tests {
             &[
                 "--json".to_owned(),
                 "docs".to_owned(),
-                "check-links".to_owned(),
+                "check".to_owned(),
+                "links".to_owned(),
             ],
             false,
             EmbeddedRepoOverrideMode::DefaultIfMissing,

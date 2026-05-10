@@ -51,7 +51,7 @@ Compatibility fallbacks:
 - `cargo prepush-ci`
 
 Task-composition note:
-- `qa:docs` is a native task chain over `effigy docs check-links`, `check-json-examples`, `check-index`, plus `qa:docs:vision`
+- `qa:docs` is a native task chain over `effigy docs check links`, `check-json-examples`, `check-index`, plus `qa:docs:vision`
 - `qa:ci` is the native docs-plus-CI-contracts aggregation path used by release-gate wiring
 - the remaining `docs/scripts/check-vision-*.sh` checks are intentionally
   repo-policy surfaces for now; further migration should happen behind the

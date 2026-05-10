@@ -164,11 +164,11 @@ mod tests {
 
     #[test]
     fn builtin_task_reference_invocation_suppresses_child_header() {
-        let rendered = render_builtin_task_reference_invocation("docs check-headings", "--strict")
+        let rendered = render_builtin_task_reference_invocation("docs check headings", "--strict")
             .expect("render task ref");
 
         assert!(rendered.contains("env EFFIGY_INTERNAL_SUPPRESS_HEADER=1"));
-        assert!(rendered.contains("docs check-headings"));
+        assert!(rendered.contains("docs check headings"));
         assert!(rendered.ends_with("--strict"));
     }
 }

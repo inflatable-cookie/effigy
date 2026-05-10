@@ -299,7 +299,7 @@ the manifest level and only override the exceptions:
 run_in = "either"
 
 [tasks]
-qa = [{ task = "docs check-links README.md" }]
+qa = [{ task = "docs check links README.md" }]
 
 [tasks.dev]
 run_in = "container"

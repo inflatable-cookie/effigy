@@ -215,7 +215,7 @@ notes, and compatibility context before publishing the human-reviewed note.
 - If a release note/log documents a workflow path that was correct at that time, keep that historical path as-is.
 - For current operational guidance (outside historical logs), use the active
   workflow paths in `.github/workflows/*.yml`.
-- Validation check `effigy docs check-workflow-paths` intentionally excludes `docs/logs/` to preserve historical evidence fidelity.
+- Validation check `effigy docs check workflow-paths` intentionally excludes `docs/logs/` to preserve historical evidence fidelity.
 
 ## Expected Outcome
 

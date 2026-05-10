@@ -2,7 +2,7 @@
 
 Lane: [`066-docs-check-subcommand-consolidation-strict-lane.md`](../066-docs-check-subcommand-consolidation-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -25,6 +25,13 @@ surfaces and close `g04.023`.
 - focused docs parser/runner/help/CLI tests are green
 - `g04.023` can be marked complete
 
+## Result
+
+- live docs/help now use `docs check <KIND>`
+- starter/task fixtures and embedded-command seams now use the new forms
+- focused parser/help/embedded/CLI output proofs are green
+- `g04.023` is complete
+
 ## Next Task
 
-Close the remaining runner/docs/completion slice and finish the lane.
+Open the next queued `g04` lane.

@@ -27,12 +27,11 @@ Historical command-reference rule:
 ## Active Spec Set
 
 - [`batch-cards/README.md`](./batch-cards/README.md)
-- [`066-docs-check-subcommand-consolidation-strict-lane.md`](./066-docs-check-subcommand-consolidation-strict-lane.md)
 - [`064-deployment-transaction-system-strict-lane.md`](./064-deployment-transaction-system-strict-lane.md)
 
 Active strict lane:
 
-- `066` for `g04.023` docs check subcommand consolidation
+- none; select the next queued `g04` lane before opening another strict lane
 
 Queued strict lanes:
 
@@ -44,6 +43,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`066-docs-check-subcommand-consolidation-strict-lane.md`](./066-docs-check-subcommand-consolidation-strict-lane.md)
 - [`063-task-status-query-surface-and-read-model-strict-lane.md`](./063-task-status-query-surface-and-read-model-strict-lane.md)
 - [`065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md`](./065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md)
 - [`062-task-status-record-and-active-run-model-strict-lane.md`](./062-task-status-record-and-active-run-model-strict-lane.md)
@@ -100,5 +100,5 @@ Recently completed:
 
 ## Next Task
 
-Execute the ready `g04.023` card under
-[`066-docs-check-subcommand-consolidation-strict-lane.md`](./066-docs-check-subcommand-consolidation-strict-lane.md).
+Open the next queued `g04` lane, starting with the roadmap for
+`024-command-reference-completeness-and-flag-consistency`.

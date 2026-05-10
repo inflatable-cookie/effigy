@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.023`](../roadmaps/g04/023-docs-check-subcommand-consolidation.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -21,7 +21,7 @@ Collapse the flat `docs check-*` subcommand surface into one `docs check
 
 ## Current Ready Card
 
-- [`639-close-docs-check-runner-docs-and-completions.md`](../roadmaps/g04/batch-cards/639-close-docs-check-runner-docs-and-completions.md)
+- none; lane complete
 
 ## Execution Chain
 
@@ -33,8 +33,8 @@ Collapse the flat `docs check-*` subcommand surface into one `docs check
 - `638` complete: collapsed the docs parser surface into `docs check <KIND>`,
   updated the typed CLI shape to one docs-check variant, and landed parser/help
   proofs plus migration-error coverage
-- `639` ready: finish the broad runner/docs/completion migration and close the
-  lane
+- `639` complete: finished the broad runner/docs/completion migration, updated
+  live task/starter surfaces, and closed the lane
 
 ## Exit Condition
 
@@ -44,5 +44,4 @@ visible help/reference surfaces reflect the new shape.
 
 ## Next Task
 
-Execute
-[`639-close-docs-check-runner-docs-and-completions.md`](../roadmaps/g04/batch-cards/639-close-docs-check-runner-docs-and-completions.md).
+Open the next queued `g04` lane.

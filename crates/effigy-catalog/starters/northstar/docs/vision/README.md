@@ -2,7 +2,7 @@
 
 This folder holds the product vision for this repo. The docs-policy
 index declared in `effigy.toml` uses the `Vision Artifacts` section
-below as the source of truth for `effigy docs check-index`.
+below as the source of truth for `effigy docs check index`.
 
 ## Vision Artifacts
 

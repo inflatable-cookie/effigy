@@ -94,7 +94,7 @@ Recommended enforcement task for adopted repos:
 
 ```toml
 [tasks]
-"qa:docs:agent-defaults" = "effigy docs check-forbidden AGENTS.md README.md .github/workflows/ci.yml --forbid '--repo .'"
+"qa:docs:agent-defaults" = "effigy docs check forbidden AGENTS.md README.md .github/workflows/ci.yml --forbid '--repo .'"
 ```
 
 Adjust the file list to match the repo's real agent-facing surfaces. The point

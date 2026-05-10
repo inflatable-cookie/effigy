@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -113,5 +113,5 @@ match subcommand {
 
 ## Next Task
 
-Execute
-[`639-close-docs-check-runner-docs-and-completions.md`](./batch-cards/639-close-docs-check-runner-docs-and-completions.md).
+Open the next queued lane, starting with
+[`024-command-reference-completeness-and-flag-consistency.md`](./024-command-reference-completeness-and-flag-consistency.md).

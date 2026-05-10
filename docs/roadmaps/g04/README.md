@@ -34,7 +34,7 @@ Current milestones:
 - [`020-task-status-record-and-active-run-model.md`](./020-task-status-record-and-active-run-model.md) (complete; canonical task-status identity, active/completed persistence, direct-path write-side ownership, and stale reconciliation helpers landed)
 - [`021-task-status-query-surface-and-read-model.md`](./021-task-status-query-surface-and-read-model.md) (complete; `effigy tasks status <selector>` and `--all` are both landed on the shared task-status record model)
 - [`022-remote-bundle-sources-git-and-oci-delivery.md`](./022-remote-bundle-sources-git-and-oci-delivery.md) (complete; unified `[bundle].base` typed source forms, removed `base_path`, and landed git/OCI bundle resolution, sync, and inspect)
-- [`023-docs-check-subcommand-consolidation.md`](./023-docs-check-subcommand-consolidation.md) (active; collapse 10 `docs check-*` subcommands into `docs check <KIND>`)
+- [`023-docs-check-subcommand-consolidation.md`](./023-docs-check-subcommand-consolidation.md) (complete; collapsed the flat `docs check-*` surface into `docs check <KIND>` and removed the old spellings with migration errors)
 - [`024-command-reference-completeness-and-flag-consistency.md`](./024-command-reference-completeness-and-flag-consistency.md) (queued; document missing commands, fix container flag gaps, add `--repo` to changelog and bundle)
 - [`025-container-command-decomposition.md`](./025-container-command-decomposition.md) (queued; split `container_command/` into lifecycle/data/cache/volume submodules)
 - [`026-shared-dispatcher-and-exec-collapse.md`](./026-shared-dispatcher-and-exec-collapse.md) (queued; extract common JSON/text dispatcher, collapse exec variants, share release stage logic)
@@ -73,8 +73,8 @@ Rules:
 
 ## Next Task
 
-Execute the ready `g04.023` card under
-[`066-docs-check-subcommand-consolidation-strict-lane.md`](../../specs/066-docs-check-subcommand-consolidation-strict-lane.md).
+Open the next queued lane, starting with
+[`024-command-reference-completeness-and-flag-consistency.md`](./024-command-reference-completeness-and-flag-consistency.md).
 
 
 Batch cards live in `g04/batch-cards/` when strict posture uses them.

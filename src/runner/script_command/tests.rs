@@ -7,7 +7,7 @@ use std::path::Path;
 fn parse_rhai_embedded_command_defaults_repo_override_when_missing() {
     let command = parse_rhai_embedded_command(
         Path::new("/tmp/repo"),
-        &["docs".to_owned(), "check-links".to_owned()],
+        &["docs".to_owned(), "check".to_owned(), "links".to_owned()],
         false,
     )
     .expect("parse rhai embedded command");
@@ -31,7 +31,8 @@ fn parse_rhai_embedded_command_preserves_explicit_repo_override() {
         Path::new("/tmp/repo"),
         &[
             "docs".to_owned(),
-            "check-links".to_owned(),
+            "check".to_owned(),
+            "links".to_owned(),
             "--repo".to_owned(),
             "/tmp/other".to_owned(),
         ],

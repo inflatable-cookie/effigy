@@ -302,7 +302,7 @@ Example:
 
 ```toml
 [tasks]
-"qa:docs:agent-defaults" = "effigy docs check-forbidden AGENTS.md README.md .github/workflows/ci.yml --forbid '--repo .'"
+"qa:docs:agent-defaults" = "effigy docs check forbidden AGENTS.md README.md .github/workflows/ci.yml --forbid '--repo .'"
 ```
 
 ### Starter `qa:northstar` bundle
@@ -338,14 +338,14 @@ equivalent:
 
 ```toml
 [tasks]
-"qa:northstar:spine" = "effigy docs check-paths README.md AGENTS.md docs/README.md docs/vision/README.md docs/roadmaps/README.md docs/logs/README.md docs/policy/vision-next-task-verbs.txt"
-"qa:northstar:agent-contract" = "effigy docs check-contains AGENTS.md --require 'effigy tasks' --require 'effigy test --plan' --require 'docs/README.md' --require 'docs/vision/README.md' --require 'docs/roadmaps/README.md' --require 'docs/logs/README.md'"
-"qa:northstar:readme" = "effigy docs check-contains README.md --require 'docs/README.md'"
-"qa:northstar:docs-front-door" = "effigy docs check-contains docs/README.md --require 'vision/README.md' --require 'roadmaps/README.md' --require 'logs/README.md'"
-"qa:northstar:indexes" = "effigy docs check-index --policy-index vision"
-"qa:northstar:next-action" = "effigy docs check-next-action --policy vision"
-"qa:northstar:headings" = "effigy docs check-headings docs/vision/README.md --require-heading '## Current Vision'"
-"qa:northstar:agent-defaults" = "effigy docs check-forbidden AGENTS.md README.md --forbid '--repo .'"
+"qa:northstar:spine" = "effigy docs check paths README.md AGENTS.md docs/README.md docs/vision/README.md docs/roadmaps/README.md docs/logs/README.md docs/policy/vision-next-task-verbs.txt"
+"qa:northstar:agent-contract" = "effigy docs check contains AGENTS.md --require 'effigy tasks' --require 'effigy test --plan' --require 'docs/README.md' --require 'docs/vision/README.md' --require 'docs/roadmaps/README.md' --require 'docs/logs/README.md'"
+"qa:northstar:readme" = "effigy docs check contains README.md --require 'docs/README.md'"
+"qa:northstar:docs-front-door" = "effigy docs check contains docs/README.md --require 'vision/README.md' --require 'roadmaps/README.md' --require 'logs/README.md'"
+"qa:northstar:indexes" = "effigy docs check index --policy-index vision"
+"qa:northstar:next-action" = "effigy docs check next-action --policy vision"
+"qa:northstar:headings" = "effigy docs check headings docs/vision/README.md --require-heading '## Current Vision'"
+"qa:northstar:agent-defaults" = "effigy docs check forbidden AGENTS.md README.md --forbid '--repo .'"
 "qa:northstar" = [
   { task = "qa:northstar:spine" },
   { task = "qa:northstar:agent-contract" },
