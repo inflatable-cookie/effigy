@@ -2,7 +2,7 @@
 
 Lane: [`062-task-status-record-and-active-run-model-strict-lane.md`](../062-task-status-record-and-active-run-model-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -45,6 +45,15 @@ share without reopening identity or file-layout decisions.
 - `cargo fmt --all -- --check`
 - `git diff --check`
 
+## Closeout
+
+- added a typed task-status identity, key, state, stage, warning, outcome, and
+  active/completed record model in `effigy-execution`
+- added deterministic key derivation with descendant-scope collision coverage
+- added canonical runtime/report path helpers in `effigy-runtime` for active,
+  latest, and history record locations
+
 ## Next Task
 
-Wire the shared task-status writer into the canonical execution path.
+Card
+[`620-wire-task-status-writer-into-canonical-execution-path.md`](./620-wire-task-status-writer-into-canonical-execution-path.md).

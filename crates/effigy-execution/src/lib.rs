@@ -1,9 +1,17 @@
+mod task_status;
+
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
 use effigy_context::EffigyRuntimeContext;
 use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
+use serde::{Deserialize, Serialize};
+pub use task_status::{
+    TaskStatusActiveRecord, TaskStatusCompletedRecord, TaskStatusKey, TaskStatusOutcome,
+    TaskStatusRecord, TaskStatusRuntimeRouteSummary, TaskStatusStage, TaskStatusState,
+    TaskStatusTargetIdentity, TaskStatusWarning,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskExecutionRequest {
@@ -475,7 +483,7 @@ impl ExecutionPlanDiagnostic {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ExecutionSurface {
     #[default]
     DirectCli,

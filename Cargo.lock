@@ -853,6 +853,7 @@ version = "0.5.0"
 dependencies = [
  "effigy-context",
  "effigy-tasks",
+ "serde",
 ]
 
 [[package]]
@@ -966,6 +967,7 @@ dependencies = [
  "effigy-catalog",
  "effigy-containers",
  "effigy-core",
+ "effigy-execution",
  "effigy-gateway",
  "effigy-manifest",
  "effigy-process",

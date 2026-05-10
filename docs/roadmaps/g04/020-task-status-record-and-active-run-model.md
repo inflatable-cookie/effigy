@@ -257,4 +257,4 @@ No final user-facing command contract is introduced here.
 ## Next Task
 
 Execute card
-[`619-add-task-status-record-types-and-path-helpers.md`](./batch-cards/619-add-task-status-record-types-and-path-helpers.md).
+[`620-wire-task-status-writer-into-canonical-execution-path.md`](./batch-cards/620-wire-task-status-writer-into-canonical-execution-path.md).

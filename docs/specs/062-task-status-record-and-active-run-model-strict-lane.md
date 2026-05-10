@@ -35,8 +35,10 @@ inspection or caller-local runtime guesses.
 - `618` complete: locked task-status identity, state/stage taxonomy, active/completed
   persistence layout, and stale-record reconciliation boundary before
   implementation
-- `619` ready: add typed task-status key/record types and runtime/report path
-  helpers before write-side execution hooks
+- `619` complete: added typed task-status key/record types and runtime/report
+  path helpers
+- `620` ready: wire the shared task-status writer into the canonical execution
+  path before widening to more caller surfaces
 
 ## Exit Condition
 
@@ -48,4 +50,4 @@ truth.
 ## Next Task
 
 Execute ready card
-[`619-add-task-status-record-types-and-path-helpers.md`](../roadmaps/g04/batch-cards/619-add-task-status-record-types-and-path-helpers.md).
+[`620-wire-task-status-writer-into-canonical-execution-path.md`](../roadmaps/g04/batch-cards/620-wire-task-status-writer-into-canonical-execution-path.md).

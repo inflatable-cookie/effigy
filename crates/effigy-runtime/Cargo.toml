@@ -11,6 +11,7 @@ anstyle = "1"
 effigy-catalog = { path = "../effigy-catalog" }
 effigy-containers = { path = "../effigy-containers" }
 effigy-core = { path = "../effigy-core" }
+effigy-execution = { path = "../effigy-execution" }
 effigy-gateway = { path = "../effigy-gateway" }
 effigy-manifest = { path = "../effigy-manifest" }
 effigy-process = { path = "../effigy-process" }
