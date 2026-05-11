@@ -122,37 +122,65 @@ pub struct ChangelogArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeployArgs {
+    /// Selected deployment command.
     pub subcommand: DeploySubcommand,
+    /// Optional repository root used to resolve manifest config and reports.
     pub repo_override: Option<PathBuf>,
+    /// Emit the command result as a versioned JSON payload.
     pub output_json: bool,
 }
 
+/// Parsed `effigy deploy` subcommands.
+///
+/// `Model` and `Export` keep the static deployment-file generation surface.
+/// The transaction variants (`Plan`, `Apply`, `Status`, `History`, and
+/// `Redeploy`) operate on named `[deploy.<env>]` manifest environments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeploySubcommand {
+    /// Derive the provider-neutral deployment model.
     Model,
+    /// Export provider files without live provider mutation.
     Export {
+        /// Static export target.
         provider: DeployExportProvider,
+        /// Output directory for generated files.
         path: PathBuf,
+        /// Preview generated paths without writing files.
         plan: bool,
     },
+    /// Resolve a deployment transaction and optionally persist its report.
     Plan {
+        /// Name from `[deploy.<env>]`.
         env: String,
+        /// Persist the plan under `.effigy/reports/deploy/<env>/`.
         write_report: bool,
     },
+    /// Apply a deployment transaction after explicit confirmation.
     Apply {
+        /// Name from `[deploy.<env>]`.
         env: String,
+        /// Required confirmation flag for mutation-capable execution.
         yes: bool,
     },
+    /// Inspect active/latest deployment state for an environment.
     Status {
+        /// Name from `[deploy.<env>]`.
         env: String,
     },
+    /// List persisted deployment reports for an environment.
     History {
+        /// Name from `[deploy.<env>]`.
         env: String,
+        /// Optional maximum number of history rows to return.
         limit: Option<usize>,
     },
+    /// Replay a recorded deployment transaction when inputs remain reproducible.
     Redeploy {
+        /// Name from `[deploy.<env>]`.
         env: String,
+        /// Recorded deployment id from deploy history.
         deployment: String,
+        /// Required confirmation flag for replay execution.
         yes: bool,
     },
 }

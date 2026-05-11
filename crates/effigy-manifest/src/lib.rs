@@ -125,6 +125,11 @@ pub struct TaskManifest {
     pub data: Option<ManifestDataConfig>,
     #[serde(default)]
     pub state: Option<toml::Value>,
+    /// Raw deployment transaction config keyed by environment.
+    ///
+    /// This intentionally remains a raw TOML value in the manifest crate so
+    /// the runner can evolve `[deploy.<env>]` without forcing every manifest
+    /// consumer to depend on deployment transaction semantics.
     #[serde(default)]
     pub deploy: Option<toml::Value>,
     #[serde(default)]
