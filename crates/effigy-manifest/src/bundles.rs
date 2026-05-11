@@ -1052,6 +1052,7 @@ fn normalize_bundle_specific_inputs(
                 "routes.front",
                 "routes.admin",
                 "routes.api",
+                "routes.s3",
                 "sources.underlay",
                 "sources.poodle",
             ],
@@ -1061,6 +1062,7 @@ fn normalize_bundle_specific_inputs(
             ("front_route_domain", "routes.front", None),
             ("admin_route_domain", "routes.admin", Some("admin")),
             ("api_route_domain", "routes.api", Some("api")),
+            ("s3_route_domain", "routes.s3", Some("s3")),
         ] {
             insert_bundle_input_value(
                 inputs,

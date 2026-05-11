@@ -28,10 +28,10 @@ artifact_policy = "digest-preferred"
 
 [deploy.uat.provider]
 adapter = "render"
-project_id = "prj-d810rqhkh4rs73e7n9eg"
-environment_id = "evm-d810rqhkh4rs73e7n9f0"
-preflight_scope = "environment"
-services = { front = "" }
+project_id = "<render-project-id>"
+environment_id = "<render-uat-environment-id>"
+skip_domains = true
+services = { front = "<render-front-service-id>" }
 
 [deploy.production]
 state = "production"

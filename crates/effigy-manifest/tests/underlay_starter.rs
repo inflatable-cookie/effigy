@@ -187,6 +187,7 @@ fn starter_generates_services_via_bundled_catalog() {
         "app.test",
         "admin.app.test",
         "api.app.test",
+        "s3.app.test",
         "dbgate.app.test",
         "mailpit.app.test",
         "minio.app.test",

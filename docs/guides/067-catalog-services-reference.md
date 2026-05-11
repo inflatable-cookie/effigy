@@ -213,7 +213,8 @@ Local S3-compatible object storage and console.
 - Volume: persistent `data` volume at `/data`.
 - Healthcheck: `mc ready local`.
 - Shell target: yes (`/bin/sh`).
-- Gateway: eligible for HTTP route plus TCP loopback alias for the S3 port.
+- Gateway: eligible for HTTPS app-facing routes (for example `https://s3.<host>`
+  and `https://minio.<host>`) plus a TCP loopback alias for the raw S3 port.
 
 ### `elasticsearch`
 

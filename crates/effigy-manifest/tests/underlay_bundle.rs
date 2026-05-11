@@ -175,6 +175,7 @@ run = "printf seed"
         "acme.test",
         "admin.acme.test",
         "api.acme.test",
+        "s3.acme.test",
         "dbgate.acme.test",
         "mailpit.acme.test",
         "minio.acme.test",
@@ -192,10 +193,10 @@ run = "printf seed"
     };
     assert_eq!(
         steps.len(),
-        3,
-        "expected env helper + container up + deps sync"
+        4,
+        "expected env helper + container up + minio bootstrap + deps sync"
     );
-    let Some(ManifestManagedRunStep::Step(sync_step)) = steps.get(2) else {
+    let Some(ManifestManagedRunStep::Step(sync_step)) = steps.get(3) else {
         panic!("expected bootstrap deps sync step");
     };
     assert_eq!(
@@ -436,7 +437,7 @@ poodle = "../../poodle"
     let effigy_manifest::ManifestManagedRun::Sequence(steps) = run else {
         panic!("underlay bootstrap should use a managed sequence");
     };
-    let Some(effigy_manifest::ManifestManagedRunStep::Step(sync_step)) = steps.get(2) else {
+    let Some(effigy_manifest::ManifestManagedRunStep::Step(sync_step)) = steps.get(3) else {
         panic!("expected bootstrap deps sync step");
     };
     assert_eq!(
@@ -485,7 +486,7 @@ mounts = ["../../underlay", "../../poodle"]
     let effigy_manifest::ManifestManagedRun::Sequence(steps) = run else {
         panic!("underlay bootstrap should use a managed sequence");
     };
-    let Some(effigy_manifest::ManifestManagedRunStep::Step(sync_step)) = steps.get(2) else {
+    let Some(effigy_manifest::ManifestManagedRunStep::Step(sync_step)) = steps.get(3) else {
         panic!("expected bootstrap deps sync step");
     };
     assert_eq!(

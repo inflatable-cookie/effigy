@@ -200,9 +200,10 @@ and `minio` services plus the default gateway routes:
 - `https://<host>`
 - `https://admin.<host>`
 - `https://api.<host>`
+- `https://s3.<host>`
 - `https://dbgate.<host>`
-- `http://mailpit.<host>`
-- `http://minio.<host>`
+- `https://mailpit.<host>`
+- `https://minio.<host>`
 
 At runtime the current gateway surface also derives project-owned
 loopback aliases for:
