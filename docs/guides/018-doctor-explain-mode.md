@@ -14,7 +14,7 @@ ambiguity, or deferral that does not match what you expected.
 
 ## When To Use This
 
-Reach for `effigy doctor <selector> -- <args>` when:
+Reach for `effigy doctor <selector> <args...>` when:
 
 - `effigy <task>` resolves somewhere you did not expect
 - a selector is ambiguous and you need the candidate list
@@ -24,15 +24,15 @@ Reach for `effigy doctor <selector> -- <args>` when:
 ## Command Shape
 
 ```bash
-effigy doctor [--repo <PATH>] <task> -- <args>
-effigy --json doctor --repo <PATH> <task> -- <args>
+effigy doctor [--repo <PATH>] <task> <args...>
+effigy --json doctor --repo <PATH> <task> <args...>
 ```
 
 Examples:
 
 ```bash
-effigy doctor --repo /path/to/workspace catalog-a/build -- --watch
-effigy --json doctor --repo /path/to/workspace catalog-a/build -- --watch
+effigy doctor --repo /path/to/workspace catalog-a/build --watch
+effigy --json doctor --repo /path/to/workspace catalog-a/build --watch
 ```
 
 Use text output for human diagnosis. Use JSON when CI, tooling, or tests need
@@ -43,7 +43,7 @@ stable reasoning fields.
 Command:
 
 ```bash
-effigy doctor --repo /path/to/workspace catalog-a/build -- --watch
+effigy doctor --repo /path/to/workspace catalog-a/build --watch
 ```
 
 Text output excerpt:
@@ -69,7 +69,7 @@ JSON output excerpt:
   "schema_version": 1,
   "request": {
     "task": "catalog-a/build",
-    "args": ["--", "--watch"]
+    "args": ["--watch"]
   },
   "selection": {
     "status": "ok",

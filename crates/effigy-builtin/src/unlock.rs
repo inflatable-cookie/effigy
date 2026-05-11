@@ -61,6 +61,15 @@ fn render_unlock_help() -> String {
                 heading: "Usage",
                 lines: &["effigy tasks unlock [--all | <scope>...] [--yes] [--json]"],
             },
+            HelpSection::Bulleted {
+                heading: "Options",
+                items: &[
+                    "--all : clear every lock scope for the repo",
+                    "<scope>... : explicit lock scopes (see below)",
+                    "--yes : confirm broad unlock without an interactive prompt",
+                    "--json : render machine-readable unlock payload",
+                ],
+            },
             HelpSection::Plain {
                 heading: "Prompting",
                 lines: &[

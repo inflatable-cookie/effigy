@@ -64,7 +64,7 @@ Fast commands:
 
 ```sh
 effigy tasks --resolve <selector>
-effigy doctor <selector> -- <args>
+effigy doctor <selector> <args...>
 ```
 
 Temporary compatibility snippet:

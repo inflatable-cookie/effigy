@@ -3,7 +3,7 @@
 //! This crate exposes three main public surfaces:
 //!
 //! - CLI entrypoints and parsing helpers for embedding or testing the command
-//!   surface
+//!   surface ([`run_cli`]; the parsed command AST is `effigy_cli::parse_command`)
 //! - the `effigy_changelog` crate for Northstar changelog parsing, validation,
 //!   formatting, analysis, and release-note extraction
 //! - supporting runtime modules such as env-schema resolution, task routing,
@@ -11,6 +11,10 @@
 //!
 //! Operator-focused guidance lives in the repository guides:
 //!
+//! - guides map: `docs/guides/README.md`
+//! - full command and flag lookup: `docs/guides/025-command-reference-matrix.md`
+//! - JSON envelopes for automation: `docs/guides/017-json-output-contracts.md`
+//! - env schema and `--env-schema` overrides: `docs/guides/050-env-schema-integration.md`
 //! - release operations: `docs/guides/051-release-orchestration.md`
 //! - release/distribution policy: `docs/guides/049-ci-binary-distribution-and-release-protocol.md`
 //! - changelog workflow and Northstar profile usage:

@@ -488,7 +488,7 @@ Fix:
 ## 8) When to Use `doctor` vs `tasks --resolve`
 
 - use `effigy tasks --resolve <selector>` for routing evidence only,
-- use `effigy doctor <selector> -- <args>` for full explain output including selection and deferral reasoning.
+- use `effigy doctor <selector> <args...>` for full explain output including selection and deferral reasoning.
 
 ## Expected Outcome
 

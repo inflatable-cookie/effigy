@@ -95,7 +95,7 @@ Release: milestone m1
 - Added doctor explain mode for selector reasoning and deferral diagnostics.
 
 ## User-Visible Changes
-- New invocation: `effigy doctor <task> -- <args>`.
+- New invocation: `effigy doctor <task> <args...>`.
 - JSON payload schema includes `effigy.doctor.explain.v1` in envelope result.
 
 ## Vision Target Delta
@@ -105,13 +105,13 @@ Release: milestone m1
 
 ## Migration Notes
 - Before: `effigy tasks --resolve <selector>` only.
-- After: use `effigy doctor <selector> -- <args>` when you need richer reasoning.
+- After: use `effigy doctor <selector> <args...>` when you need richer reasoning.
 - Fallback: `effigy tasks --resolve <selector>` remains available.
 
 ## Validation
-- command: `effigy doctor api/build -- --watch`
+- command: `effigy doctor api/build --watch`
   - result: explain output with selection and deferral reasoning
-- command: `effigy --json doctor api/build -- --watch`
+- command: `effigy --json doctor api/build --watch`
   - result: valid `effigy.command.v1` envelope with `effigy.doctor.explain.v1` payload
 
 ## Rollback Notes

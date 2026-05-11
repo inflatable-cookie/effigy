@@ -48,7 +48,7 @@ These commands produce stable JSON payloads suitable for agents to consume:
 |---------|------------------|
 | `effigy --json tasks` | array of tasks with name, source catalog, kind |
 | `effigy --json doctor` | check results with status, message, fix hint |
-| `effigy --json doctor <selector> -- <args>` | routing decision tree |
+| `effigy --json doctor <selector> <args...>` | routing decision tree |
 | `effigy --json test --plan` | resolved test plan tree |
 | `effigy --json completion candidates` | shell completion candidates |
 | `effigy --json config` | merged config tree |

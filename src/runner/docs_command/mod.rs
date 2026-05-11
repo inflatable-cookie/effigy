@@ -60,17 +60,21 @@ pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
             }
             DocsCheckKind::Index => checks::run_check_index(
                 &repo_root,
-                policy_index.as_deref(),
-                dir.as_ref(),
-                index.as_ref(),
+                policy_index.as_ref().as_deref(),
+                dir.as_ref().as_ref(),
+                index.as_ref().as_ref(),
                 args.output_json,
             ),
-            DocsCheckKind::NextAction => {
-                checks::run_check_next_action(&repo_root, policy_name.as_deref(), args.output_json)
-            }
-            DocsCheckKind::WorkflowPaths => {
-                checks::run_check_workflow_paths(&repo_root, dir.as_ref(), args.output_json)
-            }
+            DocsCheckKind::NextAction => checks::run_check_next_action(
+                &repo_root,
+                policy_name.as_ref().as_deref(),
+                args.output_json,
+            ),
+            DocsCheckKind::WorkflowPaths => checks::run_check_workflow_paths(
+                &repo_root,
+                dir.as_ref().as_ref(),
+                args.output_json,
+            ),
         },
         DocsSubcommand::AddLogIndex { log_path } => {
             checks::run_add_log_index(&repo_root, &log_path, args.output_json)

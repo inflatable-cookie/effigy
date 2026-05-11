@@ -91,9 +91,11 @@ containers, demos, and manifest composition, continue to:
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
 
-## 3) Global Flags That Work Everywhere
+## 3) Global JSON, `--repo`, and task-runtime prefix flags
 
-Three flags apply to almost every Effigy command:
+### Global CLI flags
+
+These apply to **top-level** commands (everything in `effigy --help`):
 
 ```sh
 # Machine-readable JSON output (great for CI and scripts)
@@ -114,6 +116,31 @@ effigy release --help
 Use `--json` when another tool needs to parse the output.  
 Use `--repo` when you want to run Effigy against a repo that is not your current directory.  
 Use `--help` (or `-h`) when you need the exact flags for a specific command.
+
+### Prefix flags on `effigy <task>` and `effigy <catalog>/<task>`
+
+For **manifest-defined tasks**, Effigy parses these **before** task-specific
+arguments (they must stay in the leading prefix segment, not after arbitrary
+passthrough):
+
+```sh
+effigy --repo /path/to/other-project api/build
+effigy serve --env-schema config/staging.env.schema
+effigy validate --verbose-root
+```
+
+- **`--repo <PATH>`** — same meaning as the global form, but carried on a task
+  invocation (parsed from the task argument list).
+- **`--env-schema <PATH>`** — override which env schema file validates and
+  merges plain (non-secret) values for that run. See
+  [`050-env-schema-integration.md`](./050-env-schema-integration.md).
+- **`--verbose-root`** — widen diagnostics and path resolution toward the
+  repository root when the selected catalog is nested.
+
+Built-ins that use Effigy's shared **passthrough** parser reject
+`--verbose-root` and `--env-schema` on the **builtin** invocation itself
+(today: `effigy doctor`, `effigy watch`, `effigy scan`). Use
+`effigy <builtin> --help` for the exact flag set.
 
 ## 4) Optional: Local Dev Stacks With Containers
 
@@ -174,7 +201,7 @@ Use these before running unfamiliar tasks.
 
 ```sh
 effigy doctor --verbose
-effigy doctor --repo /path/to/workspace app/build -- --watch
+effigy doctor --repo /path/to/workspace app/build --watch
 ```
 
 Use the second form when you want explain-mode output for a specific task

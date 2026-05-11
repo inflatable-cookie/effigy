@@ -21,7 +21,7 @@ missing.
 Useful flags:
 
 - `effigy doctor --json` — machine-readable envelope.
-- `effigy doctor <selector> -- <args>` — show why a selector resolves where it
+- `effigy doctor <selector> <args...>` — show why a selector resolves where it
   does.
 
 ## 2. `effigy tasks`
@@ -86,5 +86,5 @@ effigy --json tasks | jq -r '.result.payload.tasks[].name'
 - **`tasks` is empty + user asked for a workflow** → the repo may use raw
   tooling. Check for `package.json`, `Cargo.toml`, etc., and ask the user
   which surface they prefer.
-- **Selector ambiguous in `effigy doctor <selector> --`** → ask the user for the intended
+- **Selector ambiguous in `effigy doctor <selector> <args...>`** → ask the user for the intended
   scope rather than guessing.

@@ -18,6 +18,26 @@ pub(super) fn render_scan_help() -> String {
                 ],
             },
             HelpSection::Bulleted {
+                heading: "Common Options",
+                items: &[
+                    "--threshold, --warn <N|RATIO|BYTES> : warning threshold (meaning depends on the scanner)",
+                    "--high <N|RATIO|BYTES> : high severity threshold (threshold scanners only)",
+                    "--critical <N|RATIO|BYTES> : critical severity threshold (threshold scanners only)",
+                    "--include <GLOB> : include glob, repeatable",
+                    "--exclude <GLOB> : exclude glob, repeatable",
+                    "--source-root <GLOB> : source-tree glob to scan for generated files (generated-in-src only, repeatable)",
+                    "--warning-marker <TEXT> : add a warning marker (marker scanners only, repeatable)",
+                    "--high-marker <TEXT> : add a high marker (marker scanners only, repeatable)",
+                    "--critical-marker <TEXT> : add a critical marker (marker scanners only, repeatable)",
+                    "--show-warnings : include warning rows in terminal text output",
+                    "--markdown : render markdown instead of terminal text",
+                    "--out <PATH> : write rendered report to a file",
+                    "--json : render machine-readable scan payload",
+                    "--fail-on-findings : return non-zero when findings exist",
+                    "--no-gitignore : ignore .gitignore/.ignore rules during traversal",
+                ],
+            },
+            HelpSection::Bulleted {
                 heading: "Subcommands",
                 items: &[
                     "god-files : detect oversized code files using code-only line counts",
@@ -27,6 +47,13 @@ pub(super) fn render_scan_help() -> String {
                     "generated-in-src : detect generated files committed inside source-oriented directories",
                     "attention-markers : detect TODO/FIXME/deprecation and deferred-work markers in code",
                     "stale-suppressions : detect lint/type/tool suppression markers that hide warnings and failures",
+                ],
+            },
+            HelpSection::Bulleted {
+                heading: "Notes",
+                items: &[
+                    "use `effigy scan <subcommand> --help` for per-scanner defaults and additional flags",
+                    "terminal text hides warning rows by default and prints a warning count summary; markdown and json include full findings",
                 ],
             },
         ],

@@ -57,7 +57,7 @@ Deep dive:
 
 ```sh
 effigy doctor --verbose
-effigy doctor --repo /path/to/workspace api/test -- --watch
+effigy doctor --repo /path/to/workspace api/test --watch
 ```
 
 Use `doctor` when a repo feels ambiguous, broken, or inconsistent. Use the

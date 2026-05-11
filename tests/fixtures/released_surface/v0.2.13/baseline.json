@@ -13,7 +13,7 @@
   "release_verify_install_schema": "effigy.release.verify-install.v1",
   "test_plan_schema": "effigy.test.plan.v1",
   "smoke_success_text": "release smoke checks passed",
-  "verify_install_check_count": 7,
+  "verify_install_check_count": 5,
   "release_gates_configured_count": 2,
   "release_source_cases": [
     {

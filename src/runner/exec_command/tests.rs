@@ -29,10 +29,25 @@ use crate::runner::runtime_session_context::{
 };
 
 fn temp_repo(name: &str) -> PathBuf {
-    let base = std::env::current_dir()
-        .expect("cwd")
-        .join("target")
-        .join("test-tmp");
+    let base = if cfg!(target_os = "macos") {
+        let user = std::env::var_os("USER")
+            .or_else(|| std::env::var_os("LOGNAME"))
+            .map(|value| value.to_string_lossy().into_owned());
+        let users_home = user
+            .as_deref()
+            .map(|name| PathBuf::from(format!("/Users/{name}")));
+        let env_home = std::env::var_os("HOME").map(PathBuf::from);
+        let candidate = users_home
+            .filter(|path| path.starts_with("/Users") && path.is_dir())
+            .or_else(|| env_home.filter(|path| path.starts_with("/Users") && path.is_dir()))
+            .unwrap_or_else(|| PathBuf::from("/Users"));
+        candidate.join(".effigy-test-tmp")
+    } else {
+        std::env::current_dir()
+            .expect("cwd")
+            .join("target")
+            .join("test-tmp")
+    };
     fs::create_dir_all(&base).expect("mkdir test base");
     let root = base.join(format!(
         "effigy-exec-command-{name}-{}",

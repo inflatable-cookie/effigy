@@ -13,6 +13,17 @@ pub(super) fn render_completion_help() -> String {
                 lines: &[COMPLETION_HELP_USAGE_LINE, COMPLETION_CANDIDATES_USAGE_LINE],
             },
             HelpSection::Bulleted {
+                heading: "Options",
+                items: &[
+                    "<bash|zsh|fish> : target shell (optional; prompts on real TTY when omitted)",
+                    "--install : write completion script to the user-local completion directory and wire shell startup when needed",
+                    "--export : print the raw completion script to stdout",
+                    "--repo <PATH> : override target repository root for candidates",
+                    "--prefix <VALUE> : prefix used to filter candidate selectors",
+                    "--json : render machine-readable completion payloads",
+                ],
+            },
+            HelpSection::Bulleted {
                 heading: "Notes",
                 items: &[
                     "completion command list is sourced from Effigy built-in command index",

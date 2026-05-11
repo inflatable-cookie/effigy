@@ -14,20 +14,9 @@ pub(super) fn derive_deploy_model(repo_root: &Path) -> Result<DeployModel, Runne
     })?;
     let base = match bundle.base.as_ref() {
         Some(effigy_manifest::ManifestBundleBase::Shipped { name }) => name.as_str(),
-        Some(effigy_manifest::ManifestBundleBase::Path { .. }) => {
+        Some(_) => {
             return Err(RunnerError::task_invocation(
-                "`deploy model` does not support `[bundle].base = { type = \"path\", ... }` yet"
-                    .to_owned(),
-            ));
-        }
-        Some(effigy_manifest::ManifestBundleBase::Git { .. }) => {
-            return Err(RunnerError::task_invocation(
-                "`deploy model` does not support git bundle sources yet".to_owned(),
-            ));
-        }
-        Some(effigy_manifest::ManifestBundleBase::Oci { .. }) => {
-            return Err(RunnerError::task_invocation(
-                "`deploy model` does not support OCI bundle sources yet".to_owned(),
+                "`deploy model` currently supports only shipped bundle sources".to_owned(),
             ));
         }
         None => {

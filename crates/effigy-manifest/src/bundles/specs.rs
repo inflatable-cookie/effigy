@@ -12,8 +12,8 @@ use super::export::{
 use super::{
     bundle_shared_root_path, bundle_source_path, bundle_spec_from_descriptor,
     derive_bundle_workspace_subdir, insert_bundle_input_value, optional_bundle_integer,
-    optional_bundle_string, parse_bundle_descriptor_source, render_toml_string_array_lines,
-    render_toml_string_list, required_bundle_string, BundleSpec, ManifestError,
+    optional_bundle_string, parse_bundle_descriptor_source, render_toml_string_list,
+    required_bundle_string, BundleSpec, ManifestError,
 };
 
 const DECODELABS_BUNDLE_DESCRIPTOR: &str = include_str!("../../bundles/decodelabs/bundle.toml");
@@ -39,38 +39,11 @@ pub(super) fn decodelabs_library_spec() -> BundleSpec {
     bundle_spec_from_descriptor(&descriptor)
 }
 
-pub(super) const DECODELABS_PHP_EXTENSIONS: &[&str] = &[
-    "bcmath",
-    "apcu",
-    "bz2",
-    "calendar",
-    "curl",
-    "gmp",
-    "imagick",
-    "mbstring",
-    "pcntl",
-    "exif",
-    "gd",
-    "intl",
-    "memcached",
-    "mysqli",
-    "opcache",
-    "pdo_mysql",
-    "readline",
-    "redis",
-    "sockets",
-    "sqlite3",
-    "xml",
-    "zip",
-    "event",
-];
-
 pub(super) fn resolve_decodelabs_bundle(
     manifest_path: &Path,
     inputs: &BTreeMap<String, Value>,
 ) -> Result<Value, ManifestError> {
     let host = required_bundle_string(manifest_path, "decodelabs", inputs, "host")?;
-    let host_dir_name = decodelabs_host_dir_name(manifest_path, &host)?;
     let project_name = required_bundle_string(manifest_path, "decodelabs", inputs, "project_name")?;
     let database = required_bundle_string(manifest_path, "decodelabs", inputs, "database")?;
     let system_name =
@@ -86,7 +59,6 @@ pub(super) fn resolve_decodelabs_bundle(
         optional_bundle_string(inputs, "zest_domain").unwrap_or_else(|| format!("zest.{host}"));
     let mut render_inputs = inputs.clone();
     render_inputs.insert("host".to_owned(), Value::String(host));
-    render_inputs.insert("host_dir_name".to_owned(), Value::String(host_dir_name));
     render_inputs.insert("project_name".to_owned(), Value::String(project_name));
     render_inputs.insert("database".to_owned(), Value::String(database));
     render_inputs.insert("system_name".to_owned(), Value::String(system_name));
@@ -99,81 +71,21 @@ pub(super) fn resolve_decodelabs_bundle(
         "default_workspace".to_owned(),
         Value::String(default_workspace),
     );
-    insert_bundle_input_value(
-        &mut render_inputs,
-        "routes.front",
-        Value::String(optional_bundle_string(inputs, "routes.front").unwrap_or_default()),
-    );
-    insert_bundle_input_value(
-        &mut render_inputs,
-        "routes.admin",
-        Value::String(
-            optional_bundle_string(inputs, "routes.admin").unwrap_or_else(|| "admin".to_owned()),
-        ),
-    );
-    insert_bundle_input_value(
-        &mut render_inputs,
-        "routes.api",
-        Value::String(
-            optional_bundle_string(inputs, "routes.api").unwrap_or_else(|| "api".to_owned()),
-        ),
-    );
     if let Some(port) = zest_port {
-        let port = decodelabs_zest_port(port)?;
-        render_inputs.insert("zest_port".to_owned(), Value::Integer(i64::from(port)));
+        render_inputs.insert("zest_port".to_owned(), Value::Integer(port));
     }
     render_inputs.insert("zest_domain".to_owned(), Value::String(zest_domain));
 
     let rendered = render_shipped_bundle_template_with_inputs(
         manifest_path,
         "decodelabs",
-        &DECODELABS_TEMPLATE.replace(
-            "__PHP_EXTENSIONS__",
-            &render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  "),
-        ),
+        DECODELABS_TEMPLATE,
         &render_inputs,
     )?;
 
     toml::from_str::<Value>(&rendered).map_err(|error| ManifestError::Parse {
         path: bundle_source_path("decodelabs"),
         error,
-    })
-}
-
-fn decodelabs_host_dir_name(manifest_path: &Path, host: &str) -> Result<String, ManifestError> {
-    let trimmed = host.trim().trim_end_matches('.');
-    let Some(first_label) = trimmed.split('.').next() else {
-        return Err(ManifestError::Render {
-            path: manifest_path.to_path_buf(),
-            detail: "bundle `decodelabs` could not derive a working directory from empty `host`"
-                .to_owned(),
-        });
-    };
-    if first_label.is_empty() {
-        return Err(ManifestError::Render {
-            path: manifest_path.to_path_buf(),
-            detail: format!(
-                "bundle `decodelabs` could not derive a working directory from `host = {host}`"
-            ),
-        });
-    }
-    Ok(first_label.to_owned())
-}
-
-fn decodelabs_zest_port(port: i64) -> Result<u16, ManifestError> {
-    if port <= 0 {
-        return Err(ManifestError::Render {
-            path: bundle_source_path("decodelabs"),
-            detail: format!(
-                "invalid `decodelabs` bundle input `zest_port = {port}`; expected a port in the range 1-65535"
-            ),
-        });
-    }
-    u16::try_from(port).map_err(|_| ManifestError::Render {
-        path: bundle_source_path("decodelabs"),
-        detail: format!(
-            "invalid `decodelabs` bundle input `zest_port = {port}`; expected a port in the range 1-65535"
-        ),
     })
 }
 
@@ -221,10 +133,7 @@ pub(super) fn resolve_decodelabs_library_bundle(
     let rendered = render_shipped_bundle_template_with_inputs(
         manifest_path,
         "decodelabs-library",
-        &DECODELABS_LIBRARY_TEMPLATE.replace(
-            "__PHP_EXTENSIONS__",
-            &render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  "),
-        ),
+        DECODELABS_LIBRARY_TEMPLATE,
         &render_inputs,
     )?;
 

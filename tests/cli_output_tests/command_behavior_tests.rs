@@ -416,7 +416,7 @@ fn cli_docs_check_links_json_reports_broken_relative_targets() {
     .expect("write readme");
     fs::write(root.join("docs/guides/guide.md"), "# Guide\n").expect("write guide");
 
-    let output = run_json_cli_command(&root, &["docs", "check-links", "README.md"]);
+    let output = run_json_cli_command(&root, &["docs", "check", "links", "README.md"]);
     assert!(!output.status.success());
     let parsed = parse_stdout_json(&output);
     let details: Value = serde_json::from_str(
@@ -2336,7 +2336,7 @@ fn cli_docs_check_links_without_paths_scans_full_docs_tree() {
     .expect("write log");
     fs::write(root.join("docs/research/example.md"), "# Research\n").expect("write research");
 
-    let output = run_json_cli_command(&root, &["docs", "check-links"]);
+    let output = run_json_cli_command(&root, &["docs", "check", "links"]);
     assert!(!output.status.success());
     let parsed = parse_stdout_json(&output);
     let details: Value = serde_json::from_str(
@@ -2371,7 +2371,7 @@ fn cli_docs_check_json_examples_json_uses_default_completion_policy() {
     )
     .expect("write examples");
 
-    let output = run_json_cli_command(&root, &["docs", "check-json-examples"]);
+    let output = run_json_cli_command(&root, &["docs", "check", "json-examples"]);
     assert!(output.status.success());
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["schema"], "effigy.docs.json-examples.v1");
@@ -2391,7 +2391,7 @@ fn cli_docs_check_index_json_reports_missing_entries() {
     fs::write(root.join("docs/logs/2026-03/one.md"), "# One\n").expect("write one");
     fs::write(root.join("docs/logs/2026-03/two.md"), "# Two\n").expect("write two");
 
-    let output = run_json_cli_command(&root, &["docs", "check-index"]);
+    let output = run_json_cli_command(&root, &["docs", "check", "index"]);
     assert!(!output.status.success());
     let parsed = parse_stdout_json(&output);
     let details: Value = serde_json::from_str(
@@ -2459,7 +2459,7 @@ fn cli_docs_check_workflow_paths_json_reports_stale_workflow_reference() {
     )
     .expect("write workflow");
 
-    let output = run_json_cli_command(&root, &["docs", "check-workflow-paths"]);
+    let output = run_json_cli_command(&root, &["docs", "check", "workflow-paths"]);
     assert!(!output.status.success());
     let parsed = parse_stdout_json(&output);
     let details: Value = serde_json::from_str(
@@ -2498,7 +2498,10 @@ fn cli_docs_check_index_json_uses_named_policy_index() {
     fs::write(root.join("docs/vision/blueprint.md"), "# Blueprint\n").expect("write blueprint");
     fs::write(root.join("docs/vision/history/old.md"), "# Old\n").expect("write history");
 
-    let output = run_json_cli_command(&root, &["docs", "check-index", "--policy-index", "vision"]);
+    let output = run_json_cli_command(
+        &root,
+        &["docs", "check", "index", "--policy-index", "vision"],
+    );
     assert!(output.status.success());
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["schema"], "effigy.docs.index-check.v1");
@@ -2529,7 +2532,10 @@ fn cli_docs_check_next_action_json_uses_named_policy() {
     )
     .expect("write artifact");
 
-    let output = run_json_cli_command(&root, &["docs", "check-next-action", "--policy", "vision"]);
+    let output = run_json_cli_command(
+        &root,
+        &["docs", "check", "next-action", "--policy", "vision"],
+    );
     assert!(output.status.success());
     let parsed = parse_stdout_json(&output);
     assert_eq!(
@@ -2562,7 +2568,10 @@ fn cli_docs_check_next_action_json_rejects_missing_heading() {
     )
     .expect("write artifact");
 
-    let output = run_json_cli_command(&root, &["docs", "check-next-action", "--policy", "vision"]);
+    let output = run_json_cli_command(
+        &root,
+        &["docs", "check", "next-action", "--policy", "vision"],
+    );
     assert!(!output.status.success());
     let parsed = parse_stdout_json(&output);
     let details: Value = serde_json::from_str(
@@ -2598,7 +2607,10 @@ fn cli_docs_check_next_action_json_rejects_non_actionable_verb() {
     )
     .expect("write artifact");
 
-    let output = run_json_cli_command(&root, &["docs", "check-next-action", "--policy", "vision"]);
+    let output = run_json_cli_command(
+        &root,
+        &["docs", "check", "next-action", "--policy", "vision"],
+    );
     assert!(!output.status.success());
     let parsed = parse_stdout_json(&output);
     let details: Value = serde_json::from_str(
@@ -2895,7 +2907,8 @@ fn cli_docs_check_headings_json_reports_missing_heading() {
         &root,
         &[
             "docs",
-            "check-headings",
+            "check",
+            "headings",
             "docs/guides/example.md",
             "--require-heading",
             "## Vision Alignment",
@@ -2923,7 +2936,8 @@ fn cli_docs_check_contains_json_reports_missing_text() {
         &root,
         &[
             "docs",
-            "check-contains",
+            "check",
+            "contains",
             "docs/example.md",
             "--require",
             "Vision Target Delta",
@@ -2948,7 +2962,7 @@ fn cli_docs_check_paths_json_reports_missing_path() {
 
     let output = run_json_cli_command(
         &root,
-        &["docs", "check-paths", "README.md", "docs/README.md"],
+        &["docs", "check", "paths", "README.md", "docs/README.md"],
     );
     assert!(!output.status.success());
     let parsed = parse_stdout_json(&output);
@@ -2971,7 +2985,8 @@ fn cli_docs_check_forbidden_json_reports_forbidden_text() {
         &root,
         &[
             "docs",
-            "check-forbidden",
+            "check",
+            "forbidden",
             "AGENTS.md",
             "--forbid",
             "--repo .",
@@ -4026,11 +4041,11 @@ fn cli_release_verify_install_json_mode_installs_and_checks_tagged_binary() {
     assert_eq!(parsed["result"]["verified"], true);
     assert_eq!(parsed["result"]["tag"], "v0.1.0");
     assert_eq!(parsed["result"]["repo_url"], repo_url);
-    assert_eq!(parsed["result"]["configured_check_count"], 7);
-    assert_eq!(parsed["result"]["executed_check_count"], 7);
+    assert_eq!(parsed["result"]["configured_check_count"], 5);
+    assert_eq!(parsed["result"]["executed_check_count"], 5);
     assert_eq!(parsed["result"]["stopped_early"], false);
     let results = parsed["result"]["results"].as_array().expect("results");
-    assert_eq!(results.len(), 7);
+    assert_eq!(results.len(), 5);
     assert_eq!(results[0]["name"], "cargo install from git tag");
     assert_eq!(results[0]["passed"], true);
     assert!(results[0]["command"]
@@ -4039,11 +4054,8 @@ fn cli_release_verify_install_json_mode_installs_and_checks_tagged_binary() {
     assert!(results[0]["duration_ms"].as_u64().is_some());
     assert_eq!(results[1]["name"], "installed binary version check");
     assert_eq!(results[1]["stdout"], "effigy v0.1.0");
-    assert_eq!(
-        results[6]["name"],
-        "installed binary completion candidates check"
-    );
-    assert_eq!(results[6]["passed"], true);
+    assert_eq!(results[4]["name"], "installed binary json help check");
+    assert_eq!(results[4]["passed"], true);
 }
 
 #[test]

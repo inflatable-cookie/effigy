@@ -223,21 +223,45 @@ fn resolve_git_bundle_source(
     manifest_path: &Path,
     url: &str,
     reference: Option<&str>,
-    _refresh_remote: bool,
+    refresh_remote: bool,
 ) -> Result<ResolvedBundleSource, ManifestError> {
     let local_path = git_bundle_cache_path(manifest_path, url, reference)?;
     let reference = reference
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("main");
-    ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
-    let version_hint = Some(git_head_revision(manifest_path, &local_path)?);
+
+    let cache_exists = local_path.join(".git").is_dir();
+
+    if !cache_exists || refresh_remote {
+        ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
+    }
+
+    let version_hint = if local_path.join(".git").is_dir() {
+        Some(git_head_revision(manifest_path, &local_path)?)
+    } else {
+        None
+    };
+
+    let stale = if cache_exists && !refresh_remote {
+        match git_ls_remote(manifest_path, url, reference, &local_path) {
+            Ok(remote_commit) => {
+                let local_commit =
+                    git_head_revision(manifest_path, &local_path).unwrap_or_default();
+                remote_commit != local_commit
+            }
+            Err(_) => false,
+        }
+    } else {
+        false
+    };
+
     Ok(ResolvedBundleSource {
         source_type: BundleSourceType::Git,
         local_path,
         source_path: PathBuf::from(url),
         version_hint,
-        stale: false,
+        stale,
     })
 }
 
@@ -379,6 +403,34 @@ fn git_head_revision(manifest_path: &Path, local_path: &Path) -> Result<String, 
         None,
     )?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn git_ls_remote(
+    manifest_path: &Path,
+    url: &str,
+    reference: &str,
+    local_path: &Path,
+) -> Result<String, ManifestError> {
+    let output = run_git(
+        manifest_path,
+        Some(local_path),
+        &["ls-remote", url, reference],
+        None,
+    )?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let commit = stdout
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().next())
+        .unwrap_or("")
+        .to_owned();
+    if commit.is_empty() {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!("git ls-remote returned no commit for {url} {reference}"),
+        });
+    }
+    Ok(commit)
 }
 
 fn run_git(
@@ -1224,6 +1276,24 @@ fn normalize_bundle_specific_inputs(
         return Ok(());
     }
 
+    if bundle_name == "decodelabs" {
+        let host = required_bundle_string(manifest_path, bundle_name, inputs, "host")?;
+        let host_dir_name = derive_decodelabs_host_dir_name(manifest_path, &host)?;
+        inputs.insert("host_dir_name".to_owned(), Value::String(host_dir_name));
+
+        if let Some(port) = optional_bundle_integer(inputs, "zest_port") {
+            if port <= 0 || port > u16::MAX as i64 {
+                return Err(ManifestError::Render {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "invalid `decodelabs` bundle input `zest_port = {port}`; expected a port in the range 1-65535"
+                    ),
+                });
+            }
+        }
+        return Ok(());
+    }
+
     if bundle_name == "decodelabs-library" {
         let shared_root_path = bundle_shared_root_path(manifest_path, bundle_name, inputs)?;
         inputs.insert(
@@ -1464,14 +1534,6 @@ pub(super) fn render_toml_string_list(inputs: &BTreeMap<String, Value>, key: &st
     format!("[{encoded}]")
 }
 
-pub(super) fn render_toml_string_array_lines(values: &[&str], indent: &str) -> String {
-    values
-        .iter()
-        .map(|value| format!("{indent}{value:?},"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 pub(super) fn derive_bundle_workspace_subdir(
     manifest_path: &Path,
     shared_root: &str,
@@ -1505,6 +1567,29 @@ pub(super) fn derive_bundle_workspace_subdir(
         });
     }
     Ok(relative.display().to_string())
+}
+
+pub(super) fn derive_decodelabs_host_dir_name(
+    manifest_path: &Path,
+    host: &str,
+) -> Result<String, ManifestError> {
+    let trimmed = host.trim().trim_end_matches('.');
+    let Some(first_label) = trimmed.split('.').next() else {
+        return Err(ManifestError::Render {
+            path: manifest_path.to_path_buf(),
+            detail: "bundle `decodelabs` could not derive a working directory from empty `host`"
+                .to_owned(),
+        });
+    };
+    if first_label.is_empty() {
+        return Err(ManifestError::Render {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+                "bundle `decodelabs` could not derive a working directory from `host = {host}`"
+            ),
+        });
+    }
+    Ok(first_label.to_owned())
 }
 
 pub(super) fn resolve_bundle_host_path(manifest_path: &Path, path: &str) -> PathBuf {

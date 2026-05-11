@@ -275,7 +275,7 @@ fn run_standard_task_inner(
         preflight,
         selection,
         context,
-        &env_schema_resolved,
+        env_schema_resolved,
         secret_ref,
     )? {
         return Ok((output, "nested task sequence completed".to_owned()));

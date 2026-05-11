@@ -193,6 +193,7 @@ This section is inventory, not a recommended reading order.
 - [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md)
 - [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
 - [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)
+- [`072-artifact-commands-guide.md`](./072-artifact-commands-guide.md)
 
 ### Docs and Governance
 
@@ -208,6 +209,11 @@ This section is inventory, not a recommended reading order.
 Deprecated but still link-stable:
 - [`035-guide-ownership-and-update-triggers.md`](./035-guide-ownership-and-update-triggers.md)
 - [`039-docs-drift-monitoring.md`](./039-docs-drift-monitoring.md)
+- [`archive/028-docs-flow-map.md`](./archive/028-docs-flow-map.md)
+- [`archive/031-docs-navigation-cleanup.md`](./archive/031-docs-navigation-cleanup.md)
+- [`archive/032-docs-consistency-sweep-and-changelog.md`](./archive/032-docs-consistency-sweep-and-changelog.md)
+- [`archive/043-wrapper-channel-evaluation-and-policy.md`](./archive/043-wrapper-channel-evaluation-and-policy.md)
+- [`archive/053-release-wrapper-retirement-record-template.md`](./archive/053-release-wrapper-retirement-record-template.md)
 
 ### Distribution and Adoption
 

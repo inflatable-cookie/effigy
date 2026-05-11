@@ -7,9 +7,10 @@ pub(crate) fn render_system_help<R: HelpRenderer>(renderer: &mut R) -> HelpResul
     )?;
     renderer.section("Usage")?;
     renderer.text(
-        "effigy system <up|down|status|logs|repair|reset-runtime> [--system <NAME>] [--repo <PATH>] [--json]",
+        "effigy system <up|down|status|logs|repair|reset-runtime> [--system <NAME>] [--repo <PATH>] [--follow] [--json]",
     )?;
     renderer.text("")?;
+    renderer.section("Options")?;
     renderer.key_values(&[
         KeyValue::new(
             "--system <NAME>",

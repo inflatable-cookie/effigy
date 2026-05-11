@@ -45,6 +45,15 @@ pub(super) fn render_cache_help(command_label: &str) -> String {
                 ],
             },
             HelpSection::Bulleted {
+                heading: "Options",
+                items: &[
+                    "<selector> : optional task selector (inspect) or one-or-more selectors (invalidate)",
+                    "--all : invalidate every declared cache entry (invalidate only)",
+                    "--json : render machine-readable cache payload",
+                    "-h, --help : print command help",
+                ],
+            },
+            HelpSection::Bulleted {
                 heading: "Notes",
                 items: &[
                     "phase-1 cache is explicit opt-in via `[tasks.<name>.cache]`",

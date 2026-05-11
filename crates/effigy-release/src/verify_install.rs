@@ -250,7 +250,7 @@ pub fn run_release_verify_install(
             tag,
             repo_url,
             installed_bin: None,
-            configured_check_count: 7,
+            configured_check_count: 5,
             executed_check_count: results.len(),
             stopped_early: true,
             results,
@@ -270,7 +270,7 @@ pub fn run_release_verify_install(
             tag,
             repo_url,
             installed_bin: Some(installed_bin),
-            configured_check_count: 7,
+            configured_check_count: 5,
             executed_check_count: results.len(),
             stopped_early: true,
             results,
@@ -312,23 +312,6 @@ pub fn run_release_verify_install(
             vec!["--json".to_owned(), "help".to_owned()],
             VerificationExpectation::JsonHelpEnvelope,
         ),
-        (
-            "installed binary completion check",
-            installed_bin.clone(),
-            vec!["completion".to_owned(), "bash".to_owned()],
-            VerificationExpectation::ContainsStdout("complete"),
-        ),
-        (
-            "installed binary completion candidates check",
-            installed_bin.clone(),
-            vec![
-                "completion".to_owned(),
-                "candidates".to_owned(),
-                "--repo".to_owned(),
-                fixture_dir.display().to_string(),
-            ],
-            VerificationExpectation::ContainsStdout("noop"),
-        ),
     ];
 
     let mut stopped_early = false;
@@ -357,7 +340,7 @@ pub fn run_release_verify_install(
         tag,
         repo_url,
         installed_bin: Some(installed_bin),
-        configured_check_count: 7,
+        configured_check_count: 5,
         executed_check_count: results.len(),
         stopped_early,
         blockers: blockers.clone(),

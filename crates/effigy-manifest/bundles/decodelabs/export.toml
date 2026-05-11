@@ -42,7 +42,29 @@ node_version = "24"
 node_global_packages = ["eclint"]
 composer_global_packages = ["decodelabs/effigy"]
 extensions = [
-__PHP_EXTENSIONS__
+  "bcmath",
+  "apcu",
+  "bz2",
+  "calendar",
+  "curl",
+  "gmp",
+  "imagick",
+  "mbstring",
+  "pcntl",
+  "exif",
+  "gd",
+  "intl",
+  "memcached",
+  "mysqli",
+  "opcache",
+  "pdo_mysql",
+  "readline",
+  "redis",
+  "sockets",
+  "sqlite3",
+  "xml",
+  "zip",
+  "event",
 ]
 
 [containers.{{ inputs.container_name }}.services.web]

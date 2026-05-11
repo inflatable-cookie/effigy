@@ -161,6 +161,12 @@ effigy scan attention-markers        # Surface TODO/FIXME/SECURITY markers
 
 Each scanner respects `.gitignore`, supports `--json` for CI integration, and can be configured in `effigy.toml` with thresholds, include/exclude globs, and automatic `doctor` inclusion. Findings write to `.effigy/reports/doctor/` as markdown for review.
 
+For scripts and agents, `effigy --json <command>` emits stable envelopes (see
+`docs/guides/017-json-output-contracts.md`). Manifest tasks also accept a
+leading `--repo`, `--env-schema <PATH>`, or `--verbose-root` before task-specific
+arguments when you need an alternate root, schema file, or broader diagnostics
+(`docs/guides/050-env-schema-integration.md`).
+
 ### Built-In Test Orchestration
 
 `effigy test` is not just a passthrough. It auto-detects your test runners and orchestrates them across your whole repo:

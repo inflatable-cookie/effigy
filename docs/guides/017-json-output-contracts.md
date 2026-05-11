@@ -143,7 +143,7 @@ effigy --json tasks --resolve catalog-a/api
 effigy --json tasks status test
 effigy --json tasks status --all
 effigy --json doctor
-effigy --json doctor --repo /path/to/workspace catalog-a/build -- --watch
+effigy --json doctor --repo /path/to/workspace catalog-a/build --watch
 effigy --json scan god-files
 effigy --json scan duplicate-blocks
 effigy --json scan comment-ratio

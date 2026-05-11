@@ -75,7 +75,7 @@ Expected outcome:
 
 ```sh
 effigy doctor --verbose
-effigy doctor test -- --help
+effigy doctor test --help
 ```
 
 Expected outcome:

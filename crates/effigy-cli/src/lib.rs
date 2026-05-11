@@ -1,3 +1,12 @@
+//! Parsed command line for Effigy.
+//!
+//! The stable entrypoint for tools and tests is [`parse_command`], which returns
+//! a [`Command`] value tree. Human-readable `--help` panels live under
+//! [`help`] ([`HelpTopic`] selects the panel). Global `--json` is threaded by
+//! the runner via [`strip_global_json_flags`] and [`apply_global_json_flag`].
+//!
+//! End-user documentation: repository `docs/guides/025-command-reference-matrix.md`.
+
 use std::path::PathBuf;
 
 mod command_parsing;
@@ -83,6 +92,7 @@ pub struct InternalHostProcessStopArgs {
     pub grace_secs: u64,
 }
 
+/// Which `effigy <topic> --help` panel to render.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpTopic {
     General,
@@ -413,10 +423,10 @@ pub enum DocsSubcommand {
         required_blocks: Vec<DocsBlockRequirement>,
         required_headings: Vec<String>,
         forbidden_text: Vec<String>,
-        policy_index: Option<String>,
-        dir: Option<PathBuf>,
-        index: Option<PathBuf>,
-        policy_name: Option<String>,
+        policy_index: Box<Option<String>>,
+        dir: Box<Option<PathBuf>>,
+        index: Box<Option<PathBuf>>,
+        policy_name: Box<Option<String>>,
     },
     AddLogIndex {
         log_path: PathBuf,

@@ -12,6 +12,7 @@ pub(crate) fn render_workspace_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
     renderer.section("Usage")?;
     renderer.text("effigy workspace [<NAME>] [--system <NAME>] [--repo <PATH>]")?;
     renderer.text("")?;
+    renderer.section("Options")?;
     renderer.key_values(&[
         KeyValue::new(
             "<NAME>",

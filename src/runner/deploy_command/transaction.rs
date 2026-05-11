@@ -737,18 +737,13 @@ struct DeployHooksConfig {
     after_deploy: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 enum ReleasePolicy {
     None,
+    #[default]
     Optional,
     Required,
-}
-
-impl Default for ReleasePolicy {
-    fn default() -> Self {
-        Self::Optional
-    }
 }
 
 impl ReleasePolicy {
@@ -761,18 +756,13 @@ impl ReleasePolicy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 enum ArtifactPolicy {
     MutableOk,
+    #[default]
     DigestPreferred,
     DigestPinned,
-}
-
-impl Default for ArtifactPolicy {
-    fn default() -> Self {
-        Self::DigestPreferred
-    }
 }
 
 impl ArtifactPolicy {

@@ -46,11 +46,11 @@ run_check(
     bin_path,
     ["catalog_a/test", "--plan", "--repo", tmp_dir],
 );
-run_check("completion bash", bin_path, ["completion", "bash"]);
+run_check("completion bash", bin_path, ["config", "completion", "bash", "--export"]);
 run_check(
     "completion candidates",
     bin_path,
-    ["completion", "candidates", "--repo", tmp_dir],
+    ["config", "completion", "candidates", "--repo", tmp_dir],
 );
 
 fs::remove(tmp_dir);

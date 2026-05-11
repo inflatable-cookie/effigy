@@ -5,10 +5,9 @@ use toml::Value;
 
 use effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root;
 
-use super::specs::DECODELABS_PHP_EXTENSIONS;
 use super::{
     bundle_source_path, get_bundle, optional_bundle_string, render_bundle_template_with_inputs,
-    render_toml_string_array_lines, BundleInputType, BundleSpec, ManifestError,
+    BundleInputType, BundleSpec, ManifestError,
 };
 
 pub(super) fn render_shipped_bundle_template_with_inputs(
@@ -159,14 +158,11 @@ pub(super) fn bundle_input_type_literal(value_type: BundleInputType) -> &'static
 }
 
 pub(super) fn decodelabs_export_template() -> String {
-    let extensions = render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  ");
-    include_str!("../../bundles/decodelabs/export.toml").replace("__PHP_EXTENSIONS__", &extensions)
+    include_str!("../../bundles/decodelabs/export.toml").to_owned()
 }
 
 pub(super) fn decodelabs_library_export_template() -> String {
-    let extensions = render_toml_string_array_lines(DECODELABS_PHP_EXTENSIONS, "  ");
-    include_str!("../../bundles/decodelabs-library/export.toml")
-        .replace("__PHP_EXTENSIONS__", &extensions)
+    include_str!("../../bundles/decodelabs-library/export.toml").to_owned()
 }
 
 pub(super) fn underlay_export_template() -> String {

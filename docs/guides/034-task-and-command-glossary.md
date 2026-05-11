@@ -14,6 +14,20 @@ Example:
 alias = "api"
 ```
 
+## Task runtime prefix flags
+
+Definition:
+- Optional leading arguments on `effigy <task>` / `effigy <catalog>/<task>`
+  parsed before task-specific passthrough: `--repo <PATH>`,
+  `--verbose-root`, `--env-schema <PATH>` (see
+  [`050-env-schema-integration.md`](./050-env-schema-integration.md)).
+
+Notes:
+- They must stay in the prefix segment consumed by the runtime parser, not
+  mixed arbitrarily into passthrough.
+- Some built-ins that use the passthrough parser (`doctor`, `watch`, `scan`)
+  reject `--verbose-root` and `--env-schema` on that built-in invocation.
+
 ## Selector
 
 Definition:
@@ -160,7 +174,7 @@ Definition:
 Example:
 
 ```sh
-effigy doctor api/build -- --watch
+effigy doctor api/build --watch
 ```
 
 ## Plan Mode

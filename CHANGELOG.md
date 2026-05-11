@@ -39,6 +39,12 @@ During v0.x, MINOR bumps may include breaking changes.
   active repo bundle source, including source type, local path, version hint,
   stale state, and manifest path, while `effigy bundle inspect <name>` keeps
   the shipped bundle schema/catalog path.
+- **Decodelabs bundle git hosting:** the `decodelabs` bundle (and
+  `decodelabs-library`) now works when loaded from a git bundle source. The
+  `host_dir_name` derivation and `zest_port` validation that were previously
+  shipped-only now run for all bundle source types, and the PHP extensions list
+  is baked into the template so no shipped-only placeholder replacement is
+  required.
 - **Task status read surface:** `effigy tasks status <selector>` now resolves
   one task selector through normal routing and reports live-or-last-known task
   status in text or JSON using the persisted active/latest task-status record
@@ -107,8 +113,19 @@ During v0.x, MINOR bumps may include breaking changes.
   `changelog validate|format|analyze|extract`. Relative bundle export paths and
   relative changelog file paths now anchor to the selected repo root when
   `--repo` is supplied.
+- **Documentation:** quick-start, command matrix, glossary, docs front door,
+  and crate-level rustdoc now spell out task-runtime prefix flags
+  (`--repo`, `--verbose-root`, `--env-schema`), JSON placement, scan deep-help,
+  and which built-ins reject the prefix flags on the built-in invocation.
+- **`deploy model` bundle source error messages** are now consolidated: all
+  non-shipped bundle sources report a single consistent error instead of
+  separate messages for path, git, and OCI.
 
 ### Fixed
+- **Git bundle stale detection** now compares the cached local `HEAD` to
+  `git ls-remote` for the configured ref, so `bundle inspect` correctly reports
+  when a git-backed bundle source has drifted, and `bundle sync` no longer
+  unconditionally fetches on every manifest load.
 - **State capture standalone manifest parsing** now treats a positional
   `*.toml` argument the same way across `state plan`, `state apply`, and
   `state capture`, so JSON contract and operator flows like
@@ -270,7 +287,7 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Fixed
 - **Docs and bundled agent skill:** bootstrap default **`[bootstrap].start`**
   behavior matches the CLI; command matrix includes **`effigy defer`**; skill uses
-  **`effigy doctor <selector> -- <args>`** for routing explain.
+  **`effigy doctor <selector> <args...>`** for routing explain.
 - **`effigy bootstrap`** no longer treats **`--no-prompt`** as implicit approval
   to reuse a non-empty destination; use **`--reuse-path`** for that explicit
   destructive choice.

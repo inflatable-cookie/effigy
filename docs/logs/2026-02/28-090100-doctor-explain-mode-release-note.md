@@ -8,10 +8,13 @@ Related roadmap: 009 - Doctor Health Consolidation
 
 `doctor` now includes task-resolution explain mode:
 
-- `effigy doctor [--repo <PATH>] <task> -- <args>`
-- `effigy --json doctor --repo <PATH> <task> -- <args>`
+- Current shape: `effigy doctor [--repo <PATH>] <task> <args...>`
+- Current JSON shape: `effigy --json doctor --repo <PATH> <task> <args...>`
 
 Explain mode is part of the existing `doctor` command surface and does not introduce a new top-level command.
+
+Note: older notes used a literal `--` separator between the task selector and
+diagnosed args; current invocation does not.
 
 ## What Changed
 
@@ -35,8 +38,8 @@ Explain mode is part of the existing `doctor` command surface and does not intro
 ## Command Examples
 
 ```bash
-effigy doctor --repo /path/to/workspace catalog-a/build -- --watch
-effigy --json doctor --repo /path/to/workspace catalog-a/build -- --watch
+effigy doctor --repo /path/to/workspace catalog-a/build --watch
+effigy --json doctor --repo /path/to/workspace catalog-a/build --watch
 ```
 
 ## Validation
