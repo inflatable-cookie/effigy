@@ -125,6 +125,7 @@ pub enum ArtifactKind {
     MigratedBaseSnapshot,
     UatContentSnapshot,
     ContentOverlay,
+    ObjectStore,
     AppSpecific,
 }
 

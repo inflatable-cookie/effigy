@@ -36,6 +36,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Added an HTTPS `s3.<host>` route and MinIO bucket/CORS bootstrap helper to
   the Underlay starter bundle, with generated S3-style local blob environment
   values for API workspaces.
+- Added state-stack parser support for `role = "media-library"` and
+  `artifact_kind = "object-store"` so media/object-store bundles can be modeled
+  as first-class state layers before generic object-store apply lands.
 - **Git bundle sources:** `[bundle].base = { type = "git", ... }` now resolves
   local or remote git-backed bundle sources into the shared Effigy bundle cache
   and records a commit-sha version hint on the materialized bundle root.

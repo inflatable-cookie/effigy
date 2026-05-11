@@ -74,6 +74,7 @@ pub enum StateLayerRole {
     Structure,
     BaselineSeed,
     LegacyImport,
+    MediaLibrary,
     BaseApply,
     DevOverlay,
     WorkingBaseline,
@@ -262,6 +263,7 @@ pub fn validate_state_stack(
             StateLayerRole::Structure
                 | StateLayerRole::BaselineSeed
                 | StateLayerRole::LegacyImport
+                | StateLayerRole::MediaLibrary
                 | StateLayerRole::DevOverlay
                 | StateLayerRole::UatCapture
                 | StateLayerRole::FullCapture
@@ -332,14 +334,15 @@ fn layer_role_order(role: StateLayerRole) -> usize {
         StateLayerRole::Structure => 10,
         StateLayerRole::BaselineSeed => 20,
         StateLayerRole::LegacyImport => 30,
-        StateLayerRole::BaseApply => 40,
-        StateLayerRole::DevOverlay => 50,
-        StateLayerRole::WorkingBaseline => 60,
-        StateLayerRole::UatCapture => 70,
-        StateLayerRole::LegacyRefresh => 80,
-        StateLayerRole::Rebase => 90,
-        StateLayerRole::SchemaEvolution => 100,
-        StateLayerRole::FullCapture => 110,
+        StateLayerRole::MediaLibrary => 40,
+        StateLayerRole::BaseApply => 50,
+        StateLayerRole::DevOverlay => 60,
+        StateLayerRole::WorkingBaseline => 70,
+        StateLayerRole::UatCapture => 80,
+        StateLayerRole::LegacyRefresh => 90,
+        StateLayerRole::Rebase => 100,
+        StateLayerRole::SchemaEvolution => 110,
+        StateLayerRole::FullCapture => 120,
     }
 }
 
@@ -552,6 +555,21 @@ mod tests {
     }
 
     #[test]
+    fn accepts_media_library_object_store_layers() {
+        let manifest = StateStackManifest::parse_toml(media_fixture()).expect("parse");
+
+        let plan = manifest.plan_lineage().expect("plan");
+
+        assert_eq!(plan.layers[1].key, "legacy-media");
+        assert_eq!(plan.layers[1].role, StateLayerRole::MediaLibrary);
+        assert_eq!(plan.layers[1].sql_target.as_deref(), Some("media"));
+        assert_eq!(
+            plan.artifact_reports[0].artifact_kind,
+            Some(effigy_artifacts::ArtifactKind::ObjectStore)
+        );
+    }
+
+    #[test]
     fn requires_deferred_roles_to_be_manual_or_checkpoint() {
         let mut manifest = StateStackManifest::parse_toml(acowtancy_fixture()).expect("parse");
         manifest.layers.insert(
@@ -632,6 +650,31 @@ role = "full-capture"
 source = "farmyard:full-capture"
 apply_mode = "checkpoint"
 environment_policy = "capture-only"
+"#
+    }
+
+    fn media_fixture() -> &'static str {
+        r#"
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[layers]]
+key = "structure"
+role = "structure"
+source = "farmyard:db:migrate"
+apply_mode = "task"
+environment_policy = "all"
+
+[[layers]]
+key = "legacy-media"
+role = "media-library"
+source = "farmyard/state/legacy/dist/oci/media.oci"
+apply_mode = "artifact"
+environment_policy = "all"
+artifact_kind = "object-store"
+snapshot_identity = "legacy-media@local"
+target = "media"
 "#
     }
 }

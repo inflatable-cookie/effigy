@@ -59,14 +59,14 @@ Layer:
 Layer role:
 
 - the orchestration meaning of a layer
-- examples: `structure`, `baseline-seed`, `legacy-import`, `overlay`,
+- examples: `structure`, `baseline-seed`, `legacy-import`, `media-library`,
   `dev-overlay`, `uat-capture`, `full-capture`
 
 Artifact kind:
 
 - the coarse descriptive type of a payload
 - examples: `sql-dump`, `migrated-base-snapshot`, `content-overlay`,
-  `app-specific`
+  `object-store`, `app-specific`
 
 Layer role and artifact kind are different:
 
@@ -143,9 +143,9 @@ This taxonomy is ordered guidance, not a claim that every repo uses every phase.
 First implementation rule:
 
 - implementation may model every role now, but it should only execute
-  `structure`, `baseline-seed`, `legacy-import`, `dev-overlay`,
-  `uat-capture`, and `full-capture` until refresh/rebase command semantics are
-  promoted by a later card
+  `structure`, `baseline-seed`, `legacy-import`, `media-library`,
+  `dev-overlay`, `uat-capture`, and `full-capture` until refresh/rebase command
+  semantics are promoted by a later card
 
 ## Source Rules
 
@@ -456,13 +456,17 @@ App hook inputs should include:
 
 ## Media Rules
 
-Media may participate in the same stack, but media semantics stay app-owned.
+Media may participate in the same stack through `role = "media-library"` and,
+for S3-compatible object-store payloads, `artifact_kind = "object-store"`.
+Media semantics stay app-owned.
 
 Effigy may coordinate:
 
 - ordered replay of media-bearing layers
 - capture lineage
 - staging of binary payloads
+- object payload integrity and target reports once the object-store apply
+  primitive exists
 
 Effigy must not own:
 

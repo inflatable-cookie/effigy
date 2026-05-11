@@ -547,6 +547,7 @@ fn parse_artifact_kind(value: &str) -> Result<ArtifactKind, RunnerError> {
         "migrated-base-snapshot" => Ok(ArtifactKind::MigratedBaseSnapshot),
         "uat-content-snapshot" => Ok(ArtifactKind::UatContentSnapshot),
         "content-overlay" => Ok(ArtifactKind::ContentOverlay),
+        "object-store" => Ok(ArtifactKind::ObjectStore),
         "app-specific" => Ok(ArtifactKind::AppSpecific),
         _ => Err(RunnerError::task_invocation(format!(
             "unknown artifact kind `{value}`"

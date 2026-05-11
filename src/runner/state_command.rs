@@ -855,15 +855,26 @@ struct ManifestStateStackConfig {
     layers: Vec<effigy_state::StateStackLayer>,
     #[serde(default)]
     captures: BTreeMap<String, ManifestStateCaptureProfile>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    targets: BTreeMap<String, toml::Value>,
 }
 
 impl ManifestStateStackConfig {
     fn into_manifest(self) -> StateStackManifest {
+        let Self {
+            schema,
+            name,
+            environment,
+            layers,
+            captures: _,
+            targets: _,
+        } = self;
         StateStackManifest {
-            schema: self.schema,
-            name: self.name,
-            environment: self.environment,
-            layers: self.layers,
+            schema,
+            name,
+            environment,
+            layers,
         }
     }
 }

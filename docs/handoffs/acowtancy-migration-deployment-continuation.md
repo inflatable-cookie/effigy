@@ -195,6 +195,18 @@ artifact_kind = "object-store"
 source = "farmyard/state/legacy/dist/oci/media.oci"
 target = "media"
 snapshot_identity = "legacy-media@<snapshot>"
+
+[state.uat.targets.media]
+kind = "s3-compatible"
+bucket_env = "BLOB_S3_BUCKET"
+endpoint_url_env = "BLOB_S3_ENDPOINT_URL"
+public_url_base_env = "BLOB_S3_PUBLIC_URL_BASE"
+presign_url_base_env = "BLOB_S3_PRESIGN_URL_BASE"
+region_env = "BLOB_S3_REGION"
+path_style_env = "BLOB_S3_PATH_STYLE"
+access_key_id_env = "AWS_ACCESS_KEY_ID"
+secret_access_key_env = "AWS_SECRET_ACCESS_KEY"
+key_prefix = ""
 ```
 
 Database replay should write stable object keys, not local filesystem paths.
