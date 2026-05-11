@@ -137,27 +137,44 @@ Expected shape:
 
 ```toml
 [deploy.uat]
-provider = "railway"
 state = "uat"
 code_ref = "branch:main"
 release_policy = "optional"
 provider_project = "acowtancy-uat"
 artifact_policy = "digest-preferred"
 
+[deploy.uat.provider]
+adapter = "render"
+project_id = "<render-project-id>"
+environment_id = "<render-uat-environment-id>"
+services = { front = "<srv-front>", admin = "<srv-admin>", api = "<srv-api>", jobs = "<srv-jobs>" }
+
 [deploy.production]
-provider = "railway"
 state = "production"
 code_ref = "release-tag"
 release_policy = "required"
 provider_project = "acowtancy-production"
 artifact_policy = "digest-pinned"
+
+[deploy.production.provider]
+adapter = "render"
+project_id = "<render-project-id>"
+environment_id = "<render-production-environment-id>"
+services = { front = "<srv-front>", admin = "<srv-admin>", api = "<srv-api>", jobs = "<srv-jobs>" }
 ```
 
 The current deployment implementation provides the report-backed transaction
-surface and provider-neutral boundary. Treat provider live mutation as a point
-to verify against the current code before relying on it operationally. The
-contract records the intended full adapter behavior; the implementation landed
-the first transaction/report surface.
+surface and provider-neutral boundary. Render live checks now run through the
+external provider package. The current regression path is:
+
+```text
+examples/render-provider-smoke/
+```
+
+Use the smoke fixture to verify package wiring against a disposable Render
+project. Acowtancy itself should use the client-owned Render workspace, with
+project, environment, and service IDs recorded in manifest config. Only
+`RENDER_API_KEY` should come from the operator environment.
 
 The Acowtancy canonical problem doc already explains the rebase loop and must
 remain the source of truth for the business/migration problem:
