@@ -125,9 +125,9 @@ During v0.x, MINOR bumps may include breaking changes.
   and crate-level rustdoc now spell out task-runtime prefix flags
   (`--repo`, `--verbose-root`, `--env-schema`), JSON placement, scan deep-help,
   and which built-ins reject the prefix flags on the built-in invocation.
-- **`deploy model` bundle source error messages** are now consolidated: all
-  non-shipped bundle sources report a single consistent error instead of
-  separate messages for path, git, and OCI.
+- **`deploy model` bundle source handling** now derives the active bundle name
+  from the materialized bundle descriptor for path, git, and OCI bundle
+  sources, so deployment planning works with remote bundle-backed repos.
 
 ### Fixed
 - **Git bundle stale detection** now compares the cached local `HEAD` to

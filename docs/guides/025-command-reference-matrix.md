@@ -311,8 +311,9 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   modifications
 - `bundle sync` is the explicit refresh path for git and OCI bundle sources in
   the current repo; shipped and path bundle sources report not-applicable
-- `deploy model` is intentionally JSON-only in the first batch and currently
-  supports the shipped `underlay` bundle only
+- `deploy model` is intentionally JSON-only and derives Underlay deployment
+  shape from shipped, path, git, or OCI bundle sources once the active bundle
+  materializes locally
 - `deploy export render` is intentionally Underlay-first in the first batch and
   currently generates only `render.yaml`
 - `deploy export railway` is intentionally Underlay-first in the first batch

@@ -15,30 +15,15 @@ pub(super) fn derive_deploy_model(repo_root: &Path) -> Result<DeployModel, Runne
     })?;
     let base = match bundle.base.as_ref() {
         Some(effigy_manifest::ManifestBundleBase::Shipped { name }) => name.clone(),
-        Some(effigy_manifest::ManifestBundleBase::Path { dir }) => {
-            let manifest_dir = loaded.manifest_path.parent().unwrap_or_else(|| Path::new("."));
-            let bundle_dir = manifest_dir.join(dir);
-            let bundle_toml = bundle_dir.join("bundle.toml");
-            let descriptor = std::fs::read_to_string(&bundle_toml)
-                .map_err(|e| RunnerError::task_invocation(format!(
-                    "`deploy model` could not read bundle descriptor at {}: {e}",
-                    bundle_toml.display()
-                )))?;
-            let name_re = regex::Regex::new(r#"(?m)^\s*name\s*=\s*"([^"]+)""#).expect("valid regex");
-            name_re.captures(&descriptor)
-                .and_then(|caps| caps.get(1))
-                .map(|m| m.as_str().to_owned())
-                .ok_or_else(|| {
-                    RunnerError::task_invocation(format!(
-                        "`deploy model` bundle descriptor at {} is missing [bundle].name",
-                        bundle_toml.display()
-                    ))
-                })?
-        }
-        Some(_) => {
-            return Err(RunnerError::task_invocation(
-                "`deploy model` currently supports only path or shipped bundle sources".to_owned(),
-            ));
+        Some(effigy_manifest::ManifestBundleBase::Path { .. })
+        | Some(effigy_manifest::ManifestBundleBase::Git { .. })
+        | Some(effigy_manifest::ManifestBundleBase::Oci { .. }) => {
+            let bundle_root = loaded.bundle_root.as_deref().ok_or_else(|| {
+                RunnerError::task_invocation(
+                    "`deploy model` could not resolve the materialized bundle root".to_owned(),
+                )
+            })?;
+            bundle_name_from_descriptor(bundle_root)?
         }
         None => {
             return Err(RunnerError::task_invocation(
@@ -53,6 +38,27 @@ pub(super) fn derive_deploy_model(repo_root: &Path) -> Result<DeployModel, Runne
             "`deploy model` currently supports only the `underlay` bundle, got `{other}`"
         ))),
     }
+}
+
+fn bundle_name_from_descriptor(bundle_root: &Path) -> Result<String, RunnerError> {
+    let bundle_toml = bundle_root.join("bundle.toml");
+    let descriptor = std::fs::read_to_string(&bundle_toml).map_err(|e| {
+        RunnerError::task_invocation(format!(
+            "`deploy model` could not read bundle descriptor at {}: {e}",
+            bundle_toml.display()
+        ))
+    })?;
+    let name_re = Regex::new(r#"(?m)^\s*name\s*=\s*"([^"]+)""#).expect("valid regex");
+    name_re
+        .captures(&descriptor)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_owned())
+        .ok_or_else(|| {
+            RunnerError::task_invocation(format!(
+                "`deploy model` bundle descriptor at {} is missing [bundle].name",
+                bundle_toml.display()
+            ))
+        })
 }
 
 fn derive_underlay_model(
