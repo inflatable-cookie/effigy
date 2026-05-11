@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -76,5 +76,4 @@ system using Railway.
 
 ## Next Task
 
-Settle the Render execution backend and implement the Render adapter behind the
-same provider boundary.
+Continue to `g04.030` for Render deployment transaction support.

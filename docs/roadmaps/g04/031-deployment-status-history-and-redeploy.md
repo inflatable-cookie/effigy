@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -65,5 +65,4 @@ Persist:
 
 ## Next Task
 
-Prove the deployment system against Acowtancy's UAT and production deployment
-loop, then close the v0.6.0 suite.
+Continue to `g04.032` for the Acowtancy deployment proof and suite closeout.

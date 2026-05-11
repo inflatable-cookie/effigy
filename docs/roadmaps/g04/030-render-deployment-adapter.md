@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -73,4 +73,4 @@ Settle the execution backend before implementation opens:
 
 ## Next Task
 
-Add deployment status, history, and evidence-backed redeploy.
+Continue to `g04.031` for deployment status, history, and redeploy.

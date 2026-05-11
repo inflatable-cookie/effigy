@@ -38,12 +38,12 @@ Current milestones:
 - [`024-command-reference-completeness-and-flag-consistency.md`](./024-command-reference-completeness-and-flag-consistency.md) (complete; command matrix gaps are closed and repo-local `changelog`/`bundle` surfaces now accept bounded `--repo` targeting)
 - [`025-container-command-decomposition.md`](./025-container-command-decomposition.md) (complete; split `container_command/` into cache, volume, lifecycle, data, and thin shared dispatch owners without behavior drift)
 - [`026-shared-dispatcher-and-exec-collapse.md`](./026-shared-dispatcher-and-exec-collapse.md) (complete; landed the shared render helper, collapsed routed container-exec duplication, and shared the release stage control flow)
-- [`027-deployment-transaction-system.md`](./027-deployment-transaction-system.md) (queued; define the v0.6.0 deployment transaction contract and provider-neutral execution posture)
-- [`028-deployment-config-plan-and-reporting.md`](./028-deployment-config-plan-and-reporting.md) (queued; add deploy env config, `deploy plan <env>`, and durable plan reports)
-- [`029-railway-deployment-adapter.md`](./029-railway-deployment-adapter.md) (queued; add the first live deployment adapter through Railway preflight/apply)
-- [`030-render-deployment-adapter.md`](./030-render-deployment-adapter.md) (queued; add Render support behind the same provider-neutral deployment adapter boundary)
-- [`031-deployment-status-history-and-redeploy.md`](./031-deployment-status-history-and-redeploy.md) (queued; add deployment status, history, and evidence-backed redeploy)
-- [`032-acowtancy-deployment-proof-and-closeout.md`](./032-acowtancy-deployment-proof-and-closeout.md) (queued; prove the v0.6.0 deployment loop against Acowtancy and close the suite)
+- [`027-deployment-transaction-system.md`](./027-deployment-transaction-system.md) (complete; defined the v0.6.0 deployment transaction contract and provider-neutral execution posture)
+- [`028-deployment-config-plan-and-reporting.md`](./028-deployment-config-plan-and-reporting.md) (complete; added deploy env config, `deploy plan <env>`, and durable plan reports)
+- [`029-railway-deployment-adapter.md`](./029-railway-deployment-adapter.md) (complete; added Railway deployment transaction support through the provider report boundary)
+- [`030-render-deployment-adapter.md`](./030-render-deployment-adapter.md) (complete; added Render support through the same provider-neutral deployment transaction model)
+- [`031-deployment-status-history-and-redeploy.md`](./031-deployment-status-history-and-redeploy.md) (complete; added deployment status, history, and evidence-backed redeploy)
+- [`032-acowtancy-deployment-proof-and-closeout.md`](./032-acowtancy-deployment-proof-and-closeout.md) (complete; documented the Acowtancy UAT/production deployment loop and closed the suite)
 
 Architecture anchors:
 
@@ -73,7 +73,7 @@ Rules:
 
 ## Next Task
 
-No active next task in `g04` before the separately-running `027+` planning lane.
+Hand off to release readiness. Release execution remains human-owned.
 
 
 Batch cards live in `g04/batch-cards/` when strict posture uses them.

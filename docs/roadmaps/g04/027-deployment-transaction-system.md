@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -73,5 +73,4 @@ production deployment transaction.
 
 ## Next Task
 
-Open the deployment transaction strict lane and promote the first implementation
-card for config, plan, and reporting.
+Continue to `g04.028` for deploy config, plan, and reporting.

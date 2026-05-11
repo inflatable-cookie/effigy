@@ -188,6 +188,253 @@ run = "cargo run -p acme-jobs {args}"
         .any(|value| value.as_str() == Some("jobs")));
 }
 
+fn setup_deploy_transaction_fixture(name: &str) -> std::path::PathBuf {
+    let root = temp_workspace(name);
+    write_root_manifest(
+        &root,
+        r#"
+[bundle]
+base = "underlay"
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "acme"
+databases = ["acme"]
+
+[bundle.dirs]
+front = "acme-front"
+admin = "acme-admin"
+api = "acme-api"
+
+[deploy.uat]
+provider = "railway"
+state = "uat"
+code_ref = "branch:main"
+release_policy = "optional"
+provider_project = "acme-uat"
+artifact_policy = "digest-preferred"
+
+[deploy.uat.hooks]
+after_deploy = "deploy:uat:smoke"
+
+[deploy.production]
+provider = "render"
+state = "production"
+code_ref = "release-tag"
+release_policy = "required"
+provider_project = "acme-production"
+artifact_policy = "digest-pinned"
+
+[deploy.production.preflight]
+require_release_gates = true
+"#,
+    );
+    fs::create_dir_all(root.join("acme-front")).expect("mkdir front");
+    fs::create_dir_all(root.join("acme-admin")).expect("mkdir admin");
+    fs::create_dir_all(root.join("acme-api")).expect("mkdir api");
+    fs::write(
+        root.join("acme-front/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write front config");
+    fs::write(
+        root.join("acme-admin/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write admin config");
+    write_manifest(
+        &root.join("acme-front/effigy.toml"),
+        r#"
+[tasks.build]
+run = "bun x vite build"
+"#,
+    );
+    write_manifest(
+        &root.join("acme-admin/effigy.toml"),
+        r#"
+[tasks.build]
+run = "bun x vite build"
+"#,
+    );
+    write_manifest(
+        &root.join("acme-api/effigy.toml"),
+        r#"
+[tasks.build]
+run = "cargo build --release"
+
+[tasks.api]
+run = "cargo run -p acme-api"
+
+[tasks."db:migrate"]
+run = "cargo run -p acme-db --bin migrate_dev_db"
+"#,
+    );
+    root
+}
+
+#[test]
+fn run_deploy_plan_json_reports_env_state_provider_and_hooks() {
+    let root = setup_deploy_transaction_fixture("deploy-plan-transaction");
+    let out = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Plan {
+            env: "uat".to_owned(),
+            write_report: true,
+        },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("run deploy plan");
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.plan.v1", 1);
+    assert_eq!(parsed["env"].as_str(), Some("uat"));
+    assert_eq!(parsed["provider"].as_str(), Some("railway"));
+    assert_eq!(parsed["state"]["stack"].as_str(), Some("uat"));
+    assert_eq!(parsed["release_policy"]["mode"].as_str(), Some("optional"));
+    assert_eq!(
+        parsed["artifact_policy"]["mode"].as_str(),
+        Some("digest-preferred")
+    );
+    assert_eq!(
+        parsed["hooks"][0]["task"].as_str(),
+        Some("deploy:uat:smoke")
+    );
+    let report_path = parsed["written_report_path"]
+        .as_str()
+        .expect("written report");
+    assert!(
+        root.join(report_path).exists(),
+        "missing report {report_path}"
+    );
+}
+
+#[test]
+fn run_deploy_apply_writes_latest_and_history_reports() {
+    let root = setup_deploy_transaction_fixture("deploy-apply-transaction");
+    let out = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Apply {
+            env: "uat".to_owned(),
+            yes: true,
+        },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("run deploy apply");
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.apply.v1", 1);
+    assert_eq!(parsed["status"].as_str(), Some("succeeded"));
+    let report_path = parsed["written_report_path"]
+        .as_str()
+        .expect("written report");
+    let history_path = parsed["written_history_path"]
+        .as_str()
+        .expect("written history");
+    assert!(
+        root.join(report_path).exists(),
+        "missing report {report_path}"
+    );
+    assert!(
+        root.join(history_path).exists(),
+        "missing history {history_path}"
+    );
+
+    let history = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::History {
+            env: "uat".to_owned(),
+            limit: Some(5),
+        },
+        repo_override: Some(root),
+        output_json: true,
+    }))
+    .expect("run deploy history");
+    let parsed_history =
+        parse_json_output_with_schema_version(&history, "effigy.deploy.history.v1", 1);
+    assert_eq!(
+        parsed_history["entries"].as_array().expect("entries").len(),
+        1
+    );
+}
+
+#[test]
+fn run_deploy_status_reports_latest_after_apply() {
+    let root = setup_deploy_transaction_fixture("deploy-status-transaction");
+    run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Apply {
+            env: "uat".to_owned(),
+            yes: true,
+        },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("run deploy apply");
+
+    let out = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Status {
+            env: "uat".to_owned(),
+        },
+        repo_override: Some(root),
+        output_json: true,
+    }))
+    .expect("run deploy status");
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.status.v1", 1);
+    assert!(
+        parsed["latest"].is_object(),
+        "latest should be present: {parsed}"
+    );
+}
+
+#[test]
+fn run_deploy_redeploy_replays_history_entry() {
+    let root = setup_deploy_transaction_fixture("deploy-redeploy-transaction");
+    let apply = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Apply {
+            env: "uat".to_owned(),
+            yes: true,
+        },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("run deploy apply");
+    let parsed_apply = parse_json_output_with_schema_version(&apply, "effigy.deploy.apply.v1", 1);
+    let deployment_id = parsed_apply["deployment_id"]
+        .as_str()
+        .expect("deployment id")
+        .to_owned();
+
+    let out = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Redeploy {
+            env: "uat".to_owned(),
+            deployment: deployment_id,
+            yes: true,
+        },
+        repo_override: Some(root),
+        output_json: true,
+    }))
+    .expect("run deploy redeploy");
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.apply.v1", 1);
+    assert_eq!(parsed["status"].as_str(), Some("succeeded"));
+    assert!(parsed["source_deployment"].as_str().is_some());
+}
+
+#[test]
+fn run_deploy_plan_blocks_required_release_without_tag_ref() {
+    let root = setup_deploy_transaction_fixture("deploy-plan-production-blocker");
+    let out = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Plan {
+            env: "production".to_owned(),
+            write_report: false,
+        },
+        repo_override: Some(root),
+        output_json: true,
+    }))
+    .expect_err("production plan should be blocked");
+    let rendered = out.to_string();
+    assert!(
+        rendered.contains("release_policy `required`"),
+        "got: {rendered}"
+    );
+}
+
 #[test]
 fn run_deploy_model_requires_json_in_first_batch() {
     let root = temp_workspace("deploy-model-underlay-text");

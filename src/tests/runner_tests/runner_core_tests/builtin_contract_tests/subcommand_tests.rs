@@ -11,27 +11,27 @@ fn run_manifest_task_builtin_subcommand_error_contracts_are_stable() {
             "builtin-subcommand-cache-missing-subcommand",
             "cache",
             &[],
-            &["`cache` requires a subcommand: `inspect` or `invalidate`"],
+            &["`tasks cache` requires a subcommand: `inspect` or `invalidate`"],
         ),
         builtin_contract_error_case(
             "builtin-subcommand-cache-unknown-subcommand",
             "cache",
             &["drop"],
-            &["unknown cache subcommand `drop` (expected `inspect` or `invalidate`)"],
+            &["unknown tasks cache subcommand `drop` (expected `inspect` or `invalidate`)"],
         ),
         builtin_contract_error_case(
             "builtin-subcommand-completion-unknown-shell",
             "completion",
             &["drop"],
             &[
-                "invalid shell `drop` for `completion` (expected `bash`, `zsh`, `fish`, or `candidates`)",
+                "invalid shell `drop` for `config completion` (expected `bash`, `zsh`, `fish`, or `candidates`)",
             ],
         ),
         builtin_contract_error_case(
             "builtin-subcommand-completion-candidates-unknown-arg",
             "completion",
             &["candidates", "--wat"],
-            &["unknown argument(s) for built-in `completion`: candidates --wat"],
+            &["unknown argument(s) for built-in `config completion`: candidates --wat"],
         ),
         builtin_contract_error_case(
             "builtin-subcommand-scan-unknown-subcommand",

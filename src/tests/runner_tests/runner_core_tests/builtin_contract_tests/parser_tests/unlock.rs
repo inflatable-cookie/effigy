@@ -46,6 +46,6 @@ fn builtin_unlock_parser_contracts_are_stable() {
 
     assert_parser_task_invocation_error(
         parse_unlock_contract_request(&task, &string_args(&[])),
-        "`unlock` requires at least one scope (or `--all`)",
+        "`tasks unlock` requires at least one scope (or `--all`)",
     );
 }

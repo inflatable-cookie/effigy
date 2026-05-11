@@ -2,7 +2,7 @@
 
 Roadmap: [`g04.027`](../roadmaps/g04/027-deployment-transaction-system.md)
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 
@@ -40,53 +40,20 @@ This lane owns:
 
 ## Coordination Boundaries
 
-The `g04.022` through `g04.026` thread owns remote bundle sources, docs-command
-cleanup, command-reference completion, container-command decomposition, and
-shared dispatcher/exec collapse.
-
-This lane should avoid:
-
-- shared dispatcher refactors until `g04.026` lands
-- broad command-reference churn while `g04.024` is active
-- container-command or runtime execution rewrites
-- bundle-source internals until `g04.022` lands
-
-Safe first implementation areas after activation:
-
-- deploy-specific parser additions
-- deploy-specific manifest config types
-- deploy-specific report structs
-- deploy-specific provider adapter trait
-- mocked provider tests
-- deployment docs that do not rewrite shared indexes
+The `g04.022` through `g04.026` work completed before this lane moved from
+queued planning into implementation.
 
 ## Current Ready Card
 
-None. The lane is queued until the currently active task-status query lane and
-the `g04.022` through `g04.026` coordination point are clear or deliberately
-paused.
+None. The lane is complete for the v0.6.0 deployment slice.
 
 ## Execution Chain
 
 - `635` complete: queued the deployment strict lane, recorded coordination
   boundaries, and selected the first future implementation boundary
-
-## Future Card Order
-
-- `636`: promote deploy env config and plan report field contract
-- `637`: add deploy env config parser
-- `638`: add deploy plan command surface
-- `639`: add deploy plan report history
-- `640`: add provider adapter trait
-- `641`: add Railway preflight adapter
-- `642`: add Railway apply transaction
-- `643`: settle Render execution backend
-- `644`: add Render preflight adapter
-- `645`: add Render apply transaction
-- `646`: add deploy status/history
-- `647`: add deploy redeploy
-- `648`: close Acowtancy deployment proof
-- `649`: close v0.6.0 deployment suite
+- `636` complete: closed the deployment transaction suite with config parsing,
+  plan/apply/status/history/redeploy commands, Railway/Render transaction
+  report support, docs, tests, and Acowtancy proof documentation
 
 ## Exit Condition
 
@@ -95,7 +62,10 @@ provider-neutral UAT and production deployments through Railway and Render,
 with state-stack lineage, artifact policy, release evidence, provider reports,
 hooks, and health checks captured in durable deployment reports.
 
+The first slice records provider transaction evidence through the shared report
+boundary. Provider setup creation, secret creation, provider rollback, and
+database/media rollback remain out of scope.
+
 ## Next Task
 
-Wait for the active coordination point to clear, then execute future card `636`
-as the first deploy-specific implementation boundary.
+Hand off to release readiness. Release execution remains human-owned.

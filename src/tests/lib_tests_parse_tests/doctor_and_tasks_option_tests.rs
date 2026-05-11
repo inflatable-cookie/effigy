@@ -214,6 +214,101 @@ fn parse_deploy_export_render_with_path_plan_and_json() {
 }
 
 #[test]
+fn parse_deploy_plan_with_env_write_report_and_json() {
+    let cmd = parse_command(vec![
+        "deploy".to_owned(),
+        "plan".to_owned(),
+        "uat".to_owned(),
+        "--write-report".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::Plan {
+                env: "uat".to_owned(),
+                write_report: true,
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_deploy_apply_requires_yes_in_model_not_parser() {
+    let cmd = parse_command(vec![
+        "deploy".to_owned(),
+        "apply".to_owned(),
+        "production".to_owned(),
+        "--yes".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::Apply {
+                env: "production".to_owned(),
+                yes: true,
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_deploy_history_with_limit() {
+    let cmd = parse_command(vec![
+        "deploy".to_owned(),
+        "history".to_owned(),
+        "uat".to_owned(),
+        "--limit".to_owned(),
+        "5".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::History {
+                env: "uat".to_owned(),
+                limit: Some(5),
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_deploy_redeploy_with_deployment_and_yes() {
+    let cmd = parse_command(vec![
+        "deploy".to_owned(),
+        "redeploy".to_owned(),
+        "uat".to_owned(),
+        "--deployment".to_owned(),
+        "deploy-1".to_owned(),
+        "--yes".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::Redeploy {
+                env: "uat".to_owned(),
+                deployment: "deploy-1".to_owned(),
+                yes: true,
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
 fn parse_deploy_export_railway_with_path_plan_and_json() {
     let cmd = parse_command(vec![
         "deploy".to_owned(),

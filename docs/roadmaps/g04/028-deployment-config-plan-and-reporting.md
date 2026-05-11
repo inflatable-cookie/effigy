@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -79,4 +79,4 @@ artifact_policy = "digest-pinned"
 
 ## Next Task
 
-Add the provider adapter trait and Railway read-only preflight adapter.
+Continue to `g04.029` for Railway deployment transaction support.

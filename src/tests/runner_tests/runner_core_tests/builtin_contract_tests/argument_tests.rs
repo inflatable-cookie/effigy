@@ -76,19 +76,19 @@ fn run_manifest_task_builtin_argument_contract_matrix_is_stable() {
             "builtin-arg-contract-migrate-unknown",
             "migrate",
             &["--wat"],
-            &["unknown argument(s) for built-in `migrate`: --wat"],
+            &["unknown argument(s) for built-in `tasks migrate`: --wat"],
         ),
         builtin_contract_error_case(
             "builtin-arg-contract-unlock-unknown",
             "unlock",
             &["--wat"],
-            &["unknown argument(s) for built-in `unlock`: --wat"],
+            &["unknown argument(s) for built-in `tasks unlock`: --wat"],
         ),
         builtin_contract_error_case(
             "builtin-arg-contract-cache-missing-subcommand",
             "cache",
             &[],
-            &["`cache` requires a subcommand: `inspect` or `invalidate`"],
+            &["`tasks cache` requires a subcommand: `inspect` or `invalidate`"],
         ),
     ];
     cases.extend(builtin_shared_unknown_argument_cases(

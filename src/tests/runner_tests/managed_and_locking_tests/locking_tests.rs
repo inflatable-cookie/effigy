@@ -180,12 +180,12 @@ fn run_manifest_task_builtin_unlock_argument_validation_contract_table() {
         ManagedUnlockInvocationErrorCase {
             workspace: "unlock-requires-scope-or-all",
             args: &[],
-            expected: &["`unlock` requires at least one scope (or `--all`)"],
+            expected: &["`tasks unlock` requires at least one scope (or `--all`)"],
         },
         ManagedUnlockInvocationErrorCase {
             workspace: "unlock-rejects-all-with-scope",
             args: &["--all", "workspace"],
-            expected: &["`unlock` accepts either `--all` or explicit scope values, not both"],
+            expected: &["`tasks unlock` accepts either `--all` or explicit scope values, not both"],
         },
         ManagedUnlockInvocationErrorCase {
             workspace: "unlock-all-requires-confirmation",

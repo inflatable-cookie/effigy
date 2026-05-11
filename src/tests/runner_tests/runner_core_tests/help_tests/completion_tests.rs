@@ -20,7 +20,10 @@ fn run_manifest_task_builtin_help_topics_render_expected_content() {
             "builtin-migrate-help-json",
             "migrate",
             &["--help", "--json"],
-            &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"migrate\""],
+            &[
+                "\"schema\": \"effigy.help.v1\"",
+                "\"topic\": \"tasks-migrate\"",
+            ],
         ),
         builtin_help_case(
             "builtin-completion-help",

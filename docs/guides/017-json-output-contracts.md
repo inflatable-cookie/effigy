@@ -117,6 +117,10 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.watch.v1`
 - `deploy.model.v1`
 - `effigy.deploy.export.v1`
+- `effigy.deploy.plan.v1`
+- `effigy.deploy.apply.v1`
+- `effigy.deploy.status.v1`
+- `effigy.deploy.history.v1`
 - `effigy.init.v1`
 - `effigy.init.list.v1`
 - `effigy.migrate.v1`
@@ -153,6 +157,8 @@ effigy --json config --schema --target test
 effigy --json deploy model --repo /path/to/workspace
 effigy --json deploy export render --repo /path/to/workspace --path infra/render --plan
 effigy --json deploy export railway --repo /path/to/workspace --path infra/railway --plan
+effigy --json deploy plan uat --repo /path/to/workspace
+effigy --json deploy apply uat --repo /path/to/workspace --yes
 effigy --json test --plan
 effigy --json test
 effigy --json watch --owner effigy --once test

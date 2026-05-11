@@ -37,7 +37,7 @@ fn cache_builtin_requires_subcommand() {
     let err = run_cache_builtin(&root, &[]).expect_err("cache should require a subcommand");
     assert_cache_task_invocation(
         err,
-        "`cache` requires a subcommand: `inspect` or `invalidate`",
+        "`tasks cache` requires a subcommand: `inspect` or `invalidate`",
     );
 }
 
@@ -51,7 +51,7 @@ fn cache_builtin_rejects_unknown_subcommand() {
         run_cache_builtin(&root, &["drop"]).expect_err("cache should reject unknown subcommand");
     assert_cache_task_invocation(
         err,
-        "unknown cache subcommand `drop` (expected `inspect` or `invalidate`)",
+        "unknown tasks cache subcommand `drop` (expected `inspect` or `invalidate`)",
     );
 }
 
@@ -65,21 +65,21 @@ fn cache_builtin_inspect_rejects_invalid_flags() {
         run_cache_builtin(&root, &["inspect", "--wat"]).expect_err("inspect should reject --wat");
     assert_cache_task_invocation(
         unknown_flag,
-        "unknown argument(s) for built-in `cache`: --wat",
+        "unknown argument(s) for built-in `tasks cache`: --wat",
     );
 
     let all_flag =
         run_cache_builtin(&root, &["inspect", "--all"]).expect_err("inspect should reject --all");
     assert_cache_task_invocation(
         all_flag,
-        "`cache inspect` does not support `--all`; use `cache invalidate --all`",
+        "`tasks cache inspect` does not support `--all`; use `tasks cache invalidate --all`",
     );
 
     let too_many_selectors = run_cache_builtin(&root, &["inspect", "build", "test"])
         .expect_err("inspect should reject multiple selectors");
     assert_cache_task_invocation(
         too_many_selectors,
-        "`cache inspect` accepts at most one selector",
+        "`tasks cache inspect` accepts at most one selector",
     );
 }
 
@@ -93,20 +93,20 @@ fn cache_builtin_invalidate_rejects_invalid_selector_combinations_and_flags() {
         run_cache_builtin(&root, &["invalidate"]).expect_err("invalidate should require selector");
     assert_cache_task_invocation(
         missing_selector,
-        "`cache invalidate` requires one or more selectors (or `--all`)",
+        "`tasks cache invalidate` requires one or more selectors (or `--all`)",
     );
 
     let conflicting =
         run_cache_builtin(&root, &["invalidate", "--all", "build"]).expect_err("invalid combo");
     assert_cache_task_invocation(
         conflicting,
-        "`cache invalidate` accepts either `--all` or selectors, not both",
+        "`tasks cache invalidate` accepts either `--all` or selectors, not both",
     );
 
     let unknown_flag = run_cache_builtin(&root, &["invalidate", "--wat"])
         .expect_err("invalidate should reject unknown flags");
     assert_cache_task_invocation(
         unknown_flag,
-        "unknown argument(s) for built-in `cache`: --wat",
+        "unknown argument(s) for built-in `tasks cache`: --wat",
     );
 }

@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Queued
+Status: Complete
 Owner: Platform
 Created: 2026-05-10
 Depends on:
@@ -61,5 +61,4 @@ problem, then close the v0.6.0 deployment suite.
 
 ## Next Task
 
-Hand off to release readiness after the deployment suite is implemented and
-validated. Release execution remains human-owned.
+Hand off to release readiness. Release execution remains human-owned.

@@ -53,7 +53,7 @@ pub(in crate::runner::tests) fn builtin_shared_unknown_argument_cases(
             completion_workspace,
             "completion",
             &["candidates", "--wat"],
-            &["unknown argument(s) for built-in `completion`: candidates --wat"],
+            &["unknown argument(s) for built-in `config completion`: candidates --wat"],
         ),
         builtin_contract_error_case(
             watch_workspace,

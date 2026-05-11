@@ -10,6 +10,7 @@ mod derive;
 mod model;
 mod railway;
 mod render;
+mod transaction;
 
 use model::*;
 
@@ -27,6 +28,32 @@ pub(super) fn run_deploy(args: DeployArgs) -> Result<String, RunnerError> {
             provider,
             &path,
             plan,
+            args.output_json,
+        ),
+        DeploySubcommand::Plan { env, write_report } => transaction::run_deploy_plan(
+            &resolved.resolved_root,
+            &env,
+            write_report,
+            args.output_json,
+        ),
+        DeploySubcommand::Apply { env, yes } => {
+            transaction::run_deploy_apply(&resolved.resolved_root, &env, yes, args.output_json)
+        }
+        DeploySubcommand::Status { env } => {
+            transaction::run_deploy_status(&resolved.resolved_root, &env, args.output_json)
+        }
+        DeploySubcommand::History { env, limit } => {
+            transaction::run_deploy_history(&resolved.resolved_root, &env, limit, args.output_json)
+        }
+        DeploySubcommand::Redeploy {
+            env,
+            deployment,
+            yes,
+        } => transaction::run_deploy_redeploy(
+            &resolved.resolved_root,
+            &env,
+            &deployment,
+            yes,
             args.output_json,
         ),
     }

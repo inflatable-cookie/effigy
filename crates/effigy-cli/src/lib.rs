@@ -135,6 +135,26 @@ pub enum DeploySubcommand {
         path: PathBuf,
         plan: bool,
     },
+    Plan {
+        env: String,
+        write_report: bool,
+    },
+    Apply {
+        env: String,
+        yes: bool,
+    },
+    Status {
+        env: String,
+    },
+    History {
+        env: String,
+        limit: Option<usize>,
+    },
+    Redeploy {
+        env: String,
+        deployment: String,
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

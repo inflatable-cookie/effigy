@@ -10,7 +10,10 @@ fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
             "builtin-entrypoint-cache-help-json",
             "cache",
             &["--wat", "--help", "--json"],
-            &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"cache\""],
+            &[
+                "\"schema\": \"effigy.help.v1\"",
+                "\"topic\": \"tasks-cache\"",
+            ],
         ),
         builtin_help_case(
             "builtin-entrypoint-completion-help-json",
@@ -52,7 +55,10 @@ fn run_manifest_task_builtin_entrypoint_help_json_contract_table() {
             "builtin-entrypoint-unlock-help-json",
             "unlock",
             &["--help", "--json", "--wat"],
-            &["\"schema\": \"effigy.help.v1\"", "\"topic\": \"unlock\""],
+            &[
+                "\"schema\": \"effigy.help.v1\"",
+                "\"topic\": \"tasks-unlock\"",
+            ],
         ),
     ];
 

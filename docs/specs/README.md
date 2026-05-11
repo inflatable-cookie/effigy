@@ -31,7 +31,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- `064` for `g04.027` through `g04.032` deployment transaction system planning
+- none
 
 Queued strict lanes:
 
@@ -43,6 +43,7 @@ Paused but still useful:
 
 Recently completed:
 
+- [`064-deployment-transaction-system-strict-lane.md`](./064-deployment-transaction-system-strict-lane.md)
 - [`069-shared-dispatcher-and-exec-collapse-strict-lane.md`](./069-shared-dispatcher-and-exec-collapse-strict-lane.md)
 - [`068-container-command-decomposition-strict-lane.md`](./068-container-command-decomposition-strict-lane.md)
 - [`067-command-reference-completeness-and-flag-consistency-strict-lane.md`](./067-command-reference-completeness-and-flag-consistency-strict-lane.md)
@@ -103,4 +104,4 @@ Recently completed:
 
 ## Next Task
 
-No active next task in `g04` before the separately-running deployment lane.
+No active strict-lane task. Release execution remains human-owned.

@@ -476,7 +476,7 @@ Companion references:
 }
 ```
 
-### Planned v0.6.0 Deploy Plan (`effigy.deploy.plan.v1`)
+### Deploy Plan (`effigy.deploy.plan.v1`)
 
 ```json
 {
@@ -534,7 +534,7 @@ Companion references:
 }
 ```
 
-### Planned v0.6.0 Deploy Apply (`effigy.deploy.apply.v1`)
+### Deploy Apply (`effigy.deploy.apply.v1`)
 
 ```json
 {

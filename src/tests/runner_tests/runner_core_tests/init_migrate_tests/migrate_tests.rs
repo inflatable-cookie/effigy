@@ -118,7 +118,7 @@ fn run_manifest_task_builtin_migrate_argument_contract_table() {
             workspace: "builtin-migrate-unknown-arg",
             args: &["--wat"],
             expect_error: true,
-            expected: &["unknown argument(s) for built-in `migrate`: --wat"],
+            expected: &["unknown argument(s) for built-in `tasks migrate`: --wat"],
         },
         BuiltinArgumentContractCase {
             workspace: "builtin-migrate-help-precedence",
