@@ -11,7 +11,7 @@ It is not a local-dev compose export, and it is not provider-specific config.
 
 Effigy needs one inspectable model between:
 
-- effective manifest and bundle state
+- effective manifest, including any bundle-owned `[deploy.model]` content
 - provider-specific deployment output
 
 That middle layer should let Effigy:

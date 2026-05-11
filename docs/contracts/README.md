@@ -18,8 +18,8 @@ This folder contains both:
 - [`002-production-deployment-model.md`](./002-production-deployment-model.md):
   provider-neutral production deployment contract for the new export surface.
 - [`003-underlay-deployment-derivation.md`](./003-underlay-deployment-derivation.md):
-  first concrete mapping from the shipped `underlay` bundle into
-  `deploy.model.v1`.
+  first concrete bundle-owned `deploy.model.v1` shape for the git-hosted
+  `underlay` bundle.
 - [`004-underlay-reference-deploy-model-example.md`](./004-underlay-reference-deploy-model-example.md):
   first concrete example model for the shipped `underlay-reference` repo.
 - [`005-container-runtime-contract.md`](./005-container-runtime-contract.md):

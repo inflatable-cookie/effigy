@@ -57,7 +57,7 @@ For narrative workflow guidance instead of lookup, start with:
   `effigy container`.
 - Need substrate lifecycle (VM + compose + gateway + workspace handoff) for the
   repo's declared system: use `effigy system` and `effigy workspace`.
-- Need to discover or inspect a shipped or local bundle before adopting it: use
+- Need to inspect or refresh a local, git, or OCI bundle source: use
   `effigy bundle`.
 - Need a provider-neutral production model derived from the effective manifest
   and bundle: use `effigy deploy model --json`.
@@ -304,16 +304,15 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   half-up substrate state
 - mounted sibling repos listed in `systems.<name>.mounts` auto-adopt
   producer-declared isolation paths into workspace containers
-- `bundle inspect` reports the active repo bundle source only; named shipped
-  bundle inspection is gone
+- `bundle inspect` reports the active repo bundle source only; there is no named
+  bundle inspection anymore
 - `bundle sync` is the explicit refresh path for git and OCI bundle sources in
   the current repo; local path bundle sources report not-applicable
-- `deploy model` is intentionally JSON-only and derives Underlay deployment
-  shape from the active materialized bundle source
-- `deploy export render` is intentionally Underlay-first in the first batch and
-  currently generates only `render.yaml`
-- `deploy export railway` is intentionally Underlay-first in the first batch
-  and currently generates service-local `railway.toml` files plus `report.json`
+- `deploy model` is intentionally JSON-only and reads the active rendered
+  `[deploy.model]` section from the effective manifest
+- `deploy export render` currently generates only `render.yaml`
+- `deploy export railway` currently generates service-local `railway.toml`
+  files plus `report.json`
 - v0.6.0 deployment transactions are separate from `deploy export`:
   `deploy plan/apply/status/history/redeploy` compose code refs, provider
   targets, state stacks, OCI artifact policy, release evidence, hooks, health

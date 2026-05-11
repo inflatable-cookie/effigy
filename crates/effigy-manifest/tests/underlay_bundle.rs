@@ -731,3 +731,48 @@ api = "farmyard"
         "front route should move off the bare host when bundle.routes.front is set: {domains:?}"
     );
 }
+
+#[test]
+fn underlay_bundle_s3_route_override_flows_from_bundle_input_without_rust_changes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    setup_underlay_path_bundle(tmp.path());
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[bundle]
+base = { type = "path", dir = "bundles/underlay" }
+host = "acowtancy.test"
+project_name = "acowtancy-dev"
+workspace_subdir = "acowtancy"
+databases = ["acowtancy"]
+
+[bundle.routes]
+s3 = "blob"
+"#,
+    )
+    .expect("write manifest");
+    std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let stack = loaded
+        .manifest
+        .containers
+        .as_ref()
+        .and_then(|containers| containers.environments.get("stack"))
+        .expect("stack");
+    let domains = stack
+        .dns
+        .as_ref()
+        .expect("dns")
+        .routes
+        .iter()
+        .map(|route| route.domain.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(domains.contains(&"blob.acowtancy.test"), "got {domains:?}");
+    assert!(
+        !domains.contains(&"s3.acowtancy.test"),
+        "s3 route should honor bundle-defined label changes without rust-side route wiring: {domains:?}"
+    );
+}

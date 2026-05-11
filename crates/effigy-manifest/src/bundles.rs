@@ -1026,101 +1026,15 @@ fn resolve_local_bundle_inputs(
                     detail: format!("local bundle `{bundle_name}` requires input `{key}`"),
                 });
             }
-            (None, false) => {}
+            (None, false) => {
+                if input.value_type == BundleInputType::String {
+                    insert_bundle_input_value(&mut resolved, key, Value::String(String::new()));
+                }
+            }
         }
     }
     normalize_database_bundle_inputs(manifest_path, bundle_name, &mut resolved)?;
-    normalize_bundle_specific_inputs(manifest_path, bundle_name, &mut resolved)?;
     Ok(resolved)
-}
-
-fn normalize_bundle_specific_inputs(
-    manifest_path: &Path,
-    bundle_name: &str,
-    inputs: &mut BTreeMap<String, Value>,
-) -> Result<(), ManifestError> {
-    if bundle_name == "underlay" {
-        ensure_optional_bundle_string_inputs(
-            inputs,
-            &[
-                "dirs.docs",
-                "dirs.api",
-                "dirs.client",
-                "dirs.ui",
-                "dirs.front",
-                "dirs.admin",
-                "routes.front",
-                "routes.admin",
-                "routes.api",
-                "routes.s3",
-                "sources.underlay",
-                "sources.poodle",
-            ],
-        );
-        let host = required_bundle_string(manifest_path, bundle_name, inputs, "host")?;
-        for (output, input, default_label) in [
-            ("front_route_domain", "routes.front", None),
-            ("admin_route_domain", "routes.admin", Some("admin")),
-            ("api_route_domain", "routes.api", Some("api")),
-            ("s3_route_domain", "routes.s3", Some("s3")),
-        ] {
-            insert_bundle_input_value(
-                inputs,
-                output,
-                Value::String(underlay_route_domain(
-                    &host,
-                    optional_bundle_string(inputs, input)
-                        .as_deref()
-                        .or(default_label),
-                )),
-            );
-        }
-        return Ok(());
-    }
-
-    if bundle_name == "decodelabs" {
-        let host = required_bundle_string(manifest_path, bundle_name, inputs, "host")?;
-        let host_dir_name = derive_decodelabs_host_dir_name(manifest_path, &host)?;
-        inputs.insert("host_dir_name".to_owned(), Value::String(host_dir_name));
-
-        if let Some(port) = optional_bundle_integer(inputs, "zest_port") {
-            if port <= 0 || port > u16::MAX as i64 {
-                return Err(ManifestError::Render {
-                    path: manifest_path.to_path_buf(),
-                    detail: format!(
-                        "invalid `decodelabs` bundle input `zest_port = {port}`; expected a port in the range 1-65535"
-                    ),
-                });
-            }
-        }
-        return Ok(());
-    }
-
-    if bundle_name == "decodelabs-library" {
-        let shared_root_path = bundle_shared_root_path(manifest_path, bundle_name, inputs)?;
-        inputs.insert(
-            "shared_root".to_owned(),
-            Value::String(shared_root_path.display().to_string()),
-        );
-        if !inputs.contains_key("workspace_subdir") {
-            let workspace_subdir = derive_bundle_workspace_subdir(
-                manifest_path,
-                &shared_root_path.display().to_string(),
-            )?;
-            inputs.insert(
-                "workspace_subdir".to_owned(),
-                Value::String(workspace_subdir),
-            );
-        }
-        if !inputs.contains_key("project_name") {
-            let workspace_subdir = optional_bundle_string(inputs, "workspace_subdir")
-                .unwrap_or_else(|| "app".to_owned());
-            let project_name = default_decodelabs_library_project_name(&workspace_subdir);
-            inputs.insert("project_name".to_owned(), Value::String(project_name));
-        }
-    }
-
-    Ok(())
 }
 
 fn normalize_database_bundle_inputs(
@@ -1198,14 +1112,6 @@ fn normalize_database_value(
     }
 }
 
-fn ensure_optional_bundle_string_inputs(inputs: &mut BTreeMap<String, Value>, keys: &[&str]) {
-    for key in keys {
-        if bundle_input_value(inputs, key).is_none() {
-            insert_bundle_input_value(inputs, key, Value::String(String::new()));
-        }
-    }
-}
-
 pub(super) fn render_bundle_template_with_inputs(
     manifest_path: &Path,
     bundle_name: &str,
@@ -1214,6 +1120,15 @@ pub(super) fn render_bundle_template_with_inputs(
     inputs: &BTreeMap<String, Value>,
 ) -> Result<String, ManifestError> {
     let mut env = minijinja::Environment::new();
+    env.add_function("bundle_host_label", render_bundle_host_label);
+    env.add_function("bundle_host_path", render_bundle_host_path);
+    env.add_function("bundle_workspace_subdir", render_bundle_workspace_subdir);
+    env.add_function(
+        "bundle_default_project_name",
+        render_bundle_default_project_name,
+    );
+    env.add_function("bundle_validated_port", render_bundle_validated_port);
+    env.add_function("route_domain", render_route_domain);
     env.add_template("bundle", template)
         .map_err(|error| ManifestError::Render {
             path: manifest_path.to_path_buf(),
@@ -1226,11 +1141,17 @@ pub(super) fn render_bundle_template_with_inputs(
             detail: format!("bundle `{bundle_name}` template load error: {error}"),
         })?;
     let bundle_root = bundle_root.display().to_string();
+    let manifest_root = manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .display()
+        .to_string();
     let context = LocalBundleTemplateContext {
         inputs,
         bundle: LocalBundleTemplateBundle {
             name: bundle_name,
             root: &bundle_root,
+            manifest_root: &manifest_root,
         },
     };
     template
@@ -1251,134 +1172,44 @@ struct LocalBundleTemplateContext<'a> {
 pub(super) struct LocalBundleTemplateBundle<'a> {
     pub(super) name: &'a str,
     pub(super) root: &'a str,
+    pub(super) manifest_root: &'a str,
 }
 
-pub(super) fn required_bundle_string(
-    manifest_path: &Path,
-    bundle_name: &str,
-    inputs: &BTreeMap<String, Value>,
-    key: &str,
-) -> Result<String, ManifestError> {
-    let Some(value) = bundle_input_value(inputs, key) else {
-        return Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!("bundle `{bundle_name}` requires string input `{key}`"),
-        });
-    };
-    let Some(value) = value.as_str() else {
-        return Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!("bundle `{bundle_name}` input `{key}` must be a string"),
-        });
-    };
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!("bundle `{bundle_name}` input `{key}` must not be empty"),
-        });
-    }
-    Ok(value.to_owned())
-}
-
-pub(super) fn bundle_shared_root_input(
-    _manifest_path: &Path,
-    bundle_name: &str,
-    inputs: &BTreeMap<String, Value>,
-) -> Result<String, ManifestError> {
-    Ok(
-        optional_bundle_string(inputs, "shared_root").unwrap_or_else(|| {
-            bundle_default_input_string(bundle_name, "shared_root")
-                .unwrap_or_else(|| "../".to_owned())
-        }),
-    )
-}
-
-pub(super) fn bundle_shared_root_path(
-    manifest_path: &Path,
-    bundle_name: &str,
-    inputs: &BTreeMap<String, Value>,
-) -> Result<PathBuf, ManifestError> {
-    let shared_root = bundle_shared_root_input(manifest_path, bundle_name, inputs)?;
-    let shared_root_path = resolve_bundle_host_path(manifest_path, &shared_root);
-    Ok(shared_root_path.canonicalize().unwrap_or(shared_root_path))
-}
-
-pub(super) fn bundle_default_input_string(bundle_name: &str, key: &str) -> Option<String> {
-    let _ = (bundle_name, key);
-    None
-}
-
-pub(super) fn optional_bundle_integer(inputs: &BTreeMap<String, Value>, key: &str) -> Option<i64> {
-    bundle_input_value(inputs, key).and_then(Value::as_integer)
-}
-
-pub(super) fn optional_bundle_string(
-    inputs: &BTreeMap<String, Value>,
-    key: &str,
-) -> Option<String> {
-    let value = bundle_input_value(inputs, key)?.as_str()?.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_owned())
-    }
-}
-
-pub(super) fn derive_bundle_workspace_subdir(
-    manifest_path: &Path,
-    shared_root: &str,
-) -> Result<String, ManifestError> {
-    let manifest_root = manifest_path
-        .parent()
-        .ok_or_else(|| ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: "bundle workspace subdir derivation requires a manifest parent directory"
-                .to_owned(),
-        })?;
-    let shared_root = resolve_bundle_host_path(manifest_path, shared_root);
+fn derive_bundle_workspace_subdir_from_roots(
+    manifest_root: &Path,
+    shared_root: &Path,
+) -> Result<String, String> {
     let manifest_root = manifest_root
         .canonicalize()
         .unwrap_or_else(|_| manifest_root.to_path_buf());
-    let shared_root = shared_root.canonicalize().unwrap_or(shared_root);
-    let relative = manifest_root
-        .strip_prefix(&shared_root)
-        .map_err(|_| ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!(
-                "bundle `decodelabs-library` could not derive `workspace_subdir` because repo root {} is not under shared_root {}",
-                manifest_root.display(),
-                shared_root.display()
-            ),
-        })?;
+    let shared_root = shared_root
+        .canonicalize()
+        .unwrap_or_else(|_| shared_root.to_path_buf());
+    let relative = manifest_root.strip_prefix(&shared_root).map_err(|_| {
+        format!(
+            "bundle workspace subdir derivation requires repo root {} to be under shared_root {}",
+            manifest_root.display(),
+            shared_root.display()
+        )
+    })?;
     if relative.as_os_str().is_empty() {
-        return Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: "bundle `decodelabs-library` requires `workspace_subdir` when the repo root equals `shared_root`".to_owned(),
-        });
+        return Err(
+            "bundle workspace subdir derivation requires `workspace_subdir` when the repo root equals `shared_root`"
+                .to_owned(),
+        );
     }
     Ok(relative.display().to_string())
 }
 
-pub(super) fn derive_decodelabs_host_dir_name(
-    manifest_path: &Path,
-    host: &str,
-) -> Result<String, ManifestError> {
+fn derive_host_label(host: &str) -> Result<String, String> {
     let trimmed = host.trim().trim_end_matches('.');
     let Some(first_label) = trimmed.split('.').next() else {
-        return Err(ManifestError::Render {
-            path: manifest_path.to_path_buf(),
-            detail: "bundle `decodelabs` could not derive a working directory from empty `host`"
-                .to_owned(),
-        });
+        return Err("bundle host label derivation requires a non-empty `host`".to_owned());
     };
     if first_label.is_empty() {
-        return Err(ManifestError::Render {
-            path: manifest_path.to_path_buf(),
-            detail: format!(
-                "bundle `decodelabs` could not derive a working directory from `host = {host}`"
-            ),
-        });
+        return Err(format!(
+            "bundle host label derivation requires a non-empty first label in `host = {host}`"
+        ));
     }
     Ok(first_label.to_owned())
 }
@@ -1395,8 +1226,62 @@ pub(super) fn resolve_bundle_host_path(manifest_path: &Path, path: &str) -> Path
     }
 }
 
-pub(super) fn underlay_route_domain(host: &str, label: Option<&str>) -> String {
-    let label = label.map(str::trim).unwrap_or_default();
+fn render_route_domain(host: String, label: Option<String>, fallback: Option<String>) -> String {
+    route_domain_with_fallback(&host, label.as_deref(), fallback.as_deref())
+}
+
+fn render_bundle_host_label(host: String) -> Result<String, minijinja::Error> {
+    derive_host_label(&host)
+        .map_err(|detail| minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, detail))
+}
+
+fn render_bundle_host_path(manifest_root: String, path: String) -> String {
+    let resolved = resolve_bundle_host_path(
+        Path::new(&manifest_root).join("effigy.toml").as_path(),
+        &path,
+    );
+    resolved
+        .canonicalize()
+        .unwrap_or(resolved)
+        .display()
+        .to_string()
+}
+
+fn render_bundle_workspace_subdir(
+    manifest_root: String,
+    shared_root: String,
+) -> Result<String, minijinja::Error> {
+    let shared_root = resolve_bundle_host_path(
+        Path::new(&manifest_root).join("effigy.toml").as_path(),
+        &shared_root,
+    );
+    derive_bundle_workspace_subdir_from_roots(Path::new(&manifest_root), &shared_root)
+        .map_err(|detail| minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, detail))
+}
+
+fn render_bundle_default_project_name(prefix: String, workspace_subdir: String) -> String {
+    default_project_name_from_workspace_subdir(&prefix, &workspace_subdir)
+}
+
+fn render_bundle_validated_port(value: i64, input_name: String) -> Result<i64, minijinja::Error> {
+    if value <= 0 || value > u16::MAX as i64 {
+        Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!(
+                "invalid bundle input `{input_name} = {value}`; expected a port in the range 1-65535"
+            ),
+        ))
+    } else {
+        Ok(value)
+    }
+}
+
+fn route_domain_with_fallback(host: &str, label: Option<&str>, fallback: Option<&str>) -> String {
+    let label = label
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| fallback.map(str::trim).filter(|value| !value.is_empty()))
+        .unwrap_or_default();
     if label.is_empty() {
         host.to_owned()
     } else {
@@ -1404,7 +1289,10 @@ pub(super) fn underlay_route_domain(host: &str, label: Option<&str>) -> String {
     }
 }
 
-pub(super) fn default_decodelabs_library_project_name(workspace_subdir: &str) -> String {
+pub(super) fn default_project_name_from_workspace_subdir(
+    prefix: &str,
+    workspace_subdir: &str,
+) -> String {
     let slug = workspace_subdir
         .chars()
         .map(|ch| {
@@ -1418,9 +1306,9 @@ pub(super) fn default_decodelabs_library_project_name(workspace_subdir: &str) ->
         .trim_matches('-')
         .to_owned();
     if slug.is_empty() {
-        "decodelabs-library-dev".to_owned()
+        format!("{prefix}-dev")
     } else {
-        format!("decodelabs-library-{slug}-dev")
+        format!("{prefix}-{slug}-dev")
     }
 }
 

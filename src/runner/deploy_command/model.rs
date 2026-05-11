@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize)]
 pub(crate) struct DeployModel {
@@ -100,7 +100,7 @@ pub(crate) struct DeploySecret {
     pub(crate) notes: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct DeployWarning {
     pub(crate) code: String,
     pub(crate) scope: String,

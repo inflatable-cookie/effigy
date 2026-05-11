@@ -1,7 +1,8 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use effigy_manifest::task_runtime::{ManifestManagedRun, ManifestTask};
-use regex::Regex;
+use serde::Deserialize;
 
 use super::model::*;
 use crate::runner::error::RunnerError;
@@ -10,87 +11,21 @@ use crate::runner::manifest::{load_task_manifest, load_task_manifest_with_inspec
 pub(super) fn derive_deploy_model(repo_root: &Path) -> Result<DeployModel, RunnerError> {
     let loaded =
         load_task_manifest_with_inspection(&repo_root.join(effigy_manifest::TASK_MANIFEST_FILE))?;
-    let bundle = loaded.manifest.bundle.as_ref().ok_or_else(|| {
-        RunnerError::task_invocation("`deploy model` requires a bundle-backed repo".to_owned())
-    })?;
-    if bundle.base.is_none() {
-        return Err(RunnerError::task_invocation(
-            "`deploy model` requires a bundle base selection".to_owned(),
-        ));
-    }
-    let bundle_root = loaded.bundle_root.as_deref().ok_or_else(|| {
-        RunnerError::task_invocation(
-            "`deploy model` could not resolve the materialized bundle root".to_owned(),
-        )
-    })?;
-    let base = bundle_name_from_descriptor(bundle_root)?;
-
-    match base.as_str() {
-        "underlay" => derive_underlay_model(repo_root, bundle),
-        other => Err(RunnerError::task_invocation(format!(
-            "`deploy model` currently supports only the `underlay` bundle, got `{other}`"
-        ))),
-    }
-}
-
-fn bundle_name_from_descriptor(bundle_root: &Path) -> Result<String, RunnerError> {
-    let bundle_toml = bundle_root.join("bundle.toml");
-    let descriptor = std::fs::read_to_string(&bundle_toml).map_err(|e| {
+    let deploy_value = loaded
+        .effective_value
+        .get("deploy")
+        .cloned()
+        .ok_or_else(|| {
+            RunnerError::task_invocation("`deploy model` requires `[deploy.model]`".to_owned())
+        })?;
+    let config: ManifestDeployRootConfig = deploy_value.try_into().map_err(|error| {
         RunnerError::task_invocation(format!(
-            "`deploy model` could not read bundle descriptor at {}: {e}",
-            bundle_toml.display()
+            "failed to parse composed `[deploy.model]` config: {error}"
         ))
     })?;
-    let name_re = Regex::new(r#"(?m)^\s*name\s*=\s*"([^"]+)""#).expect("valid regex");
-    name_re
-        .captures(&descriptor)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_owned())
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "`deploy model` bundle descriptor at {} is missing [bundle].name",
-                bundle_toml.display()
-            ))
-        })
-}
-
-fn derive_underlay_model(
-    repo_root: &Path,
-    bundle: &effigy_manifest::ManifestBundleConfig,
-) -> Result<DeployModel, RunnerError> {
-    let host = required_bundle_string(bundle, "host")?;
-    let project_name = required_bundle_string(bundle, "project_name")?;
-    let front_dir = bundle_dir_or_default(bundle, "dirs.front", "app-front")?;
-    let admin_dir = bundle_dir_or_default(bundle, "dirs.admin", "app-admin")?;
-    let api_dir = bundle_dir_or_default(bundle, "dirs.api", "app-api")?;
-    let databases = required_bundle_string_list(bundle, "databases")?;
-    let api_port = bundle_integer_or_default(bundle, "api_port", 41001)?;
-
-    let front_manifest = load_child_manifest(repo_root, &front_dir)?;
-    let admin_manifest = load_child_manifest(repo_root, &admin_dir)?;
-    let api_manifest = load_child_manifest(repo_root, &api_dir)?;
-
-    let front_domain = route_domain(
-        &host,
-        bundle_string_or_default(bundle, "routes.front", "")?.as_str(),
-    );
-    let admin_domain = route_domain(
-        &host,
-        bundle_string_or_default(bundle, "routes.admin", "admin")?.as_str(),
-    );
-    let api_domain = route_domain(
-        &host,
-        bundle_string_or_default(bundle, "routes.api", "api")?.as_str(),
-    );
-
-    let front_build = required_task_command(&front_manifest, "build", &front_dir)?;
-    let admin_build = required_task_command(&admin_manifest, "build", &admin_dir)?;
-    let api_build = required_task_command(&api_manifest, "build", &api_dir)?;
-    let api_start = required_task_command(&api_manifest, "api", &api_dir)?;
-    let api_release = optional_task_command(&api_manifest, "db:migrate");
-    let jobs_start = optional_task_command(&api_manifest, "jobs");
-    let front_fallback = detect_static_fallback(repo_root, &front_dir);
-    let admin_fallback = detect_static_fallback(repo_root, &admin_dir);
+    let model = config.model.ok_or_else(|| {
+        RunnerError::task_invocation("`deploy model` requires `[deploy.model]`".to_owned())
+    })?;
 
     let repo_name = repo_root
         .file_name()
@@ -98,171 +33,118 @@ fn derive_underlay_model(
         .unwrap_or("app")
         .to_owned();
 
-    let mut services = vec![
-        DeployService {
-            name: "front".to_owned(),
-            role: "static".to_owned(),
-            runtime: "node".to_owned(),
-            source_root: front_dir.clone(),
-            build: Some(DeployCommandStep {
-                command: front_build,
-            }),
-            start: None,
-            release: None,
-            health: None,
-            output: Some(DeployOutput {
-                kind: "directory".to_owned(),
-                path: "build".to_owned(),
-                fallback: front_fallback.clone(),
-            }),
-            port: None,
-            domains: vec![front_domain.clone()],
-            env: std::collections::BTreeMap::new(),
-            secret_refs: Vec::new(),
-            volumes: Vec::new(),
-            warnings: missing_static_fallback_warning("front", front_fallback.is_none()),
-        },
-        DeployService {
-            name: "admin".to_owned(),
-            role: "static".to_owned(),
-            runtime: "node".to_owned(),
-            source_root: admin_dir.clone(),
-            build: Some(DeployCommandStep {
-                command: admin_build,
-            }),
-            start: None,
-            release: None,
-            health: None,
-            output: Some(DeployOutput {
-                kind: "directory".to_owned(),
-                path: "build".to_owned(),
-                fallback: admin_fallback.clone(),
-            }),
-            port: None,
-            domains: vec![admin_domain.clone()],
-            env: std::collections::BTreeMap::new(),
-            secret_refs: Vec::new(),
-            volumes: Vec::new(),
-            warnings: missing_static_fallback_warning("admin", admin_fallback.is_none()),
-        },
-        DeployService {
-            name: "api".to_owned(),
-            role: "web".to_owned(),
-            runtime: "rust".to_owned(),
-            source_root: api_dir.clone(),
-            build: Some(DeployCommandStep {
-                command: api_build.clone(),
-            }),
-            start: Some(DeployCommandStep { command: api_start }),
-            release: api_release.as_ref().map(|command| DeployCommandStep {
-                command: command.clone(),
-            }),
-            health: Some(DeployHealth {
-                kind: "http".to_owned(),
-                path: "/v1/health".to_owned(),
-            }),
-            output: None,
-            port: Some(api_port),
-            domains: vec![api_domain.clone()],
-            env: std::collections::BTreeMap::new(),
-            secret_refs: vec!["DATABASE_URL".to_owned()],
-            volumes: Vec::new(),
-            warnings: api_release
-                .is_none()
-                .then_some(DeployWarning {
-                    code: "missing-release-hook".to_owned(),
-                    scope: "service".to_owned(),
-                    target: Some("api".to_owned()),
-                    message: "No explicit `db:migrate` release or migration command is promoted into the deployment model yet".to_owned(),
-                    severity: "warn".to_owned(),
-                })
-                .into_iter()
-                .collect(),
-        },
-    ];
-
-    if let Some(jobs_start) = jobs_start {
-        services.push(DeployService {
-            name: "jobs".to_owned(),
-            role: "worker".to_owned(),
-            runtime: "rust".to_owned(),
-            source_root: api_dir.clone(),
-            build: Some(DeployCommandStep {
-                command: api_build.clone(),
-            }),
-            start: Some(DeployCommandStep {
-                command: jobs_start,
-            }),
-            release: None,
-            health: None,
-            output: None,
-            port: None,
-            domains: Vec::new(),
-            env: std::collections::BTreeMap::new(),
-            secret_refs: vec!["DATABASE_URL".to_owned()],
-            volumes: Vec::new(),
-            warnings: Vec::new(),
-        });
+    let mut services = Vec::with_capacity(model.services.len());
+    for service in &model.services {
+        if let Some(derived) = derive_service(repo_root, service)? {
+            services.push(derived);
+        }
     }
 
-    let mut secret_services = vec!["api".to_owned()];
-    if services.iter().any(|service| service.name == "jobs") {
-        secret_services.push("jobs".to_owned());
-    }
-
-    let model = DeployModel {
+    Ok(DeployModel {
         schema: "deploy.model.v1".to_owned(),
         schema_version: 1,
         app: DeployApp {
             name: repo_name,
-            bundle: Some("underlay".to_owned()),
-            project_name,
-            source_root: Some(".".to_owned()),
-            notes: None,
+            bundle: model.app.bundle.clone(),
+            project_name: model.app.project_name.clone(),
+            source_root: model.app.source_root.clone(),
+            notes: model.app.notes.clone(),
         },
         services,
-        backing_services: vec![DeployBackingService {
-            name: "postgres".to_owned(),
-            kind: "postgres".to_owned(),
-            mode: "managed".to_owned(),
-            required: true,
-            consumers: secret_services.clone(),
-            warnings: Vec::new(),
-        }],
-        domains: vec![
-            DeployDomain {
-                host: front_domain,
-                service: "front".to_owned(),
-                tls: "provider_managed".to_owned(),
-            },
-            DeployDomain {
-                host: admin_domain,
-                service: "admin".to_owned(),
-                tls: "provider_managed".to_owned(),
-            },
-            DeployDomain {
-                host: api_domain,
-                service: "api".to_owned(),
-                tls: "provider_managed".to_owned(),
-            },
-        ],
-        secrets: vec![DeploySecret {
-            name: "DATABASE_URL".to_owned(),
-            services: secret_services,
-            required: true,
-            source: "operator".to_owned(),
-            notes: Some(format!(
-                "Managed Postgres connection string for primary database `{}`",
-                databases
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| "app".to_owned())
-            )),
-        }],
-        warnings: Vec::new(),
+        backing_services: model
+            .backing_services
+            .into_iter()
+            .map(|service| DeployBackingService {
+                name: service.name,
+                kind: service.kind,
+                mode: service.mode,
+                required: service.required,
+                consumers: service.consumers,
+                warnings: service.warnings.unwrap_or_default(),
+            })
+            .collect(),
+        domains: model
+            .domains
+            .into_iter()
+            .map(|domain| DeployDomain {
+                host: domain.host,
+                service: domain.service,
+                tls: domain.tls,
+            })
+            .collect(),
+        secrets: model
+            .secrets
+            .into_iter()
+            .map(|secret| DeploySecret {
+                name: secret.name,
+                services: secret.services,
+                required: secret.required,
+                source: secret.source,
+                notes: secret.notes,
+            })
+            .collect(),
+        warnings: model.warnings.unwrap_or_default(),
+    })
+}
+
+fn derive_service(
+    repo_root: &Path,
+    service: &ManifestDeployModelService,
+) -> Result<Option<DeployService>, RunnerError> {
+    let manifest = load_child_manifest(repo_root, &service.source_root)?;
+    let mut warnings = service.warnings.clone().unwrap_or_default();
+
+    let build = resolve_task_step(&manifest, &service.source_root, service.build.as_ref())?;
+    let start = resolve_task_step(&manifest, &service.source_root, service.start.as_ref())?;
+    let release = resolve_task_step(&manifest, &service.source_root, service.release.as_ref())?;
+
+    if build.omit_service || start.omit_service || release.omit_service {
+        return Ok(None);
+    }
+
+    warnings.extend(build.warnings);
+    warnings.extend(start.warnings);
+    warnings.extend(release.warnings);
+
+    let output = match service.output.as_ref() {
+        Some(output) => {
+            let mut fallback = output.fallback.clone();
+            if fallback.is_none() && output.detect_static_fallback.unwrap_or(false) {
+                fallback = detect_static_fallback(repo_root, &service.source_root);
+                warnings.extend(missing_static_fallback_warning(
+                    &service.name,
+                    fallback.is_none(),
+                ));
+            }
+            Some(DeployOutput {
+                kind: output.kind.clone(),
+                path: output.path.clone(),
+                fallback,
+            })
+        }
+        None => None,
     };
 
-    Ok(model)
+    Ok(Some(DeployService {
+        name: service.name.clone(),
+        role: service.role.clone(),
+        runtime: service.runtime.clone(),
+        source_root: service.source_root.clone(),
+        build: build.command.map(|command| DeployCommandStep { command }),
+        start: start.command.map(|command| DeployCommandStep { command }),
+        release: release.command.map(|command| DeployCommandStep { command }),
+        health: service.health.as_ref().map(|health| DeployHealth {
+            kind: health.kind.clone(),
+            path: health.path.clone(),
+        }),
+        output,
+        port: service.port,
+        domains: service.domains.clone(),
+        env: service.env.clone().unwrap_or_default(),
+        secret_refs: service.secret_refs.clone().unwrap_or_default(),
+        volumes: service.volumes.clone().unwrap_or_default(),
+        warnings,
+    }))
 }
 
 fn load_child_manifest(
@@ -276,16 +158,69 @@ fn load_child_manifest(
     )
 }
 
-fn required_task_command(
+struct ResolvedTaskStep {
+    command: Option<String>,
+    warnings: Vec<DeployWarning>,
+    omit_service: bool,
+}
+
+fn resolve_task_step(
     manifest: &effigy_manifest::TaskManifest,
-    task_name: &str,
     dir: &str,
-) -> Result<String, RunnerError> {
-    optional_task_command(manifest, task_name).ok_or_else(|| {
-        RunnerError::task_invocation(format!(
-            "required task `{task_name}` is missing or non-command in `{dir}/effigy.toml`"
-        ))
-    })
+    step: Option<&ManifestDeployModelTaskStep>,
+) -> Result<ResolvedTaskStep, RunnerError> {
+    let Some(step) = step else {
+        return Ok(ResolvedTaskStep {
+            command: None,
+            warnings: Vec::new(),
+            omit_service: false,
+        });
+    };
+
+    let command = optional_task_command(manifest, &step.task);
+    match command {
+        Some(command) => Ok(ResolvedTaskStep {
+            command: Some(command),
+            warnings: Vec::new(),
+            omit_service: false,
+        }),
+        None if step.omit_service_if_missing.unwrap_or(false) => Ok(ResolvedTaskStep {
+            command: None,
+            warnings: Vec::new(),
+            omit_service: true,
+        }),
+        None if step.warn_if_missing.unwrap_or(false) => Ok(ResolvedTaskStep {
+            command: None,
+            warnings: vec![DeployWarning {
+                code: step
+                    .warning_code
+                    .clone()
+                    .unwrap_or_else(|| "missing-task-hook".to_owned()),
+                scope: "service".to_owned(),
+                target: step.warning_target.clone(),
+                message: step.warning_message.clone().unwrap_or_else(|| {
+                    format!(
+                        "Optional task `{}` is missing or non-command in `{dir}/effigy.toml`",
+                        step.task
+                    )
+                }),
+                severity: step
+                    .warning_severity
+                    .clone()
+                    .unwrap_or_else(|| "warn".to_owned()),
+            }],
+            omit_service: false,
+        }),
+        None if step.optional.unwrap_or(false) => Ok(ResolvedTaskStep {
+            command: None,
+            warnings: Vec::new(),
+            omit_service: false,
+        }),
+        None => Err(RunnerError::task_invocation(format!(
+            "required task `{}` is missing or non-command in `{dir}/effigy.toml`",
+            step.task
+        ))),
+    }
 }
 
 fn optional_task_command(
@@ -311,107 +246,145 @@ fn normalize_task_command(command: &str) -> String {
         .to_owned()
 }
 
-fn required_bundle_string(
-    bundle: &effigy_manifest::ManifestBundleConfig,
-    key: &str,
-) -> Result<String, RunnerError> {
-    bundle_value(bundle, key)
-        .and_then(|value| value.as_str())
-        .map(|value| value.to_owned())
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!("missing required bundle input `{key}`"))
-        })
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestDeployRootConfig {
+    #[serde(default)]
+    model: Option<ManifestDeployModelConfig>,
 }
 
-fn required_bundle_string_list(
-    bundle: &effigy_manifest::ManifestBundleConfig,
-    key: &str,
-) -> Result<Vec<String>, RunnerError> {
-    let items = bundle_value(bundle, key)
-        .and_then(|value| value.as_array())
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!("missing required bundle input `{key}`"))
-        })?;
-
-    let values = items
-        .iter()
-        .map(|value: &toml::Value| {
-            value.as_str().map(|item| item.to_owned()).ok_or_else(|| {
-                RunnerError::task_invocation(format!("bundle input `{key}` must be a string list"))
-            })
-        })
-        .collect::<Result<Vec<String>, RunnerError>>()?;
-
-    if values.is_empty() {
-        return Err(RunnerError::task_invocation(format!(
-            "bundle input `{key}` must not be empty"
-        )));
-    }
-
-    Ok(values)
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestDeployModelConfig {
+    app: ManifestDeployModelApp,
+    #[serde(default)]
+    services: Vec<ManifestDeployModelService>,
+    #[serde(default)]
+    backing_services: Vec<ManifestDeployModelBackingService>,
+    #[serde(default)]
+    domains: Vec<ManifestDeployModelDomain>,
+    #[serde(default)]
+    secrets: Vec<ManifestDeployModelSecret>,
+    #[serde(default)]
+    warnings: Option<Vec<DeployWarning>>,
 }
 
-fn bundle_integer_or_default(
-    bundle: &effigy_manifest::ManifestBundleConfig,
-    key: &str,
-    default: u16,
-) -> Result<u16, RunnerError> {
-    let Some(value) = bundle_value(bundle, key) else {
-        return Ok(default);
-    };
-
-    let raw = value.as_integer().ok_or_else(|| {
-        RunnerError::task_invocation(format!("bundle input `{key}` must be an integer"))
-    })?;
-    u16::try_from(raw).map_err(|_| {
-        RunnerError::task_invocation(format!("bundle input `{key}` must fit into a u16"))
-    })
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestDeployModelApp {
+    project_name: String,
+    #[serde(default)]
+    bundle: Option<String>,
+    #[serde(default)]
+    source_root: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
 }
 
-fn bundle_string_or_default(
-    bundle: &effigy_manifest::ManifestBundleConfig,
-    key: &str,
-    default: &str,
-) -> Result<String, RunnerError> {
-    match bundle_value(bundle, key) {
-        Some(value) => value.as_str().map(|item| item.to_owned()).ok_or_else(|| {
-            RunnerError::task_invocation(format!("bundle input `{key}` must be a string"))
-        }),
-        None => Ok(default.to_owned()),
-    }
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestDeployModelService {
+    name: String,
+    role: String,
+    runtime: String,
+    source_root: String,
+    #[serde(default)]
+    build: Option<ManifestDeployModelTaskStep>,
+    #[serde(default)]
+    start: Option<ManifestDeployModelTaskStep>,
+    #[serde(default)]
+    release: Option<ManifestDeployModelTaskStep>,
+    #[serde(default)]
+    health: Option<ManifestDeployModelHealth>,
+    #[serde(default)]
+    output: Option<ManifestDeployModelOutput>,
+    #[serde(default)]
+    port: Option<u16>,
+    #[serde(default)]
+    domains: Vec<String>,
+    #[serde(default)]
+    env: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    secret_refs: Option<Vec<String>>,
+    #[serde(default)]
+    volumes: Option<Vec<String>>,
+    #[serde(default)]
+    warnings: Option<Vec<DeployWarning>>,
 }
 
-fn bundle_dir_or_default(
-    bundle: &effigy_manifest::ManifestBundleConfig,
-    key: &str,
-    default: &str,
-) -> Result<String, RunnerError> {
-    bundle_string_or_default(bundle, key, default)
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestDeployModelTaskStep {
+    task: String,
+    #[serde(default)]
+    optional: Option<bool>,
+    #[serde(default)]
+    omit_service_if_missing: Option<bool>,
+    #[serde(default)]
+    warn_if_missing: Option<bool>,
+    #[serde(default)]
+    warning_code: Option<String>,
+    #[serde(default)]
+    warning_target: Option<String>,
+    #[serde(default)]
+    warning_message: Option<String>,
+    #[serde(default)]
+    warning_severity: Option<String>,
 }
 
-fn bundle_value<'a>(
-    bundle: &'a effigy_manifest::ManifestBundleConfig,
-    key: &str,
-) -> Option<&'a toml::Value> {
-    if let Some(value) = bundle.inputs.get(key) {
-        return Some(value);
-    }
-
-    let mut parts = key.split('.');
-    let first = parts.next()?;
-    let mut value = bundle.inputs.get(first)?;
-
-    for part in parts {
-        value = value.as_table()?.get(part)?;
-    }
-
-    Some(value)
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestDeployModelHealth {
+    kind: String,
+    path: String,
 }
 
-fn route_domain(host: &str, label: &str) -> String {
-    if label.trim().is_empty() {
-        host.to_owned()
-    } else {
-        format!("{}.{}", label.trim(), host)
-    }
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestDeployModelOutput {
+    kind: String,
+    path: String,
+    #[serde(default)]
+    fallback: Option<String>,
+    #[serde(default)]
+    detect_static_fallback: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestDeployModelBackingService {
+    name: String,
+    kind: String,
+    mode: String,
+    #[serde(default = "default_true")]
+    required: bool,
+    #[serde(default)]
+    consumers: Vec<String>,
+    #[serde(default)]
+    warnings: Option<Vec<DeployWarning>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestDeployModelDomain {
+    host: String,
+    service: String,
+    tls: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestDeployModelSecret {
+    name: String,
+    #[serde(default)]
+    services: Vec<String>,
+    #[serde(default = "default_true")]
+    required: bool,
+    source: String,
+    #[serde(default)]
+    notes: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }

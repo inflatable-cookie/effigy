@@ -917,6 +917,8 @@ fn iso_timestamp(time: SystemTime) -> String {
 struct ManifestDeployConfig {
     #[serde(default)]
     providers: BTreeMap<String, ManifestDeployProviderConfig>,
+    #[serde(rename = "model", default)]
+    _model: Option<toml::Value>,
     #[serde(flatten)]
     envs: BTreeMap<String, ManifestDeployEnvConfig>,
 }

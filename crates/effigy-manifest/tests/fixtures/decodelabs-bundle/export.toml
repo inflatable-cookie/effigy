@@ -6,7 +6,7 @@ driver = "colima"
 startup = "detached"
 project_name = "{{ inputs.project_name }}"
 primary_service = "{{ inputs.workspace_service_name }}"
-working_dir = "/var/www/{{ inputs.host_dir_name }}"
+working_dir = "/var/www/{{ bundle_host_label(inputs.host) }}"
 
 [containers.{{ inputs.container_name }}.lifecycle]
 on_task_exit = "stop"
@@ -18,7 +18,7 @@ routes = [
   { domain = "pma.{{ inputs.host }}", tls = true, service = "pma" },
   { domain = "mailpit.{{ inputs.host }}", tls = true, port = 8025, service = "mail" },
 {% if inputs.zest_port %}
-  { domain = "{{ inputs.zest_domain or "zest." ~ inputs.host }}", tls = true, port = {{ inputs.zest_port }}, service = "{{ inputs.workspace_service_name }}" },
+  { domain = "{{ inputs.zest_domain or "zest." ~ inputs.host }}", tls = true, port = {{ bundle_validated_port(inputs.zest_port, "zest_port") }}, service = "{{ inputs.workspace_service_name }}" },
 {% endif %}
 ]
 
@@ -33,7 +33,7 @@ version = "8.4"
 document_root = "."
 isolated_dirs = ["vendor", "node_modules"]
 {% if inputs.zest_port %}
-host_ports = ["{{ inputs.zest_port }}:{{ inputs.zest_port }}"]
+host_ports = ["{{ bundle_validated_port(inputs.zest_port, "zest_port") }}:{{ bundle_validated_port(inputs.zest_port, "zest_port") }}"]
 {% else %}
 host_ports = []
 {% endif %}

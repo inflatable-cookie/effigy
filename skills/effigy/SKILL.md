@@ -115,6 +115,40 @@ effigy --json tasks | jq -r '.result.payload.tasks[].name'
 Details: `references/json-envelope.md`. Full spec:
 `docs/guides/017-json-output-contracts.md`.
 
+## Bundle sources
+
+Repos declare their bundle preset through `[bundle].base`:
+
+```toml
+[bundle]
+base = { type = "path", dir = "bundles/acme" }
+host = "acme.test"
+project_name = "acme-dev"
+```
+
+Supported source types:
+
+- `path` — local directory containing `bundle.toml` + `export.toml`
+- `git` — clone-on-demand from a git URL (cached in `.effigy/cache/bundles/git/`)
+- `oci` — pull-on-demand from a container registry (cached in `.effigy/cache/bundles/oci/`)
+
+Bundle caches live inside the project `.effigy` directory so they are available
+inside workspace containers.
+
+Key commands:
+
+```bash
+effigy bundle inspect          # inspect active repo bundle source
+effigy bundle sync             # refresh git/oci bundle caches
+effigy --json bundle inspect   # machine-readable source metadata
+```
+
+The old `base = "underlay"` string form and the built-in shipped bundle catalog
+are removed. Bundles must now come from a typed source.
+
+Details: `references/bundle-sources.md`. Full reference:
+`docs/guides/066-local-manifest-bundles.md`.
+
 ## Config shapes
 
 `effigy.toml` and `tasks/effigy.tasks.toml` host these top-level sections:
@@ -124,6 +158,7 @@ Details: `references/json-envelope.md`. Full spec:
 - `[containers.<name>]` — container catalog
 - `[bootstrap]` — first-run setup steps
 - `[release]` — release configuration
+- `[bundle]` — bundle source and inputs
 
 Details: `references/config-shapes.md`. Full reference:
 `docs/guides/025-command-reference-matrix.md`.
@@ -170,6 +205,8 @@ For depth beyond this skill, read the canonical guides in the Effigy repo:
 | JSON contracts | `docs/guides/017-json-output-contracts.md` |
 | Quick start + cookbook | `docs/guides/021-quick-start-and-command-cookbook.md` |
 | Command reference | `docs/guides/025-command-reference-matrix.md` |
+| Bundle sources | `docs/guides/066-local-manifest-bundles.md` |
+| Underlay starter | `docs/guides/065-underlay-starter.md` |
 | Agent adoption | `docs/guides/047-agent-and-cross-repo-adoption.md` |
 | CI + release protocol | `docs/guides/049-ci-binary-distribution-and-release-protocol.md` |
 | Release orchestration | `docs/guides/051-release-orchestration.md` |

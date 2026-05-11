@@ -1,14 +1,15 @@
-# 003 - Underlay Deployment Derivation
+# 003 - Underlay Bundle-Owned Deployment Model
 
-This contract defines how the shipped `underlay` bundle should derive into
-`deploy.model.v1`.
+This contract defines the `deploy.model.v1` shape that the git-hosted
+`underlay` bundle should emit through its rendered `[deploy.model]` section.
 
-It is the first concrete derivation target for the production export surface.
+It is the first concrete bundle-owned deployment model for the production
+export surface.
 
 ## Purpose
 
-The neutral deployment model is only useful if Effigy can map a real bundle
-into it consistently.
+The neutral deployment model is only useful if a real bundle can own and emit
+that shape consistently.
 
 Underlay is the first target because its shape is already regular:
 
@@ -20,7 +21,7 @@ Underlay is the first target because its shape is already regular:
 
 ## Source of truth
 
-Derivation should come from the effective manifest after normal composition:
+The source of truth is the effective manifest after normal composition:
 
 - root manifest
 - included fragments
@@ -28,7 +29,12 @@ Derivation should come from the effective manifest after normal composition:
 - bundle defaults
 - explicit local overlays when included
 
-The derivation should not inspect live containers or runtime state.
+The `underlay` bundle owns the rendered `[deploy.model]` section inside that
+effective manifest.
+
+Effigy should consume that rendered model. It should not reconstruct the
+Underlay deploy shape from Rust-side bundle-name branches, and it should not
+inspect live containers or runtime state.
 
 ## Bundle inputs that matter
 

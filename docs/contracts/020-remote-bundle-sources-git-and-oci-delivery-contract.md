@@ -97,7 +97,7 @@ Rules:
 
 Git bundle sources must:
 
-- cache into `~/.effigy/cache/bundles/git/<canonical-url-sha256>/<ref>/`
+- cache into `<project>/.effigy/cache/bundles/git/<canonical-url-sha256>/<ref>/`
 - normalize SSH and HTTPS forms into one stable cache identity
 - default `ref` to `main` when omitted
 - accept branch, tag, or commit-sha refs
@@ -113,7 +113,7 @@ OCI bundle sources must:
 
 - reuse the existing artifact/OCI substrate for auth and fetch behavior
 - cache into
-  `~/.effigy/cache/bundles/oci/<registry>/<name>/<tag-or-digest>/`
+  `<project>/.effigy/cache/bundles/oci/<registry>/<name>/<tag-or-digest>/`
 - detect stale state by re-resolving the manifest digest and comparing it to
   the cached materialization
 

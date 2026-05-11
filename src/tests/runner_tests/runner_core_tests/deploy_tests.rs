@@ -990,3 +990,193 @@ databases = ["acme"]
     assert!(!export_dir.join("services/front/railway.toml").exists());
     assert!(!export_dir.join("report.json").exists());
 }
+
+#[test]
+fn run_deploy_model_json_reads_explicit_manifest_model_without_bundle() {
+    let root = temp_workspace("deploy-model-explicit-manifest");
+    fs::create_dir_all(root.join("service-web")).expect("mkdir service");
+    write_root_manifest(
+        &root,
+        r#"
+[deploy.model.app]
+project_name = "plain-app"
+source_root = "."
+notes = "manifest-owned deploy model"
+
+[[deploy.model.services]]
+name = "web"
+role = "web"
+runtime = "node"
+source_root = "service-web"
+domains = ["plain.example.test"]
+secret_refs = ["API_TOKEN"]
+
+[deploy.model.services.build]
+task = "build"
+
+[deploy.model.services.start]
+task = "serve"
+
+[deploy.model.services.health]
+kind = "http"
+path = "/health"
+"#,
+    );
+    write_manifest(
+        &root.join("service-web/effigy.toml"),
+        r#"
+[tasks.build]
+run = "pnpm build"
+
+[tasks.serve]
+run = "pnpm start"
+"#,
+    );
+
+    let out = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Model,
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("run deploy model");
+
+    let parsed = parse_json_output_with_schema_version(&out, "deploy.model.v1", 1);
+    assert_eq!(
+        parsed["app"]["name"].as_str(),
+        root.file_name().and_then(|name| name.to_str())
+    );
+    assert!(parsed["app"]["bundle"].is_null());
+    assert_eq!(parsed["app"]["project_name"].as_str(), Some("plain-app"));
+    assert_eq!(
+        parsed["app"]["notes"].as_str(),
+        Some("manifest-owned deploy model")
+    );
+
+    let services = parsed["services"].as_array().expect("services array");
+    assert_eq!(services.len(), 1);
+    let web = &services[0];
+    assert_eq!(web["name"].as_str(), Some("web"));
+    assert_eq!(web["role"].as_str(), Some("web"));
+    assert_eq!(web["runtime"].as_str(), Some("node"));
+    assert_eq!(web["source_root"].as_str(), Some("service-web"));
+    assert_eq!(web["build"]["command"].as_str(), Some("pnpm build"));
+    assert_eq!(web["start"]["command"].as_str(), Some("pnpm start"));
+    assert_eq!(web["health"]["path"].as_str(), Some("/health"));
+    assert_eq!(
+        web["domains"].as_array().expect("domains")[0].as_str(),
+        Some("plain.example.test")
+    );
+    assert_eq!(
+        web["secret_refs"].as_array().expect("secrets")[0].as_str(),
+        Some("API_TOKEN")
+    );
+}
+
+#[test]
+fn run_deploy_export_render_plan_uses_explicit_manifest_model_without_bundle() {
+    let root = temp_workspace("deploy-export-render-explicit-manifest");
+    fs::create_dir_all(root.join("site")).expect("mkdir site");
+    write_root_manifest(
+        &root,
+        r#"
+[deploy.model.app]
+project_name = "plain-app"
+source_root = "."
+
+[[deploy.model.services]]
+name = "site"
+role = "static"
+runtime = "node"
+source_root = "site"
+domains = ["plain.example.test"]
+
+[deploy.model.services.build]
+task = "build"
+
+[deploy.model.services.output]
+kind = "directory"
+path = "dist"
+fallback = "200.html"
+"#,
+    );
+    write_manifest(
+        &root.join("site/effigy.toml"),
+        r#"
+[tasks.build]
+run = "pnpm build"
+"#,
+    );
+
+    let export_dir = root.join("infra/render");
+    let rendered = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Export {
+            provider: DeployExportProvider::Render,
+            path: export_dir.clone(),
+            plan: true,
+        },
+        repo_override: Some(root),
+        output_json: false,
+    }))
+    .expect("run render export plan");
+
+    assert!(rendered.contains("planned render export"));
+    assert!(!export_dir.join("render.yaml").exists());
+}
+
+#[test]
+fn run_deploy_export_railway_plan_uses_explicit_manifest_model_without_bundle() {
+    let root = temp_workspace("deploy-export-railway-explicit-manifest");
+    fs::create_dir_all(root.join("service-web")).expect("mkdir web");
+    write_root_manifest(
+        &root,
+        r#"
+[deploy.model.app]
+project_name = "plain-app"
+source_root = "."
+
+[[deploy.model.services]]
+name = "web"
+role = "web"
+runtime = "node"
+source_root = "service-web"
+domains = ["plain.example.test"]
+secret_refs = ["API_TOKEN"]
+
+[deploy.model.services.build]
+task = "build"
+
+[deploy.model.services.start]
+task = "serve"
+
+[deploy.model.services.health]
+kind = "http"
+path = "/health"
+"#,
+    );
+    write_manifest(
+        &root.join("service-web/effigy.toml"),
+        r#"
+[tasks.build]
+run = "pnpm build"
+
+[tasks.serve]
+run = "pnpm start"
+"#,
+    );
+
+    let export_dir = root.join("infra/railway");
+    let rendered = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Export {
+            provider: DeployExportProvider::Railway,
+            path: export_dir.clone(),
+            plan: true,
+        },
+        repo_override: Some(root),
+        output_json: false,
+    }))
+    .expect("run railway export plan");
+
+    assert!(rendered.contains("planned railway export"));
+    assert!(!export_dir.join("services/web/railway.toml").exists());
+    assert!(!export_dir.join("report.json").exists());
+}

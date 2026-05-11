@@ -50,7 +50,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - **`effigy bundle inspect`:** bare `effigy bundle inspect` now reports the
   active repo bundle source, including source type, local path, version hint,
   stale state, and manifest path, while `effigy bundle inspect <name>` keeps
-  the shipped bundle schema/catalog path.
+  the active bundle schema/catalog path.
 - **Decodelabs bundle git hosting:** the `decodelabs` bundle (and
   `decodelabs-library`) now works when loaded from a git bundle source. The
   `host_dir_name` derivation and `zest_port` validation that were previously
@@ -157,12 +157,19 @@ During v0.x, MINOR bumps may include breaking changes.
 - **`deploy model` bundle source handling** now derives the active bundle name
   from the materialized bundle descriptor for path, git, and OCI bundle
   sources, so deployment planning works with remote bundle-backed repos.
+- **Bundle cache location** moved from `~/.effigy/cache/bundles/` to
+  `<project>/.effigy/cache/bundles/` so cached bundles are available inside
+  workspace containers that mount the project root.
 
 ### Fixed
 - **Git bundle stale detection** now compares the cached local `HEAD` to
   `git ls-remote` for the configured ref, so `bundle inspect` correctly reports
   when a git-backed bundle source has drifted, and `bundle sync` no longer
   unconditionally fetches on every manifest load.
+- **Bundle-owned route labels** now render through a generic template helper
+  and generic optional-string input normalization, so external bundle repos can
+  add or rename route labels like Underlay `routes.s3` without adding new
+  Rust-side `*_route_domain` wiring inside Effigy.
 - **Colima/containerd runtime row recovery** now repairs transient
   `error retrieving current runtime: empty value` state-loss failures on the
   runtime `ps` path used by gateway registration and container discovery, so

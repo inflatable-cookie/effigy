@@ -221,7 +221,7 @@ details):
 | `bun_version`    | `""` (latest)       | Pin a specific Bun release.                                        |
 | `workspace_mount`| `"/workspace-root"` | Mount point for the workspace root inside the container.           |
 | `working_subdir` | `""` (= mount root) | Subdirectory of `workspace_mount` to set as the compose `working_dir`. |
-| `host_ports`     | `[]`                | Catalog-level escape hatch for explicit workspace port bindings. The shipped `underlay` bundle fills this from `api_port`, `admin_port`, and `front_port`. |
+| `host_ports`     | `[]`                | Catalog-level escape hatch for explicit workspace port bindings. The underlay bundle fills this from `api_port`, `admin_port`, and `front_port`. |
 
 System-layer overrides still apply on top:
 
@@ -261,7 +261,7 @@ The integration suite covers both the fragment and the starter:
 - `crates/effigy-manifest/tests/underlay_starter.rs`
   - verifies the starter composes into a single manifest via
     `[manifest].include`
-  - verifies the root manifest resolves the shipped `underlay` bundle
+  - verifies the root manifest resolves the git-hosted `underlay` bundle
   - verifies `systems.dev` binds the `stack` container
   - verifies the four expected services resolve to their bundled
     catalog fragments

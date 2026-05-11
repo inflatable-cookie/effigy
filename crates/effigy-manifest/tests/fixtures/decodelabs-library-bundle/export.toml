@@ -1,10 +1,13 @@
 [containers]
 default = "{{ inputs.container_name }}"
 
+{% set resolved_workspace_subdir = inputs.workspace_subdir or bundle_workspace_subdir(bundle.manifest_root, inputs.shared_root) %}
+{% set resolved_project_name = inputs.project_name or bundle_default_project_name(bundle.name, resolved_workspace_subdir) %}
+
 [containers.{{ inputs.container_name }}]
 driver = "colima"
 startup = "detached"
-project_name = "{{ inputs.project_name }}"
+project_name = "{{ resolved_project_name }}"
 primary_service = "{{ inputs.workspace_service_name }}"
 working_dir = "/workspace-root"
 
@@ -20,8 +23,8 @@ composer = { service = "{{ inputs.workspace_service_name }}", command = "compose
 catalog = "php-fpm"
 version = "8.4"
 document_root = "."
-working_dir = "/workspace-root/{{ inputs.workspace_subdir }}"
-mount_source = "{{ inputs.shared_root }}"
+working_dir = "/workspace-root/{{ resolved_workspace_subdir }}"
+mount_source = "{{ bundle_host_path(bundle.manifest_root, inputs.shared_root) }}"
 isolated_dirs = ["vendor"]
 node_version = "24"
 node_global_packages = ["eclint"]
@@ -58,7 +61,7 @@ default = "{{ inputs.system_name }}"
 [systems.{{ inputs.system_name }}]
 container = "{{ inputs.container_name }}"
 default_workspace = "{{ inputs.default_workspace }}"
-working_dir = "/workspace-root/{{ inputs.workspace_subdir }}"
+working_dir = "/workspace-root/{{ resolved_workspace_subdir }}"
 user = "dev"
 home = "/home/dev"
 
