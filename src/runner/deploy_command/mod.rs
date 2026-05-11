@@ -8,6 +8,7 @@ use super::error::RunnerError;
 
 mod derive;
 mod model;
+mod provider_package;
 mod railway;
 mod render;
 mod transaction;

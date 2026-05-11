@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::derive::derive_deploy_model;
+use super::provider_package::{resolve_provider_package, ManifestDeployProviderConfig};
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::load_task_manifest_with_inspection;
 use crate::runner::render::render_command_result;
@@ -315,6 +316,8 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
         ))
     })?;
     let model = derive_deploy_model(repo_root)?;
+    let provider_package =
+        resolve_provider_package(repo_root, &env_config.provider, &config.providers)?;
     let code = resolve_code_ref(repo_root, &env_config.code_ref)?;
     let mut blockers = Vec::new();
     let mut warnings = Vec::new();
@@ -338,7 +341,8 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
         lineage_id: format!("{stack}-planned"),
         planned_report_path: format!(".effigy/reports/state/{stack}/latest-plan.json"),
     });
-    let provider_preflight = provider_preflight_report(env_config, &model);
+    let provider_preflight =
+        provider_preflight_report(env_config, &model, provider_package.as_ref());
     blockers.extend(provider_preflight.blockers.clone());
     let hooks = env_config
         .hooks
@@ -418,6 +422,7 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
 fn provider_preflight_report(
     env_config: &ManifestDeployEnvConfig,
     model: &super::model::DeployModel,
+    provider_package: Option<&super::provider_package::DeployProviderPackage>,
 ) -> DeployProviderPreflightReport {
     let provider = env_config.provider.trim().to_ascii_lowercase();
     if !matches!(provider.as_str(), "railway" | "render") {
@@ -436,7 +441,28 @@ fn provider_preflight_report(
         };
     }
 
-    let mut checks = vec![
+    let mut checks = Vec::new();
+    if let Some(package) = provider_package {
+        checks.push(DeployProviderCheck {
+            name: "provider-package".to_owned(),
+            status: "planned".to_owned(),
+            target: Some(package.root.display().to_string()),
+            message: Some(format!(
+                "{} {} resolved from provider package",
+                package.descriptor.provider.display_name, package.descriptor.provider.version
+            )),
+        });
+        let policy_blockers =
+            provider_package_policy_blockers(&env_config.provider, &package.descriptor.policy);
+        if !policy_blockers.is_empty() {
+            return DeployProviderPreflightReport {
+                status: "blocked".to_owned(),
+                checks,
+                blockers: policy_blockers,
+            };
+        }
+    }
+    checks.extend([
         DeployProviderCheck {
             name: "project".to_owned(),
             status: "planned".to_owned(),
@@ -456,13 +482,36 @@ fn provider_preflight_report(
             ),
             message: None,
         },
-    ];
+    ]);
     checks.extend(provider_adapter_checks(&provider, model));
     DeployProviderPreflightReport {
         status: "planned".to_owned(),
         checks,
         blockers: Vec::new(),
     }
+}
+
+fn provider_package_policy_blockers(
+    provider: &str,
+    policy: &super::provider_package::DeployProviderPolicy,
+) -> Vec<String> {
+    [
+        (policy.creates_projects, "create projects"),
+        (policy.creates_services, "create services"),
+        (policy.creates_resources, "create resources"),
+        (policy.creates_variables, "create variables"),
+        (policy.creates_domains, "create domains"),
+        (policy.prints_secret_values, "print secret values"),
+    ]
+    .into_iter()
+    .filter_map(|(enabled, action)| {
+        enabled.then(|| {
+            format!(
+                "deploy provider `{provider}` package policy is not allowed to {action} in the current deployment transaction surface"
+            )
+        })
+    })
+    .collect()
 }
 
 fn provider_adapter_checks(
@@ -771,6 +820,8 @@ fn iso_timestamp(time: SystemTime) -> String {
 
 #[derive(Debug, Deserialize)]
 struct ManifestDeployConfig {
+    #[serde(default)]
+    providers: BTreeMap<String, ManifestDeployProviderConfig>,
     #[serde(flatten)]
     envs: BTreeMap<String, ManifestDeployEnvConfig>,
 }

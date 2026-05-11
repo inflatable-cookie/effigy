@@ -208,6 +208,9 @@ front = "acme-front"
 admin = "acme-admin"
 api = "acme-api"
 
+[deploy.providers.render]
+source = { type = "path", dir = "providers/render" }
+
 [deploy.uat]
 provider = "railway"
 state = "uat"
@@ -242,6 +245,7 @@ require_release_gates = true
     fs::create_dir_all(root.join("acme-front")).expect("mkdir front");
     fs::create_dir_all(root.join("acme-admin")).expect("mkdir admin");
     fs::create_dir_all(root.join("acme-api")).expect("mkdir api");
+    write_provider_package(&root.join("providers/render"), "render");
     fs::write(
         root.join("acme-front/svelte.config.js"),
         "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
@@ -280,6 +284,30 @@ run = "cargo run -p acme-db --bin migrate_dev_db"
 "#,
     );
     root
+}
+
+fn write_provider_package(root: &std::path::Path, name: &str) {
+    fs::create_dir_all(root.join("scripts")).expect("mkdir provider scripts");
+    fs::write(
+        root.join("provider.toml"),
+        format!(
+            r#"
+[provider]
+schema = "effigy.deploy-provider.v1"
+name = "{name}"
+display_name = "{name}"
+version = "0.1.0"
+
+[capabilities]
+preflight = "scripts/preflight.rhai"
+
+[policy]
+prints_secret_values = false
+"#
+        ),
+    )
+    .expect("write provider descriptor");
+    fs::write(root.join("scripts/preflight.rhai"), "// preflight\n").expect("write script");
 }
 
 #[test]
@@ -335,6 +363,12 @@ fn run_deploy_plan_json_reports_render_provider_preflight() {
     let checks = parsed["provider_preflight"]["checks"]
         .as_array()
         .expect("provider checks");
+    assert!(
+        checks
+            .iter()
+            .any(|check| check["name"].as_str() == Some("provider-package")),
+        "render preflight should include provider package resolution: {checks:?}"
+    );
     assert!(
         checks
             .iter()

@@ -320,6 +320,9 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   checks, and reports; Railway and Render share the same provider transaction
   boundary, with Render planning reporting adapter, variable-name, and domain
   checks before live provider setup exists
+- `[deploy.providers.<name>]` can resolve path and git deploy-provider packages
+  with `provider.toml` descriptors during deploy planning; provider package
+  Rhai phase dispatch is a follow-on slice
 - `deploy apply` must validate provider setup and block with
   remediation instead of creating provider projects, services, resources,
   domains, variables, or secrets

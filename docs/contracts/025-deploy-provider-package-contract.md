@@ -68,6 +68,9 @@ code_ref = "branch:main"
 
 The provider name in `[deploy.<env>]` must resolve to a configured
 `[deploy.providers.<name>]` package or a built-in compatibility provider.
+The first implementation validates `path` and `git` provider package sources
+during deploy planning. OCI provider package materialization is reserved for a
+later slice.
 
 ## Execution Contract
 

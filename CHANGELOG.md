@@ -67,6 +67,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Render deployment transaction planning:** Render provider configs now get
   explicit transaction preflight checks for adapter boundary, required variable
   names, and domains, and unknown deploy providers block at plan time.
+- **Deploy provider packages:** `[deploy.providers.<name>]` can now resolve
+  path and git provider packages with `provider.toml` descriptors during
+  deploy planning, validate declared Rhai capability scripts, and block unsafe
+  provider package policies before any live provider mutation is attempted.
 - **State stack planning foundation:** `effigy state plan [<STACK>]` now
   validates `effigy.state-stack.v1` manifests and reports ordered lineage in
   text or JSON without executing app hooks. When no standalone manifest is
