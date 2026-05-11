@@ -447,6 +447,63 @@ fn execute_rhai_script_exposes_state_capture_context_helpers() {
 }
 
 #[test]
+fn execute_rhai_script_exposes_deploy_provider_context_and_report_helpers() {
+    let root = temp_root("deploy-provider-context");
+    let context_path = root.join(".effigy/runtime/deploy/provider/context.json");
+    let report_path = root.join(".effigy/runtime/deploy/provider/report.json");
+    fs::create_dir_all(context_path.parent().unwrap()).expect("context dir");
+    fs::write(
+        &context_path,
+        r#"{
+  "schema": "effigy.deploy-provider.context.v1",
+  "phase": "preflight",
+  "env": "uat",
+  "provider": "render"
+}
+"#,
+    )
+    .expect("context");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "deploy-provider:render:preflight".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let _env = ScopedTestEnv::set_many(&[
+        (
+            "EFFIGY_DEPLOY_PROVIDER_CONTEXT",
+            context_path.display().to_string(),
+        ),
+        (
+            "EFFIGY_DEPLOY_PROVIDER_REPORT",
+            report_path.display().to_string(),
+        ),
+    ]);
+    let script = r#"
+        let context = deploy::provider_context();
+        if context["provider"] != "render" { throw("provider"); }
+        if deploy::provider_context_path() == "" { throw("context path"); }
+        if deploy::provider_report_path() == "" { throw("report path"); }
+        deploy::provider_report(#{
+            schema: "effigy.deploy-provider.report.v1",
+            phase: "preflight",
+            provider: "render",
+            status: "planned",
+            checks: [#{ name: "auth", status: "planned" }],
+            warnings: [],
+            blockers: [],
+            files: [],
+        });
+    "#;
+
+    execute_rhai_script_with_runtime_context(&context, None, script, &[], &callbacks())
+        .expect("execute");
+    let report = fs::read_to_string(&report_path).expect("report");
+    assert!(report.contains(r#""provider": "render""#), "{report}");
+    assert!(report.contains(r#""name": "auth""#), "{report}");
+}
+
+#[test]
 fn execute_rhai_script_exposes_exec_run_helper() {
     let root = temp_root("exec-run");
     fs::write(root.join("input.sql"), "select 1;").expect("input");

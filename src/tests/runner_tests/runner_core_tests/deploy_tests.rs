@@ -307,7 +307,23 @@ prints_secret_values = false
         ),
     )
     .expect("write provider descriptor");
-    fs::write(root.join("scripts/preflight.rhai"), "// preflight\n").expect("write script");
+    fs::write(
+        root.join("scripts/preflight.rhai"),
+        format!(
+            r#"deploy::provider_report(#{{
+    schema: "effigy.deploy-provider.report.v1",
+    phase: "preflight",
+    provider: "{name}",
+    status: "planned",
+    checks: [#{{ name: "provider-script", status: "planned", target: "{name}" }}],
+    warnings: [],
+    blockers: [],
+    files: [],
+}})
+"#
+        ),
+    )
+    .expect("write script");
 }
 
 #[test]

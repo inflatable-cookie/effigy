@@ -5,10 +5,13 @@ use std::process::Command as ProcessCommand;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::derive::derive_deploy_model;
-use super::provider_package::{resolve_provider_package, ManifestDeployProviderConfig};
+use super::provider_package::{
+    resolve_provider_package, run_provider_preflight, DeployProviderPackage,
+    ManifestDeployProviderConfig,
+};
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::load_task_manifest_with_inspection;
 use crate::runner::render::render_command_result;
@@ -341,8 +344,13 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
         lineage_id: format!("{stack}-planned"),
         planned_report_path: format!(".effigy/reports/state/{stack}/latest-plan.json"),
     });
-    let provider_preflight =
-        provider_preflight_report(env_config, &model, provider_package.as_ref());
+    let provider_preflight = provider_preflight_report(
+        repo_root,
+        env,
+        env_config,
+        &model,
+        provider_package.as_ref(),
+    )?;
     blockers.extend(provider_preflight.blockers.clone());
     let hooks = env_config
         .hooks
@@ -420,13 +428,15 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
 }
 
 fn provider_preflight_report(
+    repo_root: &Path,
+    env: &str,
     env_config: &ManifestDeployEnvConfig,
     model: &super::model::DeployModel,
-    provider_package: Option<&super::provider_package::DeployProviderPackage>,
-) -> DeployProviderPreflightReport {
+    provider_package: Option<&DeployProviderPackage>,
+) -> Result<DeployProviderPreflightReport, RunnerError> {
     let provider = env_config.provider.trim().to_ascii_lowercase();
     if !matches!(provider.as_str(), "railway" | "render") {
-        return DeployProviderPreflightReport {
+        return Ok(DeployProviderPreflightReport {
             status: "blocked".to_owned(),
             checks: vec![DeployProviderCheck {
                 name: "provider-adapter".to_owned(),
@@ -438,7 +448,7 @@ fn provider_preflight_report(
                 "deploy provider `{}` is not supported; expected `railway` or `render`",
                 env_config.provider
             )],
-        };
+        });
     }
 
     let mut checks = Vec::new();
@@ -455,11 +465,57 @@ fn provider_preflight_report(
         let policy_blockers =
             provider_package_policy_blockers(&env_config.provider, &package.descriptor.policy);
         if !policy_blockers.is_empty() {
-            return DeployProviderPreflightReport {
+            return Ok(DeployProviderPreflightReport {
                 status: "blocked".to_owned(),
                 checks,
                 blockers: policy_blockers,
-            };
+            });
+        }
+        if let Some(report) = run_provider_preflight(
+            repo_root,
+            &provider,
+            package,
+            deploy_provider_context(env, env_config, model, package),
+        )? {
+            checks.extend(report.checks.into_iter().map(|check| DeployProviderCheck {
+                name: check.name,
+                status: check.status,
+                target: check.target,
+                message: check.message,
+            }));
+            if !report.warnings.is_empty() {
+                checks.push(DeployProviderCheck {
+                    name: "provider-warnings".to_owned(),
+                    status: "warning".to_owned(),
+                    target: Some(provider.clone()),
+                    message: Some(report.warnings.join("; ")),
+                });
+            }
+            if !report.files.is_empty() {
+                checks.push(DeployProviderCheck {
+                    name: "provider-files".to_owned(),
+                    status: "planned".to_owned(),
+                    target: Some(report.files.join(",")),
+                    message: Some("provider package reported generated files".to_owned()),
+                });
+            }
+            if report.status != "planned" && report.status != "ok" && report.blockers.is_empty() {
+                return Ok(DeployProviderPreflightReport {
+                    status: "blocked".to_owned(),
+                    checks,
+                    blockers: vec![format!(
+                        "deploy provider `{provider}` preflight returned status `{}` without explicit blockers",
+                        report.status
+                    )],
+                });
+            }
+            if !report.blockers.is_empty() {
+                return Ok(DeployProviderPreflightReport {
+                    status: "blocked".to_owned(),
+                    checks,
+                    blockers: report.blockers,
+                });
+            }
         }
     }
     checks.extend([
@@ -484,11 +540,39 @@ fn provider_preflight_report(
         },
     ]);
     checks.extend(provider_adapter_checks(&provider, model));
-    DeployProviderPreflightReport {
+    Ok(DeployProviderPreflightReport {
         status: "planned".to_owned(),
         checks,
         blockers: Vec::new(),
-    }
+    })
+}
+
+fn deploy_provider_context(
+    env: &str,
+    env_config: &ManifestDeployEnvConfig,
+    model: &super::model::DeployModel,
+    package: &DeployProviderPackage,
+) -> Value {
+    json!({
+        "schema": "effigy.deploy-provider.context.v1",
+        "phase": "preflight",
+        "env": env,
+        "provider": env_config.provider,
+        "provider_project": env_config.provider_project,
+        "provider_package": {
+            "root": package.root.display().to_string(),
+            "name": package.descriptor.provider.name,
+            "display_name": package.descriptor.provider.display_name,
+            "version": package.descriptor.provider.version,
+        },
+        "deploy": {
+            "state": env_config.state,
+            "code_ref": env_config.code_ref,
+            "release_policy": env_config.release_policy.as_str(),
+            "artifact_policy": env_config.artifact_policy.as_str(),
+        },
+        "model": model,
+    })
 }
 
 fn provider_package_policy_blockers(

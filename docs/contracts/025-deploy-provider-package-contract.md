@@ -75,7 +75,31 @@ later slice.
 ## Execution Contract
 
 Effigy invokes provider scripts with a versioned JSON context file and expects
-a versioned JSON report on stdout or at an output path supplied in context.
+a versioned JSON report through the provider Rhai surface.
+
+Provider scripts read context with:
+
+```rhai
+let context = deploy::provider_context();
+```
+
+Provider scripts write their phase report with:
+
+```rhai
+deploy::provider_report(#{
+    schema: "effigy.deploy-provider.report.v1",
+    phase: "preflight",
+    provider: "render",
+    status: "planned",
+    checks: [],
+    warnings: [],
+    blockers: [],
+    files: [],
+});
+```
+
+Effigy also exposes `deploy::provider_context_path()` and
+`deploy::provider_report_path()` for scripts that need file paths directly.
 
 Context schema:
 
@@ -85,13 +109,18 @@ Context schema:
   "phase": "preflight",
   "env": "uat",
   "provider": "render",
-  "repo_root": "/repo",
-  "provider_root": "/repo/.effigy/cache/providers/render",
-  "deploy_plan": {},
-  "deploy_model": {},
-  "state_plan": {},
-  "redaction": {
-    "secret_names": ["DATABASE_URL"]
+  "provider_project": "acowtancy-uat",
+  "provider_package": {
+    "root": "/repo/.effigy/cache/providers/render",
+    "name": "render",
+    "display_name": "Render",
+    "version": "0.1.0"
+  },
+  "deploy": {
+    "state": "uat",
+    "code_ref": "branch:main",
+    "release_policy": "optional",
+    "artifact_policy": "digest-preferred"
   }
 }
 ```
@@ -115,6 +144,12 @@ Provider scripts must not invent Effigy transaction state. They can add
 provider evidence, warnings, blockers, generated files, and operation reports.
 Core Effigy remains responsible for final report persistence and command
 success/failure semantics.
+
+In the first executable slice, `deploy plan` runs provider-package
+`preflight.rhai` when declared. Effigy merges reported `checks` into
+`provider_preflight.checks`, converts warnings/files into provider checks, and
+blocks the plan when the provider report returns blockers or an unsupported
+status.
 
 ## Safety Rules
 
@@ -142,7 +177,8 @@ operator-owned inputs, not committed provider config.
 Core Effigy must expose enough Rhai API for provider packages to avoid shell
 glue:
 
-- runtime context: repo root, provider root, invocation cwd, catalog root
+- runtime context: repo root, invocation cwd, catalog root
+- provider context/report helpers under `deploy::*`
 - JSON/TOML read/write helpers
 - template rendering or deterministic text file writing
 - HTTP helpers with redaction support

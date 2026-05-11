@@ -155,7 +155,55 @@ fn build_deploy_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) ->
         context.clone(),
         callbacks.clone(),
     );
+    module.set_native_fn(
+        "provider_context",
+        || -> Result<Dynamic, Box<EvalAltResult>> {
+            let path = required_deploy_env("EFFIGY_DEPLOY_PROVIDER_CONTEXT")?;
+            let contents = std::fs::read_to_string(&path).map_err(|error| {
+                rhai_runtime_error(format!(
+                    "failed to read deploy provider context `{path}`: {error}"
+                ))
+            })?;
+            let value = serde_json::from_str::<serde_json::Value>(&contents).map_err(|error| {
+                rhai_runtime_error(format!(
+                    "failed to parse deploy provider context `{path}`: {error}"
+                ))
+            })?;
+            rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
+        },
+    );
+    module.set_native_fn(
+        "provider_context_path",
+        || -> Result<String, Box<EvalAltResult>> {
+            required_deploy_env("EFFIGY_DEPLOY_PROVIDER_CONTEXT")
+        },
+    );
+    module.set_native_fn(
+        "provider_report_path",
+        || -> Result<String, Box<EvalAltResult>> {
+            required_deploy_env("EFFIGY_DEPLOY_PROVIDER_REPORT")
+        },
+    );
+    module.set_native_fn(
+        "provider_report",
+        |report: Map| -> Result<Dynamic, Box<EvalAltResult>> {
+            let path = required_deploy_env("EFFIGY_DEPLOY_PROVIDER_REPORT")?;
+            let value = map_to_json(report)?;
+            let pretty = serde_json::to_string_pretty(&value)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            std::fs::write(&path, pretty).map_err(|error| {
+                rhai_runtime_error(format!(
+                    "failed to write deploy provider report `{path}`: {error}"
+                ))
+            })?;
+            rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
+        },
+    );
     module
+}
+
+fn required_deploy_env(name: &str) -> Result<String, Box<EvalAltResult>> {
+    std::env::var(name).map_err(|_| rhai_runtime_error(format!("missing {name}")))
 }
 
 fn build_system_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {

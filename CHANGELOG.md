@@ -71,6 +71,10 @@ During v0.x, MINOR bumps may include breaking changes.
   path and git provider packages with `provider.toml` descriptors during
   deploy planning, validate declared Rhai capability scripts, and block unsafe
   provider package policies before any live provider mutation is attempted.
+  Provider package `preflight.rhai` scripts now run during `deploy plan` through
+  `deploy::provider_context()` and `deploy::provider_report(...)`, and their
+  reported checks, warnings, files, and blockers are merged into provider
+  preflight output.
 - **State stack planning foundation:** `effigy state plan [<STACK>]` now
   validates `effigy.state-stack.v1` manifests and reports ordered lineage in
   text or JSON without executing app hooks. When no standalone manifest is
