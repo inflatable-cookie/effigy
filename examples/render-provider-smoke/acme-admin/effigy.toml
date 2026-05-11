@@ -1,0 +1,5 @@
+[catalog]
+alias = "render-smoke-admin"
+
+[tasks.build]
+run = "echo render smoke admin build"

@@ -1,0 +1,33 @@
+[catalog]
+alias = "render-provider-smoke"
+
+[bundle]
+base = { type = "path", dir = "../../crates/effigy-manifest/tests/fixtures/underlay-bundle" }
+host = "render-provider-smoke.test"
+project_name = "render-provider-smoke-dev"
+workspace_subdir = "examples/render-provider-smoke"
+databases = ["render_provider_smoke"]
+
+[bundle.dirs]
+front = "acme-front"
+admin = "acme-admin"
+api = "acme-api"
+
+[deploy.providers.render]
+source = { type = "path", dir = "../../external/providers/render" }
+
+[deploy.uat]
+provider = "render"
+state = "uat"
+code_ref = "branch:main"
+release_policy = "optional"
+provider_project = "effigy-provider-smoke"
+artifact_policy = "digest-preferred"
+
+[deploy.production]
+provider = "render"
+state = "production"
+code_ref = "branch:main"
+release_policy = "optional"
+provider_project = "effigy-provider-smoke"
+artifact_policy = "digest-preferred"

@@ -1,0 +1,8 @@
+[catalog]
+alias = "render-smoke-api"
+
+[tasks.build]
+run = "echo render smoke api build"
+
+[tasks.api]
+run = "echo render smoke api start"
