@@ -25,5 +25,13 @@ target-*/
 .effigy/
 external/*
 !external/README.md
+!external/setup-effigy/
+!external/providers/
+!external/providers/railway/
+!external/providers/render/
+!external/bundles/
+!external/bundles/underlay/
+!external/bundles/decodelabs/
+!external/bundles/decodelabs-library/
 .claude/settings.local.json
 .DS_Store

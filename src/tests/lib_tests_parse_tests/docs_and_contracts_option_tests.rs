@@ -207,7 +207,7 @@ fn parse_docs_check_forbidden_with_requirements() {
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "AGENTS.md".to_owned(),
-        "setup-effigy/README.md".to_owned(),
+        "external/setup-effigy/README.md".to_owned(),
         "--forbid".to_owned(),
         "--repo .".to_owned(),
         "--json".to_owned(),
@@ -221,7 +221,7 @@ fn parse_docs_check_forbidden_with_requirements() {
                 kind: DocsCheckKind::Forbidden,
                 paths: vec![
                     PathBuf::from("AGENTS.md"),
-                    PathBuf::from("setup-effigy/README.md"),
+                    PathBuf::from("external/setup-effigy/README.md"),
                 ],
                 file: None,
                 section: None,

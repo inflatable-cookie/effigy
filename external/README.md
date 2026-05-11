@@ -1,13 +1,14 @@
 # External Effigy Packages
 
-This directory is for local clones of Effigy-adjacent packages that are
-developed beside the main Effigy source tree.
+This directory is for Effigy-adjacent packages that are developed beside the
+main Effigy source tree.
 
-The directory is ignored by Git except for this README. Clone provider and
-bundle repos here when working across package boundaries:
+External packages are tracked as Git submodules. The Effigy repo records the
+submodule pointers, not the nested package contents.
 
 ```text
 external/
+  setup-effigy/  git@github.com:inflatable-cookie/setup-effigy.git
   providers/
     railway/   git@github.com:inflatable-cookie/effigy-provider-railway.git
     render/    git@github.com:inflatable-cookie/effigy-provider-render.git
@@ -20,3 +21,12 @@ external/
 The Decodelabs clones may be made from the local source repos under
 `~/Dev/legacy/libraries/decodelabs/`; keep their `origin` remotes pointed at
 the canonical GitHub repositories.
+
+Initialize or refresh all external packages with:
+
+```sh
+git submodule update --init --recursive
+```
+
+When working inside a package, commit and push in that package first, then
+commit the updated submodule pointer in the Effigy repo.

@@ -89,7 +89,7 @@ pub(crate) fn render_docs_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<
             "effigy docs check headings docs/guides/024-ci-and-automation-recipes.md --require-heading \"## Vision Alignment\"",
             "effigy docs check paths README.md docs/README.md docs/vision/README.md",
             "effigy docs check contains docs/logs/README.md --require \"Vision Target Delta\"",
-            "effigy docs check forbidden AGENTS.md setup-effigy/README.md --forbid \"--repo .\"",
+            "effigy docs check forbidden AGENTS.md external/setup-effigy/README.md --forbid \"--repo .\"",
             "effigy docs check json-examples --file docs/guides/026-json-payload-examples.md --section \"Completion Candidates\"",
             "effigy docs check index --dir docs/logs --index docs/logs/README.md",
             "effigy docs check index --policy-index vision",
