@@ -101,6 +101,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `config::user_set`, `config::user_unset`) so first-party scripts no longer
   need `effigy::run_json(...)` escape hatches for those shipped operator
   surfaces.
+- **Rhai shell-replacement helpers:** `.rhai` scripts now expose
+  `fs::make_temp_file`, `fs::list_recursive`, `fs::env_file_map`,
+  `str::parse_int`, and `http::capture(...)` so repo automation can replace
+  common `mktemp`, `find`, dotenv-map, integer parsing, and `curl -o/-w`
+  shell script patterns.
 - **Interactive completion setup:** `effigy config completion` now supports
   `--install` and `--export`, prompts for shell and action on a real TTY when
   omitted, installs user-local completion files for bash/zsh/fish, wires
@@ -126,6 +131,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `git ls-remote` for the configured ref, so `bundle inspect` correctly reports
   when a git-backed bundle source has drifted, and `bundle sync` no longer
   unconditionally fetches on every manifest load.
+- **Colima/containerd runtime row recovery** now repairs transient
+  `error retrieving current runtime: empty value` state-loss failures on the
+  runtime `ps` path used by gateway registration and container discovery, so
+  detached bring-up and managed handoff no longer fail after the runtime has
+  already been started.
 - **State capture standalone manifest parsing** now treats a positional
   `*.toml` argument the same way across `state plan`, `state apply`, and
   `state capture`, so JSON contract and operator flows like

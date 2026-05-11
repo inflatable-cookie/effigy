@@ -132,7 +132,7 @@ pub fn list_running_compose_containers_for_policy(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
-    let output = run_runtime_command_capture_for_policy(
+    let output = run_runtime_command_capture_with_repair(
         repo_root,
         policy,
         &[
@@ -149,6 +149,47 @@ pub fn list_running_compose_containers_for_policy(
             .filter(|row| row.project_name.as_deref() == Some(policy.project_name.as_str()))
             .collect(),
     )
+}
+
+fn run_runtime_command_capture_with_repair(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    args: &[OsString],
+    label: &str,
+) -> Result<Output, ContainerExecError> {
+    match run_runtime_command_capture_for_policy(repo_root, policy, args, label) {
+        Ok(output) => Ok(output),
+        Err(ContainerExecError::Failure {
+            command: _,
+            code: _,
+            stdout,
+            stderr,
+        }) if docker_failure_looks_like_colima_dns_outage(&stdout, &stderr)
+            || docker_failure_looks_like_colima_runtime_state_loss(&stdout, &stderr) =>
+        {
+            repair_colima_runtime(policy, repo_root)?;
+            run_runtime_command_capture_for_policy(repo_root, policy, args, label).map_err(
+                |retry_error| match retry_error {
+                    ContainerExecError::Failure {
+                        command,
+                        code,
+                        stdout,
+                        stderr,
+                    } => ContainerExecError::Failure {
+                        command,
+                        code,
+                        stdout,
+                        stderr: format!(
+                            "{stderr}\n[effigy] retried after repairing Colima runtime state for profile `{}`",
+                            policy.profile,
+                        ),
+                    },
+                    other => other,
+                },
+            )
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub fn run_compose_invocation_capture(
