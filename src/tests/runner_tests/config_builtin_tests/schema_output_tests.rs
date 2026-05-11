@@ -119,58 +119,11 @@ fn run_manifest_task_builtin_config_schema_target_bundle_prints_generic_bundle_s
         &[
             "(bundle target)",
             "[bundle]",
-            "base = \"underlay\"",
-            "Bundle base selects a shipped preset to import.",
-            "base = { type = \"path\", dir = \"bundles/acme\" }",
+            "# Bundle base selects a local or git-hosted preset.",
+            "# base = { type = \"path\", dir = \"bundles/acme\" }",
             "Local bundle directories contain `bundle.toml` metadata plus an `effigy.toml` defaults template under that `dir`.",
             "All other keys are bundle-defined inputs.",
-            "Use `effigy bundle list` to discover bundles.",
-        ],
-    );
-    assert_output_excludes_all(&out, &["[tasks]"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_config_schema_target_bundle_named_prints_specific_inputs() {
-    let root = workspace_with_empty_manifest("builtin-config-schema-target-bundle-named");
-
-    let out = run_config_ok(
-        root,
-        &["--schema", "--target", "bundle", "--bundle", "underlay"],
-    );
-    assert_output_contains_all(
-        &out,
-        &[
-            "(bundle target, bundle: underlay)",
-            "[bundle]",
-            "base = \"underlay\"",
-            "workspace_subdir = \"underlay-reference\"",
-            "Default paths populated by this bundle:",
-            "containers.stack.services.postgres.catalog",
-        ],
-    );
-    assert_output_excludes_all(&out, &["[tasks]"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_config_schema_target_bundle_underlay_prints_current_surface() {
-    let root = workspace_with_empty_manifest("builtin-config-schema-target-bundle-underlay");
-
-    let out = run_config_ok(
-        root,
-        &["--schema", "--target", "bundle", "--bundle", "underlay"],
-    );
-    assert_output_contains_all(
-        &out,
-        &[
-            "(bundle target, bundle: underlay)",
-            "[bundle]",
-            "base = \"underlay\"",
-            "host = \"acme.test\"",
-            "workspace_subdir = \"underlay-reference\"",
-            "api_port = 41001",
-            "containers.stack.services.postgres.catalog",
-            "containers.stack.dns.routes",
+            "Use `effigy bundle list` to discover local bundles.",
         ],
     );
     assert_output_excludes_all(&out, &["[tasks]"]);

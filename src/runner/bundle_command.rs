@@ -327,31 +327,19 @@ mod tests {
     use effigy_context::{CapturedEnv, EffigyRuntimeContext};
 
     #[test]
-    fn bundle_list_reports_bundles() {
+    fn bundle_list_reports_no_bundles() {
         let rendered = run_bundle_list(false).expect("list");
-        assert!(rendered.contains("[bundle]"));
-        assert!(rendered.contains("underlay"));
+        assert!(rendered.contains("no bundles available"));
     }
 
     #[test]
-    fn bundle_inspect_reports_inputs_and_default_paths() {
-        let rendered = run_bundle_inspect(Some("underlay"), None, false).expect("inspect");
-        assert!(rendered.contains("Inputs"));
-        assert!(rendered.contains("workspace_subdir"));
-        assert!(rendered.contains("Default Paths"));
-        assert!(rendered.contains("containers.stack.services.postgres.catalog"));
+    fn bundle_inspect_rejects_unknown_shipped_bundle() {
+        let error = run_bundle_inspect(Some("underlay"), None, false).expect_err("reject");
+        assert!(error.to_string().contains("unknown bundle `underlay`"));
     }
 
     #[test]
-    fn bundle_inspect_reports_underlay_alias_surface() {
-        let rendered = run_bundle_inspect(Some("underlay"), None, false).expect("inspect");
-        assert!(rendered.contains("workspace_subdir"));
-        assert!(rendered.contains("containers.stack.services.postgres.catalog"));
-        assert!(rendered.contains("containers.stack.dns.routes"));
-    }
-
-    #[test]
-    fn bundle_export_writes_local_bundle_files() {
+    fn bundle_export_rejects_unknown_shipped_bundle() {
         let tmp = std::env::temp_dir().join(format!(
             "effigy-bundle-export-{}",
             std::time::SystemTime::now()
@@ -360,13 +348,10 @@ mod tests {
                 .as_nanos()
         ));
         let target = tmp.join("underlay");
+        std::fs::create_dir_all(&target).expect("mkdir");
 
-        let rendered = run_bundle_export("underlay", &target, None, false).expect("export");
-
-        assert!(rendered.contains("exported `underlay`"));
-        assert!(target.join("bundle.toml").exists());
-        assert!(target.join("effigy.toml").exists());
-        assert!(target.join("scripts/dev/ui-setup.rhai").exists());
+        let error = run_bundle_export("underlay", &target, None, false).expect_err("reject");
+        assert!(error.to_string().contains("unknown bundle `underlay`"));
         let _ = std::fs::remove_dir_all(tmp);
     }
 
@@ -397,9 +382,9 @@ mod tests {
     }
 
     #[test]
-    fn bundle_sync_json_reports_not_applicable_for_shipped_bundle() {
+    fn bundle_sync_json_reports_not_applicable_for_path_bundle() {
         let tmp = std::env::temp_dir().join(format!(
-            "effigy-bundle-sync-shipped-{}",
+            "effigy-bundle-sync-path-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
@@ -408,7 +393,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).expect("mkdir");
         std::fs::write(
             tmp.join("effigy.toml"),
-            "[bundle]\nbase = \"underlay\"\nhost = \"example.test\"\n",
+            "[bundle]\nbase = { type = \"path\", dir = \"bundles/acme\" }\n",
         )
         .expect("write");
         let context = EffigyRuntimeContext::builder()
@@ -421,7 +406,7 @@ mod tests {
         })
         .expect("bundle sync");
         assert!(rendered.contains("\"schema\":\"effigy.bundle.sync.v1\""));
-        assert!(rendered.contains("\"source_type\":\"shipped\""));
+        assert!(rendered.contains("\"source_type\":\"path\""));
         assert!(rendered.contains("\"applicable\":false"));
         let _ = std::fs::remove_dir_all(tmp);
     }
@@ -438,7 +423,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).expect("mkdir");
         std::fs::write(
             tmp.join("effigy.toml"),
-            "[bundle]\nbase = \"underlay\"\nhost = \"example.test\"\n",
+            "[bundle]\nbase = { type = \"path\", dir = \"bundles/acme\" }\n",
         )
         .expect("write");
         let context = EffigyRuntimeContext::builder()
@@ -451,7 +436,7 @@ mod tests {
         })
         .expect("bundle inspect");
         assert!(rendered.contains("\"mode\":\"active-source\""));
-        assert!(rendered.contains("\"source_type\":\"shipped\""));
+        assert!(rendered.contains("\"source_type\":\"path\""));
         assert!(rendered.contains("\"stale\":false"));
         let _ = std::fs::remove_dir_all(tmp);
     }

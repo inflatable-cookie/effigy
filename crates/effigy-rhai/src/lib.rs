@@ -14,6 +14,7 @@ use effigy_core::path_error_text::failed_to_read_path;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use rhai::module_resolvers::FileModuleResolver;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Position, Scope};
 use ring::rand::SecureRandom;
 use ring::rand::SystemRandom;
@@ -27,6 +28,8 @@ use signal_hook::flag as signal_flag;
 pub const EFFIGY_RHAI_ARGS_JSON: &str = "EFFIGY_RHAI_ARGS_JSON";
 pub const EFFIGY_RHAI_TASK_NAME: &str = "EFFIGY_RHAI_TASK_NAME";
 pub const EFFIGY_RHAI_REPO_ROOT: &str = "EFFIGY_RHAI_REPO_ROOT";
+pub const EFFIGY_RHAI_CATALOG_ROOT: &str = "EFFIGY_RHAI_CATALOG_ROOT";
+pub const EFFIGY_RHAI_INVOCATION_CWD: &str = "EFFIGY_RHAI_INVOCATION_CWD";
 
 static RHAI_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -75,9 +78,13 @@ impl std::error::Error for RhaiHostError {}
 
 #[derive(Clone)]
 pub struct ScriptContext {
+    /// Working directory used by relative filesystem helpers.
     pub cwd: PathBuf,
+    /// Repository root used by Effigy helper callbacks.
     pub repo_root: PathBuf,
+    /// Logical task name exposed to the script.
     pub task_name: String,
+    /// Shared cancellation flag checked by long-running script helpers.
     pub stop_requested: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -182,6 +189,9 @@ fn execute_rhai_script_inner(
     let context = Arc::new(context.clone());
     let callbacks = callbacks.clone();
     let mut engine = Engine::new();
+    let catalog_root = resolve_context_path(EFFIGY_RHAI_CATALOG_ROOT, &context.cwd);
+    let invocation_cwd = resolve_invocation_cwd(&context);
+    engine.set_module_resolver(FileModuleResolver::new_with_path(&catalog_root));
     register_host_api(&mut engine, context.clone(), callbacks);
 
     let mut scope = Scope::new();
@@ -195,11 +205,35 @@ fn execute_rhai_script_inner(
     );
     scope.push_constant("cwd", context.cwd.display().to_string());
     scope.push_constant("repo_root", context.repo_root.display().to_string());
+    scope.push_constant("catalog_root", catalog_root.display().to_string());
+    scope.push_constant("invocation_cwd", invocation_cwd.display().to_string());
     scope.push_constant("task_name", context.task_name.clone());
 
     engine
         .run_with_scope(&mut scope, script)
         .map_err(|error| RhaiHostError::new(error.to_string()))
+}
+
+fn resolve_context_path(key: &str, fallback: &Path) -> PathBuf {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| fallback.to_path_buf())
+}
+
+fn resolve_invocation_cwd(script_context: &ScriptContext) -> PathBuf {
+    if let Some(path) = std::env::var(EFFIGY_RHAI_INVOCATION_CWD)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+    {
+        return path;
+    }
+    if let Some(context) = ACTIVE_RUNTIME_CONTEXT.with(|active| active.borrow().clone()) {
+        return context.invocation_cwd().to_path_buf();
+    }
+    script_context.cwd.clone()
 }
 
 fn with_rhai_runtime_context<T>(

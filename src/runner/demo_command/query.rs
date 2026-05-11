@@ -78,6 +78,7 @@ pub(super) fn render_demo_run_command(
             bundle_root: loaded.bundle_root.as_deref(),
             catalogs: &catalogs,
             task_scope_cwd: repo_root,
+            invocation_cwd: repo_root,
             runtime_env_schema_override: None,
             depth: 0,
             resolver: &effigy_routing::resolve_task_selection,

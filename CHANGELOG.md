@@ -101,6 +101,9 @@ During v0.x, MINOR bumps may include breaking changes.
   `config::user_set`, `config::user_unset`) so first-party scripts no longer
   need `effigy::run_json(...)` escape hatches for those shipped operator
   surfaces.
+- **Rhai catalog context:** `.rhai` steps now expose `catalog_root` and
+  `invocation_cwd`, and file imports resolve from the selected catalog root so
+  cross-catalog routed tasks can import their own local Rhai modules.
 - **Rhai shell-replacement helpers:** `.rhai` scripts now expose
   `fs::make_temp_file`, `fs::list_recursive`, `fs::env_file_map`,
   `str::parse_int`, and `http::capture(...)` so repo automation can replace

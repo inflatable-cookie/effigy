@@ -67,6 +67,28 @@ fn run_scan_command(root: &Path, scan: &str, args: &[&str]) -> Value {
     serde_json::from_str(&stdout).expect("json parse")
 }
 
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &dest)?;
+        } else {
+            fs::copy(&path, &dest)?;
+        }
+    }
+    Ok(())
+}
+
+fn setup_underlay_path_bundle(root: &Path) {
+    let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("crates/effigy-manifest/tests/fixtures/underlay-bundle");
+    let bundle_dir = root.join("bundles/underlay");
+    copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
+}
+
 fn assert_scan_success(parsed: &Value, schema: &str, scan: &str) {
     assert_eq!(parsed["schema"], "effigy.command.v1");
     assert_eq!(parsed["ok"], true);

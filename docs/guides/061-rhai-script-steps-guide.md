@@ -60,6 +60,8 @@ Current v1 helpers:
   - `args`
   - `cwd`
   - `repo_root`
+  - `catalog_root`
+  - `invocation_cwd`
   - `task_name`
 - env and path helpers:
   - `env(name)`
@@ -214,6 +216,12 @@ means Effigy needs a new typed Rhai host helper.
 Use `config::effective()` or `config::get("systems.dev.container")` instead of
 re-reading `effigy.toml` when a script needs Effigy's composed/bundle-expanded
 manifest view.
+Rhai imports resolve from the selected catalog root, not from the shell's
+current directory. This keeps cross-catalog routed tasks stable: a script owned
+by `farmyard/` can import `scripts/tasks/shared.rhai` even when the operator
+runs the task from the parent app repo. The top-level `catalog_root` and
+`invocation_cwd` constants are available when a script needs to distinguish the
+selected task catalog from the operator's original working directory.
 Similarly, use `http::request(...)` or `http::post(...)` instead of
 `process::run("curl", [...])` for smoke probes.
 Use `search::files(root, pattern, #{ glob: "*.rs" })` instead of

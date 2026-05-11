@@ -1,5 +1,27 @@
 use super::*;
 
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &dest)?;
+        } else {
+            std::fs::copy(&path, &dest)?;
+        }
+    }
+    Ok(())
+}
+
+fn setup_underlay_path_bundle(root: &std::path::Path) {
+    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../effigy-manifest/tests/fixtures/underlay-bundle");
+    let bundle_dir = root.join("bundles/underlay");
+    copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
+}
+
 #[test]
 fn load_container_policy_uses_default_container() {
     let root = temp_repo("default");
@@ -64,12 +86,13 @@ primary_service = "app"
 #[test]
 fn load_container_exec_working_dir_ignores_host_task_defaults_for_workspace_inference() {
     let root = temp_repo("bundle-host-default-workdir");
+    setup_underlay_path_bundle(&root);
     let manifest_path = root.join("effigy.toml");
     fs::write(
         &manifest_path,
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "underlay-reference-dev"
 workspace_subdir = "underlay-reference"

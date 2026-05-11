@@ -41,6 +41,7 @@ pub(in crate::runner) fn build_task_command(
             bundle_root: selection.catalog.bundle_root.as_deref(),
             catalogs: &preflight.catalogs,
             task_scope_cwd: &selection.catalog.catalog_root,
+            invocation_cwd: &preflight.invocation_cwd,
             runtime_env_schema_override,
             depth: 0,
             resolver: &effigy_routing::resolve_task_selection,

@@ -44,6 +44,14 @@ pub fn render_rhai_step_invocation(
             "EFFIGY_RHAI_REPO_ROOT",
             shell_quote(&context.repo_root.display().to_string()),
         ),
+        (
+            "EFFIGY_RHAI_CATALOG_ROOT",
+            shell_quote(&context.task_scope_cwd.display().to_string()),
+        ),
+        (
+            "EFFIGY_RHAI_INVOCATION_CWD",
+            shell_quote(&context.invocation_cwd.display().to_string()),
+        ),
     ];
 
     let rendered_script_path = render_bundle_template_tokens(script_path, context.bundle_root);

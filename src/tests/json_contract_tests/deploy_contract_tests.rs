@@ -4,11 +4,12 @@ use effigy_cli::{Command, DeployArgs, DeployExportProvider, DeploySubcommand};
 #[test]
 fn deploy_model_json_contract_has_versioned_shape() {
     let root = temp_workspace("deploy-model-json-contract");
+    setup_underlay_path_bundle(&root);
     write_manifest(
         &root.join("effigy.toml"),
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -93,11 +94,12 @@ run = "cargo run -p acme-jobs {args}"
 #[test]
 fn deploy_export_render_json_contract_has_versioned_shape() {
     let root = temp_workspace("deploy-export-render-json-contract");
+    setup_underlay_path_bundle(&root);
     write_manifest(
         &root.join("effigy.toml"),
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -152,11 +154,12 @@ databases = ["acme"]
 #[test]
 fn deploy_export_railway_json_contract_has_versioned_shape() {
     let root = temp_workspace("deploy-export-railway-json-contract");
+    setup_underlay_path_bundle(&root);
     write_manifest(
         &root.join("effigy.toml"),
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -212,11 +215,12 @@ databases = ["acme"]
 #[test]
 fn deploy_model_json_contract_uses_expected_top_level_fields() {
     let root = temp_workspace("deploy-model-json-contract-top-level");
+    setup_underlay_path_bundle(&root);
     write_manifest(
         &root.join("effigy.toml"),
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"

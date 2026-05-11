@@ -136,6 +136,32 @@ pub(in crate::runner::tests) fn workspace_with_empty_manifest(name: &str) -> Pat
     root
 }
 
+pub(in crate::runner::tests) fn underlay_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("crates/effigy-manifest/tests/fixtures/underlay-bundle")
+}
+
+pub(in crate::runner::tests) fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &dest)?;
+        } else {
+            std::fs::copy(&path, &dest)?;
+        }
+    }
+    Ok(())
+}
+
+pub(in crate::runner::tests) fn setup_underlay_path_bundle(root: &Path) -> PathBuf {
+    let bundle_dir = root.join("bundles/underlay");
+    copy_dir_all(&underlay_fixture_dir(), &bundle_dir).expect("copy underlay fixture");
+    bundle_dir
+}
+
 pub(in crate::runner::tests) fn run_config_ok(root: PathBuf, args: &[&str]) -> String {
     run_builtin_ok(root, "config", args)
 }

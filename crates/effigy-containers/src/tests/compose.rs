@@ -1,5 +1,20 @@
 use super::*;
 
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &dest)?;
+        } else {
+            std::fs::copy(&path, &dest)?;
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn load_container_policy_generates_compose_from_catalog_services() {
     with_temp_effigy_home("catalog-services", |_| {
@@ -88,12 +103,16 @@ fn generated_compose_underlay_shape_keeps_runtime_paths_and_external_mounts_stab
         let underlay = parent.path().join("underlay");
         fs::create_dir_all(&root).expect("mkdir root");
         fs::create_dir_all(&underlay).expect("mkdir underlay sibling");
+        let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../effigy-manifest/tests/fixtures/underlay-bundle");
+        let bundle_dir = root.join("bundles/underlay");
+        copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
         fs::write(
             root.join("effigy.toml"),
             format!(
                 r#"
 [bundle]
-base = "underlay"
+base = {{ type = "path", dir = "bundles/underlay" }}
 host = "underlay.test"
 databases = ["underlay"]
 project_name = "underlay-reference-dev"

@@ -11,13 +11,8 @@ use toml::Value;
 use crate::ManifestError;
 
 mod export;
-mod specs;
 
 use export::{materialize_shipped_bundle_assets, shipped_bundle_export_files};
-use specs::{
-    resolve_underlay_bundle,
-    underlay_spec,
-};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct BundleSpec {
@@ -699,11 +694,12 @@ fn bundle_cache_home_dir(manifest_path: &Path) -> Result<PathBuf, ManifestError>
     if let Some(path) = test_bundle_home_dir() {
         return Ok(path.join(".effigy"));
     }
-    let home = std::env::var_os("HOME").ok_or_else(|| ManifestError::Compose {
-        path: manifest_path.to_path_buf(),
-        detail: "HOME is not set; cannot resolve bundle cache path".to_owned(),
-    })?;
-    Ok(PathBuf::from(home).join(".effigy"))
+    // Store bundle caches inside the project’s .effigy directory so they’re
+    // available inside workspace containers (which mount the project root).
+    let project_root = manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    Ok(project_root.join(".effigy"))
 }
 
 pub fn sync_bundle_source(manifest_path: &Path) -> Result<Option<BundleSyncReport>, ManifestError> {
@@ -893,7 +889,7 @@ fn resolve_bundle_selection(
 }
 
 pub fn list_bundles() -> Vec<BundleSpec> {
-    vec![underlay_spec()]
+    vec![]
 }
 
 pub fn get_bundle(name: &str) -> Option<BundleSpec> {
@@ -992,17 +988,14 @@ pub fn export_bundle(name: &str, target_dir: &Path) -> Result<BundleExport, Mani
 
 fn resolve_bundle_defaults(
     manifest_path: &Path,
-    current: &Value,
+    _current: &Value,
     bundle_name: &str,
-    inputs: &BTreeMap<String, Value>,
+    _inputs: &BTreeMap<String, Value>,
 ) -> Result<Value, ManifestError> {
-    match bundle_name {
-        "underlay" => resolve_underlay_bundle(manifest_path, current, inputs),
-        other => Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!("unknown bundle `{other}`"),
-        }),
-    }
+    Err(ManifestError::Compose {
+        path: manifest_path.to_path_buf(),
+        detail: format!("unknown bundle `{bundle_name}`"),
+    })
 }
 
 #[derive(Debug, serde::Deserialize)]

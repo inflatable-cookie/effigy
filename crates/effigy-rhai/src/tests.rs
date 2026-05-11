@@ -2,6 +2,7 @@ use super::{
     execute_rhai_script, execute_rhai_script_with_runtime_context, install_stop_requested_flag,
     load_script, load_script_args_from_env, render_host_log_message, resolve_script_path,
     EffigyCommandError, HostCallbacks, HostCommandOutput, ScriptContext, EFFIGY_RHAI_ARGS_JSON,
+    EFFIGY_RHAI_CATALOG_ROOT, EFFIGY_RHAI_INVOCATION_CWD,
 };
 use crate::surface::{FEATURE_NAMES, MODULE_NAMES};
 use serde_json::Value;
@@ -355,6 +356,42 @@ fn execute_rhai_script_exposes_runtime_context_helper() {
         &callbacks(),
     )
     .expect("execute");
+}
+
+#[test]
+fn execute_rhai_script_resolves_imports_from_catalog_root() {
+    let invocation_root = temp_root("rhai-import-invocation");
+    let catalog_root = temp_root("rhai-import-catalog");
+    let scripts = catalog_root.join("scripts/tasks");
+    fs::create_dir_all(&scripts).expect("scripts");
+    fs::write(scripts.join("helper.rhai"), "fn value() { \"ok\" }").expect("helper");
+    let context = ScriptContext {
+        cwd: invocation_root.clone(),
+        repo_root: invocation_root.clone(),
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = format!(
+        r#"
+            import "scripts/tasks/helper.rhai" as helper;
+            if helper::value() != "ok" {{ throw("import"); }}
+            if catalog_root != "{}" {{ throw("catalog root"); }}
+            if invocation_cwd != "{}" {{ throw("invocation cwd"); }}
+        "#,
+        catalog_root.display(),
+        invocation_root.display(),
+    );
+
+    unsafe {
+        std::env::set_var(EFFIGY_RHAI_CATALOG_ROOT, &catalog_root);
+        std::env::set_var(EFFIGY_RHAI_INVOCATION_CWD, &invocation_root);
+    }
+    let result = execute_rhai_script(&context, &script, &[], &callbacks());
+    unsafe {
+        std::env::remove_var(EFFIGY_RHAI_CATALOG_ROOT);
+        std::env::remove_var(EFFIGY_RHAI_INVOCATION_CWD);
+    }
+    result.expect("execute");
 }
 
 #[test]

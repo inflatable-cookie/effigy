@@ -259,11 +259,12 @@ fn cli_json_mode_missing_task_wraps_runner_failure() {
 #[test]
 fn cli_json_mode_deploy_model_wraps_deploy_payload() {
     let root = temp_workspace("cli-json-deploy-model");
+    setup_underlay_path_bundle(&root);
     fs::write(
         root.join("effigy.toml"),
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -320,9 +321,10 @@ api = "acme-api"
 #[test]
 fn cli_json_mode_deploy_export_render_wraps_export_payload() {
     let root = temp_workspace("cli-json-deploy-export-render");
+    setup_underlay_path_bundle(&root);
     fs::write(
         root.join("effigy.toml"),
-        "[bundle]\nbase = \"underlay\"\nhost = \"acme.test\"\nproject_name = \"acme-dev\"\nworkspace_subdir = \"acme\"\ndatabases = [\"acme\"]\n",
+        "[bundle]\nbase = { type = \"path\", dir = \"bundles/underlay\" }\nhost = \"acme.test\"\nproject_name = \"acme-dev\"\nworkspace_subdir = \"acme\"\ndatabases = [\"acme\"]\n",
     )
     .expect("write root manifest");
     fs::create_dir_all(root.join("app-front")).expect("mkdir front");
@@ -383,9 +385,10 @@ fn cli_json_mode_deploy_export_render_wraps_export_payload() {
 #[test]
 fn cli_json_mode_deploy_export_railway_wraps_export_payload() {
     let root = temp_workspace("cli-json-deploy-export-railway");
+    setup_underlay_path_bundle(&root);
     fs::write(
         root.join("effigy.toml"),
-        "[bundle]\nbase = \"underlay\"\nhost = \"acme.test\"\nproject_name = \"acme-dev\"\nworkspace_subdir = \"acme\"\ndatabases = [\"acme\"]\n",
+        "[bundle]\nbase = { type = \"path\", dir = \"bundles/underlay\" }\nhost = \"acme.test\"\nproject_name = \"acme-dev\"\nworkspace_subdir = \"acme\"\ndatabases = [\"acme\"]\n",
     )
     .expect("write root manifest");
     fs::create_dir_all(root.join("app-front")).expect("mkdir front");

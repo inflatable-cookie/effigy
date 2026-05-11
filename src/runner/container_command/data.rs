@@ -884,6 +884,28 @@ mod tests {
         root
     }
 
+    fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+        fs::create_dir_all(dst)?;
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let path = entry.path();
+            let dest = dst.join(entry.file_name());
+            if path.is_dir() {
+                copy_dir_all(&path, &dest)?;
+            } else {
+                fs::copy(&path, &dest)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn setup_underlay_path_bundle(root: &Path) {
+        let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/effigy-manifest/tests/fixtures/underlay-bundle");
+        let bundle_dir = root.join("bundles/underlay");
+        copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
+    }
+
     struct HomeGuard(Option<std::ffi::OsString>);
 
     impl HomeGuard {
@@ -1064,13 +1086,14 @@ database = "app"
     #[test]
     fn run_container_data_dump_reports_planned_oci_artifact_capture() {
         let root = temp_repo("data-dump-oci-planned");
+        setup_underlay_path_bundle(&root);
         let home = temp_repo("data-dump-oci-planned-home");
         let _home = HomeGuard::set(&home);
         fs::write(
             root.join("effigy.toml"),
             r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "app.test"
 project_name = "data-dump-oci-planned-dev"
 workspace_subdir = "data-dump-oci-planned"
@@ -1124,13 +1147,14 @@ databases = ["app"]
     #[test]
     fn run_container_data_dump_reports_pushed_oci_artifact_capture() {
         let root = temp_repo("data-dump-oci-pushed");
+        setup_underlay_path_bundle(&root);
         let home = temp_repo("data-dump-oci-pushed-home");
         let _home = HomeGuard::set(&home);
         fs::write(
             root.join("effigy.toml"),
             r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "app.test"
 project_name = "data-dump-oci-pushed-dev"
 workspace_subdir = "data-dump-oci-pushed"
@@ -1186,7 +1210,7 @@ databases = ["app"]
         let manifest: TaskManifest = toml::from_str(
             r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 databases = ["acowtancy", "acowtancy_test"]
 
 [containers]
@@ -1238,7 +1262,7 @@ database = "acowtancy"
         let manifest: TaskManifest = toml::from_str(
             r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 databases = ["acowtancy", "acowtancy_test"]
 
 [data.targets.legacy_mysql]

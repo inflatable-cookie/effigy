@@ -27,6 +27,28 @@ pub(crate) mod harness {
     pub(crate) use crate::contract_test_support::{
         lock_test, parse_json, temp_workspace, with_cwd, write_manifest, EnvGuard,
     };
+
+    pub(crate) fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let path = entry.path();
+            let dest = dst.join(entry.file_name());
+            if path.is_dir() {
+                copy_dir_all(&path, &dest)?;
+            } else {
+                std::fs::copy(&path, &dest)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn setup_underlay_path_bundle(root: &std::path::Path) {
+        let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/effigy-manifest/tests/fixtures/underlay-bundle");
+        let bundle_dir = root.join("bundles/underlay");
+        copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
+    }
 }
 
 pub(crate) mod execution {

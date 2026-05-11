@@ -1,6 +1,7 @@
 use crate::runner::entrypoints::run_command;
 use crate::runner::tests::prelude::{
-    parse_json_output_with_schema_version, temp_workspace, write_manifest, write_root_manifest,
+    parse_json_output_with_schema_version, setup_underlay_path_bundle, temp_workspace,
+    write_manifest, write_root_manifest,
 };
 use effigy_cli::{Command, DeployArgs, DeployExportProvider, DeploySubcommand};
 use std::fs;
@@ -8,11 +9,12 @@ use std::fs;
 #[test]
 fn run_deploy_model_json_derives_underlay_reference_shape() {
     let root = temp_workspace("deploy-model-underlay");
+    setup_underlay_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -190,11 +192,12 @@ run = "cargo run -p acme-jobs {args}"
 
 fn setup_deploy_transaction_fixture(name: &str) -> std::path::PathBuf {
     let root = temp_workspace(name);
+    setup_underlay_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -438,11 +441,12 @@ fn run_deploy_plan_blocks_required_release_without_tag_ref() {
 #[test]
 fn run_deploy_model_requires_json_in_first_batch() {
     let root = temp_workspace("deploy-model-underlay-text");
+    setup_underlay_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -467,11 +471,12 @@ databases = ["acme"]
 #[test]
 fn run_deploy_model_warns_when_release_hook_is_missing() {
     let root = temp_workspace("deploy-model-underlay-no-release-hook");
+    setup_underlay_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -517,11 +522,12 @@ databases = ["acme"]
 #[test]
 fn run_deploy_model_warns_when_static_fallback_is_missing() {
     let root = temp_workspace("deploy-model-underlay-no-static-fallback");
+    setup_underlay_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -570,11 +576,12 @@ databases = ["acme"]
 #[test]
 fn run_deploy_export_render_writes_render_yaml() {
     let root = temp_workspace("deploy-export-render");
+    setup_underlay_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -652,11 +659,12 @@ run = "cargo run -p acme-jobs {args}"
 #[test]
 fn run_deploy_export_render_plan_does_not_write_files() {
     let root = temp_workspace("deploy-export-render-plan");
+    setup_underlay_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -708,11 +716,12 @@ databases = ["acme"]
 #[test]
 fn run_deploy_export_railway_writes_service_files_and_report() {
     let root = temp_workspace("deploy-export-railway");
+    setup_underlay_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -797,11 +806,12 @@ run = "cargo run -p acme-jobs {args}"
 #[test]
 fn run_deploy_export_railway_plan_does_not_write_files() {
     let root = temp_workspace("deploy-export-railway-plan");
+    setup_underlay_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"

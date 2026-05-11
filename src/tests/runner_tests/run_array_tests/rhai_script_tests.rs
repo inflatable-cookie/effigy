@@ -172,7 +172,10 @@ run = [{ rhai = "scripts/rhai/dispatch.rhai" }]
         bundles_json.contains("\"schema\": \"effigy.bundle.list.v1\""),
         "got: {bundles_json}"
     );
-    assert!(bundles_json.contains("\"underlay\""), "got: {bundles_json}");
+    assert!(
+        bundles_json.contains("\"bundles\": []"),
+        "expected empty bundles list, got: {bundles_json}"
+    );
 }
 
 #[test]

@@ -170,19 +170,25 @@ fn target_schema_lines(
 }
 
 fn bundle_schema_lines(bundle: Option<&BundleSpec>, default_paths: &[String]) -> Vec<String> {
-    let bundle_name = bundle
-        .map(|bundle| bundle.name.as_str())
-        .unwrap_or("underlay");
     let mut lines = vec![
         "[bundle]".to_owned(),
-        format!("base = \"{bundle_name}\""),
-        "# Bundle base selects a shipped preset to import. Legacy `name` is accepted as an alias.".to_owned(),
-        "# To import a repo-local bundle directory instead, set `base = { type = \"path\", dir = \"bundles/acme\" }`.".to_owned(),
-        "# Local bundle directories contain `bundle.toml` metadata plus an `effigy.toml` defaults template under that `dir`.".to_owned(),
-        "# Local bundle templates can reference bundled scripts and assets with `{{ bundle.root }}`.".to_owned(),
-        "# Repo-owned run steps can also reference the active bundle root with `{{ bundle.root }}`.".to_owned(),
-        "# All other keys are bundle-defined inputs.".to_owned(),
+        "# Bundle base selects a local or git-hosted preset.".to_owned(),
     ];
+    match bundle {
+        Some(b) => lines.push(format!("base = \"{}\"", b.name)),
+        None => lines.push("# base = { type = \"path\", dir = \"bundles/acme\" }".to_owned()),
+    };
+    lines.push("# To import a repo-local bundle directory instead, set `base = { type = \"path\", dir = \"bundles/acme\" }`.".to_owned());
+    lines.push("# Local bundle directories contain `bundle.toml` metadata plus an `effigy.toml` defaults template under that `dir`.".to_owned());
+    lines.push(
+        "# Local bundle templates can reference bundled scripts and assets with `{{ bundle.root }}`."
+            .to_owned(),
+    );
+    lines.push(
+        "# Repo-owned run steps can also reference the active bundle root with `{{ bundle.root }}`."
+            .to_owned(),
+    );
+    lines.push("# All other keys are bundle-defined inputs.".to_owned());
 
     match bundle {
         Some(bundle) => {
@@ -201,10 +207,9 @@ fn bundle_schema_lines(bundle: Option<&BundleSpec>, default_paths: &[String]) ->
             }
         }
         None => {
-            lines.push("# Use `effigy bundle list` to discover bundles.".to_owned());
-            lines.push("# Use `effigy bundle inspect <name>` or `effigy config --schema --target bundle --bundle <name>` for one shipped bundle's full input surface.".to_owned());
+            lines.push("# Use `effigy bundle list` to discover local bundles.".to_owned());
             lines.push(
-                "# Use bare `effigy bundle inspect` to inspect the active repo bundle source."
+                "# Use `effigy bundle inspect` to inspect the active repo bundle source."
                     .to_owned(),
             );
         }

@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use effigy_manifest::task_runtime::{ManifestManagedRun, ManifestTask};
+use regex::Regex;
 
 use super::model::*;
 use crate::runner::error::RunnerError;
@@ -13,10 +14,30 @@ pub(super) fn derive_deploy_model(repo_root: &Path) -> Result<DeployModel, Runne
         RunnerError::task_invocation("`deploy model` requires a bundle-backed repo".to_owned())
     })?;
     let base = match bundle.base.as_ref() {
-        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) => name.as_str(),
+        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) => name.clone(),
+        Some(effigy_manifest::ManifestBundleBase::Path { dir }) => {
+            let manifest_dir = loaded.manifest_path.parent().unwrap_or_else(|| Path::new("."));
+            let bundle_dir = manifest_dir.join(dir);
+            let bundle_toml = bundle_dir.join("bundle.toml");
+            let descriptor = std::fs::read_to_string(&bundle_toml)
+                .map_err(|e| RunnerError::task_invocation(format!(
+                    "`deploy model` could not read bundle descriptor at {}: {e}",
+                    bundle_toml.display()
+                )))?;
+            let name_re = regex::Regex::new(r#"(?m)^\s*name\s*=\s*"([^"]+)""#).expect("valid regex");
+            name_re.captures(&descriptor)
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().to_owned())
+                .ok_or_else(|| {
+                    RunnerError::task_invocation(format!(
+                        "`deploy model` bundle descriptor at {} is missing [bundle].name",
+                        bundle_toml.display()
+                    ))
+                })?
+        }
         Some(_) => {
             return Err(RunnerError::task_invocation(
-                "`deploy model` currently supports only shipped bundle sources".to_owned(),
+                "`deploy model` currently supports only path or shipped bundle sources".to_owned(),
             ));
         }
         None => {
@@ -26,10 +47,10 @@ pub(super) fn derive_deploy_model(repo_root: &Path) -> Result<DeployModel, Runne
         }
     };
 
-    match base {
+    match base.as_str() {
         "underlay" => derive_underlay_model(repo_root, bundle),
         other => Err(RunnerError::task_invocation(format!(
-            "`deploy model` currently supports only the shipped `underlay` bundle, got `{other}`"
+            "`deploy model` currently supports only the `underlay` bundle, got `{other}`"
         ))),
     }
 }
