@@ -172,7 +172,7 @@ fn target_schema_lines(
 fn bundle_schema_lines(bundle: Option<&BundleSpec>, default_paths: &[String]) -> Vec<String> {
     let bundle_name = bundle
         .map(|bundle| bundle.name.as_str())
-        .unwrap_or("decodelabs");
+        .unwrap_or("underlay");
     let mut lines = vec![
         "[bundle]".to_owned(),
         format!("base = \"{bundle_name}\""),

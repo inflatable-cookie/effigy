@@ -59,7 +59,6 @@ pub(super) fn shipped_bundle_export_files(
         detail: format!("unknown bundle `{name}`"),
     })?;
     let defaults = match name {
-        "decodelabs-library" => decodelabs_library_export_template(),
         "underlay" => underlay_export_template(),
         other => {
             return Err(ManifestError::Compose {
@@ -143,10 +142,6 @@ pub(super) fn bundle_input_type_literal(value_type: BundleInputType) -> &'static
         BundleInputType::Bool => "bool",
         BundleInputType::List => "list",
     }
-}
-
-pub(super) fn decodelabs_library_export_template() -> String {
-    include_str!("../../bundles/decodelabs-library/export.toml").to_owned()
 }
 
 pub(super) fn underlay_export_template() -> String {
@@ -407,7 +402,6 @@ pub(super) fn prune_stale_materialized_bundle_roots(
 
 pub(super) fn embedded_bundle_assets(bundle_name: &str) -> &'static [EmbeddedBundleAsset] {
     match bundle_name {
-        "decodelabs-library" => &[],
         "underlay" => UNDERLAY_ASSETS,
         _ => &[],
     }

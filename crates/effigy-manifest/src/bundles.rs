@@ -15,7 +15,7 @@ mod specs;
 
 use export::{materialize_shipped_bundle_assets, shipped_bundle_export_files};
 use specs::{
-    decodelabs_library_spec, resolve_decodelabs_library_bundle, resolve_underlay_bundle,
+    resolve_underlay_bundle,
     underlay_spec,
 };
 
@@ -893,7 +893,7 @@ fn resolve_bundle_selection(
 }
 
 pub fn list_bundles() -> Vec<BundleSpec> {
-    vec![decodelabs_library_spec(), underlay_spec()]
+    vec![underlay_spec()]
 }
 
 pub fn get_bundle(name: &str) -> Option<BundleSpec> {
@@ -997,7 +997,6 @@ fn resolve_bundle_defaults(
     inputs: &BTreeMap<String, Value>,
 ) -> Result<Value, ManifestError> {
     match bundle_name {
-        "decodelabs-library" => resolve_decodelabs_library_bundle(manifest_path, inputs),
         "underlay" => resolve_underlay_bundle(manifest_path, current, inputs),
         other => Err(ManifestError::Compose {
             path: manifest_path.to_path_buf(),
@@ -1305,6 +1304,12 @@ fn normalize_bundle_specific_inputs(
                 Value::String(workspace_subdir),
             );
         }
+        if !inputs.contains_key("project_name") {
+            let workspace_subdir = optional_bundle_string(inputs, "workspace_subdir")
+                .unwrap_or_else(|| "app".to_owned());
+            let project_name = default_decodelabs_library_project_name(&workspace_subdir);
+            inputs.insert("project_name".to_owned(), Value::String(project_name));
+        }
     }
 
     Ok(())
@@ -1605,6 +1610,26 @@ pub(super) fn underlay_route_domain(host: &str, label: Option<&str>) -> String {
         host.to_owned()
     } else {
         format!("{label}.{host}")
+    }
+}
+
+pub(super) fn default_decodelabs_library_project_name(workspace_subdir: &str) -> String {
+    let slug = workspace_subdir
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_owned();
+    if slug.is_empty() {
+        "decodelabs-library-dev".to_owned()
+    } else {
+        format!("decodelabs-library-{slug}-dev")
     }
 }
 

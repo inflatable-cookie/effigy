@@ -17,12 +17,12 @@ fn run_manifest_task_builtin_config_rejects_invalid_flag_combinations() {
         },
         BuiltinInvocationCase {
             workspace: "builtin-config-bundle-requires-schema",
-            args: &["--bundle", "decodelabs-library"],
+            args: &["--bundle", "underlay"],
             expected: &["`--bundle` requires `--schema`"],
         },
         BuiltinInvocationCase {
             workspace: "builtin-config-bundle-requires-bundle-target",
-            args: &["--schema", "--target", "tasks", "--bundle", "decodelabs-library"],
+            args: &["--schema", "--target", "tasks", "--bundle", "underlay"],
             expected: &["`--bundle` requires `--target bundle`"],
         },
         BuiltinInvocationCase {

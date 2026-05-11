@@ -119,7 +119,7 @@ fn run_manifest_task_builtin_config_schema_target_bundle_prints_generic_bundle_s
         &[
             "(bundle target)",
             "[bundle]",
-            "base = \"decodelabs\"",
+            "base = \"underlay\"",
             "Bundle base selects a shipped preset to import.",
             "base = { type = \"path\", dir = \"bundles/acme\" }",
             "Local bundle directories contain `bundle.toml` metadata plus an `effigy.toml` defaults template under that `dir`.",
@@ -136,17 +136,17 @@ fn run_manifest_task_builtin_config_schema_target_bundle_named_prints_specific_i
 
     let out = run_config_ok(
         root,
-        &["--schema", "--target", "bundle", "--bundle", "decodelabs-library"],
+        &["--schema", "--target", "bundle", "--bundle", "underlay"],
     );
     assert_output_contains_all(
         &out,
         &[
-            "(bundle target, bundle: decodelabs-library)",
+            "(bundle target, bundle: underlay)",
             "[bundle]",
-            "base = \"decodelabs-library\"",
-            "shared_root = \"../\"",
+            "base = \"underlay\"",
+            "workspace_subdir = \"underlay-reference\"",
             "Default paths populated by this bundle:",
-            "containers.web.services.app.catalog",
+            "containers.stack.services.postgres.catalog",
         ],
     );
     assert_output_excludes_all(&out, &["[tasks]"]);

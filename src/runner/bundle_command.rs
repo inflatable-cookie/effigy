@@ -330,17 +330,16 @@ mod tests {
     fn bundle_list_reports_bundles() {
         let rendered = run_bundle_list(false).expect("list");
         assert!(rendered.contains("[bundle]"));
-        assert!(rendered.contains("decodelabs-library"));
         assert!(rendered.contains("underlay"));
     }
 
     #[test]
     fn bundle_inspect_reports_inputs_and_default_paths() {
-        let rendered = run_bundle_inspect(Some("decodelabs-library"), None, false).expect("inspect");
+        let rendered = run_bundle_inspect(Some("underlay"), None, false).expect("inspect");
         assert!(rendered.contains("Inputs"));
-        assert!(rendered.contains("shared_root"));
+        assert!(rendered.contains("workspace_subdir"));
         assert!(rendered.contains("Default Paths"));
-        assert!(rendered.contains("containers.web.services.app.catalog"));
+        assert!(rendered.contains("containers.stack.services.postgres.catalog"));
     }
 
     #[test]

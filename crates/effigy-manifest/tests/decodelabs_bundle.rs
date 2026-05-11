@@ -8,6 +8,10 @@ fn decodelabs_bundle_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/decodelabs-bundle")
 }
 
+fn decodelabs_library_bundle_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/decodelabs-library-bundle")
+}
+
 #[test]
 fn decodelabs_bundle_resolves_defaults_and_allows_block_overrides() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -661,10 +665,13 @@ fn decodelabs_library_bundle_derives_shared_workspace_runtime() {
     let manifest_path = repo_root.join("effigy.toml");
     std::fs::write(
         &manifest_path,
-        r#"
+        format!(
+            r#"
 [bundle]
-base = "decodelabs-library"
+base = {{ type = "path", dir = "{}" }}
 "#,
+            decodelabs_library_bundle_dir().display()
+        ),
     )
     .expect("write manifest");
 
@@ -673,7 +680,7 @@ base = "decodelabs-library"
     let bundle = manifest.bundle.expect("bundle");
     assert!(matches!(
         bundle.base.as_ref(),
-        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) if name == "decodelabs-library"
+        Some(effigy_manifest::ManifestBundleBase::Path { .. })
     ));
 
     let containers = manifest.containers.expect("containers");

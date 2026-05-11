@@ -97,7 +97,7 @@ fn builtin_config_parser_contracts_are_stable() {
 
     let parsed = parse_config_contract_request(
         &task,
-        &string_args(&["--schema", "--target", "bundle", "--bundle", "decodelabs-library"]),
+        &string_args(&["--schema", "--target", "bundle", "--bundle", "underlay"]),
     )
     .expect("config parse");
     assert_eq!(
@@ -109,7 +109,7 @@ fn builtin_config_parser_contracts_are_stable() {
             minimal: false,
             output_json: false,
             target: Some("bundle"),
-            bundle: Some("decodelabs-library".to_owned()),
+            bundle: Some("underlay".to_owned()),
             runner: None,
             user_inspect: false,
             user_path: false,

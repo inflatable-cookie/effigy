@@ -86,6 +86,31 @@ fn setup_fake_docker_deferral_runtime(
     (docker_log, env)
 }
 
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &dest)?;
+        } else {
+            std::fs::copy(&path, &dest)?;
+        }
+    }
+    Ok(())
+}
+
+fn decodelabs_library_fixture_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("crates/effigy-manifest/tests/fixtures/decodelabs-library-bundle")
+}
+
+fn setup_decodelabs_library_path_bundle(root: &std::path::Path) {
+    let bundle_dir = root.join("bundles/decodelabs-library");
+    copy_dir_all(&decodelabs_library_fixture_dir(), &bundle_dir).expect("copy fixture bundle");
+}
+
 #[test]
 fn run_manifest_task_defers_when_task_missing_with_token_support() {
     let _guard = lock_test();
@@ -161,13 +186,11 @@ fn run_manifest_task_decodelabs_bundle_defers_inside_container() {
     let _guard = lock_test();
     let root = temp_workspace("decodelabs-container-deferral");
     std::fs::create_dir(root.join(".git")).expect("git dir");
+    setup_decodelabs_library_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"[bundle]
-base = "decodelabs-library"
-host = "legacy.test"
-project_name = "legacy-dev"
-databases = ["legacy"]
+base = { type = "path", dir = "bundles/decodelabs-library" }
 "#,
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
@@ -228,13 +251,11 @@ fn run_manifest_task_decodelabs_bundle_defers_locally_inside_handoff_container()
     let root = temp_workspace("decodelabs-container-deferral-handoff");
     std::fs::create_dir(root.join(".git")).expect("git dir");
     std::fs::create_dir_all(root.join("app")).expect("app dir");
+    setup_decodelabs_library_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"[bundle]
-base = "decodelabs-library"
-host = "legacy.test"
-project_name = "legacy-dev"
-databases = ["legacy"]
+base = { type = "path", dir = "bundles/decodelabs-library" }
 "#,
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
@@ -273,13 +294,11 @@ fn run_manifest_task_decodelabs_handoff_local_deferral_prefers_composer_global_b
     let root = temp_workspace("decodelabs-container-deferral-handoff-composer-bin");
     std::fs::create_dir(root.join(".git")).expect("git dir");
     std::fs::create_dir_all(root.join("app")).expect("app dir");
+    setup_decodelabs_library_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"[bundle]
-base = "decodelabs-library"
-host = "legacy.test"
-project_name = "legacy-dev"
-databases = ["legacy"]
+base = { type = "path", dir = "bundles/decodelabs-library" }
 "#,
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
@@ -319,13 +338,12 @@ fn run_manifest_task_decodelabs_container_lease_reaper_shuts_down_expired_env() 
     let _guard = lock_test();
     let root = temp_workspace("decodelabs-container-deferral-reaper");
     std::fs::create_dir(root.join(".git")).expect("git dir");
+    setup_decodelabs_library_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"[bundle]
-base = "decodelabs-library"
-host = "legacy.test"
+base = { type = "path", dir = "bundles/decodelabs-library" }
 project_name = "legacy-dev"
-databases = ["legacy"]
 "#,
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
@@ -378,11 +396,15 @@ fn run_manifest_task_decodelabs_library_bundle_isolates_leases_across_repos_by_d
     std::fs::create_dir_all(&repo_b).expect("mkdir repo b");
     std::fs::create_dir(repo_a.join(".git")).expect("git dir a");
     std::fs::create_dir(repo_b.join(".git")).expect("git dir b");
+    let bundle_a = repo_a.join("bundles/decodelabs-library");
+    let bundle_b = repo_b.join("bundles/decodelabs-library");
+    copy_dir_all(&decodelabs_library_fixture_dir(), &bundle_a).expect("copy fixture bundle a");
+    copy_dir_all(&decodelabs_library_fixture_dir(), &bundle_b).expect("copy fixture bundle b");
     write_root_manifest(
         &repo_a,
         &format!(
             r#"[bundle]
-base = "decodelabs-library"
+base = {{ type = "path", dir = "bundles/decodelabs-library" }}
 shared_root = "{}"
 "#,
             shared_root.display()
@@ -392,7 +414,7 @@ shared_root = "{}"
         &repo_b,
         &format!(
             r#"[bundle]
-base = "decodelabs-library"
+base = {{ type = "path", dir = "bundles/decodelabs-library" }}
 shared_root = "{}"
 "#,
             shared_root.display()
@@ -445,11 +467,13 @@ fn run_manifest_task_decodelabs_library_bundle_prepares_workspace_permissions_be
     let repo = shared_root.join("zest");
     std::fs::create_dir_all(&repo).expect("mkdir repo");
     std::fs::create_dir(repo.join(".git")).expect("git dir");
+    let bundle = repo.join("bundles/decodelabs-library");
+    copy_dir_all(&decodelabs_library_fixture_dir(), &bundle).expect("copy fixture bundle");
     write_root_manifest(
         &repo,
         &format!(
             r#"[bundle]
-base = "decodelabs-library"
+base = {{ type = "path", dir = "bundles/decodelabs-library" }}
 shared_root = "{}"
 "#,
             shared_root.display()
