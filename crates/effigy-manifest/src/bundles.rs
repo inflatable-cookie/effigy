@@ -194,32 +194,28 @@ fn resolve_git_bundle_source(
     if !cache_exists || refresh_remote {
         ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
     }
-
-    let version_hint = if local_path.join(".git").is_dir() {
+    let mut version_hint = if local_path.join(".git").is_dir() {
         Some(git_head_revision(manifest_path, &local_path)?)
     } else {
         None
     };
 
-    let stale = if cache_exists && !refresh_remote {
-        match git_ls_remote(manifest_path, url, reference, &local_path) {
-            Ok(remote_commit) => {
-                let local_commit =
-                    git_head_revision(manifest_path, &local_path).unwrap_or_default();
-                remote_commit != local_commit
+    if cache_exists && !refresh_remote {
+        if let Ok(remote_commit) = git_ls_remote(manifest_path, url, reference, &local_path) {
+            let local_commit = version_hint.clone().unwrap_or_default();
+            if remote_commit != local_commit {
+                ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
+                version_hint = Some(git_head_revision(manifest_path, &local_path)?);
             }
-            Err(_) => false,
         }
-    } else {
-        false
-    };
+    }
 
     Ok(ResolvedBundleSource {
         source_type: BundleSourceType::Git,
         local_path,
         source_path: PathBuf::from(url),
         version_hint,
-        stale,
+        stale: false,
     })
 }
 
@@ -1926,6 +1922,62 @@ run = "serve {{ inputs.host }}"
         assert!(third.applicable);
         assert!(!third.changed);
         assert_eq!(third.version_hint, second.version_hint);
+    }
+
+    #[test]
+    fn git_bundle_source_refreshes_stale_cache_root_on_manifest_load() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bundle_home = tmp.path().join("bundle-home");
+        let _home = with_test_bundle_home(&bundle_home);
+
+        let source_repo = tmp.path().join("bundle-source");
+        write_local_bundle_repo(&source_repo);
+
+        let manifest_path = tmp.path().join("consumer.toml");
+        std::fs::write(
+            &manifest_path,
+            format!(
+                "[bundle]\nbase = {{ type = \"git\", url = {:?}, ref = \"main\" }}\n",
+                source_repo.display().to_string()
+            ),
+        )
+        .expect("write manifest");
+
+        let first = resolve_materialized_bundle_source(
+            &manifest_path,
+            &BundleSelection::Git {
+                url: source_repo.display().to_string(),
+                reference: Some("main".to_owned()),
+            },
+        )
+        .expect("first resolve");
+
+        std::fs::write(
+            source_repo.join("export.toml"),
+            "[manifest]\nextend = [\"bundle.meta\"]\n\n[bundle.meta]\nsource = \"next\"\n",
+        )
+        .expect("update export template");
+        git(&["add", "."], &source_repo);
+        git(&["commit", "-m", "next"], &source_repo);
+
+        let second = resolve_materialized_bundle_source(
+            &manifest_path,
+            &BundleSelection::Git {
+                url: source_repo.display().to_string(),
+                reference: Some("main".to_owned()),
+            },
+        )
+        .expect("second resolve");
+
+        assert_eq!(first.local_path, second.local_path);
+        assert_ne!(first.version_hint, second.version_hint);
+        let cached_export =
+            std::fs::read_to_string(second.local_path.join("export.toml")).expect("read cache");
+        assert!(
+            cached_export.contains("source = \"next\""),
+            "expected refreshed git bundle cache to pick up the new commit"
+        );
+        assert!(!second.stale);
     }
 
     #[test]

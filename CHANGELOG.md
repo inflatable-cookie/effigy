@@ -162,6 +162,9 @@ During v0.x, MINOR bumps may include breaking changes.
   workspace containers that mount the project root.
 
 ### Fixed
+- **Git bundle loads** now refresh stale cached clones during manifest load
+  when the remote ref has advanced, so repos do not get stranded on outdated
+  bundle templates until someone runs `effigy bundle sync` by hand.
 - **Git bundle stale detection** now compares the cached local `HEAD` to
   `git ls-remote` for the configured ref, so `bundle inspect` correctly reports
   when a git-backed bundle source has drifted, and `bundle sync` no longer
