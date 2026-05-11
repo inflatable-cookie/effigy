@@ -8,8 +8,8 @@ Created: 2026-05-10
 
 Effigy needs one bundle-source contract that replaces the accidental
 `base`/`base_path` split with one extensible source model. That model must
-cover shipped presets, local directories, git repositories, and OCI-delivered
-bundle sources without changing the downstream bundle materialization boundary.
+cover local directories, git repositories, and OCI-delivered bundle sources
+without changing the downstream bundle materialization boundary.
 
 This contract sits above manifest parsing and cache/update policy and below the
 later CLI/help/docs surface for `bundle inspect` and `bundle sync`.
@@ -20,7 +20,7 @@ This contract owns:
 
 - the unified `[bundle].base` configuration surface
 - removal of `[bundle].base_path`
-- the typed source taxonomy for shipped, path, git, and OCI bundle origins
+- the typed source taxonomy for path, git, and OCI bundle origins
 - the canonical materialization boundary each source must produce
 - cache-key identity and stale/update detection rules for git and OCI sources
 - the bounded first-round `bundle sync` and `bundle inspect` source metadata
@@ -40,20 +40,6 @@ The first-round surface is:
 
 ```toml
 [bundle]
-base = "underlay"
-```
-
-as sugar for:
-
-```toml
-[bundle]
-base = { type = "shipped", name = "underlay" }
-```
-
-The explicit block forms are:
-
-```toml
-[bundle]
 base = { type = "path", dir = "bundles/acme" }
 
 [bundle]
@@ -63,8 +49,7 @@ base = { type = "git", url = "git@github.com:acme/effigy-bundle.git", ref = "mai
 base = { type = "oci", url = "ghcr.io/acme/effigy-bundle:v1.2.3" }
 ```
 
-The legacy `name` field remains accepted only as the old shipped-preset alias
-when that is already part of the current bundle manifest grammar.
+The legacy `name` field is removed in this lane.
 
 ## `base_path` Removal
 
@@ -80,7 +65,6 @@ No silent upgrade or fallback is allowed.
 
 The internal source boundary is one typed enum:
 
-- `shipped`
 - `path`
 - `git`
 - `oci`

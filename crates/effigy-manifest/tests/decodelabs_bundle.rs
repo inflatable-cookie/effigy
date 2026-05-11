@@ -350,7 +350,7 @@ databases = ["contactpatch"]
     let result = load_task_manifest_with_inspection(&manifest_path);
     assert!(
         result.is_err(),
-        "legacy `name` key should be rejected when decodelabs is not a shipped bundle"
+        "legacy `name` key should be rejected when decodelabs is resolved through typed bundle sources"
     );
 }
 

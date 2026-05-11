@@ -54,17 +54,16 @@ This lane owns:
 - `632` complete: landed repo-local `bundle sync`, refreshed git/OCI bundle
   sources through the shared resolver seam, and reported bounded source-sync
   outcomes in text/JSON
-- `633` complete: widened `bundle inspect` so named inspection stays on the
-  shipped bundle schema/catalog path while bare inspection reports active
-  repo-local bundle source metadata for shipped/path/git/oci sources
+- `633` complete: widened `bundle inspect` so it reports active repo-local
+  bundle source metadata for path/git/oci sources
 - `634` complete: closed the remaining guides/help/changelog/proof slice and
   finished the lane
 
 ## Exit Condition
 
-This lane is complete when Effigy can resolve shipped, path, git, and OCI
-bundle sources through one stable source model, inspect/sync remote bundles,
-and no longer accepts `base_path`.
+This lane is complete when Effigy can resolve path, git, and OCI bundle
+sources through one stable source model, inspect/sync remote bundles, and no
+longer accepts `base_path`.
 
 ## Next Task
 

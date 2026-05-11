@@ -15,7 +15,7 @@ This contract owns:
 
 - the missing `version` command reference entry
 - missing container command shapes and flags in the command matrix
-- the bounded `--repo` widening for `changelog` and `bundle`
+- the bounded `--repo` widening for `changelog`
 - the no-behavior-change rule for command surfaces other than the added
   repo-target override
 
@@ -59,17 +59,13 @@ Bounded widening for this lane:
 - `changelog format`
 - `changelog analyze`
 - `changelog extract`
-- `bundle list`
-- `bundle inspect`
-- `bundle export`
 
 The widened commands must keep the same behavior when `--repo` is omitted.
 
 ## Bundle Boundary
 
-This lane may add repo-targeting to bundle surfaces. It may not widen bundle
-source behavior, add new bundle verbs, or alter the existing local-vs-shipped
-bundle meaning.
+This lane touched `bundle` only while the old surface still existed. The
+current bundle surface is outside scope here.
 
 ## Changelog Boundary
 
@@ -80,6 +76,5 @@ changelog schema, release orchestration, or version-selection behavior.
 
 - the command reference matrix covers the live parser surface named above
 - `changelog` accepts `--repo <PATH>` on the bounded subcommands
-- `bundle` accepts `--repo <PATH>` on the bounded subcommands
 - text/help/reference surfaces align with the widened parser
 - focused parser/runner proofs cover the new `--repo` paths

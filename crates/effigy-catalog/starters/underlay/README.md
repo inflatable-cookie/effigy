@@ -2,12 +2,13 @@
 
 Reusable manifest shape for Underlay-style repos. Effigy resolves what you type
 (**`effigy dev`**, **`effigy health`**, …) to **tasks** declared in your root
-**`effigy.toml`** and the shipped **`underlay` bundle**, plus a small set of
-**built-ins** (`test`, `init`, `doctor`, … — see **`effigy --help`**). A bundle
-default **`dev`** is still a **task**, not a special CLI verb.
+**`effigy.toml`** and the bundle source selected by `[bundle].base`, plus a
+small set of **built-ins** (`test`, `init`, `doctor`, … — see
+**`effigy --help`**). A bundle-default **`dev`** is still a **task**, not a
+special CLI verb.
 
 The stable
-system/container layer comes from the shipped `underlay` bundle: one
+system/container layer comes from the bundled `underlay` source: one
 long-running Rust + Bun workspace container, bundled postgres, dbgate,
 mailpit, and minio services, managed gateway routes, and loopback alias
 publication for `db.<host>`, `smtp.<host>`, and `s3.<host>`.
@@ -33,7 +34,7 @@ It is not emitted into the consumer repo. The helper reads `[bundle.dirs]`
 when repos need explicit package-directory mapping instead of the default
 `app-*` / `acme-*` guesses.
 
-The shipped bundle also provides `smoke:error-logging`,
+The bundle source also provides `smoke:error-logging`,
 `metrics:error-log`, and `validate:error-reporting` through a bundled
 `{{ bundle.root }}/scripts/error-reporting.rhai` helper. Override
 `API_BASE_URL`, `SMOKE_ENDPOINT`, `WINDOW_HOURS`,
