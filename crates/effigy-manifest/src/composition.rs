@@ -51,6 +51,9 @@ struct ManifestSectionConfig {
     include: Vec<ManifestIncludeEntry>,
     #[serde(default)]
     extend: Vec<String>,
+    #[serde(default)]
+    #[serde(rename = "root")]
+    _root: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -29,6 +29,8 @@ During v0.x, MINOR bumps may include breaking changes.
   **`docs check-paths`** are removed and fail with migration guidance.
 
 ### Added
+- Added `[manifest].root = true` so nested Effigy manifests can opt out of
+  parent workspace root promotion.
 - **Git bundle sources:** `[bundle].base = { type = "git", ... }` now resolves
   local or remote git-backed bundle sources into the shared Effigy bundle cache
   and records a commit-sha version hint on the materialized bundle root.

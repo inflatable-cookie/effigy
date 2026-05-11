@@ -32,6 +32,9 @@ Notes:
 - symlinked catalogs are treated the same as physical directories for routing.
 - dependency/build trees are skipped during discovery, including `.effigy/`,
   `node_modules/`, `vendor/`, and `target/`.
+- nested `effigy.toml` files can declare `[manifest].root = true` to stop
+  automatic promotion to a parent Cargo/npm workspace when commands are invoked
+  from that nested tree.
 - aliases must remain unique across all discovered manifests.
 - if duplicate aliases are found (including through symlinked paths), Effigy returns a catalog alias conflict error.
 

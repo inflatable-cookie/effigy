@@ -3,7 +3,13 @@ use std::path::{Path, PathBuf};
 
 use crate::fs_probe::PathPresenceCache;
 
-const ROOT_MARKERS: [&str; 4] = ["package.json", "composer.json", "Cargo.toml", ".git"];
+const ROOT_MARKERS: [&str; 5] = [
+    "effigy.toml",
+    "package.json",
+    "composer.json",
+    "Cargo.toml",
+    ".git",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolutionMode {
@@ -106,6 +112,18 @@ fn maybe_promote_to_parent_workspace(
     child: &Path,
     probe: &mut PathPresenceCache,
 ) -> Option<ResolvedTarget> {
+    if has_effigy_manifest_root_marker(child, probe) {
+        return Some(ResolvedTarget {
+            resolved_root: child.to_path_buf(),
+            resolution_mode: ResolutionMode::AutoNearest,
+            evidence: vec![format!(
+                "child manifest {} declares `[manifest].root = true`; kept nearest root",
+                child.join("effigy.toml").display()
+            )],
+            warnings: Vec::new(),
+        });
+    }
+
     let parent = child.parent()?;
     if !parent.is_dir() {
         return None;
@@ -170,6 +188,82 @@ fn read_to_string(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
+fn has_effigy_manifest_root_marker(path: &Path, probe: &mut PathPresenceCache) -> bool {
+    let manifest_path = path.join("effigy.toml");
+    if !probe.exists(&manifest_path) {
+        return false;
+    }
+
+    let raw = read_to_string(&manifest_path);
+    let Ok(value) = toml::from_str::<toml::Value>(&raw) else {
+        return false;
+    };
+
+    value
+        .as_table()
+        .and_then(|table| table.get("manifest"))
+        .and_then(toml::Value::as_table)
+        .and_then(|manifest| manifest.get("root"))
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false)
+}
+
 fn canonicalize_best_effort(path: PathBuf) -> PathBuf {
     fs::canonicalize(&path).unwrap_or(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{has_effigy_manifest_root_marker, resolve_target_root, ResolutionMode};
+    use crate::fs_probe::PathPresenceCache;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn workspace_with_child_manifest(root_marker: &str) -> (TempDir, std::path::PathBuf) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"child\"]\n",
+        )
+        .expect("write workspace cargo");
+        let child = root.join("child");
+        fs::create_dir_all(&child).expect("mkdir child");
+        fs::write(child.join("effigy.toml"), root_marker).expect("write child manifest");
+        (temp, child)
+    }
+
+    #[test]
+    fn manifest_root_marker_prevents_parent_workspace_promotion() {
+        let (_temp, child) = workspace_with_child_manifest("[manifest]\nroot = true\n");
+        assert!(has_effigy_manifest_root_marker(
+            &child,
+            &mut PathPresenceCache::new()
+        ));
+
+        let resolved = resolve_target_root(child.clone(), None).expect("resolve");
+
+        assert_eq!(
+            fs::canonicalize(&resolved.resolved_root).expect("canonical resolved"),
+            fs::canonicalize(&child).expect("canonical child")
+        );
+        assert_eq!(resolved.resolution_mode, ResolutionMode::AutoNearest);
+        assert!(resolved
+            .evidence
+            .iter()
+            .any(|item| item.contains("root = true")));
+    }
+
+    #[test]
+    fn nested_effigy_manifest_without_root_marker_still_promotes_to_workspace() {
+        let (temp, child) = workspace_with_child_manifest("[catalog]\nalias = \"child\"\n");
+
+        let resolved = resolve_target_root(child, None).expect("resolve");
+
+        assert_eq!(
+            fs::canonicalize(&resolved.resolved_root).expect("canonical resolved"),
+            fs::canonicalize(temp.path()).expect("canonical temp")
+        );
+        assert_eq!(resolved.resolution_mode, ResolutionMode::AutoPromoted);
+    }
 }

@@ -1,6 +1,9 @@
 [catalog]
 alias = "render-provider-smoke"
 
+[manifest]
+root = true
+
 [bundle]
 base = { type = "path", dir = "../../crates/effigy-manifest/tests/fixtures/underlay-bundle" }
 host = "render-provider-smoke.test"

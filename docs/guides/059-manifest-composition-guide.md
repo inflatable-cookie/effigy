@@ -35,6 +35,18 @@ Rule:
 - included files are partial manifests
 - included paths resolve relative to the file that declares them
 
+Nested fixtures, examples, or child projects can opt into being their own
+Effigy root:
+
+```toml
+[manifest]
+root = true
+```
+
+Use this when a nested `effigy.toml` should not be promoted to a parent
+Cargo/npm workspace during automatic root resolution. This is for real nested
+repo boundaries or smoke fixtures, not for ordinary include fragments.
+
 ## 2) Split By Concern
 
 Good fragment shapes:
