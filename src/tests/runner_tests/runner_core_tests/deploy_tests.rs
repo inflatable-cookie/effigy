@@ -212,31 +212,37 @@ api = "acme-api"
 source = { type = "path", dir = "providers/render" }
 
 [deploy.uat]
-provider = "render"
 state = "uat"
 code_ref = "branch:main"
 release_policy = "optional"
 provider_project = "acme-uat"
 artifact_policy = "digest-preferred"
 
+[deploy.uat.provider]
+adapter = "render"
+
 [deploy.uat.hooks]
 after_deploy = "deploy:uat:smoke"
 
 [deploy.render]
-provider = "render"
 state = "uat"
 code_ref = "branch:main"
 release_policy = "optional"
 provider_project = "acme-render"
 artifact_policy = "digest-preferred"
 
+[deploy.render.provider]
+adapter = "render"
+
 [deploy.production]
-provider = "render"
 state = "production"
 code_ref = "release-tag"
 release_policy = "required"
 provider_project = "acme-production"
 artifact_policy = "digest-pinned"
+
+[deploy.production.provider]
+adapter = "render"
 
 [deploy.production.preflight]
 require_release_gates = true

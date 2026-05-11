@@ -31,8 +31,8 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Added
 - Added `[manifest].root = true` so nested Effigy manifests can opt out of
   parent workspace root promotion.
-- Added raw `[deploy.<env>.provider_config]` pass-through data for external
-  deploy-provider packages.
+- Added table-form `[deploy.<env>.provider]` config for external
+  deploy-provider packages, with `adapter` selecting the package.
 - **Git bundle sources:** `[bundle].base = { type = "git", ... }` now resolves
   local or remote git-backed bundle sources into the shared Effigy bundle cache
   and records a commit-sha version hint on the materialized bundle root.

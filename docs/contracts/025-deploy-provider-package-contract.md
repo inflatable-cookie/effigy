@@ -61,9 +61,11 @@ Provider packages should be configured separately from environment selection:
 source = { type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-render.git", ref = "main" }
 
 [deploy.uat]
-provider = "render"
 state = "uat"
 code_ref = "branch:main"
+
+[deploy.uat.provider]
+adapter = "render"
 ```
 
 For Effigy repo development, the first-party provider packages live under
@@ -119,15 +121,15 @@ Context schema:
   "schema": "effigy.deploy-provider.context.v1",
   "phase": "preflight",
   "env": "uat",
-  "provider": "render",
-  "provider_project": "acowtancy-uat",
-  "provider_config": {
+  "provider": {
+    "adapter": "render",
     "project_id": "prj-...",
     "environment_id": "env-...",
     "services": {
       "front": "srv-..."
     }
   },
+  "provider_project": "acowtancy-uat",
   "provider_package": {
     "root": "/repo/.effigy/cache/providers/render",
     "name": "render",

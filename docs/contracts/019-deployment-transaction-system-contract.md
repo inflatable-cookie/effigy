@@ -79,24 +79,28 @@ Minimum shape:
 
 ```toml
 [deploy.uat]
-provider = "railway"
 state = "uat"
 code_ref = "branch:main"
 release_policy = "optional"
 provider_project = "acowtancy-uat"
 artifact_policy = "digest-preferred"
+
+[deploy.uat.provider]
+adapter = "railway"
 ```
 
 Production shape:
 
 ```toml
 [deploy.production]
-provider = "railway"
 state = "production"
 code_ref = "release-tag"
 release_policy = "required"
 provider_project = "acowtancy-production"
 artifact_policy = "digest-pinned"
+
+[deploy.production.provider]
+adapter = "railway"
 
 [deploy.production.preflight]
 require_clean_worktree = true
@@ -108,7 +112,7 @@ require_release_gates = true
 
 Supported first-round fields:
 
-- `provider`
+- `[deploy.<env>.provider].adapter`
   - required
   - `railway` first, `render` before the v0.6.0 closeout
 - `state`
@@ -119,9 +123,9 @@ Supported first-round fields:
   - `none`, `optional`, or `required`
 - `provider_project`
   - provider-side project identity
-- `[deploy.<env>.provider_config]`
-  - raw provider-owned stable identifiers and options passed to the
-    deploy-provider package; secrets and credential values stay out of config
+- `[deploy.<env>.provider]`
+  - provider-owned stable identifiers and options passed to the deploy-provider
+    package; secrets and credential values stay out of config
 - `artifact_policy`
   - `mutable-ok`, `digest-preferred`, or `digest-pinned`
 - `[deploy.<env>.preflight]`

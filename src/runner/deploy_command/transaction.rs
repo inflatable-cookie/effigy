@@ -5,7 +5,7 @@ use std::process::Command as ProcessCommand;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use super::derive::derive_deploy_model;
 use super::provider_package::{
@@ -73,15 +73,16 @@ pub(super) fn run_deploy_apply(
     write_json_report(repo_root, &[&active_path], &plan)?;
 
     let (env_config, model, provider_package) = deploy_execution_inputs(repo_root, env)?;
+    let provider = env_config.provider.adapter().to_owned();
     let provider_package = provider_package.ok_or_else(|| {
         RunnerError::task_invocation(format!(
             "deploy provider `{}` must be configured under `[deploy.providers.{}`]",
-            env_config.provider, env_config.provider
+            provider, provider
         ))
     })?;
     let provider_phase = run_provider_apply(
         repo_root,
-        &env_config.provider,
+        &provider,
         &provider_package,
         deploy_provider_context("apply", env, &env_config, &model, &provider_package),
     )?;
@@ -385,7 +386,7 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
         schema_version: 1,
         deployment_id,
         env: env.to_owned(),
-        provider: env_config.provider.clone(),
+        provider: env_config.provider.adapter().to_owned(),
         app: DeployPlanApp {
             name: model.app.name,
             project_name: env_config
@@ -438,7 +439,7 @@ fn deploy_execution_inputs(
     })?;
     let model = derive_deploy_model(repo_root)?;
     let provider_package =
-        resolve_provider_package(repo_root, &env_config.provider, &config.providers)?;
+        resolve_provider_package(repo_root, env_config.provider.adapter(), &config.providers)?;
     Ok((env_config, model, provider_package))
 }
 
@@ -468,22 +469,22 @@ fn provider_preflight_report(
     model: &super::model::DeployModel,
     provider_package: Option<&DeployProviderPackage>,
 ) -> Result<DeployProviderPreflightReport, RunnerError> {
-    let provider = env_config.provider.trim().to_ascii_lowercase();
+    let provider = env_config.provider.adapter().trim().to_ascii_lowercase();
     let Some(package) = provider_package else {
         return Ok(DeployProviderPreflightReport {
             status: "blocked".to_owned(),
             checks: vec![DeployProviderCheck {
                 name: "provider-package".to_owned(),
                 status: "blocked".to_owned(),
-                target: Some(env_config.provider.clone()),
+                target: Some(provider.clone()),
                 message: Some(format!(
                     "deploy provider `{}` must be configured under `[deploy.providers.{}`]",
-                    env_config.provider, env_config.provider
+                    provider, provider
                 )),
             }],
             blockers: vec![format!(
                 "deploy provider `{}` has no configured provider package",
-                env_config.provider,
+                provider,
             )],
         });
     };
@@ -497,8 +498,7 @@ fn provider_preflight_report(
             package.descriptor.provider.display_name, package.descriptor.provider.version
         )),
     }];
-    let policy_blockers =
-        provider_package_policy_blockers(&env_config.provider, &package.descriptor.policy);
+    let policy_blockers = provider_package_policy_blockers(&provider, &package.descriptor.policy);
     if !policy_blockers.is_empty() {
         return Ok(DeployProviderPreflightReport {
             status: "blocked".to_owned(),
@@ -591,9 +591,8 @@ fn deploy_provider_context(
         "schema": "effigy.deploy-provider.context.v1",
         "phase": phase,
         "env": env,
-        "provider": env_config.provider,
+        "provider": env_config.provider.config_value(),
         "provider_project": env_config.provider_project,
-        "provider_config": env_config.provider_config,
         "provider_package": {
             "root": package.root.display().to_string(),
             "name": package.descriptor.provider.name,
@@ -641,7 +640,7 @@ fn deploy_status_provider_report(
         Ok((env_config, model, Some(provider_package))) => {
             let report = run_provider_status(
                 repo_root,
-                &env_config.provider,
+                env_config.provider.adapter(),
                 &provider_package,
                 deploy_provider_context("status", env, &env_config, &model, &provider_package),
             )?;
@@ -654,7 +653,7 @@ fn deploy_status_provider_report(
             None,
             vec![format!(
                 "deploy provider `{}` has no configured provider package; provider status skipped",
-                env_config.provider
+                env_config.provider.adapter()
             )],
         )),
         Err(error) => Ok((None, vec![format!("provider status skipped: {error}")])),
@@ -923,9 +922,8 @@ struct ManifestDeployConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ManifestDeployEnvConfig {
-    provider: String,
+    provider: ManifestDeployProviderSelection,
     #[serde(default)]
     state: Option<String>,
     #[serde(default = "default_code_ref")]
@@ -935,13 +933,67 @@ struct ManifestDeployEnvConfig {
     #[serde(default)]
     provider_project: Option<String>,
     #[serde(default)]
-    provider_config: Value,
-    #[serde(default)]
     artifact_policy: ArtifactPolicy,
     #[serde(default)]
     preflight: Option<DeployPreflightConfig>,
     #[serde(default)]
     hooks: Option<DeployHooksConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum ManifestDeployProviderSelection {
+    Name(String),
+    Config(ManifestDeployProviderEnvConfig),
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct ManifestDeployProviderEnvConfig {
+    adapter: String,
+    #[serde(flatten)]
+    config: BTreeMap<String, toml::Value>,
+}
+
+impl ManifestDeployProviderSelection {
+    fn adapter(&self) -> &str {
+        match self {
+            Self::Name(name) => name,
+            Self::Config(config) => config.adapter.as_str(),
+        }
+    }
+
+    fn config_value(&self) -> Value {
+        match self {
+            Self::Name(name) => json!({ "adapter": name }),
+            Self::Config(config) => provider_config_to_json(config),
+        }
+    }
+}
+
+fn provider_config_to_json(config: &ManifestDeployProviderEnvConfig) -> Value {
+    let mut value = Map::new();
+    value.insert("adapter".to_owned(), json!(config.adapter));
+    for (key, item) in &config.config {
+        value.insert(key.clone(), toml_value_to_json(item));
+    }
+    Value::Object(value)
+}
+
+fn toml_value_to_json(value: &toml::Value) -> Value {
+    match value {
+        toml::Value::String(value) => json!(value),
+        toml::Value::Integer(value) => json!(value),
+        toml::Value::Float(value) => json!(value),
+        toml::Value::Boolean(value) => json!(value),
+        toml::Value::Datetime(value) => json!(value.to_string()),
+        toml::Value::Array(values) => Value::Array(values.iter().map(toml_value_to_json).collect()),
+        toml::Value::Table(values) => Value::Object(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), toml_value_to_json(value)))
+                .collect(),
+        ),
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

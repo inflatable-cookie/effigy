@@ -29,7 +29,8 @@ curl -sS \
 Then add the IDs to `effigy.toml`:
 
 ```toml
-[deploy.uat.provider_config]
+[deploy.uat.provider]
+adapter = "render"
 project_id = "prj-..."
 environment_id = "env-..."
 preflight_scope = "environment"
@@ -43,7 +44,7 @@ effigy deploy status uat
 ```
 
 `deploy apply` is intentionally blocked while
-`provider_config.preflight_scope = "environment"` is set.
+`provider.preflight_scope = "environment"` is set.
 
 ## Service Check
 
@@ -51,7 +52,8 @@ After Render services exist, remove `preflight_scope = "environment"` and
 provide service IDs:
 
 ```toml
-[deploy.uat.provider_config]
+[deploy.uat.provider]
+adapter = "render"
 project_id = "prj-..."
 environment_id = "env-..."
 service_scope = ["front"]

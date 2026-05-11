@@ -20,28 +20,28 @@ api = "acme-api"
 source = { type = "path", dir = "../../external/providers/render" }
 
 [deploy.uat]
-provider = "render"
 state = "uat"
 code_ref = "branch:main"
 release_policy = "optional"
 provider_project = "effigy-provider-smoke"
 artifact_policy = "digest-preferred"
 
-[deploy.uat.provider_config]
+[deploy.uat.provider]
+adapter = "render"
 project_id = ""
 environment_id = ""
 preflight_scope = "environment"
 services = { front = "" }
 
 [deploy.production]
-provider = "render"
 state = "production"
 code_ref = "branch:main"
 release_policy = "optional"
 provider_project = "effigy-provider-smoke"
 artifact_policy = "digest-preferred"
 
-[deploy.production.provider_config]
+[deploy.production.provider]
+adapter = "render"
 project_id = ""
 environment_id = ""
 preflight_scope = "environment"
