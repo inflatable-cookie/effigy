@@ -57,6 +57,7 @@ adapter = "render"
 project_id = "prj-..."
 environment_id = "env-..."
 service_scope = ["front"]
+skip_domains = true
 services = { front = "srv-..." }
 ```
 
