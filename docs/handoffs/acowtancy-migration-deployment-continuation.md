@@ -99,6 +99,9 @@ Key local files:
   variables, or secrets.
 - Do not promise database/media rollback. `deploy redeploy` is replay of
   recorded immutable inputs, not rollback.
+- Treat media as its own state lane. Farmyard owns Acowtancy media semantics,
+  Underlay owns the object-store env/config contract, and Effigy should grow a
+  generic object-store artifact apply primitive for OCI-backed media payloads.
 - Do not run release prepare/execute unless the user explicitly asks. Release
   execution remains human-owned.
 - Do not edit `.github/workflows/` without explicit approval.
@@ -180,6 +183,23 @@ The Acowtancy canonical problem doc already explains the rebase loop and must
 remain the source of truth for the business/migration problem:
 
 - `/Users/tom/Dev/projects/acowtancy/ledger/planning/migration-execution/legacy-migration-problem-space-and-rebase-loop.md`
+
+The same doc now records the target media lane:
+
+```toml
+[[state.uat.layers]]
+key = "legacy-media"
+role = "media-library"
+apply_mode = "artifact"
+artifact_kind = "object-store"
+source = "farmyard/state/legacy/dist/oci/media.oci"
+target = "media"
+snapshot_identity = "legacy-media@<snapshot>"
+```
+
+Database replay should write stable object keys, not local filesystem paths.
+Those keys must be replayable into local Underlay MinIO, Render/provider UAT,
+and production object stores.
 
 ## Suggested Next Move
 
