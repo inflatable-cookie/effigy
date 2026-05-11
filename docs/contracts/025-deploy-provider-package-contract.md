@@ -121,6 +121,13 @@ Context schema:
   "env": "uat",
   "provider": "render",
   "provider_project": "acowtancy-uat",
+  "provider_config": {
+    "project_id": "prj-...",
+    "environment_id": "env-...",
+    "services": {
+      "front": "srv-..."
+    }
+  },
   "provider_package": {
     "root": "/repo/.effigy/cache/providers/render",
     "name": "render",

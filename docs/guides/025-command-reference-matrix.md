@@ -323,9 +323,10 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - `[deploy.providers.<name>]` can resolve path and git deploy-provider packages
   with `provider.toml` descriptors during deploy planning; declared
   `preflight.rhai` scripts run through `deploy::provider_context()` and
-  `deploy::provider_report(...)`, and reported checks/blockers are merged into
-  the deploy plan; `apply.rhai` and `status.rhai` own provider execution and
-  status reporting for configured packages
+  receive `[deploy.<env>.provider_config]` as raw provider-owned config;
+  `deploy::provider_report(...)` checks/blockers are merged into the deploy
+  plan; `apply.rhai` and `status.rhai` own provider execution and status
+  reporting for configured packages
 - `deploy apply` must validate provider setup and block with
   remediation instead of creating provider projects, services, resources,
   domains, variables, or secrets

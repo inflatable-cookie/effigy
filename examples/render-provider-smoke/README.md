@@ -21,36 +21,46 @@ curl -sS \
   --header "Authorization: Bearer $RENDER_API_KEY"
 
 curl -sS \
-  --url "https://api.render.com/v1/environments?projectId=$EFFIGY_RENDER_PROJECT_ID&name=uat&limit=20" \
+  --url "https://api.render.com/v1/environments?projectId=prj-...&name=uat&limit=20" \
   --header 'Accept: application/json' \
   --header "Authorization: Bearer $RENDER_API_KEY"
 ```
 
-Then export the IDs:
+Then add the IDs to `effigy.toml`:
+
+```toml
+[deploy.uat.provider_config]
+project_id = "prj-..."
+environment_id = "env-..."
+preflight_scope = "environment"
+```
+
+Run:
 
 ```sh
-export EFFIGY_RENDER_PROJECT_ID=prj-...
-export EFFIGY_RENDER_ENVIRONMENT_ID_uat=env-...
-export EFFIGY_RENDER_PREFLIGHT_SCOPE=environment
-
 effigy deploy plan uat
 effigy deploy status uat
 ```
 
 `deploy apply` is intentionally blocked while
-`EFFIGY_RENDER_PREFLIGHT_SCOPE=environment` is set.
+`provider_config.preflight_scope = "environment"` is set.
 
 ## Service Check
 
-After Render services exist, unset `EFFIGY_RENDER_PREFLIGHT_SCOPE` and provide
-service IDs:
+After Render services exist, remove `preflight_scope = "environment"` and
+provide service IDs:
+
+```toml
+[deploy.uat.provider_config]
+project_id = "prj-..."
+environment_id = "env-..."
+service_scope = ["front"]
+services = { front = "srv-..." }
+```
+
+Run:
 
 ```sh
-unset EFFIGY_RENDER_PREFLIGHT_SCOPE
-export EFFIGY_RENDER_SERVICE_front_ID=srv-...
-export EFFIGY_RENDER_SERVICE_admin_ID=srv-...
-export EFFIGY_RENDER_SERVICE_api_ID=srv-...
-
 effigy deploy plan uat
 effigy deploy status uat
 ```

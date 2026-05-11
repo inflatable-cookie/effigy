@@ -27,6 +27,12 @@ release_policy = "optional"
 provider_project = "effigy-provider-smoke"
 artifact_policy = "digest-preferred"
 
+[deploy.uat.provider_config]
+project_id = ""
+environment_id = ""
+preflight_scope = "environment"
+services = { front = "" }
+
 [deploy.production]
 provider = "render"
 state = "production"
@@ -34,3 +40,9 @@ code_ref = "branch:main"
 release_policy = "optional"
 provider_project = "effigy-provider-smoke"
 artifact_policy = "digest-preferred"
+
+[deploy.production.provider_config]
+project_id = ""
+environment_id = ""
+preflight_scope = "environment"
+services = { front = "" }

@@ -593,6 +593,7 @@ fn deploy_provider_context(
         "env": env,
         "provider": env_config.provider,
         "provider_project": env_config.provider_project,
+        "provider_config": env_config.provider_config,
         "provider_package": {
             "root": package.root.display().to_string(),
             "name": package.descriptor.provider.name,
@@ -933,6 +934,8 @@ struct ManifestDeployEnvConfig {
     release_policy: ReleasePolicy,
     #[serde(default)]
     provider_project: Option<String>,
+    #[serde(default)]
+    provider_config: Value,
     #[serde(default)]
     artifact_policy: ArtifactPolicy,
     #[serde(default)]

@@ -119,6 +119,9 @@ Supported first-round fields:
   - `none`, `optional`, or `required`
 - `provider_project`
   - provider-side project identity
+- `[deploy.<env>.provider_config]`
+  - raw provider-owned stable identifiers and options passed to the
+    deploy-provider package; secrets and credential values stay out of config
 - `artifact_policy`
   - `mutable-ok`, `digest-preferred`, or `digest-pinned`
 - `[deploy.<env>.preflight]`
