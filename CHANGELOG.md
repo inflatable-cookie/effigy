@@ -165,6 +165,10 @@ During v0.x, MINOR bumps may include breaking changes.
   workspace containers that mount the project root.
 
 ### Fixed
+- **Git bundle refresh visibility** now prints a short `[bundle] ...` status
+  line on real TTY runs when Effigy clones, refreshes, or updates a git-backed
+  bundle cache during manifest load, so operators can see when a newer bundle
+  revision is being pulled.
 - **Git bundle loads** now refresh stale cached clones during manifest load
   when the remote ref has advanced, so repos do not get stranded on outdated
   bundle templates until someone runs `effigy bundle sync` by hand.

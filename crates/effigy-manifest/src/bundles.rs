@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -191,7 +192,19 @@ fn resolve_git_bundle_source(
 
     let cache_exists = local_path.join(".git").is_dir();
 
-    if !cache_exists || refresh_remote {
+    if !cache_exists {
+        emit_git_bundle_status_line(&format!(
+            "cloning git bundle {}@{}",
+            render_git_bundle_source_label(url),
+            reference
+        ));
+        ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
+    } else if refresh_remote {
+        emit_git_bundle_status_line(&format!(
+            "refreshing git bundle {}@{}",
+            render_git_bundle_source_label(url),
+            reference
+        ));
         ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
     }
     let mut version_hint = if local_path.join(".git").is_dir() {
@@ -204,6 +217,13 @@ fn resolve_git_bundle_source(
         if let Ok(remote_commit) = git_ls_remote(manifest_path, url, reference, &local_path) {
             let local_commit = version_hint.clone().unwrap_or_default();
             if remote_commit != local_commit {
+                emit_git_bundle_status_line(&format!(
+                    "updating git bundle {}@{} ({} -> {})",
+                    render_git_bundle_source_label(url),
+                    reference,
+                    abbreviate_revision(&local_commit),
+                    abbreviate_revision(&remote_commit)
+                ));
                 ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
                 version_hint = Some(git_head_revision(manifest_path, &local_path)?);
             }
@@ -453,6 +473,22 @@ fn canonical_git_cache_identity(url: &str) -> String {
     }
 
     format!("local/{}", normalize_local_git_path(trimmed))
+}
+
+fn emit_git_bundle_status_line(message: &str) {
+    if !std::io::stderr().is_terminal() || std::env::var_os("CI").is_some() {
+        return;
+    }
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(stderr, "[bundle] {message}");
+}
+
+fn render_git_bundle_source_label(url: &str) -> String {
+    canonical_git_cache_identity(url)
+}
+
+fn abbreviate_revision(revision: &str) -> &str {
+    revision.get(..7).unwrap_or(revision)
 }
 
 fn normalize_git_repo_path(path: &str) -> String {
