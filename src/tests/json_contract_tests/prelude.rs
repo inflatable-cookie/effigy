@@ -28,7 +28,10 @@ pub(crate) mod harness {
         lock_test, parse_json, temp_workspace, with_cwd, write_manifest, EnvGuard,
     };
 
-    pub(crate) fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    pub(crate) fn copy_dir_all(
+        src: &std::path::Path,
+        dst: &std::path::Path,
+    ) -> std::io::Result<()> {
         std::fs::create_dir_all(dst)?;
         for entry in std::fs::read_dir(src)? {
             let entry = entry?;

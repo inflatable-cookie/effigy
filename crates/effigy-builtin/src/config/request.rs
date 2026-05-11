@@ -12,7 +12,6 @@ pub(super) struct ConfigRequest {
     pub(super) minimal: bool,
     pub(super) output_json: bool,
     pub(super) target: Option<ConfigSchemaTarget>,
-    pub(super) bundle: Option<String>,
     pub(super) runner: Option<ConfigTestRunner>,
     pub(super) user_inspect: bool,
     pub(super) user_path: bool,
@@ -120,7 +119,6 @@ pub(super) fn parse_config_request(
     let mut minimal = false;
     let mut output_json = false;
     let mut target: Option<ConfigSchemaTarget> = None;
-    let mut bundle: Option<String> = None;
     let mut runner: Option<ConfigTestRunner> = None;
     let mut user_inspect = false;
     let mut user_path = false;
@@ -224,14 +222,6 @@ pub(super) fn parse_config_request(
             )?);
             return Ok(ParseLoopAction::Handled);
         }
-        if arg == "--bundle" {
-            bundle = Some(parser.mapped_flag_value(
-                "`--bundle` requires a value",
-                |value| Some(value.to_owned()),
-                |_| "invalid `--bundle` value".to_owned(),
-            )?);
-            return Ok(ParseLoopAction::Handled);
-        }
         if arg == "--path" {
             inspect_path = Some(parser.mapped_flag_value(
                 "`--path` requires a value",
@@ -290,16 +280,6 @@ pub(super) fn parse_config_request(
     if target.is_some() && !schema {
         return Err(BuiltinError::task_invocation(
             "`--target` requires `--schema` for built-in `config`",
-        ));
-    }
-    if bundle.is_some() && !schema {
-        return Err(BuiltinError::task_invocation(
-            "`--bundle` requires `--schema` for built-in `config`",
-        ));
-    }
-    if bundle.is_some() && target != Some(ConfigSchemaTarget::Bundle) {
-        return Err(BuiltinError::task_invocation(
-            "`--bundle` requires `--target bundle` for built-in `config`",
         ));
     }
     if runner.is_some() && !schema {
@@ -385,7 +365,6 @@ pub(super) fn parse_config_request(
         minimal,
         output_json,
         target,
-        bundle,
         runner,
         user_inspect,
         user_path,
@@ -428,7 +407,7 @@ pub fn parse_config_contract_request(
         minimal: parsed.minimal,
         output_json: parsed.output_json,
         target: parsed.target.map(ConfigSchemaTarget::as_str),
-        bundle: parsed.bundle,
+        bundle: None,
         runner: parsed.runner.map(ConfigTestRunner::as_str),
         user_inspect: parsed.user_inspect,
         user_path: parsed.user_path,

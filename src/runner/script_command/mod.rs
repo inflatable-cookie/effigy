@@ -690,31 +690,10 @@ fn run_rhai_feature(
                 log_path: PathBuf::from(required_string(&options, "log_path")?),
             },
         ),
-        FEATURE_BUNDLE_LIST => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Bundle(BundleArgs {
-                subcommand: BundleSubcommand::List,
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
         FEATURE_BUNDLE_INSPECT => run_typed_command(
             repo_root,
             effigy_cli::Command::Bundle(BundleArgs {
-                subcommand: BundleSubcommand::Inspect {
-                    bundle: Some(required_string(&options, "bundle")?),
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        FEATURE_BUNDLE_EMIT => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Bundle(BundleArgs {
-                subcommand: BundleSubcommand::Export {
-                    bundle: required_string(&options, "bundle")?,
-                    path: PathBuf::from(required_string(&options, "path")?),
-                },
+                subcommand: BundleSubcommand::Inspect,
                 repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
             }),
@@ -1044,9 +1023,7 @@ fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_DOCS_CHECK_NEXT_ACTION
             | FEATURE_DOCS_CHECK_WORKFLOW_PATHS
             | FEATURE_DOCS_ADD_LOG_INDEX
-            | FEATURE_BUNDLE_LIST
             | FEATURE_BUNDLE_INSPECT
-            | FEATURE_BUNDLE_EMIT
             | FEATURE_SERVICE_LIST
             | FEATURE_SERVICE_EXTRACT
             | FEATURE_GATEWAY_STATUS

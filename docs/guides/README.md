@@ -56,7 +56,7 @@ Read:
 
 Use when:
 - you want services, workspaces, gateway routing, and local domains
-- you are adopting the shipped bundles or service catalog
+- you are adopting a bundle source or the service catalog
 - you need mounts, isolation, or per-machine overlays
 
 Use `071` only when you are changing the shipped catalog itself.

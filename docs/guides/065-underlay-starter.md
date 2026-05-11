@@ -1,63 +1,40 @@
-# Shipped Bundles: Underlay and Decodelabs
+# Underlay Starter
 
-This guide covers the two shipped top-level bundles that consumer repos can
-adopt through `[bundle]` in `effigy.toml`:
-
-- **`underlay`** — Rust + Bun workspace container + postgres + dbgate +
-  mailpit + minio, intended for native apps that want one long-running workspace
-  container plus an opinionated gateway route set. An `effigy init underlay`
-  starter is shipped.
-- **`decodelabs`** — PHP-native stack with php-fpm, nginx, MariaDB, phpMyAdmin,
-  Memcached, and Redis, intended for Genesis-style web applications. No
-  dedicated `effigy init` starter; adopt by writing `base = "decodelabs"`
-  into `effigy.toml` directly.
+This guide covers the `effigy init underlay` starter and the external underlay
+bundle it wires into a repo-local bundle directory.
 
 ## Bundle Workflow
 
-The typical bundle adoption path is discover → inspect → adopt (or export):
+The typical path is init or adopt an external bundle repo directly:
 
 ```sh
-# 1. Discover what bundles are available
-effigy bundle list
+# 1. Inspect the active repo bundle source
+effigy bundle inspect
 
-# 2. Inspect a bundle to see its inputs, services, and defaults
-effigy bundle inspect underlay
-effigy bundle inspect decodelabs
+# 2. Refresh a git or OCI bundle source when needed
+effigy bundle sync
 
-# 3a. Adopt a shipped bundle directly (simplest path)
-#     Add to effigy.toml: [bundle] base = "underlay"
-
-# 3b. Or export it for repo-owned modifications
-effigy bundle export underlay --path bundles/underlay
+# 3. Or emit the self-contained starter
+effigy init underlay
 ```
 
-### When to adopt directly vs export
+### Source choice
 
-**Adopt directly (`base = "underlay"`) when:**
-- the shipped defaults match your needs
-- you want automatic updates when Effigy ships new bundle versions
-- your overrides are small (host name, project name, ports)
+Use a typed bundle source:
 
-**Export (`base = { type = "path", dir = "bundles/underlay" }`) when:**
-- you need to modify service definitions, tasks, or scripts
-- you want version-controlled bundle changes
-- you need to fork a bundle for multiple similar repos
+- `base = { type = "path", dir = "bundles/underlay" }`
+- `base = { type = "git", ... }`
+- `base = { type = "oci", ... }`
 
-If the shipped shape is close but needs repo-owned changes, export it and
-switch the manifest to the path form:
+The old shipped-bundle forms are gone:
 
-```sh
-effigy bundle export underlay --path bundles/underlay
-```
-
-The exported local bundle is not a lossy translation of the shipped one. Effigy
-now uses the same canonical template source for shipped bundle defaults and for
-`bundle export`, so local ownership starts from the exact same manifest shape.
+- `base = "underlay"`
+- `base = "decodelabs"`
 
 ## Underlay starter
 
 Reusable Effigy manifest shape for Underlay-style consumer repos. The
-stable system/container layer comes from the shipped `underlay` bundle:
+stable system/container layer comes from the underlay bundle source:
 one long-running Rust + Bun workspace container, bundled postgres, dbgate,
 mailpit, and minio services, a gateway-fronted domain set, and loopback
 alias publication for `db.<host>`, `smtp.<host>`, and `s3.<host>`.
@@ -78,12 +55,12 @@ Emits one root manifest into the current repo:
 |-----------------------------|----------------------------------------------------------------------------------------------|
 | `effigy.toml`               | Root manifest. `[bundle]`, optional `systems.dev.mounts`, repo alias, repo-owned tasks, and any explicit overrides. |
 
-The default UI setup script is a bundled asset referenced from
+The default UI setup script is a bundle-owned asset referenced from
 `effigy.toml` through `{{ bundle.root }}/scripts/dev/ui-setup.rhai`.
-It is not copied into the consumer repo. The helper reads `[bundle.dirs]`
-when repos need explicit package-directory mapping instead of the default
-`app-*` / `acme-*` guesses. If a repo still needs custom hydration after
-that, point the setup step at a repo-owned script instead.
+The helper reads `[bundle.dirs]` when repos need explicit package-directory
+mapping instead of the default `app-*` / `acme-*` guesses. If a repo still
+needs custom hydration after that, point the setup step at a repo-owned script
+instead.
 
 The bundle also publishes error-reporting helper tasks that run a bundled
 Rhai script from `{{ bundle.root }}/scripts/error-reporting.rhai`:
@@ -308,7 +285,7 @@ declaring it directly in the root manifest:
 
 ```toml
 [bundle]
-base = "decodelabs"
+base = { type = "git", url = "git@github.com:org/decodelabs-bundle.git", ref = "main" }
 host = "example.legacy.test"
 project_name = "my-project-dev"
 databases = ["my_database"]
@@ -334,7 +311,7 @@ databases = ["my_database"]
 | `web`      | `nginx`               | Nginx in front of `app` using the bundled `decodelabs` config variant. Document root `.`, rewrites every request to `/vendor/genesis.php`, and hands off to php-fpm. No `try_files`, asset caching, or security locations — DecodeLabs apps handle routing, asset serving, and error pages in PHP. See guide 067 for the variant reference. |
 | `db`       | `mariadb:10.11`       | MariaDB with the configured `database` created on first start.                              |
 | `pma`      | `phpmyadmin:latest`   | phpMyAdmin connected to `db`.                                                               |
-| `mail`     | `mailpit:latest`      | SMTP catch-all and inbox UI for local development. Apps inside the stack should send mail to `mail:1025`. In the shipped PHP workspace, legacy `mail()` calls are also forwarded there through a sendmail-compatible shim. |
+| `mail`     | `mailpit:latest`      | SMTP catch-all and inbox UI for local development. Apps inside the stack should send mail to `mail:1025`. In the PHP workspace, legacy `mail()` calls are also forwarded there through a sendmail-compatible shim. |
 | `memcache` | `memcached`           | In-memory cache sized at 128 MB by default.                                                 |
 | `redis`    | `redis:7`             | Key-value store.                                                                            |
 
@@ -383,9 +360,8 @@ own `scripts/` directory and point the task at the local path instead of
 ### Adoption checklist
 
 1. Write the `[bundle]` block above into the repo's `effigy.toml`.
-2. Run `effigy bundle inspect decodelabs` to confirm the shipped bundle inputs,
-   then run bare `effigy bundle inspect` to confirm the active repo bundle
-   source resolved the way you expect.
+2. Run `effigy bundle inspect` to confirm the active repo bundle source
+   resolved the way you expect.
 3. Run `effigy container up` (or `effigy system up` if the manifest declares
    `[systems.<name>]`) to bring the stack online.
 4. Use `effigy workspace` or `effigy exec` for app-level work inside the
@@ -398,4 +374,4 @@ own `scripts/` directory and point the task at the local path instead of
 Decodelabs bundle coverage lives alongside the underlay proofs under
 `crates/effigy-catalog/` (bundle resolution, service composition, gateway
 route derivation). Consumer repos on the Decodelabs stack consume this
-surface directly via `base = "decodelabs"`.
+surface through typed `path`, `git`, or `oci` bundle sources.

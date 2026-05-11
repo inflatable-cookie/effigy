@@ -118,8 +118,8 @@ host = "acme.test"
 fn exported_underlay_bundle_can_be_used_as_base_path() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle_dir = tmp.path().join("bundles/underlay");
-    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/underlay-bundle");
+    let fixture_dir =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/underlay-bundle");
     copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture bundle");
 
     std::fs::write(
@@ -185,8 +185,8 @@ databases = ["acme", "acme_test"]
 fn exported_underlay_bundle_honors_name_overrides() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle_dir = tmp.path().join("bundles/underlay");
-    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/underlay-bundle");
+    let fixture_dir =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/underlay-bundle");
     copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture bundle");
 
     std::fs::write(

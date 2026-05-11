@@ -92,7 +92,7 @@ Effigy no longer enables deferral just because a repo has:
 - `composer.json`
 - `effigy.json`
 
-Legacy repos now need an explicit `[defer]` block or a shipped bundle that
+Legacy repos now need an explicit `[defer]` block or a bundle source that
 provides one.
 
 That means:

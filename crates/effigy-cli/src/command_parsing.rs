@@ -479,36 +479,10 @@ where
 
     match subcmd.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Bundle)),
-        "list" => parse_bundle_list(args),
         "inspect" => parse_bundle_inspect(args),
-        "export" => parse_bundle_export(args),
         "sync" => parse_bundle_sync(args),
         other => Err(unknown_argument(other)),
     }
-}
-
-fn parse_bundle_list<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut output_json = false;
-    let mut repo_override: Option<PathBuf> = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--json" => output_json = true,
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    Ok(Command::Bundle(BundleArgs {
-        subcommand: BundleSubcommand::List,
-        repo_override,
-        output_json,
-    }))
 }
 
 fn parse_bundle_inspect<I>(args: I) -> Result<Command, CliParseError>
@@ -518,70 +492,18 @@ where
     let mut args = args.into_iter();
     let mut output_json = false;
     let mut repo_override: Option<PathBuf> = None;
-    let mut bundle = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => output_json = true,
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            other => {
-                if bundle.is_some() {
-                    return Err(unknown_argument(other));
-                }
-                bundle = Some(other.to_owned());
-            }
-        }
-    }
-
-    Ok(Command::Bundle(BundleArgs {
-        subcommand: BundleSubcommand::Inspect { bundle },
-        repo_override,
-        output_json,
-    }))
-}
-
-fn parse_bundle_export<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let Some(bundle) = args.next() else {
-        return Err(CliParseError::MissingFlagValue {
-            flag: "<BUNDLE>".to_owned(),
-        });
-    };
-
-    let mut output_json = false;
-    let mut repo_override: Option<PathBuf> = None;
-    let mut path = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--json" => output_json = true,
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--path" => {
-                let Some(value) = args.next() else {
-                    return Err(CliParseError::MissingFlagValue {
-                        flag: "--path".to_owned(),
-                    });
-                };
-                path = Some(PathBuf::from(value));
-            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Bundle)),
             other => return Err(unknown_argument(other)),
         }
     }
 
-    let Some(path) = path else {
-        return Err(CliParseError::MissingFlagValue {
-            flag: "--path".to_owned(),
-        });
-    };
-
     Ok(Command::Bundle(BundleArgs {
-        subcommand: BundleSubcommand::Export { bundle, path },
+        subcommand: BundleSubcommand::Inspect,
         repo_override,
         output_json,
     }))

@@ -16,9 +16,9 @@ use super::schema::{
 };
 use crate::BuiltinError;
 use effigy_manifest::{
-    get_bundle, list_bundle_default_paths, load_task_manifest_with_inspection, load_user_config,
-    save_user_config, user_config_path, ManifestCompositionEdge, ManifestCompositionOverride,
-    ManifestCompositionValueSource, UserConfig, UserContainerBackendPreference,
+    load_task_manifest_with_inspection, load_user_config, save_user_config, user_config_path,
+    ManifestCompositionEdge, ManifestCompositionOverride, ManifestCompositionValueSource,
+    UserConfig, UserContainerBackendPreference,
 };
 
 pub(super) fn render_config_request(
@@ -147,28 +147,11 @@ pub(super) fn render_config_help_payload(output_json: bool) -> Result<String, Bu
 fn render_schema_payload(request: ConfigRequest) -> Result<Option<String>, BuiltinError> {
     let color_enabled = builtin_output_color_enabled(request.output_json);
     let target = request.target;
-    let bundle = request.bundle.clone();
     let runner = request.runner;
 
     let rendered = match target {
         Some(ConfigSchemaTarget::Bundle) => {
-            let resolved_bundle = match bundle.as_deref() {
-                Some(name) => Some(get_bundle(name).ok_or_else(|| {
-                    BuiltinError::task_invocation(format!("unknown bundle `{name}`"))
-                })?),
-                None => None,
-            };
-            let default_paths = match bundle.as_deref() {
-                Some(name) => list_bundle_default_paths(name)
-                    .map_err(|error| BuiltinError::task_invocation(error.to_string()))?,
-                None => Vec::new(),
-            };
-
-            render_builtin_config_schema_bundle_target(
-                request.minimal,
-                resolved_bundle.as_ref(),
-                &default_paths,
-            )
+            render_builtin_config_schema_bundle_target(request.minimal, None, &[])
         }
         Some(ConfigSchemaTarget::Test) => {
             render_builtin_config_schema_test_target(request.minimal, runner)
@@ -181,7 +164,7 @@ fn render_schema_payload(request: ConfigRequest) -> Result<Option<String>, Built
     let text = style_schema_comments(rendered, color_enabled);
     render_config_payload(
         request.output_json,
-        ConfigPayload::schema(request.minimal, target, bundle, runner, text),
+        ConfigPayload::schema(request.minimal, target, None, runner, text),
     )
 }
 

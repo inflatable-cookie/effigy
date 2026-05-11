@@ -15,7 +15,7 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
         ),
         (
             "effigy bundle",
-            "List shipped bundles, inspect shipped bundle schemas, or inspect the active repo bundle source",
+            "Inspect or refresh the active repo bundle source",
             Some("bundle"),
         ),
         (

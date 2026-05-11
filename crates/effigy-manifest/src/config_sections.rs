@@ -6,19 +6,9 @@ use crate::{ManifestManagedRun, ManifestTaskRunIn};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ManifestBundleBase {
-    Shipped { name: String },
     Path { dir: String },
     Git { url: String, r#ref: Option<String> },
     Oci { url: String },
-}
-
-impl ManifestBundleBase {
-    pub fn shipped_name(&self) -> Option<&str> {
-        match self {
-            Self::Shipped { name } => Some(name.as_str()),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -30,16 +20,13 @@ pub struct ManifestBundleConfig {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(untagged)]
 enum ManifestBundleBaseRepr {
-    ShippedName(String),
     Typed(ManifestBundleBaseTable),
+    LegacyString(String),
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 enum ManifestBundleBaseTable {
-    Shipped {
-        name: String,
-    },
     Path {
         dir: String,
     },
@@ -68,9 +55,10 @@ struct ManifestBundleConfigRepr {
 impl From<ManifestBundleBaseRepr> for ManifestBundleBase {
     fn from(value: ManifestBundleBaseRepr) -> Self {
         match value {
-            ManifestBundleBaseRepr::ShippedName(name) => Self::Shipped { name },
+            ManifestBundleBaseRepr::LegacyString(_) => {
+                unreachable!("legacy string rejected earlier")
+            }
             ManifestBundleBaseRepr::Typed(table) => match table {
-                ManifestBundleBaseTable::Shipped { name } => Self::Shipped { name },
                 ManifestBundleBaseTable::Path { dir } => Self::Path { dir },
                 ManifestBundleBaseTable::Git { url, r#ref } => Self::Git { url, r#ref },
                 ManifestBundleBaseTable::Oci { url } => Self::Oci { url },
@@ -90,16 +78,22 @@ impl<'de> serde::Deserialize<'de> for ManifestBundleConfig {
                 "`[bundle].base_path` has been removed. Use `base = { type = \"path\", dir = \"...\" }` instead.",
             ));
         }
+        if repr.name.is_some() {
+            return Err(serde::de::Error::custom(
+                "legacy `[bundle].name` has been removed. Use `base = { type = \"path\" | \"git\" | \"oci\", ... }` instead.",
+            ));
+        }
 
-        let base = match (repr.base, repr.name) {
-            (Some(_), Some(_)) => {
+        let base = match repr.base {
+            Some(ManifestBundleBaseRepr::LegacyString(value)) => {
                 return Err(serde::de::Error::custom(
-                    "`[bundle]` cannot set both `base` and legacy `name`",
+                    format!(
+                        "string `[bundle].base` value `{value}` has been removed. Use `base = {{ type = \"path\" | \"git\" | \"oci\", ... }}` instead."
+                    ),
                 ));
             }
-            (Some(base), None) => Some(base.into()),
-            (None, Some(name)) => Some(ManifestBundleBase::Shipped { name }),
-            (None, None) => None,
+            Some(base) => Some(base.into()),
+            None => None,
         };
 
         Ok(Self {

@@ -109,9 +109,7 @@ pub const FEATURE_DOCS_CHECK_INDEX: &str = "docs.check_index";
 pub const FEATURE_DOCS_CHECK_NEXT_ACTION: &str = "docs.check_next_action";
 pub const FEATURE_DOCS_CHECK_WORKFLOW_PATHS: &str = "docs.check_workflow_paths";
 pub const FEATURE_DOCS_ADD_LOG_INDEX: &str = "docs.add_log_index";
-pub const FEATURE_BUNDLE_LIST: &str = "bundle.list";
 pub const FEATURE_BUNDLE_INSPECT: &str = "bundle.inspect";
-pub const FEATURE_BUNDLE_EMIT: &str = "bundle.emit";
 pub const FEATURE_SERVICE_LIST: &str = "service.list";
 pub const FEATURE_SERVICE_EXTRACT: &str = "service.extract";
 pub const FEATURE_GATEWAY_STATUS: &str = "gateway.status";
@@ -184,9 +182,7 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_DOCS_CHECK_NEXT_ACTION,
     FEATURE_DOCS_CHECK_WORKFLOW_PATHS,
     FEATURE_DOCS_ADD_LOG_INDEX,
-    FEATURE_BUNDLE_LIST,
     FEATURE_BUNDLE_INSPECT,
-    FEATURE_BUNDLE_EMIT,
     FEATURE_SERVICE_LIST,
     FEATURE_SERVICE_EXTRACT,
     FEATURE_GATEWAY_STATUS,

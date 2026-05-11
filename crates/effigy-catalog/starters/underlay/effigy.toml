@@ -2,7 +2,7 @@
 alias = "underlay-app"
 
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 host = "app.test"
 project_name = "underlay-app-dev"
 workspace_subdir = "underlay-app"

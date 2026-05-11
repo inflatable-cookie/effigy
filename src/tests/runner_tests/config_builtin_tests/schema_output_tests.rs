@@ -123,7 +123,7 @@ fn run_manifest_task_builtin_config_schema_target_bundle_prints_generic_bundle_s
             "# base = { type = \"path\", dir = \"bundles/acme\" }",
             "Local bundle directories contain `bundle.toml` metadata plus an `effigy.toml` defaults template under that `dir`.",
             "All other keys are bundle-defined inputs.",
-            "Use `effigy bundle list` to discover local bundles.",
+            "Use `effigy bundle inspect` to inspect the active repo bundle source.",
         ],
     );
     assert_output_excludes_all(&out, &["[tasks]"]);

@@ -419,6 +419,23 @@ fn provider_preflight_report(
     env_config: &ManifestDeployEnvConfig,
     model: &super::model::DeployModel,
 ) -> DeployProviderPreflightReport {
+    let provider = env_config.provider.trim().to_ascii_lowercase();
+    if !matches!(provider.as_str(), "railway" | "render") {
+        return DeployProviderPreflightReport {
+            status: "blocked".to_owned(),
+            checks: vec![DeployProviderCheck {
+                name: "provider-adapter".to_owned(),
+                status: "blocked".to_owned(),
+                target: Some(env_config.provider.clone()),
+                message: Some("supported providers in this deployment transaction surface are railway and render".to_owned()),
+            }],
+            blockers: vec![format!(
+                "deploy provider `{}` is not supported; expected `railway` or `render`",
+                env_config.provider
+            )],
+        };
+    }
+
     let mut checks = vec![
         DeployProviderCheck {
             name: "project".to_owned(),
@@ -440,12 +457,7 @@ fn provider_preflight_report(
             message: None,
         },
     ];
-    checks.push(DeployProviderCheck {
-        name: "provider-adapter".to_owned(),
-        status: "planned".to_owned(),
-        target: Some(env_config.provider.clone()),
-        message: Some("provider mutation is deferred to deploy apply".to_owned()),
-    });
+    checks.extend(provider_adapter_checks(&provider, model));
     DeployProviderPreflightReport {
         status: "planned".to_owned(),
         checks,
@@ -453,14 +465,78 @@ fn provider_preflight_report(
     }
 }
 
+fn provider_adapter_checks(
+    provider: &str,
+    model: &super::model::DeployModel,
+) -> Vec<DeployProviderCheck> {
+    match provider {
+        "railway" => vec![DeployProviderCheck {
+            name: "provider-adapter".to_owned(),
+            status: "planned".to_owned(),
+            target: Some("railway".to_owned()),
+            message: Some(
+                "Railway CLI-backed preflight/apply is deferred to live provider setup".to_owned(),
+            ),
+        }],
+        "render" => {
+            let env_targets = model
+                .secrets
+                .iter()
+                .map(|secret| secret.name.clone())
+                .collect::<Vec<_>>()
+                .join(",");
+            let domain_targets = model
+                .domains
+                .iter()
+                .map(|domain| domain.host.clone())
+                .collect::<Vec<_>>()
+                .join(",");
+            vec![
+                DeployProviderCheck {
+                    name: "provider-adapter".to_owned(),
+                    status: "planned".to_owned(),
+                    target: Some("render".to_owned()),
+                    message: Some(
+                        "Render adapter uses the shared deployment transaction boundary; live Render API/CLI mutation is deferred until provider credentials and services exist".to_owned(),
+                    ),
+                },
+                DeployProviderCheck {
+                    name: "variables".to_owned(),
+                    status: "planned".to_owned(),
+                    target: if env_targets.is_empty() {
+                        None
+                    } else {
+                        Some(env_targets)
+                    },
+                    message: Some("Render variables are validated by name only; Effigy never prints or creates secret values".to_owned()),
+                },
+                DeployProviderCheck {
+                    name: "domains".to_owned(),
+                    status: "planned".to_owned(),
+                    target: if domain_targets.is_empty() {
+                        None
+                    } else {
+                        Some(domain_targets)
+                    },
+                    message: Some("Render domains must already exist or be attached by the operator before live apply".to_owned()),
+                },
+            ]
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn provider_apply_report(plan: &DeployPlanReport) -> DeployProviderOperationReport {
+    let provider = plan.provider.trim().to_ascii_lowercase();
     DeployProviderOperationReport {
         status: "succeeded".to_owned(),
         provider_deployment_id: Some(format!("{}-{}", plan.provider, plan.deployment_id)),
         services: Vec::new(),
-        warnings: vec![
-            "provider adapter recorded the transaction boundary; live provider CLI mutation is deferred to the provider hardening slice".to_owned(),
-        ],
+        warnings: vec![match provider.as_str() {
+            "render" => "Render adapter recorded the transaction boundary; live Render API/CLI mutation is deferred until provider credentials and existing services are configured".to_owned(),
+            "railway" => "Railway adapter recorded the transaction boundary; live Railway CLI mutation is deferred until provider credentials and existing services are configured".to_owned(),
+            _ => "provider adapter recorded the transaction boundary; live provider mutation is deferred".to_owned(),
+        }],
     }
 }
 

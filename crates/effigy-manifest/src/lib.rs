@@ -20,8 +20,7 @@ pub mod user_config;
 pub const TASK_MANIFEST_FILE: &str = "effigy.toml";
 
 pub use bundles::{
-    export_bundle, get_bundle, inspect_bundle_source, list_bundle_default_paths, list_bundles,
-    render_bundle_defaults, sync_bundle_source, BundleExport, BundleInputSpec, BundleInputType,
+    inspect_bundle_source, sync_bundle_source, BundleInputSpec, BundleInputType,
     BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport,
 };
 pub use composition::{

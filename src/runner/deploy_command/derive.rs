@@ -13,24 +13,17 @@ pub(super) fn derive_deploy_model(repo_root: &Path) -> Result<DeployModel, Runne
     let bundle = loaded.manifest.bundle.as_ref().ok_or_else(|| {
         RunnerError::task_invocation("`deploy model` requires a bundle-backed repo".to_owned())
     })?;
-    let base = match bundle.base.as_ref() {
-        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) => name.clone(),
-        Some(effigy_manifest::ManifestBundleBase::Path { .. })
-        | Some(effigy_manifest::ManifestBundleBase::Git { .. })
-        | Some(effigy_manifest::ManifestBundleBase::Oci { .. }) => {
-            let bundle_root = loaded.bundle_root.as_deref().ok_or_else(|| {
-                RunnerError::task_invocation(
-                    "`deploy model` could not resolve the materialized bundle root".to_owned(),
-                )
-            })?;
-            bundle_name_from_descriptor(bundle_root)?
-        }
-        None => {
-            return Err(RunnerError::task_invocation(
-                "`deploy model` requires a bundle base selection".to_owned(),
-            ));
-        }
-    };
+    if bundle.base.is_none() {
+        return Err(RunnerError::task_invocation(
+            "`deploy model` requires a bundle base selection".to_owned(),
+        ));
+    }
+    let bundle_root = loaded.bundle_root.as_deref().ok_or_else(|| {
+        RunnerError::task_invocation(
+            "`deploy model` could not resolve the materialized bundle root".to_owned(),
+        )
+    })?;
+    let base = bundle_name_from_descriptor(bundle_root)?;
 
     match base.as_str() {
         "underlay" => derive_underlay_model(repo_root, bundle),

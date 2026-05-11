@@ -43,7 +43,7 @@ installing them directly on your machine.
 - [`guides/064-system-workspace-and-dev-contract.md`](./guides/064-system-workspace-and-dev-contract.md)
 
 **Then go deeper:**
-- [`guides/065-underlay-starter.md`](./guides/065-underlay-starter.md) — shipped bundle for Rust + Bun stacks
+- [`guides/065-underlay-starter.md`](./guides/065-underlay-starter.md) — Underlay starter and bundle-backed Rust + Bun stacks
 - [`guides/067-catalog-services-reference.md`](./guides/067-catalog-services-reference.md) — postgres, redis, and more
 - [`guides/069-workspace-host-integration.md`](./guides/069-workspace-host-integration.md) — sibling repo mounts and Docker/Colima coexistence
 

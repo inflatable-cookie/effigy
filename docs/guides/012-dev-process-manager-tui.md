@@ -224,11 +224,11 @@ concurrent = [
 
 ## 7) Local Dev Relationship
 
-For repos using the fuller shipped local-dev story, `effigy dev` sits at the
+For repos using the fuller bundle-backed local-dev story, `effigy dev` sits at the
 end of this chain:
 
-1. `effigy bundle list` / `effigy bundle inspect` to discover the shipped
-   top-level bundle(s) the repo wants to adopt
+1. `effigy bundle inspect` / `effigy bundle sync` to inspect or refresh the
+   active bundle source the repo already declares
 2. `effigy service list` / `effigy service extract` for bundled service
    fragments when the repo needs to take ownership of one
 3. `effigy system up` / `effigy system status` for substrate lifecycle when

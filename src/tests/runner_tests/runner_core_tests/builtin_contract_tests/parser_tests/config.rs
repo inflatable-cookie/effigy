@@ -95,32 +95,6 @@ fn builtin_config_parser_contracts_are_stable() {
         }
     );
 
-    let parsed = parse_config_contract_request(
-        &task,
-        &string_args(&["--schema", "--target", "bundle", "--bundle", "underlay"]),
-    )
-    .expect("config parse");
-    assert_eq!(
-        parsed,
-        ConfigParseContract {
-            inspect: false,
-            inspect_path: None,
-            schema: true,
-            minimal: false,
-            output_json: false,
-            target: Some("bundle"),
-            bundle: Some("underlay".to_owned()),
-            runner: None,
-            user_inspect: false,
-            user_path: false,
-            user_get: None,
-            set_container_backend: None,
-            set_container_profile: None,
-            unset_container_backend: false,
-            unset_container_profile: false,
-        }
-    );
-
     let parsed = parse_config_contract_request(&task, &string_args(&["--user-inspect", "--json"]))
         .expect("config parse");
     assert_eq!(
@@ -208,5 +182,14 @@ fn builtin_config_parser_contracts_are_stable() {
     assert_parser_task_invocation_error(
         parse_config_contract_request(&task, &string_args(&["get", "containers.unknown"])),
         "unknown config get key `containers.unknown`",
+    );
+}
+
+#[test]
+fn builtin_config_parser_rejects_removed_bundle_flag() {
+    let task = parser_task();
+    assert_parser_task_invocation_error(
+        parse_config_contract_request(&task, &string_args(&["--bundle", "underlay"])),
+        "unknown argument(s) for built-in `config`: --bundle underlay",
     );
 }

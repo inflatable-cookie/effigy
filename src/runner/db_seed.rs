@@ -1139,7 +1139,7 @@ mod tests {
         let manifest: TaskManifest = toml::from_str(
             r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 databases = ["acowtancy", "acowtancy_test"]
 
 [data.targets.legacy_mysql]
@@ -1185,7 +1185,7 @@ database = "acowtancy"
         let manifest: TaskManifest = toml::from_str(
             r#"
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 databases = ["acowtancy", "acowtancy_test"]
 
 [data.targets.legacy_mysql]

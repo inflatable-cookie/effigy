@@ -220,7 +220,10 @@ trait DeployProviderAdapter {
 
 Railway is the first apply adapter.
 
-Render must land before the v0.6.0 deployment closeout.
+Render uses the same transaction boundary. In the v0.6.0 planning slice it
+must report explicit preflight checks for the adapter, required variable names,
+and domains. Live Render mutation remains gated behind existing provider
+credentials and already-created services/resources.
 
 Provider credentials are operator-owned.
 

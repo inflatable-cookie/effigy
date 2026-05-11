@@ -40,19 +40,59 @@ pub fn load_container_policy(
 /// the active bundle. A malformed `config.toml` surfaces as a parse error.
 fn resolve_library_mounts(
     manifest: &effigy_manifest::TaskManifest,
+    bundle_root: Option<&Path>,
 ) -> Result<Vec<effigy_manifest::LibraryMount>, ContainerPolicyError> {
-    let Some(bundle_name) = manifest
+    let Some(_bundle_base) = manifest
         .bundle
         .as_ref()
         .and_then(|bundle| bundle.base.as_ref())
-        .and_then(effigy_manifest::ManifestBundleBase::shipped_name)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
     else {
         return Ok(Vec::new());
     };
+    let Some(bundle_root) = bundle_root else {
+        return Ok(Vec::new());
+    };
+    let Some(bundle_name) = read_bundle_name_from_descriptor(bundle_root)? else {
+        return Ok(Vec::new());
+    };
     let user_config = effigy_manifest::load_user_config()?;
-    Ok(user_config.library_mounts_for(bundle_name))
+    Ok(user_config.library_mounts_for(&bundle_name))
+}
+
+fn read_bundle_name_from_descriptor(
+    bundle_root: &Path,
+) -> Result<Option<String>, ContainerPolicyError> {
+    #[derive(serde::Deserialize)]
+    struct BundleDescriptor {
+        bundle: BundleMetadata,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct BundleMetadata {
+        name: String,
+    }
+
+    let descriptor_path = bundle_root.join("bundle.toml");
+    if !descriptor_path.is_file() {
+        return Ok(None);
+    }
+    let descriptor_source = std::fs::read_to_string(&descriptor_path).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "failed to read bundle descriptor at {}: {error}",
+            descriptor_path.display()
+        ))
+    })?;
+    let descriptor: BundleDescriptor = toml::from_str(&descriptor_source).map_err(|error| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "failed to parse bundle descriptor at {}: {error}",
+            descriptor_path.display()
+        ))
+    })?;
+    let bundle_name = descriptor.bundle.name.trim().to_owned();
+    if bundle_name.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(bundle_name))
 }
 
 pub fn load_container_policy_with_workspace(
@@ -84,7 +124,7 @@ pub fn load_container_policy_with_workspace(
             "container `{name}` is not defined in `[containers]` (available: {available})"
         ))
     })?;
-    let library_mounts = resolve_library_mounts(&loaded.manifest)?;
+    let library_mounts = resolve_library_mounts(&loaded.manifest, loaded.bundle_root.as_deref())?;
     build_effective_policy(
         repo_root,
         containers,
@@ -109,7 +149,7 @@ pub fn load_all_container_policies(
     })?;
     let default_project_name_base = default_project_name_base(&loaded.manifest, repo_root);
     validate_unique_project_names(containers, &default_project_name_base, repo_root)?;
-    let library_mounts = resolve_library_mounts(&loaded.manifest)?;
+    let library_mounts = resolve_library_mounts(&loaded.manifest, loaded.bundle_root.as_deref())?;
 
     let mut policies = containers
         .environments

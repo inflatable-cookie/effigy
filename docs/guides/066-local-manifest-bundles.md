@@ -1,54 +1,30 @@
 # Local Manifest Bundles
 
-Local manifest bundles let a repo reference reusable Effigy defaults in
-a directory instead of copying large `[systems]`, `[containers]`, or
-task blocks into every consumer manifest.
+Local manifest bundles are now the only bundle format Effigy supports.
+The old compiled-in shipped bundle catalog is gone.
 
-Use shipped bundles with `[bundle].base`. Use local bundles with the typed
-path form.
+Use one of these typed source forms:
 
 ```toml
 [bundle]
 base = { type = "path", dir = "bundles/acme" }
-host = "acme.test"
-project_name = "acme-dev"
 ```
-
-`[bundle].base_path` has been removed. `name` remains accepted as a legacy
-alias for `base`, but new manifests should use `base`.
-
-## Export a Shipped Bundle
-
-Use `effigy bundle export` when a shipped bundle is close but needs local
-ownership:
-
-```sh
-effigy bundle export underlay --path bundles/underlay
-```
-
-The export writes a local-bundle directory containing `bundle.toml`,
-`effigy.toml`, any bundle-owned assets, and a short README. It refuses to
-overwrite existing files.
-
-For shipped bundles, the exported `effigy.toml` is not a second hand-maintained
-"local copy" format. It is the canonical shipped bundle template materialized
-for repo ownership. Shipped bundle defaults and `bundle export` now come from
-the same template source, so a bundle change only needs to land in one file.
-
-Switch the consuming manifest from a shipped bundle to the path form:
 
 ```toml
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
-host = "acme.test"
-project_name = "acme-dev"
-workspace_subdir = "underlay-reference"
-databases = ["acme"]
+base = { type = "git", url = "git@github.com:org/acme-bundle.git", ref = "main" }
 ```
 
-After that, edits in `bundles/underlay/` are repo-owned. They no longer
-track updates to the compiled-in shipped bundle unless you export again
-to a separate directory and merge the diff.
+```toml
+[bundle]
+base = { type = "oci", url = "ghcr.io/org/acme-bundle:v1" }
+```
+
+Legacy forms are removed:
+
+- `base = "underlay"`
+- `[bundle].name`
+- `[bundle].base_path`
 
 ## Directory Contract
 
@@ -56,19 +32,18 @@ A local bundle directory contains:
 
 ```text
 bundles/acme/
-├── bundle.toml   # metadata and input schema
-└── effigy.toml   # defaults template rendered before merge
+├── bundle.toml
+├── export.toml
+└── scripts/...
 ```
 
-The defaults file name is `effigy.toml` by default. Override it with
-`[bundle].defaults` inside `bundle.toml` when needed.
+- `bundle.toml` declares bundle metadata and inputs
+- `export.toml` is the defaults template rendered before merge
+- optional assets and scripts live under the bundle root and can be referenced
+  with `{{ bundle.root }}`
 
-For shipped bundles compiled into Effigy, the canonical template source is the
-bundle's `export.toml`. `effigy bundle export` writes that canonical template
-out as `effigy.toml` for local path-based ownership.
-
-Paths in `base = { type = "path", dir = "..." }` are resolved relative to the
-consuming `effigy.toml`, unless absolute.
+Paths in `base = { type = "path", dir = "..." }` resolve relative to the
+consuming `effigy.toml` unless absolute.
 
 ## `bundle.toml`
 
@@ -76,6 +51,7 @@ consuming `effigy.toml`, unless absolute.
 [bundle]
 name = "acme"
 description = "Acme local dev stack."
+defaults = "export.toml"
 
 [[inputs]]
 name = "host"
@@ -83,19 +59,6 @@ type = "string"
 required = true
 description = "Primary local hostname."
 example = "acme.test"
-
-[[inputs]]
-name = "project_name"
-type = "string"
-required = true
-description = "Compose project name."
-example = "acme-dev"
-
-[[inputs]]
-name = "api_port"
-type = "integer"
-default = 41001
-description = "API dev-server port."
 ```
 
 Supported input types:
@@ -105,108 +68,29 @@ Supported input types:
 - `bool`
 - `list`
 
-Input names must not collide with reserved `[bundle]` selector keys:
-`base` or legacy `name`.
+Every key under `[bundle]` other than `base` must be declared in
+`bundle.toml`. Misspelled inputs fail manifest loading.
 
-Local bundles are strict. Every key under `[bundle]` other than
-`base` must be declared in `bundle.toml`; misspelled inputs fail
-manifest loading.
+## Inspect and Sync
 
-## Defaults Template
+Use:
 
-The bundle's `effigy.toml` is a Minijinja template. Resolved inputs are
-available under `inputs`.
-
-When authoring a shipped bundle inside Effigy itself, keep one canonical
-template file. Do not keep parallel `defaults.toml` and `export.toml` files
-with the same shape.
-
-The bundle directory is available as `bundle.root`. Use it for
-bundle-owned Rhai scripts, compose files, Dockerfiles, or other assets.
-Effigy renders it as an absolute path, so external bundles can stay in
-one place and consumers pick up source updates without copying assets
-into the repo.
-
-```toml
-[containers]
-default = "stack"
-
-[containers.stack]
-startup = "detached"
-project_name = "{{ inputs.project_name }}"
-primary_service = "workspace"
-
-[containers.stack.dns]
-routes = [
-  { domain = "{{ inputs.host }}", tls = true, port = {{ inputs.api_port }}, service = "workspace" },
-]
-
-[tasks.dev]
-run = "cargo run -- --host {{ inputs.host }} --port {{ inputs.api_port }}"
-
-[tasks.setup]
-run = [{ rhai = "{{ bundle.root }}/scripts/setup.rhai" }]
+```sh
+effigy bundle inspect
+effigy bundle sync
 ```
 
-After rendering, Effigy parses the result as normal `effigy.toml`
-content.
+- `bundle inspect` reports the active source type, local materialized path,
+  version hint, and stale state
+- `bundle sync` refreshes git and OCI sources
+- local path bundles report `not-applicable` on sync
 
-For shipped bundles compiled into the Effigy binary, `bundle.root` points
-at a content-addressed materialized asset directory under
-`.effigy/runtime/bundles/<bundle>/<hash>/`. Effigy refreshes that
-directory when the embedded asset contents change.
+## Template Notes
 
-Repo-owned run steps may also reference the active bundle root with
-`{{ bundle.root }}`:
+`export.toml` is a Minijinja template. Resolved inputs are available under
+`inputs`.
 
-```toml
-[tasks.dev]
-run = [{ rhai = "{{ bundle.root }}/scripts/setup.rhai" }]
-```
+Bundle-owned assets are available under `{{ bundle.root }}`.
 
-When a repo forks a bundled Rhai helper locally, keep the script
-declarative. For `.env` bootstrapping, prefer `copy_if_missing(...)`
-plus `env_file_set(...)` over reading the template into memory and
-writing it back out unchanged.
-
-## Merge Precedence
-
-Bundle defaults are lowest precedence.
-
-1. Effigy composes the root manifest and any `[manifest].include`
-   fragments.
-2. Effigy renders and parses the selected bundle defaults.
-3. Missing values are filled from the bundle.
-4. Values already owned by the repo manifest win.
-
-This means a consumer can override a bundle-provided path directly:
-
-```toml
-[bundle]
-base = { type = "path", dir = "bundles/acme" }
-host = "acme.test"
-project_name = "acme-dev"
-
-[containers.stack]
-primary_service = "api"
-```
-
-## Validation
-
-Use these commands while authoring a bundle:
-
-```bash
-effigy config --inspect
-effigy config --inspect --path containers.stack
-effigy tasks
-effigy container status
-```
-
-`effigy config --inspect` shows local bundle-populated paths with the
-bundle defaults file as the source.
-
-`effigy bundle list`, `effigy bundle inspect <name>`, and
-`effigy bundle export <name> --path <dir>` operate on shipped bundles.
-Use bare `effigy bundle inspect` to inspect the active bundle source for the
-current repo, including shipped/path/git/oci source metadata, local cache path,
-version hint, and stale state.
+That keeps repo manifests small while still letting the bundle ship helper
+scripts, env templates, and other glue beside the defaults template.

@@ -6,8 +6,8 @@ use crate::surface::*;
 
 use super::{
     dynamic_array_to_strings, effigy_result_map, map_to_json, module_feature_no_args,
-    module_feature_options, module_feature_string, module_feature_string_options,
-    module_feature_two_strings, rhai_runtime_error, HostCallbacks, ScriptContext,
+    module_feature_options, module_feature_string_options, rhai_runtime_error, HostCallbacks,
+    ScriptContext,
 };
 
 pub(super) fn register_misc_feature_modules(
@@ -306,24 +306,8 @@ fn build_bundle_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) ->
     let mut module = rhai::Module::new();
     module_feature_no_args(
         &mut module,
-        "list",
-        FEATURE_BUNDLE_LIST,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_string(
-        &mut module,
         "inspect",
         FEATURE_BUNDLE_INSPECT,
-        "bundle",
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_two_strings(
-        &mut module,
-        "emit",
-        FEATURE_BUNDLE_EMIT,
-        ["bundle", "path"],
         context.clone(),
         callbacks.clone(),
     );

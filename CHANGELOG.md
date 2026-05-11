@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- **Built-in shipped bundle catalog removed:** `effigy bundle` now supports only
+  active-source `inspect` and `sync`, `[bundle].base` must use typed
+  `path|git|oci` sources, legacy string `base = "name"` and `[bundle].name`
+  are removed, and first-party starter/config/help surfaces now assume
+  self-owned or remote bundle repos instead of compiled-in bundle presets.
 - **Helper-style root built-ins** have been tightened into clearer nested
   homes: use **`effigy tasks migrate`**, **`effigy tasks unlock`**,
   **`effigy tasks cache`**, and **`effigy config completion`** instead of the
@@ -59,6 +64,9 @@ During v0.x, MINOR bumps may include breaking changes.
   supported through the shared deployment transaction report boundary, while
   provider setup creation, secret creation, release execution, and
   database/media rollback remain out of scope.
+- **Render deployment transaction planning:** Render provider configs now get
+  explicit transaction preflight checks for adapter boundary, required variable
+  names, and domains, and unknown deploy providers block at plan time.
 - **State stack planning foundation:** `effigy state plan [<STACK>]` now
   validates `effigy.state-stack.v1` manifests and reports ordered lineage in
   text or JSON without executing app hooks. When no standalone manifest is

@@ -207,10 +207,12 @@ fn bundle_schema_lines(bundle: Option<&BundleSpec>, default_paths: &[String]) ->
             }
         }
         None => {
-            lines.push("# Use `effigy bundle list` to discover local bundles.".to_owned());
             lines.push(
                 "# Use `effigy bundle inspect` to inspect the active repo bundle source."
                     .to_owned(),
+            );
+            lines.push(
+                "# Use `effigy bundle sync` to refresh remote git or OCI sources.".to_owned(),
             );
         }
     }

@@ -40,7 +40,7 @@ fn help_topic_label_maps_all_topics() {
 fn command_kind_and_name_maps_command_variants() {
     let version = Command::Version;
     let bundle = Command::Bundle(BundleArgs {
-        subcommand: BundleSubcommand::List,
+        subcommand: BundleSubcommand::Inspect,
         repo_override: None,
         output_json: false,
     });

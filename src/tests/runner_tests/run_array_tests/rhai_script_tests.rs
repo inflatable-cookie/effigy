@@ -137,20 +137,34 @@ fn run_manifest_task_run_array_rhai_steps_support_typed_host_helpers() {
     let _guard = lock_test();
     let root = temp_workspace("run-array-rhai-host-helpers");
     fs::create_dir_all(root.join("scripts/rhai")).expect("mkdir rhai script dir");
+    fs::create_dir_all(root.join("bundles/acme")).expect("mkdir bundle dir");
+    fs::write(
+        root.join("bundles/acme/bundle.toml"),
+        "[bundle]\nname = \"acme\"\n",
+    )
+    .expect("write bundle descriptor");
+    fs::write(
+        root.join("bundles/acme/export.toml"),
+        "[tasks.capture]\nrun = \"printf capture-ok\"\n",
+    )
+    .expect("write bundle defaults");
     fs::write(
         root.join("scripts/rhai/dispatch.rhai"),
         r#"
-let bundles = bundle::list();
-if bundles["ok"] == false {
-    throw "bundle list failed";
+let bundle_report = bundle::inspect();
+if bundle_report["ok"] == false {
+    throw "bundle inspect failed";
 }
-fs::write_file("bundles.json", json::stringify(bundles));
+fs::write_file("bundles.json", json::stringify(bundle_report));
 "#,
     )
     .expect("write rhai script");
     write_manifest(
         &root.join("effigy.toml"),
-        r#"[tasks.capture]
+        r#"[bundle]
+base = { type = "path", dir = "bundles/acme" }
+
+[tasks.capture]
 run = "printf capture-ok"
 
 [tasks.validate]

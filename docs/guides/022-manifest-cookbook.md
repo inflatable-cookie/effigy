@@ -1014,7 +1014,7 @@ Use catalog aliases to keep task ownership local while retaining root-level orch
 
 ```toml
 [bundle]
-base = "underlay"
+base = { type = "path", dir = "bundles/underlay" }
 databases = ["acowtancy", "acowtancy_test"]
 
 [data.targets.legacy_mysql]

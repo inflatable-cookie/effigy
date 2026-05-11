@@ -87,7 +87,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy container` | Operate manifest-defined local container environments across Colima/containerd or Docker, along with data lifecycle, cleanup surfaces, shared-service reuse, and cross-project status views | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `volume`, `cache`, `--repo`, `--attach`, `--detach`, `--service`, `--command`, `--follow`, `--global`, `--dormant`, `--orphans`, `--project`, `--kind`, `--db-seed`, `--db-dump`, `--no-prompt`, `--push`, `--keep-data`, `--yes`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1` | `063-container-system-guide.md` |
 | `effigy system` | Operate the manifest's declared default system substrate (VM + compose + gateway) with lifecycle, log streaming, and recovery surfaces | `up`, `down`, `status`, `logs`, `repair`, `reset-runtime`, `--system`, `--repo`, `--follow`, `--json` | `effigy.system.recover.v1` | `064-system-workspace-and-dev-contract.md` |
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
-| `effigy bundle` | Discover shipped bundles, inspect bundle inputs and active source metadata, export local bundle directories, and refresh repo-local git/OCI bundle sources | `list`, `inspect`, `export`, `sync`, `--repo`, `--path`, `--json` | `effigy.bundle.list.v1`, `effigy.bundle.inspect.v1`, `effigy.bundle.export.v1`, `effigy.bundle.sync.v1` | `065-underlay-starter.md` |
+| `effigy bundle` | Inspect the active repo bundle source and refresh repo-local git/OCI bundle sources | `inspect`, `sync`, `--repo`, `--json` | `effigy.bundle.inspect.v1`, `effigy.bundle.sync.v1` | `065-underlay-starter.md` |
 | `effigy deploy` | Derive a provider-neutral production deployment model, export bounded provider files, and run provider-neutral deployment transactions with state, artifact, release, hook, health, and report evidence | `model`, `export render`, `export railway`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | [`../contracts/002-production-deployment-model.md`](../contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../contracts/019-deployment-transaction-system-contract.md) |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, optionally stage DB seed dumps and run the standard `bootstrap:db-seed` task, optionally prompt for missing bundle DB dumps on a real TTY, optionally isolate generated-compose runtime state with `--fresh`, optionally pin this bootstrap session to `containerd` or `docker` with `--backend`, run `[bootstrap].start` after setup by default (`--no-start` to skip), and expose `bootstrap deps sync`, `bootstrap children status/sync`, and `bootstrap teardown` for typed dependency hydration, child checkout inspection/refresh, and fresh-session cleanup | `<git-url>`, `teardown`, `deps sync`, `children status`, `children sync`, `--path`, `--branch`, `--backend <containerd|docker>`, `--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>`, `--fresh`, `--no-prompt`, `--reuse-path`, `--no-start`, `--start`, `--plan`, `--yes`, `--js-only`, `--rust-only`, `--fetch-only`, `--checkout`, `--json` | `effigy.bootstrap.v1`, `effigy.bootstrap.deps.v1`, `effigy.bootstrap.children-status.v1`, `effigy.bootstrap.children-sync.v1`, `effigy.bootstrap-teardown.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
@@ -226,9 +226,7 @@ bootstrap/data seed/data dump without becoming part of `[bundle].databases`.
 ### Bundles, Bootstrap, and Demos
 
 ```sh
-effigy bundle list [--repo <PATH>] [--json]
-effigy bundle inspect [--repo <PATH>] [<BUNDLE>] [--json]
-effigy bundle export [--repo <PATH>] <BUNDLE> --path <DIR> [--json]
+effigy bundle inspect [--repo <PATH>] [--json]
 effigy bundle sync [--json]
 effigy deploy model [--repo <PATH>] --json
 effigy deploy export render [--repo <PATH>] --path <DIR> [--plan] [--json]
@@ -306,14 +304,12 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   half-up substrate state
 - mounted sibling repos listed in `systems.<name>.mounts` auto-adopt
   producer-declared isolation paths into workspace containers
-- `bundle export <BUNDLE> --path <DIR>` writes a local
-  `base = { type = "path", dir = "..." }` bundle directory for repo-owned
-  modifications
+- `bundle inspect` reports the active repo bundle source only; named shipped
+  bundle inspection is gone
 - `bundle sync` is the explicit refresh path for git and OCI bundle sources in
-  the current repo; shipped and path bundle sources report not-applicable
+  the current repo; local path bundle sources report not-applicable
 - `deploy model` is intentionally JSON-only and derives Underlay deployment
-  shape from shipped, path, git, or OCI bundle sources once the active bundle
-  materializes locally
+  shape from the active materialized bundle source
 - `deploy export render` is intentionally Underlay-first in the first batch and
   currently generates only `render.yaml`
 - `deploy export railway` is intentionally Underlay-first in the first batch
@@ -322,7 +318,8 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   `deploy plan/apply/status/history/redeploy` compose code refs, provider
   targets, state stacks, OCI artifact policy, release evidence, hooks, health
   checks, and reports; Railway and Render share the same provider transaction
-  boundary
+  boundary, with Render planning reporting adapter, variable-name, and domain
+  checks before live provider setup exists
 - `deploy apply` must validate provider setup and block with
   remediation instead of creating provider projects, services, resources,
   domains, variables, or secrets

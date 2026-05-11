@@ -326,7 +326,9 @@ run = "printf seed"
             panic!("{task_name} should contain a Rhai step");
         };
         assert!(
-            step.rhai.as_deref().is_some_and(|path| path.ends_with("/scripts/error-reporting.rhai")),
+            step.rhai
+                .as_deref()
+                .is_some_and(|path| path.ends_with("/scripts/error-reporting.rhai")),
             "{task_name} should reference error-reporting.rhai"
         );
     }
@@ -488,9 +490,7 @@ mounts = ["../../underlay", "../../poodle"]
     };
     assert_eq!(
         sync_step.task.as_deref(),
-        Some(
-            "bootstrap deps sync ../underlay acme-api acme-client acme-ui acme-front acme-admin"
-        )
+        Some("bootstrap deps sync ../underlay acme-api acme-client acme-ui acme-front acme-admin")
     );
 
     let children = &manifest.bootstrap.as_ref().expect("bootstrap").children;

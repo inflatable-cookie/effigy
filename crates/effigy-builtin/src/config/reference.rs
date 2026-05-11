@@ -26,11 +26,7 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy bundle list` to discover shipped `[bundle]` presets, `effigy bundle inspect <name>` to inspect one shipped bundle's accepted inputs plus default manifest paths, or bare `effigy bundle inspect` to inspect the active repo bundle source.",
-    )?;
-    renderer.notice(
-        NoticeLevel::Info,
-        "Use `effigy config --schema --target bundle` for the generic `[bundle]` shape, or add `--bundle <name>` to render one bundle's concrete input surface.",
+        "Use `effigy bundle inspect` to inspect the active repo bundle source and `effigy bundle sync` to refresh remote git or OCI bundle sources.",
     )?;
     renderer.notice(
         NoticeLevel::Info,
@@ -44,15 +40,17 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
         color_enabled,
         [
             "[bundle]",
-            "# Optional top-level bundle resolver for local or git-hosted manifest presets.",
+            "# Optional top-level bundle resolver for repo-local, git-hosted, or OCI-hosted manifest presets.",
             "base = { type = \"path\", dir = \"bundles/acme\" }",
             "# Or use a git-hosted bundle:",
             "# base = { type = \"git\", url = \"git@github.com:org/bundle.git\" }",
+            "# Or use an OCI bundle:",
+            "# base = { type = \"oci\", url = \"ghcr.io/org/bundle:v1\" }",
             "# Bundle-defined inputs depend on the selected preset.",
-            "# Discover local bundles: `effigy bundle list`",
             "# Inspect the active repo bundle source: `effigy bundle inspect`",
-            "# Render bundle config schema: `effigy config --schema --target bundle --bundle <name>`",
-            "# Define local bundles with `bundle.toml` and `effigy.toml` in the chosen `dir`.",
+            "# Refresh remote git or OCI sources: `effigy bundle sync`",
+            "# Render the generic bundle config schema: `effigy config --schema --target bundle`",
+            "# Define local bundles with `bundle.toml` and `export.toml` in the chosen `dir`.",
             "# Local bundle templates can reference bundled scripts and assets with `{{ bundle.root }}`.",
             "# Repo-owned run steps can also reference the active bundle root with `{{ bundle.root }}`.",
             "",

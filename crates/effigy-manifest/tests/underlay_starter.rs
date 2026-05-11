@@ -6,7 +6,7 @@
 //! This test verifies that the starter manifest:
 //!
 //! - parses cleanly as a single root manifest
-//! - resolves the shipped `underlay` bundle into the expected
+//! - resolves the local bundled `underlay` source into the expected
 //!   `systems.dev` + `containers.stack` shape
 //! - declares the catalog-sourced services (workspace + postgres + dbgate +
 //!   mailpit + minio)
@@ -59,14 +59,14 @@ fn starter_composes_into_single_manifest() {
     let bundle = manifest.bundle.expect("starter root carries [bundle]");
     assert!(matches!(
         bundle.base.as_ref(),
-        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) if name == "underlay"
+        Some(effigy_manifest::ManifestBundleBase::Path { dir }) if dir == "bundles/underlay"
     ));
 
     // Catalog alias is declared in the root.
     let catalog = manifest.catalog.expect("starter root carries [catalog]");
     assert_eq!(catalog.alias.as_deref(), Some("underlay-app"));
 
-    // `[bootstrap]` now comes from the shipped bundle defaults.
+    // `[bootstrap]` now comes from the local bundle defaults.
     let bootstrap = manifest
         .bootstrap
         .expect("starter declares [bootstrap] via bundle defaults");

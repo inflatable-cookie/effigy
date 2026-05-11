@@ -1,9 +1,5 @@
-use super::command_context::resolve_active_repo_root;
 use effigy_cli::{BundleArgs, BundleSubcommand};
-use effigy_manifest::{
-    export_bundle, get_bundle, inspect_bundle_source, list_bundle_default_paths, list_bundles,
-    sync_bundle_source, BundleSourceType,
-};
+use effigy_manifest::{inspect_bundle_source, sync_bundle_source, BundleSourceType};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -11,126 +7,11 @@ use super::error::RunnerError;
 
 pub(super) fn run_bundle(args: BundleArgs) -> Result<String, RunnerError> {
     match args.subcommand {
-        BundleSubcommand::List => run_bundle_list(args.output_json),
-        BundleSubcommand::Inspect { bundle } => run_bundle_inspect(
-            bundle.as_deref(),
-            args.repo_override.as_deref(),
-            args.output_json,
-        ),
-        BundleSubcommand::Export { bundle, path } => run_bundle_export(
-            &bundle,
-            &path,
-            args.repo_override.as_deref(),
-            args.output_json,
-        ),
+        BundleSubcommand::Inspect => {
+            run_active_bundle_inspect(args.repo_override.as_deref(), args.output_json)
+        }
         BundleSubcommand::Sync => run_bundle_sync(args.output_json),
     }
-}
-
-fn run_bundle_list(output_json: bool) -> Result<String, RunnerError> {
-    let bundles = list_bundles();
-    if output_json {
-        return Ok(json!({
-            "schema": "effigy.bundle.list.v1",
-            "schema_version": 1,
-            "ok": true,
-            "bundles": bundles.iter().map(|bundle| json!({
-                "name": bundle.name,
-                "description": bundle.description,
-                "input_count": bundle.inputs.len(),
-            })).collect::<Vec<_>>(),
-        })
-        .to_string());
-    }
-
-    if bundles.is_empty() {
-        return Ok("[info] no bundles available".to_owned());
-    }
-
-    let mut lines = vec![format!("[bundle] {} bundles", bundles.len())];
-    lines.extend(
-        bundles
-            .into_iter()
-            .map(|bundle| format!("{} :: {}", bundle.name, bundle.description)),
-    );
-    Ok(lines.join("\n"))
-}
-
-fn run_bundle_inspect(
-    bundle_name: Option<&str>,
-    repo_override: Option<&Path>,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    if let Some(bundle_name) = bundle_name {
-        return run_shipped_bundle_inspect(bundle_name, output_json);
-    }
-    run_active_bundle_inspect(repo_override, output_json)
-}
-
-fn run_shipped_bundle_inspect(bundle_name: &str, output_json: bool) -> Result<String, RunnerError> {
-    let bundle = get_bundle(bundle_name)
-        .ok_or_else(|| RunnerError::task_invocation(format!("unknown bundle `{bundle_name}`")))?;
-    let default_paths = list_bundle_default_paths(bundle_name)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-
-    if output_json {
-        return Ok(json!({
-            "schema": "effigy.bundle.inspect.v1",
-            "schema_version": 1,
-            "ok": true,
-            "mode": "catalog",
-            "bundle": {
-                "name": bundle.name,
-                "description": bundle.description,
-                "inputs": bundle.inputs.iter().map(|input| json!({
-                    "name": input.name,
-                    "type": input.value_type,
-                    "required": input.required,
-                    "description": input.description,
-                    "default": input.default,
-                    "example": input.example,
-                })).collect::<Vec<_>>(),
-                "default_paths": default_paths,
-            },
-            "source": null,
-        })
-        .to_string());
-    }
-
-    let mut lines = vec![
-        format!("[bundle] {}", bundle.name),
-        bundle.description,
-        String::new(),
-        format!("Inputs ({})", bundle.inputs.len()),
-    ];
-    for input in &bundle.inputs {
-        let mut suffix = vec![format!("{:?}", input.value_type).to_lowercase()];
-        suffix.push(
-            if input.required {
-                "required"
-            } else {
-                "optional"
-            }
-            .to_owned(),
-        );
-        if let Some(default) = &input.default {
-            suffix.push(format!("default={default}"));
-        }
-        if let Some(example) = &input.example {
-            suffix.push(format!("example={example}"));
-        }
-        lines.push(format!(
-            "- {} [{}] :: {}",
-            input.name,
-            suffix.join(", "),
-            input.description
-        ));
-    }
-
-    lines.push(String::new());
-    lines.push(format!("Default Paths ({})", default_paths.len()));
-    lines.extend(default_paths.into_iter().map(|path| format!("- {path}")));
-    Ok(lines.join("\n"))
 }
 
 fn run_active_bundle_inspect(
@@ -185,42 +66,6 @@ fn run_active_bundle_inspect(
     .join("\n"))
 }
 
-fn run_bundle_export(
-    bundle_name: &str,
-    path: &std::path::Path,
-    repo_override: Option<&Path>,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    let export_path = resolve_bundle_export_path(repo_override, path)?;
-    let export = export_bundle(bundle_name, &export_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-
-    if output_json {
-        return Ok(json!({
-            "schema": "effigy.bundle.export.v1",
-            "schema_version": 1,
-            "ok": true,
-            "bundle": export.bundle,
-            "path": export.path,
-            "files": export.files,
-        })
-        .to_string());
-    }
-
-    let mut lines = vec![
-        format!(
-            "[bundle] exported `{}` to {}",
-            export.bundle,
-            export.path.display()
-        ),
-        "Use it from a manifest with `[bundle].base = { type = \"path\", dir = ... }`.".to_owned(),
-        String::new(),
-        format!("Files ({})", export.files.len()),
-    ];
-    lines.extend(export.files.into_iter().map(|file| format!("- {file}")));
-    Ok(lines.join("\n"))
-}
-
 fn run_bundle_sync(output_json: bool) -> Result<String, RunnerError> {
     let cwd = crate::runner::command_context::active_invocation_cwd()?;
     let manifest_path = discover_bundle_manifest_path(&cwd)?;
@@ -262,7 +107,7 @@ fn run_bundle_sync(output_json: bool) -> Result<String, RunnerError> {
     }
     if !report.applicable {
         lines.push("status=not-applicable".to_owned());
-        lines.push("current bundle source is local or shipped; nothing to refresh".to_owned());
+        lines.push("current bundle source is local; nothing to refresh".to_owned());
         return Ok(lines.join("\n"));
     }
     lines.push(format!(
@@ -296,25 +141,8 @@ fn discover_bundle_manifest_path(root_or_cwd: impl AsRef<Path>) -> Result<PathBu
     )))
 }
 
-fn resolve_bundle_export_path(
-    repo_override: Option<&Path>,
-    path: &Path,
-) -> Result<PathBuf, RunnerError> {
-    if path.is_absolute() {
-        return Ok(path.to_path_buf());
-    }
-    match repo_override {
-        Some(path_override) => {
-            let resolved = resolve_active_repo_root(Some(path_override.to_path_buf()))?;
-            Ok(resolved.resolved_root.join(path))
-        }
-        None => Ok(path.to_path_buf()),
-    }
-}
-
 fn source_type_label(source_type: BundleSourceType) -> &'static str {
     match source_type {
-        BundleSourceType::Shipped => "shipped",
         BundleSourceType::Path => "path",
         BundleSourceType::Git => "git",
         BundleSourceType::Oci => "oci",
@@ -325,35 +153,6 @@ fn source_type_label(source_type: BundleSourceType) -> &'static str {
 mod tests {
     use super::*;
     use effigy_context::{CapturedEnv, EffigyRuntimeContext};
-
-    #[test]
-    fn bundle_list_reports_no_bundles() {
-        let rendered = run_bundle_list(false).expect("list");
-        assert!(rendered.contains("no bundles available"));
-    }
-
-    #[test]
-    fn bundle_inspect_rejects_unknown_shipped_bundle() {
-        let error = run_bundle_inspect(Some("underlay"), None, false).expect_err("reject");
-        assert!(error.to_string().contains("unknown bundle `underlay`"));
-    }
-
-    #[test]
-    fn bundle_export_rejects_unknown_shipped_bundle() {
-        let tmp = std::env::temp_dir().join(format!(
-            "effigy-bundle-export-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        let target = tmp.join("underlay");
-        std::fs::create_dir_all(&target).expect("mkdir");
-
-        let error = run_bundle_export("underlay", &target, None, false).expect_err("reject");
-        assert!(error.to_string().contains("unknown bundle `underlay`"));
-        let _ = std::fs::remove_dir_all(tmp);
-    }
 
     #[test]
     fn bundle_sync_reports_missing_bundle_config() {
@@ -412,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn bundle_inspect_without_name_reports_active_source_metadata() {
+    fn bundle_inspect_reports_active_source_metadata() {
         let tmp = std::env::temp_dir().join(format!(
             "effigy-bundle-inspect-active-{}",
             std::time::SystemTime::now()
@@ -432,31 +231,12 @@ mod tests {
             .capture_lossy()
             .expect("capture context");
         let rendered = crate::runner::command_context::with_runtime_context(&context, || {
-            run_bundle_inspect(None, None, true)
+            run_active_bundle_inspect(None, true)
         })
         .expect("bundle inspect");
         assert!(rendered.contains("\"mode\":\"active-source\""));
         assert!(rendered.contains("\"source_type\":\"path\""));
         assert!(rendered.contains("\"stale\":false"));
         let _ = std::fs::remove_dir_all(tmp);
-    }
-
-    #[test]
-    fn bundle_export_repo_override_anchors_relative_path_to_repo_root() {
-        let repo = std::env::temp_dir().join(format!(
-            "effigy-bundle-export-repo-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&repo).expect("mkdir repo");
-        let target = std::path::Path::new("bundles/underlay");
-
-        let resolved = resolve_bundle_export_path(Some(repo.as_path()), target).expect("resolve");
-        assert!(resolved.ends_with(target));
-        assert!(resolved.file_name().is_some_and(|name| name == "underlay"));
-
-        let _ = std::fs::remove_dir_all(repo);
     }
 }

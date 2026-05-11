@@ -10,10 +10,6 @@ use toml::Value;
 
 use crate::ManifestError;
 
-mod export;
-
-use export::{materialize_shipped_bundle_assets, shipped_bundle_export_files};
-
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct BundleSpec {
     pub name: String,
@@ -40,19 +36,11 @@ pub enum BundleInputType {
     List,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct BundleExport {
-    pub bundle: String,
-    pub path: PathBuf,
-    pub files: Vec<String>,
-}
-
 // The remote-source variants are introduced here so later git/OCI batches can
 // widen the same source seam without another model break.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BundleSourceType {
-    Shipped,
     Path,
     Git,
     Oci,
@@ -110,17 +98,7 @@ pub(crate) fn apply_bundle_defaults(
     };
 
     let selection = resolve_bundle_selection(manifest_path, &bundle)?;
-    let mut normalized_inputs = bundle.inputs.clone();
-    let bundle_name = match &selection {
-        BundleSelection::Shipped { name } => name.as_str(),
-        BundleSelection::Path { .. } => "",
-        BundleSelection::Git { .. } => "",
-        BundleSelection::Oci { .. } => "",
-    };
-    if !bundle_name.is_empty() {
-        normalize_database_bundle_inputs(manifest_path, bundle_name, &mut normalized_inputs)?;
-        normalize_bundle_specific_inputs(manifest_path, bundle_name, &mut normalized_inputs)?;
-    }
+    let normalized_inputs = bundle.inputs.clone();
     let resolved_source = resolve_materialized_bundle_source(manifest_path, &selection)?;
     let (mut defaults, source_path) = resolve_bundle_defaults_from_source(
         manifest_path,
@@ -149,10 +127,6 @@ pub(crate) fn apply_bundle_defaults(
     }))
 }
 
-pub(crate) fn bundle_source_path(name: &str) -> PathBuf {
-    PathBuf::from(format!("<bundle:{name}>"))
-}
-
 fn resolve_materialized_bundle_source(
     manifest_path: &Path,
     selection: &BundleSelection,
@@ -166,13 +140,6 @@ fn resolve_materialized_bundle_source_with_options(
     refresh_remote: bool,
 ) -> Result<ResolvedBundleSource, ManifestError> {
     match selection {
-        BundleSelection::Shipped { name } => Ok(ResolvedBundleSource {
-            source_type: BundleSourceType::Shipped,
-            local_path: materialize_shipped_bundle_assets(manifest_path, name)?,
-            source_path: bundle_source_path(name),
-            version_hint: None,
-            stale: false,
-        }),
         BundleSelection::Path { path } => Ok(ResolvedBundleSource {
             source_type: BundleSourceType::Path,
             local_path: path.clone(),
@@ -191,16 +158,12 @@ fn resolve_materialized_bundle_source_with_options(
 
 fn resolve_bundle_defaults_from_source(
     manifest_path: &Path,
-    current: &Value,
+    _current: &Value,
     selection: &BundleSelection,
     source: &ResolvedBundleSource,
     normalized_inputs: &BTreeMap<String, Value>,
 ) -> Result<(Value, PathBuf), ManifestError> {
     match (selection, source.source_type) {
-        (BundleSelection::Shipped { name }, BundleSourceType::Shipped) => Ok((
-            resolve_bundle_defaults(manifest_path, current, name, normalized_inputs)?,
-            source.source_path.clone(),
-        )),
         (BundleSelection::Path { .. }, BundleSourceType::Path)
         | (BundleSelection::Git { .. }, BundleSourceType::Git)
         | (BundleSelection::Oci { .. }, BundleSourceType::Oci) => {
@@ -696,9 +659,7 @@ fn bundle_cache_home_dir(manifest_path: &Path) -> Result<PathBuf, ManifestError>
     }
     // Store bundle caches inside the project’s .effigy directory so they’re
     // available inside workspace containers (which mount the project root).
-    let project_root = manifest_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
+    let project_root = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     Ok(project_root.join(".effigy"))
 }
 
@@ -708,14 +669,6 @@ pub fn sync_bundle_source(manifest_path: &Path) -> Result<Option<BundleSyncRepor
     };
     let selection = resolve_bundle_selection(manifest_path, &bundle)?;
     match &selection {
-        BundleSelection::Shipped { name } => Ok(Some(BundleSyncReport {
-            source_type: BundleSourceType::Shipped,
-            source_path: bundle_source_path(name),
-            local_path: None,
-            version_hint: None,
-            changed: false,
-            applicable: false,
-        })),
         BundleSelection::Path { path } => Ok(Some(BundleSyncReport {
             source_type: BundleSourceType::Path,
             source_path: path.clone(),
@@ -828,9 +781,6 @@ pub(crate) struct AppliedBundleDefaults {
 }
 
 enum BundleSelection {
-    Shipped {
-        name: String,
-    },
     Path {
         path: PathBuf,
     },
@@ -848,13 +798,6 @@ fn resolve_bundle_selection(
     bundle: &crate::config_sections::ManifestBundleConfig,
 ) -> Result<BundleSelection, ManifestError> {
     match bundle.base.as_ref() {
-        Some(crate::config_sections::ManifestBundleBase::Shipped { name })
-            if !name.trim().is_empty() =>
-        {
-            Ok(BundleSelection::Shipped {
-                name: name.trim().to_owned(),
-            })
-        }
         Some(crate::config_sections::ManifestBundleBase::Path { dir })
             if !dir.trim().is_empty() =>
         {
@@ -882,120 +825,9 @@ fn resolve_bundle_selection(
         }
         _ => Err(ManifestError::Compose {
             path: manifest_path.to_path_buf(),
-            detail: "`[bundle]` must set `base` to a shipped preset or a typed bundle source block"
-                .to_owned(),
+            detail: "`[bundle]` must set `base` to a typed bundle source block".to_owned(),
         }),
     }
-}
-
-pub fn list_bundles() -> Vec<BundleSpec> {
-    vec![]
-}
-
-pub fn get_bundle(name: &str) -> Option<BundleSpec> {
-    list_bundles()
-        .into_iter()
-        .find(|bundle| bundle.name == name)
-}
-
-pub fn render_bundle_defaults(
-    name: &str,
-    inputs: &BTreeMap<String, Value>,
-) -> Result<Value, ManifestError> {
-    let mut normalized_inputs = inputs.clone();
-    normalize_database_bundle_inputs(&bundle_source_path(name), name, &mut normalized_inputs)?;
-    normalize_bundle_specific_inputs(&bundle_source_path(name), name, &mut normalized_inputs)?;
-    resolve_bundle_defaults(
-        &bundle_source_path(name),
-        &Value::Table(Default::default()),
-        name,
-        &normalized_inputs,
-    )
-}
-
-pub fn list_bundle_default_paths(name: &str) -> Result<Vec<String>, ManifestError> {
-    let spec = get_bundle(name).ok_or_else(|| ManifestError::Compose {
-        path: bundle_source_path(name),
-        detail: format!("unknown bundle `{name}`"),
-    })?;
-    let example_inputs = spec
-        .inputs
-        .iter()
-        .map(|input| {
-            (
-                input.name.clone(),
-                input
-                    .default
-                    .clone()
-                    .or_else(|| input.example.clone())
-                    .unwrap_or_else(|| Value::String(format!("<{}>", input.name))),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    let defaults = render_bundle_defaults(name, &example_inputs)?;
-    let mut paths = Vec::new();
-    collect_value_paths("", &defaults, &mut paths);
-    Ok(paths)
-}
-
-pub fn export_bundle(name: &str, target_dir: &Path) -> Result<BundleExport, ManifestError> {
-    let files = shipped_bundle_export_files(name)?;
-    if target_dir.exists() && !target_dir.is_dir() {
-        return Err(ManifestError::Compose {
-            path: target_dir.to_path_buf(),
-            detail: "bundle export path exists but is not a directory".to_owned(),
-        });
-    }
-    std::fs::create_dir_all(target_dir).map_err(|error| ManifestError::Read {
-        path: target_dir.to_path_buf(),
-        error,
-    })?;
-
-    for file in &files {
-        let path = target_dir.join(file.path);
-        if path.exists() {
-            return Err(ManifestError::Compose {
-                path,
-                detail:
-                    "bundle export refuses to overwrite existing files; choose an empty directory"
-                        .to_owned(),
-            });
-        }
-    }
-
-    let mut written = Vec::new();
-    for file in files {
-        let path = target_dir.join(file.path);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
-                path: parent.to_path_buf(),
-                error,
-            })?;
-        }
-        std::fs::write(&path, file.contents).map_err(|error| ManifestError::Read {
-            path: path.clone(),
-            error,
-        })?;
-        written.push(file.path.to_owned());
-    }
-
-    Ok(BundleExport {
-        bundle: name.to_owned(),
-        path: target_dir.to_path_buf(),
-        files: written,
-    })
-}
-
-fn resolve_bundle_defaults(
-    manifest_path: &Path,
-    _current: &Value,
-    bundle_name: &str,
-    _inputs: &BTreeMap<String, Value>,
-) -> Result<Value, ManifestError> {
-    Err(ManifestError::Compose {
-        path: manifest_path.to_path_buf(),
-        detail: format!("unknown bundle `{bundle_name}`"),
-    })
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -1051,25 +883,6 @@ pub(super) fn parse_bundle_descriptor_source(
         path: path.to_path_buf(),
         error,
     })
-}
-
-pub(super) fn bundle_spec_from_descriptor(descriptor: &LocalBundleDescriptor) -> BundleSpec {
-    BundleSpec {
-        name: descriptor.bundle.name.clone(),
-        description: descriptor.bundle._description.clone(),
-        inputs: descriptor
-            .inputs
-            .iter()
-            .map(|input| BundleInputSpec {
-                name: input.name.clone(),
-                value_type: input.value_type,
-                required: input.required,
-                description: input._description.clone(),
-                default: input.default.clone(),
-                example: input.example.clone(),
-            })
-            .collect(),
-    }
 }
 
 fn resolve_local_bundle_defaults(
@@ -1490,12 +1303,8 @@ pub(super) fn bundle_shared_root_path(
 }
 
 pub(super) fn bundle_default_input_string(bundle_name: &str, key: &str) -> Option<String> {
-    list_bundles()
-        .into_iter()
-        .find(|spec| spec.name == bundle_name)
-        .and_then(|spec| spec.inputs.into_iter().find(|input| input.name == key))
-        .and_then(|input| input.default)
-        .and_then(|value| value.as_str().map(str::to_owned))
+    let _ = (bundle_name, key);
+    None
 }
 
 pub(super) fn optional_bundle_integer(inputs: &BTreeMap<String, Value>, key: &str) -> Option<i64> {
@@ -1512,19 +1321,6 @@ pub(super) fn optional_bundle_string(
     } else {
         Some(value.to_owned())
     }
-}
-
-pub(super) fn render_toml_string_list(inputs: &BTreeMap<String, Value>, key: &str) -> String {
-    let Some(values) = bundle_input_value(inputs, key).and_then(Value::as_array) else {
-        return "[]".to_owned();
-    };
-    let encoded = values
-        .iter()
-        .filter_map(Value::as_str)
-        .map(|value| format!("{value:?}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("[{encoded}]")
 }
 
 pub(super) fn derive_bundle_workspace_subdir(
@@ -1869,22 +1665,6 @@ pub(super) fn lookup_value_at_path_mut<'a>(
         current = current.as_table_mut()?.get_mut(segment)?;
     }
     Some(current)
-}
-
-fn collect_value_paths(path: &str, value: &Value, out: &mut Vec<String>) {
-    if !path.is_empty() {
-        out.push(path.to_owned());
-    }
-    if let Some(table) = value.as_table() {
-        for (key, child) in table {
-            let child_path = if path.is_empty() {
-                key.clone()
-            } else {
-                format!("{path}.{key}")
-            };
-            collect_value_paths(&child_path, child, out);
-        }
-    }
 }
 
 #[cfg(test)]

@@ -219,6 +219,14 @@ artifact_policy = "digest-preferred"
 [deploy.uat.hooks]
 after_deploy = "deploy:uat:smoke"
 
+[deploy.render]
+provider = "render"
+state = "uat"
+code_ref = "branch:main"
+release_policy = "optional"
+provider_project = "acme-render"
+artifact_policy = "digest-preferred"
+
 [deploy.production]
 provider = "render"
 state = "production"
@@ -306,6 +314,38 @@ fn run_deploy_plan_json_reports_env_state_provider_and_hooks() {
     assert!(
         root.join(report_path).exists(),
         "missing report {report_path}"
+    );
+}
+
+#[test]
+fn run_deploy_plan_json_reports_render_provider_preflight() {
+    let root = setup_deploy_transaction_fixture("deploy-plan-render-provider");
+    let out = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Plan {
+            env: "render".to_owned(),
+            write_report: false,
+        },
+        repo_override: Some(root),
+        output_json: true,
+    }))
+    .expect("run render deploy plan");
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.plan.v1", 1);
+    assert_eq!(parsed["provider"].as_str(), Some("render"));
+    let checks = parsed["provider_preflight"]["checks"]
+        .as_array()
+        .expect("provider checks");
+    assert!(
+        checks
+            .iter()
+            .any(|check| check["name"].as_str() == Some("variables")),
+        "render preflight should include variable-name checks: {checks:?}"
+    );
+    assert!(
+        checks
+            .iter()
+            .any(|check| check["name"].as_str() == Some("domains")),
+        "render preflight should include domain checks: {checks:?}"
     );
 }
 

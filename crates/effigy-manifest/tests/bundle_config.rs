@@ -1,21 +1,6 @@
 use effigy_manifest::{ManifestBundleBase, ManifestBundleConfig};
 
 #[test]
-fn bundle_config_accepts_shipped_string_sugar() {
-    let bundle = toml::from_str::<ManifestBundleConfig>(
-        r#"
-base = "underlay"
-"#,
-    )
-    .expect("parse bundle config");
-
-    assert!(matches!(
-        bundle.base.as_ref(),
-        Some(ManifestBundleBase::Shipped { name }) if name == "underlay"
-    ));
-}
-
-#[test]
 fn bundle_config_accepts_path_block() {
     let bundle = toml::from_str::<ManifestBundleConfig>(
         r#"
@@ -57,6 +42,23 @@ base = { type = "oci", url = "ghcr.io/acme/effigy-bundle:v1.2.3" }
 }
 
 #[test]
+fn bundle_config_rejects_legacy_string_base_with_migration_error() {
+    let error = toml::from_str::<ManifestBundleConfig>(
+        r#"
+base = "underlay"
+"#,
+    )
+    .expect_err("legacy string base should be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("string `[bundle].base` value `underlay` has been removed"),
+        "{error}"
+    );
+}
+
+#[test]
 fn bundle_config_rejects_base_path_with_migration_error() {
     let error = toml::from_str::<ManifestBundleConfig>(
         r#"
@@ -69,6 +71,23 @@ base_path = "bundles/acme"
         error
             .to_string()
             .contains("`[bundle].base_path` has been removed"),
+        "{error}"
+    );
+}
+
+#[test]
+fn bundle_config_rejects_legacy_name_with_migration_error() {
+    let error = toml::from_str::<ManifestBundleConfig>(
+        r#"
+name = "underlay"
+"#,
+    )
+    .expect_err("legacy bundle name should be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("legacy `[bundle].name` has been removed"),
         "{error}"
     );
 }

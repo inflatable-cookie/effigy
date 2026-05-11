@@ -35,12 +35,11 @@ catalog = "postgres"
 catalog = "redis"
 ```
 
-Inspect the shipped bundle surface directly:
+Inspect the active repo bundle source directly:
 
 ```sh
-effigy bundle list
-effigy bundle inspect underlay
-effigy bundle inspect decodelabs
+effigy bundle inspect
+effigy bundle sync
 ```
 
 Catalog-driven services land in generated compose under
