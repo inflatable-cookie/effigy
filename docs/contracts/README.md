@@ -90,6 +90,10 @@ This folder contains both:
   structural-only duplication-reduction contract for shared json/text result
   rendering, routed container-exec collapse, and shared release-stage control
   flow without changing surfaced behavior.
+- [`025-deploy-provider-package-contract.md`](./025-deploy-provider-package-contract.md):
+  deploy-provider package contract for moving provider-specific deployment
+  behavior into external git/path/OCI packages backed by `provider.toml` and
+  Rhai phase scripts.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -115,6 +119,7 @@ This folder contains both:
 | `022-command-reference-completeness-and-flag-consistency-contract.md` | Platform maintainers | Missing command/flag coverage in the command matrix, `version` reference rule, bounded `--repo` widening for `changelog` and `bundle`, and the no-behavior-change rule outside repo targeting | Planning review against `g04.024` plus focused parser, runner, and guide proofs once implementation starts |
 | `023-container-command-decomposition-contract.md` | Platform maintainers | Target `container_command` module ownership, structural-only extraction boundary, thin-dispatcher rule for `mod.rs`, and the no-user-facing-change rule during cache/volume/lifecycle splits | Planning review against `g04.025` plus focused container-command proofs once implementation starts |
 | `024-shared-dispatcher-and-exec-collapse-contract.md` | Platform maintainers | Shared result-render boundary, routed container-exec collapse scope, release prepare/execute shared-control-flow boundary, and the structural-only no-surface-change rule | Planning review against `g04.026` plus focused runner/output proofs once implementation starts |
+| `025-deploy-provider-package-contract.md` | Platform maintainers | Provider package descriptor shape, phase script context/report schema, safety policy, Rhai surface requirements, and built-in compatibility boundary | Planning review before moving Render/Railway provider behavior out of core |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 

@@ -239,6 +239,13 @@ Provider adapters must not:
 
 Missing provider setup should become explicit blockers with remediation.
 
+Provider-specific behavior should move to external deploy-provider packages
+once the provider package contract is implemented. Core Effigy keeps the
+provider-neutral transaction, report persistence, safety gates, and built-in
+compatibility adapters. Provider packages own provider-specific checklists,
+exports, validation, preflight evidence, apply/status calls, and templates. See
+[`025-deploy-provider-package-contract.md`](./025-deploy-provider-package-contract.md).
+
 ## Reports
 
 Report layout:
