@@ -347,6 +347,7 @@ The repo declares its own bring-up in `effigy.toml`:
 
 ```toml
 [bootstrap]
+submodules = "recursive"
 run = [{ task = "bootstrap deps sync" }]
 start = "dev"
 ```
@@ -372,6 +373,13 @@ One command clones the root repo, clones every child into the right relative pat
 ```bash
 effigy bootstrap children status   # See what's ahead/behind or missing
 effigy bootstrap children sync     # Pull and fast-forward all children
+```
+
+Effigy itself keeps adjacent provider, bundle, and action repos under
+`external/` as Git submodules. In a normal checkout, hydrate them with:
+
+```bash
+git submodule update --init --recursive
 ```
 
 Pass `--db-seed ./latest.sql` to stage a database dump before setup runs. Pass `--fresh` to isolate runtime state from earlier local runs. One command, one consistent path, no local folklore.

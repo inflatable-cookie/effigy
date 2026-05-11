@@ -75,6 +75,9 @@ During v0.x, MINOR bumps may include breaking changes.
   `deploy::provider_context()` and `deploy::provider_report(...)`, and their
   reported checks, warnings, files, and blockers are merged into provider
   preflight output.
+- **External package workspace:** Effigy-adjacent action, provider, and bundle
+  repos now live under `external/` as Git submodules, and repo discovery skips
+  `external/` so provider/bundle manifests do not become ambient task catalogs.
 - **State stack planning foundation:** `effigy state plan [<STACK>]` now
   validates `effigy.state-stack.v1` manifests and reports ordered lineage in
   text or JSON without executing app hooks. When no standalone manifest is

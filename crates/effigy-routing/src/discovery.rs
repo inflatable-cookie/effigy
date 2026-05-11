@@ -201,7 +201,7 @@ fn mount_source_path(raw: &str) -> Option<PathBuf> {
 pub(super) fn should_skip_dir(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|n| n.to_str()),
-        Some(".git" | ".effigy" | "node_modules" | "vendor" | "target" | ".next")
+        Some(".git" | ".effigy" | "external" | "node_modules" | "vendor" | "target" | ".next")
     )
 }
 
@@ -272,4 +272,48 @@ fn is_task_manifest_file(file_type: &FileType, path: &Path) -> bool {
 
 fn has_root_manifest(workspace_root: &Path) -> bool {
     workspace_root.join(TASK_MANIFEST_FILE).is_file()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::discover_manifest_paths;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn discover_manifest_paths_skips_external_catalogs() {
+        let root = temp_root("effigy-routing-external");
+        let external = root.join("external/provider");
+        let app = root.join("apps/demo");
+        fs::create_dir_all(&external).expect("external dir");
+        fs::create_dir_all(&app).expect("app dir");
+        fs::write(root.join("effigy.toml"), "[catalog]\nalias = \"root\"\n").expect("root");
+        fs::write(
+            external.join("effigy.toml"),
+            "[catalog]\nalias = \"external\"\n",
+        )
+        .expect("external manifest");
+        fs::write(app.join("effigy.toml"), "[catalog]\nalias = \"demo\"\n").expect("app manifest");
+
+        let manifests = discover_manifest_paths(&root).expect("discover");
+
+        assert!(manifests.contains(&root.join("effigy.toml")));
+        assert!(manifests.contains(&app.join("effigy.toml")));
+        assert!(
+            !manifests.contains(&external.join("effigy.toml")),
+            "external manifests should not become ambient catalogs: {manifests:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temp_root(prefix: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("{prefix}-{suffix}"));
+        fs::create_dir_all(&path).expect("temp root");
+        path
+    }
 }

@@ -66,6 +66,16 @@ state = "uat"
 code_ref = "branch:main"
 ```
 
+For Effigy repo development, the first-party provider packages live under
+`external/providers/` as Git submodules:
+
+```toml
+[deploy.providers.render]
+source = { type = "path", dir = "external/providers/render" }
+```
+
+Hydrate them with `git submodule update --init --recursive`.
+
 The provider name in `[deploy.<env>]` must resolve to a configured
 `[deploy.providers.<name>]` package or a built-in compatibility provider.
 The first implementation validates `path` and `git` provider package sources

@@ -185,7 +185,12 @@ fn resolve_repo_root_for_project_rows(
 fn skip_effigy_repo_discovery_dir(name: &std::ffi::OsStr) -> bool {
     matches!(
         name.to_str(),
-        Some(".git") | Some(".effigy") | Some("node_modules") | Some("target") | Some("vendor")
+        Some(".git")
+            | Some(".effigy")
+            | Some("external")
+            | Some("node_modules")
+            | Some("target")
+            | Some("vendor")
     )
 }
 
@@ -323,18 +328,22 @@ mod tests {
     }
 
     #[test]
-    fn discover_effigy_repos_under_skips_heavy_runtime_dirs() {
+    fn discover_effigy_repos_under_skips_heavy_runtime_and_external_dirs() {
         let temp = tempdir().expect("tempdir");
         let scope_root = temp.path().join("scope");
         let target_repo = scope_root.join("target/not-a-real-repo");
         let node_modules_repo = scope_root.join("node_modules/not-a-real-repo");
+        let external_repo = scope_root.join("external/not-a-real-repo");
         let real_repo = scope_root.join("apps/demo");
         fs::create_dir_all(&target_repo).expect("mkdir target repo");
         fs::create_dir_all(&node_modules_repo).expect("mkdir node_modules repo");
+        fs::create_dir_all(&external_repo).expect("mkdir external repo");
         fs::create_dir_all(&real_repo).expect("mkdir real repo");
         fs::write(target_repo.join("effigy.toml"), "[manifest]\n").expect("write target manifest");
         fs::write(node_modules_repo.join("effigy.toml"), "[manifest]\n")
             .expect("write node_modules manifest");
+        fs::write(external_repo.join("effigy.toml"), "[manifest]\n")
+            .expect("write external manifest");
         fs::write(real_repo.join("effigy.toml"), "[manifest]\n").expect("write real manifest");
 
         let discovered = discover_effigy_repos_under(&scope_root);
