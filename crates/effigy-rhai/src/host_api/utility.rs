@@ -176,6 +176,16 @@ fn build_str_module() -> rhai::Module {
         },
     );
     module.set_native_fn(
+        "parse_int",
+        |value: Dynamic| -> Result<i64, Box<EvalAltResult>> {
+            value
+                .to_string()
+                .trim()
+                .parse::<i64>()
+                .map_err(|error| rhai_runtime_error(error.to_string()))
+        },
+    );
+    module.set_native_fn(
         "shell_quote",
         |value: Dynamic| -> Result<String, Box<EvalAltResult>> {
             if value.is_unit() {

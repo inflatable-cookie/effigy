@@ -1,6 +1,12 @@
+use std::path::PathBuf;
+
 use effigy_manifest::config_sections::ManifestWorkspaceContainerRef;
 use effigy_manifest::load_task_manifest_with_inspection;
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, ManifestTaskRunIn};
+
+fn decodelabs_bundle_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/decodelabs-bundle")
+}
 
 #[test]
 fn decodelabs_bundle_resolves_defaults_and_allows_block_overrides() {
@@ -8,9 +14,10 @@ fn decodelabs_bundle_resolves_defaults_and_allows_block_overrides() {
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
-        r#"
+        format!(
+            r#"
 [bundle]
-base = "decodelabs"
+base = {{ type = "path", dir = "{}" }}
 host = "contact-patch.legacy.test"
 project_name = "contactpatch-dev"
 databases = ["contactpatch"]
@@ -18,6 +25,8 @@ databases = ["contactpatch"]
 [containers.web.services.db]
 version = "11.0"
 "#,
+            decodelabs_bundle_dir().display()
+        ),
     )
     .expect("write manifest");
     std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
@@ -50,7 +59,7 @@ version = "11.0"
     let bundle = manifest.bundle.expect("bundle");
     assert!(matches!(
         bundle.base.as_ref(),
-        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) if name == "decodelabs"
+        Some(effigy_manifest::ManifestBundleBase::Path { .. })
     ));
 
     let containers = manifest.containers.expect("containers");
@@ -231,9 +240,10 @@ fn decodelabs_bundle_renames_system_container_and_workspace_service() {
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
-        r#"
+        format!(
+            r#"
 [bundle]
-base = "decodelabs"
+base = {{ type = "path", dir = "{}" }}
 host = "contact-patch.legacy.test"
 project_name = "contactpatch-dev"
 databases = ["contactpatch"]
@@ -242,6 +252,8 @@ container_name = "shop"
 workspace_service_name = "php"
 default_workspace = "frontend"
 "#,
+            decodelabs_bundle_dir().display()
+        ),
     )
     .expect("write manifest");
 
@@ -289,13 +301,16 @@ fn decodelabs_bundle_derives_working_dir_from_host_label() {
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
-        r#"
+        format!(
+            r#"
 [bundle]
-base = "decodelabs"
+base = {{ type = "path", dir = "{}" }}
 host = "cbs.legacy.test"
 project_name = "cbs-dev"
 databases = ["cbs"]
 "#,
+            decodelabs_bundle_dir().display()
+        ),
     )
     .expect("write manifest");
 
@@ -316,22 +331,23 @@ fn decodelabs_bundle_rejects_legacy_name_key() {
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
-        r#"
+        format!(
+            r#"
 [bundle]
 name = "decodelabs"
 host = "contact-patch.legacy.test"
 project_name = "contactpatch-dev"
 databases = ["contactpatch"]
 "#,
+        ),
     )
     .expect("write manifest");
 
-    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("legacy name loads");
-    let bundle = loaded.manifest.bundle.expect("bundle");
-    assert!(matches!(
-        bundle.base.as_ref(),
-        Some(effigy_manifest::ManifestBundleBase::Shipped { name }) if name == "decodelabs"
-    ));
+    let result = load_task_manifest_with_inspection(&manifest_path);
+    assert!(
+        result.is_err(),
+        "legacy `name` key should be rejected when decodelabs is not a shipped bundle"
+    );
 }
 
 #[test]
@@ -340,13 +356,16 @@ fn decodelabs_bundle_hydrates_primary_database_from_databases_list() {
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
-        r#"
+        format!(
+            r#"
 [bundle]
-base = "decodelabs"
+base = {{ type = "path", dir = "{}" }}
 host = "contact-patch.legacy.test"
 project_name = "contactpatch-dev"
 databases = ["contactpatch", "contactpatch_test"]
 "#,
+            decodelabs_bundle_dir().display()
+        ),
     )
     .expect("write manifest");
 
@@ -381,14 +400,17 @@ fn decodelabs_bundle_can_publish_optional_zest_route() {
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
-        r#"
+        format!(
+            r#"
 [bundle]
-base = "decodelabs"
+base = {{ type = "path", dir = "{}" }}
 host = "gideon.legacy.test"
 project_name = "gideon-dev"
 databases = ["gideon"]
 zest_port = 8938
 "#,
+            decodelabs_bundle_dir().display()
+        ),
     )
     .expect("write manifest");
 
@@ -454,21 +476,24 @@ fn decodelabs_bundle_can_extend_bundle_provided_dns_routes() {
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
-        r#"
+        format!(
+            r#"
 [manifest]
 extend = ["containers.web.dns.routes"]
 
 [bundle]
-base = "decodelabs"
+base = {{ type = "path", dir = "{}" }}
 host = "cbs.legacy.test"
 project_name = "cbs-dev"
 databases = ["cbs"]
 
 [containers.web.dns]
 routes = [
-  { domain = "borderway.legacy.test", tls = true, service = "web" },
+  {{ domain = "borderway.legacy.test", tls = true, service = "web" }},
 ]
 "#,
+            decodelabs_bundle_dir().display()
+        ),
     )
     .expect("write manifest");
 
@@ -512,21 +537,24 @@ deploy = "true"
     .expect("write root manifest");
     std::fs::write(
         &local_path,
-        r#"
+        format!(
+            r#"
 [manifest]
 extend = ["containers.web.dns.routes"]
 
 [bundle]
-base = "decodelabs"
+base = {{ type = "path", dir = "{}" }}
 host = "cbs.legacy.test"
 project_name = "cbs-dev"
 databases = ["cbs"]
 
 [containers.web.dns]
 routes = [
-  { domain = "borderway.legacy.test", tls = true, service = "web" },
+  {{ domain = "borderway.legacy.test", tls = true, service = "web" }},
 ]
 "#,
+            decodelabs_bundle_dir().display()
+        ),
     )
     .expect("write local manifest");
     std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
@@ -571,23 +599,26 @@ deploy = "true"
     .expect("write root manifest");
     std::fs::write(
         &local_path,
-        r#"
+        format!(
+            r#"
 [manifest]
 extend = ["containers.web.dns.routes", "containers.web.dns.domains"]
 
 [bundle]
-base = "decodelabs"
+base = {{ type = "path", dir = "{}" }}
 host = "cbs.legacy.test"
 project_name = "cbs-dev"
 databases = ["cbs"]
 
 [containers.web.dns]
 domains = ["admin.cbs.legacy.test"]
-domain_defaults = { tls = true, service = "web" }
+domain_defaults = {{ tls = true, service = "web" }}
 routes = [
-  { domain = "borderway.legacy.test", tls = true, service = "web" },
+  {{ domain = "borderway.legacy.test", tls = true, service = "web" }},
 ]
 "#,
+            decodelabs_bundle_dir().display()
+        ),
     )
     .expect("write local manifest");
     std::fs::create_dir(tmp.path().join(".git")).expect("git dir");

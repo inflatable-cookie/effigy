@@ -136,17 +136,15 @@ fn run_manifest_task_builtin_config_schema_target_bundle_named_prints_specific_i
 
     let out = run_config_ok(
         root,
-        &["--schema", "--target", "bundle", "--bundle", "decodelabs"],
+        &["--schema", "--target", "bundle", "--bundle", "decodelabs-library"],
     );
     assert_output_contains_all(
         &out,
         &[
-            "(bundle target, bundle: decodelabs)",
+            "(bundle target, bundle: decodelabs-library)",
             "[bundle]",
-            "base = \"decodelabs\"",
-            "host = \"contact-patch.legacy.test\"",
-            "project_name = \"contactpatch-dev\"",
-            "databases = [\"contactpatch\", \"contactpatch_test\"]",
+            "base = \"decodelabs-library\"",
+            "shared_root = \"../\"",
             "Default paths populated by this bundle:",
             "containers.web.services.app.catalog",
         ],

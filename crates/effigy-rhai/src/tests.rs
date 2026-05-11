@@ -970,6 +970,55 @@ fn execute_rhai_script_can_list_directory_entries() {
 }
 
 #[test]
+fn execute_rhai_script_can_create_temp_files_and_list_recursive_files() {
+    let root = temp_root("fs-recursive");
+    fs::create_dir_all(root.join("crates/a/src")).expect("crate a");
+    fs::create_dir_all(root.join("crates/b/src")).expect("crate b");
+    fs::write(root.join("crates/a/src/lib.rs"), "fn a() {}\n").expect("a");
+    fs::write(root.join("crates/b/src/lib.rs"), "fn b() {}\n").expect("b");
+    fs::write(root.join("crates/b/src/readme.md"), "notes\n").expect("notes");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            let temp = fs::make_temp_file("effigy-rhai-test");
+            if !fs::is_file(temp) { throw("temp file"); }
+            let all = fs::list_recursive("crates");
+            if all.len() != 3 { throw("all"); }
+            let rust = fs::list_recursive("crates", #{ extension: "rs" });
+            if rust.len() != 2 { throw("rust"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
+fn execute_rhai_script_can_return_env_file_maps_and_parse_ints() {
+    let root = temp_root("env-map-parse-int");
+    fs::write(
+        root.join("app.env"),
+        "DATABASE_URL=postgres://local\nPORT=5432\n",
+    )
+    .expect("env");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            let env_map = fs::env_file_map("app.env");
+            if env_map["DATABASE_URL"] != "postgres://local" { throw("database url"); }
+            if str::parse_int(env_map["PORT"]) != 5432 { throw("port"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
 fn execute_rhai_script_can_search_files_without_rg() {
     let root = temp_root("search-files");
     let routes = root.join("routes");
@@ -997,6 +1046,41 @@ fn execute_rhai_script_can_search_files_without_rg() {
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
+fn execute_rhai_script_can_capture_http_status_and_body_to_file() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buffer = [0; 1024];
+        let _ = stream.read(&mut buffer).expect("read request");
+        stream
+            .write_all(
+                b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nforced boom",
+            )
+            .expect("write response");
+    });
+    let root = temp_root("http-capture");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = format!(
+        r#"
+            let response = http::capture("POST", "http://{addr}/smoke", "tmp/response.txt", #{{}});
+            if response["status"] != 500 {{ throw("status"); }}
+            if response["success"] != false {{ throw("success"); }}
+            if response["body"] != "forced boom" {{ throw("body"); }}
+            if fs::read_file("tmp/response.txt") != "forced boom" {{ throw("file"); }}
+        "#
+    );
+
+    execute_rhai_script(&context, &script, &[], &callbacks()).expect("execute");
+    server.join().expect("server");
 }
 
 #[test]

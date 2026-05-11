@@ -223,6 +223,26 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
     );
     let file_context = context.clone();
     module.set_native_fn(
+        "list_recursive",
+        move |path: ImmutableString| -> Result<Array, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            list_recursive_paths(&path, None)
+        },
+    );
+    let file_context = context.clone();
+    module.set_native_fn(
+        "list_recursive",
+        move |path: ImmutableString, options: Map| -> Result<Array, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            let extension = options
+                .get("extension")
+                .filter(|value| !value.is_unit())
+                .map(|value| value.to_string());
+            list_recursive_paths(&path, extension.as_deref())
+        },
+    );
+    let file_context = context.clone();
+    module.set_native_fn(
         "create_dir",
         move |path: ImmutableString| -> Result<(), Box<EvalAltResult>> {
             let path = resolve_runtime_path(&file_context.cwd, path.as_str());
@@ -280,6 +300,21 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
             Ok(path.display().to_string())
         },
     );
+    module.set_native_fn(
+        "make_temp_file",
+        move |prefix: ImmutableString| -> Result<String, Box<EvalAltResult>> {
+            let dir = allocate_temp_dir(prefix.as_str())
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            if let Some(parent) = dir.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| rhai_runtime_error(failed_to_write_path(parent, error)))?;
+            }
+            let path = dir.with_extension("tmp");
+            std::fs::File::create(&path)
+                .map_err(|error| rhai_runtime_error(failed_to_write_path(&path, error)))?;
+            Ok(path.display().to_string())
+        },
+    );
     let file_context = context.clone();
     module.set_native_fn(
         "env_file_get",
@@ -299,6 +334,23 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
     let file_context = context.clone();
     module.set_native_fn(
         "env_file_entries",
+        move |path: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            if !path.exists() {
+                return Ok(Map::new());
+            }
+            let contents = std::fs::read_to_string(&path)
+                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
+            let mut map = Map::new();
+            for (key, value) in parse_dotenv_entries(&contents) {
+                map.insert(key.into(), value.into());
+            }
+            Ok(map)
+        },
+    );
+    let file_context = context.clone();
+    module.set_native_fn(
+        "env_file_map",
         move |path: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
             let path = resolve_runtime_path(&file_context.cwd, path.as_str());
             if !path.exists() {
@@ -360,6 +412,28 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
         },
     );
     module
+}
+
+fn list_recursive_paths(root: &Path, extension: Option<&str>) -> Result<Array, Box<EvalAltResult>> {
+    if !root.exists() {
+        return Ok(Array::new());
+    }
+    let normalized_extension = extension.map(|extension| extension.trim_start_matches('.'));
+    let mut entries = Vec::new();
+    for entry in walkdir::WalkDir::new(root) {
+        let entry = entry.map_err(|error| rhai_runtime_error(error.to_string()))?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if let Some(extension) = normalized_extension {
+            if entry.path().extension().and_then(|value| value.to_str()) != Some(extension) {
+                continue;
+            }
+        }
+        entries.push(entry.path().display().to_string());
+    }
+    entries.sort();
+    Ok(entries.into_iter().map(Into::into).collect())
 }
 
 fn update_env_file_entry(path: &Path, key: &str, value: &str) -> Result<bool, Box<EvalAltResult>> {

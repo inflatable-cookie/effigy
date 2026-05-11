@@ -164,7 +164,7 @@ fn run_manifest_task_decodelabs_bundle_defers_inside_container() {
     write_root_manifest(
         &root,
         r#"[bundle]
-base = "decodelabs"
+base = "decodelabs-library"
 host = "legacy.test"
 project_name = "legacy-dev"
 databases = ["legacy"]
@@ -231,7 +231,7 @@ fn run_manifest_task_decodelabs_bundle_defers_locally_inside_handoff_container()
     write_root_manifest(
         &root,
         r#"[bundle]
-base = "decodelabs"
+base = "decodelabs-library"
 host = "legacy.test"
 project_name = "legacy-dev"
 databases = ["legacy"]
@@ -276,7 +276,7 @@ fn run_manifest_task_decodelabs_handoff_local_deferral_prefers_composer_global_b
     write_root_manifest(
         &root,
         r#"[bundle]
-base = "decodelabs"
+base = "decodelabs-library"
 host = "legacy.test"
 project_name = "legacy-dev"
 databases = ["legacy"]
@@ -322,7 +322,7 @@ fn run_manifest_task_decodelabs_container_lease_reaper_shuts_down_expired_env() 
     write_root_manifest(
         &root,
         r#"[bundle]
-base = "decodelabs"
+base = "decodelabs-library"
 host = "legacy.test"
 project_name = "legacy-dev"
 databases = ["legacy"]

@@ -327,18 +327,18 @@ mod tests {
     use effigy_context::{CapturedEnv, EffigyRuntimeContext};
 
     #[test]
-    fn bundle_list_reports_decodelabs() {
+    fn bundle_list_reports_bundles() {
         let rendered = run_bundle_list(false).expect("list");
         assert!(rendered.contains("[bundle]"));
-        assert!(rendered.contains("decodelabs"));
+        assert!(rendered.contains("decodelabs-library"));
         assert!(rendered.contains("underlay"));
     }
 
     #[test]
     fn bundle_inspect_reports_inputs_and_default_paths() {
-        let rendered = run_bundle_inspect(Some("decodelabs"), None, false).expect("inspect");
+        let rendered = run_bundle_inspect(Some("decodelabs-library"), None, false).expect("inspect");
         assert!(rendered.contains("Inputs"));
-        assert!(rendered.contains("host"));
+        assert!(rendered.contains("shared_root"));
         assert!(rendered.contains("Default Paths"));
         assert!(rendered.contains("containers.web.services.app.catalog"));
     }

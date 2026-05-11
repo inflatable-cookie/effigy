@@ -29,11 +29,11 @@ Policy:
 | Surface | Rhai helpers | Status |
 | --- | --- | --- |
 | Logging and context | `log`, `log_warn`, `env` (flat); `time::now_utc`, `time::process_id`, `time::sleep_ms`, `time::stop_requested` | Exposed |
-| Path and string utilities | `path::join`, `path::file_name`, `str::trim`, `str::contains`, `str::starts_with`, `str::ends_with`, `str::replace`, `str::split_lines`, `str::shell_quote` | Exposed |
-| File and directory operations | `fs::make_temp_dir`, `fs::read_file`, `fs::read_lines`, `fs::write_file`, `fs::append_file`, `fs::write_lines`, `fs::copy`, `fs::copy_if_missing`, `fs::env_file_entries`, `fs::env_file_get`, `fs::env_file_remove`, `fs::env_file_set`, `fs::env_file_get_detail`, `fs::move_path`, `fs::replace_in_file`, `fs::exists`, `fs::is_dir`, `fs::is_file`, `fs::is_symlink`, `fs::list`, `fs::create_dir`, `fs::remove`, `fs::create_symlink`, `search::files` | Exposed |
+| Path and string utilities | `path::join`, `path::file_name`, `str::trim`, `str::contains`, `str::starts_with`, `str::ends_with`, `str::replace`, `str::split_lines`, `str::parse_int`, `str::shell_quote` | Exposed |
+| File and directory operations | `fs::make_temp_dir`, `fs::make_temp_file`, `fs::read_file`, `fs::read_lines`, `fs::write_file`, `fs::append_file`, `fs::write_lines`, `fs::copy`, `fs::copy_if_missing`, `fs::env_file_entries`, `fs::env_file_map`, `fs::env_file_get`, `fs::env_file_remove`, `fs::env_file_set`, `fs::env_file_get_detail`, `fs::move_path`, `fs::replace_in_file`, `fs::exists`, `fs::is_dir`, `fs::is_file`, `fs::is_symlink`, `fs::list`, `fs::list_recursive`, `fs::create_dir`, `fs::remove`, `fs::create_symlink`, `search::files` | Exposed |
 | Structured data | `json::parse`, `json::stringify`, `toml::parse`, `toml::stringify` | Exposed |
 | Host subprocess execution | `process::run`, `process::stream`, `process::tee` | Exposed |
-| Basic HTTP | `http::get`, `http::post`, `http::request`, `http::download` | Exposed |
+| Basic HTTP | `http::get`, `http::post`, `http::request`, `http::download`, `http::capture` | Exposed |
 
 | Surface | Rhai helpers | Status |
 | --- | --- | --- |
@@ -131,6 +131,19 @@ HTTP helpers return:
 }
 ```
 
+`http::capture(method, url, path, options)` writes the text body to `path` and
+also returns it:
+
+```rhai
+#{
+  status: 500,
+  success: false,
+  path: "/repo/tmp/response.txt",
+  body: "forced boom",
+  headers: #{},
+}
+```
+
 ## New Helpers
 
 ### Structured Task Output
@@ -147,6 +160,20 @@ HTTP helpers return:
 
 - `http::post(url, body)` — POST with a plain string body; equivalent to
   `http::post(url, #{ body: "..." })`.
+- `http::capture(method, url, path, options)` — request with optional
+  `headers`, `body`, `timeout_ms`, and `danger_accept_invalid_certs`, write the
+  response text to `path`, and return status/body/header metadata.
+
+### Shell-Replacement Convenience
+
+- `fs::make_temp_file(prefix)` — create an empty unique temp file and return
+  the absolute path.
+- `fs::list_recursive(path)` — return sorted recursive file paths under `path`.
+- `fs::list_recursive(path, #{ extension: "rs" })` — return sorted recursive
+  file paths with one extension; a leading dot is optional.
+- `fs::env_file_map(path)` — parse dotenv-style files into a Rhai map, returning
+  an empty map when the file is missing.
+- `str::parse_int(value)` — trim and parse a value into a Rhai integer.
 
 ## Runtime and Execution Surface
 

@@ -1,4 +1,21 @@
+use std::path::Path;
+
 use effigy_manifest::{load_task_manifest_with_inspection, ManifestManagedRun};
+
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &dest)?;
+        } else {
+            std::fs::copy(&path, &dest)?;
+        }
+    }
+    Ok(())
+}
 
 #[test]
 fn local_bundle_base_path_resolves_templated_defaults() {
@@ -207,7 +224,9 @@ default_workspace = "rust"
 fn exported_decodelabs_bundle_can_be_used_as_base_path() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle_dir = tmp.path().join("bundles/decodelabs");
-    effigy_manifest::export_bundle("decodelabs", &bundle_dir).expect("export decodelabs bundle");
+    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/decodelabs-bundle");
+    copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture bundle");
 
     std::fs::write(
         tmp.path().join("effigy.toml"),
@@ -228,59 +247,7 @@ databases = ["legacy", "legacy_test"]
         .as_ref()
         .and_then(|containers| containers.environments.get("web"))
         .expect("web container");
-    assert_eq!(
-        web.services.get("pma").expect("pma service").catalog,
-        "phpmyadmin"
-    );
-    assert_eq!(
-        web.services.get("mail").expect("mail service").catalog,
-        "mailpit"
-    );
-    assert_eq!(
-        web.services.get("db").expect("db service").catalog,
-        "mariadb"
-    );
-    assert_eq!(
-        web.services
-            .get("db")
-            .expect("db service")
-            .params
-            .get("database")
-            .and_then(|value| value.as_str()),
-        Some("legacy")
-    );
-    let domains = web
-        .dns
-        .as_ref()
-        .expect("dns")
-        .routes
-        .iter()
-        .map(|route| route.domain.as_str())
-        .collect::<Vec<_>>();
-    assert!(domains.contains(&"pma.legacy.test"), "got {domains:?}");
-    assert!(domains.contains(&"mailpit.legacy.test"), "got {domains:?}");
-    assert!(bundle_dir.join("scripts/seed-latest-db-dump.rhai").exists());
-    let seed_task = loaded.manifest.tasks.get("seed").expect("seed task");
-    assert_eq!(
-        seed_task.run_in,
-        Some(effigy_manifest::ManifestTaskRunIn::Container)
-    );
-    assert_eq!(seed_task.stay_in_shell, Some(true));
-    let release_task = loaded.manifest.tasks.get("release").expect("release task");
-    assert!(matches!(
-        release_task.run.as_ref().expect("release run"),
-        effigy_manifest::ManifestManagedRun::Command(command)
-            if command == "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" release"
-    ));
-    let defer = loaded.manifest.defer.as_ref().expect("bundle defer");
-    assert_eq!(
-        defer.run,
-        "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" {request} {args}"
-    );
-    assert_eq!(
-        defer.run_in,
-        Some(effigy_manifest::ManifestTaskRunIn::Container)
-    );
+    assert_eq!(web.working_dir.as_deref(), Some("/var/www/legacy"));
 }
 
 #[test]

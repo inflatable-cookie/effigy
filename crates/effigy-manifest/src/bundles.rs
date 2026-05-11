@@ -15,8 +15,8 @@ mod specs;
 
 use export::{materialize_shipped_bundle_assets, shipped_bundle_export_files};
 use specs::{
-    decodelabs_library_spec, decodelabs_spec, resolve_decodelabs_bundle,
-    resolve_decodelabs_library_bundle, resolve_underlay_bundle, underlay_spec,
+    decodelabs_library_spec, resolve_decodelabs_library_bundle, resolve_underlay_bundle,
+    underlay_spec,
 };
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -893,11 +893,7 @@ fn resolve_bundle_selection(
 }
 
 pub fn list_bundles() -> Vec<BundleSpec> {
-    vec![
-        decodelabs_spec(),
-        decodelabs_library_spec(),
-        underlay_spec(),
-    ]
+    vec![decodelabs_library_spec(), underlay_spec()]
 }
 
 pub fn get_bundle(name: &str) -> Option<BundleSpec> {
@@ -1001,7 +997,6 @@ fn resolve_bundle_defaults(
     inputs: &BTreeMap<String, Value>,
 ) -> Result<Value, ManifestError> {
     match bundle_name {
-        "decodelabs" => resolve_decodelabs_bundle(manifest_path, inputs),
         "decodelabs-library" => resolve_decodelabs_library_bundle(manifest_path, inputs),
         "underlay" => resolve_underlay_bundle(manifest_path, current, inputs),
         other => Err(ManifestError::Compose {

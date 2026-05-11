@@ -36,17 +36,6 @@ pub(super) struct BundleExportFile {
     pub(super) contents: String,
 }
 
-const DECODELABS_ASSETS: &[EmbeddedBundleAsset] = &[
-    EmbeddedBundleAsset {
-        path: "scripts/seed-latest-db-dump.rhai",
-        contents: include_str!("../../bundles/decodelabs/scripts/seed-latest-db-dump.rhai"),
-    },
-    EmbeddedBundleAsset {
-        path: "scripts/write-env-if-present.rhai",
-        contents: include_str!("../../bundles/decodelabs/scripts/write-env-if-present.rhai"),
-    },
-];
-
 const UNDERLAY_ASSETS: &[EmbeddedBundleAsset] = &[
     EmbeddedBundleAsset {
         path: "scripts/bootstrap-env.rhai",
@@ -70,7 +59,6 @@ pub(super) fn shipped_bundle_export_files(
         detail: format!("unknown bundle `{name}`"),
     })?;
     let defaults = match name {
-        "decodelabs" => decodelabs_export_template(),
         "decodelabs-library" => decodelabs_library_export_template(),
         "underlay" => underlay_export_template(),
         other => {
@@ -155,10 +143,6 @@ pub(super) fn bundle_input_type_literal(value_type: BundleInputType) -> &'static
         BundleInputType::Bool => "bool",
         BundleInputType::List => "list",
     }
-}
-
-pub(super) fn decodelabs_export_template() -> String {
-    include_str!("../../bundles/decodelabs/export.toml").to_owned()
 }
 
 pub(super) fn decodelabs_library_export_template() -> String {
@@ -423,7 +407,6 @@ pub(super) fn prune_stale_materialized_bundle_roots(
 
 pub(super) fn embedded_bundle_assets(bundle_name: &str) -> &'static [EmbeddedBundleAsset] {
     match bundle_name {
-        "decodelabs" => DECODELABS_ASSETS,
         "decodelabs-library" => &[],
         "underlay" => UNDERLAY_ASSETS,
         _ => &[],

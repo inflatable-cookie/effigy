@@ -16,8 +16,6 @@ use super::{
     required_bundle_string, BundleSpec, ManifestError,
 };
 
-const DECODELABS_BUNDLE_DESCRIPTOR: &str = include_str!("../../bundles/decodelabs/bundle.toml");
-const DECODELABS_TEMPLATE: &str = include_str!("../../bundles/decodelabs/export.toml");
 const DECODELABS_LIBRARY_BUNDLE_DESCRIPTOR: &str =
     include_str!("../../bundles/decodelabs-library/bundle.toml");
 const DECODELABS_LIBRARY_TEMPLATE: &str =
@@ -25,68 +23,11 @@ const DECODELABS_LIBRARY_TEMPLATE: &str =
 const UNDERLAY_BUNDLE_DESCRIPTOR: &str = include_str!("../../bundles/underlay/bundle.toml");
 const UNDERLAY_TEMPLATE: &str = include_str!("../../bundles/underlay/export.toml");
 
-pub(super) fn decodelabs_spec() -> BundleSpec {
-    let path = bundle_source_path("decodelabs");
-    let descriptor = parse_bundle_descriptor_source(&path, DECODELABS_BUNDLE_DESCRIPTOR)
-        .expect("embedded decodelabs bundle descriptor must parse");
-    bundle_spec_from_descriptor(&descriptor)
-}
-
 pub(super) fn decodelabs_library_spec() -> BundleSpec {
     let path = bundle_source_path("decodelabs-library");
     let descriptor = parse_bundle_descriptor_source(&path, DECODELABS_LIBRARY_BUNDLE_DESCRIPTOR)
         .expect("embedded decodelabs-library bundle descriptor must parse");
     bundle_spec_from_descriptor(&descriptor)
-}
-
-pub(super) fn resolve_decodelabs_bundle(
-    manifest_path: &Path,
-    inputs: &BTreeMap<String, Value>,
-) -> Result<Value, ManifestError> {
-    let host = required_bundle_string(manifest_path, "decodelabs", inputs, "host")?;
-    let project_name = required_bundle_string(manifest_path, "decodelabs", inputs, "project_name")?;
-    let database = required_bundle_string(manifest_path, "decodelabs", inputs, "database")?;
-    let system_name =
-        optional_bundle_string(inputs, "system_name").unwrap_or_else(|| "dev".to_owned());
-    let container_name =
-        optional_bundle_string(inputs, "container_name").unwrap_or_else(|| "web".to_owned());
-    let workspace_service_name = optional_bundle_string(inputs, "workspace_service_name")
-        .unwrap_or_else(|| "app".to_owned());
-    let default_workspace =
-        optional_bundle_string(inputs, "default_workspace").unwrap_or_else(|| "app".to_owned());
-    let zest_port = optional_bundle_integer(inputs, "zest_port");
-    let zest_domain =
-        optional_bundle_string(inputs, "zest_domain").unwrap_or_else(|| format!("zest.{host}"));
-    let mut render_inputs = inputs.clone();
-    render_inputs.insert("host".to_owned(), Value::String(host));
-    render_inputs.insert("project_name".to_owned(), Value::String(project_name));
-    render_inputs.insert("database".to_owned(), Value::String(database));
-    render_inputs.insert("system_name".to_owned(), Value::String(system_name));
-    render_inputs.insert("container_name".to_owned(), Value::String(container_name));
-    render_inputs.insert(
-        "workspace_service_name".to_owned(),
-        Value::String(workspace_service_name),
-    );
-    render_inputs.insert(
-        "default_workspace".to_owned(),
-        Value::String(default_workspace),
-    );
-    if let Some(port) = zest_port {
-        render_inputs.insert("zest_port".to_owned(), Value::Integer(port));
-    }
-    render_inputs.insert("zest_domain".to_owned(), Value::String(zest_domain));
-
-    let rendered = render_shipped_bundle_template_with_inputs(
-        manifest_path,
-        "decodelabs",
-        DECODELABS_TEMPLATE,
-        &render_inputs,
-    )?;
-
-    toml::from_str::<Value>(&rendered).map_err(|error| ManifestError::Parse {
-        path: bundle_source_path("decodelabs"),
-        error,
-    })
 }
 
 pub(super) fn resolve_decodelabs_library_bundle(
