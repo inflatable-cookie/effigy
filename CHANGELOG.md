@@ -74,7 +74,10 @@ During v0.x, MINOR bumps may include breaking changes.
   Provider package `preflight.rhai` scripts now run during `deploy plan` through
   `deploy::provider_context()` and `deploy::provider_report(...)`, and their
   reported checks, warnings, files, and blockers are merged into provider
-  preflight output.
+  preflight output. `deploy apply` and `deploy status` now dispatch to provider
+  package `apply.rhai` and `status.rhai`, and deploy environments without a
+  configured provider package block instead of falling back to built-in
+  Railway/Render stubs.
 - **External package workspace:** Effigy-adjacent action, provider, and bundle
   repos now live under `external/` as Git submodules, and repo discovery skips
   `external/` so provider/bundle manifests do not become ambient task catalogs.

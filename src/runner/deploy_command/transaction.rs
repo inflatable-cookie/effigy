@@ -9,8 +9,8 @@ use serde_json::{json, Value};
 
 use super::derive::derive_deploy_model;
 use super::provider_package::{
-    resolve_provider_package, run_provider_preflight, DeployProviderPackage,
-    ManifestDeployProviderConfig,
+    resolve_provider_package, run_provider_apply, run_provider_preflight, run_provider_status,
+    DeployProviderPackage, ManifestDeployProviderConfig,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::load_task_manifest_with_inspection;
@@ -72,7 +72,20 @@ pub(super) fn run_deploy_apply(
     }
     write_json_report(repo_root, &[&active_path], &plan)?;
 
-    let provider_operation = provider_apply_report(&plan);
+    let (env_config, model, provider_package) = deploy_execution_inputs(repo_root, env)?;
+    let provider_package = provider_package.ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "deploy provider `{}` must be configured under `[deploy.providers.{}`]",
+            env_config.provider, env_config.provider
+        ))
+    })?;
+    let provider_phase = run_provider_apply(
+        repo_root,
+        &env_config.provider,
+        &provider_package,
+        deploy_provider_context("apply", env, &env_config, &model, &provider_package),
+    )?;
+    let provider_operation = provider_apply_report(&plan, provider_phase);
     let status = if provider_operation.status == "succeeded" {
         "succeeded"
     } else {
@@ -146,6 +159,7 @@ pub(super) fn run_deploy_status(
     let latest_path = deploy_latest_path(repo_root, env);
     let active = read_optional_json(&active_path)?;
     let latest = read_optional_json(&latest_path)?;
+    let (provider_status, warnings) = deploy_status_provider_report(repo_root, env)?;
     let report = DeployStatusReport {
         schema: STATUS_SCHEMA.to_owned(),
         schema_version: 1,
@@ -158,7 +172,8 @@ pub(super) fn run_deploy_status(
             .map(|_| path_display(&latest_path, repo_root)),
         active,
         latest,
-        warnings: Vec::new(),
+        provider_status,
+        warnings,
     };
     let text = render_deploy_status_text(&report);
     render_command_result(output_json, true, json_value(&report)?, text)
@@ -296,31 +311,7 @@ pub(super) fn run_deploy_redeploy(
 }
 
 fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, RunnerError> {
-    let loaded =
-        load_task_manifest_with_inspection(&repo_root.join(effigy_manifest::TASK_MANIFEST_FILE))?;
-    let deploy_value = loaded
-        .effective_value
-        .get("deploy")
-        .cloned()
-        .ok_or_else(|| {
-            RunnerError::task_invocation(
-                "no `[deploy]` section found in the composed manifest".to_owned(),
-            )
-        })?;
-    let config: ManifestDeployConfig = deploy_value.try_into().map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to parse composed `[deploy]` config: {error}"
-        ))
-    })?;
-    let env_config = config.envs.get(env).ok_or_else(|| {
-        RunnerError::task_invocation(format!(
-            "deploy environment `{env}` is not defined in `[deploy]`; available environments: {}",
-            config.envs.keys().cloned().collect::<Vec<_>>().join(", ")
-        ))
-    })?;
-    let model = derive_deploy_model(repo_root)?;
-    let provider_package =
-        resolve_provider_package(repo_root, &env_config.provider, &config.providers)?;
+    let (env_config, model, provider_package) = deploy_execution_inputs(repo_root, env)?;
     let code = resolve_code_ref(repo_root, &env_config.code_ref)?;
     let mut blockers = Vec::new();
     let mut warnings = Vec::new();
@@ -347,7 +338,7 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
     let provider_preflight = provider_preflight_report(
         repo_root,
         env,
-        env_config,
+        &env_config,
         &model,
         provider_package.as_ref(),
     )?;
@@ -427,6 +418,49 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
     })
 }
 
+fn deploy_execution_inputs(
+    repo_root: &Path,
+    env: &str,
+) -> Result<
+    (
+        ManifestDeployEnvConfig,
+        super::model::DeployModel,
+        Option<DeployProviderPackage>,
+    ),
+    RunnerError,
+> {
+    let config = load_deploy_config(repo_root)?;
+    let env_config = config.envs.get(env).cloned().ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "deploy environment `{env}` is not defined in `[deploy]`; available environments: {}",
+            config.envs.keys().cloned().collect::<Vec<_>>().join(", ")
+        ))
+    })?;
+    let model = derive_deploy_model(repo_root)?;
+    let provider_package =
+        resolve_provider_package(repo_root, &env_config.provider, &config.providers)?;
+    Ok((env_config, model, provider_package))
+}
+
+fn load_deploy_config(repo_root: &Path) -> Result<ManifestDeployConfig, RunnerError> {
+    let loaded =
+        load_task_manifest_with_inspection(&repo_root.join(effigy_manifest::TASK_MANIFEST_FILE))?;
+    let deploy_value = loaded
+        .effective_value
+        .get("deploy")
+        .cloned()
+        .ok_or_else(|| {
+            RunnerError::task_invocation(
+                "no `[deploy]` section found in the composed manifest".to_owned(),
+            )
+        })?;
+    deploy_value.try_into().map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to parse composed `[deploy]` config: {error}"
+        ))
+    })
+}
+
 fn provider_preflight_report(
     repo_root: &Path,
     env: &str,
@@ -435,87 +469,87 @@ fn provider_preflight_report(
     provider_package: Option<&DeployProviderPackage>,
 ) -> Result<DeployProviderPreflightReport, RunnerError> {
     let provider = env_config.provider.trim().to_ascii_lowercase();
-    if !matches!(provider.as_str(), "railway" | "render") {
+    let Some(package) = provider_package else {
         return Ok(DeployProviderPreflightReport {
             status: "blocked".to_owned(),
             checks: vec![DeployProviderCheck {
-                name: "provider-adapter".to_owned(),
+                name: "provider-package".to_owned(),
                 status: "blocked".to_owned(),
                 target: Some(env_config.provider.clone()),
-                message: Some("supported providers in this deployment transaction surface are railway and render".to_owned()),
+                message: Some(format!(
+                    "deploy provider `{}` must be configured under `[deploy.providers.{}`]",
+                    env_config.provider, env_config.provider
+                )),
             }],
             blockers: vec![format!(
-                "deploy provider `{}` is not supported; expected `railway` or `render`",
-                env_config.provider
+                "deploy provider `{}` has no configured provider package",
+                env_config.provider,
             )],
         });
-    }
+    };
 
-    let mut checks = Vec::new();
-    if let Some(package) = provider_package {
-        checks.push(DeployProviderCheck {
-            name: "provider-package".to_owned(),
-            status: "planned".to_owned(),
-            target: Some(package.root.display().to_string()),
-            message: Some(format!(
-                "{} {} resolved from provider package",
-                package.descriptor.provider.display_name, package.descriptor.provider.version
-            )),
+    let mut checks = vec![DeployProviderCheck {
+        name: "provider-package".to_owned(),
+        status: "planned".to_owned(),
+        target: Some(package.root.display().to_string()),
+        message: Some(format!(
+            "{} {} resolved from provider package",
+            package.descriptor.provider.display_name, package.descriptor.provider.version
+        )),
+    }];
+    let policy_blockers =
+        provider_package_policy_blockers(&env_config.provider, &package.descriptor.policy);
+    if !policy_blockers.is_empty() {
+        return Ok(DeployProviderPreflightReport {
+            status: "blocked".to_owned(),
+            checks,
+            blockers: policy_blockers,
         });
-        let policy_blockers =
-            provider_package_policy_blockers(&env_config.provider, &package.descriptor.policy);
-        if !policy_blockers.is_empty() {
+    }
+    if let Some(report) = run_provider_preflight(
+        repo_root,
+        &provider,
+        package,
+        deploy_provider_context("preflight", env, env_config, model, package),
+    )? {
+        checks.extend(report.checks.into_iter().map(|check| DeployProviderCheck {
+            name: check.name,
+            status: check.status,
+            target: check.target,
+            message: check.message,
+        }));
+        if !report.warnings.is_empty() {
+            checks.push(DeployProviderCheck {
+                name: "provider-warnings".to_owned(),
+                status: "warning".to_owned(),
+                target: Some(provider.clone()),
+                message: Some(report.warnings.join("; ")),
+            });
+        }
+        if !report.files.is_empty() {
+            checks.push(DeployProviderCheck {
+                name: "provider-files".to_owned(),
+                status: "planned".to_owned(),
+                target: Some(report.files.join(",")),
+                message: Some("provider package reported generated files".to_owned()),
+            });
+        }
+        if report.status != "planned" && report.status != "ok" && report.blockers.is_empty() {
             return Ok(DeployProviderPreflightReport {
                 status: "blocked".to_owned(),
                 checks,
-                blockers: policy_blockers,
+                blockers: vec![format!(
+                    "deploy provider `{provider}` preflight returned status `{}` without explicit blockers",
+                    report.status
+                )],
             });
         }
-        if let Some(report) = run_provider_preflight(
-            repo_root,
-            &provider,
-            package,
-            deploy_provider_context(env, env_config, model, package),
-        )? {
-            checks.extend(report.checks.into_iter().map(|check| DeployProviderCheck {
-                name: check.name,
-                status: check.status,
-                target: check.target,
-                message: check.message,
-            }));
-            if !report.warnings.is_empty() {
-                checks.push(DeployProviderCheck {
-                    name: "provider-warnings".to_owned(),
-                    status: "warning".to_owned(),
-                    target: Some(provider.clone()),
-                    message: Some(report.warnings.join("; ")),
-                });
-            }
-            if !report.files.is_empty() {
-                checks.push(DeployProviderCheck {
-                    name: "provider-files".to_owned(),
-                    status: "planned".to_owned(),
-                    target: Some(report.files.join(",")),
-                    message: Some("provider package reported generated files".to_owned()),
-                });
-            }
-            if report.status != "planned" && report.status != "ok" && report.blockers.is_empty() {
-                return Ok(DeployProviderPreflightReport {
-                    status: "blocked".to_owned(),
-                    checks,
-                    blockers: vec![format!(
-                        "deploy provider `{provider}` preflight returned status `{}` without explicit blockers",
-                        report.status
-                    )],
-                });
-            }
-            if !report.blockers.is_empty() {
-                return Ok(DeployProviderPreflightReport {
-                    status: "blocked".to_owned(),
-                    checks,
-                    blockers: report.blockers,
-                });
-            }
+        if !report.blockers.is_empty() {
+            return Ok(DeployProviderPreflightReport {
+                status: "blocked".to_owned(),
+                checks,
+                blockers: report.blockers,
+            });
         }
     }
     checks.extend([
@@ -539,7 +573,6 @@ fn provider_preflight_report(
             message: None,
         },
     ]);
-    checks.extend(provider_adapter_checks(&provider, model));
     Ok(DeployProviderPreflightReport {
         status: "planned".to_owned(),
         checks,
@@ -548,6 +581,7 @@ fn provider_preflight_report(
 }
 
 fn deploy_provider_context(
+    phase: &str,
     env: &str,
     env_config: &ManifestDeployEnvConfig,
     model: &super::model::DeployModel,
@@ -555,7 +589,7 @@ fn deploy_provider_context(
 ) -> Value {
     json!({
         "schema": "effigy.deploy-provider.context.v1",
-        "phase": "preflight",
+        "phase": phase,
         "env": env,
         "provider": env_config.provider,
         "provider_project": env_config.provider_project,
@@ -598,78 +632,55 @@ fn provider_package_policy_blockers(
     .collect()
 }
 
-fn provider_adapter_checks(
-    provider: &str,
-    model: &super::model::DeployModel,
-) -> Vec<DeployProviderCheck> {
-    match provider {
-        "railway" => vec![DeployProviderCheck {
-            name: "provider-adapter".to_owned(),
-            status: "planned".to_owned(),
-            target: Some("railway".to_owned()),
-            message: Some(
-                "Railway CLI-backed preflight/apply is deferred to live provider setup".to_owned(),
-            ),
-        }],
-        "render" => {
-            let env_targets = model
-                .secrets
-                .iter()
-                .map(|secret| secret.name.clone())
-                .collect::<Vec<_>>()
-                .join(",");
-            let domain_targets = model
-                .domains
-                .iter()
-                .map(|domain| domain.host.clone())
-                .collect::<Vec<_>>()
-                .join(",");
-            vec![
-                DeployProviderCheck {
-                    name: "provider-adapter".to_owned(),
-                    status: "planned".to_owned(),
-                    target: Some("render".to_owned()),
-                    message: Some(
-                        "Render adapter uses the shared deployment transaction boundary; live Render API/CLI mutation is deferred until provider credentials and services exist".to_owned(),
-                    ),
-                },
-                DeployProviderCheck {
-                    name: "variables".to_owned(),
-                    status: "planned".to_owned(),
-                    target: if env_targets.is_empty() {
-                        None
-                    } else {
-                        Some(env_targets)
-                    },
-                    message: Some("Render variables are validated by name only; Effigy never prints or creates secret values".to_owned()),
-                },
-                DeployProviderCheck {
-                    name: "domains".to_owned(),
-                    status: "planned".to_owned(),
-                    target: if domain_targets.is_empty() {
-                        None
-                    } else {
-                        Some(domain_targets)
-                    },
-                    message: Some("Render domains must already exist or be attached by the operator before live apply".to_owned()),
-                },
-            ]
+fn deploy_status_provider_report(
+    repo_root: &Path,
+    env: &str,
+) -> Result<(Option<Value>, Vec<String>), RunnerError> {
+    match deploy_execution_inputs(repo_root, env) {
+        Ok((env_config, model, Some(provider_package))) => {
+            let report = run_provider_status(
+                repo_root,
+                &env_config.provider,
+                &provider_package,
+                deploy_provider_context("status", env, &env_config, &model, &provider_package),
+            )?;
+            Ok((
+                report.map(|report| json_value(&report)).transpose()?,
+                Vec::new(),
+            ))
         }
-        _ => Vec::new(),
+        Ok((env_config, _model, None)) => Ok((
+            None,
+            vec![format!(
+                "deploy provider `{}` has no configured provider package; provider status skipped",
+                env_config.provider
+            )],
+        )),
+        Err(error) => Ok((None, vec![format!("provider status skipped: {error}")])),
     }
 }
 
-fn provider_apply_report(plan: &DeployPlanReport) -> DeployProviderOperationReport {
-    let provider = plan.provider.trim().to_ascii_lowercase();
+fn provider_apply_report(
+    plan: &DeployPlanReport,
+    provider_phase: super::provider_package::DeployProviderPhaseReport,
+) -> DeployProviderOperationReport {
     DeployProviderOperationReport {
-        status: "succeeded".to_owned(),
+        status: if provider_phase.blockers.is_empty()
+            && matches!(
+                provider_phase.status.as_str(),
+                "succeeded" | "planned" | "ok"
+            ) {
+            "succeeded".to_owned()
+        } else {
+            "failed".to_owned()
+        },
         provider_deployment_id: Some(format!("{}-{}", plan.provider, plan.deployment_id)),
         services: Vec::new(),
-        warnings: vec![match provider.as_str() {
-            "render" => "Render adapter recorded the transaction boundary; live Render API/CLI mutation is deferred until provider credentials and existing services are configured".to_owned(),
-            "railway" => "Railway adapter recorded the transaction boundary; live Railway CLI mutation is deferred until provider credentials and existing services are configured".to_owned(),
-            _ => "provider adapter recorded the transaction boundary; live provider mutation is deferred".to_owned(),
-        }],
+        warnings: provider_phase
+            .warnings
+            .into_iter()
+            .chain(provider_phase.blockers)
+            .collect(),
     }
 }
 
@@ -902,7 +913,7 @@ fn iso_timestamp(time: SystemTime) -> String {
     format!("{}Z", utc_basic_timestamp(time))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct ManifestDeployConfig {
     #[serde(default)]
     providers: BTreeMap<String, ManifestDeployProviderConfig>,
@@ -910,7 +921,7 @@ struct ManifestDeployConfig {
     envs: BTreeMap<String, ManifestDeployEnvConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ManifestDeployEnvConfig {
     provider: String,
@@ -930,14 +941,14 @@ struct ManifestDeployEnvConfig {
     hooks: Option<DeployHooksConfig>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct DeployPreflightConfig {
     #[serde(default)]
     require_release_gates: bool,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct DeployHooksConfig {
     #[serde(default)]
@@ -1147,6 +1158,8 @@ struct DeployStatusReport {
     active: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     latest: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_status: Option<Value>,
     warnings: Vec<String>,
 }
 

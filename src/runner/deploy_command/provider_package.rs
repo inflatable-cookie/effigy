@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -91,7 +92,7 @@ pub(super) struct DeployProviderPolicy {
     pub prints_secret_values: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(super) struct DeployProviderPhaseReport {
     pub schema: String,
     pub phase: String,
@@ -107,7 +108,7 @@ pub(super) struct DeployProviderPhaseReport {
     pub files: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(super) struct DeployProviderPhaseCheck {
     pub name: String,
     pub status: String,
@@ -172,6 +173,38 @@ pub(super) fn run_provider_preflight(
     )
 }
 
+pub(super) fn run_provider_apply(
+    repo_root: &Path,
+    provider_name: &str,
+    package: &DeployProviderPackage,
+    context: Value,
+) -> Result<DeployProviderPhaseReport, RunnerError> {
+    let Some(script) = &package.descriptor.capabilities.apply else {
+        return Err(RunnerError::task_invocation(format!(
+            "deploy provider `{provider_name}` package does not declare an apply capability"
+        )));
+    };
+    run_provider_phase(repo_root, provider_name, package, "apply", script, context)?.ok_or_else(
+        || {
+            RunnerError::task_invocation(format!(
+                "deploy provider `{provider_name}` apply capability did not produce a report"
+            ))
+        },
+    )
+}
+
+pub(super) fn run_provider_status(
+    repo_root: &Path,
+    provider_name: &str,
+    package: &DeployProviderPackage,
+    context: Value,
+) -> Result<Option<DeployProviderPhaseReport>, RunnerError> {
+    let Some(script) = &package.descriptor.capabilities.status else {
+        return Ok(None);
+    };
+    run_provider_phase(repo_root, provider_name, package, "status", script, context)
+}
+
 fn run_provider_phase(
     repo_root: &Path,
     provider_name: &str,
@@ -180,6 +213,11 @@ fn run_provider_phase(
     script: &str,
     context: Value,
 ) -> Result<Option<DeployProviderPhaseReport>, RunnerError> {
+    let _guard = provider_script_env_lock().lock().map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to lock deploy provider script environment: {error}"
+        ))
+    })?;
     let workspace = provider_phase_workspace(repo_root, provider_name, phase)?;
     let context_path = workspace.join("context.json");
     let report_path = workspace.join("report.json");
@@ -218,6 +256,11 @@ fn run_provider_phase(
     })?;
     validate_provider_phase_report(provider_name, phase, &report)?;
     Ok(Some(report))
+}
+
+fn provider_script_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn provider_phase_workspace(

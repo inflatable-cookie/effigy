@@ -212,7 +212,7 @@ api = "acme-api"
 source = { type = "path", dir = "providers/render" }
 
 [deploy.uat]
-provider = "railway"
+provider = "render"
 state = "uat"
 code_ref = "branch:main"
 release_policy = "optional"
@@ -300,6 +300,8 @@ version = "0.1.0"
 
 [capabilities]
 preflight = "scripts/preflight.rhai"
+apply = "scripts/apply.rhai"
+status = "scripts/status.rhai"
 
 [policy]
 prints_secret_values = false
@@ -324,6 +326,40 @@ prints_secret_values = false
         ),
     )
     .expect("write script");
+    fs::write(
+        root.join("scripts/apply.rhai"),
+        format!(
+            r#"deploy::provider_report(#{{
+    schema: "effigy.deploy-provider.report.v1",
+    phase: "apply",
+    provider: "{name}",
+    status: "succeeded",
+    checks: [#{{ name: "provider-apply", status: "succeeded", target: "{name}" }}],
+    warnings: [],
+    blockers: [],
+    files: ["deployment_id:{name}-fixture"],
+}})
+"#
+        ),
+    )
+    .expect("write apply script");
+    fs::write(
+        root.join("scripts/status.rhai"),
+        format!(
+            r#"deploy::provider_report(#{{
+    schema: "effigy.deploy-provider.report.v1",
+    phase: "status",
+    provider: "{name}",
+    status: "ok",
+    checks: [#{{ name: "provider-status", status: "ok", target: "{name}" }}],
+    warnings: [],
+    blockers: [],
+    files: [],
+}})
+"#
+        ),
+    )
+    .expect("write status script");
 }
 
 #[test]
@@ -341,7 +377,7 @@ fn run_deploy_plan_json_reports_env_state_provider_and_hooks() {
 
     let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.plan.v1", 1);
     assert_eq!(parsed["env"].as_str(), Some("uat"));
-    assert_eq!(parsed["provider"].as_str(), Some("railway"));
+    assert_eq!(parsed["provider"].as_str(), Some("render"));
     assert_eq!(parsed["state"]["stack"].as_str(), Some("uat"));
     assert_eq!(parsed["release_policy"]["mode"].as_str(), Some("optional"));
     assert_eq!(
@@ -388,14 +424,8 @@ fn run_deploy_plan_json_reports_render_provider_preflight() {
     assert!(
         checks
             .iter()
-            .any(|check| check["name"].as_str() == Some("variables")),
-        "render preflight should include variable-name checks: {checks:?}"
-    );
-    assert!(
-        checks
-            .iter()
-            .any(|check| check["name"].as_str() == Some("domains")),
-        "render preflight should include domain checks: {checks:?}"
+            .any(|check| check["name"].as_str() == Some("provider-script")),
+        "render preflight should include provider script checks: {checks:?}"
     );
 }
 
@@ -472,6 +502,10 @@ fn run_deploy_status_reports_latest_after_apply() {
     assert!(
         parsed["latest"].is_object(),
         "latest should be present: {parsed}"
+    );
+    assert!(
+        parsed["provider_status"].is_object(),
+        "provider status should be present: {parsed}"
     );
 }
 

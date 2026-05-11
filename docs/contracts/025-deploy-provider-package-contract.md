@@ -77,10 +77,11 @@ source = { type = "path", dir = "external/providers/render" }
 Hydrate them with `git submodule update --init --recursive`.
 
 The provider name in `[deploy.<env>]` must resolve to a configured
-`[deploy.providers.<name>]` package or a built-in compatibility provider.
-The first implementation validates `path` and `git` provider package sources
-during deploy planning. OCI provider package materialization is reserved for a
-later slice.
+`[deploy.providers.<name>]` package. v0.6.0 removes the built-in provider
+adapter fallback; provider-specific behavior belongs in provider packages.
+The implementation validates `path` and `git` provider package sources during
+deploy planning. OCI provider package materialization is reserved for a later
+slice.
 
 ## Execution Contract
 
@@ -155,11 +156,19 @@ provider evidence, warnings, blockers, generated files, and operation reports.
 Core Effigy remains responsible for final report persistence and command
 success/failure semantics.
 
-In the first executable slice, `deploy plan` runs provider-package
-`preflight.rhai` when declared. Effigy merges reported `checks` into
-`provider_preflight.checks`, converts warnings/files into provider checks, and
-blocks the plan when the provider report returns blockers or an unsupported
-status.
+`deploy plan` runs provider-package `preflight.rhai` when declared. Effigy
+merges reported `checks` into `provider_preflight.checks`, converts
+warnings/files into provider checks, and blocks the plan when the provider
+report returns blockers or an unsupported status.
+
+`deploy apply` runs provider-package `apply.rhai` after the plan passes and
+`--yes` is supplied. The provider report determines the provider operation
+status in `effigy.deploy.apply.v1`; core Effigy still owns report persistence,
+state/hook/health bookkeeping, and transaction gates.
+
+`deploy status` runs provider-package `status.rhai` when the deploy environment
+and provider package can be resolved, and includes the returned provider report
+as `provider_status` in `effigy.deploy.status.v1`.
 
 ## Safety Rules
 

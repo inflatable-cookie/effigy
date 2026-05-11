@@ -317,14 +317,15 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - v0.6.0 deployment transactions are separate from `deploy export`:
   `deploy plan/apply/status/history/redeploy` compose code refs, provider
   targets, state stacks, OCI artifact policy, release evidence, hooks, health
-  checks, and reports; Railway and Render share the same provider transaction
-  boundary, with Render planning reporting adapter, variable-name, and domain
-  checks before live provider setup exists
+  checks, and reports; provider-specific planning, apply, and status behavior
+  comes from configured deploy-provider packages rather than built-in
+  Railway/Render transaction stubs
 - `[deploy.providers.<name>]` can resolve path and git deploy-provider packages
   with `provider.toml` descriptors during deploy planning; declared
   `preflight.rhai` scripts run through `deploy::provider_context()` and
   `deploy::provider_report(...)`, and reported checks/blockers are merged into
-  the deploy plan
+  the deploy plan; `apply.rhai` and `status.rhai` own provider execution and
+  status reporting for configured packages
 - `deploy apply` must validate provider setup and block with
   remediation instead of creating provider projects, services, resources,
   domains, variables, or secrets
