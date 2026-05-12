@@ -863,7 +863,7 @@ fn run_builtin_db_seed_task(
         ))
     })?;
 
-    for seed in seed_specs {
+    for seed in &seed_specs {
         let target = seed
             .target
             .clone()
@@ -942,6 +942,44 @@ fn run_builtin_db_seed_task(
             return Err(RunnerError::task_invocation(format!(
                 "[error] SQL import failed\nstdout:\n{stdout}\n\nstderr:\n{stderr}"
             )));
+        }
+    }
+    cleanup_builtin_seed_staging(repo_root, &seed_specs)?;
+    Ok(())
+}
+
+fn cleanup_builtin_seed_staging(
+    repo_root: &Path,
+    seed_specs: &[SeedMetadataEntry],
+) -> Result<(), RunnerError> {
+    let staging_dir = repo_root.join(DB_SEEDS_DIR);
+    for seed in seed_specs {
+        let staged_path = repo_root.join(&seed.staged_path);
+        match std::fs::remove_file(&staged_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "database seed import succeeded but failed to remove staged seed {}: {error}",
+                    staged_path.display()
+                )));
+            }
+        }
+    }
+    for file_name in [
+        DB_SEEDS_METADATA_FILE,
+        LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE,
+    ] {
+        let metadata_path = staging_dir.join(file_name);
+        match std::fs::remove_file(&metadata_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "database seed import succeeded but failed to remove staged seed metadata {}: {error}",
+                    metadata_path.display()
+                )));
+            }
         }
     }
     Ok(())
@@ -1050,8 +1088,10 @@ impl Drop for ScopedDbSeedEnvOverride {
 #[cfg(test)]
 mod tests {
     use super::{
-        db_seed_runtime_activation_plan, logical_database_targets, resolve_db_seed_input_paths,
-        resolve_db_seed_targets, stage_db_seed_files, stage_db_seed_files_with_adapter,
+        cleanup_builtin_seed_staging, db_seed_runtime_activation_plan, logical_database_targets,
+        resolve_db_seed_input_paths, resolve_db_seed_targets, stage_db_seed_files,
+        stage_db_seed_files_with_adapter, SeedMetadataEntry, DB_SEEDS_DIR, DB_SEEDS_METADATA_FILE,
+        LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE,
     };
     use effigy_artifacts::{
         OciArtifactAdapter, OciArtifactDescriptor, OciArtifactError, OciArtifactInspectRequest,
@@ -1241,6 +1281,52 @@ database = "acowtancy"
             fs::read_to_string(&artifact_metadata_files[0]).expect("read artifact metadata");
         assert!(metadata.contains("\"source_type\": \"oci\""));
         assert!(metadata.contains("\"digest\": \"sha256:fakedigest\""));
+    }
+
+    #[test]
+    fn cleanup_builtin_seed_staging_removes_staged_files_and_metadata() {
+        let repo = temp_repo("cleanup-staged");
+        let staging_dir = repo.join(DB_SEEDS_DIR);
+        fs::create_dir_all(&staging_dir).expect("create staging dir");
+        let staged_path = staging_dir.join("app--latest.sql");
+        fs::write(&staged_path, b"select 1;").expect("write staged seed");
+        for file_name in [
+            DB_SEEDS_METADATA_FILE,
+            LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE,
+        ] {
+            fs::write(staging_dir.join(file_name), "[]").expect("write metadata");
+        }
+
+        cleanup_builtin_seed_staging(
+            &repo,
+            &[SeedMetadataEntry {
+                target: Some("app".to_owned()),
+                staged_path: format!("{DB_SEEDS_DIR}/app--latest.sql"),
+            }],
+        )
+        .expect("cleanup staged seeds");
+
+        assert!(!staged_path.exists());
+        assert!(!staging_dir.join(DB_SEEDS_METADATA_FILE).exists());
+        assert!(!staging_dir
+            .join(LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE)
+            .exists());
+        assert!(staging_dir.is_dir());
+    }
+
+    #[test]
+    fn cleanup_builtin_seed_staging_tolerates_missing_files() {
+        let repo = temp_repo("cleanup-missing");
+        fs::create_dir_all(repo.join(DB_SEEDS_DIR)).expect("create staging dir");
+
+        cleanup_builtin_seed_staging(
+            &repo,
+            &[SeedMetadataEntry {
+                target: Some("app".to_owned()),
+                staged_path: format!("{DB_SEEDS_DIR}/app--latest.sql"),
+            }],
+        )
+        .expect("cleanup missing staged seeds");
     }
 
     struct FakeOciArtifactAdapter;

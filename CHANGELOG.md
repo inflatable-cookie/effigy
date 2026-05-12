@@ -17,6 +17,9 @@ During v0.x, MINOR bumps may include breaking changes.
   layer is successfully executed, staged, or imported. Apply reports now carry
   hook status/output/error plus a structured
   `EFFIGY_STATE_APPLY_CONTEXT` handoff file for repo-owned finalize work.
+- **Built-in DB seed fallback** now removes its staged seed copies and
+  metadata from `.effigy/local/db-seeds/` after a successful import instead of
+  leaving consumed hidden files behind.
 - **Decodelabs bundle seeding** now relies on Effigy's built-in
   `container data seed` and bootstrap DB-seed fallback instead of shipping a
   custom `bootstrap:db-seed` override and helper script.
