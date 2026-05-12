@@ -19,7 +19,8 @@ During v0.x, MINOR bumps may include breaking changes.
   `EFFIGY_STATE_APPLY_CONTEXT` handoff file for repo-owned finalize work.
 - **Single-step task refs** can now use `run = { task = "..." }` without a
   one-element array wrapper, and the Decodelabs bundle now uses that native
-  shape for its `release` deferral wrapper.
+  shape for its `release` deferral wrapper. Shorthand task definitions under
+  `[tasks]` now accept the same single-object form.
 - **Built-in DB seed fallback** now removes its staged seed copies and
   metadata from `.effigy/local/db-seeds/` after a successful import instead of
   leaving consumed hidden files behind.

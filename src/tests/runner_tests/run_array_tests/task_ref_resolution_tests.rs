@@ -269,6 +269,26 @@ run = { task = "docs check headings README.md --require-heading '# Hello' --requ
 }
 
 #[test]
+fn run_manifest_task_shorthand_accepts_single_task_object_without_array_wrapper() {
+    let root = temp_workspace("single-task-object-shorthand-builtin-task-ref");
+    write_manifest(&root.join("README.md"), "# Hello\n\n## World\n");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks]
+validate = { task = "docs check headings README.md --require-heading '# Hello' --require-heading '## World'" }
+"#,
+    );
+
+    let _guard = EnvGuard::set_many(&[(
+        "EFFIGY_EXECUTABLE",
+        Some("/definitely/not/a/real/effigy".to_owned()),
+    )]);
+
+    let out = run_validate_ok(&root, &[]);
+    assert_eq!(out, "");
+}
+
+#[test]
 fn run_manifest_task_run_array_supports_builtin_defer_task_reference_steps() {
     let root = temp_workspace("run-array-builtin-defer-task-ref");
     let marker = root.join("defer-called.log");
