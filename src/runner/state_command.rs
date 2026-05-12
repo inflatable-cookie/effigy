@@ -283,7 +283,7 @@ fn execute_state_apply_hook(
     let context_path =
         write_state_apply_hook_context(repo_root, stack_name, environment, lineage_id, layer)?;
     layer.hook_context_path = Some(context_path.clone());
-    match crate::runner::execute::api::run_manifest_task_with_surface_and_env(
+    match crate::runner::execute::api::run_manifest_task_with_surface_env_and_secret_targets(
         &TaskInvocation {
             name: hook,
             args: Vec::new(),
@@ -291,6 +291,7 @@ fn execute_state_apply_hook(
         repo_root.to_path_buf(),
         ExecutionSurface::DirectCli,
         &state_apply_hook_env(stack_name, environment, lineage_id, layer, &context_path),
+        &["state"],
     ) {
         Ok(output) => {
             layer.hook_status = Some(StateStackApplyHookStatus::Executed);
@@ -1463,6 +1464,7 @@ mod tests {
         OciArtifactDescriptor, OciArtifactError, OciArtifactInspectRequest, OciArtifactPullReport,
         OciArtifactPullRequest, OciArtifactPushReport, OciArtifactPushRequest,
     };
+    use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
     use effigy_state::{
         StateEnvironment, StateLayerApplyMode, StateLayerEnvironmentPolicy, StateLayerRole,
         StateStackLineageLayer, StateStackLineageReport,
@@ -1479,6 +1481,56 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("create temp repo");
         root
+    }
+
+    struct ScopedEnvVar {
+        key: String,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self {
+                key: key.to_owned(),
+                previous,
+            }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(previous) = &self.previous {
+                    std::env::set_var(&self.key, previous);
+                } else {
+                    std::env::remove_var(&self.key);
+                }
+            }
+        }
+    }
+
+    fn write_state_test_vault(root: &Path, passphrase: &str, records: &[(&str, &str)]) {
+        let mut payload = VaultPlaintextPayload::empty();
+        for (name, value) in records {
+            payload.records.insert(
+                (*name).to_owned(),
+                VaultSecretRecord::new(SecretValue::new(*value)),
+            );
+        }
+        let envelope = payload
+            .encrypt_with_passphrase(passphrase)
+            .expect("encrypt test vault");
+        let vault_path = root.join(".effigy/secrets/local.vault");
+        fs::create_dir_all(vault_path.parent().expect("vault parent")).expect("mkdir vault parent");
+        fs::write(
+            vault_path,
+            envelope.to_json_pretty().expect("serialize test vault"),
+        )
+        .expect("write test vault");
     }
 
     fn lineage() -> StateStackLineageReport {
@@ -1622,6 +1674,72 @@ hook = "apply-hook"
                 .as_str()
                 .expect("primary file")
                 .ends_with("/payload.txt")
+        );
+    }
+
+    #[test]
+    fn state_apply_hook_receives_declared_state_secret() {
+        let repo = temp_repo("apply-hook-state-secret");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.state_token]
+required = true
+targets = ["state"]
+
+[tasks.apply-hook]
+run = "sh -lc 'printf \"%s\" \"$STATE_TOKEN\" > state-secret.txt'"
+"#,
+        )
+        .expect("write effigy manifest");
+        write_state_test_vault(
+            &repo,
+            "vault-passphrase",
+            &[("state_token", "state_secret")],
+        );
+        let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
+        fs::write(repo.join("payload.txt"), "payload\n").expect("write payload");
+        fs::write(
+            repo.join("state.toml"),
+            r#"
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[layers]]
+key = "legacy-media"
+role = "media-library"
+source = "./payload.txt"
+apply_mode = "artifact"
+environment_policy = "all"
+artifact_kind = "object-store"
+target = "media"
+hook = "apply-hook"
+"#,
+        )
+        .expect("write state manifest");
+
+        run_state_apply(
+            Some(Path::new("state.toml")),
+            None,
+            &repo,
+            &repo,
+            true,
+            true,
+        )
+        .expect("run state apply");
+
+        assert_eq!(
+            fs::read_to_string(repo.join("state-secret.txt")).expect("read marker"),
+            "state_secret"
         );
     }
 

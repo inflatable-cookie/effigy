@@ -9,7 +9,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::runner::error::RunnerError;
-use crate::runner::script_command::execute_repo_rhai_script;
+use crate::runner::script_command::execute_repo_rhai_script_with_secret_targets;
+use effigy_rhai::RhaiSecretTarget;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -232,11 +233,12 @@ fn run_provider_phase(
             report_path.display().to_string(),
         ),
     ]);
-    execute_repo_rhai_script(
+    execute_repo_rhai_script_with_secret_targets(
         repo_root,
         &format!("deploy-provider:{provider_name}:{phase}"),
         &package.root.join(script),
         &[],
+        &[RhaiSecretTarget::Deploy],
     )?;
     if !report_path.is_file() {
         return Err(RunnerError::task_invocation(format!(

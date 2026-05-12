@@ -47,19 +47,23 @@ Recommended first cards:
 709-add-secrets-init-set-unset.md
 710-add-secrets-unlock-lock-and-doctor-vault-diagnostics.md
 711-close-local-encrypted-vault.md
-712-add-task-and-rhai-secret-injection.md
-713-add-deploy-provider-secret-injection.md
-714-add-container-secret-injection.md
-715-add-compat-env-export.md
-716-migrate-underlay-acowtancy-config-proof.md
-717-decide-varlock-adapter-or-deferral.md
-718-close-g05-secret-management-suite.md
+712-open-task-rhai-deploy-secret-injection-lane.md
+713-add-task-secret-injection.md
+714-add-rhai-secret-api.md
+715-add-deploy-state-artifact-secret-injection.md
+716-close-task-rhai-deploy-secret-injection.md
+717-add-container-secret-injection.md
+718-add-compat-env-export.md
+719-migrate-underlay-acowtancy-config-proof.md
+720-decide-varlock-adapter-or-deferral.md
+721-close-g05-secret-management-suite.md
 ```
 
 ## Current State
 
-`g05.001` and `g05.002` are complete. Strict lanes `076` and `077` are closed.
-Strict lane `078` is open for `g05.003`.
+`g05.001`, `g05.002`, `g05.003`, and `g05.004` are complete. Strict lanes
+`076`, `077`, `078`, and `079` are closed. Strict lane `080` is open for
+`g05.005`.
 
 Completed cards:
 
@@ -71,11 +75,18 @@ Completed cards:
 - [`707-add-secret-domain-and-vault-file-model.md`](./batch-cards/707-add-secret-domain-and-vault-file-model.md)
 - [`708-add-vault-crypto-round-trip.md`](./batch-cards/708-add-vault-crypto-round-trip.md)
 - [`709-add-secrets-init-set-unset.md`](./batch-cards/709-add-secrets-init-set-unset.md)
+- [`710-add-secrets-unlock-lock-and-doctor-vault-diagnostics.md`](./batch-cards/710-add-secrets-unlock-lock-and-doctor-vault-diagnostics.md)
+- [`711-close-local-encrypted-vault.md`](./batch-cards/711-close-local-encrypted-vault.md)
+- [`712-open-task-rhai-deploy-secret-injection-lane.md`](./batch-cards/712-open-task-rhai-deploy-secret-injection-lane.md)
+- [`713-add-task-secret-injection.md`](./batch-cards/713-add-task-secret-injection.md)
+- [`714-add-rhai-secret-api.md`](./batch-cards/714-add-rhai-secret-api.md)
+- [`715-add-deploy-state-artifact-secret-injection.md`](./batch-cards/715-add-deploy-state-artifact-secret-injection.md)
+- [`716-close-task-rhai-deploy-secret-injection.md`](./batch-cards/716-close-task-rhai-deploy-secret-injection.md)
 
 Ready card:
 
-- [`710-add-secrets-unlock-lock-and-doctor-vault-diagnostics.md`](./batch-cards/710-add-secrets-unlock-lock-and-doctor-vault-diagnostics.md)
+- [`717-add-container-secret-injection.md`](./batch-cards/717-add-container-secret-injection.md)
 
 ## Next Task
 
-Execute `710` to add unlock/lock and doctor vault diagnostics.
+Execute `717` to add container secret injection.

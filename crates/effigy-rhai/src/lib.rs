@@ -1,4 +1,6 @@
 use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,6 +13,8 @@ use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine as _;
 use effigy_context::EffigyRuntimeContext;
 use effigy_core::path_error_text::failed_to_read_path;
+use effigy_manifest::{ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig};
+use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload};
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -35,6 +39,7 @@ static RHAI_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     static ACTIVE_RUNTIME_CONTEXT: RefCell<Option<EffigyRuntimeContext>> = const { RefCell::new(None) };
+    static ACTIVE_RHAI_SECRETS: RefCell<Option<RhaiSecretStore>> = const { RefCell::new(None) };
 }
 
 type TaskRunner = Arc<dyn Fn(&Path, &str, &[String]) -> Result<String, String> + Send + Sync>;
@@ -114,10 +119,40 @@ pub struct HostCommandOutput {
     pub stderr: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RhaiSecretTarget {
+    /// General repo-owned Rhai scripts.
+    Rhai,
+    /// Deployment provider package scripts.
+    Deploy,
+    /// State stack workflow hooks.
+    State,
+    /// Artifact workflow scripts.
+    Artifacts,
+}
+
+impl RhaiSecretTarget {
+    fn manifest_target(self) -> ManifestSecretTarget {
+        match self {
+            Self::Rhai => ManifestSecretTarget::Rhai,
+            Self::Deploy => ManifestSecretTarget::Deploy,
+            Self::State => ManifestSecretTarget::State,
+            Self::Artifacts => ManifestSecretTarget::Artifacts,
+        }
+    }
+}
+
 struct ProcessExecutionOptions {
     cwd: PathBuf,
     env: Vec<(String, String)>,
     stdin_file: Option<PathBuf>,
+}
+
+#[derive(Clone, Default)]
+struct RhaiSecretStore {
+    declared_rhai: BTreeSet<String>,
+    declared_other_target: BTreeSet<String>,
+    values: BTreeMap<String, String>,
 }
 
 pub fn load_script(path: &Path, cwd: &Path) -> Result<String, RhaiHostError> {
@@ -175,8 +210,26 @@ pub fn execute_rhai_script_with_runtime_context(
     script_args: &[String],
     callbacks: &HostCallbacks,
 ) -> Result<(), RhaiHostError> {
+    execute_rhai_script_with_runtime_context_and_secret_targets(
+        context,
+        runtime_context,
+        script,
+        script_args,
+        callbacks,
+        &[RhaiSecretTarget::Rhai],
+    )
+}
+
+pub fn execute_rhai_script_with_runtime_context_and_secret_targets(
+    context: &ScriptContext,
+    runtime_context: Option<&EffigyRuntimeContext>,
+    script: &str,
+    script_args: &[String],
+    callbacks: &HostCallbacks,
+    secret_targets: &[RhaiSecretTarget],
+) -> Result<(), RhaiHostError> {
     with_rhai_runtime_context(runtime_context, || {
-        execute_rhai_script_inner(context, script, script_args, callbacks)
+        execute_rhai_script_inner(context, script, script_args, callbacks, secret_targets)
     })
 }
 
@@ -185,7 +238,9 @@ fn execute_rhai_script_inner(
     script: &str,
     script_args: &[String],
     callbacks: &HostCallbacks,
+    secret_targets: &[RhaiSecretTarget],
 ) -> Result<(), RhaiHostError> {
+    let secret_store = resolve_rhai_secret_store(&context.repo_root, secret_targets)?;
     let context = Arc::new(context.clone());
     let callbacks = callbacks.clone();
     let mut engine = Engine::new();
@@ -209,9 +264,11 @@ fn execute_rhai_script_inner(
     scope.push_constant("invocation_cwd", invocation_cwd.display().to_string());
     scope.push_constant("task_name", context.task_name.clone());
 
-    engine
-        .run_with_scope(&mut scope, script)
-        .map_err(|error| RhaiHostError::new(error.to_string()))
+    with_rhai_secret_store(secret_store, || {
+        engine
+            .run_with_scope(&mut scope, script)
+            .map_err(|error| RhaiHostError::new(redact_active_rhai_secrets(&error.to_string())))
+    })
 }
 
 fn resolve_context_path(key: &str, fallback: &Path) -> PathBuf {
@@ -245,6 +302,221 @@ fn with_rhai_runtime_context<T>(
         let output = run();
         active.replace(previous);
         output
+    })
+}
+
+fn with_rhai_secret_store<T>(store: RhaiSecretStore, run: impl FnOnce() -> T) -> T {
+    ACTIVE_RHAI_SECRETS.with(|active| {
+        let previous = active.replace(Some(store));
+        let output = run();
+        active.replace(previous);
+        output
+    })
+}
+
+fn resolve_rhai_secret_store(
+    repo_root: &Path,
+    secret_targets: &[RhaiSecretTarget],
+) -> Result<RhaiSecretStore, RhaiHostError> {
+    let manifest_path = repo_root.join("effigy.toml");
+    if !manifest_path.exists() {
+        return Ok(RhaiSecretStore::default());
+    }
+    let manifest = match effigy_manifest::load_task_manifest(&manifest_path) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            return Err(RhaiHostError::new(error.to_string()));
+        }
+    };
+    let Some(secrets) = manifest.secrets.as_ref() else {
+        return Ok(RhaiSecretStore::default());
+    };
+    let allowed_targets = secret_targets
+        .iter()
+        .copied()
+        .map(RhaiSecretTarget::manifest_target)
+        .collect::<Vec<_>>();
+    let mut store = RhaiSecretStore::default();
+    for (name, key) in &secrets.keys {
+        if key
+            .targets
+            .iter()
+            .any(|target| allowed_targets.contains(target))
+        {
+            store.declared_rhai.insert(name.clone());
+        } else {
+            store.declared_other_target.insert(name.clone());
+        }
+    }
+    if store.declared_rhai.is_empty() {
+        return Ok(store);
+    }
+
+    let required = secrets
+        .keys
+        .iter()
+        .filter(|(_, key)| {
+            key.required
+                && key
+                    .targets
+                    .iter()
+                    .any(|target| allowed_targets.contains(target))
+        })
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
+        if required.is_empty() {
+            return Ok(store);
+        }
+        return Err(RhaiHostError::new(
+            "required Rhai secrets need `[secrets].backend = \"effigy-vault\"`",
+        ));
+    }
+
+    let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)?;
+    if !vault_path.exists() {
+        if required.is_empty() {
+            return Ok(store);
+        }
+        return Err(RhaiHostError::new(format!(
+            "required Rhai secrets are declared but the vault is missing at {}",
+            vault_path.display()
+        )));
+    }
+
+    let Some(passphrase) = read_rhai_secret_passphrase(required.is_empty())? else {
+        return Ok(store);
+    };
+    let payload = read_rhai_secret_vault_payload(&vault_path, passphrase.expose())?;
+    for name in &store.declared_rhai {
+        if let Some(record) = payload.records.get(name) {
+            store
+                .values
+                .insert(name.clone(), record.value.expose().to_owned());
+        }
+    }
+
+    let missing_required = required
+        .into_iter()
+        .filter(|name| !store.values.contains_key(name))
+        .collect::<Vec<_>>();
+    if !missing_required.is_empty() {
+        return Err(RhaiHostError::new(format!(
+            "required Rhai secret(s) missing from the vault: {}",
+            missing_required.join(", ")
+        )));
+    }
+
+    Ok(store)
+}
+
+fn resolve_rhai_secret_vault_path(
+    repo_root: &Path,
+    secrets: &ManifestSecretsConfig,
+) -> Result<PathBuf, RhaiHostError> {
+    let vault = secrets.vault.as_ref().ok_or_else(|| {
+        RhaiHostError::new("`[secrets]` selects `effigy-vault` but `[secrets.vault]` is missing")
+    })?;
+    let path = vault
+        .path
+        .as_deref()
+        .ok_or_else(|| RhaiHostError::new("`[secrets.vault].path` is required for Rhai secrets"))?;
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(repo_root.join(path))
+    }
+}
+
+fn read_rhai_secret_passphrase(optional_only: bool) -> Result<Option<SecretValue>, RhaiHostError> {
+    if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
+        return Ok(Some(SecretValue::new(value)));
+    }
+    if !std::io::stdin().is_terminal() {
+        if optional_only {
+            return Ok(None);
+        }
+        return Err(RhaiHostError::new(
+            "Rhai secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
+        ));
+    }
+    let value = rpassword::prompt_password("Vault passphrase: ")
+        .map_err(|error| RhaiHostError::new(format!("failed to read secret input: {error}")))?;
+    Ok(Some(SecretValue::new(value)))
+}
+
+fn read_rhai_secret_vault_payload(
+    vault_path: &Path,
+    passphrase: &str,
+) -> Result<VaultPlaintextPayload, RhaiHostError> {
+    let raw = std::fs::read_to_string(vault_path).map_err(|error| {
+        RhaiHostError::new(format!(
+            "failed to read vault {}: {error}",
+            vault_path.display()
+        ))
+    })?;
+    let envelope =
+        VaultEnvelope::from_json(&raw).map_err(|error| RhaiHostError::new(error.to_string()))?;
+    envelope
+        .decrypt_with_passphrase(passphrase)
+        .map_err(|error| RhaiHostError::new(error.to_string()))
+}
+
+fn active_rhai_secret(name: &str) -> Result<String, Box<EvalAltResult>> {
+    ACTIVE_RHAI_SECRETS.with(|active| {
+        let store = active.borrow();
+        let store = store
+            .as_ref()
+            .ok_or_else(|| rhai_runtime_error("Rhai secret store is not active"))?;
+        if !store.declared_rhai.contains(name) {
+            if store.declared_other_target.contains(name) {
+                return Err(rhai_runtime_error(format!(
+                    "secret `{name}` is not declared for the `rhai` target"
+                )));
+            }
+            return Err(rhai_runtime_error(format!(
+                "secret `{name}` is not declared under `[secrets.keys]`"
+            )));
+        }
+        store.values.get(name).cloned().ok_or_else(|| {
+            rhai_runtime_error(format!("Rhai secret `{name}` is missing from the vault"))
+        })
+    })
+}
+
+fn active_rhai_has_secret(name: &str) -> Result<bool, Box<EvalAltResult>> {
+    ACTIVE_RHAI_SECRETS.with(|active| {
+        let store = active.borrow();
+        let store = store
+            .as_ref()
+            .ok_or_else(|| rhai_runtime_error("Rhai secret store is not active"))?;
+        if !store.declared_rhai.contains(name) {
+            if store.declared_other_target.contains(name) {
+                return Err(rhai_runtime_error(format!(
+                    "secret `{name}` is not declared for the `rhai` target"
+                )));
+            }
+            return Err(rhai_runtime_error(format!(
+                "secret `{name}` is not declared under `[secrets.keys]`"
+            )));
+        }
+        Ok(store.values.contains_key(name))
+    })
+}
+
+fn redact_active_rhai_secrets(input: &str) -> String {
+    ACTIVE_RHAI_SECRETS.with(|active| {
+        let Some(store) = active.borrow().as_ref().cloned() else {
+            return input.to_owned();
+        };
+        let mut redacted = input.to_owned();
+        for value in store.values.values() {
+            if !value.is_empty() {
+                redacted = redacted.replace(value, "[REDACTED]");
+            }
+        }
+        redacted
     })
 }
 
@@ -302,7 +574,8 @@ fn emit_host_log(message: &str, stderr: bool) -> std::io::Result<()> {
     } else {
         resolve_color_enabled(OutputMode::from_env(), io::stdout().is_terminal())
     };
-    let rendered = render_host_log_message(message, color_enabled);
+    let message = redact_active_rhai_secrets(message);
+    let rendered = render_host_log_message(&message, color_enabled);
     if stderr {
         let mut handle = io::stderr().lock();
         handle.write_all(rendered.as_bytes())?;
@@ -378,8 +651,8 @@ fn process_status_and_streams_map(
     let mut map = Map::new();
     map.insert("status".into(), Dynamic::from_int(status));
     map.insert("success".into(), Dynamic::from_bool(success));
-    map.insert("stdout".into(), stdout.into());
-    map.insert("stderr".into(), stderr.into());
+    map.insert("stdout".into(), redact_active_rhai_secrets(&stdout).into());
+    map.insert("stderr".into(), redact_active_rhai_secrets(&stderr).into());
     map
 }
 
@@ -649,8 +922,14 @@ fn host_command_output_map(output: HostCommandOutput) -> Map {
     let mut map = Map::new();
     map.insert("status".into(), Dynamic::from_int(output.status));
     map.insert("success".into(), Dynamic::from_bool(output.success));
-    map.insert("stdout".into(), output.stdout.into());
-    map.insert("stderr".into(), output.stderr.into());
+    map.insert(
+        "stdout".into(),
+        redact_active_rhai_secrets(&output.stdout).into(),
+    );
+    map.insert(
+        "stderr".into(),
+        redact_active_rhai_secrets(&output.stderr).into(),
+    );
     map
 }
 
@@ -874,7 +1153,7 @@ fn effigy_result_map(result: Result<String, EffigyCommandError>) -> Map {
         Ok(output) => {
             map.insert("status".into(), Dynamic::from_int(0));
             map.insert("success".into(), Dynamic::from_bool(true));
-            map.insert("output".into(), output.into());
+            map.insert("output".into(), redact_active_rhai_secrets(&output).into());
             map.insert("error".into(), "".into());
             map.insert("rendered_output".into(), "".into());
         }
@@ -882,8 +1161,14 @@ fn effigy_result_map(result: Result<String, EffigyCommandError>) -> Map {
             map.insert("status".into(), Dynamic::from_int(1));
             map.insert("success".into(), Dynamic::from_bool(false));
             map.insert("output".into(), String::new().into());
-            map.insert("error".into(), error.message.into());
-            map.insert("rendered_output".into(), error.rendered_output.into());
+            map.insert(
+                "error".into(),
+                redact_active_rhai_secrets(&error.message).into(),
+            );
+            map.insert(
+                "rendered_output".into(),
+                redact_active_rhai_secrets(&error.rendered_output).into(),
+            );
         }
     }
     map

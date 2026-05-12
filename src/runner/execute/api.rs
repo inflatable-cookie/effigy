@@ -49,11 +49,24 @@ pub(in crate::runner) fn run_manifest_task_with_surface_and_env(
     surface: ExecutionSurface,
     env_overrides: &BTreeMap<String, String>,
 ) -> Result<String, RunnerError> {
+    run_manifest_task_with_surface_env_and_secret_targets(task, cwd, surface, env_overrides, &[])
+}
+
+pub(in crate::runner) fn run_manifest_task_with_surface_env_and_secret_targets(
+    task: &TaskInvocation,
+    cwd: PathBuf,
+    surface: ExecutionSurface,
+    env_overrides: &BTreeMap<String, String>,
+    secret_targets: &[&str],
+) -> Result<String, RunnerError> {
     let runtime_context = EffigyRuntimeContext::capture_lossy(Some(cwd.clone()), None)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let mut environment = ExecutionEnvironmentPlan::default().cwd(cwd);
     for (key, value) in env_overrides {
         environment = environment.env(key.clone(), value.clone());
+    }
+    for target in secret_targets {
+        environment = environment.secret_target((*target).to_owned());
     }
     let request = TaskExecutionRequestBuilder::new()
         .runtime_context(runtime_context)

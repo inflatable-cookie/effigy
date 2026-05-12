@@ -31,14 +31,13 @@ Updated: 2026-05-12
 ## Current Planning State
 
 `g05` is active as the secret and local configuration management generation.
-`g05.001` and `g05.002` are complete. Strict lane `078` is active for
-`g05.003`.
+`g05.001`, `g05.002`, and `g05.003` are complete.
 
 Current ready work:
 
-- execute ready card `710`
-- add unlock/lock and doctor vault diagnostics
-- keep runtime injection blocked until `g05.004`
+- execute ready card `717`
+- add container secret injection
+- keep container startup injection blocked until `g05.005`
 
 ## Research Roadmaps
 
@@ -70,4 +69,4 @@ closeout there first.
 
 ## Next Task
 
-Execute `710` to add unlock/lock and doctor vault diagnostics.
+Execute `717` to add container secret injection.

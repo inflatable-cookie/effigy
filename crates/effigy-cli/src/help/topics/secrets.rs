@@ -15,6 +15,8 @@ pub(crate) fn render_secrets_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
             "effigy secrets init [--repo <PATH>] [--json]",
             "effigy secrets set <NAME> [--repo <PATH>] [--json]",
             "effigy secrets unset <NAME> [--repo <PATH>] [--json]",
+            "effigy secrets unlock [--repo <PATH>] [--json]",
+            "effigy secrets lock [--repo <PATH>] [--json]",
             "effigy --json secrets list",
         ],
         &[
@@ -31,6 +33,11 @@ pub(crate) fn render_secrets_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
             ("init", "Create an empty encrypted local vault"),
             ("set <NAME>", "Set a declared secret value"),
             ("unset <NAME>", "Remove a declared secret value"),
+            (
+                "unlock",
+                "Verify the vault can be unlocked for this invocation",
+            ),
+            ("lock", "Clear invocation-local unlock state"),
             ("-h, --help", "Print command help"),
         ],
         &[
@@ -39,6 +46,8 @@ pub(crate) fn render_secrets_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
             "effigy secrets init",
             "effigy secrets set database_url",
             "effigy secrets unset database_url",
+            "effigy secrets unlock",
+            "effigy secrets lock",
             "effigy secrets list --json",
         ],
     )

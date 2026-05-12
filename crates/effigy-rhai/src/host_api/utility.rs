@@ -6,14 +6,15 @@ use std::time::Duration;
 
 use chrono::Utc;
 use effigy_core::shell::shell_quote;
-use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString};
+use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map};
 
 use crate::surface::{
     MODULE_JSON, MODULE_PATH, MODULE_RANDOM, MODULE_REGEX, MODULE_STR, MODULE_TIME, MODULE_TOML,
 };
 
 use super::{
-    generate_jwt_env_keys_dynamic, generate_random_base64, rhai_runtime_error, ScriptContext,
+    generate_jwt_env_keys_dynamic, generate_random_base64, resolve_runtime_path,
+    rhai_runtime_error, ScriptContext,
 };
 
 pub(super) fn register_utility_modules(engine: &mut Engine, context: Arc<ScriptContext>) {
@@ -22,8 +23,14 @@ pub(super) fn register_utility_modules(engine: &mut Engine, context: Arc<ScriptC
         std::rc::Rc::new(build_time_module(context.clone())),
     );
     engine.register_static_module(MODULE_PATH, std::rc::Rc::new(build_path_module()));
-    engine.register_static_module(MODULE_JSON, std::rc::Rc::new(build_json_module()));
-    engine.register_static_module(MODULE_TOML, std::rc::Rc::new(build_toml_module()));
+    engine.register_static_module(
+        MODULE_JSON,
+        std::rc::Rc::new(build_json_module(context.clone())),
+    );
+    engine.register_static_module(
+        MODULE_TOML,
+        std::rc::Rc::new(build_toml_module(context.clone())),
+    );
     engine.register_static_module(MODULE_STR, std::rc::Rc::new(build_str_module()));
     engine.register_static_module(MODULE_REGEX, std::rc::Rc::new(build_regex_module()));
     engine.register_static_module(MODULE_RANDOM, std::rc::Rc::new(build_random_module()));
@@ -76,7 +83,7 @@ fn build_path_module() -> rhai::Module {
     module
 }
 
-fn build_json_module() -> rhai::Module {
+fn build_json_module(context: Arc<ScriptContext>) -> rhai::Module {
     let mut module = rhai::Module::new();
     module.set_native_fn(
         "parse",
@@ -95,10 +102,50 @@ fn build_json_module() -> rhai::Module {
                 .map_err(|error| rhai_runtime_error(error.to_string()))
         },
     );
+    module.set_native_fn(
+        "stringify_compact",
+        |value: Dynamic| -> Result<String, Box<EvalAltResult>> {
+            let decoded: serde_json::Value = rhai::serde::from_dynamic(&value)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            serde_json::to_string(&decoded).map_err(|error| rhai_runtime_error(error.to_string()))
+        },
+    );
+    let file_context = context.clone();
+    module.set_native_fn(
+        "read_file",
+        move |path: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            let raw = std::fs::read_to_string(&path).map_err(|error| {
+                rhai_runtime_error(format!("failed to read {}: {error}", path.display()))
+            })?;
+            let value: serde_json::Value = serde_json::from_str(&raw)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
+        },
+    );
+    let file_context = context.clone();
+    module.set_native_fn(
+        "write_file",
+        move |path: ImmutableString, value: Dynamic| -> Result<(), Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    rhai_runtime_error(format!("failed to create {}: {error}", parent.display()))
+                })?;
+            }
+            let decoded: serde_json::Value = rhai::serde::from_dynamic(&value)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            let rendered = serde_json::to_string_pretty(&decoded)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            std::fs::write(&path, rendered).map_err(|error| {
+                rhai_runtime_error(format!("failed to write {}: {error}", path.display()))
+            })
+        },
+    );
     module
 }
 
-fn build_toml_module() -> rhai::Module {
+fn build_toml_module(context: Arc<ScriptContext>) -> rhai::Module {
     let mut module = rhai::Module::new();
     module.set_native_fn(
         "parse",
@@ -114,6 +161,38 @@ fn build_toml_module() -> rhai::Module {
             let decoded: toml::Value = rhai::serde::from_dynamic(&value)
                 .map_err(|error| rhai_runtime_error(error.to_string()))?;
             toml::to_string_pretty(&decoded).map_err(|error| rhai_runtime_error(error.to_string()))
+        },
+    );
+    let file_context = context.clone();
+    module.set_native_fn(
+        "read_file",
+        move |path: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            let raw = std::fs::read_to_string(&path).map_err(|error| {
+                rhai_runtime_error(format!("failed to read {}: {error}", path.display()))
+            })?;
+            let value: toml::Value =
+                toml::from_str(&raw).map_err(|error| rhai_runtime_error(error.to_string()))?;
+            rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
+        },
+    );
+    let file_context = context.clone();
+    module.set_native_fn(
+        "write_file",
+        move |path: ImmutableString, value: Dynamic| -> Result<(), Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    rhai_runtime_error(format!("failed to create {}: {error}", parent.display()))
+                })?;
+            }
+            let decoded: toml::Value = rhai::serde::from_dynamic(&value)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            let rendered = toml::to_string_pretty(&decoded)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            std::fs::write(&path, rendered).map_err(|error| {
+                rhai_runtime_error(format!("failed to write {}: {error}", path.display()))
+            })
         },
     );
     module
@@ -240,6 +319,48 @@ fn build_regex_module() -> rhai::Module {
                     .replace_all(&value.to_string(), replacement.as_str())
                     .to_string())
             }
+        },
+    );
+    module.set_native_fn(
+        "captures",
+        |pattern: ImmutableString, value: Dynamic| -> Result<Map, Box<EvalAltResult>> {
+            let matcher = regex::Regex::new(pattern.as_str())
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            let mut result = Map::new();
+            if value.is_unit() {
+                result.insert("matched".into(), false.into());
+                result.insert("groups".into(), Array::new().into());
+                result.insert("named".into(), Map::new().into());
+                return Ok(result);
+            }
+
+            let rendered = value.to_string();
+            let Some(captures) = matcher.captures(&rendered) else {
+                result.insert("matched".into(), false.into());
+                result.insert("groups".into(), Array::new().into());
+                result.insert("named".into(), Map::new().into());
+                return Ok(result);
+            };
+
+            let groups = captures
+                .iter()
+                .map(|entry| match entry {
+                    Some(value) => value.as_str().to_owned().into(),
+                    None => ().into(),
+                })
+                .collect::<Array>();
+            let mut named = Map::new();
+            for name in matcher.capture_names().flatten() {
+                let value = captures
+                    .name(name)
+                    .map(|entry| entry.as_str().to_owned().into())
+                    .unwrap_or_else(|| ().into());
+                named.insert(name.into(), value);
+            }
+            result.insert("matched".into(), true.into());
+            result.insert("groups".into(), groups.into());
+            result.insert("named".into(), named.into());
+            Ok(result)
         },
     );
     module.set_native_fn(

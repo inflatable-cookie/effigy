@@ -1,5 +1,6 @@
 use super::super::cache::ops::update_task_cache_entry;
 use super::context::ExecutionTaskContext;
+use super::pipeline::standard::redact_task_secret_values;
 use super::process::{build_shell_process, command_launch_error};
 use crate::runner::error::RunnerError;
 use effigy_env::secret::SecretString;
@@ -23,8 +24,8 @@ fn run_task_process_json(
     let output = build_shell_process(context, secret_env)
         .output()
         .map_err(|error| command_launch_error(context, error))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout = redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_env);
+    let stderr = redact_task_secret_values(&String::from_utf8_lossy(&output.stderr), secret_env);
     let rendered = super::json_payload::render_task_command_json(
         &context.selector.task_name,
         context.selector,

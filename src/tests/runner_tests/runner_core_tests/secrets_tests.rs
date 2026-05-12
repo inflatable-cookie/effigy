@@ -3,7 +3,7 @@ use crate::runner::tests::prelude::{
     parse_json_output_with_schema_version, temp_workspace, write_root_manifest, EnvGuard,
 };
 use effigy_cli::{Command, SecretsArgs, SecretsSubcommand};
-use effigy_secrets::VaultEnvelope;
+use effigy_secrets::{VaultEnvelope, VaultPlaintextPayload};
 use std::fs;
 
 #[test]
@@ -226,6 +226,160 @@ fn secrets_set_rejects_undeclared_secret() {
         .contains("secret `missing` is not declared under `[secrets.keys]`"));
 }
 
+#[test]
+fn secrets_unlock_verifies_vault_without_printing_values() {
+    let root = temp_workspace("secrets-unlock");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", Some("postgres://secret-value"));
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Set {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("set should succeed");
+
+    let out = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Unlock,
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("unlock should succeed");
+
+    assert!(!out.contains("postgres://secret-value"));
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
+    assert_eq!(parsed["action"].as_str(), Some("unlock"));
+    assert_eq!(
+        parsed["summary"].as_str(),
+        Some("unlocked for this invocation; 1 stored value(s)")
+    );
+}
+
+#[test]
+fn secrets_lock_reports_invocation_local_clear() {
+    let root = temp_workspace("secrets-lock");
+    write_root_manifest(&root, declared_secrets_manifest());
+
+    let out = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Lock,
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("lock should succeed");
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
+    assert_eq!(parsed["action"].as_str(), Some("lock"));
+    assert_eq!(
+        parsed["summary"].as_str(),
+        Some("cleared invocation-local unlock state")
+    );
+}
+
+#[test]
+fn secrets_doctor_reports_locked_vault_without_passphrase() {
+    let root = temp_workspace("secrets-doctor-locked");
+    write_root_manifest(&root, declared_secrets_manifest());
+    {
+        let _env = secret_test_env("vault-passphrase", None);
+        run_command(Command::Secrets(SecretsArgs {
+            subcommand: SecretsSubcommand::Init,
+            repo_override: Some(root.clone()),
+            output_json: false,
+        }))
+        .expect("init should succeed");
+    }
+    let _env = secret_test_env_clear();
+
+    let out = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Doctor,
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("locked doctor should warn but succeed");
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
+    assert_eq!(parsed["vault_state"]["status"].as_str(), Some("locked"));
+    assert_eq!(parsed["ok"].as_bool(), Some(true));
+}
+
+#[test]
+fn secrets_doctor_blocks_missing_required_when_unlocked() {
+    let root = temp_workspace("secrets-doctor-missing-required");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", None);
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+
+    let error = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Doctor,
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect_err("doctor should block missing required");
+
+    let rendered = error.to_string();
+    assert!(rendered.contains("required secret `database_url` is missing from the vault"));
+    assert!(!rendered.contains("vault-passphrase"));
+}
+
+#[test]
+fn secrets_doctor_blocks_corrupt_vault() {
+    let root = temp_workspace("secrets-doctor-corrupt");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    fs::create_dir_all(vault_path.parent().expect("parent")).expect("mkdir");
+    fs::write(&vault_path, "not-json").expect("write corrupt");
+
+    let error = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Doctor,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect_err("doctor should block corrupt vault");
+
+    assert!(error.to_string().contains("failed to parse secrets vault"));
+}
+
+#[test]
+fn secrets_doctor_blocks_undeclared_stored_values() {
+    let root = temp_workspace("secrets-doctor-undeclared");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", None);
+    let mut payload = VaultPlaintextPayload::empty();
+    payload.records.insert(
+        "orphan".to_owned(),
+        effigy_secrets::VaultSecretRecord::new(effigy_secrets::SecretValue::new("hidden")),
+    );
+    let envelope = payload
+        .encrypt_with_passphrase("vault-passphrase")
+        .expect("encrypt");
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    fs::create_dir_all(vault_path.parent().expect("parent")).expect("mkdir");
+    fs::write(&vault_path, envelope.to_json_pretty().expect("json")).expect("write vault");
+
+    let error = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Doctor,
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect_err("doctor should block undeclared stored value");
+
+    let rendered = error.to_string();
+    assert!(rendered.contains("stored secret `orphan` is not declared under `[secrets.keys]`"));
+    assert!(!rendered.contains("hidden"));
+}
+
 fn secret_test_env(passphrase: &str, value: Option<&str>) -> EnvGuard {
     EnvGuard::set_many(&[
         (
@@ -233,6 +387,13 @@ fn secret_test_env(passphrase: &str, value: Option<&str>) -> EnvGuard {
             Some(passphrase.to_owned()),
         ),
         ("EFFIGY_TEST_SECRETS_VALUE", value.map(str::to_owned)),
+    ])
+}
+
+fn secret_test_env_clear() -> EnvGuard {
+    EnvGuard::set_many(&[
+        ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
+        ("EFFIGY_TEST_SECRETS_VALUE", None),
     ])
 }
 

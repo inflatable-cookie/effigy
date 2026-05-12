@@ -1,7 +1,8 @@
 use crate::runner::tests::prelude::{
     assert_file_text_equals, assert_run_task_ok_empty, assert_task_invocation_error_contains, fs,
-    run_task, temp_workspace, write_root_manifest, EnvGuard,
+    parse_json_output_with_schema_version, run_task, temp_workspace, write_root_manifest, EnvGuard,
 };
+use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
 
 #[test]
 fn run_manifest_task_applies_task_env_with_project_substitution() {
@@ -295,4 +296,112 @@ run = "printf should-not-run"
         err,
         &["invalid `[env_schema].schema`", "cannot be empty"],
     );
+}
+
+#[test]
+fn run_manifest_task_injects_declared_vault_secret_into_env() {
+    let root = temp_workspace("task-vault-secret-env");
+    write_root_manifest(
+        &root,
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.database_url]
+required = true
+targets = ["tasks"]
+
+[tasks.capture]
+run = "printf %s \"$DATABASE_URL\""
+"#,
+    );
+    write_test_vault(
+        &root,
+        "vault-passphrase",
+        &[("database_url", "postgres://secret-value")],
+    );
+    let _env = EnvGuard::set_many(&[(
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        Some("vault-passphrase".to_owned()),
+    )]);
+
+    let out = run_task(&root, "capture", &["--json"]).expect("task should succeed");
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.task.run.v1", 1);
+
+    assert_eq!(parsed["stdout"].as_str(), Some("[REDACTED]"));
+    assert!(
+        !out.contains("postgres://secret-value"),
+        "task JSON leaked vault secret: {out}"
+    );
+}
+
+#[test]
+fn run_manifest_task_blocks_missing_required_vault_secret_before_spawn() {
+    let root = temp_workspace("task-vault-secret-missing");
+    let marker = root.join("should-not-run.out");
+    write_root_manifest(
+        &root,
+        &format!(
+            r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.database_url]
+required = true
+targets = ["tasks"]
+
+[tasks.capture]
+run = "sh -lc 'printf ran > \"{}\"'"
+"#,
+            marker.display()
+        ),
+    );
+    write_test_vault(&root, "vault-passphrase", &[]);
+    let _env = EnvGuard::set_many(&[(
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        Some("vault-passphrase".to_owned()),
+    )]);
+
+    let err = run_task(&root, "capture", &[]).expect_err("task should fail");
+    assert_task_invocation_error_contains(
+        err,
+        &[
+            "required task secret(s) missing from the vault",
+            "database_url",
+        ],
+    );
+    assert!(
+        !marker.exists(),
+        "task should not execute when a required vault secret is missing"
+    );
+}
+
+fn write_test_vault(root: &std::path::Path, passphrase: &str, records: &[(&str, &str)]) {
+    let mut payload = VaultPlaintextPayload::empty();
+    for (name, value) in records {
+        payload.records.insert(
+            (*name).to_owned(),
+            VaultSecretRecord::new(SecretValue::new(*value)),
+        );
+    }
+    let envelope = payload
+        .encrypt_with_passphrase(passphrase)
+        .expect("encrypt test vault");
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    fs::create_dir_all(vault_path.parent().expect("vault parent")).expect("mkdir vault parent");
+    fs::write(
+        vault_path,
+        envelope.to_json_pretty().expect("serialize test vault"),
+    )
+    .expect("write test vault");
 }

@@ -1,4 +1,6 @@
-use std::path::Path;
+use std::fs;
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
 
 use super::super::super::cache::ops::check_task_cache;
 use super::super::super::exec_command::{
@@ -32,6 +34,7 @@ use crate::runner::execute::workspace_seeded::{
 };
 use crate::runner::host_container_lease::emit_host_container_lease_notice;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
+use crate::runner::manifest::load_task_manifest;
 use crate::runner::runtime_session_context::{
     current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
 };
@@ -45,8 +48,11 @@ use effigy_env::schema_support::{
 };
 use effigy_env::secret::SecretString;
 use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan, TaskStatusStage};
-use effigy_manifest::TaskSelection;
+use effigy_manifest::{
+    ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig, TaskSelection,
+};
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
+use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload};
 
 pub(in crate::runner) fn run_standard_task(
     preflight: &ExecutionPreflight,
@@ -123,9 +129,17 @@ fn run_standard_task_inner(
         return Ok((output, format!("cache hit ({})", cache_check.reason)));
     }
 
-    let secret_pairs: Option<Vec<(&str, &SecretString)>> =
-        env_schema_resolved.as_ref().map(|r| r.secret_env());
-    let secret_ref = secret_pairs.as_deref();
+    let env_schema_secret_pairs = env_schema_resolved
+        .as_ref()
+        .map(|resolved| resolved.secret_env())
+        .unwrap_or_default();
+    let task_secret_pairs =
+        resolve_task_secret_env(&preflight.resolved.resolved_root, &preflight.secret_targets)?;
+    let mut secret_pairs = env_schema_secret_pairs;
+    for (key, value) in &task_secret_pairs {
+        secret_pairs.push((key.as_str(), value));
+    }
+    let secret_ref = (!secret_pairs.is_empty()).then_some(secret_pairs.as_slice());
 
     let binding_resolution = resolve_execution_binding_resolution(
         selection
@@ -225,8 +239,10 @@ fn run_standard_task_inner(
                 Some(&context.selection.task.env),
                 secret_ref,
             )?;
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let stdout =
+                redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_ref);
+            let stderr =
+                redact_task_secret_values(&String::from_utf8_lossy(&output.stderr), secret_ref);
             let rendered = render::render_task_command_json(
                 &preflight.selector.task_name,
                 &preflight.selector,
@@ -311,6 +327,185 @@ fn route_with_running_check(
             is_primary_service_running(&selection.catalog.catalog_root, &policy)
         },
     )
+}
+
+fn resolve_task_secret_env(
+    repo_root: &Path,
+    extra_targets: &[String],
+) -> Result<Vec<(String, SecretString)>, RunnerError> {
+    let manifest = load_task_manifest(&repo_root.join("effigy.toml"))?;
+    let Some(secrets) = manifest.secrets.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let targets = task_secret_targets(extra_targets)?;
+    let task_keys = secrets
+        .keys
+        .iter()
+        .filter(|(_, key)| key.targets.iter().any(|target| targets.contains(target)))
+        .collect::<Vec<_>>();
+    if task_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let required_names = task_keys
+        .iter()
+        .filter(|(_, key)| key.required)
+        .map(|(name, _)| (*name).clone())
+        .collect::<Vec<_>>();
+    if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
+        if required_names.is_empty() {
+            return Ok(Vec::new());
+        }
+        return Err(RunnerError::task_invocation(
+            "required task secrets need `[secrets].backend = \"effigy-vault\"`",
+        ));
+    }
+
+    let vault_path = resolve_task_secret_vault_path(repo_root, secrets)?;
+    if !vault_path.exists() {
+        if required_names.is_empty() {
+            return Ok(Vec::new());
+        }
+        return Err(RunnerError::task_invocation(format!(
+            "required task secrets are declared but the vault is missing at {}",
+            vault_path.display()
+        )));
+    }
+
+    let passphrase = read_task_secret_passphrase(required_names.is_empty())?;
+    let Some(passphrase) = passphrase else {
+        return Ok(Vec::new());
+    };
+    let payload = read_task_secret_vault_payload(&vault_path, passphrase.expose())?;
+
+    let mut injected = Vec::new();
+    let mut missing_required = Vec::new();
+    for (name, key) in task_keys {
+        match payload.records.get(name.as_str()) {
+            Some(record) => injected.push((
+                task_secret_env_name(name),
+                SecretString::new(record.value.expose().to_owned()),
+            )),
+            None if key.required => missing_required.push(name.to_owned()),
+            None => {}
+        }
+    }
+
+    if !missing_required.is_empty() {
+        return Err(RunnerError::task_invocation(format!(
+            "required task secret(s) missing from the vault: {}",
+            missing_required.join(", ")
+        )));
+    }
+
+    Ok(injected)
+}
+
+fn task_secret_targets(extra_targets: &[String]) -> Result<Vec<ManifestSecretTarget>, RunnerError> {
+    let mut targets = vec![ManifestSecretTarget::Tasks];
+    for target in extra_targets {
+        let target = match target.as_str() {
+            "tasks" => ManifestSecretTarget::Tasks,
+            "containers" => ManifestSecretTarget::Containers,
+            "rhai" => ManifestSecretTarget::Rhai,
+            "deploy" => ManifestSecretTarget::Deploy,
+            "state" => ManifestSecretTarget::State,
+            "artifacts" => ManifestSecretTarget::Artifacts,
+            other => {
+                return Err(RunnerError::task_invocation(format!(
+                    "unknown execution secret target `{other}`"
+                )));
+            }
+        };
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    Ok(targets)
+}
+
+fn resolve_task_secret_vault_path(
+    repo_root: &Path,
+    secrets: &ManifestSecretsConfig,
+) -> Result<PathBuf, RunnerError> {
+    let vault = secrets.vault.as_ref().ok_or_else(|| {
+        RunnerError::task_invocation(
+            "`[secrets]` selects `effigy-vault` but `[secrets.vault]` is missing",
+        )
+    })?;
+    let path = vault.path.as_deref().ok_or_else(|| {
+        RunnerError::task_invocation("`[secrets.vault].path` is required for task secret injection")
+    })?;
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(repo_root.join(path))
+    }
+}
+
+fn read_task_secret_passphrase(optional_only: bool) -> Result<Option<SecretValue>, RunnerError> {
+    if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
+        return Ok(Some(SecretValue::new(value)));
+    }
+    if !std::io::stdin().is_terminal() {
+        if optional_only {
+            return Ok(None);
+        }
+        return Err(RunnerError::task_invocation(
+            "task secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
+        ));
+    }
+    let value = rpassword::prompt_password("Vault passphrase: ").map_err(|error| {
+        RunnerError::task_invocation(format!("failed to read secret input: {error}"))
+    })?;
+    Ok(Some(SecretValue::new(value)))
+}
+
+fn read_task_secret_vault_payload(
+    vault_path: &Path,
+    passphrase: &str,
+) -> Result<VaultPlaintextPayload, RunnerError> {
+    let raw = fs::read_to_string(vault_path).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to read vault {}: {error}",
+            vault_path.display()
+        ))
+    })?;
+    let envelope = VaultEnvelope::from_json(&raw)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    envelope
+        .decrypt_with_passphrase(passphrase)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+}
+
+fn task_secret_env_name(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+pub(in crate::runner::execute) fn redact_task_secret_values(
+    input: &str,
+    secret_env: Option<&[(&str, &SecretString)]>,
+) -> String {
+    let Some(secret_env) = secret_env else {
+        return input.to_owned();
+    };
+    let mut redacted = input.to_owned();
+    for (_, secret) in secret_env {
+        let value = secret.expose();
+        if !value.is_empty() {
+            redacted = redacted.replace(value, "[REDACTED]");
+        }
+    }
+    redacted
 }
 
 fn activate_routed_container_runtime(
@@ -440,8 +635,10 @@ fn run_inline_workspace_standard_task(
             "docker compose down",
         );
         let output = output?;
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout =
+            redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_ref);
+        let stderr =
+            redact_task_secret_values(&String::from_utf8_lossy(&output.stderr), secret_ref);
         let rendered = render::render_task_command_json(
             &preflight.selector.task_name,
             &preflight.selector,

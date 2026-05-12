@@ -104,8 +104,13 @@ Current v1 helpers:
 - structured data helpers:
   - `json::parse(raw)`
   - `json::stringify(value)`
+  - `json::stringify_compact(value)`
+  - `json::read_file(path)`
+  - `json::write_file(path, value)`
   - `toml::parse(raw)`
   - `toml::stringify(value)`
+  - `toml::read_file(path)`
+  - `toml::write_file(path, value)`
 - config helpers:
   - `config::raw()`
   - `config::effective()`
@@ -311,6 +316,26 @@ let env = fs::env_file_entries(".env");
 if env["APP_HOST"] == "example.test" {
     fs::env_file_remove(".env", "LEGACY_FLAG");
 }
+```
+
+Writing and round-tripping structured JSON and TOML:
+
+```rhai
+let payload = #{
+    host: "acowtancy.legacy.test",
+    port: 5524
+};
+
+json::write_file(".effigy/tmp/payload.json", payload);
+let roundtrip_json = json::read_file(".effigy/tmp/payload.json");
+
+let fragment = #{
+    bundle: #{ host: "acowtancy.legacy.test" },
+    tasks: #{ release: #{ task: "defer release" } }
+};
+
+toml::write_file(".effigy/tmp/fragment.toml", fragment);
+let roundtrip_toml = toml::read_file(".effigy/tmp/fragment.toml");
 ```
 
 Structured process call:

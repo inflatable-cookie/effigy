@@ -1,6 +1,6 @@
 # g05.003 - Local Encrypted Vault
 
-Status: Planned
+Status: Complete
 Depends on: `g05.002`
 
 ## Goal
@@ -51,18 +51,29 @@ cannot silently decrypt the vault.
 
 ## Acceptance Criteria
 
-- A developer can initialize a vault and set declared secrets.
-- `secrets doctor` can distinguish:
+- [x] A developer can initialize a vault and set declared secrets.
+- [x] `secrets doctor` can distinguish:
   - no vault
   - locked vault
   - unlocked vault
   - missing required values
   - undeclared stored values
-- Unlock requires explicit operator participation.
-- Secret values never appear in normal output, JSON output, debug formatting,
+- [x] Unlock requires explicit operator participation.
+- [x] Secret values never appear in normal output, JSON output, debug formatting,
   or error messages.
-- Corrupt vault files fail closed with clear diagnostics.
-- File permissions are checked and warned or blocked when unsafe.
+- [x] Corrupt vault files fail closed with clear diagnostics.
+- [x] File permissions are checked and warned or blocked when unsafe.
+
+## Outcome
+
+Effigy now has a built-in local encrypted vault backed by `effigy-secrets`.
+The vault uses Argon2id key derivation, XChaCha20-Poly1305 authenticated
+encryption, OS-random salt/nonce material, declared-key enforcement, hidden
+operator input, safe Unix file permissions, and value-free text/JSON output.
+
+No runtime injection, container startup injection, provider provisioning,
+`.env` export, daemon, or cross-invocation unlock cache was added in this
+roadmap.
 
 ## Test Strategy
 
@@ -76,4 +87,3 @@ cannot silently decrypt the vault.
 ## Next Task
 
 Wire unlocked secrets into task, Rhai, and deploy execution in `g05.004`.
-

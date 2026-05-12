@@ -217,6 +217,8 @@ pub enum SecretsSubcommand {
     Init,
     Set { name: String },
     Unset { name: String },
+    Unlock,
+    Lock,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

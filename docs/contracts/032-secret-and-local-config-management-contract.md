@@ -148,6 +148,15 @@ Injection rules:
 
 - pass secret values directly to child process environments where possible
 - avoid putting secrets into shell command strings
+- task execution receives `targets = ["tasks"]` values through process
+  environment injection
+- Rhai scripts can request declared values through `effigy::secret(name)` and
+  test availability with `effigy::has_secret(name)`
+- deploy provider package scripts run with `targets = ["deploy"]` access
+- state apply hook tasks can receive `targets = ["state"]` values through the
+  same process environment injection path
+- artifact-targeted Rhai workflow callers may opt into `targets = ["artifacts"]`
+  when an artifact workflow has a script execution point
 - avoid persistent `.env` files by default
 - if a compatibility file is required, write it under `.effigy/runtime/`,
   redact it from reports, and make lifecycle/cleanup explicit

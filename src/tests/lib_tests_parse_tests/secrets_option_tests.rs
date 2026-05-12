@@ -107,6 +107,43 @@ fn parse_secrets_unset_with_name() {
 }
 
 #[test]
+fn parse_secrets_unlock_with_json() {
+    let cmd = parse_command(vec![
+        "secrets".to_owned(),
+        "unlock".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Secrets(SecretsArgs {
+            subcommand: SecretsSubcommand::Unlock,
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_secrets_lock_with_repo() {
+    let cmd = parse_command(vec![
+        "secrets".to_owned(),
+        "lock".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Secrets(SecretsArgs {
+            subcommand: SecretsSubcommand::Lock,
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: false,
+        })
+    );
+}
+
+#[test]
 fn parse_secrets_set_requires_name() {
     let error =
         parse_command(vec!["secrets".to_owned(), "set".to_owned()]).expect_err("parse should fail");
@@ -115,7 +152,7 @@ fn parse_secrets_set_requires_name() {
 
 #[test]
 fn parse_secrets_rejects_unknown_subcommand() {
-    let error = parse_command(vec!["secrets".to_owned(), "unlock".to_owned()])
+    let error = parse_command(vec!["secrets".to_owned(), "export".to_owned()])
         .expect_err("parse should fail");
-    assert_eq!(error.to_string(), "unknown argument: unlock");
+    assert_eq!(error.to_string(), "unknown argument: export");
 }

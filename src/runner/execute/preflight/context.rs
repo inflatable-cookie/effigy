@@ -22,6 +22,7 @@ pub(in crate::runner) struct ExecutionPreflight {
     pub(in crate::runner) discovery_plan: ExecutionDiscoveryPlan,
     pub(in crate::runner) selector: TaskSelector,
     pub(in crate::runner) catalogs: Vec<LoadedCatalog>,
+    pub(in crate::runner) secret_targets: Vec<String>,
 }
 
 pub(in crate::runner) fn build_execution_preflight(
@@ -57,5 +58,6 @@ pub(in crate::runner) fn build_execution_preflight_from_input(
         selector: discovery_plan.selector.clone(),
         discovery_plan,
         catalogs: discovery.catalogs,
+        secret_targets: input.secret_targets,
     })
 }

@@ -4,7 +4,7 @@ Roadmap: [`../003-local-encrypted-vault.md`](../003-local-encrypted-vault.md)
 Strict lane: [`../../../specs/078-local-encrypted-vault-strict-lane.md`](../../../specs/078-local-encrypted-vault-strict-lane.md)
 Contract: [`../../../contracts/032-secret-and-local-config-management-contract.md`](../../../contracts/032-secret-and-local-config-management-contract.md)
 
-Status: Pending
+Status: Complete
 Owner: Platform
 Created: 2026-05-12
 
@@ -31,10 +31,16 @@ Close `g05.003` before any runtime injection work starts.
 
 ## Acceptance
 
-- `g05.003` is complete
-- strict lane `078` is complete
-- docs explain human-gated unlock and no key-only unlock
-- next ready work is `g05.004`
+- [x] `g05.003` is complete
+- [x] strict lane `078` is complete
+- [x] docs explain human-gated unlock and no key-only unlock
+- [x] next ready work is `g05.004`
+
+## Outcome
+
+Closed the local encrypted vault roadmap. Command and JSON docs now cover the
+full `g05.003` secrets surface and the planning front doors point at
+`g05.004`.
 
 ## Validation
 

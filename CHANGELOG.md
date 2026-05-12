@@ -12,6 +12,24 @@ During v0.x, MINOR bumps may include breaking changes.
   `cargo run --bin effigy -- ...`, while `effigy ...` remains the installed or
   locally linked binary path.
 
+### Added
+- **Vault-backed task secret injection:** declared `[secrets.keys.*]` entries
+  with `targets = ["tasks"]` are now loaded from the local Effigy vault and
+  injected into task process environments, with missing required values
+  blocking before spawn and captured JSON output redacted.
+- **Scoped Rhai secret API:** Rhai scripts can now call
+  `effigy::secret(name)` and `effigy::has_secret(name)` for declared
+  `targets = ["rhai"]` vault secrets, with undeclared or wrong-target reads
+  rejected and known values redacted from Rhai errors and host output maps.
+- **Structured Rhai data helpers:** Rhai scripts can now write and read JSON
+  and TOML files directly through `json::write_file`, `json::read_file`,
+  `json::stringify_compact`, `toml::write_file`, and `toml::read_file`, and
+  can extract regex groups through `regex::captures(...)`.
+- **Secret-scoped deployment and state hooks:** internal Rhai execution can now
+  opt into `deploy`, `state`, and `artifacts` secret targets. Deploy provider
+  packages run with `deploy` secret access, and state apply hook tasks receive
+  declared `state` secrets through process environment injection.
+
 ### Changed
 - **State apply hooks** now run during `effigy state apply --yes` after a
   layer is successfully executed, staged, or imported. Apply reports now carry

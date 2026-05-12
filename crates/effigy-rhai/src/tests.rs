@@ -1,10 +1,12 @@
 use super::{
-    execute_rhai_script, execute_rhai_script_with_runtime_context, install_stop_requested_flag,
+    execute_rhai_script, execute_rhai_script_with_runtime_context,
+    execute_rhai_script_with_runtime_context_and_secret_targets, install_stop_requested_flag,
     load_script, load_script_args_from_env, render_host_log_message, resolve_script_path,
-    EffigyCommandError, HostCallbacks, HostCommandOutput, ScriptContext, EFFIGY_RHAI_ARGS_JSON,
-    EFFIGY_RHAI_CATALOG_ROOT, EFFIGY_RHAI_INVOCATION_CWD,
+    EffigyCommandError, HostCallbacks, HostCommandOutput, RhaiSecretTarget, ScriptContext,
+    EFFIGY_RHAI_ARGS_JSON, EFFIGY_RHAI_CATALOG_ROOT, EFFIGY_RHAI_INVOCATION_CWD,
 };
 use crate::surface::{FEATURE_NAMES, MODULE_NAMES};
+use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;
@@ -90,6 +92,15 @@ fn callbacks() -> HostCallbacks {
     }
 }
 
+fn script_context(root: &Path) -> ScriptContext {
+    ScriptContext {
+        cwd: root.to_path_buf(),
+        repo_root: root.to_path_buf(),
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    }
+}
+
 struct ScopedTestEnv {
     previous: Vec<(String, Option<String>)>,
 }
@@ -119,6 +130,181 @@ impl Drop for ScopedTestEnv {
             }
         }
     }
+}
+
+#[test]
+fn execute_rhai_script_exposes_declared_rhai_secrets() {
+    let root = temp_root("rhai-secret-present");
+    write_rhai_secret_manifest(&root, r#"targets = ["rhai"]"#);
+    write_test_vault(&root, "vault-passphrase", &[("api_token", "tok_secret")]);
+    let _env = ScopedTestEnv::set_many(&[(
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        "vault-passphrase".to_owned(),
+    )]);
+    let marker = root.join("secret.out");
+    let script = format!(
+        r#"
+            if !effigy::has_secret("api_token") {{ throw("missing"); }}
+            let token = effigy::secret("api_token");
+            fs::write_file("{}", token);
+        "#,
+        marker.display()
+    );
+
+    execute_rhai_script(&script_context(&root), &script, &[], &callbacks()).expect("execute");
+
+    assert_eq!(fs::read_to_string(marker).expect("marker"), "tok_secret");
+}
+
+#[test]
+fn execute_rhai_script_blocks_missing_required_rhai_secret_before_side_effects() {
+    let root = temp_root("rhai-secret-missing-required");
+    let marker = root.join("should-not-run.out");
+    write_rhai_secret_manifest(&root, r#"targets = ["rhai"]"#);
+    write_test_vault(&root, "vault-passphrase", &[]);
+    let _env = ScopedTestEnv::set_many(&[(
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        "vault-passphrase".to_owned(),
+    )]);
+    let script = format!(r#"fs::write_file("{}", "ran");"#, marker.display());
+
+    let error = execute_rhai_script(&script_context(&root), &script, &[], &callbacks())
+        .expect_err("script should fail");
+
+    assert!(error
+        .to_string()
+        .contains("required Rhai secret(s) missing from the vault"));
+    assert!(
+        !marker.exists(),
+        "script should not run after preflight blocker"
+    );
+}
+
+#[test]
+fn execute_rhai_script_rejects_undeclared_and_wrong_target_secret_reads() {
+    let root = temp_root("rhai-secret-wrong-target");
+    write_rhai_secret_manifest(&root, r#"targets = ["tasks"]"#);
+
+    let wrong_target = execute_rhai_script(
+        &script_context(&root),
+        r#"effigy::secret("api_token");"#,
+        &[],
+        &callbacks(),
+    )
+    .expect_err("wrong target should fail");
+    assert!(wrong_target
+        .to_string()
+        .contains("not declared for the `rhai` target"));
+
+    let undeclared = execute_rhai_script(
+        &script_context(&root),
+        r#"effigy::has_secret("missing");"#,
+        &[],
+        &callbacks(),
+    )
+    .expect_err("undeclared should fail");
+    assert!(undeclared
+        .to_string()
+        .contains("is not declared under `[secrets.keys]`"));
+}
+
+#[test]
+fn execute_rhai_script_redacts_secret_values_from_errors() {
+    let root = temp_root("rhai-secret-error-redaction");
+    write_rhai_secret_manifest(&root, r#"targets = ["rhai"]"#);
+    write_test_vault(&root, "vault-passphrase", &[("api_token", "tok_secret")]);
+    let _env = ScopedTestEnv::set_many(&[(
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        "vault-passphrase".to_owned(),
+    )]);
+
+    let error = execute_rhai_script(
+        &script_context(&root),
+        r#"throw(effigy::secret("api_token"));"#,
+        &[],
+        &callbacks(),
+    )
+    .expect_err("script should fail");
+
+    let rendered = error.to_string();
+    assert!(rendered.contains("[REDACTED]"), "got: {rendered}");
+    assert!(
+        !rendered.contains("tok_secret"),
+        "secret leaked: {rendered}"
+    );
+}
+
+#[test]
+fn execute_rhai_script_can_use_deploy_target_secret_when_allowed() {
+    let root = temp_root("rhai-secret-deploy-target");
+    write_rhai_secret_manifest(&root, r#"targets = ["deploy"]"#);
+    write_test_vault(&root, "vault-passphrase", &[("api_token", "deploy_secret")]);
+    let _env = ScopedTestEnv::set_many(&[(
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        "vault-passphrase".to_owned(),
+    )]);
+    let marker = root.join("deploy-secret.out");
+    let script = format!(
+        r#"
+            if !effigy::has_secret("api_token") {{ throw("missing"); }}
+            fs::write_file("{}", effigy::secret("api_token"));
+        "#,
+        marker.display()
+    );
+
+    execute_rhai_script_with_runtime_context_and_secret_targets(
+        &script_context(&root),
+        None,
+        &script,
+        &[],
+        &callbacks(),
+        &[RhaiSecretTarget::Deploy],
+    )
+    .expect("execute");
+
+    assert_eq!(fs::read_to_string(marker).expect("marker"), "deploy_secret");
+}
+
+fn write_rhai_secret_manifest(root: &Path, target_line: &str) {
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.api_token]
+required = true
+{target_line}
+"#
+        ),
+    )
+    .expect("write manifest");
+}
+
+fn write_test_vault(root: &Path, passphrase: &str, records: &[(&str, &str)]) {
+    let mut payload = VaultPlaintextPayload::empty();
+    for (name, value) in records {
+        payload.records.insert(
+            (*name).to_owned(),
+            VaultSecretRecord::new(SecretValue::new(*value)),
+        );
+    }
+    let envelope = payload
+        .encrypt_with_passphrase(passphrase)
+        .expect("encrypt test vault");
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    fs::create_dir_all(vault_path.parent().expect("vault parent")).expect("mkdir vault parent");
+    fs::write(
+        vault_path,
+        envelope.to_json_pretty().expect("serialize test vault"),
+    )
+    .expect("write test vault");
 }
 
 #[test]
@@ -1161,6 +1347,58 @@ fn execute_rhai_script_can_match_replace_and_escape_regex() {
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
+fn execute_rhai_script_can_capture_regex_groups_and_write_structured_files() {
+    let root = temp_root("regex-captures-and-structured-files");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root.clone(),
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            let dsn = "mysql://root:secret@db:3306/acowtancy";
+            let captures = regex::captures(
+                "^(?<scheme>[a-z0-9]+)://(?<user>[^:]+):(?<pass>[^@]+)@(?<host>[^:/]+):(?<port>[0-9]+)/(?<database>.+)$",
+                dsn
+            );
+            if !captures["matched"] { throw("matched"); }
+            if captures["groups"][1] != "mysql" { throw("group"); }
+            if captures["named"]["host"] != "db" { throw("host"); }
+            if captures["named"]["database"] != "acowtancy" { throw("database"); }
+
+            let payload = #{
+                dsn: dsn,
+                host: captures["named"]["host"],
+                port: str::parse_int(captures["named"]["port"])
+            };
+            json::write_file("tmp/payload.json", payload);
+            let roundtrip_json = json::read_file("tmp/payload.json");
+            if roundtrip_json["host"] != "db" { throw("json host"); }
+            if json::stringify_compact(roundtrip_json) != "{\"dsn\":\"mysql://root:secret@db:3306/acowtancy\",\"host\":\"db\",\"port\":3306}" {
+                throw("compact json");
+            }
+
+            let manifest = #{
+                bundle: #{ host: "acowtancy.legacy.test" },
+                tasks: #{ sync_task: #{ task: "defer migrate/media https://www.acowtancy.com" } }
+            };
+            toml::write_file("tmp/manifest.toml", manifest);
+            let roundtrip_toml = toml::read_file("tmp/manifest.toml");
+            if roundtrip_toml["bundle"]["host"] != "acowtancy.legacy.test" { throw("toml host"); }
+            if roundtrip_toml["tasks"]["sync_task"]["task"] != "defer migrate/media https://www.acowtancy.com" {
+                throw("toml task");
+            }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+    let json_payload = fs::read_to_string(root.join("tmp/payload.json")).expect("json payload");
+    assert!(json_payload.contains("\"host\": \"db\""));
+    let toml_payload = fs::read_to_string(root.join("tmp/manifest.toml")).expect("toml payload");
+    assert!(toml_payload.contains("[bundle]"));
+    assert!(toml_payload.contains("task = \"defer migrate/media https://www.acowtancy.com\""));
 }
 
 #[test]

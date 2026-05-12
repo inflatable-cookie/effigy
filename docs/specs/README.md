@@ -28,7 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`078-local-encrypted-vault-strict-lane.md`](./078-local-encrypted-vault-strict-lane.md)
+- [`080-container-secret-injection-strict-lane.md`](./080-container-secret-injection-strict-lane.md)
 
 Queued strict lanes:
 
@@ -41,5 +41,5 @@ Archived strict lanes:
 
 ## Next Task
 
-Execute `710` to add unlock/lock and doctor vault diagnostics. Release
-execution remains human-owned.
+Execute `717` to add container secret injection. Release execution remains
+human-owned.

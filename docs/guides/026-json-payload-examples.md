@@ -2060,6 +2060,11 @@ This payload is the `result` for:
 ```sh
 effigy --json secrets list
 effigy --json secrets doctor
+effigy --json secrets init
+effigy --json secrets set database_url
+effigy --json secrets unset database_url
+effigy --json secrets unlock
+effigy --json secrets lock
 ```
 
 ```json
@@ -2096,17 +2101,67 @@ effigy --json secrets doctor
     }
   ],
   "warnings": [],
-  "blockers": []
+  "blockers": [],
+  "vault_state": {
+    "status": "unlocked",
+    "path": "/workspace/app/.effigy/secrets/local.vault",
+    "stored_keys": [
+      "database_url"
+    ],
+    "missing_required": [],
+    "undeclared_stored": []
+  }
 }
 ```
 
-`effigy.secrets.v1` is declaration-only in `g05.002`. It reports names,
-targets, required flags, backend, and safe metadata. It does not contain secret
-values, value hashes, vault contents, unlock state, or injected environment.
+`effigy.secrets.v1` reports names, targets, required flags, backend, vault
+metadata, and safe vault state. It does not contain secret values, value hashes,
+decrypted vault contents, or injected environment.
 
 If a repo has no `[secrets]` section, `declared` is `false`, `keys` is empty,
 and the command succeeds. If a declared backend is missing required config,
 `secrets doctor` reports blockers and returns a failed command result.
+
+Mutation commands add safe operation metadata:
+
+```json
+{
+  "schema": "effigy.secrets.v1",
+  "schema_version": 1,
+  "ok": true,
+  "repo_root": "/workspace/app",
+  "declared": true,
+  "backend": "effigy-vault",
+  "vault": {
+    "path": ".effigy/secrets/local.vault",
+    "identity": "ssh-agent",
+    "unlock": "key-and-passphrase"
+  },
+  "external": null,
+  "keys": [
+    {
+      "name": "database_url",
+      "required": true,
+      "targets": [
+        "tasks",
+        "containers"
+      ],
+      "description": "Application database connection URL"
+    }
+  ],
+  "warnings": [],
+  "blockers": [],
+  "action": "set",
+  "name": "database_url",
+  "vault_path": "/workspace/app/.effigy/secrets/local.vault",
+  "changed": true,
+  "summary": "stored declared secret"
+}
+```
+
+`secrets unlock` verifies the vault can be decrypted for the current invocation.
+`secrets lock` clears invocation-local state. Effigy does not create a daemon or
+persistent unlock cache in `g05.003`.
 
 ## Notes
 

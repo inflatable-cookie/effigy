@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rhai::{Array, Dynamic, Engine, EvalAltResult, Map};
+use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map};
 
 use crate::surface::*;
 
@@ -490,6 +490,18 @@ fn build_effigy_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) ->
             let value: serde_json::Value = serde_json::from_str(&output)
                 .map_err(|error| rhai_runtime_error(error.to_string()))?;
             rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
+        },
+    );
+    module.set_native_fn(
+        "secret",
+        move |name: ImmutableString| -> Result<String, Box<EvalAltResult>> {
+            super::active_rhai_secret(name.as_str())
+        },
+    );
+    module.set_native_fn(
+        "has_secret",
+        move |name: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
+            super::active_rhai_has_secret(name.as_str())
         },
     );
     module

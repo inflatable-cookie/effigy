@@ -173,6 +173,7 @@ pub struct ExecutionPreflightInput {
     pub args: Vec<String>,
     pub cwd: PathBuf,
     pub surface: ExecutionSurface,
+    pub secret_targets: Vec<String>,
 }
 
 impl ExecutionPreflightInput {
@@ -187,7 +188,13 @@ impl ExecutionPreflightInput {
             args,
             cwd,
             surface,
+            secret_targets: Vec::new(),
         }
+    }
+
+    pub fn with_secret_targets(mut self, targets: Vec<String>) -> Self {
+        self.secret_targets = targets;
+        self
     }
 }
 
@@ -465,6 +472,7 @@ impl ExecutionDispatchPlan {
             self.effective_cwd.clone(),
             self.surface.clone(),
         )
+        .with_secret_targets(self.request.environment.secret_targets.clone())
     }
 }
 
@@ -579,6 +587,10 @@ pub struct ExecutionEnvironmentPlan {
     pub cwd: Option<PathBuf>,
     pub env: BTreeMap<String, OsString>,
     pub stdin_file: Option<PathBuf>,
+    /// Additional declared secret target scopes requested by an internal
+    /// workflow caller. Normal task execution always includes `tasks`; callers
+    /// use this for scoped surfaces such as `state`.
+    pub secret_targets: Vec<String>,
 }
 
 impl ExecutionEnvironmentPlan {
@@ -594,6 +606,11 @@ impl ExecutionEnvironmentPlan {
 
     pub fn env(mut self, key: impl Into<String>, value: impl Into<OsString>) -> Self {
         self.env.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn secret_target(mut self, target: impl Into<String>) -> Self {
+        self.secret_targets.push(target.into());
         self
     }
 }

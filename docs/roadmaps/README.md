@@ -39,15 +39,16 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   transactions, provider packages, post-release reference-grade cleanup, and
   artifact/crate-boundary rejustification.
 - `g05` is active as the secret and local configuration management generation.
-  [`g05.001`](./g05/001-secret-and-local-config-contract.md) and
-  [`g05.002`](./g05/002-secret-manifest-and-doctor-surface.md) are complete.
-  The local encrypted vault lane is open for
-  [`g05.003`](./g05/003-local-encrypted-vault.md). The next ready work is the
-  unlock/lock command surface and richer vault doctor diagnostics.
+  [`g05.001`](./g05/001-secret-and-local-config-contract.md),
+  [`g05.002`](./g05/002-secret-manifest-and-doctor-surface.md),
+  [`g05.003`](./g05/003-local-encrypted-vault.md), and
+  [`g05.004`](./g05/004-task-rhai-and-deploy-secret-injection.md) are complete.
+  Strict lane `080` is open for `g05.005`. The next ready work is container
+  secret injection.
 
 ## Active Strict Lane
 
-Strict lane `078` is active for `g05.003`.
+Strict lane `080` is active for `g05.005`.
 
 ## Research Program
 
@@ -83,7 +84,7 @@ Before rollover:
 
 ## Next Task
 
-Execute `710` to add unlock/lock and doctor vault diagnostics.
+Execute `717` to add container secret injection.
 
 ## Historical language boundary
 

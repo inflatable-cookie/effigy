@@ -3,7 +3,7 @@
 Roadmap: [`g05.003`](../roadmaps/g05/003-local-encrypted-vault.md)
 Contract: [`032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-12
 
@@ -71,8 +71,8 @@ a later card, but it must not weaken into key-only behavior.
 - `707` complete: added secrets-domain crate and vault file model
 - `708` complete: added vault crypto round trip
 - `709` complete: added `secrets init/set/unset`
-- `710` ready: add `secrets unlock/lock` and doctor vault diagnostics
-- `711` pending: close `g05.003`
+- `710` complete: added `secrets unlock/lock` and doctor vault diagnostics
+- `711` complete: close `g05.003`
 
 ## Hard Boundaries
 
@@ -92,6 +92,12 @@ unset declared secret values, unlock explicitly with human participation, and
 run doctor diagnostics that distinguish missing, locked, corrupt, unsafe, and
 incomplete vault states without exposing values.
 
+## Outcome
+
+`g05.003` is complete. Effigy owns a local encrypted vault implementation and
+value-free operator surface. Runtime injection remains deliberately deferred to
+`g05.004`.
+
 ## Next Task
 
-Execute `710` to add unlock/lock and doctor vault diagnostics.
+Open the first `g05.004` task/Rhai/deploy injection card.

@@ -1,6 +1,6 @@
 # g05.004 - Task, Rhai, And Deploy Secret Injection
 
-Status: Planned
+Status: Complete
 Depends on: `g05.003`
 
 ## Goal
@@ -51,9 +51,18 @@ values unless a later roadmap explicitly justifies that surface.
 - Task commands can receive declared secrets without command-string leakage.
 - Rhai scripts can request declared secrets through a small host API.
 - Deploy provider packages can consume declared provider credentials.
+- State apply hook tasks can consume declared state credentials.
 - Missing required secrets block before side effects.
-- Secret values are redacted from task status, deploy reports, provider reports,
-  JSON envelopes, and errors.
+- Secret values are redacted from captured task JSON, Rhai errors, host logs,
+  process result maps, and Effigy callback maps.
+
+## Closeout
+
+Completed by cards `712` through `716`.
+
+Artifact-targeted secret scope is available to internal Rhai workflow callers,
+but the current built-in artifact stage/capture commands do not execute Rhai
+scripts. No artifact-specific caller was added in this roadmap.
 
 ## Test Strategy
 
@@ -65,5 +74,4 @@ values unless a later roadmap explicitly justifies that surface.
 
 ## Next Task
 
-Add container runtime secret injection in `g05.005`.
-
+Start container runtime secret injection in `g05.005`.

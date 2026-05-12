@@ -4,9 +4,10 @@ use std::sync::Arc;
 use effigy_containers::ContainerCapturedExecOperation;
 use effigy_execution::ExecutionSurface;
 use effigy_rhai::{
-    execute_rhai_script_with_runtime_context, install_stop_requested_flag, load_script,
-    load_script_args_from_env, required_env, surface::*, EffigyCommandError, HostCallbacks,
-    HostCommandOutput, ScriptContext, EFFIGY_RHAI_REPO_ROOT, EFFIGY_RHAI_TASK_NAME,
+    execute_rhai_script_with_runtime_context_and_secret_targets, install_stop_requested_flag,
+    load_script, load_script_args_from_env, required_env, surface::*, EffigyCommandError,
+    HostCallbacks, HostCommandOutput, RhaiSecretTarget, ScriptContext, EFFIGY_RHAI_REPO_ROOT,
+    EFFIGY_RHAI_TASK_NAME,
 };
 
 use effigy_cli::{
@@ -45,6 +46,22 @@ pub(in crate::runner) fn execute_repo_rhai_script(
     file: &Path,
     args: &[String],
 ) -> Result<(), RunnerError> {
+    execute_repo_rhai_script_with_secret_targets(
+        repo_root,
+        task_name,
+        file,
+        args,
+        &[RhaiSecretTarget::Rhai],
+    )
+}
+
+pub(in crate::runner) fn execute_repo_rhai_script_with_secret_targets(
+    repo_root: &Path,
+    task_name: &str,
+    file: &Path,
+    args: &[String],
+    secret_targets: &[RhaiSecretTarget],
+) -> Result<(), RunnerError> {
     let context = ScriptContext {
         cwd: repo_root.to_path_buf(),
         repo_root: repo_root.to_path_buf(),
@@ -53,12 +70,13 @@ pub(in crate::runner) fn execute_repo_rhai_script(
     };
     let script = load_script(file, &context.cwd).map_err(map_rhai_error)?;
     let runtime_context = active_runtime_context();
-    execute_rhai_script_with_runtime_context(
+    execute_rhai_script_with_runtime_context_and_secret_targets(
         &context,
         runtime_context.as_ref(),
         &script,
         args,
         &host_callbacks(),
+        secret_targets,
     )
     .map_err(map_rhai_error)
 }
