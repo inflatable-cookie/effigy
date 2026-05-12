@@ -74,6 +74,9 @@ Current v1 helpers:
   - `str::ends_with(value, suffix)`
   - `str::replace(value, from, to)`
   - `str::split_lines(value)`
+  - `regex::is_match(pattern, value)`
+  - `regex::replace(pattern, value, replacement)`
+  - `regex::escape(value)`
 - file helpers:
   - `fs::make_temp_dir(prefix)`
   - `fs::append_file(path, contents)`
@@ -147,9 +150,7 @@ Current v1 helpers:
   - `docs::check_next_action(options_map)`
   - `docs::check_workflow_paths(options_map)`
   - `docs::add_log_index(options_map)`
-  - `bundle::list()`
-  - `bundle::inspect(name)`
-  - `bundle::emit(name, path)`
+  - `bundle::inspect()`
   - `service::list()`
   - `service::extract(name, options_map)`
   - `catalog::tasks()` / `catalog::tasks(options_map)`
@@ -224,8 +225,9 @@ runs the task from the parent app repo. The top-level `catalog_root` and
 selected task catalog from the operator's original working directory.
 Similarly, use `http::request(...)` or `http::post(...)` instead of
 `process::run("curl", [...])` for smoke probes.
-Use `search::files(root, pattern, #{ glob: "*.rs" })` instead of
-`process::run("rg", [...])` for portable file audits.
+Use `search::files(root, pattern, #{ glob: "*.rs" })` plus `regex::*` helpers
+instead of `process::run("rg", [...])` for portable file audits and
+allowlist-style path filtering.
 
 `effigy::run(...)` and `effigy::run_json(...)` are escape hatches for surfaces
 that do not yet have a typed helper. First-party scripts should use the typed

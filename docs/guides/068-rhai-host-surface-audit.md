@@ -5,7 +5,7 @@ recursively launching `effigy`.
 
 Policy:
 
-- Prefer typed helpers such as `container::exec(...)` and `bundle::emit(...)`.
+- Prefer typed helpers such as `container::exec(...)` and `bundle::inspect()`.
 - Do not use `process::run("effigy", ...)` in first-party Rhai scripts.
 - `process::run("effigy", ...)`, `process::stream("effigy", ...)`, and
   `process::tee("effigy", ...)` are rejected at runtime; add a typed host
@@ -29,7 +29,7 @@ Policy:
 | Surface | Rhai helpers | Status |
 | --- | --- | --- |
 | Logging and context | `log`, `log_warn`, `env` (flat); `time::now_utc`, `time::process_id`, `time::sleep_ms`, `time::stop_requested` | Exposed |
-| Path and string utilities | `path::join`, `path::file_name`, `str::trim`, `str::contains`, `str::starts_with`, `str::ends_with`, `str::replace`, `str::split_lines`, `str::parse_int`, `str::shell_quote` | Exposed |
+| Path and string utilities | `path::join`, `path::file_name`, `str::trim`, `str::contains`, `str::starts_with`, `str::ends_with`, `str::replace`, `str::split_lines`, `str::parse_int`, `str::shell_quote`, `regex::is_match`, `regex::replace`, `regex::escape` | Exposed |
 | File and directory operations | `fs::make_temp_dir`, `fs::make_temp_file`, `fs::read_file`, `fs::read_lines`, `fs::write_file`, `fs::append_file`, `fs::write_lines`, `fs::copy`, `fs::copy_if_missing`, `fs::env_file_entries`, `fs::env_file_map`, `fs::env_file_get`, `fs::env_file_remove`, `fs::env_file_set`, `fs::env_file_get_detail`, `fs::move_path`, `fs::replace_in_file`, `fs::exists`, `fs::is_dir`, `fs::is_file`, `fs::is_symlink`, `fs::list`, `fs::list_recursive`, `fs::create_dir`, `fs::remove`, `fs::create_symlink`, `search::files` | Exposed |
 | Structured data | `json::parse`, `json::stringify`, `toml::parse`, `toml::stringify` | Exposed |
 | Host subprocess execution | `process::run`, `process::stream`, `process::tee` | Exposed |
@@ -50,7 +50,7 @@ Policy:
 | State capture context | `state::capture_context`, `state::capture_context_path`, `state::capture_source`, `state::capture_destination_ref` | Exposed |
 | Artifacts | `artifact::inspect`, `artifact::stage`, `artifact::capture` | Exposed |
 | Docs checks | `docs::check_links`, `docs::check_json_examples`, `docs::check_headings`, `docs::check_paths`, `docs::check_contains`, `docs::check_forbidden`, `docs::check_index`, `docs::check_next_action`, `docs::check_workflow_paths`, `docs::add_log_index` | Exposed |
-| Bundles | `bundle::list`, `bundle::inspect`, `bundle::emit` | Exposed |
+| Bundles | `bundle::inspect` | Exposed |
 | Services | `service::list`, `service::extract` | Exposed |
 | Gateway | `gateway::status`, `gateway::setup_tls`, `gateway::up`, `gateway::down` | Exposed |
 | Doctor | `doctor::run` | Exposed |
