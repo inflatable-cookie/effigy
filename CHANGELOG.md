@@ -52,8 +52,7 @@ During v0.x, MINOR bumps may include breaking changes.
   bundle root changed, and returns `effigy.bundle.sync.v1` in JSON mode.
 - **`effigy bundle inspect`:** bare `effigy bundle inspect` now reports the
   active repo bundle source, including source type, local path, version hint,
-  stale state, and manifest path, while `effigy bundle inspect <name>` keeps
-  the active bundle schema/catalog path.
+  stale state, and manifest path.
 - **Decodelabs bundle git hosting:** the `decodelabs` bundle (and
   `decodelabs-library`) now works when loaded from a git bundle source. The
   `host_dir_name` derivation and `zest_port` validation that were previously
@@ -149,10 +148,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Changed
 - **Repo-local bundle and changelog commands** now accept `--repo <PATH>` on
-  the bounded surfaces from `g04.024`: `bundle list|inspect|export` and
-  `changelog validate|format|analyze|extract`. Relative bundle export paths and
-  relative changelog file paths now anchor to the selected repo root when
-  `--repo` is supplied.
+  the bounded surfaces from `g04.024`: `bundle inspect|sync` and
+  `changelog validate|format|analyze|extract`. Relative changelog file paths
+  and active bundle-source resolution now anchor to the selected repo root
+  when `--repo` is supplied.
 - **Documentation:** quick-start, command matrix, glossary, docs front door,
   and crate-level rustdoc now spell out task-runtime prefix flags
   (`--repo`, `--verbose-root`, `--env-schema`), JSON placement, scan deep-help,
