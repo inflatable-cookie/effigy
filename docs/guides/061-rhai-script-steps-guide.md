@@ -39,7 +39,7 @@ File-backed example:
 
 ```toml
 [tasks.link:local]
-run = [{ rhai = "scripts/rhai/install-local-bin-links.rhai" }]
+run = [{ rhai = "scripts/install-local-bin-links.rhai" }]
 ```
 
 Use `rhai = "..."` as a repo-relative Rhai script path when:
@@ -47,7 +47,7 @@ Use `rhai = "..."` as a repo-relative Rhai script path when:
 - the script is non-trivial
 - you want normal file diffing/review
 - the repo is building up a real native scripting surface under
-  `scripts/rhai/`
+  `scripts/`
 
 ## 3) Rhai v1 Host API
 
@@ -245,7 +245,7 @@ Structured file copy without loading the whole template through script memory:
 
 ```toml
 [tasks.report:write]
-run = [{ rhai = "scripts/rhai/copy-template.rhai" }]
+run = [{ rhai = "scripts/copy-template.rhai" }]
 ```
 
 ```rhai
@@ -317,7 +317,7 @@ Structured process call:
 
 ```toml
 [tasks.test:smoke]
-run = [{ rhai = "scripts/rhai/test-smoke.rhai" }]
+run = [{ rhai = "scripts/test-smoke.rhai" }]
 ```
 
 Ephemeral workspace and timestamp:
@@ -340,7 +340,7 @@ Nested task call:
 
 ```toml
 [tasks.docs:proof]
-run = [{ rhai = "scripts/rhai/docs-proof.rhai" }]
+run = [{ rhai = "scripts/docs-proof.rhai" }]
 ```
 
 ## 5) Good Boundary

@@ -10,9 +10,9 @@ use std::os::unix::fs::PermissionsExt;
 #[test]
 fn run_manifest_task_run_array_supports_file_backed_rhai_steps() {
     let root = temp_workspace("run-array-file-rhai-step");
-    fs::create_dir_all(root.join("scripts/rhai")).expect("mkdir rhai script dir");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(
-        root.join("scripts/rhai/validate.rhai"),
+        root.join("scripts/validate.rhai"),
         r#"
 let process = process::run("sh", ["-lc", "printf process-ok"]);
 task::run("capture", []);
@@ -27,7 +27,7 @@ fs::copy("nested-source.txt", "nested.txt");
 run = "printf nested-ok > nested-source.txt"
 
 [tasks.validate]
-run = [{ rhai = "scripts/rhai/validate.rhai" }]
+run = [{ rhai = "scripts/validate.rhai" }]
 "#,
     );
 
@@ -68,9 +68,9 @@ run = [{ run = "printf invalid", rhai = "print(\"nope\")" }]
 #[test]
 fn run_manifest_task_run_array_rhai_steps_support_args_and_runtime_helpers() {
     let root = temp_workspace("run-array-rhai-runtime-helpers");
-    fs::create_dir_all(root.join("scripts/rhai")).expect("mkdir rhai script dir");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(
-        root.join("scripts/rhai/helpers.rhai"),
+        root.join("scripts/helpers.rhai"),
         r#"
 let stamp = time::now_utc();
 let scratch = fs::make_temp_dir("rhai-runtime-helper");
@@ -96,7 +96,7 @@ fs::remove(scratch);
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.validate]
-run = [{ rhai = "scripts/rhai/helpers.rhai" }]
+run = [{ rhai = "scripts/helpers.rhai" }]
 "#,
     );
 
@@ -136,7 +136,7 @@ run = [{ rhai = "scripts/rhai/helpers.rhai" }]
 fn run_manifest_task_run_array_rhai_steps_support_typed_host_helpers() {
     let _guard = lock_test();
     let root = temp_workspace("run-array-rhai-host-helpers");
-    fs::create_dir_all(root.join("scripts/rhai")).expect("mkdir rhai script dir");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::create_dir_all(root.join("bundles/acme")).expect("mkdir bundle dir");
     fs::write(
         root.join("bundles/acme/bundle.toml"),
@@ -149,7 +149,7 @@ fn run_manifest_task_run_array_rhai_steps_support_typed_host_helpers() {
     )
     .expect("write bundle defaults");
     fs::write(
-        root.join("scripts/rhai/dispatch.rhai"),
+        root.join("scripts/dispatch.rhai"),
         r#"
 let bundle_report = bundle::inspect();
 if bundle_report["ok"] == false {
@@ -168,7 +168,7 @@ base = { type = "path", dir = "bundles/acme" }
 run = "printf capture-ok"
 
 [tasks.validate]
-run = [{ rhai = "scripts/rhai/dispatch.rhai" }]
+run = [{ rhai = "scripts/dispatch.rhai" }]
 "#,
     );
 
@@ -269,9 +269,9 @@ fn run_manifest_task_run_array_rhai_steps_support_container_helpers() {
 fn write_container_fixture(root: &std::path::Path) {
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("write compose");
-    fs::create_dir_all(root.join("scripts/rhai")).expect("mkdir rhai dir");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
     fs::write(
-        root.join("scripts/rhai/container-helpers.rhai"),
+        root.join("scripts/container-helpers.rhai"),
         r#"
 let up = container::up("web", true);
 if up.trim() != "" {
@@ -287,7 +287,7 @@ fs::write_file("down.txt", down);
     write_manifest(
         &root.join("effigy.toml"),
         r#"[tasks.validate]
-run = [{ rhai = "scripts/rhai/container-helpers.rhai" }]
+run = [{ rhai = "scripts/container-helpers.rhai" }]
 
 [containers]
 default = "web"

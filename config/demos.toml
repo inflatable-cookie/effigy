@@ -7,7 +7,7 @@ mode = "headless"
 status = "ready"
 covers = ["effigy.demo.registry", "effigy.demo.browser-query"]
 tags = ["self-hosted", "proof-report"]
-run = [{ rhai = "scripts/rhai/write-browser-proof-report.rhai" }]
+run = [{ rhai = "scripts/write-browser-proof-report.rhai" }]
 artifacts = [
   ".effigy/demo/artifacts/browser-proof-report/index.html",
   ".effigy/demo/artifacts/browser-proof-report/list.txt",
@@ -24,7 +24,7 @@ mode = "interactive"
 status = "ready"
 covers = ["effigy.demo.lifecycle", "effigy.demo.stop-rerun"]
 tags = ["self-hosted", "lifecycle"]
-run = [{ rhai = "scripts/rhai/run-lifecycle-window.rhai" }]
+run = [{ rhai = "scripts/run-lifecycle-window.rhai" }]
 artifacts = [
   ".effigy/demo/artifacts/lifecycle-window/index.html",
   ".effigy/demo/artifacts/lifecycle-window/status.txt",

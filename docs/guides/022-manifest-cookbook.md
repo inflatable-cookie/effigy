@@ -344,7 +344,7 @@ overrides happen inline on the array entry itself.
 
 ```toml
 [tasks.link:local]
-run = [{ rhai = "scripts/rhai/install-local-bin-links.rhai" }]
+run = [{ rhai = "scripts/install-local-bin-links.rhai" }]
 ```
 
 File-backed Rhai:
@@ -369,7 +369,7 @@ Another file-backed example:
 
 ```toml
 [tasks.report:stamp]
-run = [{ rhai = "scripts/rhai/report-stamp.rhai" }]
+run = [{ rhai = "scripts/report-stamp.rhai" }]
 ```
 
 Use this when:

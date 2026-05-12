@@ -49,9 +49,9 @@ explainable drift guards and a focused proof matrix for critical paths.
 - `effigy scan` covers god files, duplicate blocks, comment ratio, generated
   assets, generated-in-src, attention markers, and stale suppressions.
 - `config/scan.toml` configures repo scan thresholds.
-- `scripts/rhai/write-json-contract-artifacts.rhai` owns repo-local JSON
+- `scripts/write-json-contract-artifacts.rhai` owns repo-local JSON
   contract artifact capture for CI validation tasks.
-- `scripts/rhai/check-runtime-container-drift.rhai` owns the lightweight
+- `scripts/check-runtime-container-drift.rhai` owns the lightweight
   runtime/container drift guard.
 - no release/distribution shell guards remain; the release workflow now uses
   the native `distribution check-glibc-floor` command.
@@ -100,7 +100,7 @@ explainable drift guards and a focused proof matrix for critical paths.
 ## Suppression Policy
 
 - Prefer removing the drift over adding an allowance.
-- Temporary allowances live in `scripts/rhai/check-runtime-container-drift.rhai` and
+- Temporary allowances live in `scripts/check-runtime-container-drift.rhai` and
   must also be named in this lane.
 - Allowances should be path-scoped, not broad pattern suppressions.
 - Each allowance should map to a future migration card or remain clearly marked

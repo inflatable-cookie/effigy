@@ -127,6 +127,6 @@ failure_count += check_no_unlisted_matches(
 if failure_count > 0 {
     throw "Runtime/container drift guard failed.\n"
         + "Either route the call through the current request/plan/manager surface, or add\n"
-        + "a deliberate temporary allowance in scripts/rhai/check-runtime-container-drift.rhai and\n"
+        + "a deliberate temporary allowance in scripts/check-runtime-container-drift.rhai and\n"
         + "document it in docs/specs/052-drift-guards-and-architecture-proof-matrix-strict-lane.md.";
 }

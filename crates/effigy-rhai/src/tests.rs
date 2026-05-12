@@ -1359,23 +1359,23 @@ fn first_party_rhai_scripts_use_exec_run_for_container_commands() {
 
 fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
     match relative {
-        "scripts/rhai/write-browser-proof-report.rhai" => {
+        "scripts/write-browser-proof-report.rhai" => {
             contents.contains("process::tee(\"cargo\", process_args)")
         }
-        "scripts/rhai/check-release-smoke.rhai" => {
+        "scripts/check-release-smoke.rhai" => {
             contents.contains("process::run(program, process_args)")
         }
-        "scripts/rhai/rehearse-linux-release-container.rhai" => {
+        "scripts/rehearse-linux-release-container.rhai" => {
             contents.contains("process::run(\n    \"colima\",")
         }
         "crates/effigy-catalog/starters/underlay/scripts/dev/ui-setup.rhai"
         | "crates/effigy-manifest/bundles/underlay/scripts/dev/ui-setup.rhai" => {
             contents.contains("process::stream(\"sh\", [\"-lc\", shell])")
         }
-        "scripts/rhai/build-local-bin.rhai" => {
+        "scripts/build-local-bin.rhai" => {
             contents.contains("process::stream(program, process_args, options)")
         }
-        "scripts/rhai/install-local-bin-links.rhai" => contents.contains("process::run("),
+        "scripts/install-local-bin-links.rhai" => contents.contains("process::run("),
         _ => false,
     }
 }

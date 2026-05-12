@@ -96,7 +96,7 @@ Remaining compatibility boundary:
   direct exec helpers
 - those wrappers must not leak back into runner command code
 - drift allowances for legacy runner/runtime callers must stay documented in
-  `scripts/rhai/check-runtime-container-drift.rhai` and the active closeout lane
+  `scripts/check-runtime-container-drift.rhai` and the active closeout lane
 
 ## Operation Reports
 

@@ -32,7 +32,7 @@ Tasks can be shell strings, refs to other tasks, or Rhai scripts. Examples:
 ]
 
 # Rhai script
-"link:local" = [{ rhai = "scripts/rhai/install-local-bin-links.rhai" }]
+"link:local" = [{ rhai = "scripts/install-local-bin-links.rhai" }]
 
 # Mixed chain
 "bootstrap:local" = [
@@ -42,7 +42,7 @@ Tasks can be shell strings, refs to other tasks, or Rhai scripts. Examples:
 
 # Task with explicit run block (for richer config)
 [tasks."smoke:release"]
-run = [{ rhai = "scripts/rhai/check-release-smoke.rhai" }]
+run = [{ rhai = "scripts/check-release-smoke.rhai" }]
 ```
 
 ## `[systems.<name>]`
