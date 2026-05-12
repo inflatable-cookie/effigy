@@ -622,12 +622,11 @@ fn provider_package_policy_blockers(
         (policy.prints_secret_values, "print secret values"),
     ]
     .into_iter()
-    .filter_map(|(enabled, action)| {
-        enabled.then(|| {
-            format!(
-                "deploy provider `{provider}` package policy is not allowed to {action} in the current deployment transaction surface"
-            )
-        })
+    .filter(|(enabled, _)| *enabled)
+    .map(|(_, action)| {
+        format!(
+            "deploy provider `{provider}` package policy is not allowed to {action} in the current deployment transaction surface"
+        )
     })
     .collect()
 }

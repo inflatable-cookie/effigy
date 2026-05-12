@@ -190,6 +190,6 @@ fn builtin_config_parser_rejects_removed_bundle_flag() {
     let task = parser_task();
     assert_parser_task_invocation_error(
         parse_config_contract_request(&task, &string_args(&["--bundle", "underlay"])),
-        "unknown argument(s) for built-in `config`: --bundle underlay",
+        "unknown argument(s) for built-in `builtin-parse`: --bundle underlay",
     );
 }

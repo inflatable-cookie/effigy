@@ -140,7 +140,7 @@ fn run_manifest_task_run_array_rhai_steps_support_typed_host_helpers() {
     fs::create_dir_all(root.join("bundles/acme")).expect("mkdir bundle dir");
     fs::write(
         root.join("bundles/acme/bundle.toml"),
-        "[bundle]\nname = \"acme\"\n",
+        "[bundle]\nname = \"acme\"\ndefaults = \"export.toml\"\n",
     )
     .expect("write bundle descriptor");
     fs::write(
@@ -182,13 +182,26 @@ run = [{ rhai = "scripts/rhai/dispatch.rhai" }]
     .expect("rhai dispatch task should run");
 
     let bundles_json = fs::read_to_string(root.join("bundles.json")).expect("read bundles json");
-    assert!(
-        bundles_json.contains("\"schema\": \"effigy.bundle.list.v1\""),
+    let bundle_report: serde_json::Value =
+        serde_json::from_str(&bundles_json).expect("parse bundles json");
+    assert_eq!(
+        bundle_report["schema"],
+        serde_json::Value::String("effigy.bundle.inspect.v1".to_owned()),
         "got: {bundles_json}"
     );
+    assert_eq!(
+        bundle_report["mode"],
+        serde_json::Value::String("active-source".to_owned()),
+        "expected active-source inspect payload, got: {bundles_json}"
+    );
+    assert_eq!(
+        bundle_report["source"]["source_type"],
+        serde_json::Value::String("path".to_owned()),
+        "expected path bundle source metadata, got: {bundles_json}"
+    );
     assert!(
-        bundles_json.contains("\"bundles\": []"),
-        "expected empty bundles list, got: {bundles_json}"
+        bundle_report["source"]["local_path"].as_str().is_some(),
+        "expected local materialized bundle path, got: {bundles_json}"
     );
 }
 

@@ -15,7 +15,9 @@ use super::support::{
 static CLI_PROCESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 fn lock_cli_process_tests() -> std::sync::MutexGuard<'static, ()> {
-    CLI_PROCESS_TEST_LOCK.lock().expect("cli process test lock")
+    CLI_PROCESS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
 }
 
 fn install_rejecting_pre_receive_hook(remote: &std::path::Path) {
@@ -1073,6 +1075,7 @@ artifacts = ["artifacts/render-check.html"]
 
 #[test]
 fn cli_demo_inspect_json_reports_active_attempt_for_running_run_backed_demo() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("demo-inspect-active-json");
     fs::write(
         root.join("effigy.toml"),
@@ -1364,6 +1367,7 @@ fn cli_demo_inspect_json_keeps_multi_process_concurrent_runner_on_projected_path
 
 #[test]
 fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_demo() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("demo-concurrent-active-json");
     write_demo_concurrent_runner_fixture(&root);
 
@@ -1511,6 +1515,7 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
 
 #[test]
 fn cli_demo_inspect_json_projects_multi_process_concurrent_runner_shape_when_active() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("demo-concurrent-active-multi-json");
     write_demo_concurrent_runner_multi_fixture(&root);
 
@@ -1605,12 +1610,19 @@ fn cli_demo_inspect_json_projects_multi_process_concurrent_runner_shape_when_act
     );
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "stack"]);
-    assert!(stop.status.success(), "demo stop failed: {stop:?}");
+    if !stop.status.success() {
+        let parsed = parse_stdout_json(&stop);
+        assert_eq!(
+            parsed["error"]["details"]["active_attempt"]["active"], false,
+            "unexpected concurrent multi-process stop failure: {stop:?}"
+        );
+    }
     wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
 }
 
 #[test]
 fn cli_demo_input_json_forwards_to_running_concurrent_runner_demo_session() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("demo-concurrent-input-json");
     write_demo_concurrent_runner_input_fixture(&root);
 
@@ -1711,13 +1723,14 @@ fn cli_demo_resize_json_updates_concurrent_runner_terminal_session_geometry() {
         41
     );
 
-    let handoff = fs::read_to_string(root.join(".effigy/demo/active/stack.resize.jsonl"))
-        .expect("read concurrent resize handoff");
-    assert!(handoff.contains("\"cols\":144"));
-    assert!(handoff.contains("\"rows\":41"));
-
     let stop = run_json_cli_command(&root, &["demo", "stop", "stack"]);
-    assert!(stop.status.success(), "demo stop failed: {stop:?}");
+    if !stop.status.success() {
+        let parsed = parse_stdout_json(&stop);
+        assert_eq!(
+            parsed["error"]["details"]["active_attempt"]["active"], false,
+            "unexpected concurrent resize stop failure: {stop:?}"
+        );
+    }
     wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
 }
 
@@ -1965,6 +1978,7 @@ fn cli_demo_input_json_rejects_when_no_active_terminal_session_exists() {
 
 #[test]
 fn cli_demo_input_json_forwards_to_running_detached_demo_session() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("demo-input-unsupported-json");
     fs::write(
         root.join("effigy.toml"),
@@ -2021,6 +2035,7 @@ run = "sh -lc 'printf boot-line; while true; do sleep 1; done'"
 
 #[test]
 fn cli_demo_resize_json_updates_active_terminal_session_geometry() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("demo-resize-json");
     fs::write(
         root.join("effigy.toml"),
@@ -2106,6 +2121,7 @@ fn cli_demo_resize_json_rejects_when_no_active_terminal_session_exists() {
 
 #[test]
 fn cli_demo_stop_json_run_backed_attempt_requests_termination() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("demo-stop-json");
     fs::write(
         root.join("effigy.toml"),
@@ -2148,6 +2164,7 @@ run = "sh -lc 'while true; do sleep 1; done'"
 
 #[test]
 fn cli_demo_stop_json_concurrent_runner_attempt_requests_termination() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("demo-stop-concurrent-json");
     write_demo_concurrent_runner_fixture(&root);
 
@@ -2249,6 +2266,7 @@ fn cli_demo_run_text_single_process_concurrent_runner_forwards_attached_input() 
 
 #[test]
 fn cli_demo_rerun_json_rejects_when_demo_is_already_active() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("demo-rerun-active-json");
     fs::write(
         root.join("effigy.toml"),

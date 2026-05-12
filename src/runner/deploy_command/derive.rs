@@ -18,13 +18,13 @@ pub(super) fn derive_deploy_model(repo_root: &Path) -> Result<DeployModel, Runne
         .ok_or_else(|| {
             RunnerError::task_invocation("`deploy model` requires `[deploy.model]`".to_owned())
         })?;
-    let config: ManifestDeployRootConfig = deploy_value.try_into().map_err(|error| {
+    let model_value = deploy_value.get("model").cloned().ok_or_else(|| {
+        RunnerError::task_invocation("`deploy model` requires `[deploy.model]`".to_owned())
+    })?;
+    let model: ManifestDeployModelConfig = model_value.try_into().map_err(|error| {
         RunnerError::task_invocation(format!(
             "failed to parse composed `[deploy.model]` config: {error}"
         ))
-    })?;
-    let model = config.model.ok_or_else(|| {
-        RunnerError::task_invocation("`deploy model` requires `[deploy.model]`".to_owned())
     })?;
 
     let repo_name = repo_root
@@ -244,13 +244,6 @@ fn normalize_task_command(command: &str) -> String {
         .replace("{args}", "")
         .trim()
         .to_owned()
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManifestDeployRootConfig {
-    #[serde(default)]
-    model: Option<ManifestDeployModelConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

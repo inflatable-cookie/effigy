@@ -134,7 +134,7 @@ fn maybe_promote_to_parent_workspace(
     let mut evidence: Vec<String> = Vec::new();
     let mut should_promote = false;
 
-    if probe.child_exists(parent, "effigy.toml") {
+    if probe.child_exists(parent, "effigy.toml") && child_manifest_declares_catalog(child, probe) {
         should_promote = true;
         evidence.push("parent effigy.toml anchors child workspace".to_owned());
     }
@@ -194,23 +194,42 @@ fn read_to_string(path: &Path) -> String {
 }
 
 fn has_effigy_manifest_root_marker(path: &Path, probe: &mut PathPresenceCache) -> bool {
+    let Some(value) = manifest_value(path, probe) else {
+        return false;
+    };
+    let Some(table) = value.as_table() else {
+        return false;
+    };
+    let Some(manifest) = table.get("manifest").and_then(toml::Value::as_table) else {
+        return false;
+    };
+    manifest
+        .get("root")
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn child_manifest_declares_catalog(path: &Path, probe: &mut PathPresenceCache) -> bool {
+    let Some(value) = manifest_value(path, probe) else {
+        return false;
+    };
+    value
+        .as_table()
+        .is_some_and(|table| table.get("catalog").is_some())
+}
+
+fn manifest_value(path: &Path, probe: &mut PathPresenceCache) -> Option<toml::Value> {
     let manifest_path = path.join("effigy.toml");
     if !probe.exists(&manifest_path) {
-        return false;
+        return None;
     }
 
     let raw = read_to_string(&manifest_path);
     let Ok(value) = toml::from_str::<toml::Value>(&raw) else {
-        return false;
+        return None;
     };
 
-    value
-        .as_table()
-        .and_then(|table| table.get("manifest"))
-        .and_then(toml::Value::as_table)
-        .and_then(|manifest| manifest.get("root"))
-        .and_then(toml::Value::as_bool)
-        .unwrap_or(false)
+    Some(value)
 }
 
 fn canonicalize_best_effort(path: PathBuf) -> PathBuf {
@@ -297,5 +316,31 @@ mod tests {
             .evidence
             .iter()
             .any(|item| item.contains("parent effigy.toml anchors child workspace")));
+    }
+
+    #[test]
+    fn nested_standalone_effigy_manifest_does_not_promote_to_parent_effigy_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.root]\nrun = \"printf root\"\n",
+        )
+        .expect("write root manifest");
+        let child = root.join("child");
+        fs::create_dir_all(&child).expect("mkdir child");
+        fs::write(
+            child.join("effigy.toml"),
+            "[tasks.qa]\nrun = \"printf child\"\n",
+        )
+        .expect("write child manifest");
+
+        let resolved = resolve_target_root(child.clone(), None).expect("resolve");
+
+        assert_eq!(
+            fs::canonicalize(&resolved.resolved_root).expect("canonical resolved"),
+            fs::canonicalize(&child).expect("canonical child")
+        );
+        assert_eq!(resolved.resolution_mode, ResolutionMode::AutoNearest);
     }
 }

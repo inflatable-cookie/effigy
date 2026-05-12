@@ -175,6 +175,11 @@ During v0.x, MINOR bumps may include breaking changes.
   parent `effigy.toml` root during repo resolution, so sibling catalog
   discovery and relative task prefixes keep working inside repos that use
   parent/child Effigy manifests without an extra package-manager workspace.
+- **Standalone nested Effigy repos** no longer get incorrectly promoted back
+  to a parent `effigy.toml` root just because they live under another Effigy
+  repo, so `--repo child` and in-repo commands keep using the child repo's
+  own docs policy, tasks, and manifest authority unless the child manifest is
+  explicitly acting as a catalog/workspace child.
 - **Git bundle refresh visibility** now prints a short `[bundle] ...` status
   line on real TTY runs when Effigy clones, refreshes, or updates a git-backed
   bundle cache during manifest load, so operators can see when a newer bundle
