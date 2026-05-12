@@ -99,6 +99,11 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
             Some("deploy"),
         ),
         (
+            "effigy secrets",
+            "Inspect declaration-only `[secrets]` manifest config",
+            Some("secrets"),
+        ),
+        (
             "effigy docs",
             "Run reusable docs QA checks such as markdown link, JSON example, and index validation",
             Some("docs"),

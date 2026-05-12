@@ -4,8 +4,8 @@ use effigy_cli::{
     ContainerSubcommand, ContractsArgs, ContractsSubcommand, DemoArgs, DemoListQuery,
     DemoSubcommand, DeployArgs, DeploySubcommand, DistributionArgs, DistributionSubcommand,
     DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, ReleaseArgs,
-    ReleaseSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand,
-    TaskInvocation, TasksArgs, WorkspaceArgs,
+    ReleaseSubcommand, SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs,
+    SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 
 #[test]
@@ -16,6 +16,7 @@ fn help_topic_label_maps_all_topics() {
     assert_eq!(help_topic_label(HelpTopic::Deploy), "deploy");
     assert_eq!(help_topic_label(HelpTopic::Defer), "defer");
     assert_eq!(help_topic_label(HelpTopic::Exec), "exec");
+    assert_eq!(help_topic_label(HelpTopic::Secrets), "secrets");
     assert_eq!(help_topic_label(HelpTopic::State), "state");
     assert_eq!(help_topic_label(HelpTopic::System), "system");
     assert_eq!(help_topic_label(HelpTopic::Workspace), "workspace");
@@ -55,6 +56,11 @@ fn command_kind_and_name_maps_command_variants() {
         output_json: false,
         service: None,
         command: vec!["php".to_owned(), "-v".to_owned()],
+    });
+    let secrets = Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::List,
+        repo_override: None,
+        output_json: false,
     });
     let service = Command::Service(ServiceArgs {
         subcommand: ServiceSubcommand::List,
@@ -160,6 +166,10 @@ fn command_kind_and_name_maps_command_variants() {
         ("deploy", "deploy".to_owned())
     );
     assert_eq!(command_kind_and_name(&exec), ("exec", "exec".to_owned()));
+    assert_eq!(
+        command_kind_and_name(&secrets),
+        ("secrets", "secrets".to_owned())
+    );
     assert_eq!(
         command_kind_and_name(&system),
         ("system", "system".to_owned())

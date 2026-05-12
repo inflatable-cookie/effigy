@@ -21,6 +21,7 @@ pub enum Command {
     Bundle(BundleArgs),
     Changelog(ChangelogArgs),
     Deploy(DeployArgs),
+    Secrets(SecretsArgs),
     Defer(DeferArgs),
     Exec(ExecArgs),
     State(StateArgs),
@@ -99,6 +100,7 @@ pub enum HelpTopic {
     Bundle,
     Changelog,
     Deploy,
+    Secrets,
     Defer,
     Exec,
     State,
@@ -199,6 +201,22 @@ pub enum DeploySubcommand {
 pub enum DeployExportProvider {
     Render,
     Railway,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretsArgs {
+    pub subcommand: SecretsSubcommand,
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SecretsSubcommand {
+    List,
+    Doctor,
+    Init,
+    Set { name: String },
+    Unset { name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

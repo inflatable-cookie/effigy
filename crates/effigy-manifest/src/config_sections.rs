@@ -5,6 +5,7 @@ mod container;
 mod demo;
 mod distribution;
 mod release;
+mod secrets;
 
 pub use bootstrap::{
     ManifestBootstrapChildConfig, ManifestBootstrapConfig, ManifestBootstrapStart,
@@ -41,6 +42,11 @@ pub use distribution::{
     ManifestDistributionPreflightConfig, ManifestDistributionPublishConfig,
 };
 pub use release::{ManifestReleaseConfig, ManifestReleaseGateConfig, ManifestReleaseGateDetails};
+pub use secrets::{
+    ManifestSecretKeyConfig, ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig,
+    ManifestSecretsExternalConfig, ManifestSecretsUnlockPolicy, ManifestSecretsVaultConfig,
+    ManifestSecretsVaultIdentity,
+};
 
 #[cfg(test)]
 mod tests {

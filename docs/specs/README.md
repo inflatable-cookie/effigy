@@ -26,89 +26,20 @@ Historical command-reference rule:
 
 ## Active Spec Set
 
-- [`batch-cards/README.md`](./batch-cards/README.md)
-
 Active strict lane:
 
-- none
+- [`078-local-encrypted-vault-strict-lane.md`](./078-local-encrypted-vault-strict-lane.md)
 
 Queued strict lanes:
 
 - none
 
-Paused but still useful:
+Archived strict lanes:
 
-- [`010-effigy-modularization-and-crate-boundaries-strict-lane.md`](./010-effigy-modularization-and-crate-boundaries-strict-lane.md)
-
-Recently completed:
-
-- [`075-artifact-and-crate-boundary-review-strict-lane.md`](./075-artifact-and-crate-boundary-review-strict-lane.md)
-- [`074-low-risk-deduplication-strict-lane.md`](./074-low-risk-deduplication-strict-lane.md)
-- [`073-deploy-domain-boundary-hardening-strict-lane.md`](./073-deploy-domain-boundary-hardening-strict-lane.md)
-- [`072-manifest-section-decomposition-strict-lane.md`](./072-manifest-section-decomposition-strict-lane.md)
-- [`071-state-domain-extraction-strict-lane.md`](./071-state-domain-extraction-strict-lane.md)
-- [`070-shared-database-target-resolution-strict-lane.md`](./070-shared-database-target-resolution-strict-lane.md)
-- [`064-deployment-transaction-system-strict-lane.md`](./064-deployment-transaction-system-strict-lane.md)
-- [`069-shared-dispatcher-and-exec-collapse-strict-lane.md`](./069-shared-dispatcher-and-exec-collapse-strict-lane.md)
-- [`068-container-command-decomposition-strict-lane.md`](./068-container-command-decomposition-strict-lane.md)
-- [`067-command-reference-completeness-and-flag-consistency-strict-lane.md`](./067-command-reference-completeness-and-flag-consistency-strict-lane.md)
-- [`066-docs-check-subcommand-consolidation-strict-lane.md`](./066-docs-check-subcommand-consolidation-strict-lane.md)
-- [`063-task-status-query-surface-and-read-model-strict-lane.md`](./063-task-status-query-surface-and-read-model-strict-lane.md)
-- [`065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md`](./065-remote-bundle-sources-git-and-oci-delivery-strict-lane.md)
-- [`062-task-status-record-and-active-run-model-strict-lane.md`](./062-task-status-record-and-active-run-model-strict-lane.md)
-- [`061-state-stack-and-layered-seed-framework-strict-lane.md`](./061-state-stack-and-layered-seed-framework-strict-lane.md)
-- [`060-oci-artifact-closeout-and-proof-matrix-strict-lane.md`](./060-oci-artifact-closeout-and-proof-matrix-strict-lane.md)
-- [`059-planning-crate-decomposition-strict-lane.md`](./059-planning-crate-decomposition-strict-lane.md)
-- [`058-architecture-guard-integration-strict-lane.md`](./058-architecture-guard-integration-strict-lane.md)
-- [`057-container-volume-operation-pipeline-strict-lane.md`](./057-container-volume-operation-pipeline-strict-lane.md)
-- [`056-data-seed-dump-plan-consumption-strict-lane.md`](./056-data-seed-dump-plan-consumption-strict-lane.md)
-- [`055-runtime-activation-route-and-plan-authority-strict-lane.md`](./055-runtime-activation-route-and-plan-authority-strict-lane.md)
-- [`054-runtime-pipeline-integration-audit-and-debt-map-strict-lane.md`](./054-runtime-pipeline-integration-audit-and-debt-map-strict-lane.md)
-- [`053-contract-promotion-and-g04-closeout-strict-lane.md`](./053-contract-promotion-and-g04-closeout-strict-lane.md)
-- [`052-drift-guards-and-architecture-proof-matrix-strict-lane.md`](./052-drift-guards-and-architecture-proof-matrix-strict-lane.md)
-- [`051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md`](./051-cli-parser-modularisation-for-runtime-surfaces-strict-lane.md)
-- [`050-manager-backed-runtime-read-write-shell-strict-lane.md`](./050-manager-backed-runtime-read-write-shell-strict-lane.md)
-- [`049-effective-container-policy-decomposition-strict-lane.md`](./049-effective-container-policy-decomposition-strict-lane.md)
-- [`048-rhai-host-api-split-and-callback-purity-strict-lane.md`](./048-rhai-host-api-split-and-callback-purity-strict-lane.md)
-- [`047-data-seed-dump-pipeline-strict-lane.md`](./047-data-seed-dump-pipeline-strict-lane.md)
-- [`046-container-operation-pipeline-strict-lane.md`](./046-container-operation-pipeline-strict-lane.md)
-- [`045-runtime-activation-pipeline-strict-lane.md`](./045-runtime-activation-pipeline-strict-lane.md)
-- [`044-execution-pipeline-ownership-strict-lane.md`](./044-execution-pipeline-ownership-strict-lane.md)
-- [`043-runtime-architecture-sanity-and-g04-rollover-strict-lane.md`](./043-runtime-architecture-sanity-and-g04-rollover-strict-lane.md)
-- [`042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md`](./042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md)
-- [`041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md`](./041-contract-promotion-public-cleanup-breaks-and-closeout-strict-lane.md)
-- [`040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md`](./040-dependability-proof-matrix-for-decodelabs-and-underlay-shapes-strict-lane.md)
-- [`039-runtime-container-caller-migration-and-cleanup-strict-lane.md`](./039-runtime-container-caller-migration-and-cleanup-strict-lane.md)
-- [`038-plugin-ready-container-manager-facade-strict-lane.md`](./038-plugin-ready-container-manager-facade-strict-lane.md)
-- [`037-canonical-task-execution-request-and-pipeline-strict-lane.md`](./037-canonical-task-execution-request-and-pipeline-strict-lane.md)
-- [`036-universal-runtime-context-and-path-authority-strict-lane.md`](./036-universal-runtime-context-and-path-authority-strict-lane.md)
-- [`035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md`](./035-v0-x-release-readiness-audit-and-gate-alignment-strict-lane.md)
-- [`034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md`](./034-next-v0-x-readiness-and-roadmap-selection-strict-lane.md)
-- [`033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md`](./033-interactive-cli-prompt-expansion-and-guardrails-strict-lane.md)
-- [`032-v1-runtime-hardening-proof-and-stress-matrix-strict-lane.md`](./032-v1-runtime-hardening-proof-and-stress-matrix-strict-lane.md)
-- [`031-architecture-map-and-authority-surface-repair-strict-lane.md`](./031-architecture-map-and-authority-surface-repair-strict-lane.md)
-- [`030-container-and-runtime-error-taxonomy-and-diagnostics-strict-lane.md`](./030-container-and-runtime-error-taxonomy-and-diagnostics-strict-lane.md)
-- [`029-workspace-runtime-orchestrator-split-and-handoff-simplification-strict-lane.md`](./029-workspace-runtime-orchestrator-split-and-handoff-simplification-strict-lane.md)
-- [`028-container-assembly-model-and-single-pass-compose-emission-strict-lane.md`](./028-container-assembly-model-and-single-pass-compose-emission-strict-lane.md)
-- [`027-runtime-session-context-and-runtime-ownership-hardening-strict-lane.md`](./027-runtime-session-context-and-runtime-ownership-hardening-strict-lane.md)
-- [`026-decodelabs-production-strategy-scope-strict-lane.md`](./026-decodelabs-production-strategy-scope-strict-lane.md)
-- [`025-regression-matrix-and-drift-guards-strict-lane.md`](./025-regression-matrix-and-drift-guards-strict-lane.md)
-- [`024-embedded-command-script-and-bootstrap-convergence-strict-lane.md`](./024-embedded-command-script-and-bootstrap-convergence-strict-lane.md)
-- [`023-interactive-session-ownership-and-lifecycle-convergence-strict-lane.md`](./023-interactive-session-ownership-and-lifecycle-convergence-strict-lane.md)
-- [`022-execution-surface-convergence-strict-lane.md`](./022-execution-surface-convergence-strict-lane.md)
-- [`001-production-deployment-model-and-export-contract-strict-lane.md`](./001-production-deployment-model-and-export-contract-strict-lane.md)
-- [`021-unified-init-and-starter-emission-strict-lane.md`](./021-unified-init-and-starter-emission-strict-lane.md)
-- [`013-dev-front-door-and-managed-lifecycle-strict-lane.md`](./013-dev-front-door-and-managed-lifecycle-strict-lane.md)
-- [`015-persistent-data-and-volume-lifecycle-strict-lane.md`](./015-persistent-data-and-volume-lifecycle-strict-lane.md)
-- [`016-multi-project-coordination-strict-lane.md`](./016-multi-project-coordination-strict-lane.md)
-- [`014-rust-native-gateway-strict-lane.md`](./014-rust-native-gateway-strict-lane.md)
-- [`012-container-context-and-transparent-execution-strict-lane.md`](./012-container-context-and-transparent-execution-strict-lane.md)
-- [`011-service-catalog-and-compose-assembly-strict-lane.md`](./011-service-catalog-and-compose-assembly-strict-lane.md)
-- [`020-multi-project-gateway-expansion-and-service-dns-strict-lane.md`](./020-multi-project-gateway-expansion-and-service-dns-strict-lane.md)
-- [`007-distribution-release-and-consumer-rollout-strict-lane.md`](./007-distribution-release-and-consumer-rollout-strict-lane.md)
+- completed or paused historical strict lanes live in
+  [`archive/`](./archive/)
 
 ## Next Task
 
-Plan the `g05` generation theme and decide which stale strict-lane specs should
-be archived before opening implementation roadmaps. Release execution remains
-human-owned.
+Execute `710` to add unlock/lock and doctor vault diagnostics. Release
+execution remains human-owned.

@@ -4,7 +4,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Generation model
 
-- Use generation folders: `g01`, `g02`, `g03`, `g04`, and future `gNN`
+- Use generation folders: `g01`, `g02`, `g03`, `g04`, `g05`, and future `gNN`
   generations opened by explicit rollover.
 - Use milestone files inside each generation: `NNN-<slug>.md`.
 - Reference milestones as `gNN.NNN`.
@@ -20,6 +20,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Layout
 
 - `gNN/batch-cards/` optional per-generation execution cards
+- `g05/` current secret and local configuration management generation
 - `g04/` previous runtime architecture simplification generation
 - `g03/` previous production export and runtime hardening generation
 - `g02/` previous release and local-runtime expansion generation
@@ -37,14 +38,16 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   covered runtime architecture simplification, state stacks, deployment
   transactions, provider packages, post-release reference-grade cleanup, and
   artifact/crate-boundary rejustification.
-- No generation is currently open for implementation.
-- The next work is a `g05` planning decision plus rollover cleanup. Do not open
-  `g05` implementation roadmaps until stale generation-specific strict-lane
-  specs have been archived or removed from `docs/specs/`.
+- `g05` is active as the secret and local configuration management generation.
+  [`g05.001`](./g05/001-secret-and-local-config-contract.md) and
+  [`g05.002`](./g05/002-secret-manifest-and-doctor-surface.md) are complete.
+  The local encrypted vault lane is open for
+  [`g05.003`](./g05/003-local-encrypted-vault.md). The next ready work is the
+  unlock/lock command surface and richer vault doctor diagnostics.
 
 ## Active Strict Lane
 
-None.
+Strict lane `078` is active for `g05.003`.
 
 ## Research Program
 
@@ -80,8 +83,7 @@ Before rollover:
 
 ## Next Task
 
-Plan the `g05` generation theme and rollover cleanup before opening new
-implementation roadmaps.
+Execute `710` to add unlock/lock and doctor vault diagnostics.
 
 ## Historical language boundary
 

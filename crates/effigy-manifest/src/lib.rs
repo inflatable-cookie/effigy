@@ -43,8 +43,11 @@ pub use config_sections::{
     ManifestDistributionPreflightConfig, ManifestDocsPolicyConfig, ManifestEnvSchemaConfig,
     ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption, ManifestIsolationConfig,
     ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestReleaseConfig,
-    ManifestScanConfig, ManifestShellConfig, ManifestSystemConfig, ManifestSystemsConfig,
-    ManifestTaskDefaultsConfig, ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget, ManifestSecretsBackend,
+    ManifestSecretsConfig, ManifestSecretsExternalConfig, ManifestSecretsUnlockPolicy,
+    ManifestSecretsVaultConfig, ManifestSecretsVaultIdentity, ManifestShellConfig,
+    ManifestSystemConfig, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
+    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,
@@ -141,6 +144,8 @@ pub struct TaskManifest {
     pub shell: Option<ManifestShellConfig>,
     #[serde(default)]
     pub env_schema: Option<ManifestEnvSchemaConfig>,
+    #[serde(default)]
+    pub secrets: Option<ManifestSecretsConfig>,
     #[serde(default)]
     pub docs_policy: Option<ManifestDocsPolicyConfig>,
     #[serde(default)]

@@ -35,6 +35,7 @@ mod release_command;
 mod render;
 mod runtime_session_context;
 mod script_command;
+mod secrets_command;
 mod service_command;
 mod state_command;
 mod system_command;
@@ -65,6 +66,7 @@ pub(in crate::runner) use host_process::{
 };
 pub(in crate::runner) use release_command::run_release;
 pub(in crate::runner) use script_command::run_internal_rhai;
+pub(in crate::runner) use secrets_command::run_secrets;
 pub(in crate::runner) use service_command::run_service;
 pub(in crate::runner) use state_command::run_state;
 pub(in crate::runner) use system_command::{run_system, run_workspace};

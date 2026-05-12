@@ -41,6 +41,8 @@ For narrative workflow guidance instead of lookup, start with:
   `effigy service`.
 - Need one ad-hoc command inside the dev container without opening a shell:
   use `effigy exec`.
+- Need to inspect declared secret names and safe metadata without reading
+  values: use `effigy secrets list` or `effigy secrets doctor`.
 - Need host-local DNS, route status, or TLS setup for container domains: use
   `effigy gateway`.
 - Need machine-readable output: add top-level `effigy --json <command>` (or
@@ -79,6 +81,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy defer` | Run the configured `[defer]` fallback explicitly (same routing container semantics as selector-miss deferral) | `--repo`, `--json` | command envelope; payload follows the deferred execution path | `015-deferral-fallback-migration.md` |
 | `effigy service` | Inspect the layered service catalog and extract bundled fragments into repo-owned overrides | `list`, `extract`, `--repo`, `--dir`, `--json` | service commands render command-envelope JSON with catalog payloads | `063-container-system-guide.md` |
 | `effigy exec` | Run one ad-hoc command inside the manifest's dev-context container | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
+| `effigy secrets` | Inspect declared secret names, targets, required flags, backend, and safe metadata without resolving values | `list`, `doctor`, `--repo`, `--json` | `effigy.secrets.v1` | [`../contracts/032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md) |
 | `effigy gateway` | Operate the host-native local DNS and reverse-proxy gateway for container-owned routes | `up`, `down`, `status`, `setup-tls`, `--json` | gateway commands render command-envelope JSON with gateway payloads | `063-container-system-guide.md` |
 | `effigy doctor` | Run health checks and optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md` |
 | `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion | `check <KIND>`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1` | `029-docs-qa-checklist-and-validation.md` |
@@ -138,6 +141,8 @@ effigy tasks status --all [--repo <PATH>] [--json]
 effigy defer [--repo <PATH>] [--json] <REQUEST> [args...]
 effigy doctor [--repo <PATH>] [--fix] [--verbose] [--json]
 effigy doctor <task> <args> [--json]
+effigy secrets list [--repo <PATH>] [--json]
+effigy secrets doctor [--repo <PATH>] [--json]
 effigy config path [--json]
 effigy config get <containers.backend|containers.profile> [--json]
 effigy config set <containers.backend|containers.profile> <value> [--json]

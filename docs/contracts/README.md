@@ -107,6 +107,16 @@ This folder contains both:
   deploy domain boundary contract for separating transaction models, report
   persistence, provider-package dispatch, and text rendering without schema or
   provider behavior drift.
+- [`030-low-risk-deduplication-contract.md`](./030-low-risk-deduplication-contract.md):
+  docs-policy test ownership, CLI help topic normalization, private fixture
+  builders, and no-behavior-change duplication cleanup rules.
+- [`031-artifact-and-crate-boundary-contract.md`](./031-artifact-and-crate-boundary-contract.md):
+  artifact refs, staging, OCI, internal module ownership, small-crate retention
+  rules, merge-candidate evidence rules, and package-map refresh triggers.
+- [`032-secret-and-local-config-management-contract.md`](./032-secret-and-local-config-management-contract.md):
+  `g05` secret and local configuration contract covering config/secret
+  separation, the built-in human-gated vault posture, secret declarations,
+  runtime injection, Underlay conventions, and Varlock adapter positioning.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -139,6 +149,7 @@ This folder contains both:
 | `029-deploy-domain-boundary-contract.md` | Platform maintainers | Deploy transaction ownership, report persistence paths, provider-package dispatch context, text rendering boundary, JSON schema compatibility, and provider-specific behavior staying outside core | Planning review against `g04.037` plus focused deploy transaction and provider package fixture tests once implementation starts |
 | `030-low-risk-deduplication-contract.md` | Platform maintainers | Docs-policy test ownership, CLI help topic normalization, private fixture-builder boundaries, and no-behavior-change duplication cleanup rules | Planning review against `g04.038` plus focused docs-policy, help, fixture, and duplicate-block scan proofs once implementation starts |
 | `031-artifact-and-crate-boundary-contract.md` | Platform maintainers | Artifact refs/staging/OCI/module ownership, small-crate retention rules, merge-candidate evidence rules, and package-map refresh triggers | Planning review against `g04.039` plus artifact tests, crate-boundary docs review, god-file scan, and cargo check once implementation starts |
+| `032-secret-and-local-config-management-contract.md` | Platform maintainers | `[secrets]` manifest shape, built-in vault unlock policy, redaction rules, task/container/Rhai/deploy injection, `.env.schema` relationship, Underlay config convention, and Varlock adapter posture | Planning review against `g05.001` plus focused secrets, vault, injection, redaction, container, Rhai, and deploy-provider tests once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -191,5 +202,7 @@ container-command decomposition contract, and
 shared dispatcher and exec collapse contract, `029-deploy-domain-boundary-contract.md`
 as the `g04.037` deploy domain boundary contract, and
 `030-low-risk-deduplication-contract.md` as the `g04.038` low-risk
-deduplication contract, and `031-artifact-and-crate-boundary-contract.md` as
-the `g04.039` artifact and crate-boundary contract.
+deduplication contract, `031-artifact-and-crate-boundary-contract.md` as the
+`g04.039` artifact and crate-boundary contract, and
+`032-secret-and-local-config-management-contract.md` as the active `g05.001`
+secret and local configuration contract.

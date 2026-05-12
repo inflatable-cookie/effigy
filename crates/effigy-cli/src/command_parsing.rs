@@ -22,6 +22,8 @@ mod docs;
 mod release;
 #[path = "command_parsing_runtime.rs"]
 mod runtime;
+#[path = "command_parsing_secrets.rs"]
+mod secrets;
 #[path = "command_parsing_state.rs"]
 mod state;
 
@@ -44,6 +46,7 @@ use runtime::{
     parse_exec_command, parse_gateway_command, parse_service_command, parse_system_command,
     parse_workspace_command,
 };
+use secrets::parse_secrets_command;
 use state::parse_state_command;
 
 use super::value_parsing::{next_required_value, parse_pretty_bool, parse_repo_path};
@@ -64,6 +67,7 @@ where
         "bundle" => parse_bundle_command(args),
         "changelog" => parse_changelog_command(args),
         "deploy" => parse_deploy_command(args),
+        "secrets" => parse_secrets_command(args),
         "defer" => parse_defer_command(args),
         "exec" => parse_exec_command(args),
         "state" => parse_state_command(args),

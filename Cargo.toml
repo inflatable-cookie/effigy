@@ -25,6 +25,7 @@ members = [
     "crates/effigy-rhai",
     "crates/effigy-routing",
     "crates/effigy-scan",
+    "crates/effigy-secrets",
     "crates/effigy-demo",
     "crates/effigy-state",
     "crates/effigy-runtime",
@@ -75,6 +76,7 @@ effigy-runtime = { path = "crates/effigy-runtime" }
 effigy-runtime-plan = { path = "crates/effigy-runtime-plan" }
 effigy-routing = { path = "crates/effigy-routing" }
 effigy-scan = { path = "crates/effigy-scan" }
+effigy-secrets = { path = "crates/effigy-secrets" }
 effigy-state = { path = "crates/effigy-state" }
 effigy-tasks = { path = "crates/effigy-tasks" }
 effigy-tui = { path = "crates/effigy-tui" }
@@ -99,6 +101,7 @@ signal-hook = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 minijinja = "2"
+rpassword = "7"
 
 [dev-dependencies]
 tempfile = "3"

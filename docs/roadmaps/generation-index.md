@@ -1,6 +1,6 @@
 # Roadmap Generation Index
 
-Current generation: pending `g05` planning
+Current generation: `g05`
 Updated: 2026-05-12
 
 ## Generation history
@@ -30,15 +30,15 @@ Updated: 2026-05-12
 
 ## Current Planning State
 
-No roadmap generation is currently active for implementation.
+`g05` is active as the secret and local configuration management generation.
+`g05.001` and `g05.002` are complete. Strict lane `078` is active for
+`g05.003`.
 
-Before `g05` opens:
+Current ready work:
 
-- choose the next generation theme
-- archive or remove stale generation-specific strict-lane specs from
-  `docs/specs/`
-- update the roadmap front doors to point at the first `g05` roadmap and ready
-  card
+- execute ready card `710`
+- add unlock/lock and doctor vault diagnostics
+- keep runtime injection blocked until `g05.004`
 
 ## Research Roadmaps
 
@@ -70,5 +70,4 @@ closeout there first.
 
 ## Next Task
 
-Plan the `g05` generation theme and rollover cleanup before opening new
-implementation roadmaps.
+Execute `710` to add unlock/lock and doctor vault diagnostics.

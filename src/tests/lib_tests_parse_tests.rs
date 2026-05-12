@@ -18,5 +18,7 @@ mod help_and_flag_tests;
 mod release_option_tests;
 #[path = "lib_tests_parse_tests/routing_and_passthrough_tests.rs"]
 mod routing_and_passthrough_tests;
+#[path = "lib_tests_parse_tests/secrets_option_tests.rs"]
+mod secrets_option_tests;
 #[path = "lib_tests_parse_tests/state_option_tests.rs"]
 mod state_option_tests;

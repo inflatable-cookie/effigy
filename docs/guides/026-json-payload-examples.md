@@ -33,6 +33,8 @@ Start with the family that matches your job:
   `Test Plan`, `Test Results`, `Watch`
 - bootstrap and setup:
   `Bootstrap`, `Deploy Model`, `Init`, `Migrate`, `Config`, `Unlock`
+- secret declarations and diagnostics:
+  `Secrets`
 - layered state, seed, and migration planning:
   `State Stack Lineage`
 - shell completion or editor integration:
@@ -2050,6 +2052,61 @@ effigy --json state history uat --kind capture --limit 5
 History lookup is read-only. It scans report JSON files and treats malformed
 files as warnings so manual cleanup or old report layouts do not corrupt hidden
 state.
+
+### 30) Secrets (`effigy.secrets.v1`)
+
+This payload is the `result` for:
+
+```sh
+effigy --json secrets list
+effigy --json secrets doctor
+```
+
+```json
+{
+  "schema": "effigy.secrets.v1",
+  "schema_version": 1,
+  "ok": true,
+  "repo_root": "/workspace/app",
+  "declared": true,
+  "backend": "effigy-vault",
+  "vault": {
+    "path": ".effigy/secrets/local.vault",
+    "identity": "ssh-agent",
+    "unlock": "key-and-passphrase"
+  },
+  "external": null,
+  "keys": [
+    {
+      "name": "database_url",
+      "required": true,
+      "targets": [
+        "tasks",
+        "containers"
+      ],
+      "description": "Application database connection URL"
+    },
+    {
+      "name": "render_api_key",
+      "required": false,
+      "targets": [
+        "deploy"
+      ],
+      "description": "Render API key for deployment checks and apply"
+    }
+  ],
+  "warnings": [],
+  "blockers": []
+}
+```
+
+`effigy.secrets.v1` is declaration-only in `g05.002`. It reports names,
+targets, required flags, backend, and safe metadata. It does not contain secret
+values, value hashes, vault contents, unlock state, or injected environment.
+
+If a repo has no `[secrets]` section, `declared` is `false`, `keys` is empty,
+and the command succeeds. If a declared backend is missing required config,
+`secrets doctor` reports blockers and returns a failed command result.
 
 ## Notes
 
