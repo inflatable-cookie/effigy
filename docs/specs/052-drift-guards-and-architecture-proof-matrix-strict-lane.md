@@ -51,8 +51,10 @@ explainable drift guards and a focused proof matrix for critical paths.
 - `config/scan.toml` configures repo scan thresholds.
 - `scripts/rhai/write-json-contract-artifacts.rhai` owns repo-local JSON
   contract artifact capture for CI validation tasks.
-- `scripts/check-linux-glibc-floor.sh` remains a release/distribution-specific
-  shell guard.
+- `scripts/rhai/check-runtime-container-drift.rhai` owns the lightweight
+  runtime/container drift guard.
+- `scripts/check-linux-glibc-floor.sh` remains the one release/distribution-specific
+  shell guard because the release workflow still invokes that path directly.
 
 ## Initial Guard Targets
 
@@ -98,7 +100,7 @@ explainable drift guards and a focused proof matrix for critical paths.
 ## Suppression Policy
 
 - Prefer removing the drift over adding an allowance.
-- Temporary allowances live in `scripts/check-runtime-container-drift.sh` and
+- Temporary allowances live in `scripts/rhai/check-runtime-container-drift.rhai` and
   must also be named in this lane.
 - Allowances should be path-scoped, not broad pattern suppressions.
 - Each allowance should map to a future migration card or remain clearly marked

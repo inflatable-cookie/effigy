@@ -9,7 +9,7 @@ use effigy_core::shell::shell_quote;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString};
 
 use crate::surface::{
-    MODULE_JSON, MODULE_PATH, MODULE_RANDOM, MODULE_STR, MODULE_TIME, MODULE_TOML,
+    MODULE_JSON, MODULE_PATH, MODULE_RANDOM, MODULE_REGEX, MODULE_STR, MODULE_TIME, MODULE_TOML,
 };
 
 use super::{
@@ -25,6 +25,7 @@ pub(super) fn register_utility_modules(engine: &mut Engine, context: Arc<ScriptC
     engine.register_static_module(MODULE_JSON, std::rc::Rc::new(build_json_module()));
     engine.register_static_module(MODULE_TOML, std::rc::Rc::new(build_toml_module()));
     engine.register_static_module(MODULE_STR, std::rc::Rc::new(build_str_module()));
+    engine.register_static_module(MODULE_REGEX, std::rc::Rc::new(build_regex_module()));
     engine.register_static_module(MODULE_RANDOM, std::rc::Rc::new(build_random_module()));
 }
 
@@ -206,6 +207,50 @@ fn build_random_module() -> rhai::Module {
     module.set_native_fn(
         "base64",
         |size: i64| -> Result<String, Box<EvalAltResult>> { generate_random_base64(size) },
+    );
+    module
+}
+
+fn build_regex_module() -> rhai::Module {
+    let mut module = rhai::Module::new();
+    module.set_native_fn(
+        "is_match",
+        |pattern: ImmutableString, value: Dynamic| -> Result<bool, Box<EvalAltResult>> {
+            let matcher = regex::Regex::new(pattern.as_str())
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            if value.is_unit() {
+                Ok(false)
+            } else {
+                Ok(matcher.is_match(&value.to_string()))
+            }
+        },
+    );
+    module.set_native_fn(
+        "replace",
+        |pattern: ImmutableString,
+         value: Dynamic,
+         replacement: ImmutableString|
+         -> Result<String, Box<EvalAltResult>> {
+            let matcher = regex::Regex::new(pattern.as_str())
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            if value.is_unit() {
+                Ok(String::new())
+            } else {
+                Ok(matcher
+                    .replace_all(&value.to_string(), replacement.as_str())
+                    .to_string())
+            }
+        },
+    );
+    module.set_native_fn(
+        "escape",
+        |value: Dynamic| -> Result<String, Box<EvalAltResult>> {
+            if value.is_unit() {
+                Ok(regex::escape(""))
+            } else {
+                Ok(regex::escape(&value.to_string()))
+            }
+        },
     );
     module
 }

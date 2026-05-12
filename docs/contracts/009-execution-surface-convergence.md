@@ -281,7 +281,7 @@ Minimum proof areas:
 - unsupported inline-container failure-family parity
 - container data seed/dump local and `oci://` parity through `effigy-data` and
   `effigy-artifacts`
-- drift guard coverage from `scripts/check-runtime-container-drift.sh`
+- drift guard coverage from `effigy qa:architecture:runtime-container-drift`
 
 ## Next Task
 

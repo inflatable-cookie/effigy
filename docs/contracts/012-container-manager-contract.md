@@ -96,7 +96,7 @@ Remaining compatibility boundary:
   direct exec helpers
 - those wrappers must not leak back into runner command code
 - drift allowances for legacy runner/runtime callers must stay documented in
-  `scripts/check-runtime-container-drift.sh` and the active closeout lane
+  `scripts/rhai/check-runtime-container-drift.rhai` and the active closeout lane
 
 ## Operation Reports
 
@@ -135,8 +135,8 @@ Minimum proof:
 
 Lightweight drift check:
 
-```bash
-bash scripts/check-runtime-container-drift.sh
+```sh
+effigy qa:architecture:runtime-container-drift
 ```
 
 The command should pass with only documented, path-scoped allowances.

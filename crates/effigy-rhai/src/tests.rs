@@ -1143,6 +1143,27 @@ fn execute_rhai_script_can_search_files_without_rg() {
 }
 
 #[test]
+fn execute_rhai_script_can_match_replace_and_escape_regex() {
+    let root = temp_root("regex-surface");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+            if !regex::is_match("^src/runner/.+\\.rs$", "src/runner/demo.rs") { throw("match"); }
+            if regex::is_match("^src/runner/.+\\.rs$", "docs/demo.md") { throw("negative"); }
+            let replaced = regex::replace("[0-9]+", "version-123", "456");
+            if replaced != "version-456" { throw("replace"); }
+            let escaped = regex::escape("a+b");
+            if escaped != "a\\+b" { throw("escape"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
 fn execute_rhai_script_can_capture_http_status_and_body_to_file() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -1369,7 +1390,7 @@ fn first_party_rhai_scripts_do_not_use_legacy_module_dot_calls() {
     let scripts = collect_rhai_scripts(&repo_root);
     let mut violations = Vec::new();
     let module_call = regex::Regex::new(
-        r"\b(?:time|path|fs|process|http|json|toml|str|random|search|config|task|container|scan|docs|deploy|system|demo|changelog|cache|gateway|bundle|service|catalog|doctor|contracts|unlock|test|effigy)\.[A-Za-z_][A-Za-z0-9_]*\s*\(",
+        r"\b(?:time|path|fs|process|http|json|toml|str|regex|random|search|config|task|container|scan|docs|deploy|system|demo|changelog|cache|gateway|bundle|service|catalog|doctor|contracts|unlock|test|effigy)\.[A-Za-z_][A-Za-z0-9_]*\s*\(",
     )
     .expect("module regex");
     for script in scripts {

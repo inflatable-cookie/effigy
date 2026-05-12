@@ -145,7 +145,7 @@ Required behavior:
 The lightweight drift guard is:
 
 ```sh
-bash scripts/check-runtime-container-drift.sh
+effigy qa:architecture:runtime-container-drift
 ```
 
 It checks for new direct uses of cwd discovery, backend branching, raw

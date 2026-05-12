@@ -16,6 +16,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Repo-local JSON contract artifact capture** now runs through a native Rhai
   task helper instead of bash-plus-Python glue, and the old
   `scripts/lib/check-json-contracts/*` shell library is gone.
+- **Runtime/container drift guarding** now runs through a native Rhai script
+  with in-process file search and regex filtering instead of the old shell
+  `rg`/`awk` guard wrapper.
 
 ## [0.6.1] - 2026-05-12
 
