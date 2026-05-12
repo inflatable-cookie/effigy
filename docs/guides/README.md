@@ -61,6 +61,16 @@ Use when:
 
 Use `071` only when you are changing the shipped catalog itself.
 
+### Build and manage environment state
+
+Read:
+- [`073-state-stack-guide.md`](./073-state-stack-guide.md)
+
+Use when:
+- you need ordered database schema, seed, and migration layers
+- you run UAT environments from imported legacy baselines
+- you capture and replay changes across environment rebuilds
+
 ### Define and operate demos
 
 Read:
@@ -106,10 +116,13 @@ Read:
   for maintainer policy and CI install rules
 - [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
   for changelog-only work
+- [`074-deployment-guide.md`](./074-deployment-guide.md) for UAT and production
+  deployment transactions
 
 Use when:
 - you want release gates, prepare/execute flows, or distribution checks
 - you need changelog extraction or release evidence
+- you deploy to Railway, Render, or external providers through Effigy transactions
 
 Older narrow runbooks for CI pinning, Homebrew-tap wiring, and first-publish
 execution are now deprecated and kept only for historical detail.
@@ -190,6 +203,8 @@ This section is inventory, not a recommended reading order.
 - [`066-local-manifest-bundles.md`](./066-local-manifest-bundles.md)
 - [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
 - [`071-catalog-service-authoring.md`](./071-catalog-service-authoring.md)
+- [`073-state-stack-guide.md`](./073-state-stack-guide.md)
+- [`074-deployment-guide.md`](./074-deployment-guide.md)
 - [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md)
 - [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
 - [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)
