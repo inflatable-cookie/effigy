@@ -28,6 +28,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Rhai URL and DSN helpers:** Rhai scripts can now parse generic URLs with
   `url::parse(...)` and MySQL DSNs with `url::parse_mysql_dsn(...)` instead of
   hand-rolling regex extraction for host, port, database, and query params.
+  The same surface now includes `url::query_get(...)` plus
+  `url::parse_pg_dsn(...)` for Postgres DSNs.
 - **Secret-scoped deployment and state hooks:** internal Rhai execution can now
   opt into `deploy`, `state`, and `artifacts` secret targets. Deploy provider
   packages run with `deploy` secret access, and state apply hook tasks receive

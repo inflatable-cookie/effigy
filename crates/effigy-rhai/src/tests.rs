@@ -1416,6 +1416,12 @@ fn execute_rhai_script_can_parse_urls_and_mysql_dsns() {
             if parsed["path_segments"][0] != "a" || parsed["path_segments"][1] != "b" { throw("segments"); }
             if parsed["query"]["mode"] != "fast" || parsed["query"]["debug"] != "1" { throw("query"); }
             if parsed["fragment"] != "frag" { throw("fragment"); }
+            if url::query_get("https://user:pass@example.test:8443/a/b?mode=fast&debug=1#frag", "mode") != "fast" {
+                throw("query_get");
+            }
+            if url::query_get("https://user:pass@example.test:8443/a/b?mode=fast&debug=1#frag", "missing") != "" {
+                throw("query_get missing");
+            }
 
             let dsn = url::parse_mysql_dsn("mysql://root:secret@db:3306/acowtancy?charset=utf8mb4");
             if dsn["scheme"] != "mysql" { throw("dsn scheme"); }
@@ -1425,6 +1431,15 @@ fn execute_rhai_script_can_parse_urls_and_mysql_dsns() {
             if dsn["port"] != 3306 { throw("dsn port"); }
             if dsn["database"] != "acowtancy" { throw("dsn database"); }
             if dsn["query"]["charset"] != "utf8mb4" { throw("dsn query"); }
+
+            let pg = url::parse_pg_dsn("postgres://postgres:secret@db:5432/acowtancy?sslmode=disable");
+            if pg["scheme"] != "postgres" { throw("pg scheme"); }
+            if pg["username"] != "postgres" { throw("pg username"); }
+            if pg["password"] != "secret" { throw("pg password"); }
+            if pg["host"] != "db" { throw("pg host"); }
+            if pg["port"] != 5432 { throw("pg port"); }
+            if pg["database"] != "acowtancy" { throw("pg database"); }
+            if pg["query"]["sslmode"] != "disable" { throw("pg query"); }
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");

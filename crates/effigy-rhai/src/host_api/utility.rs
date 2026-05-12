@@ -97,24 +97,45 @@ fn build_url_module() -> rhai::Module {
         },
     );
     module.set_native_fn(
-        "parse_mysql_dsn",
-        |raw: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+        "query_get",
+        |raw: ImmutableString, key: ImmutableString| -> Result<String, Box<EvalAltResult>> {
             let url =
                 Url::parse(raw.as_str()).map_err(|error| rhai_runtime_error(error.to_string()))?;
-            let mut value = url_to_map(&url);
-            let mut database = String::new();
-            if let Some(mut segments) = url.path_segments() {
-                if let Some(first) = segments.next() {
-                    database = first.to_owned();
-                }
-            } else {
-                database = url.path().trim_start_matches('/').to_owned();
-            }
-            value.insert("database".into(), database.into());
-            Ok(value)
+            Ok(url
+                .query_pairs()
+                .find(|(candidate, _)| candidate == key.as_str())
+                .map(|(_, value)| value.to_string())
+                .unwrap_or_default())
+        },
+    );
+    module.set_native_fn(
+        "parse_mysql_dsn",
+        |raw: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+            parse_database_dsn(raw.as_str())
+        },
+    );
+    module.set_native_fn(
+        "parse_pg_dsn",
+        |raw: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+            parse_database_dsn(raw.as_str())
         },
     );
     module
+}
+
+fn parse_database_dsn(raw: &str) -> Result<Map, Box<EvalAltResult>> {
+    let url = Url::parse(raw).map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let mut value = url_to_map(&url);
+    let mut database = String::new();
+    if let Some(mut segments) = url.path_segments() {
+        if let Some(first) = segments.next() {
+            database = first.to_owned();
+        }
+    } else {
+        database = url.path().trim_start_matches('/').to_owned();
+    }
+    value.insert("database".into(), database.into());
+    Ok(value)
 }
 
 fn url_to_map(url: &Url) -> Map {

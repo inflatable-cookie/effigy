@@ -113,7 +113,9 @@ Current v1 helpers:
   - `toml::write_file(path, value)`
 - URL helpers:
   - `url::parse(raw)`
+  - `url::query_get(raw, key)`
   - `url::parse_mysql_dsn(raw)`
+  - `url::parse_pg_dsn(raw)`
 - config helpers:
   - `config::raw()`
   - `config::effective()`
@@ -345,7 +347,9 @@ Parsing a URL or MySQL DSN without regexes:
 
 ```rhai
 let parsed = url::parse("https://user:pass@example.test:8443/a/b?mode=fast#frag");
+let mode = url::query_get("https://user:pass@example.test:8443/a/b?mode=fast#frag", "mode");
 let dsn = url::parse_mysql_dsn("mysql://root:secret@db:3306/acowtancy?charset=utf8mb4");
+let pg = url::parse_pg_dsn("postgres://postgres:secret@db:5432/acowtancy?sslmode=disable");
 
 let host = dsn["host"];
 let database = dsn["database"];
