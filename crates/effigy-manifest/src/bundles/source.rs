@@ -1,6 +1,7 @@
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use effigy_artifacts::{
     ArtifactSourceRef, OciArtifactAdapter, OciArtifactPullRequest, OrasCliArtifactAdapter,
@@ -128,6 +129,7 @@ fn resolve_git_bundle_source(
     refresh_remote: bool,
 ) -> Result<ResolvedBundleSource, ManifestError> {
     let local_path = git_bundle_cache_path(manifest_path, url, reference)?;
+    let remote_status_path = git_bundle_remote_status_path(&local_path);
     let reference = reference
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -156,8 +158,24 @@ fn resolve_git_bundle_source(
         None
     };
 
+    if refresh_remote || !cache_exists {
+        write_cached_git_bundle_remote_status(&remote_status_path, version_hint.as_deref())?;
+    }
+
     if cache_exists && !refresh_remote {
-        if let Ok(remote_commit) = git_ls_remote(manifest_path, url, reference, &local_path) {
+        let cached_remote_commit = read_cached_git_bundle_remote_status(&remote_status_path)?
+            .filter(|status| git_bundle_remote_status_is_fresh(status))
+            .map(|status| status.remote_commit);
+        let remote_commit = if let Some(remote_commit) = cached_remote_commit {
+            Some(remote_commit)
+        } else if let Ok(remote_commit) = git_ls_remote(manifest_path, url, reference, &local_path)
+        {
+            write_cached_git_bundle_remote_status(&remote_status_path, Some(&remote_commit))?;
+            Some(remote_commit)
+        } else {
+            None
+        };
+        if let Some(remote_commit) = remote_commit {
             let local_commit = version_hint.clone().unwrap_or_default();
             if remote_commit != local_commit {
                 emit_git_bundle_status_line(&format!(
@@ -169,6 +187,10 @@ fn resolve_git_bundle_source(
                 ));
                 ensure_git_bundle_checkout(manifest_path, url, reference, &local_path)?;
                 version_hint = Some(git_head_revision(manifest_path, &local_path)?);
+                write_cached_git_bundle_remote_status(
+                    &remote_status_path,
+                    version_hint.as_deref(),
+                )?;
             }
         }
     }
@@ -491,6 +513,88 @@ fn oci_bundle_cache_path(manifest_path: &Path, reference: &str) -> Result<PathBu
 
 fn oci_bundle_metadata_path(local_path: &Path) -> PathBuf {
     local_path.join(".effigy-bundle-source.digest")
+}
+
+fn git_bundle_remote_status_path(local_path: &Path) -> PathBuf {
+    local_path.join(".effigy-bundle-source.git-remote")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitBundleRemoteStatus {
+    checked_at_ms: u64,
+    remote_commit: String,
+}
+
+fn git_bundle_remote_check_ttl() -> Duration {
+    let ttl_secs = std::env::var("EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or(60);
+    Duration::from_secs(ttl_secs)
+}
+
+fn current_unix_timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+fn git_bundle_remote_status_is_fresh(status: &GitBundleRemoteStatus) -> bool {
+    let age_ms = current_unix_timestamp_ms().saturating_sub(status.checked_at_ms);
+    age_ms
+        <= git_bundle_remote_check_ttl()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX)
+}
+
+fn read_cached_git_bundle_remote_status(
+    metadata_path: &Path,
+) -> Result<Option<GitBundleRemoteStatus>, ManifestError> {
+    let Ok(raw) = std::fs::read_to_string(metadata_path) else {
+        return Ok(None);
+    };
+    let mut lines = raw.lines();
+    let checked_at_ms = lines
+        .next()
+        .and_then(|value| value.trim().parse::<u64>().ok());
+    let remote_commit = lines
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    match (checked_at_ms, remote_commit) {
+        (Some(checked_at_ms), Some(remote_commit)) => Ok(Some(GitBundleRemoteStatus {
+            checked_at_ms,
+            remote_commit,
+        })),
+        _ => Ok(None),
+    }
+}
+
+fn write_cached_git_bundle_remote_status(
+    metadata_path: &Path,
+    remote_commit: Option<&str>,
+) -> Result<(), ManifestError> {
+    let Some(parent) = metadata_path.parent() else {
+        return Ok(());
+    };
+    std::fs::create_dir_all(parent).map_err(|error| ManifestError::Read {
+        path: parent.to_path_buf(),
+        error,
+    })?;
+    let remote_commit = remote_commit.unwrap_or_default().trim();
+    if remote_commit.is_empty() {
+        return Ok(());
+    }
+    let rendered = format!("{}\n{}\n", current_unix_timestamp_ms(), remote_commit);
+    std::fs::write(metadata_path, rendered).map_err(|error| ManifestError::Read {
+        path: metadata_path.to_path_buf(),
+        error,
+    })
 }
 
 fn read_cached_oci_bundle_digest(metadata_path: &Path) -> Result<Option<String>, ManifestError> {
@@ -1166,14 +1270,44 @@ run = "serve {{ inputs.host }}"
         .expect("second resolve");
 
         assert_eq!(first.local_path, second.local_path);
-        assert_ne!(first.version_hint, second.version_hint);
+        assert_eq!(
+            first.version_hint, second.version_hint,
+            "fresh remote-check cache should skip repeated remote probes"
+        );
+        assert!(
+            !second.local_path.join("export.toml").is_file(),
+            "fresh remote-check cache should leave the cached bundle unchanged until the check window expires"
+        );
+
+        let remote_status_path = git_bundle_remote_status_path(&second.local_path);
+        std::fs::write(
+            &remote_status_path,
+            format!(
+                "0\n{}\n",
+                first.version_hint.clone().expect("first version")
+            ),
+        )
+        .expect("backdate remote status");
+
+        let third = resolve_materialized_bundle_source(
+            &manifest_path,
+            &BundleSelection::Git {
+                url: source_repo.display().to_string(),
+                reference: Some("main".to_owned()),
+            },
+        )
+        .expect("third resolve");
+
+        assert_eq!(first.local_path, second.local_path);
+        assert_eq!(first.local_path, third.local_path);
+        assert_ne!(first.version_hint, third.version_hint);
         let cached_export =
-            std::fs::read_to_string(second.local_path.join("export.toml")).expect("read cache");
+            std::fs::read_to_string(third.local_path.join("export.toml")).expect("read cache");
         assert!(
             cached_export.contains("source = \"next\""),
             "expected refreshed git bundle cache to pick up the new commit"
         );
-        assert!(!second.stale);
+        assert!(!third.stale);
     }
 
     #[test]

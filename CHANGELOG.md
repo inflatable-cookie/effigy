@@ -17,6 +17,11 @@ During v0.x, MINOR bumps may include breaking changes.
   layer is successfully executed, staged, or imported. Apply reports now carry
   hook status/output/error plus a structured
   `EFFIGY_STATE_APPLY_CONTEXT` handoff file for repo-owned finalize work.
+- **Git-backed bundle sources** now reuse a short shared remote-check freshness
+  window during manifest load, so repeated runs across many repos stop paying
+  for a fresh `git ls-remote` probe on every invocation while still picking up
+  remote bundle updates automatically and letting `effigy bundle sync` force a
+  refresh immediately.
 - **Repo-local JSON contract artifact capture** now runs through a native Rhai
   task helper instead of bash-plus-Python glue, and the old
   `scripts/lib/check-json-contracts/*` shell library is gone.
