@@ -111,6 +111,9 @@ Current v1 helpers:
   - `toml::stringify(value)`
   - `toml::read_file(path)`
   - `toml::write_file(path, value)`
+- URL helpers:
+  - `url::parse(raw)`
+  - `url::parse_mysql_dsn(raw)`
 - config helpers:
   - `config::raw()`
   - `config::effective()`
@@ -336,6 +339,17 @@ let fragment = #{
 
 toml::write_file(".effigy/tmp/fragment.toml", fragment);
 let roundtrip_toml = toml::read_file(".effigy/tmp/fragment.toml");
+```
+
+Parsing a URL or MySQL DSN without regexes:
+
+```rhai
+let parsed = url::parse("https://user:pass@example.test:8443/a/b?mode=fast#frag");
+let dsn = url::parse_mysql_dsn("mysql://root:secret@db:3306/acowtancy?charset=utf8mb4");
+
+let host = dsn["host"];
+let database = dsn["database"];
+let charset = dsn["query"]["charset"];
 ```
 
 Structured process call:

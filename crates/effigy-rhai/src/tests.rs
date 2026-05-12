@@ -1402,6 +1402,35 @@ fn execute_rhai_script_can_capture_regex_groups_and_write_structured_files() {
 }
 
 #[test]
+fn execute_rhai_script_can_parse_urls_and_mysql_dsns() {
+    let root = temp_root("url-and-dsn-surface");
+    let context = script_context(&root);
+    let script = r#"
+            let parsed = url::parse("https://user:pass@example.test:8443/a/b?mode=fast&debug=1#frag");
+            if parsed["scheme"] != "https" { throw("scheme"); }
+            if parsed["username"] != "user" { throw("username"); }
+            if parsed["password"] != "pass" { throw("password"); }
+            if parsed["host"] != "example.test" { throw("host"); }
+            if parsed["port"] != 8443 { throw("port"); }
+            if parsed["path"] != "/a/b" { throw("path"); }
+            if parsed["path_segments"][0] != "a" || parsed["path_segments"][1] != "b" { throw("segments"); }
+            if parsed["query"]["mode"] != "fast" || parsed["query"]["debug"] != "1" { throw("query"); }
+            if parsed["fragment"] != "frag" { throw("fragment"); }
+
+            let dsn = url::parse_mysql_dsn("mysql://root:secret@db:3306/acowtancy?charset=utf8mb4");
+            if dsn["scheme"] != "mysql" { throw("dsn scheme"); }
+            if dsn["username"] != "root" { throw("dsn username"); }
+            if dsn["password"] != "secret" { throw("dsn password"); }
+            if dsn["host"] != "db" { throw("dsn host"); }
+            if dsn["port"] != 3306 { throw("dsn port"); }
+            if dsn["database"] != "acowtancy" { throw("dsn database"); }
+            if dsn["query"]["charset"] != "utf8mb4" { throw("dsn query"); }
+        "#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
 fn execute_rhai_script_can_capture_http_status_and_body_to_file() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");

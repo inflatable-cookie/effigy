@@ -7,9 +7,11 @@ use std::time::Duration;
 use chrono::Utc;
 use effigy_core::shell::shell_quote;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map};
+use url::Url;
 
 use crate::surface::{
     MODULE_JSON, MODULE_PATH, MODULE_RANDOM, MODULE_REGEX, MODULE_STR, MODULE_TIME, MODULE_TOML,
+    MODULE_URL,
 };
 
 use super::{
@@ -23,6 +25,7 @@ pub(super) fn register_utility_modules(engine: &mut Engine, context: Arc<ScriptC
         std::rc::Rc::new(build_time_module(context.clone())),
     );
     engine.register_static_module(MODULE_PATH, std::rc::Rc::new(build_path_module()));
+    engine.register_static_module(MODULE_URL, std::rc::Rc::new(build_url_module()));
     engine.register_static_module(
         MODULE_JSON,
         std::rc::Rc::new(build_json_module(context.clone())),
@@ -81,6 +84,76 @@ fn build_path_module() -> rhai::Module {
         },
     );
     module
+}
+
+fn build_url_module() -> rhai::Module {
+    let mut module = rhai::Module::new();
+    module.set_native_fn(
+        "parse",
+        |raw: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+            let url =
+                Url::parse(raw.as_str()).map_err(|error| rhai_runtime_error(error.to_string()))?;
+            Ok(url_to_map(&url))
+        },
+    );
+    module.set_native_fn(
+        "parse_mysql_dsn",
+        |raw: ImmutableString| -> Result<Map, Box<EvalAltResult>> {
+            let url =
+                Url::parse(raw.as_str()).map_err(|error| rhai_runtime_error(error.to_string()))?;
+            let mut value = url_to_map(&url);
+            let mut database = String::new();
+            if let Some(mut segments) = url.path_segments() {
+                if let Some(first) = segments.next() {
+                    database = first.to_owned();
+                }
+            } else {
+                database = url.path().trim_start_matches('/').to_owned();
+            }
+            value.insert("database".into(), database.into());
+            Ok(value)
+        },
+    );
+    module
+}
+
+fn url_to_map(url: &Url) -> Map {
+    let mut query = Map::new();
+    for (key, value) in url.query_pairs() {
+        query.insert(key.to_string().into(), value.to_string().into());
+    }
+
+    let segments = url
+        .path_segments()
+        .map(|parts| {
+            parts
+                .filter(|part| !part.is_empty())
+                .map(|part| part.to_owned().into())
+                .collect::<Array>()
+        })
+        .unwrap_or_default();
+
+    let mut value = Map::new();
+    value.insert("scheme".into(), url.scheme().into());
+    value.insert("username".into(), url.username().into());
+    value.insert(
+        "password".into(),
+        url.password().map(str::to_owned).unwrap_or_default().into(),
+    );
+    value.insert("host".into(), url.host_str().unwrap_or_default().into());
+    value.insert("port".into(), i64::from(url.port().unwrap_or(0)).into());
+    value.insert("path".into(), url.path().into());
+    value.insert("path_segments".into(), segments.into());
+    value.insert(
+        "query_string".into(),
+        url.query().map(str::to_owned).unwrap_or_default().into(),
+    );
+    value.insert("query".into(), query.into());
+    value.insert(
+        "fragment".into(),
+        url.fragment().map(str::to_owned).unwrap_or_default().into(),
+    );
+    value
 }
 
 fn build_json_module(context: Arc<ScriptContext>) -> rhai::Module {

@@ -25,6 +25,9 @@ During v0.x, MINOR bumps may include breaking changes.
   and TOML files directly through `json::write_file`, `json::read_file`,
   `json::stringify_compact`, `toml::write_file`, and `toml::read_file`, and
   can extract regex groups through `regex::captures(...)`.
+- **Rhai URL and DSN helpers:** Rhai scripts can now parse generic URLs with
+  `url::parse(...)` and MySQL DSNs with `url::parse_mysql_dsn(...)` instead of
+  hand-rolling regex extraction for host, port, database, and query params.
 - **Secret-scoped deployment and state hooks:** internal Rhai execution can now
   opt into `deploy`, `state`, and `artifacts` secret targets. Deploy provider
   packages run with `deploy` secret access, and state apply hook tasks receive
