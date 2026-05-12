@@ -348,7 +348,7 @@ The repo declares its own bring-up in `effigy.toml`:
 ```toml
 [bootstrap]
 submodules = "recursive"
-run = [{ task = "bootstrap deps sync" }]
+run = { task = "bootstrap deps sync" }
 start = "dev"
 ```
 
@@ -358,13 +358,13 @@ Need companion repos alongside it? Declare child repos in the same manifest:
 [[bootstrap.children]]
 path = "shared-lib"
 repo = "git@github.com:acme/shared-lib.git"
-run = [{ task = "bootstrap deps sync" }]
+run = { task = "bootstrap deps sync" }
 required = true
 
 [[bootstrap.children]]
 path = "ops-tools"
 repo = "git@github.com:acme/ops-tools.git"
-run = [{ task = "bootstrap deps sync" }]
+run = { task = "bootstrap deps sync" }
 required = false
 ```
 

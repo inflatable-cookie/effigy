@@ -9,10 +9,10 @@ fn run_doctor_verbose_text_output_includes_per_finding_entries() {
     write_root_manifest(
         &root,
         r#"[tasks.alpha]
-run = [{ task = "missing/task" }]
+run = { task = "missing/task" }
 
 [tasks.beta]
-run = [{ task = "missing/task" }]
+run = { task = "missing/task" }
 "#,
     );
 

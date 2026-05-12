@@ -67,7 +67,7 @@ fn run_doctor_text_output_snapshot_mixed_findings_and_fix_actions() {
 alias = "catalog_a"
 
 [tasks.build]
-run = [{ task = "missing/task" }]
+run = { task = "missing/task" }
 "#,
     );
 

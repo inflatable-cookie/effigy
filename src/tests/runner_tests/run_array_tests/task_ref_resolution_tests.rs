@@ -142,7 +142,7 @@ mode = "tui"
 concurrent = [{ name = "api", run = "printf api" }]
 
 [tasks.validate]
-run = [{ task = "dev_stack" }]
+run = { task = "dev_stack" }
 "#;
     let root = temp_workspace("run-array-task-ref-managed-concurrent");
     write_validate_manifest(&root, manifest);
@@ -235,7 +235,7 @@ fn run_manifest_task_run_array_builtin_task_reference_stays_in_process() {
     write_validate_manifest(
         &root,
         r#"[tasks.validate]
-run = [{ task = "docs check headings README.md --require-heading '# Hello' --require-heading '## World'" }]
+run = { task = "docs check headings README.md --require-heading '# Hello' --require-heading '## World'" }
 "#,
     );
 
