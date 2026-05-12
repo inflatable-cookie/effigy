@@ -113,11 +113,33 @@ pub struct ManifestManagedConcurrentEntry {
     pub shutdown_on_exit: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ManifestManagedRun {
     Command(String),
     Sequence(Vec<ManifestManagedRunStep>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(untagged)]
+enum ManifestManagedRunDef {
+    Command(String),
+    Sequence(Vec<ManifestManagedRunStep>),
+    Step(Box<ManifestManagedRunStepTable>),
+}
+
+impl<'de> serde::Deserialize<'de> for ManifestManagedRun {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        match ManifestManagedRunDef::deserialize(deserializer)? {
+            ManifestManagedRunDef::Command(command) => Ok(Self::Command(command)),
+            ManifestManagedRunDef::Sequence(steps) => Ok(Self::Sequence(steps)),
+            ManifestManagedRunDef::Step(step) => {
+                Ok(Self::Sequence(vec![ManifestManagedRunStep::Step(step)]))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
@@ -202,5 +224,29 @@ impl ManifestManagedProfile {
         } else {
             Some(self.concurrent.as_slice())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ManifestManagedRun, ManifestManagedRunStep, ManifestTask};
+
+    #[test]
+    fn run_accepts_single_task_object_without_array_wrapper() {
+        let task: ManifestTask = toml::from_str(
+            r#"
+run = { task = "docs check headings README.md --require-heading '# Hello'" }
+"#,
+        )
+        .expect("parse task");
+
+        let Some(ManifestManagedRun::Sequence(steps)) = task.run else {
+            panic!("expected single task object to deserialize as one-step sequence");
+        };
+        assert!(matches!(
+            steps.as_slice(),
+            [ManifestManagedRunStep::Step(step)]
+                if step.task.as_deref() == Some("docs check headings README.md --require-heading '# Hello'")
+        ));
     }
 }

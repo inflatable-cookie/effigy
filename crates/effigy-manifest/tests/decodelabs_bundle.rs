@@ -188,8 +188,12 @@ version = "11.0"
     assert_eq!(release_task.workspace.as_deref(), None);
     assert!(matches!(
         release_task.run.as_ref().expect("release run"),
-        ManifestManagedRun::Command(command)
-            if command == "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" release"
+        ManifestManagedRun::Sequence(steps)
+            if matches!(
+                steps.as_slice(),
+                [ManifestManagedRunStep::Step(step)]
+                    if step.task.as_deref() == Some("defer release")
+            )
     ));
     let defer = manifest.defer.as_ref().expect("bundle defer");
     assert_eq!(

@@ -17,6 +17,9 @@ During v0.x, MINOR bumps may include breaking changes.
   layer is successfully executed, staged, or imported. Apply reports now carry
   hook status/output/error plus a structured
   `EFFIGY_STATE_APPLY_CONTEXT` handoff file for repo-owned finalize work.
+- **Single-step task refs** can now use `run = { task = "..." }` without a
+  one-element array wrapper, and the Decodelabs bundle now uses that native
+  shape for its `release` deferral wrapper.
 - **Built-in DB seed fallback** now removes its staged seed copies and
   metadata from `.effigy/local/db-seeds/` after a successful import instead of
   leaving consumed hidden files behind.

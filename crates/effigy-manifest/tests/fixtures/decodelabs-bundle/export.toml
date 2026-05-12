@@ -115,7 +115,7 @@ run_in = "host"
 run = "effigy container data seed"
 
 [tasks.release]
-run = "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" release"
+run = { task = "defer release" }
 
 [defer]
 run = "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" {request} {args}"
