@@ -249,6 +249,31 @@ run = [{ task = "docs check headings README.md --require-heading '# Hello' --req
 }
 
 #[test]
+fn run_manifest_task_run_array_supports_builtin_defer_task_reference_steps() {
+    let root = temp_workspace("run-array-builtin-defer-task-ref");
+    let marker = root.join("defer-called.log");
+    write_validate_manifest(
+        &root,
+        &format!(
+            r#"[defer]
+run = "sh -lc 'printf deferred > \"{}\"'"
+
+[tasks.validate]
+run = [{{ task = "defer release -- --dry-run" }}, "printf validate-ok"]
+"#,
+            marker.display()
+        ),
+    );
+
+    let out = run_validate_ok(&root, &[]);
+    assert_eq!(out, "");
+    assert_eq!(
+        fs::read_to_string(marker).expect("read defer marker"),
+        "deferred"
+    );
+}
+
+#[test]
 fn run_manifest_task_run_array_dag_task_reference_stays_in_process() {
     let root = temp_workspace("run-array-task-ref-dag-in-process");
     let marker = root.join("task-ref-dag.log");

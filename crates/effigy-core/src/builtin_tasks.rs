@@ -18,6 +18,10 @@ pub const BUILTIN_TASKS: &[(&str, &str)] = &[
         "Built-in remedial health checks for environment, manifests, and task references",
     ),
     (
+        "defer",
+        "Run the configured `[defer]` fallback explicitly instead of relying on selector miss routing",
+    ),
+    (
         "test",
         "Built-in test runner detection, supports <catalog>/test fallback, optional --plan",
     ),

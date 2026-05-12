@@ -25,6 +25,7 @@ pub mod runtime;
 pub mod scheduler;
 
 pub use command::resolve_managed_task_plan;
+pub use effigy_core::builtin_tasks::BUILTIN_TASKS;
 pub use plan::{
     invalid_managed_process_definition, resolve_managed_concurrent_task_plan,
     ManagedConcurrentPlanInput,
@@ -89,26 +90,6 @@ pub struct ManagedTaskReadiness {
 /// omits `run`. Mirrors the runner-local default from before the
 /// extraction.
 pub const DEFAULT_MANAGED_SHELL_RUN: &str = "exec ${SHELL:-/bin/zsh} -i";
-
-/// Builtin task names managed's reference parser recognises without
-/// catalog resolution. Duplicated from `runner::model::constants`
-/// during batch 240 — when routing-core extracts, both copies collapse
-/// back to one.
-pub const BUILTIN_TASKS: [(&str, &str); 13] = [
-    ("test", "effigy-test"),
-    ("scan", "effigy-scan"),
-    ("doctor", "effigy-doctor"),
-    ("contracts", "effigy-contracts"),
-    ("bootstrap", "effigy-bootstrap"),
-    ("changelog", "effigy-changelog"),
-    ("container", "effigy-container"),
-    ("demo", "effigy-demo"),
-    ("distribution", "effigy-distribution"),
-    ("docs", "effigy-docs"),
-    ("release", "effigy-release"),
-    ("script", "effigy-script"),
-    ("tasks", "effigy-tasks"),
-];
 
 /// Error raised by the managed orchestration crate.
 ///

@@ -42,6 +42,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Database seed/dump service resolution** now uses one shared resolver and
   treats `catalog = "mysql"` consistently with `mariadb` as a MariaDB/MySQL
   service.
+- **Builtin `defer` task refs** now resolve correctly inside `task = "..."` run
+  steps, so wrapper tasks like `{ task = "defer release" }` no longer fail as
+  missing catalog tasks.
 
 ## [0.6.1] - 2026-05-12
 
