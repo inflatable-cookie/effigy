@@ -34,7 +34,7 @@ explainable drift guards and a focused proof matrix for critical paths.
 
 ## Existing Guard Surfaces
 
-- `tasks/effigy.tasks.toml` owns local QA aggregators:
+- `config/tasks.toml` owns local QA aggregators:
   - `qa:docs`
   - `qa:json`
   - `qa:ci`
@@ -48,9 +48,9 @@ explainable drift guards and a focused proof matrix for critical paths.
   contract drift.
 - `effigy scan` covers god files, duplicate blocks, comment ratio, generated
   assets, generated-in-src, attention markers, and stale suppressions.
-- `quality/effigy.scan.toml` configures repo scan thresholds.
-- `scripts/lib/check-json-contracts/*` holds shell helpers for JSON contract
-  checks.
+- `config/scan.toml` configures repo scan thresholds.
+- `scripts/rhai/write-json-contract-artifacts.rhai` owns repo-local JSON
+  contract artifact capture for CI validation tasks.
 - `scripts/check-linux-glibc-floor.sh` remains a release/distribution-specific
   shell guard.
 

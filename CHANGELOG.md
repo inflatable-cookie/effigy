@@ -12,6 +12,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `cargo run --bin effigy -- ...`, while `effigy ...` remains the installed or
   locally linked binary path.
 
+### Changed
+- **Repo-local JSON contract artifact capture** now runs through a native Rhai
+  task helper instead of bash-plus-Python glue, and the old
+  `scripts/lib/check-json-contracts/*` shell library is gone.
+
 ## [0.6.1] - 2026-05-12
 
 ### Fixed
