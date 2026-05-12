@@ -39,6 +39,8 @@ mod service_command;
 mod state_command;
 mod system_command;
 mod tasks_command;
+#[cfg(test)]
+mod test_support;
 mod util;
 
 pub(in crate::runner) use artifact_command::run_artifact;

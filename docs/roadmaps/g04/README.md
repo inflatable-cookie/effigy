@@ -1,6 +1,6 @@
 # Roadmap g04
 
-`g04` is the current Effigy runtime architecture simplification generation.
+`g04` is the completed Effigy runtime architecture simplification generation.
 
 Generation theme:
 
@@ -49,8 +49,8 @@ Current milestones:
 - [`035-state-domain-extraction.md`](./035-state-domain-extraction.md) (complete; moved state report paths, history, apply planning, and capture planning into `effigy-state`)
 - [`036-manifest-section-decomposition.md`](./036-manifest-section-decomposition.md) (complete; split bundle source/cache and manifest config sections into bounded owners)
 - [`037-deploy-domain-boundary-hardening.md`](./037-deploy-domain-boundary-hardening.md) (complete; separated deploy transaction reports, provider context, and text rendering)
-- [`038-docs-policy-cli-help-and-test-fixture-deduplication.md`](./038-docs-policy-cli-help-and-test-fixture-deduplication.md) (planned; removes high-confidence duplication in docs, help, and fixtures)
-- [`039-artifact-and-crate-boundary-rejustification.md`](./039-artifact-and-crate-boundary-rejustification.md) (planned; reviews artifact internals and crate ownership after v0.6.x)
+- [`038-docs-policy-cli-help-and-test-fixture-deduplication.md`](./038-docs-policy-cli-help-and-test-fixture-deduplication.md) (complete; removed high-confidence docs-policy duplication and centralized safe help/fixture pieces)
+- [`039-artifact-and-crate-boundary-rejustification.md`](./039-artifact-and-crate-boundary-rejustification.md) (complete; split artifact internals and refreshed crate-boundary posture)
 
 Architecture anchors:
 
@@ -66,7 +66,7 @@ Architecture anchors:
 
 Rules:
 
-- `g04` remains the current runtime architecture simplification generation
+- `g04` is closed as the runtime architecture simplification generation
 - `g03` is closed as the production export and runtime hardening generation
 - no release work starts from this generation without explicit human request
 - no `.github/workflows/` edits
@@ -80,8 +80,8 @@ Rules:
 
 ## Next Task
 
-Execute `038` for docs-policy, CLI help, and fixture deduplication.
-Release execution remains human-owned.
+Plan the `g05` generation theme and rollover cleanup before opening new
+implementation roadmaps. Release execution remains human-owned.
 
 
 Batch cards live in `g04/batch-cards/` when strict posture uses them.

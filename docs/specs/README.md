@@ -42,6 +42,8 @@ Paused but still useful:
 
 Recently completed:
 
+- [`075-artifact-and-crate-boundary-review-strict-lane.md`](./075-artifact-and-crate-boundary-review-strict-lane.md)
+- [`074-low-risk-deduplication-strict-lane.md`](./074-low-risk-deduplication-strict-lane.md)
 - [`073-deploy-domain-boundary-hardening-strict-lane.md`](./073-deploy-domain-boundary-hardening-strict-lane.md)
 - [`072-manifest-section-decomposition-strict-lane.md`](./072-manifest-section-decomposition-strict-lane.md)
 - [`071-state-domain-extraction-strict-lane.md`](./071-state-domain-extraction-strict-lane.md)
@@ -107,5 +109,6 @@ Recently completed:
 
 ## Next Task
 
-Execute `g04.038` for docs-policy, CLI help, and fixture deduplication.
-Release execution remains human-owned.
+Plan the `g05` generation theme and decide which stale strict-lane specs should
+be archived before opening implementation roadmaps. Release execution remains
+human-owned.

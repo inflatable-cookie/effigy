@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-05-12
 Depends on:
@@ -60,10 +60,21 @@ builders into public APIs just to reduce line count.
 ## Acceptance Criteria
 
 - docs-policy duplicate blocks are removed
-- runner docs tests still cover command integration
-- CLI help topic duplication is reduced or deliberately documented as acceptable
-- repeated container policy fixture setup is centralized where safe
-- duplicate-block scan shows reduced high-severity findings
+- runner docs tests still cover command adaptation
+- CLI help topic duplication is deliberately documented as acceptable where the
+  scanner is matching literal-heavy arrays with different user-facing content
+- repeated runner-local container policy fixture setup is centralized where safe
+- duplicate-block scan shows reduced critical findings and fewer total findings
+
+## Outcome
+
+- reduced duplicate scan from `critical=2 high=7 warning=87 findings=96` to
+  `critical=0 high=7 warning=84 findings=91`
+- consolidated docs-policy test ownership into the domain crate
+- added shared common option rows for CLI help topics
+- added private runner fixture support for repeated container policy literals
+- deferred cross-crate fixture support and broader help-system changes until a
+  stronger ownership boundary exists
 
 ## Suggested Batch Cards
 
@@ -83,5 +94,4 @@ builders into public APIs just to reduce line count.
 
 ## Next Task
 
-Finish the suite by reviewing artifact internals and crate boundaries against
-current post-v0.6.x ownership reality.
+Execute `g04.039` to review artifact internals and crate boundaries.

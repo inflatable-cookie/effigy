@@ -4,11 +4,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 
-use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
-use effigy_manifest::{
-    ManifestContainerConfig, ManifestContainerDriver, ManifestContainerOnTaskExit,
-    ManifestContainerShutdownMode, ManifestContainerStartup,
-};
+use effigy_manifest::ManifestContainerConfig;
 
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::container_runtime_prep::ContainerTaskActivation;
@@ -27,6 +23,7 @@ use crate::runner::exec_command::{
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
 };
+use crate::runner::test_support::effective_container_policy;
 
 fn temp_repo(name: &str) -> PathBuf {
     let base = if cfg!(target_os = "macos") {
@@ -84,38 +81,8 @@ working_dir = "{working_dir}"
     .expect("write manifest");
 }
 
-fn test_policy() -> EffectiveContainerPolicy {
-    EffectiveContainerPolicy {
-        name: "web".to_owned(),
-        driver: ManifestContainerDriver::Colima,
-        startup: ManifestContainerStartup::Detached,
-        profile: "effigy".to_owned(),
-        compose_source: EffectiveComposeSource::Direct,
-        compose_files: vec![PathBuf::from("docker-compose.yml")],
-        compose_file_display: "docker-compose.yml".to_owned(),
-        managed_volumes: vec![],
-        shared_services: vec![],
-        project_name: "demo-web".to_owned(),
-        primary_service: "app".to_owned(),
-        dns_domain: None,
-        dns_tls: false,
-        dns_port: None,
-        dns_routes: vec![],
-        service_aliases: vec![],
-        declared_ports: vec![],
-        ports_declared_explicitly: false,
-        declared_mounts: vec![],
-        declared_media_mounts: vec![],
-        pull_production_hook: None,
-        health_check: None,
-        health_timeout_secs: 60,
-        workspace_user: None,
-        workspace_home: None,
-        on_task_exit: ManifestContainerOnTaskExit::Stop,
-        shutdown: ManifestContainerShutdownMode::Graceful,
-        detach_timeout_secs: 10,
-        host_processes: Vec::new(),
-    }
+fn test_policy() -> effigy_containers::EffectiveContainerPolicy {
+    effective_container_policy("web", "demo-web", "app", "docker-compose.yml")
 }
 
 #[test]

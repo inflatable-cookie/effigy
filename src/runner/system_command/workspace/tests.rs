@@ -19,11 +19,7 @@ use crate::runner::system_command::workspace_provisioning::{
     LinuxWorkspaceTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
 use crate::runner::system_command::workspace_session::classify_workspace_session_ownership;
-use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
-use effigy_manifest::{
-    ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-    ManifestContainerStartup,
-};
+use crate::runner::test_support::effective_container_policy;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 fn temp_repo(manifest: &str) -> std::path::PathBuf {
@@ -70,74 +66,14 @@ fn permission_command_tolerates_read_only_bind_mounts() {
 
 #[test]
 fn workspace_handoff_notice_mentions_container() {
-    let rendered = render_workspace_handoff_notice(&EffectiveContainerPolicy {
-        name: "stack".to_owned(),
-        driver: effigy_manifest::ManifestContainerDriver::Colima,
-        startup: effigy_manifest::ManifestContainerStartup::Detached,
-        profile: "effigy".to_owned(),
-        compose_source: effigy_containers::EffectiveComposeSource::Direct,
-        compose_files: vec![std::path::PathBuf::from("docker-compose.yml")],
-        compose_file_display: "docker-compose.yml".to_owned(),
-        managed_volumes: vec![],
-        shared_services: vec![],
-        project_name: "demo-stack".to_owned(),
-        primary_service: "workspace".to_owned(),
-        dns_domain: None,
-        dns_tls: false,
-        dns_port: None,
-        dns_routes: vec![],
-        service_aliases: vec![],
-        declared_ports: vec![],
-        ports_declared_explicitly: false,
-        declared_mounts: vec![],
-        declared_media_mounts: vec![],
-        pull_production_hook: None,
-        health_check: None,
-        health_timeout_secs: 60,
-        workspace_user: None,
-        workspace_home: None,
-        on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
-        shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
-        detach_timeout_secs: 10,
-        host_processes: Vec::new(),
-    });
+    let rendered = render_workspace_handoff_notice(&test_policy());
 
     assert!(rendered.contains("[next]"));
     assert!(rendered.contains("switching into workspace container `stack`"));
 }
 
-fn test_policy() -> EffectiveContainerPolicy {
-    EffectiveContainerPolicy {
-        name: "stack".to_owned(),
-        driver: ManifestContainerDriver::Colima,
-        startup: ManifestContainerStartup::Detached,
-        profile: "effigy".to_owned(),
-        compose_source: EffectiveComposeSource::Direct,
-        compose_files: vec![std::path::PathBuf::from("docker-compose.yml")],
-        compose_file_display: "docker-compose.yml".to_owned(),
-        managed_volumes: vec![],
-        shared_services: vec![],
-        project_name: "demo-stack".to_owned(),
-        primary_service: "workspace".to_owned(),
-        dns_domain: None,
-        dns_tls: false,
-        dns_port: None,
-        dns_routes: vec![],
-        service_aliases: vec![],
-        declared_ports: vec![],
-        ports_declared_explicitly: false,
-        declared_mounts: vec![],
-        declared_media_mounts: vec![],
-        pull_production_hook: None,
-        health_check: None,
-        health_timeout_secs: 60,
-        workspace_user: None,
-        workspace_home: None,
-        on_task_exit: ManifestContainerOnTaskExit::Stop,
-        shutdown: ManifestContainerShutdownMode::Graceful,
-        detach_timeout_secs: 10,
-        host_processes: Vec::new(),
-    }
+fn test_policy() -> effigy_containers::EffectiveContainerPolicy {
+    effective_container_policy("stack", "demo-stack", "workspace", "docker-compose.yml")
 }
 
 #[test]

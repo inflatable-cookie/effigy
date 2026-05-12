@@ -137,6 +137,8 @@ This folder contains both:
 | `027-state-domain-extraction-contract.md` | Platform maintainers | State report/path/history/planning ownership, runner side-effect boundary, output compatibility, and future media/object-store state seam readiness | Planning review against `g04.035` plus focused `effigy-state` and state command proofs once implementation starts |
 | `028-manifest-section-decomposition-contract.md` | Platform maintainers | Manifest section module ownership, public API compatibility, parse error compatibility, and no-grammar-drift rule for bundle, state, deploy, object-store, container, root, and import config parsing | Planning review against `g04.036` plus focused manifest parser and composition tests once implementation starts |
 | `029-deploy-domain-boundary-contract.md` | Platform maintainers | Deploy transaction ownership, report persistence paths, provider-package dispatch context, text rendering boundary, JSON schema compatibility, and provider-specific behavior staying outside core | Planning review against `g04.037` plus focused deploy transaction and provider package fixture tests once implementation starts |
+| `030-low-risk-deduplication-contract.md` | Platform maintainers | Docs-policy test ownership, CLI help topic normalization, private fixture-builder boundaries, and no-behavior-change duplication cleanup rules | Planning review against `g04.038` plus focused docs-policy, help, fixture, and duplicate-block scan proofs once implementation starts |
+| `031-artifact-and-crate-boundary-contract.md` | Platform maintainers | Artifact refs/staging/OCI/module ownership, small-crate retention rules, merge-candidate evidence rules, and package-map refresh triggers | Planning review against `g04.039` plus artifact tests, crate-boundary docs review, god-file scan, and cargo check once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -186,4 +188,8 @@ docs-check consolidation contract, and
 `023-container-command-decomposition-contract.md` as the `g04.025`
 container-command decomposition contract, and
 `024-shared-dispatcher-and-exec-collapse-contract.md` as the `g04.026`
-shared dispatcher and exec collapse contract.
+shared dispatcher and exec collapse contract, `029-deploy-domain-boundary-contract.md`
+as the `g04.037` deploy domain boundary contract, and
+`030-low-risk-deduplication-contract.md` as the `g04.038` low-risk
+deduplication contract, and `031-artifact-and-crate-boundary-contract.md` as
+the `g04.039` artifact and crate-boundary contract.

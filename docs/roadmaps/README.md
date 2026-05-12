@@ -4,7 +4,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Generation model
 
-- Use generation folders: `g01`, `g02`, `g03`, `g04`.
+- Use generation folders: `g01`, `g02`, `g03`, `g04`, and future `gNN`
+  generations opened by explicit rollover.
 - Use milestone files inside each generation: `NNN-<slug>.md`.
 - Reference milestones as `gNN.NNN`.
 - Trigger generation rollover manually; do not use automatic file-count limits.
@@ -19,7 +20,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Layout
 
 - `gNN/batch-cards/` optional per-generation execution cards
-- `g04/` current runtime architecture simplification generation
+- `g04/` previous runtime architecture simplification generation
 - `g03/` previous production export and runtime hardening generation
 - `g02/` previous release and local-runtime expansion generation
 - `g01/` original implementation and consolidation generation
@@ -31,29 +32,19 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g01` is closed as the original implementation and consolidation generation.
 - `g02` is closed as the release and local-runtime expansion generation.
 - `g03` is closed as the production export and runtime hardening generation.
-- `g04` is current. Its completed roadmap set starts with
-  [`g04.001`](./g04/001-runtime-architecture-sanity-audit-and-generation-rollover.md),
-  then moves into execution, runtime activation, container operation, data,
-  Rhai, container policy, runtime read/write/shell, parser, drift-guard, and
-  contract closeout roadmaps. The next queued set starts at
-  [`g04.012`](./g04/012-runtime-pipeline-integration-audit-and-debt-map.md)
-  and focuses on integration debt, route authority, data-plan consumption,
-  volume operations, guards, and planning-crate decomposition. `g04.012` is
-  complete through `g04.018`. The next active roadmap is
-  [`g04.019`](./g04/019-state-stack-and-layered-seed-framework.md) for layered
-  seed/migration state above the OCI artifact substrate.
-- [`g04.022`](./g04/022-remote-bundle-sources-git-and-oci-delivery.md) is queued
-  for remote bundle sources (git and OCI delivery) after the task-status lanes
-  close.
-- [`g04.023`](./g04/023-docs-check-subcommand-consolidation.md) through
-  [`g04.026`](./g04/026-shared-dispatcher-and-exec-collapse.md) are queued for
-  command surface consolidation: docs check subcommand collapse, reference
-  guide completeness, container command decomposition, and shared dispatcher
-  extraction.
+- `g04` is complete through
+  [`g04.039`](./g04/039-artifact-and-crate-boundary-rejustification.md). It
+  covered runtime architecture simplification, state stacks, deployment
+  transactions, provider packages, post-release reference-grade cleanup, and
+  artifact/crate-boundary rejustification.
+- No generation is currently open for implementation.
+- The next work is a `g05` planning decision plus rollover cleanup. Do not open
+  `g05` implementation roadmaps until stale generation-specific strict-lane
+  specs have been archived or removed from `docs/specs/`.
 
 ## Active Strict Lane
 
-`061` is active for [`g04.019`](./g04/019-state-stack-and-layered-seed-framework.md).
+None.
 
 ## Research Program
 
@@ -89,7 +80,8 @@ Before rollover:
 
 ## Next Task
 
-Execute the ready `g04.019` card under strict lane `061`.
+Plan the `g05` generation theme and rollover cleanup before opening new
+implementation roadmaps.
 
 ## Historical language boundary
 

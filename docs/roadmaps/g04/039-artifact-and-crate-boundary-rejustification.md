@@ -2,7 +2,7 @@
 
 Generation: `g04`
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-05-12
 Depends on:
@@ -72,6 +72,16 @@ The implementation should choose the smallest split that reduces context load.
 - future media/object-store roadmap work has a clear artifact boundary to depend
   on
 
+## Outcome
+
+- split `effigy-artifacts` into `refs`, `metadata`, `staging`, `oci`,
+  `reports`, `errors`, and private `util`
+- kept `lib.rs` as the public compatibility facade
+- documented current small-crate retention posture in the package map
+- found no immediate crate merge candidates with sufficient ownership evidence
+- confirmed artifact/media/object-store follow-up should depend on
+  `effigy-artifacts`, not rebuild artifact primitives in runner/app code
+
 ## Suggested Batch Cards
 
 - `685-open-artifact-and-crate-boundary-review-lane.md`
@@ -91,6 +101,4 @@ The implementation should choose the smallest split that reduces context load.
 
 ## Next Task
 
-Close or roll over g04 after this suite, depending on whether the remaining work
-is still runtime-architecture cleanup or has become a new product/theme
-generation.
+Decide whether to close `g04` or roll over into the next generation.

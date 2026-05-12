@@ -1,6 +1,6 @@
 # Breaking Command Surface and Container Compaction
 
-Status: Live
+Status: Complete
 Owner: Platform
 Created: 2026-05-09
 Depends on: `v0.5.0` release closeout
@@ -15,8 +15,9 @@ This backlog item has two linked goals:
   with real domain roots
 - reduce container crate sprawl so one crate owns the container domain
 
-This is backlog work, not the active strict lane. Do not execute it by
-drifting inside `g04.019`.
+This backlog item has been completed. Future command-surface or crate
+compaction work should be opened as a fresh generation-scoped plan, not by
+reopening this item.
 
 ## 2) Decisions Already Made
 
@@ -67,8 +68,8 @@ Rationale:
 - [ ] Do not move `init` under `tasks`.
 - [ ] Do not move `scan` under `tasks` or `doctor`.
 - [ ] Do not mix this cleanup with new container/runtime features.
-- [ ] Do not open a new generation or replace the active `g04.019` strict lane
-  just to land this work.
+- [ ] Do not reopen this completed backlog item just to land unrelated future
+  cleanup.
 
 ## 5) Command Surface Target
 
@@ -240,24 +241,19 @@ Current judgment:
 - if `effigy-execution` grows materially beyond its current dispatch/request
   role, reassess it separately instead of bundling it into a broad crate merge
 
-## 11) Pickup Note
+## 11) Completion Note
 
-Current state of Batch 1:
+Completed outcome:
 
-- partial command-surface implementation is already in the worktree
-- root parser and builtin registry have been shifted toward:
+- root parser and builtin registry shifted to:
   - `tasks migrate`
   - `tasks unlock`
   - `tasks cache`
   - `config completion`
 - root `catalogs` alias has been removed from parser and builtin dispatch
-- help, command matrix, completion index, and a wide set of tests have been
-  partially updated to the new shapes
-
-Not done yet:
-
-- broad validation has not been completed
-- crate compaction has not started
+- help, command matrix, completion index, migration notes, and tests were
+  updated to the new shapes
+- container-domain crates were compacted into the canonical container crate
 - expect more fallout in parser/help/JSON-contract/CLI-output tests before this
   batch is stable
 

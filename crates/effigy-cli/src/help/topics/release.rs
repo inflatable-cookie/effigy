@@ -1,8 +1,8 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::render_standard_topic_help;
+use super::shared::{render_standard_topic_help_with_common_options, CommonOption};
 
 pub(crate) fn render_release_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
-    render_standard_topic_help(
+    render_standard_topic_help_with_common_options(
         renderer,
         "release",
         &[
@@ -24,23 +24,15 @@ pub(crate) fn render_release_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
             "effigy --json release status [--repo <PATH>] [--check-gates]",
         ],
         &[
-            ("--repo <PATH>", "Override target repository path"),
-            (
-                "--plan",
-                "Preview release preparation or execution checks without prompting or irreversible actions",
-            ),
-            (
-                "--dry-run",
-                "Alias for `--plan` on `release prepare` and `release execute` preview flows",
-            ),
-            (
-                "--yes",
+            CommonOption::Repo,
+            CommonOption::Plan,
+            CommonOption::DryRun,
+            CommonOption::Yes(
                 "Apply prepared release changes or execute commit/tag/push without interactive confirmation",
             ),
-            (
-                "--check-gates",
-                "Run configured release gate commands before reporting readiness (interactive prepare auto-checks configured gates by default)",
-            ),
+            CommonOption::CheckGates,
+        ],
+        &[
             (
                 "--version <SEMVER>",
                 "Override the changelog-derived selected version for `release simulate`, `release prepare --plan`, or `release prepare --yes`",
@@ -57,8 +49,10 @@ pub(crate) fn render_release_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
                 "--repo-url <URL>",
                 "Git repository URL used for tag install verification",
             ),
-            ("--json", "Render machine-readable release status payload"),
-            ("-h, --help", "Print command help"),
+        ],
+        &[
+            CommonOption::Json("Render machine-readable release status payload"),
+            CommonOption::Help,
         ],
         &[
             "effigy release status",

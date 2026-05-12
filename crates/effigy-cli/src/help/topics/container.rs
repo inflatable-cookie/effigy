@@ -1,8 +1,8 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::render_standard_topic_help;
+use super::shared::{render_standard_topic_help_with_common_options, CommonOption};
 
 pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
-    render_standard_topic_help(
+    render_standard_topic_help_with_common_options(
         renderer,
         "container",
         &[
@@ -48,8 +48,8 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy container <NAME> eject [--repo <PATH>] [--json]",
             "effigy --json container up [--repo <PATH>]",
         ],
+        &[CommonOption::Repo],
         &[
-            ("--repo <PATH>", "Override target repository path"),
             (
                 "--attach",
                 "Force attached owner-session behavior for `up` even if the manifest defaults to detached startup",
@@ -114,8 +114,10 @@ pub(crate) fn render_container_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
                 "--no-prompt",
                 "Suppress interactive DB-seed collection for `data seed` and bootstrap flows that would otherwise prompt on a real TTY",
             ),
-            ("--json", "Render machine-readable container payloads"),
-            ("-h, --help", "Print command help"),
+        ],
+        &[
+            CommonOption::Json("Render machine-readable container payloads"),
+            CommonOption::Help,
         ],
         &[
             "effigy container up",

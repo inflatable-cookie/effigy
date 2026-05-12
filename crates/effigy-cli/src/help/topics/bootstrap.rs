@@ -1,8 +1,8 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::render_standard_topic_help;
+use super::shared::{render_standard_topic_help_with_common_options, CommonOption};
 
 pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
-    render_standard_topic_help(
+    render_standard_topic_help_with_common_options(
         renderer,
         "bootstrap",
         &[
@@ -17,6 +17,7 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
             "effigy bootstrap teardown [--yes] [--json]",
             "effigy --json bootstrap <GIT_URL> --plan",
         ],
+        &[],
         &[
             (
                 "--path <DIR>",
@@ -70,8 +71,10 @@ pub(crate) fn render_bootstrap_help<R: HelpRenderer>(renderer: &mut R) -> HelpRe
                 "--yes",
                 "Confirm bootstrap session teardown non-interactively",
             ),
-            ("--json", "Render machine-readable bootstrap payloads"),
-            ("-h, --help", "Print command help"),
+        ],
+        &[
+            CommonOption::Json("Render machine-readable bootstrap payloads"),
+            CommonOption::Help,
         ],
         &[
             "effigy bootstrap git@github.com:inflatable-cookie/loophole.git --plan",

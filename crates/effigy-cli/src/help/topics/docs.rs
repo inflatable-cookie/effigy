@@ -1,8 +1,8 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::render_standard_topic_help;
+use super::shared::{render_standard_topic_help_with_common_options, CommonOption};
 
 pub(crate) fn render_docs_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
-    render_standard_topic_help(
+    render_standard_topic_help_with_common_options(
         renderer,
         "docs",
         &[
@@ -22,8 +22,8 @@ pub(crate) fn render_docs_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<
             "effigy docs add-log-index [--repo <PATH>] <LOG_FILE> [--json]",
             "effigy --json docs check links [--repo <PATH>] [<FILE>...]",
         ],
+        &[CommonOption::Repo],
         &[
-            ("--repo <PATH>", "Override target repository path"),
             (
                 "--file <PATH>",
                 "Override the markdown file scanned by `check-json-examples`",
@@ -80,8 +80,10 @@ pub(crate) fn render_docs_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<
                 "<LOG_FILE>",
                 "Log path to insert into `docs/logs/README.md` for `add-log-index`",
             ),
-            ("--json", "Render machine-readable validation payloads"),
-            ("-h, --help", "Print command help"),
+        ],
+        &[
+            CommonOption::Json("Render machine-readable validation payloads"),
+            CommonOption::Help,
         ],
         &[
             "effigy docs check links README.md docs/guides/README.md",

@@ -320,45 +320,10 @@ pub(crate) fn read_host_container_lease_token_for_tests(
 #[cfg(test)]
 mod tests {
     use super::refresh_host_container_lease_for_task_activation;
-    use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
-    use effigy_manifest::{
-        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-        ManifestContainerStartup,
-    };
-    use std::path::PathBuf;
+    use crate::runner::test_support::effective_container_policy;
 
-    fn test_policy() -> EffectiveContainerPolicy {
-        EffectiveContainerPolicy {
-            name: "web".to_owned(),
-            driver: ManifestContainerDriver::Colima,
-            startup: ManifestContainerStartup::Detached,
-            profile: "effigy".to_owned(),
-            compose_source: EffectiveComposeSource::Direct,
-            compose_files: vec![PathBuf::from("/tmp/docker-compose.yml")],
-            compose_file_display: "docker-compose.yml".to_owned(),
-            managed_volumes: vec![],
-            shared_services: vec![],
-            project_name: "demo-web-dev".to_owned(),
-            primary_service: "app".to_owned(),
-            dns_domain: None,
-            dns_tls: false,
-            dns_port: None,
-            dns_routes: vec![],
-            service_aliases: vec![],
-            declared_ports: vec![],
-            ports_declared_explicitly: false,
-            declared_mounts: vec![],
-            declared_media_mounts: vec![],
-            pull_production_hook: None,
-            health_check: None,
-            health_timeout_secs: 60,
-            workspace_user: None,
-            workspace_home: None,
-            on_task_exit: ManifestContainerOnTaskExit::Stop,
-            shutdown: ManifestContainerShutdownMode::Graceful,
-            detach_timeout_secs: 10,
-            host_processes: Vec::new(),
-        }
+    fn test_policy() -> effigy_containers::EffectiveContainerPolicy {
+        effective_container_policy("web", "demo-web-dev", "app", "/tmp/docker-compose.yml")
     }
 
     #[test]

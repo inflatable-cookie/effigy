@@ -1,7 +1,7 @@
 # Package Map
 
 Status: active
-Updated: 2026-05-07
+Updated: 2026-05-12
 
 ## Purpose
 
@@ -198,6 +198,52 @@ of owning every runtime/container decision locally.
 | [`effigy-containers`](../../crates/effigy-containers/src/lib.rs) | `ContainerManager`, `ContainerOperationRequest`, `ContainerOperationPlan`, `BackendId`, operation kind structs, and side-effect/safety models | Canonical container-domain crate for backend selection, typed lifecycle/read/exec/data/cache/volume planning, compose/runtime compatibility helpers, and workspace-aware container policy handling. |
 | [`effigy-data`](../../crates/effigy-data/src/lib.rs) | `DataTargetRef`, `ResolvedDataTarget`, `DataSeedPlan`, `DataDumpPlan`, `DatabaseCommandPlan`, `ArtifactDataHandoff` | Data seed/dump planning, logical target resolution, database command rendering, and artifact handoff normalization. |
 | [`effigy-artifacts`](../../crates/effigy-artifacts/src/lib.rs) | artifact refs, OCI refs, staging/capture/apply requests and reports | Artifact transport/staging substrate used by seed/dump and artifact commands. |
+
+## Artifact Substrate Ownership Map
+
+`effigy-artifacts` is now an internal module facade rather than a one-file
+domain crate.
+
+| Module | Responsibility |
+| --- | --- |
+| [`crates/effigy-artifacts/src/lib.rs`](../../crates/effigy-artifacts/src/lib.rs) | public compatibility facade and artifact crate tests |
+| [`crates/effigy-artifacts/src/refs.rs`](../../crates/effigy-artifacts/src/refs.rs) | local/OCI source refs, source types, artifact kinds, and reference parsing |
+| [`crates/effigy-artifacts/src/metadata.rs`](../../crates/effigy-artifacts/src/metadata.rs) | artifact metadata schema and metadata builder |
+| [`crates/effigy-artifacts/src/staging.rs`](../../crates/effigy-artifacts/src/staging.rs) | local and pulled-OCI staging requests, reports, copy logic, and metadata writes |
+| [`crates/effigy-artifacts/src/oci.rs`](../../crates/effigy-artifacts/src/oci.rs) | OCI request/report models, ORAS adapter, descriptor parsing, and ORAS failure remediation |
+| [`crates/effigy-artifacts/src/reports.rs`](../../crates/effigy-artifacts/src/reports.rs) | artifact operation report model and operation/result enums |
+| [`crates/effigy-artifacts/src/errors.rs`](../../crates/effigy-artifacts/src/errors.rs) | artifact ref, staging, and OCI error families |
+| [`crates/effigy-artifacts/src/util.rs`](../../crates/effigy-artifacts/src/util.rs) | private path, slug, digest, and redaction helpers |
+
+Media/object-store work should build on this artifact substrate. It should not
+reimplement OCI ref parsing, staging metadata, digest handling, or ORAS
+redaction in runner/app code.
+
+## Small Crate Boundary Posture
+
+Small crates are not merge candidates by line count. They stay separate when
+they own a stable public seam used by more than one shell surface or when they
+protect dependency direction.
+
+Current retained small-crate rationale:
+
+- `effigy-core`: low-level build info, shell helpers, and runtime-dir helpers;
+  intentionally small because it is the bottom utility layer.
+- `effigy-runtime-plan`: pure activation request/plan/report model; small by
+  design because side effects stay in runner/runtime adapters.
+- `effigy-process`: host process primitives used across runner surfaces without
+  importing container/runtime crates.
+- `effigy-routing`: selector routing and catalog task lookup order; retained to
+  keep routing independent from CLI and runner orchestration.
+- `effigy-gateway`: local gateway and route registry primitives; retained
+  because runtime/container code consumes it without owning gateway command
+  shell behavior.
+- `effigy-ui`: renderer abstraction and output primitives; retained to keep
+  command/domain crates from depending on top-level CLI rendering.
+
+No small crate is currently a merge candidate on ownership grounds. Future
+merge proposals must prove the boundary has no useful API, not just that the
+crate has few lines.
 
 ## Runtime/Container Hardening Deltas
 

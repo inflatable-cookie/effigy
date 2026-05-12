@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
-Current generation: `g04`
-Updated: 2026-05-08
+Current generation: pending `g05` planning
+Updated: 2026-05-12
 
 ## Generation history
 
@@ -19,18 +19,26 @@ Updated: 2026-05-08
     canonical task execution request, dependability proof, contract promotion,
     and artifact seed/apply/capture substrate work.
 - `g04`
-  - Holds the current runtime architecture simplification generation.
+  - Held the runtime architecture simplification generation.
   - `001` lands the architecture sanity audit and opens the new queue.
   - The completed roadmap set focused on ownership purity for execution,
-    runtime
-    activation, container operations, data seed/dump, Rhai host APIs, and drift
-    guards.
-  - Current completed set closed with contract promotion into the package map and
-    `015-runtime-operation-pipeline-contract.md`.
-  - The next queued set starts at `g04.012` and burns down integration debt
-    found after the first pipeline sweep.
-  - The current active follow-up lane is `g04.019`, which turns the OCI/data
-    substrate into a state-stack framework for layered seed/migration replay.
+    runtime activation, container operations, data seed/dump, Rhai host APIs,
+    drift guards, state stacks, deployment transactions, provider packages,
+    post-release deduplication, and artifact/crate-boundary cleanup.
+  - Closed through `g04.039` after the post-v0.6.x reference-grade cleanup
+    sweep.
+
+## Current Planning State
+
+No roadmap generation is currently active for implementation.
+
+Before `g05` opens:
+
+- choose the next generation theme
+- archive or remove stale generation-specific strict-lane specs from
+  `docs/specs/`
+- update the roadmap front doors to point at the first `g05` roadmap and ready
+  card
 
 ## Research Roadmaps
 
@@ -59,3 +67,8 @@ generation:
 
 If that cleanup has not happened, stay in the current generation and finish the
 closeout there first.
+
+## Next Task
+
+Plan the `g05` generation theme and rollover cleanup before opening new
+implementation roadmaps.
