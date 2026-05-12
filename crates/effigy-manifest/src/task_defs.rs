@@ -9,8 +9,8 @@ use super::{
 enum ManifestTaskDefinition {
     Run(String),
     RunSequence(Vec<ManifestManagedRunStep>),
-    RunStep(Box<ManifestManagedRunStepTable>),
     Full(Box<ManifestTask>),
+    RunStep(Box<ManifestManagedRunStepTable>),
 }
 
 impl ManifestTaskDefinition {
@@ -80,6 +80,26 @@ sync = { task = "defer migrate/media https://www.example.test" }
             steps.as_slice(),
             [ManifestManagedRunStep::Step(step)]
                 if step.task.as_deref() == Some("defer migrate/media https://www.example.test")
+        ));
+    }
+
+    #[test]
+    fn task_table_run_accepts_single_task_object_without_array_wrapper() {
+        let parsed: TasksEnvelope = toml::from_str(
+            r#"
+[tasks.release]
+run = { task = "defer release" }
+"#,
+        )
+        .expect("parse task table definition");
+
+        let task = parsed.tasks.get("release").expect("missing release task");
+        let Some(ManifestManagedRun::Sequence(steps)) = &task.run else {
+            panic!("expected task-table single task object to deserialize as one-step sequence");
+        };
+        assert!(matches!(
+            steps.as_slice(),
+            [ManifestManagedRunStep::Step(step)] if step.task.as_deref() == Some("defer release")
         ));
     }
 }
