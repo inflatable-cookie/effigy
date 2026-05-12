@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-12
+
 ### Breaking
 - **Built-in shipped bundle catalog removed:** `effigy bundle` now supports only
   active-source `inspect` and `sync`, `[bundle].base` must use typed
