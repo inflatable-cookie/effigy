@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-12
+
+### Fixed
+- **Git-tag installs with external submodules** now use absolute
+  `ssh://git@github.com/...` URLs in `.gitmodules`, so `cargo install` from
+  Effigy git tags can initialize external bundle, provider, and setup
+  submodules instead of failing on scp-style `git@github.com:...` URLs.
+
 ## [0.6.0] - 2026-05-12
 
 ### Breaking
