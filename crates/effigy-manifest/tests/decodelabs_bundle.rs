@@ -37,20 +37,6 @@ version = "11.0"
 
     let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
     let bundle_root = loaded.bundle_root.clone().expect("bundle root");
-    let seed_script = bundle_root.join("scripts/seed-latest-db-dump.rhai");
-    let seed_script_source = std::fs::read_to_string(&seed_script).expect("seed script");
-    assert!(
-        seed_script_source.contains("reset and seeded database"),
-        "decodelabs bundle should materialize its seed helper at {}",
-        seed_script.display()
-    );
-    assert!(
-        seed_script_source.contains(r#"exec::run(mysql_args + ["-e", reset_sql], exec_options)"#)
-            && seed_script_source.contains(r#"#{ run_in: "container", container: container_name, service: "db", stdin_file: import_path }"#)
-            && seed_script_source.contains(r#"return path::join(repo_root, dump_repo_path);"#),
-        "decodelabs seed helper should import dumps through the execution builder with host-file stdin handoff at {}",
-        seed_script.display()
-    );
     let env_script = bundle_root.join("scripts/write-env-if-present.rhai");
     let env_script_source = std::fs::read_to_string(&env_script).expect("env script");
     assert!(
@@ -193,28 +179,10 @@ version = "11.0"
         ManifestManagedRun::Command(command)
             if command == "effigy container data seed"
     ));
-
-    let bootstrap_seed_task = manifest
-        .tasks
-        .get("bootstrap:db-seed")
-        .expect("bootstrap db seed task");
-    assert_eq!(bootstrap_seed_task.workspace.as_deref(), Some("app"));
-    assert_eq!(
-        bootstrap_seed_task.run_in,
-        Some(ManifestTaskRunIn::Container)
+    assert!(
+        !manifest.tasks.contains_key("bootstrap:db-seed"),
+        "decodelabs bundle should rely on Effigy's built-in data seed fallback"
     );
-    assert!(matches!(
-        bootstrap_seed_task.run.as_ref().expect("bootstrap db seed run"),
-        ManifestManagedRun::Sequence(steps)
-            if matches!(
-                steps.as_slice(),
-                [ManifestManagedRunStep::Step(step)]
-                    if step
-                        .rhai
-                        .as_deref()
-                        .is_some_and(|path| path.ends_with("/scripts/seed-latest-db-dump.rhai"))
-            )
-    ));
 
     let release_task = manifest.tasks.get("release").expect("release task");
     assert_eq!(release_task.workspace.as_deref(), None);

@@ -114,11 +114,6 @@ workspace = "{{ inputs.default_workspace }}"
 run_in = "host"
 run = "effigy container data seed"
 
-[tasks."bootstrap:db-seed"]
-workspace = "{{ inputs.default_workspace }}"
-run_in = "container"
-run = [{ rhai = "{{ bundle.root }}/scripts/seed-latest-db-dump.rhai" }]
-
 [tasks.release]
 run = "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" release"
 

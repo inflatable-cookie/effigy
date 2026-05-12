@@ -17,6 +17,9 @@ During v0.x, MINOR bumps may include breaking changes.
   layer is successfully executed, staged, or imported. Apply reports now carry
   hook status/output/error plus a structured
   `EFFIGY_STATE_APPLY_CONTEXT` handoff file for repo-owned finalize work.
+- **Decodelabs bundle seeding** now relies on Effigy's built-in
+  `container data seed` and bootstrap DB-seed fallback instead of shipping a
+  custom `bootstrap:db-seed` override and helper script.
 - **Git-backed bundle sources** now reuse a short shared remote-check freshness
   window during manifest load, so repeated runs across many repos stop paying
   for a fresh `git ls-remote` probe on every invocation while still picking up
