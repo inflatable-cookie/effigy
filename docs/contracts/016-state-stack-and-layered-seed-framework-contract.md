@@ -771,7 +771,8 @@ First implementation slice:
   live transport is not needed
 - emit a lineage report showing the ordered stack and artifact-operation
   references
-- do not execute Farmyard migration hooks yet
+- execute declared layer hooks after successful task execution, artifact
+  staging, or SQL import using a structured apply-context handoff
 
 Effigy should not absorb:
 
@@ -785,7 +786,6 @@ Effigy should not absorb:
 - post-go-live sync surfaces
 - implementation-specific hook payload schema
 - live rebase execution
-- automatic apply-hook execution for Acowtancy/Farmyard
 
 ## Next Task
 

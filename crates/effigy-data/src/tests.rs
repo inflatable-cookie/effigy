@@ -492,6 +492,42 @@ mod tests {
     }
 
     #[test]
+    fn collects_database_services_from_manifest_entries() {
+        let services = collect_database_services_from_manifest_entries(&[
+            DatabaseServiceManifestEntry::new(" postgres ", " postgres ")
+                .password(Some(" pg-secret ".to_owned()))
+                .declared_databases(vec![
+                    " app ".to_owned(),
+                    "".to_owned(),
+                    " app_test ".to_owned(),
+                ])
+                .primary_database(Some(" app ".to_owned())),
+            DatabaseServiceManifestEntry::new("mysql", "mysql")
+                .password(Some(" ".to_owned()))
+                .declared_databases(vec![" legacy ".to_owned()])
+                .primary_database(Some(" legacy ".to_owned())),
+            DatabaseServiceManifestEntry::new("redis", "redis"),
+            DatabaseServiceManifestEntry::new(" ", "postgres"),
+        ]);
+
+        assert_eq!(services.len(), 2);
+        assert_eq!(services[0].name, "postgres");
+        assert_eq!(services[0].kind, DatabaseServiceKind::Postgres);
+        assert_eq!(services[0].password, "pg-secret");
+        assert_eq!(
+            services[0].declared_databases,
+            vec!["app".to_owned(), "app_test".to_owned()]
+        );
+        assert_eq!(services[0].primary_database.as_deref(), Some("app"));
+
+        assert_eq!(services[1].name, "mysql");
+        assert_eq!(services[1].kind, DatabaseServiceKind::MariaDb);
+        assert_eq!(services[1].password, "secret");
+        assert_eq!(services[1].declared_databases, vec!["legacy".to_owned()]);
+        assert_eq!(services[1].primary_database.as_deref(), Some("legacy"));
+    }
+
+    #[test]
     fn database_service_selection_reports_unknown_ambiguous_and_missing_service() {
         let services = vec![
             DatabaseService::new("postgres_a", DatabaseServiceKind::Postgres)

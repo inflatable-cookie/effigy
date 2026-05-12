@@ -1,25 +1,28 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command as ProcessCommand;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use super::derive::derive_deploy_model;
+use super::provider_context::{
+    build_provider_context, provider_package_policy_blockers, DeployProviderContextRequest,
+};
 use super::provider_package::{
     resolve_provider_package, run_provider_apply, run_provider_preflight, run_provider_status,
     DeployProviderPackage, ManifestDeployProviderConfig,
 };
+use super::report::*;
+use super::text::{
+    render_deploy_apply_text, render_deploy_history_text, render_deploy_plan_text,
+    render_deploy_status_text,
+};
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::load_task_manifest_with_inspection;
 use crate::runner::render::render_command_result;
-
-const PLAN_SCHEMA: &str = "effigy.deploy.plan.v1";
-const APPLY_SCHEMA: &str = "effigy.deploy.apply.v1";
-const STATUS_SCHEMA: &str = "effigy.deploy.status.v1";
-const HISTORY_SCHEMA: &str = "effigy.deploy.history.v1";
 
 pub(super) fn run_deploy_plan(
     repo_root: &Path,
@@ -587,48 +590,18 @@ fn deploy_provider_context(
     model: &super::model::DeployModel,
     package: &DeployProviderPackage,
 ) -> Value {
-    json!({
-        "schema": "effigy.deploy-provider.context.v1",
-        "phase": phase,
-        "env": env,
-        "provider": env_config.provider.config_value(),
-        "provider_project": env_config.provider_project,
-        "provider_package": {
-            "root": package.root.display().to_string(),
-            "name": package.descriptor.provider.name,
-            "display_name": package.descriptor.provider.display_name,
-            "version": package.descriptor.provider.version,
-        },
-        "deploy": {
-            "state": env_config.state,
-            "code_ref": env_config.code_ref,
-            "release_policy": env_config.release_policy.as_str(),
-            "artifact_policy": env_config.artifact_policy.as_str(),
-        },
-        "model": model,
+    build_provider_context(DeployProviderContextRequest {
+        phase,
+        env,
+        provider: env_config.provider.config_value(),
+        provider_project: env_config.provider_project.as_deref(),
+        package,
+        state: env_config.state.as_deref(),
+        code_ref: &env_config.code_ref,
+        release_policy: env_config.release_policy.as_str(),
+        artifact_policy: env_config.artifact_policy.as_str(),
+        model,
     })
-}
-
-fn provider_package_policy_blockers(
-    provider: &str,
-    policy: &super::provider_package::DeployProviderPolicy,
-) -> Vec<String> {
-    [
-        (policy.creates_projects, "create projects"),
-        (policy.creates_services, "create services"),
-        (policy.creates_resources, "create resources"),
-        (policy.creates_variables, "create variables"),
-        (policy.creates_domains, "create domains"),
-        (policy.prints_secret_values, "print secret values"),
-    ]
-    .into_iter()
-    .filter(|(enabled, _)| *enabled)
-    .map(|(_, action)| {
-        format!(
-            "deploy provider `{provider}` package policy is not allowed to {action} in the current deployment transaction surface"
-        )
-    })
-    .collect()
 }
 
 fn deploy_status_provider_report(
@@ -723,181 +696,6 @@ fn git_output(repo_root: &Path, args: &[&str]) -> Result<String, RunnerError> {
         )));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-}
-
-fn deploy_active_path(repo_root: &Path, env: &str) -> PathBuf {
-    repo_root
-        .join(".effigy")
-        .join("runtime")
-        .join("deploy")
-        .join("active")
-        .join(format!("{}.json", safe_path_component(env)))
-}
-
-fn deploy_latest_path(repo_root: &Path, env: &str) -> PathBuf {
-    repo_root
-        .join(".effigy")
-        .join("reports")
-        .join("deploy")
-        .join(safe_path_component(env))
-        .join("latest.json")
-}
-
-fn deploy_history_dir(repo_root: &Path, env: &str) -> PathBuf {
-    repo_root
-        .join(".effigy")
-        .join("reports")
-        .join("deploy")
-        .join(safe_path_component(env))
-        .join("history")
-}
-
-fn deploy_report_paths(repo_root: &Path, env: &str, deployment_id: &str) -> DeployReportPaths {
-    DeployReportPaths {
-        latest_path: deploy_latest_path(repo_root, env),
-        history_path: deploy_history_dir(repo_root, env)
-            .join(format!("{}.json", safe_path_component(deployment_id))),
-    }
-}
-
-struct DeployReportPaths {
-    latest_path: PathBuf,
-    history_path: PathBuf,
-}
-
-fn write_json_report<T: Serialize>(
-    repo_root: &Path,
-    paths: &[&Path],
-    report: &T,
-) -> Result<(), RunnerError> {
-    let encoded = serde_json::to_string_pretty(report)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    for path in paths {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "failed to create deploy report directory {}: {error}",
-                    parent.display()
-                ))
-            })?;
-        }
-        fs::write(path, format!("{encoded}\n")).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to write deploy report {}: {error}",
-                path_display(path, repo_root)
-            ))
-        })?;
-    }
-    Ok(())
-}
-
-fn read_optional_json(path: &Path) -> Result<Option<Value>, RunnerError> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let text = fs::read_to_string(path).map_err(|error| {
-        RunnerError::task_invocation(format!("failed to read {}: {error}", path.display()))
-    })?;
-    let value = serde_json::from_str(&text).map_err(|error| {
-        RunnerError::task_invocation(format!("failed to parse {}: {error}", path.display()))
-    })?;
-    Ok(Some(value))
-}
-
-fn json_value<T: Serialize>(value: &T) -> Result<Value, RunnerError> {
-    serde_json::to_value(value).map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn render_deploy_plan_text(report: &DeployPlanReport) -> String {
-    let mut lines = vec![
-        format!(
-            "[deploy] planned {} deployment to {}",
-            report.provider, report.env
-        ),
-        format!("deployment: {}", report.deployment_id),
-        format!("code: {}", report.code.requested_ref),
-        format!("release_policy: {}", report.release_policy.mode),
-    ];
-    if let Some(state) = &report.state {
-        lines.push(format!("state: {} ({})", state.stack, state.lineage_id));
-    }
-    if !report.blockers.is_empty() {
-        lines.push(String::new());
-        lines.push(format!("Blockers ({})", report.blockers.len()));
-        lines.extend(report.blockers.iter().map(|blocker| format!("- {blocker}")));
-    }
-    if !report.warnings.is_empty() {
-        lines.push(String::new());
-        lines.push(format!("Warnings ({})", report.warnings.len()));
-        lines.extend(report.warnings.iter().map(|warning| format!("- {warning}")));
-    }
-    lines.join("\n")
-}
-
-fn render_deploy_apply_text(report: &DeployApplyReport) -> String {
-    format!(
-        "[deploy] {} {} deployment to {}\ndeployment: {}\nreport: {}",
-        report.status,
-        report.provider,
-        report.env,
-        report.deployment_id,
-        report
-            .written_report_path
-            .as_deref()
-            .unwrap_or("<not written>")
-    )
-}
-
-fn render_deploy_status_text(report: &DeployStatusReport) -> String {
-    let latest = if report.latest.is_some() {
-        "present"
-    } else {
-        "missing"
-    };
-    let active = if report.active.is_some() {
-        "present"
-    } else {
-        "missing"
-    };
-    format!(
-        "[deploy] status {}\nactive: {active}\nlatest: {latest}",
-        report.env
-    )
-}
-
-fn render_deploy_history_text(report: &DeployHistoryReport) -> String {
-    let mut lines = vec![format!(
-        "[deploy] history {} ({} entries)",
-        report.env,
-        report.entries.len()
-    )];
-    lines.extend(report.entries.iter().map(|entry| {
-        format!(
-            "- {} [{}] {}",
-            entry.deployment_id, entry.status, entry.path
-        )
-    }));
-    lines.join("\n")
-}
-
-fn path_display(path: &Path, repo_root: &Path) -> String {
-    path.strip_prefix(repo_root)
-        .unwrap_or(path)
-        .display()
-        .to_string()
-}
-
-fn safe_path_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect()
 }
 
 fn utc_basic_timestamp(time: SystemTime) -> String {
@@ -1055,202 +853,4 @@ impl ArtifactPolicy {
 
 fn default_code_ref() -> String {
     "branch:main".to_owned()
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DeployPlanReport {
-    schema: String,
-    schema_version: u8,
-    deployment_id: String,
-    env: String,
-    provider: String,
-    app: DeployPlanApp,
-    code: DeployCodeRef,
-    release_policy: DeployReleasePolicyReport,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    state: Option<DeployStatePlan>,
-    artifact_policy: DeployArtifactPolicyReport,
-    provider_preflight: DeployProviderPreflightReport,
-    hooks: Vec<DeployHookPlan>,
-    health_checks: Vec<DeployHealthPlan>,
-    warnings: Vec<String>,
-    blockers: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    written_report_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    written_history_path: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DeployPlanApp {
-    name: String,
-    project_name: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DeployCodeRef {
-    requested_ref: String,
-    kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    resolved_ref: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    resolved_commit: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DeployReleasePolicyReport {
-    mode: String,
-    required: bool,
-    gates_required: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DeployStatePlan {
-    stack: String,
-    lineage_id: String,
-    planned_report_path: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DeployArtifactPolicyReport {
-    mode: String,
-    blockers: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DeployProviderPreflightReport {
-    status: String,
-    checks: Vec<DeployProviderCheck>,
-    blockers: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DeployProviderCheck {
-    name: String,
-    status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    target: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DeployHookPlan {
-    stage: String,
-    task: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DeployHealthPlan {
-    service: String,
-    kind: String,
-    path: String,
-}
-
-#[derive(Debug, Serialize)]
-struct DeployApplyReport {
-    schema: String,
-    schema_version: u8,
-    deployment_id: String,
-    env: String,
-    provider: String,
-    status: String,
-    started_at: String,
-    finished_at: String,
-    code: DeployCodeRef,
-    release_policy: DeployReleasePolicyReport,
-    state: DeployApplyStateReport,
-    provider_operation: DeployProviderOperationReport,
-    hooks: Vec<DeployHookResult>,
-    health_checks: Vec<DeployHealthResult>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    written_report_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    written_history_path: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct DeployApplyStateReport {
-    status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    lineage_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    apply_report_path: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct DeployProviderOperationReport {
-    status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    provider_deployment_id: Option<String>,
-    services: Vec<String>,
-    warnings: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct DeployHookResult {
-    stage: String,
-    task: String,
-    status: String,
-}
-
-#[derive(Debug, Serialize)]
-struct DeployHealthResult {
-    service: String,
-    status: String,
-    path: String,
-}
-
-#[derive(Debug, Serialize)]
-struct DeployStatusReport {
-    schema: String,
-    schema_version: u8,
-    env: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    active_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    latest_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    active: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    latest: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    provider_status: Option<Value>,
-    warnings: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct DeployHistoryReport {
-    schema: String,
-    schema_version: u8,
-    env: String,
-    entries: Vec<DeployHistoryItem>,
-    warnings: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct DeployHistoryItem {
-    path: String,
-    deployment_id: String,
-    schema: String,
-    status: String,
-}
-
-#[derive(Debug, Serialize)]
-struct DeployRedeployReport {
-    schema: String,
-    schema_version: u8,
-    deployment_id: String,
-    env: String,
-    provider: String,
-    status: String,
-    source_deployment: String,
-    started_at: String,
-    finished_at: String,
-    source_report_path: String,
-    warnings: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    written_report_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    written_history_path: Option<String>,
 }

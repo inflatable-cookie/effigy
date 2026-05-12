@@ -8,9 +8,12 @@ use super::error::RunnerError;
 
 mod derive;
 mod model;
+mod provider_context;
 mod provider_package;
 mod railway;
 mod render;
+mod report;
+mod text;
 mod transaction;
 
 use model::*;

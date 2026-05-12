@@ -1008,6 +1008,7 @@ version = "0.6.1"
 dependencies = [
  "effigy-artifacts",
  "serde",
+ "serde_json",
  "toml",
 ]
 

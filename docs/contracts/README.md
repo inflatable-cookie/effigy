@@ -94,6 +94,19 @@ This folder contains both:
   deploy-provider package contract for moving provider-specific deployment
   behavior into external git/path/OCI packages backed by `provider.toml` and
   Rhai phase scripts.
+- [`026-shared-database-target-resolution-contract.md`](./026-shared-database-target-resolution-contract.md):
+  shared database target resolution contract for converging seed, dump, state,
+  and future migration/media database-service selection behind one domain seam.
+- [`027-state-domain-extraction-contract.md`](./027-state-domain-extraction-contract.md):
+  state-domain extraction contract for moving pure state report, path, history,
+  and planning behavior from the runner into `effigy-state`.
+- [`028-manifest-section-decomposition-contract.md`](./028-manifest-section-decomposition-contract.md):
+  manifest section decomposition contract for splitting oversized manifest
+  parsing files by durable config ownership without grammar drift.
+- [`029-deploy-domain-boundary-contract.md`](./029-deploy-domain-boundary-contract.md):
+  deploy domain boundary contract for separating transaction models, report
+  persistence, provider-package dispatch, and text rendering without schema or
+  provider behavior drift.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -120,6 +133,10 @@ This folder contains both:
 | `023-container-command-decomposition-contract.md` | Platform maintainers | Target `container_command` module ownership, structural-only extraction boundary, thin-dispatcher rule for `mod.rs`, and the no-user-facing-change rule during cache/volume/lifecycle splits | Planning review against `g04.025` plus focused container-command proofs once implementation starts |
 | `024-shared-dispatcher-and-exec-collapse-contract.md` | Platform maintainers | Shared result-render boundary, routed container-exec collapse scope, release prepare/execute shared-control-flow boundary, and the structural-only no-surface-change rule | Planning review against `g04.026` plus focused runner/output proofs once implementation starts |
 | `025-deploy-provider-package-contract.md` | Platform maintainers | Provider package descriptor shape, phase script context/report schema, safety policy, Rhai surface requirements, and the external provider boundary | Planning review before widening provider-package execution beyond Render/Railway proof packages |
+| `026-shared-database-target-resolution-contract.md` | Platform maintainers | Database service classification, declared database inventory, selected database calculation, credential reference lookup, and missing/ambiguous target diagnostics across seed, dump, state, and migration/media callers | Planning review against `g04.034` plus focused `effigy-data` and runner seed/dump proofs once implementation starts |
+| `027-state-domain-extraction-contract.md` | Platform maintainers | State report/path/history/planning ownership, runner side-effect boundary, output compatibility, and future media/object-store state seam readiness | Planning review against `g04.035` plus focused `effigy-state` and state command proofs once implementation starts |
+| `028-manifest-section-decomposition-contract.md` | Platform maintainers | Manifest section module ownership, public API compatibility, parse error compatibility, and no-grammar-drift rule for bundle, state, deploy, object-store, container, root, and import config parsing | Planning review against `g04.036` plus focused manifest parser and composition tests once implementation starts |
+| `029-deploy-domain-boundary-contract.md` | Platform maintainers | Deploy transaction ownership, report persistence paths, provider-package dispatch context, text rendering boundary, JSON schema compatibility, and provider-specific behavior staying outside core | Planning review against `g04.037` plus focused deploy transaction and provider package fixture tests once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 

@@ -42,6 +42,10 @@ Paused but still useful:
 
 Recently completed:
 
+- [`073-deploy-domain-boundary-hardening-strict-lane.md`](./073-deploy-domain-boundary-hardening-strict-lane.md)
+- [`072-manifest-section-decomposition-strict-lane.md`](./072-manifest-section-decomposition-strict-lane.md)
+- [`071-state-domain-extraction-strict-lane.md`](./071-state-domain-extraction-strict-lane.md)
+- [`070-shared-database-target-resolution-strict-lane.md`](./070-shared-database-target-resolution-strict-lane.md)
 - [`064-deployment-transaction-system-strict-lane.md`](./064-deployment-transaction-system-strict-lane.md)
 - [`069-shared-dispatcher-and-exec-collapse-strict-lane.md`](./069-shared-dispatcher-and-exec-collapse-strict-lane.md)
 - [`068-container-command-decomposition-strict-lane.md`](./068-container-command-decomposition-strict-lane.md)
@@ -103,4 +107,5 @@ Recently completed:
 
 ## Next Task
 
-No active strict-lane task. Release execution remains human-owned.
+Execute `g04.038` for docs-policy, CLI help, and fixture deduplication.
+Release execution remains human-owned.

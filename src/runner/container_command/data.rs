@@ -16,9 +16,9 @@ use effigy_data::{
     database_dump_command, dump_artifact_handoff, normalize_dump_destination_path,
     select_data_targets, select_database_service, ArtifactDataHandoff, DataDumpDestination,
     DataDumpInput, DataDumpPlan, DataTargetRef, DataTargetSelectionError, DatabaseService,
-    DatabaseServiceKind, DatabaseServiceSelectionError, ResolvedDataTarget,
+    DatabaseServiceSelectionError, ResolvedDataTarget,
 };
-use effigy_manifest::{ManifestContainerServiceConfig, TASK_MANIFEST_FILE};
+use effigy_manifest::TASK_MANIFEST_FILE;
 
 use super::gateway_registration::register_gateway_routes_for_container;
 use super::lifecycle::run_container_exec_capture;
@@ -31,6 +31,7 @@ use crate::runner::db_seed::{
     db_seed_env, logical_database_targets, maybe_prompt_db_seed_inputs,
     resolve_db_seed_input_paths, run_db_seed_task, stage_db_seed_files,
 };
+use crate::runner::db_services::collect_manifest_database_services;
 use crate::runner::manifest::load_task_manifest;
 
 #[path = "data/hooks.rs"]
@@ -695,64 +696,9 @@ fn data_dump_output_path(plan: &DataDumpPlan) -> PathBuf {
 }
 
 fn collect_db_dump_services(
-    services: &std::collections::BTreeMap<String, ManifestContainerServiceConfig>,
+    services: &std::collections::BTreeMap<String, effigy_manifest::ManifestContainerServiceConfig>,
 ) -> Vec<DatabaseService> {
-    services
-        .iter()
-        .filter_map(|(service_name, service)| {
-            let kind = manifest_database_service_kind(&service.catalog)?;
-            Some((service_name, service, kind))
-        })
-        .map(|(service_name, service, kind)| {
-            DatabaseService::new(service_name.clone(), kind)
-                .password(service_password(service))
-                .declared_databases(service_declared_databases(service))
-                .primary_database_opt(service_primary_database(service))
-        })
-        .collect()
-}
-
-fn manifest_database_service_kind(catalog: &str) -> Option<DatabaseServiceKind> {
-    match catalog {
-        "postgres" => Some(DatabaseServiceKind::Postgres),
-        "mariadb" => Some(DatabaseServiceKind::MariaDb),
-        _ => None,
-    }
-}
-
-fn service_password(service: &ManifestContainerServiceConfig) -> String {
-    service
-        .params
-        .get("password")
-        .and_then(toml::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("secret")
-        .to_owned()
-}
-
-fn service_declared_databases(service: &ManifestContainerServiceConfig) -> Vec<String> {
-    service
-        .params
-        .get("databases")
-        .and_then(toml::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(toml::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
-fn service_primary_database(service: &ManifestContainerServiceConfig) -> Option<String> {
-    service
-        .params
-        .get("database")
-        .and_then(toml::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+    collect_manifest_database_services(services)
 }
 
 fn resolve_db_dump_service_for_database<'a>(

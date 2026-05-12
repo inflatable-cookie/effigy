@@ -1,14 +1,16 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use effigy_artifacts::OciArtifactAdapter;
 use effigy_cli::{BootstrapDbSeedInput, StateArgs, StateSubcommand, TaskInvocation};
 use effigy_execution::ExecutionSurface;
 use effigy_state::{
-    StateLayerApplyMode, StateLayerEnvironmentPolicy, StateLayerRole, StateStackLineageReport,
-    StateStackManifest,
+    capture_produced_layer, state_report_write_paths, StateCaptureMode, StateCapturePlanRequest,
+    StateHistoryKind, StateLayerApplyMode, StateLayerRole, StateReportWritePaths,
+    StateStackApplyHookStatus, StateStackApplyLayerReport, StateStackApplyLayerStatus,
+    StateStackApplyReport, StateStackCaptureProducedLayer, StateStackHistoryReport,
+    StateStackLineageReport, StateStackManifest,
 };
 use serde::Deserialize;
 use serde::Serialize;
@@ -161,6 +163,18 @@ fn run_state_apply(
                         Ok(output) => {
                             layer.status = StateStackApplyLayerStatus::Executed;
                             layer.output = Some(output);
+                            if let Err(error) = execute_state_apply_hook(
+                                &report.stack_name,
+                                report.environment,
+                                &report.lineage_id,
+                                layer,
+                                repo_root,
+                            ) {
+                                layer.hook_status = Some(StateStackApplyHookStatus::Failed);
+                                layer.hook_error = Some(error.to_string());
+                                report.ok = false;
+                                break;
+                            }
                         }
                         Err(error) => {
                             layer.status = StateStackApplyLayerStatus::Failed;
@@ -181,6 +195,18 @@ fn run_state_apply(
                         Ok(artifact_report) => {
                             layer.status = StateStackApplyLayerStatus::Staged;
                             layer.artifact_report = Some(artifact_report);
+                            if let Err(error) = execute_state_apply_hook(
+                                &report.stack_name,
+                                report.environment,
+                                &report.lineage_id,
+                                layer,
+                                repo_root,
+                            ) {
+                                layer.hook_status = Some(StateStackApplyHookStatus::Failed);
+                                layer.hook_error = Some(error.to_string());
+                                report.ok = false;
+                                break;
+                            }
                         }
                         Err(error) => {
                             layer.status = StateStackApplyLayerStatus::Failed;
@@ -199,6 +225,18 @@ fn run_state_apply(
                         Ok(sql_report) => {
                             layer.status = StateStackApplyLayerStatus::Imported;
                             layer.sql_report = Some(sql_report);
+                            if let Err(error) = execute_state_apply_hook(
+                                &report.stack_name,
+                                report.environment,
+                                &report.lineage_id,
+                                layer,
+                                repo_root,
+                            ) {
+                                layer.hook_status = Some(StateStackApplyHookStatus::Failed);
+                                layer.hook_error = Some(error.to_string());
+                                report.ok = false;
+                                break;
+                            }
                         }
                         Err(error) => {
                             layer.status = StateStackApplyLayerStatus::Failed;
@@ -230,6 +268,37 @@ fn run_state_apply(
     }
 
     Ok(render_state_apply_text(&report))
+}
+
+fn execute_state_apply_hook(
+    stack_name: &str,
+    environment: effigy_state::StateEnvironment,
+    lineage_id: &str,
+    layer: &mut StateStackApplyLayerReport,
+    repo_root: &Path,
+) -> Result<(), RunnerError> {
+    let Some(hook) = layer.hook.clone() else {
+        return Ok(());
+    };
+    let context_path =
+        write_state_apply_hook_context(repo_root, stack_name, environment, lineage_id, layer)?;
+    layer.hook_context_path = Some(context_path.clone());
+    match crate::runner::execute::api::run_manifest_task_with_surface_and_env(
+        &TaskInvocation {
+            name: hook,
+            args: Vec::new(),
+        },
+        repo_root.to_path_buf(),
+        ExecutionSurface::DirectCli,
+        &state_apply_hook_env(stack_name, environment, lineage_id, layer, &context_path),
+    ) {
+        Ok(output) => {
+            layer.hook_status = Some(StateStackApplyHookStatus::Executed);
+            layer.hook_output = Some(output);
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn validate_sql_layers(
@@ -301,7 +370,7 @@ fn run_state_history(
         kind,
         limit.unwrap_or(20),
         lineage,
-    )?;
+    );
 
     if output_json {
         return serde_json::to_string(&report)
@@ -606,8 +675,18 @@ fn render_state_apply_text(report: &StateStackApplyReport) -> String {
             "- {}: {:?} via {:?} ({})",
             layer.key, layer.role, layer.apply_mode, layer.status
         ));
+        if let Some(hook) = layer.hook.as_deref() {
+            let hook_status = layer
+                .hook_status
+                .map(|status| status.to_string())
+                .unwrap_or_else(|| "not-run".to_owned());
+            lines.push(format!("  hook: {hook} ({hook_status})"));
+        }
         if let Some(error) = layer.error.as_deref() {
             lines.push(format!("  error: {error}"));
+        }
+        if let Some(error) = layer.hook_error.as_deref() {
+            lines.push(format!("  hook error: {error}"));
         }
     }
     lines.join("\n")
@@ -689,50 +768,6 @@ fn render_state_history_text(report: &StateStackHistoryReport) -> String {
     lines.join("\n")
 }
 
-fn state_report_write_paths(
-    repo_root: &Path,
-    stack_name: &str,
-    kind: StateHistoryKind,
-    lineage: Option<&str>,
-    compatibility_file: Option<&str>,
-) -> StateReportWritePaths {
-    let stack_dir = repo_root
-        .join(".effigy")
-        .join("reports")
-        .join("state")
-        .join(safe_path_component(stack_name));
-    let latest_path = stack_dir.join(format!("latest-{kind}.json"));
-    let history_path = state_history_report_path(
-        &stack_dir,
-        kind,
-        &utc_basic_timestamp(SystemTime::now()),
-        &short_safe_lineage(lineage.unwrap_or("lineage-unknown")),
-    );
-    let compatibility_path = compatibility_file.map(|file| stack_dir.join(file));
-    StateReportWritePaths {
-        compatibility_path,
-        latest_path,
-        history_path,
-    }
-}
-
-fn state_history_report_path(
-    stack_dir: &Path,
-    kind: StateHistoryKind,
-    timestamp: &str,
-    lineage: &str,
-) -> PathBuf {
-    let history_dir = stack_dir.join("history");
-    let base_name = format!("{timestamp}-{kind}-{lineage}");
-    let mut path = history_dir.join(format!("{base_name}.json"));
-    let mut suffix = 2;
-    while path.exists() {
-        path = history_dir.join(format!("{base_name}-{suffix}.json"));
-        suffix += 1;
-    }
-    path
-}
-
 fn write_state_report<T: Serialize>(
     repo_root: &Path,
     paths: &StateReportWritePaths,
@@ -762,56 +797,6 @@ fn write_state_report<T: Serialize>(
         })?;
     }
     Ok(())
-}
-
-#[derive(Debug)]
-struct StateReportWritePaths {
-    compatibility_path: Option<PathBuf>,
-    latest_path: PathBuf,
-    history_path: PathBuf,
-}
-
-impl StateReportWritePaths {
-    fn all_paths(&self) -> impl Iterator<Item = &Path> {
-        self.compatibility_path
-            .iter()
-            .map(PathBuf::as_path)
-            .chain(std::iter::once(self.latest_path.as_path()))
-            .chain(std::iter::once(self.history_path.as_path()))
-    }
-}
-
-fn short_safe_lineage(lineage: &str) -> String {
-    let safe = safe_path_component(lineage);
-    safe.chars().take(48).collect()
-}
-
-fn utc_basic_timestamp(time: SystemTime) -> String {
-    let seconds = time
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-    let days = seconds.div_euclid(86_400);
-    let day_seconds = seconds.rem_euclid(86_400);
-    let (year, month, day) = civil_from_unix_days(days);
-    let hour = day_seconds / 3_600;
-    let minute = (day_seconds % 3_600) / 60;
-    let second = day_seconds % 60;
-    format!("{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}Z")
-}
-
-fn civil_from_unix_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 }.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    let year = year + if month <= 2 { 1 } else { 0 };
-    (year, month, day)
 }
 
 fn safe_path_component(value: &str) -> String {
@@ -899,375 +884,12 @@ struct ManifestStateCaptureProfile {
     push: bool,
 }
 
-#[derive(Debug, Serialize)]
-struct StateStackApplyReport {
-    schema: String,
-    schema_version: u8,
-    ok: bool,
-    executed: bool,
-    stack_name: String,
-    environment: effigy_state::StateEnvironment,
-    lineage_id: String,
-    layers: Vec<StateStackApplyLayerReport>,
-    warnings: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    written_report_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    written_history_path: Option<String>,
-}
-
-impl StateStackApplyReport {
-    fn from_lineage(lineage: &StateStackLineageReport, execute: bool) -> Self {
-        let layers = lineage
-            .layers
-            .iter()
-            .map(|layer| {
-                let status = match layer.apply_mode {
-                    StateLayerApplyMode::Task if execute => StateStackApplyLayerStatus::PlannedTask,
-                    StateLayerApplyMode::Artifact if execute => {
-                        StateStackApplyLayerStatus::PlannedArtifactStage
-                    }
-                    StateLayerApplyMode::Sql if execute => {
-                        StateStackApplyLayerStatus::PlannedSqlImport
-                    }
-                    StateLayerApplyMode::Task => StateStackApplyLayerStatus::WouldExecute,
-                    StateLayerApplyMode::Artifact => StateStackApplyLayerStatus::WouldStage,
-                    StateLayerApplyMode::Sql => StateStackApplyLayerStatus::WouldImport,
-                    _ => StateStackApplyLayerStatus::Unsupported,
-                };
-                StateStackApplyLayerReport {
-                    index: layer.index,
-                    key: layer.key.clone(),
-                    role: layer.role,
-                    apply_mode: layer.apply_mode,
-                    source: layer.source.clone(),
-                    target: layer.sql_target.clone(),
-                    status,
-                    output: None,
-                    artifact_report: None,
-                    sql_report: None,
-                    error: None,
-                }
-            })
-            .collect();
-        Self {
-            schema: "effigy.state-stack.apply.v1".to_owned(),
-            schema_version: 1,
-            ok: true,
-            executed: execute,
-            stack_name: lineage.stack_name.clone(),
-            environment: lineage.environment,
-            lineage_id: lineage.lineage_id.clone(),
-            layers,
-            warnings: lineage.warnings.clone(),
-            written_report_path: None,
-            written_history_path: None,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct StateStackApplyLayerReport {
-    index: usize,
-    key: String,
-    role: effigy_state::StateLayerRole,
-    apply_mode: StateLayerApplyMode,
-    source: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    target: Option<String>,
-    status: StateStackApplyLayerStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    output: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    artifact_report: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    sql_report: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum StateStackApplyLayerStatus {
-    WouldExecute,
-    WouldStage,
-    WouldImport,
-    PlannedTask,
-    PlannedArtifactStage,
-    PlannedSqlImport,
-    Executed,
-    Staged,
-    Imported,
-    Unsupported,
-    Failed,
-}
-
-impl std::fmt::Display for StateStackApplyLayerStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = match self {
-            Self::WouldExecute => "would-execute",
-            Self::WouldStage => "would-stage",
-            Self::WouldImport => "would-import",
-            Self::PlannedTask => "planned-task",
-            Self::PlannedArtifactStage => "planned-artifact-stage",
-            Self::PlannedSqlImport => "planned-sql-import",
-            Self::Executed => "executed",
-            Self::Staged => "staged",
-            Self::Imported => "imported",
-            Self::Unsupported => "unsupported",
-            Self::Failed => "failed",
-        };
-        f.write_str(value)
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct StateStackHistoryReport {
-    schema: String,
-    schema_version: u8,
-    stack_name: String,
-    reports: Vec<StateStackHistoryItem>,
-    warnings: Vec<String>,
-}
-
-impl StateStackHistoryReport {
-    fn scan(
-        repo_root: &Path,
-        stack: &str,
-        kind: Option<StateHistoryKind>,
-        limit: usize,
-        lineage: Option<&str>,
-    ) -> Result<Self, RunnerError> {
-        let mut warnings = Vec::new();
-        let stack_dir = repo_root
-            .join(".effigy")
-            .join("reports")
-            .join("state")
-            .join(safe_path_component(stack));
-        let mut candidates = Vec::new();
-        collect_state_history_candidates(&stack_dir, &mut candidates, &mut warnings);
-        collect_state_history_candidates(
-            &stack_dir.join("history"),
-            &mut candidates,
-            &mut warnings,
-        );
-
-        let mut reports = Vec::new();
-        for path in candidates {
-            match read_state_history_item(repo_root, &path) {
-                Ok(Some(item)) => {
-                    if kind.is_some_and(|expected| item.kind != expected) {
-                        continue;
-                    }
-                    if let Some(lineage) = lineage {
-                        let matches_lineage = item.lineage_id.as_deref() == Some(lineage)
-                            || item.parent_lineage_id.as_deref() == Some(lineage);
-                        if !matches_lineage {
-                            continue;
-                        }
-                    }
-                    reports.push(item);
-                }
-                Ok(None) => {}
-                Err(error) => warnings.push(error),
-            }
-        }
-        reports.sort_by(|left, right| {
-            right
-                .created_at
-                .cmp(&left.created_at)
-                .then_with(|| right.path.cmp(&left.path))
-        });
-        reports.truncate(limit);
-
-        Ok(Self {
-            schema: "effigy.state-stack.history.v1".to_owned(),
-            schema_version: 1,
-            stack_name: stack.to_owned(),
-            reports,
-            warnings,
-        })
-    }
-}
-
-fn collect_state_history_candidates(
-    dir: &Path,
-    candidates: &mut Vec<PathBuf>,
-    warnings: &mut Vec<String>,
-) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries {
-        match entry {
-            Ok(entry) => {
-                let path = entry.path();
-                if path.is_file()
-                    && path
-                        .extension()
-                        .and_then(|extension| extension.to_str())
-                        .is_some_and(|extension| extension == "json")
-                {
-                    candidates.push(path);
-                }
-            }
-            Err(error) => warnings.push(format!(
-                "failed to read state history entry in {}: {error}",
-                dir.display()
-            )),
-        }
-    }
-}
-
-fn read_state_history_item(
-    repo_root: &Path,
-    path: &Path,
-) -> Result<Option<StateStackHistoryItem>, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|error| format!("failed to read state report {}: {error}", path.display()))?;
-    let value: Value = serde_json::from_str(&raw)
-        .map_err(|error| format!("ignored malformed state report {}: {error}", path.display()))?;
-    let schema = value
-        .get("schema")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let Some(kind) =
-        StateHistoryKind::from_schema(&schema).or_else(|| StateHistoryKind::from_path(path))
-    else {
-        return Ok(None);
-    };
-    let lineage_id = value
-        .get("lineage_id")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let parent_lineage_id = value
-        .get("parent_lineage_id")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let created_at = value
-        .get("created_at")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .unwrap_or_else(|| path_created_at_fallback(path));
-    let ok = value.get("ok").and_then(Value::as_bool);
-    let executed = value.get("executed").and_then(Value::as_bool);
-    let path_display = path_display(path, repo_root);
-    Ok(Some(StateStackHistoryItem {
-        kind,
-        schema,
-        path: path_display,
-        created_at,
-        lineage_id,
-        parent_lineage_id,
-        ok,
-        executed,
-        summary: state_history_summary(kind, &value),
-    }))
-}
-
-fn path_created_at_fallback(path: &Path) -> String {
-    path.file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("unknown")
-        .to_owned()
-}
-
-fn state_history_summary(kind: StateHistoryKind, value: &Value) -> String {
-    match kind {
-        StateHistoryKind::Plan => value
-            .get("layers")
-            .and_then(Value::as_array)
-            .map(|layers| format!("{} planned layer(s)", layers.len()))
-            .unwrap_or_else(|| "plan report".to_owned()),
-        StateHistoryKind::Apply => value
-            .get("layers")
-            .and_then(Value::as_array)
-            .map(|layers| format!("{} apply layer(s)", layers.len()))
-            .unwrap_or_else(|| "apply report".to_owned()),
-        StateHistoryKind::Capture => value
-            .get("produced_layers")
-            .and_then(Value::as_array)
-            .map(|layers| format!("{} produced layer(s)", layers.len()))
-            .unwrap_or_else(|| "capture report".to_owned()),
-    }
-}
-
 fn parse_state_history_kind(kind: &str) -> Result<StateHistoryKind, RunnerError> {
     StateHistoryKind::parse(kind).ok_or_else(|| {
         RunnerError::task_invocation(format!(
             "`state history --kind` must be `plan`, `apply`, or `capture`, got `{kind}`"
         ))
     })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum StateHistoryKind {
-    Plan,
-    Apply,
-    Capture,
-}
-
-impl StateHistoryKind {
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "plan" => Some(Self::Plan),
-            "apply" => Some(Self::Apply),
-            "capture" => Some(Self::Capture),
-            _ => None,
-        }
-    }
-
-    fn from_schema(schema: &str) -> Option<Self> {
-        match schema {
-            effigy_state::STATE_STACK_LINEAGE_SCHEMA => Some(Self::Plan),
-            "effigy.state-stack.apply.v1" => Some(Self::Apply),
-            "effigy.state-stack.capture.v1" => Some(Self::Capture),
-            _ => None,
-        }
-    }
-
-    fn from_path(path: &Path) -> Option<Self> {
-        let file_name = path.file_name()?.to_str()?;
-        if file_name.contains("plan") {
-            Some(Self::Plan)
-        } else if file_name.contains("apply") {
-            Some(Self::Apply)
-        } else if file_name.contains("capture") {
-            Some(Self::Capture)
-        } else {
-            None
-        }
-    }
-}
-
-impl std::fmt::Display for StateHistoryKind {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = match self {
-            Self::Plan => "plan",
-            Self::Apply => "apply",
-            Self::Capture => "capture",
-        };
-        formatter.write_str(value)
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct StateStackHistoryItem {
-    kind: StateHistoryKind,
-    schema: String,
-    path: String,
-    created_at: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    lineage_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    parent_lineage_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    ok: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    executed: Option<bool>,
-    summary: String,
 }
 
 #[derive(Debug)]
@@ -1325,7 +947,11 @@ impl StateStackCaptureReport {
             .clone()
             .ok_or_else(|| RunnerError::task_invocation("missing state capture key".to_owned()))?;
         let capture_role = parse_capture_role(role)?;
-        let capture_mode = StateCaptureMode::from_role(capture_role);
+        let capture_mode = StateCaptureMode::from_role(capture_role).ok_or_else(|| {
+            RunnerError::task_invocation(format!(
+                "`state capture` role must be `uat-capture` or `full-capture`, got `{role}`"
+            ))
+        })?;
         if request.yes && request.source.is_none() {
             return Err(RunnerError::task_invocation(
                 "`state capture --yes` requires `--source <PATH>` for an already-produced capture payload".to_owned(),
@@ -1341,24 +967,15 @@ impl StateStackCaptureReport {
                 "`state capture --push` requires `--yes` so publish is explicit".to_owned(),
             ));
         }
-        let produced_layer = StateStackCaptureProducedLayer {
-            key: key.clone(),
-            role: capture_role,
-            apply_mode: StateLayerApplyMode::Artifact,
-            environment_policy: capture_mode.environment_policy(),
-            artifact_kind: Some(effigy_artifacts::ArtifactKind::AppSpecific),
-            source_ref: request.destination_ref.clone(),
-            snapshot_identity: Some(format!(
-                "{}@planned",
-                capture_mode.snapshot_identity_prefix()
-            )),
-            depends_on: lineage
-                .layers
-                .last()
-                .map(|layer| vec![layer.key.clone()])
-                .unwrap_or_default(),
-            hook: request.hook.clone(),
-        };
+        let produced_layer = capture_produced_layer(
+            lineage,
+            capture_role,
+            &StateCapturePlanRequest::new(source_env.clone(), key.clone())
+                .source(request.source.clone())
+                .destination_ref(request.destination_ref.clone())
+                .hook(request.hook.clone()),
+        )
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         let mut warnings = lineage.warnings.clone();
         if request.destination_ref.is_none() {
             warnings.push(
@@ -1607,6 +1224,117 @@ fn write_state_capture_task_context(
     Ok(path_display(&absolute_path, repo_root))
 }
 
+fn state_apply_hook_env(
+    stack_name: &str,
+    environment: effigy_state::StateEnvironment,
+    lineage_id: &str,
+    layer: &StateStackApplyLayerReport,
+    context_path: &str,
+) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    env.insert(
+        "EFFIGY_STATE_APPLY_SCHEMA".to_owned(),
+        "effigy.state-stack.apply.v1".to_owned(),
+    );
+    env.insert("EFFIGY_STATE_APPLY_STACK".to_owned(), stack_name.to_owned());
+    env.insert(
+        "EFFIGY_STATE_APPLY_ENVIRONMENT".to_owned(),
+        serde_plain_state_environment(environment),
+    );
+    env.insert(
+        "EFFIGY_STATE_APPLY_LINEAGE_ID".to_owned(),
+        lineage_id.to_owned(),
+    );
+    env.insert("EFFIGY_STATE_APPLY_LAYER_KEY".to_owned(), layer.key.clone());
+    env.insert(
+        "EFFIGY_STATE_APPLY_LAYER_ROLE".to_owned(),
+        serde_plain_role(layer.role),
+    );
+    env.insert(
+        "EFFIGY_STATE_APPLY_LAYER_MODE".to_owned(),
+        serde_plain_apply_mode(layer.apply_mode),
+    );
+    env.insert(
+        "EFFIGY_STATE_APPLY_LAYER_SOURCE".to_owned(),
+        layer.source.clone(),
+    );
+    if let Some(target) = layer.target.as_ref() {
+        env.insert("EFFIGY_STATE_APPLY_LAYER_TARGET".to_owned(), target.clone());
+    }
+    if let Some(hook) = layer.hook.as_ref() {
+        env.insert("EFFIGY_STATE_APPLY_HOOK".to_owned(), hook.clone());
+    }
+    if let Some(artifact_report) = layer.artifact_report.as_ref() {
+        if let Some(digest) = artifact_report
+            .pointer("/destination/digest")
+            .and_then(Value::as_str)
+        {
+            env.insert("EFFIGY_STATE_APPLY_DIGEST".to_owned(), digest.to_owned());
+        }
+    }
+    env.insert(
+        "EFFIGY_STATE_APPLY_CONTEXT".to_owned(),
+        context_path.to_owned(),
+    );
+    env
+}
+
+fn write_state_apply_hook_context(
+    repo_root: &Path,
+    stack_name: &str,
+    environment: effigy_state::StateEnvironment,
+    lineage_id: &str,
+    layer: &StateStackApplyLayerReport,
+) -> Result<String, RunnerError> {
+    let relative_path = PathBuf::from(".effigy")
+        .join("state")
+        .join("apply-context")
+        .join(safe_path_component(stack_name))
+        .join(format!("{}.json", safe_path_component(&layer.key)));
+    let absolute_path = repo_root.join(&relative_path);
+    let Some(parent) = absolute_path.parent() else {
+        return Err(RunnerError::task_invocation(format!(
+            "failed to resolve parent directory for {}",
+            absolute_path.display()
+        )));
+    };
+    fs::create_dir_all(parent).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to create state apply context directory {}: {error}",
+            parent.display()
+        ))
+    })?;
+    let context = StateApplyHookContext {
+        schema: "effigy.state-stack.apply-context.v1".to_owned(),
+        schema_version: 1,
+        stack_name: stack_name.to_owned(),
+        environment: serde_plain_state_environment(environment),
+        lineage_id: lineage_id.to_owned(),
+        layer: StateApplyHookLayerContext {
+            index: layer.index,
+            key: layer.key.clone(),
+            role: serde_plain_role(layer.role),
+            apply_mode: serde_plain_apply_mode(layer.apply_mode),
+            source: layer.source.clone(),
+            target: layer.target.clone(),
+            hook: layer.hook.clone(),
+            status: layer.status.to_string(),
+            output: layer.output.clone(),
+            artifact_report: layer.artifact_report.clone(),
+            sql_report: layer.sql_report.clone(),
+        },
+    };
+    let encoded = serde_json::to_string_pretty(&context)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    fs::write(&absolute_path, format!("{encoded}\n")).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to write state apply context {}: {error}",
+            path_display(&absolute_path, repo_root)
+        ))
+    })?;
+    Ok(path_display(&absolute_path, repo_root))
+}
+
 #[derive(Debug, Serialize)]
 struct StateCaptureTaskContext {
     schema: String,
@@ -1623,11 +1351,55 @@ struct StateCaptureTaskContext {
     destination_ref: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct StateApplyHookContext {
+    schema: String,
+    schema_version: u8,
+    stack_name: String,
+    environment: String,
+    lineage_id: String,
+    layer: StateApplyHookLayerContext,
+}
+
+#[derive(Debug, Serialize)]
+struct StateApplyHookLayerContext {
+    index: usize,
+    key: String,
+    role: String,
+    apply_mode: String,
+    source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hook: Option<String>,
+    status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact_report: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sql_report: Option<Value>,
+}
+
 fn serde_plain_role(role: StateLayerRole) -> String {
     serde_json::to_value(role)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
         .unwrap_or_else(|| format!("{role:?}"))
+}
+
+fn serde_plain_apply_mode(mode: StateLayerApplyMode) -> String {
+    serde_json::to_value(mode)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{mode:?}"))
+}
+
+fn serde_plain_state_environment(environment: effigy_state::StateEnvironment) -> String {
+    serde_json::to_value(environment)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{environment:?}"))
 }
 
 fn parse_capture_role(role: &str) -> Result<StateLayerRole, RunnerError> {
@@ -1638,64 +1410,6 @@ fn parse_capture_role(role: &str) -> Result<StateLayerRole, RunnerError> {
             "`state capture` role must be `uat-capture` or `full-capture`, got `{role}`"
         ))),
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum StateCaptureMode {
-    UatOverlay,
-    FullSnapshot,
-}
-
-impl StateCaptureMode {
-    fn from_role(role: StateLayerRole) -> Self {
-        match role {
-            StateLayerRole::UatCapture => Self::UatOverlay,
-            StateLayerRole::FullCapture => Self::FullSnapshot,
-            _ => unreachable!("capture roles are validated before mode selection"),
-        }
-    }
-
-    fn environment_policy(self) -> StateLayerEnvironmentPolicy {
-        match self {
-            Self::UatOverlay => StateLayerEnvironmentPolicy::NonProduction,
-            Self::FullSnapshot => StateLayerEnvironmentPolicy::CaptureOnly,
-        }
-    }
-
-    fn snapshot_identity_prefix(self) -> &'static str {
-        match self {
-            Self::UatOverlay => "uat-authored-content",
-            Self::FullSnapshot => "full-system-capture",
-        }
-    }
-}
-
-impl std::fmt::Display for StateCaptureMode {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = match self {
-            Self::UatOverlay => "uat-overlay",
-            Self::FullSnapshot => "full-snapshot",
-        };
-        formatter.write_str(value)
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct StateStackCaptureProducedLayer {
-    key: String,
-    role: StateLayerRole,
-    apply_mode: StateLayerApplyMode,
-    environment_policy: StateLayerEnvironmentPolicy,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    artifact_kind: Option<effigy_artifacts::ArtifactKind>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    source_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    snapshot_identity: Option<String>,
-    depends_on: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    hook: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1741,6 +1455,7 @@ enum StateStackCaptureTaskStatus {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1837,6 +1552,132 @@ mod tests {
             artifact_report["destination"]["digest"],
             "sha256:pushdigest"
         );
+    }
+
+    #[test]
+    fn state_apply_executes_declared_artifact_layer_hook_with_context() {
+        let repo = temp_repo("apply-hook-success");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[tasks.apply-hook]
+run = "sh -lc 'printf \"%s\" \"$EFFIGY_STATE_APPLY_CONTEXT\" > hook-path.txt'"
+"#,
+        )
+        .expect("write effigy manifest");
+        fs::write(repo.join("payload.txt"), "payload\n").expect("write payload");
+        fs::write(
+            repo.join("state.toml"),
+            r#"
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[layers]]
+key = "legacy-media"
+role = "media-library"
+source = "./payload.txt"
+apply_mode = "artifact"
+environment_policy = "all"
+artifact_kind = "object-store"
+target = "media"
+hook = "apply-hook"
+"#,
+        )
+        .expect("write state manifest");
+
+        let rendered = run_state_apply(
+            Some(Path::new("state.toml")),
+            None,
+            &repo,
+            &repo,
+            true,
+            true,
+        )
+        .expect("run state apply");
+        let report: Value = serde_json::from_str(&rendered).expect("parse apply report");
+        let layer = &report["layers"][0];
+
+        assert_eq!(report["ok"], true);
+        assert_eq!(layer["status"], "staged");
+        assert_eq!(layer["hook"], "apply-hook");
+        assert_eq!(layer["hook_status"], "executed");
+        let hook_context_path = fs::read_to_string(repo.join("hook-path.txt"))
+            .expect("read hook path marker")
+            .trim()
+            .to_owned();
+        assert_eq!(layer["hook_context_path"], hook_context_path);
+
+        let context_text =
+            fs::read_to_string(repo.join(&hook_context_path)).expect("read hook context file");
+        let context: Value = serde_json::from_str(&context_text).expect("parse hook context");
+        assert_eq!(context["schema"], "effigy.state-stack.apply-context.v1");
+        assert_eq!(context["stack_name"], "acowtancy-uat");
+        assert_eq!(context["environment"], "uat");
+        assert_eq!(context["layer"]["key"], "legacy-media");
+        assert_eq!(context["layer"]["apply_mode"], "artifact");
+        assert_eq!(context["layer"]["role"], "media-library");
+        assert!(
+            context["layer"]["artifact_report"]["metadata"]["primary_files"][0]
+                .as_str()
+                .expect("primary file")
+                .ends_with("/payload.txt")
+        );
+    }
+
+    #[test]
+    fn state_apply_reports_failed_hook_after_successful_artifact_stage() {
+        let repo = temp_repo("apply-hook-failure");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[tasks.apply-hook]
+run = "sh -lc 'exit 12'"
+"#,
+        )
+        .expect("write effigy manifest");
+        fs::write(repo.join("payload.txt"), "payload\n").expect("write payload");
+        fs::write(
+            repo.join("state.toml"),
+            r#"
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[layers]]
+key = "legacy-media"
+role = "media-library"
+source = "./payload.txt"
+apply_mode = "artifact"
+environment_policy = "all"
+artifact_kind = "object-store"
+target = "media"
+hook = "apply-hook"
+"#,
+        )
+        .expect("write state manifest");
+
+        let rendered = run_state_apply(
+            Some(Path::new("state.toml")),
+            None,
+            &repo,
+            &repo,
+            true,
+            true,
+        )
+        .expect("run state apply");
+        let report: Value = serde_json::from_str(&rendered).expect("parse apply report");
+        let layer = &report["layers"][0];
+
+        assert_eq!(report["ok"], false);
+        assert_eq!(layer["status"], "staged");
+        assert_eq!(layer["hook"], "apply-hook");
+        assert_eq!(layer["hook_status"], "failed");
+        assert!(layer["hook_context_path"].as_str().is_some());
+        assert!(layer["hook_error"]
+            .as_str()
+            .expect("hook error")
+            .contains("failed"));
     }
 
     struct FakeOciArtifactAdapter;

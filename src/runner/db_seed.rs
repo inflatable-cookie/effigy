@@ -29,6 +29,7 @@ use crate::runner::container_command::run_container_exec_capture_with_options;
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
 };
+use crate::runner::db_services::collect_manifest_database_services;
 use crate::runner::execute::api::{
     resolve_execution_binding_resolution, run_manifest_task_with_surface_and_env,
 };
@@ -957,7 +958,7 @@ fn resolve_builtin_seed_service(
                 target.name.as_str()
             ))
         })?;
-        if manifest_database_service_kind(&service.catalog).is_none() {
+        if DatabaseServiceKind::from_catalog(&service.catalog).is_none() {
             return Err(RunnerError::task_invocation(format!(
                 "database target `{}` uses unsupported service catalog `{}`",
                 target.name.as_str(),
@@ -979,61 +980,7 @@ fn resolve_builtin_seed_service(
 fn collect_builtin_seed_services(
     services: &BTreeMap<String, ManifestContainerServiceConfig>,
 ) -> Vec<DatabaseService> {
-    services
-        .iter()
-        .filter_map(|(service_name, service)| {
-            let kind = manifest_database_service_kind(&service.catalog)?;
-            Some(
-                DatabaseService::new(service_name.clone(), kind)
-                    .password(service_password(service))
-                    .declared_databases(service_declared_databases(service))
-                    .primary_database_opt(service_primary_database(service)),
-            )
-        })
-        .collect()
-}
-
-fn manifest_database_service_kind(catalog: &str) -> Option<DatabaseServiceKind> {
-    match catalog {
-        "postgres" => Some(DatabaseServiceKind::Postgres),
-        "mariadb" => Some(DatabaseServiceKind::MariaDb),
-        _ => None,
-    }
-}
-
-fn service_password(service: &ManifestContainerServiceConfig) -> String {
-    service
-        .params
-        .get("password")
-        .and_then(toml::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("secret")
-        .to_owned()
-}
-
-fn service_declared_databases(service: &ManifestContainerServiceConfig) -> Vec<String> {
-    service
-        .params
-        .get("databases")
-        .and_then(toml::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(toml::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
-fn service_primary_database(service: &ManifestContainerServiceConfig) -> Option<String> {
-    service
-        .params
-        .get("database")
-        .and_then(toml::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+    collect_manifest_database_services(services)
 }
 
 fn db_seed_service_selection_error(

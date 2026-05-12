@@ -13,6 +13,10 @@ During v0.x, MINOR bumps may include breaking changes.
   locally linked binary path.
 
 ### Changed
+- **State apply hooks** now run during `effigy state apply --yes` after a
+  layer is successfully executed, staged, or imported. Apply reports now carry
+  hook status/output/error plus a structured
+  `EFFIGY_STATE_APPLY_CONTEXT` handoff file for repo-owned finalize work.
 - **Repo-local JSON contract artifact capture** now runs through a native Rhai
   task helper instead of bash-plus-Python glue, and the old
   `scripts/lib/check-json-contracts/*` shell library is gone.
@@ -22,6 +26,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Linux GLIBC floor validation** now runs through the native
   `distribution check-glibc-floor` command in release workflow/test surfaces,
   and the old `scripts/check-linux-glibc-floor.sh` wrapper is gone.
+
+### Fixed
+- **Database seed/dump service resolution** now uses one shared resolver and
+  treats `catalog = "mysql"` consistently with `mariadb` as a MariaDB/MySQL
+  service.
 
 ## [0.6.1] - 2026-05-12
 

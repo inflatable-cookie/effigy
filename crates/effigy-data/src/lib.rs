@@ -258,6 +258,86 @@ impl DatabaseService {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatabaseServiceManifestEntry {
+    pub name: String,
+    pub catalog: String,
+    pub password: Option<String>,
+    pub declared_databases: Vec<String>,
+    pub primary_database: Option<String>,
+}
+
+impl DatabaseServiceManifestEntry {
+    pub fn new(name: impl Into<String>, catalog: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            catalog: catalog.into(),
+            password: None,
+            declared_databases: Vec::new(),
+            primary_database: None,
+        }
+    }
+
+    pub fn password(mut self, password: Option<String>) -> Self {
+        self.password = password;
+        self
+    }
+
+    pub fn declared_databases(mut self, databases: Vec<String>) -> Self {
+        self.declared_databases = databases;
+        self
+    }
+
+    pub fn primary_database(mut self, database: Option<String>) -> Self {
+        self.primary_database = database;
+        self
+    }
+}
+
+pub fn collect_database_services_from_manifest_entries(
+    entries: &[DatabaseServiceManifestEntry],
+) -> Vec<DatabaseService> {
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let name = entry.name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let kind = DatabaseServiceKind::from_catalog(entry.catalog.trim())?;
+            Some(
+                DatabaseService::new(name.to_owned(), kind)
+                    .password(trimmed_or_default(entry.password.as_deref(), "secret"))
+                    .declared_databases(trimmed_non_empty_strings(&entry.declared_databases))
+                    .primary_database_opt(trimmed_optional_string(
+                        entry.primary_database.as_deref(),
+                    )),
+            )
+        })
+        .collect()
+}
+
+fn trimmed_or_default(value: Option<&str>, default: &str) -> String {
+    trimmed_optional_string(value).unwrap_or_else(|| default.to_owned())
+}
+
+fn trimmed_optional_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn trimmed_non_empty_strings(values: &[String]) -> Vec<String> {
+    values
+        .iter()
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 pub fn select_database_service<'a>(
     services: &'a [DatabaseService],
     requested_service: Option<&str>,

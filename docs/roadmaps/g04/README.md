@@ -44,6 +44,13 @@ Current milestones:
 - [`030-render-deployment-adapter.md`](./030-render-deployment-adapter.md) (complete; added Render support through the same provider-neutral deployment transaction model)
 - [`031-deployment-status-history-and-redeploy.md`](./031-deployment-status-history-and-redeploy.md) (complete; added deployment status, history, and evidence-backed redeploy)
 - [`032-acowtancy-deployment-proof-and-closeout.md`](./032-acowtancy-deployment-proof-and-closeout.md) (complete; documented the Acowtancy UAT/production deployment loop and closed the suite)
+- [`033-post-release-reference-grade-cleanup-suite.md`](./033-post-release-reference-grade-cleanup-suite.md) (complete; opened the post-v0.6.x audit cleanup suite)
+- [`034-shared-database-target-resolution.md`](./034-shared-database-target-resolution.md) (complete; converged seed/dump database target selection behind a shared resolver)
+- [`035-state-domain-extraction.md`](./035-state-domain-extraction.md) (complete; moved state report paths, history, apply planning, and capture planning into `effigy-state`)
+- [`036-manifest-section-decomposition.md`](./036-manifest-section-decomposition.md) (complete; split bundle source/cache and manifest config sections into bounded owners)
+- [`037-deploy-domain-boundary-hardening.md`](./037-deploy-domain-boundary-hardening.md) (complete; separated deploy transaction reports, provider context, and text rendering)
+- [`038-docs-policy-cli-help-and-test-fixture-deduplication.md`](./038-docs-policy-cli-help-and-test-fixture-deduplication.md) (planned; removes high-confidence duplication in docs, help, and fixtures)
+- [`039-artifact-and-crate-boundary-rejustification.md`](./039-artifact-and-crate-boundary-rejustification.md) (planned; reviews artifact internals and crate ownership after v0.6.x)
 
 Architecture anchors:
 
@@ -73,7 +80,8 @@ Rules:
 
 ## Next Task
 
-Hand off to release readiness. Release execution remains human-owned.
+Execute `038` for docs-policy, CLI help, and fixture deduplication.
+Release execution remains human-owned.
 
 
 Batch cards live in `g04/batch-cards/` when strict posture uses them.

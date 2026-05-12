@@ -1778,10 +1778,12 @@ Executed task-only apply:
 
 `state apply --yes` executes `apply_mode = "task"` layers, stages
 `apply_mode = "artifact"` layers, and imports `apply_mode = "sql"` layers
-through the existing database seed/import plumbing. Apply reports update
-`latest-apply.json` and timestamped history. Capture, manual, checkpoint, and
-app-specific payload semantics remain reported as `unsupported` by the apply
-adapter.
+through the existing database seed/import plumbing. When a successful layer
+declares `hook`, Effigy then runs that repo-owned task with a structured
+`EFFIGY_STATE_APPLY_CONTEXT` handoff plus narrow layer env vars. Apply reports
+update `latest-apply.json` and timestamped history. Capture, manual,
+checkpoint, and app-specific payload semantics remain reported as
+`unsupported` by the apply adapter.
 
 ### 28) State Stack Capture (`effigy.state-stack.capture.v1`)
 
