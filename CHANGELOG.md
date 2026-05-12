@@ -166,6 +166,10 @@ During v0.x, MINOR bumps may include breaking changes.
   workspace containers that mount the project root.
 
 ### Fixed
+- **Submodule install verification** now uses absolute `ssh://git@github.com/...`
+  URLs in `.gitmodules`, so `cargo install` from Effigy git tags can
+  initialize external bundle/provider/setup submodules during release
+  verification instead of failing on scp-style `git@github.com:...` URLs.
 - **Global `--json` on `config completion`** now preserves the nested
   `completion` subcommand position, so commands like
   `effigy --json config completion bash --export` and

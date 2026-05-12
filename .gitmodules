@@ -1,18 +1,18 @@
 [submodule "external/setup-effigy"]
 	path = external/setup-effigy
-	url = git@github.com:inflatable-cookie/setup-effigy.git
+	url = ssh://git@github.com/inflatable-cookie/setup-effigy.git
 [submodule "external/providers/railway"]
 	path = external/providers/railway
-	url = git@github.com:inflatable-cookie/effigy-provider-railway.git
+	url = ssh://git@github.com/inflatable-cookie/effigy-provider-railway.git
 [submodule "external/providers/render"]
 	path = external/providers/render
-	url = git@github.com:inflatable-cookie/effigy-provider-render.git
+	url = ssh://git@github.com/inflatable-cookie/effigy-provider-render.git
 [submodule "external/bundles/underlay"]
 	path = external/bundles/underlay
-	url = git@github.com:inflatable-cookie/underlay-effigy-bundle.git
+	url = ssh://git@github.com/inflatable-cookie/underlay-effigy-bundle.git
 [submodule "external/bundles/decodelabs"]
 	path = external/bundles/decodelabs
-	url = git@github.com:decodelabs/decodelabs-effigy-bundle.git
+	url = ssh://git@github.com/decodelabs/decodelabs-effigy-bundle.git
 [submodule "external/bundles/decodelabs-library"]
 	path = external/bundles/decodelabs-library
-	url = git@github.com:decodelabs/decodelabs-library-effigy-bundle.git
+	url = ssh://git@github.com/decodelabs/decodelabs-library-effigy-bundle.git
