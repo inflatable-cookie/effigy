@@ -19,6 +19,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Runtime/container drift guarding** now runs through a native Rhai script
   with in-process file search and regex filtering instead of the old shell
   `rg`/`awk` guard wrapper.
+- **Linux GLIBC floor validation** now runs through the native
+  `distribution check-glibc-floor` command in release workflow/test surfaces,
+  and the old `scripts/check-linux-glibc-floor.sh` wrapper is gone.
 
 ## [0.6.1] - 2026-05-12
 

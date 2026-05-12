@@ -181,7 +181,7 @@ pub(super) fn distribution_lines(profile: ConfigDocProfile) -> Vec<&'static str>
         "",
         "[distribution.metadata]",
         "required-docs = [\"docs/guides/installation.md\", \"docs/guides/release.md\"]",
-        "required-files = [\".github/workflows/release-binaries.yml\", \"scripts/check-linux-glibc-floor.sh\"]",
+        "required-files = [\".github/workflows/release-binaries.yml\"]",
         "",
         "[distribution.closeout]",
         "owner = \"release\"",

@@ -3184,7 +3184,7 @@ fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
     fs::write(root.join("docs/logs/README.md"), "# Logs\n").expect("write docs logs readme");
     fs::write(
         root.join(".github/workflows/release-binaries.yml"),
-        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./scripts/check-linux-glibc-floor.sh ./effigy-${{ matrix.target }} 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./effigy-${{ matrix.target }} distribution check-glibc-floor --binary ./effigy-${{ matrix.target }} --max-glibc 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
     )
     .expect("write workflow");
 
@@ -3197,12 +3197,6 @@ fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
     ] {
         fs::write(root.join("docs/guides").join(guide), "# Guide\n").expect("write guide");
     }
-
-    fs::write(
-        root.join("scripts/check-linux-glibc-floor.sh"),
-        "#!/bin/sh\nexit 0\n",
-    )
-    .expect("write glibc script");
 
     let summary_path = root.join("artifacts/distribution-preflight-v0.2.5.env");
     let output = run_json_cli_command(
@@ -3271,7 +3265,7 @@ smoke-task = "proof:smoke"
 
 [distribution.metadata]
 required-docs = ["docs/guides/release.md"]
-required-files = [".github/workflows/release-binaries.yml", "scripts/check-linux-glibc-floor.sh"]
+required-files = [".github/workflows/release-binaries.yml"]
 
 [tasks."docs:verify"]
 run = "printf docs-ok"
@@ -3283,16 +3277,10 @@ run = "printf smoke-ok"
     .expect("write manifest");
     fs::write(
         root.join(".github/workflows/release-binaries.yml"),
-        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./scripts/check-linux-glibc-floor.sh ./effigy-${{ matrix.target }} 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./effigy-${{ matrix.target }} distribution check-glibc-floor --binary ./effigy-${{ matrix.target }} --max-glibc 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
     )
     .expect("write workflow");
     fs::write(root.join("docs/guides/release.md"), "# Guide\n").expect("write guide");
-    fs::write(
-        root.join("scripts/check-linux-glibc-floor.sh"),
-        "#!/bin/sh\nexit 0\n",
-    )
-    .expect("write glibc script");
-
     let output = run_json_cli_command(&root, &["distribution", "preflight", "--tag", "v0.2.5"]);
     let parsed = parse_stdout_json(&output);
 
@@ -3322,22 +3310,16 @@ name = "example-tool"
 
 [distribution.metadata]
 required-docs = ["docs/guides/release.md"]
-required-files = [".github/workflows/release-binaries.yml", "scripts/check-linux-glibc-floor.sh"]
+required-files = [".github/workflows/release-binaries.yml"]
 "#,
     )
     .expect("write manifest");
     fs::write(
         root.join(".github/workflows/release-binaries.yml"),
-        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./scripts/check-linux-glibc-floor.sh ./effigy-${{ matrix.target }} 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./effigy-${{ matrix.target }} distribution check-glibc-floor --binary ./effigy-${{ matrix.target }} --max-glibc 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
     )
     .expect("write workflow");
     fs::write(root.join("docs/guides/release.md"), "# Guide\n").expect("write guide");
-    fs::write(
-        root.join("scripts/check-linux-glibc-floor.sh"),
-        "#!/bin/sh\nexit 0\n",
-    )
-    .expect("write glibc script");
-
     let output = run_json_cli_command(
         &root,
         &["distribution", "validate-metadata", "--tag", "v0.2.5"],
@@ -3352,10 +3334,7 @@ required-files = [".github/workflows/release-binaries.yml", "scripts/check-linux
     );
     assert_eq!(
         parsed["result"]["required_files"],
-        serde_json::json!([
-            ".github/workflows/release-binaries.yml",
-            "scripts/check-linux-glibc-floor.sh"
-        ])
+        serde_json::json!([".github/workflows/release-binaries.yml"])
     );
 }
 

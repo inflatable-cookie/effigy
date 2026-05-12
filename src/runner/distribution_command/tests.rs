@@ -124,7 +124,7 @@ fn validate_metadata_skips_effigy_defaults_when_manifest_is_adopted() {
 }
 
 #[test]
-fn current_repo_distribution_metadata_requires_only_workflow_bound_glibc_script() {
+fn current_repo_distribution_metadata_uses_workflow_bound_glibc_guard() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let current_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
     run_validate_metadata(
@@ -141,8 +141,8 @@ fn current_repo_distribution_metadata_requires_only_workflow_bound_glibc_script(
         "first-publish wrapper should be retired"
     );
     assert!(
-        root.join("scripts/check-linux-glibc-floor.sh").exists(),
-        "glibc floor guard should remain until workflow cutover"
+        !root.join("scripts/check-linux-glibc-floor.sh").exists(),
+        "glibc floor wrapper should be retired after workflow cutover"
     );
 }
 

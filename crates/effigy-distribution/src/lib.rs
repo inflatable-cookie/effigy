@@ -33,10 +33,7 @@ pub const DEFAULT_REQUIRED_DOCS: [&str; 5] = [
     "docs/guides/042-homebrew-tap-and-release-automation.md",
     "docs/guides/044-distribution-first-publish-execution-runbook.md",
 ];
-pub const DEFAULT_REQUIRED_FILES: [&str; 2] = [
-    ".github/workflows/release-binaries.yml",
-    "scripts/check-linux-glibc-floor.sh",
-];
+pub const DEFAULT_REQUIRED_FILES: [&str; 1] = [".github/workflows/release-binaries.yml"];
 
 #[derive(Debug, Clone)]
 pub struct EffectiveDistributionPolicy {
@@ -1204,7 +1201,7 @@ pub fn validate_metadata_command(
                 "aarch64 Linux release baseline pinning",
             ),
             (
-                "./scripts/check-linux-glibc-floor.sh ./effigy-${{ matrix.target }} 2.35",
+                "./effigy-${{ matrix.target }} distribution check-glibc-floor --binary ./effigy-${{ matrix.target }} --max-glibc 2.35",
                 "Linux glibc compatibility guard",
             ),
         ] {

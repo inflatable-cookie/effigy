@@ -66,7 +66,7 @@ Design notes:
 - [`2026-03-12-minimal-docs-policy-config-design.md`](../logs/2026-03/12-094500-minimal-docs-policy-config-design.md)
 
 Intentional remaining shell scripts:
-- `./scripts/check-linux-glibc-floor.sh`
+- none
 
 Boundary note:
 - `cargo qa-release` now maps straight to `effigy release gates`
@@ -170,7 +170,6 @@ jobs:
 Notes:
 - `effigy contracts check-json` is the primary validator; event-aware PR vs mainline behavior should live in workflow YAML rather than a shell wrapper.
 - `effigy distribution preflight`, `check-glibc-floor`, `first-publish`, `validate-metadata`, `validate-artifacts`, and `generate-closeout` are the primary distribution validation/reporting surfaces.
-- `scripts/check-linux-glibc-floor.sh` remains only because the release workflow still invokes that path directly; once workflow edits are approved, that guard should cut over to `effigy distribution check-glibc-floor`.
 - `set -o pipefail` ensures failures inside pipe chains fail the step.
 
 ## 4) Recipe: Nightly Full Contract Sweep

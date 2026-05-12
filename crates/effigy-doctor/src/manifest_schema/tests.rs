@@ -106,7 +106,7 @@ smoke-task = "dist:preflight:smoke"
 
 [distribution.metadata]
 required-docs = ["docs/guides/010-path-installation-and-release.md"]
-required-files = ["scripts/check-linux-glibc-floor.sh"]
+required-files = [".github/workflows/release-binaries.yml"]
 
 [distribution.closeout]
 owner = "release"

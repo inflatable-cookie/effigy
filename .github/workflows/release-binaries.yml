@@ -96,7 +96,7 @@ jobs:
 
       - name: Check glibc compatibility floor
         if: contains(matrix.target, 'unknown-linux-gnu')
-        run: ./scripts/check-linux-glibc-floor.sh ./effigy-${{ matrix.target }} 2.35
+        run: ./effigy-${{ matrix.target }} distribution check-glibc-floor --binary ./effigy-${{ matrix.target }} --max-glibc 2.35
 
       - name: Smoke test
         run: ./effigy-${{ matrix.target }} smoke:release ./effigy-${{ matrix.target }}

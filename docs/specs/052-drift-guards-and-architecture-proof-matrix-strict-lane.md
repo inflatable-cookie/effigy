@@ -53,8 +53,8 @@ explainable drift guards and a focused proof matrix for critical paths.
   contract artifact capture for CI validation tasks.
 - `scripts/rhai/check-runtime-container-drift.rhai` owns the lightweight
   runtime/container drift guard.
-- `scripts/check-linux-glibc-floor.sh` remains the one release/distribution-specific
-  shell guard because the release workflow still invokes that path directly.
+- no release/distribution shell guards remain; the release workflow now uses
+  the native `distribution check-glibc-floor` command.
 
 ## Initial Guard Targets
 

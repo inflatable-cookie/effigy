@@ -69,8 +69,8 @@ with QEMU for the smoke test.
 Linux GNU compatibility policy:
 - Linux release binaries are built on `ubuntu-22.04` to keep the glibc floor
   stable at `GLIBC_2.35`
-- `scripts/check-linux-glibc-floor.sh` runs in the release build job and fails
-  the workflow if a Linux artifact starts requiring a newer glibc symbol
+- `effigy distribution check-glibc-floor` runs in the release build job and
+  fails the workflow if a Linux artifact starts requiring a newer glibc symbol
   version
 - Effigy now also has one local rehearsal path for this on developer machines:
   `cargo run --bin effigy -- release:linux:rehearse`
