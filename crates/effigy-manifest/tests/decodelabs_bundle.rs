@@ -185,20 +185,13 @@ version = "11.0"
     assert_eq!(start.to_owned_selectors(), vec!["dev".to_owned()]);
 
     let task = manifest.tasks.get("seed").expect("seed task");
-    assert_eq!(task.workspace.as_deref(), Some("app"));
-    assert_eq!(task.run_in, Some(ManifestTaskRunIn::Container));
-    assert_eq!(task.stay_in_shell, Some(true));
+    assert_eq!(task.workspace.as_deref(), None);
+    assert_eq!(task.run_in, Some(ManifestTaskRunIn::Host));
+    assert_eq!(task.stay_in_shell, None);
     assert!(matches!(
         task.run.as_ref().expect("seed run"),
-        ManifestManagedRun::Sequence(steps)
-            if matches!(
-                steps.as_slice(),
-                [ManifestManagedRunStep::Step(step)]
-                    if step
-                        .rhai
-                        .as_deref()
-                        .is_some_and(|path| path.ends_with("/scripts/seed-latest-db-dump.rhai"))
-            )
+        ManifestManagedRun::Command(command)
+            if command == "effigy container data seed"
     ));
 
     let bootstrap_seed_task = manifest

@@ -111,10 +111,8 @@ start = "dev"
 [tasks.dev]
 workspace = "{{ inputs.default_workspace }}"
 [tasks.seed]
-workspace = "{{ inputs.default_workspace }}"
-stay_in_shell = true
-run_in = "container"
-run = [{ rhai = "{{ bundle.root }}/scripts/seed-latest-db-dump.rhai" }]
+run_in = "host"
+run = "effigy container data seed"
 
 [tasks."bootstrap:db-seed"]
 workspace = "{{ inputs.default_workspace }}"
