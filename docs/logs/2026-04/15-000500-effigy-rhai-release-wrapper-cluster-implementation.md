@@ -18,9 +18,9 @@ stubs for CI/docs compatibility.
   - `--task-name`
   - passthrough script args after `--`
 - moved `scripts/check-release-gates.sh` logic into:
-  - `scripts/rhai/check-release-gates.rhai`
+  - `scripts/check-release-gates.rhai`
 - moved `scripts/check-release-install-from-tag.sh` logic into:
-  - `scripts/rhai/check-release-install-from-tag.rhai`
+  - `scripts/check-release-install-from-tag.rhai`
 - kept the `.sh` scripts as executable compatibility launchers that call
   `effigy __rhai-step`
 - updated wrapper parity tests to prove the Rhai-backed wrappers still delegate

@@ -18,8 +18,8 @@ cross-repo Rhai pilot starts.
   - repo-local automation glue
   - not strongly dependent on shell semantics
   - large enough to test the surface beyond one trivial helper
-- migrate those tasks to `rhai = "scripts/rhai/..."` file-backed scripts
-- keep the scripts in a coherent repo-local Rhai area under `scripts/rhai/`
+- migrate those tasks to `rhai = "scripts/..."` file-backed scripts
+- keep the scripts in a coherent repo-local Rhai area under `scripts/`
 - tighten docs/examples if the dogfooding batch exposes missing guidance
 - record the first real host-API gaps discovered by the dogfooding pass
 

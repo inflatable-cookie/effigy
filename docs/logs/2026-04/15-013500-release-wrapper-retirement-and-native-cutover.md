@@ -15,8 +15,8 @@ preserving legacy `.sh` entrypoints for migration safety.
   - `scripts/check-release-install-from-tag.sh`
   - `scripts/prepare-release.sh`
 - removed now-unused Rhai wrapper shims:
-  - `scripts/rhai/check-release-gates.rhai`
-  - `scripts/rhai/check-release-install-from-tag.rhai`
+  - `scripts/check-release-gates.rhai`
+  - `scripts/check-release-install-from-tag.rhai`
 - switched live repo config and docs to native paths:
   - `effigy link:local`
   - `smoke:release`

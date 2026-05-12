@@ -10,9 +10,9 @@ gap instead of hiding it behind a weaker rewrite.
 
 ## Shipped
 
-- Migrated `smoke:release` onto `scripts/rhai/check-release-smoke.rhai`
+- Migrated `smoke:release` onto `scripts/check-release-smoke.rhai`
 - Migrated the `browser-proof-report` demo onto
-  `scripts/rhai/write-browser-proof-report.rhai`
+  `scripts/write-browser-proof-report.rhai`
 - Added Rhai host helpers:
   - `now_utc()`
   - `make_temp_dir(prefix)`

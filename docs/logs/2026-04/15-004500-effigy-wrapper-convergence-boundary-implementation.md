@@ -9,9 +9,9 @@ launcher pattern already used for release wrappers.
 ## Shipped
 
 - converted `scripts/install-local-bin-links.sh` into a minimal launcher for
-  `scripts/rhai/install-local-bin-links.rhai`
+  `scripts/install-local-bin-links.rhai`
 - converted `scripts/check-release-smoke.sh` into a minimal launcher for
-  `scripts/rhai/check-release-smoke.rhai`
+  `scripts/check-release-smoke.rhai`
 - updated release/Rhai docs so these two scripts are no longer described as
   permanent shell boundaries
 - left the genuine shell/platform boundaries explicit:

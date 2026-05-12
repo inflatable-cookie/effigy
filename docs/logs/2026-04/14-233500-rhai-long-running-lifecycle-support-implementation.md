@@ -20,7 +20,7 @@ finish on macOS without depending on the PTY wrapper path.
   - `sleep_ms(milliseconds)`
   - `append_file(path, contents)`
 - added signal-aware stop tracking for Rhai scripts
-- migrated `lifecycle-window` to `scripts/rhai/run-lifecycle-window.rhai`
+- migrated `lifecycle-window` to `scripts/run-lifecycle-window.rhai`
 - removed the old shell-backed `scripts/demo/run-lifecycle-window.sh`
 - changed interactive Rhai-backed runs to prefer attached-stream transport so
   stop-aware cleanup can complete cleanly
