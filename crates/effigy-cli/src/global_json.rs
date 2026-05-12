@@ -41,7 +41,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
                     .args
                     .first()
                     .map(String::as_str)
-                    .is_some_and(|arg| matches!(arg, "migrate" | "unlock" | "cache"))
+                    .is_some_and(|arg| matches!(arg, "migrate" | "unlock" | "cache" | "completion"))
                     .then_some(1)
                     .unwrap_or(0);
                 task.args.insert(insert_at, "--json".to_owned());

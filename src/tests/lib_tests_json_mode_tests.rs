@@ -20,6 +20,33 @@ fn apply_global_json_flag_injects_task_arg_when_missing() {
 }
 
 #[test]
+fn apply_global_json_flag_preserves_config_completion_nested_subcommand_position() {
+    let cmd = Command::Task(TaskInvocation {
+        name: "config".to_owned(),
+        args: vec![
+            "completion".to_owned(),
+            "bash".to_owned(),
+            "--export".to_owned(),
+        ],
+    });
+    let applied = apply_global_json_flag(cmd, true);
+    match applied {
+        Command::Task(task) => {
+            assert_eq!(
+                task.args,
+                vec![
+                    "completion".to_owned(),
+                    "--json".to_owned(),
+                    "bash".to_owned(),
+                    "--export".to_owned(),
+                ]
+            );
+        }
+        other => panic!("expected task command, got: {other:?}"),
+    }
+}
+
+#[test]
 fn command_requests_json_checks_task_or_global_mode() {
     let version_cmd = Command::Version;
     let cmd = Command::Task(TaskInvocation {

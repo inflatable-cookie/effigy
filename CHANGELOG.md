@@ -165,6 +165,16 @@ During v0.x, MINOR bumps may include breaking changes.
   workspace containers that mount the project root.
 
 ### Fixed
+- **Global `--json` on `config completion`** now preserves the nested
+  `completion` subcommand position, so commands like
+  `effigy --json config completion bash --export` and
+  `effigy --json config completion candidates --prefix ...` route through the
+  completion built-in instead of falling back to plain `config` argument
+  validation.
+- **Nested Effigy repos without Cargo/npm workspace markers** now promote to a
+  parent `effigy.toml` root during repo resolution, so sibling catalog
+  discovery and relative task prefixes keep working inside repos that use
+  parent/child Effigy manifests without an extra package-manager workspace.
 - **Git bundle refresh visibility** now prints a short `[bundle] ...` status
   line on real TTY runs when Effigy clones, refreshes, or updates a git-backed
   bundle cache during manifest load, so operators can see when a newer bundle

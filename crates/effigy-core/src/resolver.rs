@@ -134,6 +134,11 @@ fn maybe_promote_to_parent_workspace(
     let mut evidence: Vec<String> = Vec::new();
     let mut should_promote = false;
 
+    if probe.child_exists(parent, "effigy.toml") {
+        should_promote = true;
+        evidence.push("parent effigy.toml anchors child workspace".to_owned());
+    }
+
     let parent_package = parent.join("package.json");
     if probe.exists(&parent_package) {
         let content = read_to_string(&parent_package);
@@ -265,5 +270,32 @@ mod tests {
             fs::canonicalize(temp.path()).expect("canonical temp")
         );
         assert_eq!(resolved.resolution_mode, ResolutionMode::AutoPromoted);
+    }
+
+    #[test]
+    fn nested_effigy_manifest_promotes_to_parent_effigy_root_without_other_workspace_markers() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.root]\nrun = \"printf root\"\n",
+        )
+        .expect("write root manifest");
+        let child = root.join("child");
+        fs::create_dir_all(&child).expect("mkdir child");
+        fs::write(child.join("effigy.toml"), "[catalog]\nalias = \"child\"\n")
+            .expect("write child manifest");
+
+        let resolved = resolve_target_root(child, None).expect("resolve");
+
+        assert_eq!(
+            fs::canonicalize(&resolved.resolved_root).expect("canonical resolved"),
+            fs::canonicalize(root).expect("canonical root")
+        );
+        assert_eq!(resolved.resolution_mode, ResolutionMode::AutoPromoted);
+        assert!(resolved
+            .evidence
+            .iter()
+            .any(|item| item.contains("parent effigy.toml anchors child workspace")));
     }
 }
