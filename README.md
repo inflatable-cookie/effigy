@@ -391,8 +391,8 @@ Split `effigy.toml` across focused files instead of one dumping ground:
 ```toml
 [manifest]
 include = [
-  "tasks/effigy.tasks.toml",
-  "containers/effigy.containers.toml",
+  "config/tasks.toml",
+  "config/containers.toml",
   { path = "effigy.local.toml", override = ["tasks.dev"] },
 ]
 ```

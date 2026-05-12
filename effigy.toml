@@ -3,12 +3,12 @@ alias = "effigy"
 
 [manifest]
 include = [
-  "tasks/effigy.tasks.toml",
-  "containers/effigy.containers.toml",
-  "demos/effigy.demos.toml",
+  "config/tasks.toml",
+  "config/containers.toml",
+  "config/demos.toml",
   "docs/effigy.docs.toml",
-  "quality/effigy.scan.toml",
-  "release/effigy.release.toml",
+  "config/scan.toml",
+  "config/release.toml",
 ]
 
 [bootstrap]

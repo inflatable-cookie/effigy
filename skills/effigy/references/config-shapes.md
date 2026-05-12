@@ -7,7 +7,7 @@ for the complete schema.
 Effigy splits config across:
 
 - `effigy.toml` — project-level (catalogs, systems, containers, release).
-- `tasks/effigy.tasks.toml` — task definitions (kept separate so task
+- `config/tasks.toml` — task definitions (kept separate so task
   changes don't churn the project manifest).
 
 **Tasks vs built-ins:** `[tasks]` defines ordinary selectors such as **`dev`** or

@@ -449,8 +449,8 @@ pub(super) fn discover_effigy_repo_root(start: Option<&Path>) -> Option<PathBuf>
 
 pub(super) fn looks_like_effigy_repo_root(path: &Path) -> bool {
     path.join("effigy.toml").is_file()
-        && path.join("tasks/effigy.tasks.toml").is_file()
-        && path.join("containers/effigy.containers.toml").is_file()
+        && path.join("config/tasks.toml").is_file()
+        && path.join("config/containers.toml").is_file()
 }
 
 pub(super) fn ensure_local_linux_workspace_effigy_artifact(

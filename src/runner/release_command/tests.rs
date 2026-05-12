@@ -564,10 +564,10 @@ fn current_repo_release_config_matches_self_hosting_release_surfaces() {
 
     let manifest_source =
         std::fs::read_to_string(root.join("effigy.toml")).expect("read effigy manifest");
-    assert!(manifest_source.contains("release/effigy.release.toml"));
+    assert!(manifest_source.contains("config/release.toml"));
 
-    let release_manifest = std::fs::read_to_string(root.join("release/effigy.release.toml"))
-        .expect("read release manifest");
+    let release_manifest =
+        std::fs::read_to_string(root.join("config/release.toml")).expect("read release manifest");
     assert!(release_manifest.contains("sync-files = [\"Cargo.lock\"]"));
     assert!(!root.join("scripts/check-release-gates.sh").exists());
     assert!(!root

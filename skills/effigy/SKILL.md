@@ -151,7 +151,7 @@ Details: `references/bundle-sources.md`. Full reference:
 
 ## Config shapes
 
-`effigy.toml` and `tasks/effigy.tasks.toml` host these top-level sections:
+`effigy.toml` and `config/tasks.toml` host these top-level sections:
 
 - `[tasks]` — task definitions (shell strings, ref chains, Rhai scripts)
 - `[systems.<name>]` — system-level orchestration (default workspace, etc.)

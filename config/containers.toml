@@ -1,0 +1,15 @@
+[containers."linux-release"]
+driver = "colima"
+startup = "detached"
+profile = "effigy-release"
+compose_file = "infra/release/linux/docker-compose.yml"
+project_name = "effigy-linux-release"
+primary_service = "builder"
+
+[containers."linux-release".lifecycle]
+on_task_exit = "stop"
+shutdown = "graceful"
+detach_timeout_secs = 10
+
+[containers."linux-release".host]
+mounts = ["./:/workspace"]

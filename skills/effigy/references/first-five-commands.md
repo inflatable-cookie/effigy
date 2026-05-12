@@ -59,7 +59,7 @@ For machine parsing: `effigy test --plan --json`.
 
 ## 4. `effigy config`
 
-Show resolved config — merged `effigy.toml` + `tasks/effigy.tasks.toml` +
+Show resolved config — merged `effigy.toml` + `config/tasks.toml` +
 catalog imports + defaults. This is what Effigy actually sees, after
 inheritance.
 

@@ -22,7 +22,7 @@ Repo layout:
 ```
 .
 ├── effigy.toml
-├── tasks/effigy.tasks.toml      # defines `test`, `qa:ci:fast`
+├── config/tasks.toml            # defines `test`, `qa:ci:fast`
 ├── api/
 │   └── effigy.toml               # defines `test`
 └── web/

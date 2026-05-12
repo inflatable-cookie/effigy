@@ -293,12 +293,11 @@ fn discover_effigy_repo_root_walks_up_to_repo_markers() {
             .expect("time")
             .as_nanos()
     ));
-    std::fs::create_dir_all(root.join("tasks")).expect("mkdir tasks");
-    std::fs::create_dir_all(root.join("containers")).expect("mkdir containers");
+    std::fs::create_dir_all(root.join("config")).expect("mkdir config");
     std::fs::create_dir_all(root.join("target/debug")).expect("mkdir debug");
     std::fs::write(root.join("effigy.toml"), "").expect("write manifest");
-    std::fs::write(root.join("tasks/effigy.tasks.toml"), "").expect("write tasks");
-    std::fs::write(root.join("containers/effigy.containers.toml"), "").expect("write containers");
+    std::fs::write(root.join("config/tasks.toml"), "").expect("write tasks");
+    std::fs::write(root.join("config/containers.toml"), "").expect("write containers");
 
     let discovered = discover_effigy_repo_root(Some(root.join("target/debug").as_path()))
         .expect("discover repo root");
@@ -447,12 +446,10 @@ fn workspace_artifact_source_download_bypasses_discoverable_local_repo() {
     let workspace = root.join("consumer");
     let local_effigy = root.join("effigy");
     std::fs::create_dir_all(&workspace).expect("mkdir workspace");
-    std::fs::create_dir_all(local_effigy.join("tasks")).expect("mkdir tasks");
-    std::fs::create_dir_all(local_effigy.join("containers")).expect("mkdir containers");
+    std::fs::create_dir_all(local_effigy.join("config")).expect("mkdir config");
     std::fs::write(local_effigy.join("effigy.toml"), "").expect("write manifest");
-    std::fs::write(local_effigy.join("tasks/effigy.tasks.toml"), "").expect("write tasks");
-    std::fs::write(local_effigy.join("containers/effigy.containers.toml"), "")
-        .expect("write containers");
+    std::fs::write(local_effigy.join("config/tasks.toml"), "").expect("write tasks");
+    std::fs::write(local_effigy.join("config/containers.toml"), "").expect("write containers");
     let local_artifact =
         local_effigy.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
     std::fs::create_dir_all(local_artifact.parent().expect("artifact parent"))
@@ -502,12 +499,10 @@ fn resolve_local_effigy_repo_root_ignores_cached_download_artifact_in_auto_mode(
     let workspace = root.join("underlay-reference");
     let local_effigy = root.join("effigy");
     std::fs::create_dir_all(&workspace).expect("mkdir workspace");
-    std::fs::create_dir_all(local_effigy.join("tasks")).expect("mkdir tasks");
-    std::fs::create_dir_all(local_effigy.join("containers")).expect("mkdir containers");
+    std::fs::create_dir_all(local_effigy.join("config")).expect("mkdir config");
     std::fs::write(local_effigy.join("effigy.toml"), "").expect("write manifest");
-    std::fs::write(local_effigy.join("tasks/effigy.tasks.toml"), "").expect("write tasks");
-    std::fs::write(local_effigy.join("containers/effigy.containers.toml"), "")
-        .expect("write containers");
+    std::fs::write(local_effigy.join("config/tasks.toml"), "").expect("write tasks");
+    std::fs::write(local_effigy.join("config/containers.toml"), "").expect("write containers");
     let local_artifact =
         local_effigy.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
     std::fs::create_dir_all(local_artifact.parent().expect("artifact parent"))
@@ -585,11 +580,10 @@ fn sibling_effigy_repo_root_prefers_adjacent_effigy_checkout() {
     let workspace = parent.join("underlay-reference");
     let effigy = parent.join("effigy");
     std::fs::create_dir_all(&workspace).expect("mkdir workspace");
-    std::fs::create_dir_all(effigy.join("tasks")).expect("mkdir tasks");
-    std::fs::create_dir_all(effigy.join("containers")).expect("mkdir containers");
+    std::fs::create_dir_all(effigy.join("config")).expect("mkdir config");
     std::fs::write(effigy.join("effigy.toml"), "").expect("write manifest");
-    std::fs::write(effigy.join("tasks/effigy.tasks.toml"), "").expect("write tasks");
-    std::fs::write(effigy.join("containers/effigy.containers.toml"), "").expect("write containers");
+    std::fs::write(effigy.join("config/tasks.toml"), "").expect("write tasks");
+    std::fs::write(effigy.join("config/containers.toml"), "").expect("write containers");
 
     let discovered = sibling_effigy_repo_root(&workspace).expect("discover sibling effigy");
     assert_eq!(discovered, effigy);
@@ -607,11 +601,10 @@ fn sibling_effigy_repo_root_discovers_projects_effigy_from_ancestor() {
     let workspace = root.join("legacy/sites/contactpatch");
     let effigy = root.join("projects/effigy");
     std::fs::create_dir_all(&workspace).expect("mkdir workspace");
-    std::fs::create_dir_all(effigy.join("tasks")).expect("mkdir tasks");
-    std::fs::create_dir_all(effigy.join("containers")).expect("mkdir containers");
+    std::fs::create_dir_all(effigy.join("config")).expect("mkdir config");
     std::fs::write(effigy.join("effigy.toml"), "").expect("write manifest");
-    std::fs::write(effigy.join("tasks/effigy.tasks.toml"), "").expect("write tasks");
-    std::fs::write(effigy.join("containers/effigy.containers.toml"), "").expect("write containers");
+    std::fs::write(effigy.join("config/tasks.toml"), "").expect("write tasks");
+    std::fs::write(effigy.join("config/containers.toml"), "").expect("write containers");
 
     let discovered = sibling_effigy_repo_root(&workspace).expect("discover sibling effigy");
     assert_eq!(discovered, effigy);
@@ -627,11 +620,10 @@ fn configured_effigy_repo_root_reads_host_pointer_file() {
             .as_nanos()
     ));
     let effigy = temp_home.join("projects/effigy");
-    std::fs::create_dir_all(effigy.join("tasks")).expect("mkdir tasks");
-    std::fs::create_dir_all(effigy.join("containers")).expect("mkdir containers");
+    std::fs::create_dir_all(effigy.join("config")).expect("mkdir config");
     std::fs::write(effigy.join("effigy.toml"), "").expect("write manifest");
-    std::fs::write(effigy.join("tasks/effigy.tasks.toml"), "").expect("write tasks");
-    std::fs::write(effigy.join("containers/effigy.containers.toml"), "").expect("write containers");
+    std::fs::write(effigy.join("config/tasks.toml"), "").expect("write tasks");
+    std::fs::write(effigy.join("config/containers.toml"), "").expect("write containers");
     std::fs::create_dir_all(temp_home.join(".effigy")).expect("mkdir .effigy");
     std::fs::write(
         temp_home.join(".effigy/source.toml"),
@@ -670,12 +662,10 @@ fn resolve_local_effigy_repo_root_prefers_live_sibling_checkout_over_configured_
     let configured_effigy = temp_home.join("old-effigy");
     std::fs::create_dir_all(&workspace).expect("mkdir workspace");
     for repo in [&sibling_effigy, &configured_effigy] {
-        std::fs::create_dir_all(repo.join("tasks")).expect("mkdir tasks");
-        std::fs::create_dir_all(repo.join("containers")).expect("mkdir containers");
+        std::fs::create_dir_all(repo.join("config")).expect("mkdir config");
         std::fs::write(repo.join("effigy.toml"), "").expect("write manifest");
-        std::fs::write(repo.join("tasks/effigy.tasks.toml"), "").expect("write tasks");
-        std::fs::write(repo.join("containers/effigy.containers.toml"), "")
-            .expect("write containers");
+        std::fs::write(repo.join("config/tasks.toml"), "").expect("write tasks");
+        std::fs::write(repo.join("config/containers.toml"), "").expect("write containers");
     }
     std::fs::write(
         temp_home.join(".effigy/source.toml"),

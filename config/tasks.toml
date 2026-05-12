@@ -1,0 +1,102 @@
+# Keep built-in `test` canonical so `effigy test --plan` remains available.
+# Aggregator tasks below call the built-in through task refs.
+[systems.release]
+default_workspace = "linux"
+
+[systems.release.workspaces.linux]
+container = "linux-release"
+
+[tasks]
+"fmt:check" = "cargo fmt --all -- --check"
+"build:release" = "cargo build --release --bin effigy"
+"install:local" = [{ rhai = "scripts/rhai/build-local-bin.rhai" }]
+"install:local:release" = "cargo install --path . --root ./.local-install --force"
+"link:local" = [{ rhai = "scripts/rhai/install-local-bin-links.rhai" }]
+"bootstrap:local" = [{ task = "install:local" }, { task = "link:local" }]
+"dist:metadata" = "cargo run --bin effigy -- distribution validate-metadata"
+"release:linux:env" = { system = "release", workspace = "linux" }
+"release:linux:rehearse" = [{ rhai = "scripts/rhai/rehearse-linux-release-container.rhai" }]
+"qa:docs:links" = "cargo run --bin effigy -- docs check links"
+"qa:docs:examples" = "cargo run --bin effigy -- docs check json-examples"
+"qa:docs:index" = "cargo run --bin effigy -- docs check index"
+"qa:docs:agent-defaults" = "cargo run --bin effigy -- docs check forbidden AGENTS.md .github/workflows/json-contracts.yml docs/contracts/json-selection-contract.json --forbid '--repo .'"
+"qa:architecture:runtime-container-drift" = "bash scripts/check-runtime-container-drift.sh"
+"qa:architecture" = [{ task = "qa:architecture:runtime-container-drift" }]
+"qa:docs:vision:roadmaps" = "cargo run --bin effigy -- docs check headings docs/roadmaps/g01/001-effigy-foundation.md docs/roadmaps/g01/002-deferral-fallback-system.md docs/roadmaps/g01/003-coloured-output-and-widgets.md docs/roadmaps/g01/004-dev-process-manager-tui.md docs/roadmaps/g01/005-unified-testing-orchestration.md docs/roadmaps/g01/006-tui-terminal-emulation.md docs/roadmaps/g01/007-test-runner-selection-and-environment-policy.md docs/roadmaps/g01/008-universal-json-command-coverage.md docs/roadmaps/g01/009-doctor-health-consolidation.md docs/roadmaps/g01/010-dag-lock-policy-baseline.md docs/roadmaps/g01/011-watch-init-migrate-foundation.md docs/roadmaps/g01/012-codebase-consolidation-and-health.md --require-heading '## Vision Alignment' --require-heading '## Primary Tags' --require-heading '## Target Envelope' --require-heading '## Vision Target Delta'"
+"qa:docs:vision:guides" = "cargo run --bin effigy -- docs check headings docs/guides/016-task-routing-precedence.md docs/guides/017-json-output-contracts.md docs/guides/018-doctor-explain-mode.md docs/guides/019-watch-init-migrate-foundation.md docs/guides/020-dag-lock-policy-baseline.md docs/guides/023-troubleshooting-and-failure-recipes.md docs/guides/024-ci-and-automation-recipes.md --require-heading '## Vision Alignment'"
+"qa:docs:vision:report-policy" = "cargo run --bin effigy -- docs check contains docs/logs/README.md docs/guides/036-release-notes-authoring-template-and-examples.md --require 'Vision Target Delta'"
+"qa:docs:vision:cutoff" = "cargo run --bin effigy -- docs check contains docs/logs/README.md docs/guides/029-docs-qa-checklist-and-validation.md --require '2026-03-06'"
+"qa:docs:vision:workflow" = "cargo run --bin effigy -- docs check workflow-paths"
+"qa:docs:vision:index" = "cargo run --bin effigy -- docs check index --policy-index vision"
+"qa:docs:vision:next-action" = "cargo run --bin effigy -- docs check next-action --policy vision"
+"qa:docs:vision" = [
+  { task = "qa:docs:vision:roadmaps" },
+  { task = "qa:docs:vision:guides" },
+  { task = "qa:docs:vision:report-policy" },
+  { task = "qa:docs:vision:cutoff" },
+  { task = "qa:docs:vision:workflow" },
+  { task = "qa:docs:vision:index" },
+  { task = "qa:docs:vision:next-action" },
+]
+"qa:docs" = [
+  { task = "qa:docs:links" },
+  { task = "qa:docs:examples" },
+  { task = "qa:docs:index" },
+  { task = "qa:docs:agent-defaults" },
+  { task = "qa:docs:vision" },
+]
+"qa:json" = "cargo run --bin effigy -- contracts check-json --fast --print-selected=text"
+"qa:json:ci" = "cargo run --bin effigy -- contracts check-json --full --print-selected=json"
+"qa:released-surface" = "cargo test --test cli_output_tests released_surface_ -- --nocapture"
+"qa:ci:fmt" = [{ task = "fmt:check" }]
+"qa:ci:clippy" = "cargo clippy --all-targets -- -D warnings -A clippy::result_large_err -A clippy::too_many_arguments -A clippy::type_complexity"
+"qa:ci:test" = "bash -lc 'if cargo nextest --version >/dev/null 2>&1; then cargo nextest run --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to cargo test --no-fail-fast\" >&2; cargo test --no-fail-fast; fi'"
+"qa:ci:doc" = "cargo test --doc"
+"qa:ci:docs-links" = "cargo run --bin effigy -- docs check links"
+"qa:ci:json:artifact" = "bash -lc 'set -o pipefail; cargo run --bin effigy -- contracts check-json --full --print-selected=json | tee json-contracts.log; python3 - <<\"PY\"\nfrom pathlib import Path\nfor line in Path(\"json-contracts.log\").read_text().splitlines():\n    if line.startswith(\"{\\\"selected\\\":\"):\n        Path(\"json-contracts-selected.json\").write_text(line + \"\\n\")\n        break\nelse:\n    raise SystemExit(\"json selection artifact line not found\")\nPY'"
+"qa:ci:json:validate" = "cargo run --bin effigy -- contracts validate-selection --artifact ./json-contracts-selected.json"
+"qa:ci:json:negative" = "cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture"
+"qa:ci:json" = [
+  { task = "qa:ci:json:artifact" },
+  { task = "qa:ci:json:validate" },
+  { task = "qa:ci:json:negative" },
+]
+"qa:ci:fast" = [
+  { task = "qa:ci:test" },
+  { task = "qa:ci:doc" },
+  { task = "qa:released-surface" },
+  { task = "qa:ci:json" },
+]
+"qa:ci:local" = [
+  { task = "qa:ci:fmt" },
+  { task = "qa:ci:clippy" },
+  { task = "qa:ci:test" },
+  { task = "qa:ci:doc" },
+  { task = "qa:released-surface" },
+  { task = "qa:ci:docs-links" },
+  { task = "qa:ci:json" },
+]
+"qa:gates" = [{ task = "qa:docs" }, { task = "qa:json" }, { task = "qa:architecture" }]
+"qa:ci" = [
+  { task = "qa:docs" },
+  { task = "qa:json:ci" },
+  { task = "qa:released-surface" },
+  { task = "qa:architecture" },
+]
+"prepush:test:json-mode" = "cargo test --test cli_output_tests cli_json_mode"
+"prepush:test:lib" = "cargo test --lib"
+"prepush:test:cli-output" = "cargo test --test cli_output_tests"
+"prepush:ci" = [
+  { task = "qa:json:ci" },
+  { task = "prepush:test:json-mode" },
+  { task = "prepush:test:lib" },
+  { task = "prepush:test:cli-output" },
+  { task = "qa:docs" },
+  { task = "qa:architecture" },
+]
+"dist:preflight:smoke" = "cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture"
+health = [{ task = "qa:docs" }, { task = "qa:json" }]
+qa = [{ task = "test" }, { task = "qa:docs" }, { task = "qa:json" }]
+
+[tasks."smoke:release"]
+run = [{ rhai = "scripts/rhai/check-release-smoke.rhai" }]
