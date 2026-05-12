@@ -40,7 +40,7 @@ Canonical operator entrypoints:
 - `effigy qa:json:ci`
 - `effigy qa:ci`
 - `effigy release gates`
-- `effigy-dev <command>` when validating the current checkout before refreshing the installed binary
+- `cargo run --bin effigy -- <command>` when validating the current checkout before refreshing the installed binary
 
 Compatibility fallbacks:
 - `cargo qa`
@@ -67,7 +67,6 @@ Design notes:
 
 Intentional remaining shell scripts:
 - `./scripts/check-linux-glibc-floor.sh`
-- `./scripts/effigy-dev`
 
 Boundary note:
 - `cargo qa-release` now maps straight to `effigy release gates`

@@ -59,11 +59,11 @@ Pass criteria:
 Spot-run:
 
 ```sh
-effigy-dev --help
-effigy-dev tasks
-effigy-dev doctor --verbose
-effigy-dev test --plan
-effigy-dev --json tasks | jq .schema
+cargo run --bin effigy -- --help
+cargo run --bin effigy -- tasks
+cargo run --bin effigy -- doctor --verbose
+cargo run --bin effigy -- test --plan
+cargo run --bin effigy -- --json tasks | jq .schema
 ```
 
 Pass criteria:
@@ -73,7 +73,7 @@ Pass criteria:
 ### E) Quality gates
 
 ```sh
-effigy-dev qa:docs
+cargo run --bin effigy -- qa:docs
 ```
 
 Pass criteria:
@@ -113,9 +113,9 @@ Owner: <team/person>
 ## Validation
 - command: `effigy docs check links README.md $(find docs -name '*.md' | sort)`
   - result: pass/fail
-- command: `effigy-dev qa:docs`
+- command: `cargo run --bin effigy -- qa:docs`
   - result: pass/fail
-- command: `effigy-dev test --plan`
+- command: `cargo run --bin effigy -- test --plan`
   - result: pass/fail
 
 ## Findings

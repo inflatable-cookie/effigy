@@ -57,7 +57,7 @@ fn resolve_bootstrap_request_honors_explicit_relative_path() {
     let resolved = resolve_bootstrap_request(
         cwd,
         "git@github.com:inflatable-cookie/effigy.git",
-        Some(Path::new("./sandbox/effigy-dev")),
+        Some(Path::new("./sandbox/effigy-checkout")),
         Some("main"),
         &[BootstrapDbSeedInput {
             target: Some("cbs".to_owned()),
@@ -69,7 +69,7 @@ fn resolve_bootstrap_request_honors_explicit_relative_path() {
     .expect("resolve bootstrap");
     assert_eq!(
         resolved.destination,
-        cwd.join(PathBuf::from("./sandbox/effigy-dev"))
+        cwd.join(PathBuf::from("./sandbox/effigy-checkout"))
     );
     assert_eq!(resolved.destination_source, "explicit-path");
     assert_eq!(resolved.branch.as_deref(), Some("main"));

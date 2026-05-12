@@ -5,9 +5,7 @@ let link_dir = if env("EFFIGY_LOCAL_BIN_DIR") == "" {
 };
 
 let stable_target = path::join(repo_root, ".local-install/bin/effigy");
-let dev_target = path::join(repo_root, "scripts/effigy-dev");
 let stable_link = path::join(link_dir, "effigy");
-let dev_link = path::join(link_dir, "effigy-dev");
 
 fn ensure_file(path, label) {
     if !fs::is_file(path) {
@@ -51,14 +49,11 @@ fn replace_wrapper(target, wrapper_path) {
 }
 
 ensure_file(stable_target, "stable effigy binary");
-ensure_file(dev_target, "effigy-dev wrapper");
 
 fs::create_dir(link_dir);
 replace_wrapper(stable_target, stable_link);
-replace_symlink(dev_target, dev_link);
 
 log(`[ok] wrote stable channel wrapper: ${stable_link} -> ${stable_target}`);
-log(`[ok] linked dev channel: ${dev_link} -> ${dev_target}`);
 
 let path_value = ":" + env("PATH") + ":";
 let rendered_link_dir = ":" + link_dir + ":";

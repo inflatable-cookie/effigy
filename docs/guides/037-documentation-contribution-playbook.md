@@ -121,10 +121,10 @@ also make sure the agent-default drift guard is still green:
 effigy qa:docs:agent-defaults
 ```
 
-Fallbacks when validating from a dev checkout instead of the installed binary:
+Fallbacks when validating from a source checkout instead of the installed binary:
 
 ```sh
-effigy-dev qa:docs
+cargo run --bin effigy -- qa:docs
 cargo qa-docs
 ```
 
@@ -134,10 +134,10 @@ If behavior/JSON changed, also run relevant targeted checks:
 effigy qa:json:ci
 ```
 
-Dev-checkout fallback:
+Source-run fallback:
 
 ```sh
-effigy-dev qa:json:ci
+cargo run --bin effigy -- qa:json:ci
 ```
 
 ## 5) PR Checklist Snippet

@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+- **Maintainer dev wrapper removed:** the repo no longer ships `scripts/effigy-dev`
+  or links `~/.local/bin/effigy-dev`. Current-checkout validation should use
+  `cargo run --bin effigy -- ...`, while `effigy ...` remains the installed or
+  locally linked binary path.
+
 ## [0.6.1] - 2026-05-12
 
 ### Fixed

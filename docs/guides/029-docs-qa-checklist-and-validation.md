@@ -27,8 +27,8 @@ Run in order:
 
 ```sh
 effigy qa:docs
-# dev-checkout fallback:
-# effigy-dev qa:docs
+# source-run fallback:
+# cargo run --bin effigy -- qa:docs
 # compatibility fallback:
 # cargo qa-docs
 ```

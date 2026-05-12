@@ -32,7 +32,7 @@ Use one canonical formula:
 - upgrade command:
   - `brew upgrade effigy`
 
-Do not maintain parallel formula variants (`effigy-dev`, `effigy-beta`) until channel policy explicitly adds them.
+Do not maintain parallel formula variants (`effigy-beta`, alternate channels, or checkout-specific formulas) until channel policy explicitly adds them.
 
 ## 4) Release Tag Bump Workflow
 

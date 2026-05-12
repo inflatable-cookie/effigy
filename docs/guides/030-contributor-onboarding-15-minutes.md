@@ -2,8 +2,8 @@
 
 Use this guide in a fresh clone to reach a reliable working state quickly.
 
-Use the installed `effigy` path when it is already available. Use `effigy-dev`
-or `cargo run --bin effigy -- ...` only when validating the current checkout
+Use the installed `effigy` path when it is already available. Use
+`cargo run --bin effigy -- ...` only when validating the current checkout
 before the local install is refreshed.
 
 ## Start Here
@@ -20,7 +20,7 @@ If `effigy` is not yet available on `PATH`, bootstrap first:
 ```sh
 cargo run --bin effigy -- bootstrap:local
 effigy version
-type -a effigy effigy-dev
+type -a effigy
 ```
 
 `bootstrap:local` installs a local binary and stamps an active build identity.
@@ -44,8 +44,8 @@ jq --version
 
 ```sh
 effigy --help
-# dev-checkout fallback:
-# effigy-dev --help
+# source-run fallback:
+# cargo run --bin effigy -- --help
 ```
 
 Expected outcome:
@@ -61,10 +61,10 @@ effigy tasks
 effigy tasks --task qa
 ```
 
-Dev-checkout fallback:
+Source-run fallback:
 
 ```sh
-effigy-dev tasks
+cargo run --bin effigy -- tasks
 ```
 
 Expected outcome:

@@ -30,8 +30,8 @@ Then:
 
 For work inside the Effigy repo itself:
 
-- use `effigy-dev ...` when validating the current checkout
-- use `effigy ...` when validating the installed stable channel
+- use `cargo run --bin effigy -- ...` when validating the current checkout
+- use `effigy ...` when validating the installed/local binary
 
 ## 2) What Agents Should Assume
 
@@ -87,8 +87,9 @@ Repo maintenance policy:
 - update this file when Effigy task coverage or fallback policy changes
 ```
 
-If the repo is Effigy itself, replace `effigy` with `effigy-dev` for current
-checkout validation and keep `effigy` for installed stable-channel checks.
+If the repo is Effigy itself, replace `effigy` with
+`cargo run --bin effigy -- ...` for current checkout validation and keep
+`effigy` for installed/local-binary checks.
 
 Recommended enforcement task for adopted repos:
 
@@ -216,7 +217,7 @@ Raw commands are still reasonable when:
 
 - Effigy does not yet expose the required workflow
 - the path is an external packaging or release contract kept as a standalone wrapper
-- you are bootstrapping the Effigy repo before `effigy` / `effigy-dev` are available
+- you are bootstrapping the Effigy repo before `effigy` is available
 - the repo explicitly documents a temporary migration exception
 
 When using a fallback, keep the reason explicit in repo docs so agents do not
