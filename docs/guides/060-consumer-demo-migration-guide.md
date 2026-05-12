@@ -42,7 +42,7 @@ dedicated fragment:
 
 ```toml
 [manifest]
-include = ["demos/effigy.demos.toml"]
+include = ["config/demos.toml"]
 ```
 
 This keeps the root manifest readable and gives the proof surface one obvious
@@ -51,7 +51,7 @@ home.
 Good rule:
 
 - root `effigy.toml`: broad repo contract
-- `demos/effigy.demos.toml`: demo registry and demo-local helpers
+- `config/demos.toml`: demo registry and demo-local helpers
 
 ## 3) Promote Existing Scripts Into `[demos.*]`
 
@@ -162,7 +162,7 @@ What to check:
 
 A consumer repo migration is in good shape when:
 
-- the demo inventory lives in `demos/effigy.demos.toml` or another clearly
+- the demo inventory lives in `config/demos.toml` or another clearly
   named fragment
 - `[demos.*]` entries name proof ownership and coverage explicitly
 - per-demo wrapper tasks are gone unless they are truly shared

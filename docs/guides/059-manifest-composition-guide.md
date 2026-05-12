@@ -23,9 +23,9 @@ Root example:
 ```toml
 [manifest]
 include = [
-  "effigy.tasks.toml",
-  "effigy.docs.toml",
-  "demos/effigy.demos.toml",
+  "config/tasks.toml",
+  "docs/effigy.docs.toml",
+  "config/demos.toml",
 ]
 ```
 
@@ -51,10 +51,12 @@ repo boundaries or smoke fixtures, not for ordinary include fragments.
 
 Good fragment shapes:
 
-- `effigy.tasks.toml` for broad repo tasks
-- `effigy.docs.toml` for docs policy and docs helper tasks
-- `demos/effigy.demos.toml` for `[demos.*]` entries and tightly related demo
+- `config/tasks.toml` for broad repo tasks
+- `docs/effigy.docs.toml` for docs policy and docs helper tasks
+- `config/demos.toml` for `[demos.*]` entries and tightly related demo
   helpers
+- `config/containers.toml`, `config/release.toml`, or `config/scan.toml` for
+  other singleton repo-local manifest fragments
 - `scripts/effigy.scripting.toml` for Rhai-backed task clusters in Rust-first
   repos
 - `effigy.local.toml` for local-only overrides when the repo explicitly wants
@@ -88,7 +90,7 @@ include = [
 
 Meaning:
 
-- `effigy.tasks.toml` contributes normal values
+- `config/tasks.toml` contributes normal values
 - `effigy.local.toml` may replace only `tasks.dev` and `release.sync-files`
 - other conflicting keys still fail
 
@@ -173,10 +175,10 @@ A common practical split is:
 
 ```toml
 [manifest]
-include = ["demos/effigy.demos.toml"]
+include = ["config/demos.toml"]
 ```
 
-Then in `demos/effigy.demos.toml`:
+Then in `config/demos.toml`:
 
 ```toml
 [demos.login-smoke]
@@ -224,6 +226,26 @@ Use this when:
 - the repo is Rust-first
 - the scripts are really Effigy-native task glue
 - you want scripting ownership to live under `scripts/`
+
+## 5c) Prefer One `config/` Root For Singleton Fragments
+
+When a fragment is just one repo-local TOML file with no strong neighboring
+assets, prefer collecting it under `config/`:
+
+- `config/tasks.toml`
+- `config/containers.toml`
+- `config/demos.toml`
+- `config/release.toml`
+- `config/scan.toml`
+
+Keep a fragment outside `config/` when it is tightly coupled to local assets:
+
+- `docs/effigy.docs.toml` beside docs policy files
+- `scripts/effigy.scripting.toml` beside Rhai helpers
+- env-specific overlays under their own env folder
+
+That keeps the repo root from turning into a row of one-file directories while
+still letting contextual fragments live next to the files they actually govern.
 
 For the Rhai host API and v1 limits, use
 [`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md).

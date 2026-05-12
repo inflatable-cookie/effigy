@@ -172,7 +172,7 @@ manifest:
 
 ```toml
 [manifest]
-include = ["demos/effigy.demos.toml"]
+include = ["config/demos.toml"]
 ```
 
 Then keep the root `effigy.toml` as the entrypoint and let the demo fragment
@@ -182,7 +182,7 @@ Good pattern:
 
 - root `effigy.toml`: repo entrypoint, broad tasks, shared env, release/docs
   policy
-- `demos/effigy.demos.toml`: `[demos.*]` entries and any demo-specific helper
+- `config/demos.toml`: `[demos.*]` entries and any demo-specific helper
   tasks that really need to live together
 
 For the deeper composition rules, use

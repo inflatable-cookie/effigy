@@ -131,7 +131,7 @@ At minimum, the repo should expose:
 If the consumer repo also has an operator-visible proof or demo surface:
 
 - keep the native demo registry in `[demos.<id>]`
-- prefer a dedicated fragment such as `demos/effigy.demos.toml` once the proof
+- prefer a dedicated fragment such as `config/demos.toml` once the proof
   surface is non-trivial
 - let demos carry inline `run = [ ... ]` sequences when wrapper tasks add no
   real reuse
