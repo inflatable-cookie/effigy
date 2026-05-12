@@ -47,10 +47,23 @@ pub(super) fn run_command_capture_os(
     args: &[OsString],
     label: &str,
 ) -> Result<Output, ContainerExecError> {
+    run_command_capture_os_with_env(repo_root, program, args, label, &[])
+}
+
+pub(super) fn run_command_capture_os_with_env(
+    repo_root: &Path,
+    program: &str,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+) -> Result<Output, ContainerExecError> {
     let resolved_program = resolve_host_cli_program(program);
-    let output = Command::new(&resolved_program)
-        .current_dir(repo_root)
-        .args(args)
+    let mut command = Command::new(&resolved_program);
+    command.current_dir(repo_root).args(args);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let output = command
         .output()
         .map_err(|error| ContainerExecError::Launch {
             command: format!("{program} {}", format_args(args)),

@@ -22,17 +22,16 @@ pub(super) struct ResolvedWorkspaceExecIdentity {
 pub(super) fn build_container_shell_args(
     service: &str,
     command: Option<&str>,
-    working_dir: &Path,
+    working_dir: Option<&Path>,
     shell: &str,
     workspace_identity: Option<&ResolvedWorkspaceExecIdentity>,
 ) -> Vec<OsString> {
     if let Some(command) = command {
-        let mut args = vec![
-            OsString::from("exec"),
-            OsString::from("-T"),
-            OsString::from("-w"),
-        ];
-        args.push(OsString::from(working_dir));
+        let mut args = vec![OsString::from("exec"), OsString::from("-T")];
+        if let Some(working_dir) = working_dir {
+            args.push(OsString::from("-w"));
+            args.push(OsString::from(working_dir));
+        }
         append_workspace_exec_identity(&mut args, workspace_identity);
         append_color_exec_env(&mut args, false);
         args.push(OsString::from("-e"));
@@ -44,8 +43,11 @@ pub(super) fn build_container_shell_args(
         return args;
     }
 
-    let mut args = vec![OsString::from("exec"), OsString::from("-w")];
-    args.push(OsString::from(working_dir));
+    let mut args = vec![OsString::from("exec")];
+    if let Some(working_dir) = working_dir {
+        args.push(OsString::from("-w"));
+        args.push(OsString::from(working_dir));
+    }
     append_workspace_exec_identity(&mut args, workspace_identity);
     append_color_exec_env(&mut args, true);
     args.push(OsString::from("-e"));
@@ -62,12 +64,15 @@ pub(super) fn build_container_shell_args(
 pub(super) fn build_interactive_container_shell_args(
     service: &str,
     initial_command: Option<&str>,
-    working_dir: &Path,
+    working_dir: Option<&Path>,
     shell: &str,
     workspace_identity: Option<&ResolvedWorkspaceExecIdentity>,
 ) -> Vec<OsString> {
-    let mut args = vec![OsString::from("exec"), OsString::from("-w")];
-    args.push(OsString::from(working_dir));
+    let mut args = vec![OsString::from("exec")];
+    if let Some(working_dir) = working_dir {
+        args.push(OsString::from("-w"));
+        args.push(OsString::from(working_dir));
+    }
     append_workspace_exec_identity(&mut args, workspace_identity);
     append_color_exec_env(&mut args, true);
     args.push(OsString::from("-e"));
@@ -163,7 +168,7 @@ mod tests {
         let args = build_container_shell_args(
             "app",
             Some("echo hi"),
-            Path::new("/tmp/work"),
+            Some(Path::new("/tmp/work")),
             "/bin/sh",
             Some(&workspace_identity),
         );
@@ -201,7 +206,7 @@ mod tests {
         let args = build_container_shell_args(
             "app",
             None,
-            Path::new("/workspace-root/repo"),
+            Some(Path::new("/workspace-root/repo")),
             "/bin/bash",
             None,
         );
@@ -240,7 +245,7 @@ mod tests {
         let args = build_interactive_container_shell_args(
             "app",
             Some("effigy dev"),
-            Path::new("/workspace"),
+            Some(Path::new("/workspace")),
             "/bin/sh",
             None,
         );
@@ -260,5 +265,15 @@ mod tests {
         assert!(command.contains("exec"));
         assert!(command.contains("/bin/sh"));
         assert!(command.contains("-i"));
+    }
+
+    #[test]
+    fn non_primary_shell_exec_omits_working_dir() {
+        let args = build_container_shell_args("app", Some("pwd"), None, "/bin/sh", None);
+        let rendered = args
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(rendered.windows(2).all(|window| window[0] != "-w"));
     }
 }

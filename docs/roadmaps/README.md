@@ -43,8 +43,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   [`g05.002`](./g05/002-secret-manifest-and-doctor-surface.md),
   [`g05.003`](./g05/003-local-encrypted-vault.md), and
   [`g05.004`](./g05/004-task-rhai-and-deploy-secret-injection.md) are complete.
-  Strict lane `080` is open for `g05.005`. The next ready work is container
-  secret injection.
+  Strict lane `080` is open for `g05.005`. Container secret injection and
+  explicit compatibility env export are complete. The next work is closing
+  `g05.005` or continuing to the Underlay/Acowtancy proof in `g05.006`.
 
 ## Active Strict Lane
 
@@ -84,7 +85,7 @@ Before rollover:
 
 ## Next Task
 
-Execute `717` to add container secret injection.
+Close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`.
 
 ## Historical language boundary
 

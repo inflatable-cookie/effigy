@@ -14,8 +14,8 @@ pub use implementation::{
     capture_running_container_stats_for_profile, infer_host_working_dir_for_container,
     list_running_compose_containers, list_running_compose_containers_for_policy,
     list_running_compose_containers_for_profile, list_running_compose_containers_profiled,
-    run_compose_capture, run_compose_invocation_capture, run_docker_capture, shutdown_container,
-    ContainerExecError,
+    run_compose_capture, run_compose_invocation_capture, run_compose_invocation_capture_with_env,
+    run_docker_capture, shutdown_container, ContainerExecError,
 };
 pub use parse::{
     RunningComposeContainer, RunningComposeContainerProfiled, RunningContainerStats,

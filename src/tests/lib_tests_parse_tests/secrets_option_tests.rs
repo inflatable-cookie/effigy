@@ -1,5 +1,5 @@
 use crate::tests::prelude::{parse_command, Command, HelpTopic, PathBuf};
-use effigy_cli::{SecretsArgs, SecretsSubcommand};
+use effigy_cli::{SecretsArgs, SecretsExportFormat, SecretsSubcommand};
 
 #[test]
 fn parse_secrets_without_subcommand_renders_help() {
@@ -144,6 +144,35 @@ fn parse_secrets_lock_with_repo() {
 }
 
 #[test]
+fn parse_secrets_export_env_with_output_yes_repo_and_json() {
+    let cmd = parse_command(vec![
+        "secrets".to_owned(),
+        "export".to_owned(),
+        "--format".to_owned(),
+        "env".to_owned(),
+        "--output".to_owned(),
+        ".effigy/runtime/secrets/local.env".to_owned(),
+        "--yes".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Secrets(SecretsArgs {
+            subcommand: SecretsSubcommand::Export {
+                format: SecretsExportFormat::Env,
+                output: PathBuf::from(".effigy/runtime/secrets/local.env"),
+                yes: true,
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_secrets_set_requires_name() {
     let error =
         parse_command(vec!["secrets".to_owned(), "set".to_owned()]).expect_err("parse should fail");
@@ -152,7 +181,7 @@ fn parse_secrets_set_requires_name() {
 
 #[test]
 fn parse_secrets_rejects_unknown_subcommand() {
-    let error = parse_command(vec!["secrets".to_owned(), "export".to_owned()])
-        .expect_err("parse should fail");
-    assert_eq!(error.to_string(), "unknown argument: export");
+    let error =
+        parse_command(vec!["secrets".to_owned(), "wat".to_owned()]).expect_err("parse should fail");
+    assert_eq!(error.to_string(), "unknown argument: wat");
 }

@@ -4,7 +4,7 @@ Roadmap: [`../005-container-secret-injection.md`](../005-container-secret-inject
 Strict lane: [`../../../specs/080-container-secret-injection-strict-lane.md`](../../../specs/080-container-secret-injection-strict-lane.md)
 Contract: [`../../../contracts/032-secret-and-local-config-management-contract.md`](../../../contracts/032-secret-and-local-config-management-contract.md)
 
-Status: Pending
+Status: Complete
 Owner: Platform
 Created: 2026-05-12
 
@@ -43,6 +43,16 @@ effigy secrets export --format env --output <PATH> --yes
 - missing required values block before writing
 - unsafe destinations are rejected or require an explicit documented override
 - command reference and JSON examples document the bridge clearly
+
+## Completed
+
+- Added `effigy secrets export --format env --output <PATH> --yes`.
+- Required `--yes` for plaintext export.
+- Rejected stdout export and repo-root `.env`.
+- Exported declared vault values as dotenv-compatible `KEY=VALUE` lines.
+- Blocked missing required secrets before writing.
+- Kept command output and JSON value-free.
+- Updated help, command reference, and JSON examples.
 
 ## Validation
 

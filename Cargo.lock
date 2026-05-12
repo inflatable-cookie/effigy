@@ -1017,6 +1017,7 @@ dependencies = [
  "effigy-context",
  "effigy-core",
  "effigy-env",
+ "effigy-exec",
  "effigy-execution",
  "effigy-manifest",
  "effigy-secrets",

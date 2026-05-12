@@ -10,6 +10,7 @@ description = "Rhai runtime and host API contracts for Effigy"
 effigy-core = { path = "../effigy-core" }
 effigy-context = { path = "../effigy-context" }
 effigy-env = { path = "../effigy-env" }
+effigy-exec = { path = "../effigy-exec" }
 effigy-execution = { path = "../effigy-execution" }
 effigy-manifest = { path = "../effigy-manifest" }
 effigy-secrets = { path = "../effigy-secrets" }

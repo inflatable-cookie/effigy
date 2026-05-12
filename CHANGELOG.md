@@ -34,6 +34,11 @@ During v0.x, MINOR bumps may include breaking changes.
   opt into `deploy`, `state`, and `artifacts` secret targets. Deploy provider
   packages run with `deploy` secret access, and state apply hook tasks receive
   declared `state` secrets through process environment injection.
+- **Container startup secret injection:** `effigy container up` now resolves
+  declared `targets = ["containers"]` vault secrets before startup, blocks
+  missing required values before compose mutation, and passes resolved values
+  through the compose process environment instead of writing repo-root
+  plaintext files.
 
 ### Changed
 - **State apply hooks** now run during `effigy state apply --yes` after a
@@ -66,6 +71,10 @@ During v0.x, MINOR bumps may include breaking changes.
   and the old `scripts/check-linux-glibc-floor.sh` wrapper is gone.
 
 ### Fixed
+- **Rhai container exec cwd mapping** now translates explicit repo-host `cwd`
+  paths into the matching in-container working directory before `docker
+  compose exec -w ...`, while still preserving true container-native absolute
+  paths.
 - **Database seed/dump service resolution** now uses one shared resolver and
   treats `catalog = "mysql"` consistently with `mariadb` as a MariaDB/MySQL
   service.
@@ -1509,3 +1518,4 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Fixed
 - Resolve 5 pre-existing clippy warnings (needless return, vec init-then-push,
   field reassign with default, manual contains)
+- fix Rhai `exec::run(..., #{ run_in: "host" })` inside workspace container handoff so host-context `cwd` and `stdin_file` paths are remapped onto the local workspace repo before execution

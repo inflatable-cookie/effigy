@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::{collections::BTreeMap, ffi::OsString};
 
 use effigy_containers::ContainerCapturedExecOperation;
 use effigy_execution::ExecutionSurface;
@@ -179,6 +180,8 @@ fn host_callbacks() -> HostCallbacks {
                     service: service.map(str::to_owned),
                     command: command.to_vec(),
                     stdin_file: None,
+                    cwd: None,
+                    env: BTreeMap::new(),
                 },
             )
             .map_err(|error| error.to_string())?;
@@ -192,18 +195,10 @@ fn host_callbacks() -> HostCallbacks {
         container_exec_with_options: Arc::new(|repo_root, name, service, command, options| {
             let name = if name.is_empty() { None } else { Some(name) };
             activate_rhai_container_exec(repo_root, name).map_err(|error| error.to_string())?;
-            let stdin_file = options
-                .get("stdin_file")
-                .and_then(Value::as_str)
-                .map(std::path::PathBuf::from);
+            let operation = container_exec_operation_from_options(service, command, options)
+                .map_err(|error| error.to_string())?;
             let output = crate::runner::container_command::run_container_exec_operation_capture(
-                repo_root,
-                name,
-                ContainerCapturedExecOperation {
-                    service: service.map(str::to_owned),
-                    command: command.to_vec(),
-                    stdin_file,
-                },
+                repo_root, name, operation,
             )
             .map_err(|error| error.to_string())?;
             Ok(HostCommandOutput {
@@ -214,6 +209,52 @@ fn host_callbacks() -> HostCallbacks {
             })
         }),
     }
+}
+
+fn container_exec_operation_from_options(
+    service: Option<&str>,
+    command: &[String],
+    options: Value,
+) -> Result<ContainerCapturedExecOperation, RunnerError> {
+    let stdin_file = options
+        .get("stdin_file")
+        .and_then(Value::as_str)
+        .map(std::path::PathBuf::from);
+    let cwd = options
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(std::path::PathBuf::from);
+    let env = container_exec_env_from_options(&options)?;
+    Ok(ContainerCapturedExecOperation {
+        service: service.map(str::to_owned),
+        command: command.to_vec(),
+        stdin_file,
+        cwd,
+        env,
+    })
+}
+
+fn container_exec_env_from_options(
+    options: &Value,
+) -> Result<BTreeMap<String, OsString>, RunnerError> {
+    let Some(env) = options.get("env") else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(env_map) = env.as_object() else {
+        return Err(RunnerError::task_invocation(
+            "Rhai container exec `env` option must decode to an object",
+        ));
+    };
+    let mut resolved = BTreeMap::new();
+    for (key, value) in env_map {
+        let Some(raw) = value.as_str() else {
+            return Err(RunnerError::task_invocation(format!(
+                "Rhai container exec env `{key}` must be a string"
+            )));
+        };
+        resolved.insert(key.clone(), OsString::from(raw));
+    }
+    Ok(resolved)
 }
 
 fn activate_rhai_container_exec(repo_root: &Path, name: Option<&str>) -> Result<(), RunnerError> {

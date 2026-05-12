@@ -766,6 +766,75 @@ fn execute_rhai_script_exposes_exec_run_helper() {
 }
 
 #[test]
+fn execute_rhai_script_exposes_fs_sha256_and_file_size_helpers() {
+    let root = temp_root("fs-sha256-and-file-size");
+    fs::write(root.join("payload.txt"), "hello world\n").expect("payload");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+        if fs::file_size("payload.txt") != 12 { throw("size"); }
+        let digest = fs::sha256("payload.txt");
+        if digest != "a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447" {
+            throw("sha256");
+        }
+    "#;
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
+
+#[test]
+fn execute_rhai_script_maps_host_exec_paths_into_local_workspace_during_handoff() {
+    let host_root = temp_root("exec-handoff-host");
+    let host_nested = host_root.join("bundle/scripts");
+    fs::create_dir_all(&host_nested).expect("host nested");
+
+    let local_root = temp_root("exec-handoff-local");
+    let local_nested = local_root.join("bundle/scripts");
+    fs::create_dir_all(&local_nested).expect("local nested");
+    fs::write(local_nested.join("marker.txt"), "marker-ok").expect("marker");
+    fs::write(local_nested.join("stdin.txt"), "stdin-ok").expect("stdin");
+
+    let runtime_context = effigy_context::EffigyRuntimeContext::builder()
+        .cwd_override(Some(host_nested.clone()))
+        .repo_override(Some(host_root.clone()))
+        .captured_env(effigy_context::CapturedEnv {
+            container_handoff: Some("1".into()),
+            ..effigy_context::CapturedEnv::default()
+        })
+        .capture()
+        .expect("runtime context");
+
+    let context = ScriptContext {
+        cwd: local_root.clone(),
+        repo_root: local_root,
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+
+    let script = r#"
+            let host = exec::run(
+                ["sh", "-lc", "printf '%s|' \"$PWD\"; cat marker.txt; printf '|'; cat"],
+                #{ run_in: "host", stdin_file: "stdin.txt" },
+            );
+            if !host["success"] { throw("host exec"); }
+            if !host["stdout"].contains("marker-ok|stdin-ok") { throw(host["stdout"]); }
+            if host["route"]["run_in"] != "host" { throw("host route"); }
+        "#;
+
+    execute_rhai_script_with_runtime_context(
+        &context,
+        Some(&runtime_context),
+        script,
+        &[],
+        &callbacks(),
+    )
+    .expect("execute");
+}
+
+#[test]
 fn execute_rhai_script_proves_decodelabs_mysql_seed_uses_container_exec_with_stdin_file() {
     let root = temp_root("decodelabs-mysql-seed");
     let seed_path = root.join("bundle/database/seeds/contactpatch.sql");

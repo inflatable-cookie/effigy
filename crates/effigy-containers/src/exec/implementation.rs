@@ -16,7 +16,9 @@ use super::parse::{
     parse_running_compose_containers, parse_running_container_stats, RunningComposeContainer,
     RunningComposeContainerProfiled, RunningContainerStatsCapture,
 };
-use super::process::{run_command_capture_os, run_command_capture_with_timeout};
+use super::process::{
+    run_command_capture_os, run_command_capture_os_with_env, run_command_capture_with_timeout,
+};
 
 use crate::{
     colima::shutdown_compose_commands, compose::compose_invocation_for_repo, BackendId,
@@ -199,8 +201,19 @@ pub fn run_compose_invocation_capture(
     args: &[OsString],
     label: &str,
 ) -> Result<Output, ContainerExecError> {
+    run_compose_invocation_capture_with_env(repo_root, policy, program, args, label, &[])
+}
+
+pub fn run_compose_invocation_capture_with_env(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    program: &OsStr,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+) -> Result<Output, ContainerExecError> {
     let program = program.to_string_lossy();
-    match run_command_capture_os(repo_root, &program, args, label) {
+    match run_command_capture_os_with_env(repo_root, &program, args, label, env) {
         Ok(output) => Ok(output),
         Err(ContainerExecError::Failure {
             command: _,
@@ -211,7 +224,7 @@ pub fn run_compose_invocation_capture(
             || docker_failure_looks_like_colima_runtime_state_loss(&stdout, &stderr) =>
         {
             repair_colima_runtime(policy, repo_root)?;
-            run_command_capture_os(repo_root, &program, args, label).map_err(|retry_error| {
+            run_command_capture_os_with_env(repo_root, &program, args, label, env).map_err(|retry_error| {
                 match retry_error {
                     ContainerExecError::Failure {
                         command: retry_command,

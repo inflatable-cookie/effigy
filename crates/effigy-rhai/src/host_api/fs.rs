@@ -4,6 +4,7 @@ use std::sync::Arc;
 use effigy_core::path_error_text::{failed_to_read_path, failed_to_write_path};
 use effigy_env::dotenv::parse_dotenv_entries;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map};
+use ring::digest::{digest, SHA256};
 
 use crate::surface::MODULE_FS;
 
@@ -185,6 +186,27 @@ fn build_fs_module(context: Arc<ScriptContext>) -> rhai::Module {
         "is_file",
         move |path: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
             Ok(resolve_runtime_path(&file_context.cwd, path.as_str()).is_file())
+        },
+    );
+    let file_context = context.clone();
+    module.set_native_fn(
+        "file_size",
+        move |path: ImmutableString| -> Result<i64, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            let metadata = std::fs::metadata(&path)
+                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
+            i64::try_from(metadata.len())
+                .map_err(|_| rhai_runtime_error("file size exceeded Rhai integer range"))
+        },
+    );
+    let file_context = context.clone();
+    module.set_native_fn(
+        "sha256",
+        move |path: ImmutableString| -> Result<String, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            let bytes = std::fs::read(&path)
+                .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
+            Ok(hex_sha256(&bytes))
         },
     );
     let file_context = context.clone();
@@ -434,6 +456,16 @@ fn list_recursive_paths(root: &Path, extension: Option<&str>) -> Result<Array, B
     }
     entries.sort();
     Ok(entries.into_iter().map(Into::into).collect())
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    let digest = digest(&SHA256, bytes);
+    let mut output = String::with_capacity(digest.as_ref().len() * 2);
+    for byte in digest.as_ref() {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    output
 }
 
 fn update_env_file_entry(path: &Path, key: &str, value: &str) -> Result<bool, Box<EvalAltResult>> {

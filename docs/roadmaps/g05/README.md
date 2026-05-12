@@ -82,11 +82,13 @@ Completed cards:
 - [`714-add-rhai-secret-api.md`](./batch-cards/714-add-rhai-secret-api.md)
 - [`715-add-deploy-state-artifact-secret-injection.md`](./batch-cards/715-add-deploy-state-artifact-secret-injection.md)
 - [`716-close-task-rhai-deploy-secret-injection.md`](./batch-cards/716-close-task-rhai-deploy-secret-injection.md)
+- [`717-add-container-secret-injection.md`](./batch-cards/717-add-container-secret-injection.md)
+- [`718-add-compat-env-export.md`](./batch-cards/718-add-compat-env-export.md)
 
 Ready card:
 
-- [`717-add-container-secret-injection.md`](./batch-cards/717-add-container-secret-injection.md)
+- close `g05.005` or continue to `g05.006`
 
 ## Next Task
 
-Execute `717` to add container secret injection.
+Close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`.

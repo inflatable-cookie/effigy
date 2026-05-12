@@ -2,7 +2,7 @@ use crate::runner::entrypoints::run_command;
 use crate::runner::tests::prelude::{
     parse_json_output_with_schema_version, temp_workspace, write_root_manifest, EnvGuard,
 };
-use effigy_cli::{Command, SecretsArgs, SecretsSubcommand};
+use effigy_cli::{Command, SecretsArgs, SecretsExportFormat, SecretsSubcommand};
 use effigy_secrets::{VaultEnvelope, VaultPlaintextPayload};
 use std::fs;
 
@@ -378,6 +378,108 @@ fn secrets_doctor_blocks_undeclared_stored_values() {
     let rendered = error.to_string();
     assert!(rendered.contains("stored secret `orphan` is not declared under `[secrets.keys]`"));
     assert!(!rendered.contains("hidden"));
+}
+
+#[test]
+fn secrets_export_writes_env_file_without_printing_values() {
+    let root = temp_workspace("secrets-export-env");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", Some("postgres://secret-value"));
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Set {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("set should succeed");
+
+    let out = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Export {
+            format: SecretsExportFormat::Env,
+            output: std::path::PathBuf::from(".effigy/runtime/secrets/local.env"),
+            yes: true,
+        },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("export should succeed");
+
+    assert!(!out.contains("postgres://secret-value"));
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
+    assert_eq!(parsed["action"].as_str(), Some("export"));
+    assert_eq!(parsed["format"].as_str(), Some("env"));
+    assert_eq!(parsed["keys_exported"][0].as_str(), Some("DATABASE_URL"));
+    let exported =
+        fs::read_to_string(root.join(".effigy/runtime/secrets/local.env")).expect("read export");
+    assert_eq!(exported, "DATABASE_URL=postgres://secret-value\n");
+}
+
+#[test]
+fn secrets_export_requires_yes_and_refuses_repo_root_env() {
+    let root = temp_workspace("secrets-export-guardrails");
+    write_root_manifest(&root, declared_secrets_manifest());
+
+    let missing_yes = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Export {
+            format: SecretsExportFormat::Env,
+            output: std::path::PathBuf::from(".effigy/runtime/secrets/local.env"),
+            yes: false,
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect_err("missing yes should fail");
+    assert!(missing_yes.to_string().contains("requires `--yes`"));
+
+    let root_env = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Export {
+            format: SecretsExportFormat::Env,
+            output: std::path::PathBuf::from(".env"),
+            yes: true,
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect_err("repo root .env should fail");
+    assert!(root_env
+        .to_string()
+        .contains("refuses to write repo-root `.env`"));
+}
+
+#[test]
+fn secrets_export_blocks_missing_required_before_writing() {
+    let root = temp_workspace("secrets-export-missing-required");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", None);
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+
+    let error = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Export {
+            format: SecretsExportFormat::Env,
+            output: std::path::PathBuf::from(".effigy/runtime/secrets/local.env"),
+            yes: true,
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect_err("missing required should fail");
+
+    assert!(error
+        .to_string()
+        .contains("required secret(s) missing from the vault"));
+    assert!(!root.join(".effigy/runtime/secrets/local.env").exists());
 }
 
 fn secret_test_env(passphrase: &str, value: Option<&str>) -> EnvGuard {

@@ -41,5 +41,5 @@ Archived strict lanes:
 
 ## Next Task
 
-Execute `717` to add container secret injection. Release execution remains
-human-owned.
+Close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`.
+Release execution remains human-owned.

@@ -35,8 +35,7 @@ Updated: 2026-05-12
 
 Current ready work:
 
-- execute ready card `717`
-- add container secret injection
+- close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`
 - keep container startup injection blocked until `g05.005`
 
 ## Research Roadmaps
@@ -69,4 +68,4 @@ closeout there first.
 
 ## Next Task
 
-Execute `717` to add container secret injection.
+Close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`.

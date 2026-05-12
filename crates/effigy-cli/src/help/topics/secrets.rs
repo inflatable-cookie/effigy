@@ -17,6 +17,7 @@ pub(crate) fn render_secrets_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
             "effigy secrets unset <NAME> [--repo <PATH>] [--json]",
             "effigy secrets unlock [--repo <PATH>] [--json]",
             "effigy secrets lock [--repo <PATH>] [--json]",
+            "effigy secrets export --format env --output <PATH> --yes [--repo <PATH>] [--json]",
             "effigy --json secrets list",
         ],
         &[
@@ -38,6 +39,13 @@ pub(crate) fn render_secrets_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
                 "Verify the vault can be unlocked for this invocation",
             ),
             ("lock", "Clear invocation-local unlock state"),
+            (
+                "export",
+                "Write a confirmed plaintext compatibility file without printing values",
+            ),
+            ("--format env", "Export dotenv-compatible KEY=VALUE lines"),
+            ("--output <PATH>", "Write export to a file, never stdout"),
+            ("--yes", "Required confirmation for plaintext export"),
             ("-h, --help", "Print command help"),
         ],
         &[
@@ -48,6 +56,7 @@ pub(crate) fn render_secrets_help<R: HelpRenderer>(renderer: &mut R) -> HelpResu
             "effigy secrets unset database_url",
             "effigy secrets unlock",
             "effigy secrets lock",
+            "effigy secrets export --format env --output .effigy/runtime/secrets/local.env --yes",
             "effigy secrets list --json",
         ],
     )

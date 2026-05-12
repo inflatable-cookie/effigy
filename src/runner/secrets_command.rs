@@ -2,7 +2,7 @@ use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-use effigy_cli::{SecretsArgs, SecretsSubcommand};
+use effigy_cli::{SecretsArgs, SecretsExportFormat, SecretsSubcommand};
 use effigy_manifest::{
     ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig,
     ManifestSecretsUnlockPolicy, ManifestSecretsVaultIdentity,
@@ -52,6 +52,18 @@ pub(super) fn run_secrets(args: SecretsArgs) -> Result<String, RunnerError> {
         SecretsSubcommand::Lock => {
             run_secrets_lock(&repo_root, manifest.secrets.as_ref(), args.output_json)
         }
+        SecretsSubcommand::Export {
+            format,
+            output,
+            yes,
+        } => run_secrets_export(
+            &repo_root,
+            manifest.secrets.as_ref(),
+            format,
+            &output,
+            yes,
+            args.output_json,
+        ),
     }
 }
 
@@ -207,6 +219,199 @@ fn run_secrets_unset(
         output_json,
         "removed declared secret",
     )
+}
+
+fn run_secrets_export(
+    repo_root: &Path,
+    secrets: Option<&ManifestSecretsConfig>,
+    format: SecretsExportFormat,
+    output: &Path,
+    yes: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if !yes {
+        return Err(RunnerError::task_invocation(
+            "`effigy secrets export` writes plaintext and requires `--yes`",
+        ));
+    }
+    match format {
+        SecretsExportFormat::Env => {}
+    }
+    validate_export_destination(repo_root, output)?;
+    let secrets = require_secrets(secrets)?;
+    let vault_path = resolve_vault_path(repo_root, Some(secrets))?;
+    let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
+    let payload = read_vault_payload(&vault_path, passphrase.expose())?;
+
+    let mut missing_required = Vec::new();
+    let mut exported = Vec::new();
+    for (name, key) in &secrets.keys {
+        match payload.records.get(name) {
+            Some(record) => {
+                exported.push((secret_env_name(name), record.value.expose().to_owned()))
+            }
+            None if key.required => missing_required.push(name.clone()),
+            None => {}
+        }
+    }
+    if !missing_required.is_empty() {
+        return Err(RunnerError::task_invocation(format!(
+            "required secret(s) missing from the vault: {}",
+            missing_required.join(", ")
+        )));
+    }
+    exported.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let output_path = resolve_export_output_path(repo_root, output);
+    write_env_export_file(&output_path, &exported)?;
+    render_export_result(
+        repo_root,
+        secrets,
+        &output_path,
+        exported.iter().map(|(key, _)| key.clone()).collect(),
+        output_json,
+    )
+}
+
+fn validate_export_destination(repo_root: &Path, output: &Path) -> Result<(), RunnerError> {
+    if output.as_os_str() == "-" {
+        return Err(RunnerError::task_invocation(
+            "`effigy secrets export` requires `--output <PATH>` and does not write secrets to stdout",
+        ));
+    }
+    let output_path = resolve_export_output_path(repo_root, output);
+    if output_path == repo_root.join(".env") {
+        return Err(RunnerError::task_invocation(
+            "`effigy secrets export` refuses to write repo-root `.env`; choose a runtime-only path such as `.effigy/runtime/secrets/local.env`",
+        ));
+    }
+    Ok(())
+}
+
+fn resolve_export_output_path(repo_root: &Path, output: &Path) -> PathBuf {
+    if output.is_absolute() {
+        output.to_path_buf()
+    } else {
+        repo_root.join(output)
+    }
+}
+
+fn write_env_export_file(path: &Path, entries: &[(String, String)]) -> Result<(), RunnerError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to create export directory {}: {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    let mut rendered = String::new();
+    for (key, value) in entries {
+        rendered.push_str(key);
+        rendered.push('=');
+        rendered.push_str(&dotenv_quote(value));
+        rendered.push('\n');
+    }
+    write_env_export_file_inner(path, rendered.as_bytes())
+}
+
+#[cfg(unix)]
+fn write_env_export_file_inner(path: &Path, bytes: &[u8]) -> Result<(), RunnerError> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to write secrets export {}: {error}",
+                path.display()
+            ))
+        })?;
+    file.write_all(bytes).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to write secrets export {}: {error}",
+            path.display()
+        ))
+    })?;
+    fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to secure secrets export permissions {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+#[cfg(not(unix))]
+fn write_env_export_file_inner(path: &Path, bytes: &[u8]) -> Result<(), RunnerError> {
+    fs::write(path, bytes).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to write secrets export {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn dotenv_quote(value: &str) -> String {
+    if value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':' | '@'))
+    {
+        return value.to_owned();
+    }
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
+fn secret_env_name(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn render_export_result(
+    repo_root: &Path,
+    secrets: &ManifestSecretsConfig,
+    output_path: &Path,
+    keys: Vec<String>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let mut payload = secrets_payload(repo_root, Some(secrets), Vec::new(), Vec::new());
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("action".to_owned(), json!("export"));
+        object.insert("format".to_owned(), json!("env"));
+        object.insert(
+            "output".to_owned(),
+            json!(output_path.display().to_string()),
+        );
+        object.insert("keys_exported".to_owned(), json!(keys));
+        object.insert("changed".to_owned(), json!(true));
+        object.insert(
+            "warning".to_owned(),
+            json!("plaintext compatibility export written; do not commit this file"),
+        );
+    }
+    let text = format!(
+        "[secrets] export\nrepo: {}\noutput: {}\nformat: env\nstatus: wrote plaintext compatibility file\nwarning: do not commit this file",
+        repo_root.display(),
+        output_path.display()
+    );
+    render_command_result(output_json, true, payload, text)
 }
 
 fn secrets_payload(

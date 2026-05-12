@@ -4,7 +4,7 @@ Roadmap: [`../005-container-secret-injection.md`](../005-container-secret-inject
 Strict lane: [`../../../specs/080-container-secret-injection-strict-lane.md`](../../../specs/080-container-secret-injection-strict-lane.md)
 Contract: [`../../../contracts/032-secret-and-local-config-management-contract.md`](../../../contracts/032-secret-and-local-config-management-contract.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-12
 
@@ -37,10 +37,21 @@ committing or persistently writing plaintext `.env` files.
 
 - `effigy container up` can receive declared container secrets from the vault
 - missing required container secrets block before startup
-- secret values are not rendered into compose files when avoidable
-- any generated plaintext files live only under `.effigy/runtime/`
-- values do not appear in container text output, JSON reports, or errors
+- secret values are passed through compose process env, not rendered into
+  compose files
+- no generated plaintext files are created by the injection path
+- values do not appear in Effigy container reports
 - existing container tests still pass
+
+## Completed
+
+- Added container-targeted vault secret resolution for `[secrets.keys.*]`
+  entries with `targets = ["containers"]`.
+- Added pre-start blockers for missing required container secrets.
+- Passed resolved secrets to compose startup through the compose process
+  environment for both attached and detached startup paths.
+- Preserved compose file contents and avoided generated plaintext secret files.
+- Added tests for container secret resolution and missing required blockers.
 
 ## Validation
 

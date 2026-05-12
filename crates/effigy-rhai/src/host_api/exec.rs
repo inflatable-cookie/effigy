@@ -1,4 +1,5 @@
 use effigy_core::path_error_text::failed_to_read_path;
+use effigy_exec::CwdMapper;
 use effigy_execution::{
     ExecutionEnvironmentPlan, ExecutionIntent, ExecutionOutputMode, ExecutionRoute,
     ExecutionRunTarget, ExecutionRuntimePolicy, ExecutionSurface, TaskExecutionRequestBuilder,
@@ -93,7 +94,12 @@ fn run_execution_request(
 
     let output = match &plan.route {
         ExecutionRoute::Host | ExecutionRoute::LocalContainerHandoff { .. } => {
-            run_exec_host_capture_with_environment(context, &command, &plan.request.environment)?
+            run_exec_host_capture_with_environment(
+                context,
+                &plan.request.runtime_context,
+                &command,
+                &plan.request.environment,
+            )?
         }
         ExecutionRoute::Container { container, service } => {
             let container = container.as_deref().unwrap_or_default();
@@ -115,6 +121,7 @@ fn run_execution_request(
 
 fn run_exec_host_capture_with_environment(
     context: &ScriptContext,
+    runtime_context: &effigy_context::EffigyRuntimeContext,
     command: &[String],
     environment: &ExecutionEnvironmentPlan,
 ) -> Result<super::super::HostCommandOutput, Box<EvalAltResult>> {
@@ -123,12 +130,23 @@ fn run_exec_host_capture_with_environment(
         .ok_or_else(|| rhai_runtime_error("exec::run command must not be empty"))?;
     let mut process = ProcessCommand::new(program);
     process.args(&command[1..]);
-    let resolved_cwd = resolved_execution_cwd(&context.cwd, environment);
+    let desired_cwd = resolved_execution_cwd(runtime_context.invocation_cwd(), environment);
+    let desired_stdin = resolved_execution_stdin_file(&desired_cwd, environment);
+    let (resolved_cwd, resolved_stdin) = if runtime_context.container().inside_container_handoff {
+        remap_execution_paths_for_local_handoff(
+            runtime_context,
+            &context.cwd,
+            desired_cwd,
+            desired_stdin,
+        )?
+    } else {
+        (desired_cwd, desired_stdin)
+    };
     process.current_dir(&resolved_cwd);
     for (key, value) in &environment.env {
         process.env(key, value);
     }
-    if let Some(stdin_file) = resolved_execution_stdin_file(&resolved_cwd, environment) {
+    if let Some(stdin_file) = resolved_stdin {
         let file = std::fs::File::open(&stdin_file)
             .map_err(|error| rhai_runtime_error(failed_to_read_path(&stdin_file, error)))?;
         process.stdin(std::process::Stdio::from(file));
@@ -143,6 +161,34 @@ fn run_exec_host_capture_with_environment(
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
     })
+}
+
+fn remap_execution_paths_for_local_handoff(
+    runtime_context: &effigy_context::EffigyRuntimeContext,
+    local_repo_root_hint: &Path,
+    desired_cwd: PathBuf,
+    desired_stdin: Option<PathBuf>,
+) -> Result<(PathBuf, Option<PathBuf>), Box<EvalAltResult>> {
+    let local_repo_root = local_repo_root_hint
+        .canonicalize()
+        .ok()
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| local_repo_root_hint.to_path_buf());
+    let mapper = CwdMapper::new(
+        runtime_context.command_root().to_path_buf(),
+        local_repo_root,
+    );
+    let remapped_cwd = mapper
+        .host_to_container(&desired_cwd)
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let remapped_stdin = desired_stdin
+        .map(|stdin_file| {
+            mapper
+                .host_to_container(&stdin_file)
+                .map_err(|error| rhai_runtime_error(error.to_string()))
+        })
+        .transpose()?;
+    Ok((remapped_cwd, remapped_stdin))
 }
 
 fn resolved_execution_options_json(

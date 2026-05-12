@@ -215,10 +215,24 @@ pub enum SecretsSubcommand {
     List,
     Doctor,
     Init,
-    Set { name: String },
-    Unset { name: String },
+    Set {
+        name: String,
+    },
+    Unset {
+        name: String,
+    },
     Unlock,
     Lock,
+    Export {
+        format: SecretsExportFormat,
+        output: PathBuf,
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecretsExportFormat {
+    Env,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

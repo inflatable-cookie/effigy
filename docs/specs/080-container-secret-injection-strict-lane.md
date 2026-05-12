@@ -63,8 +63,8 @@ Rules:
 
 ## Execution Chain
 
-- `717` ready: add container secret injection
-- `718` pending: add compatibility env export
+- `717` complete: container secret injection
+- `718` complete: compatibility env export
 - close `g05.005` after container injection and export are documented and
   validated
 
@@ -87,4 +87,4 @@ documented runtime-only paths.
 
 ## Next Task
 
-Execute `717` to add container secret injection.
+Close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`.

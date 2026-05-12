@@ -49,7 +49,7 @@ where
     let args = build_interactive_container_shell_args(
         &service,
         initial_command,
-        &working_dir,
+        working_dir.as_deref(),
         &shell,
         workspace_identity.as_ref(),
     );
@@ -107,7 +107,7 @@ where
     let args = build_container_shell_args(
         &service,
         command,
-        &working_dir,
+        working_dir.as_deref(),
         &shell,
         workspace_identity.as_ref(),
     );
@@ -140,7 +140,7 @@ fn resolve_container_shell_session<FValidate>(
     name: Option<&str>,
     service: Option<&str>,
     validate_runtime_match: &FValidate,
-) -> Result<(EffectiveContainerPolicy, String, PathBuf), EffigyRuntimeError>
+) -> Result<(EffectiveContainerPolicy, String, Option<PathBuf>), EffigyRuntimeError>
 where
     FValidate: Fn(&Path, &EffectiveContainerPolicy) -> Result<(), EffigyRuntimeError>,
 {
@@ -163,8 +163,14 @@ where
     let service = service
         .unwrap_or(policy.primary_service.as_str())
         .to_owned();
-    let working_dir = load_container_exec_working_dir(repo_root, name)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let working_dir = if service == policy.primary_service {
+        Some(
+            load_container_exec_working_dir(repo_root, name)
+                .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?,
+        )
+    } else {
+        None
+    };
     Ok((policy, service, working_dir))
 }
 

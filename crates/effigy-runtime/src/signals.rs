@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use effigy_containers::{exec::run_compose_invocation_capture, EffectiveContainerPolicy};
+use effigy_containers::EffectiveContainerPolicy;
 use effigy_containers::{ContainerComposeInvocationPlan, ContainerRuntimeInvocationPlan};
 #[cfg(unix)]
 use nix::libc;
@@ -31,12 +31,21 @@ pub fn run_compose_plan_capture(
     policy: &EffectiveContainerPolicy,
     plan: &ContainerComposeInvocationPlan,
 ) -> Result<Output, EffigyRuntimeError> {
-    run_compose_invocation_capture(
+    run_compose_plan_capture_with_env(policy, plan, &[])
+}
+
+pub fn run_compose_plan_capture_with_env(
+    policy: &EffectiveContainerPolicy,
+    plan: &ContainerComposeInvocationPlan,
+    env: &[(String, OsString)],
+) -> Result<Output, EffigyRuntimeError> {
+    effigy_containers::exec::run_compose_invocation_capture_with_env(
         &plan.repo_root,
         policy,
         &plan.program,
         &plan.args,
         &plan.label,
+        env,
     )
     .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))
 }
@@ -62,11 +71,19 @@ pub fn run_runtime_plan_capture(
 pub fn spawn_compose_plan_inherit(
     plan: &ContainerComposeInvocationPlan,
 ) -> Result<std::process::Child, EffigyRuntimeError> {
+    spawn_compose_plan_inherit_with_env(plan, &[])
+}
+
+pub fn spawn_compose_plan_inherit_with_env(
+    plan: &ContainerComposeInvocationPlan,
+    env: &[(String, OsString)],
+) -> Result<std::process::Child, EffigyRuntimeError> {
     spawn_command_inherit_os(
         &plan.repo_root,
         &plan.program.to_string_lossy(),
         &plan.args,
         &plan.label,
+        env,
     )
 }
 
@@ -75,6 +92,7 @@ fn spawn_command_inherit_os(
     program: &str,
     args: &[OsString],
     label: &str,
+    env: &[(String, OsString)],
 ) -> Result<std::process::Child, EffigyRuntimeError> {
     let mut command = Command::new(program);
     command
@@ -83,6 +101,9 @@ fn spawn_command_inherit_os(
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    for (key, value) in env {
+        command.env(key, value);
+    }
     #[cfg(unix)]
     unsafe {
         command.pre_exec(|| {
@@ -188,7 +209,15 @@ pub fn run_compose_plan_inherit_with_stop_flag(
     plan: &ContainerComposeInvocationPlan,
     stop_flag: &AtomicBool,
 ) -> Result<ComposeRunOutcome, EffigyRuntimeError> {
-    let child = spawn_compose_plan_inherit(plan)?;
+    run_compose_plan_inherit_with_stop_flag_and_env(plan, stop_flag, &[])
+}
+
+pub fn run_compose_plan_inherit_with_stop_flag_and_env(
+    plan: &ContainerComposeInvocationPlan,
+    stop_flag: &AtomicBool,
+    env: &[(String, OsString)],
+) -> Result<ComposeRunOutcome, EffigyRuntimeError> {
+    let child = spawn_compose_plan_inherit_with_env(plan, env)?;
     run_compose_inherit_child_with_stop_flag(child, &plan.label, stop_flag)
 }
 

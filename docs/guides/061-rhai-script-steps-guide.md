@@ -95,6 +95,8 @@ Current v1 helpers:
   - `fs::list(path)`
   - `fs::is_file(path)`
   - `fs::is_symlink(path)`
+  - `fs::file_size(path)`
+  - `fs::sha256(path)`
   - `search::files(root, pattern, options_map)`
   - `fs::create_dir(path)`
   - `fs::remove(path)`

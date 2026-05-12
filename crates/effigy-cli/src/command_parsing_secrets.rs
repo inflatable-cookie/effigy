@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::{Command, HelpTopic, SecretsArgs, SecretsSubcommand};
+use crate::{Command, HelpTopic, SecretsArgs, SecretsExportFormat, SecretsSubcommand};
 
 use crate::value_parsing::parse_repo_path;
 
@@ -24,8 +24,58 @@ where
         "unset" => parse_secrets_named_command(args, |name| SecretsSubcommand::Unset { name }),
         "unlock" => parse_secrets_read_command(args, SecretsSubcommand::Unlock),
         "lock" => parse_secrets_read_command(args, SecretsSubcommand::Lock),
+        "export" => parse_secrets_export_command(args),
         other => Err(unknown_argument(other)),
     }
+}
+
+fn parse_secrets_export_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut format: Option<SecretsExportFormat> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut yes = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--format" => {
+                let Some(value) = args.next() else {
+                    return Err(unknown_argument("missing --format value"));
+                };
+                format = Some(match value.as_str() {
+                    "env" => SecretsExportFormat::Env,
+                    other => return Err(unknown_argument(other)),
+                });
+            }
+            "--output" => output = Some(parse_repo_path(&mut args)?),
+            "--yes" => yes = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Secrets)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    let Some(format) = format else {
+        return Err(unknown_argument("missing --format"));
+    };
+    let Some(output) = output else {
+        return Err(unknown_argument("missing --output"));
+    };
+
+    Ok(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Export {
+            format,
+            output,
+            yes,
+        },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_secrets_read_command<I>(

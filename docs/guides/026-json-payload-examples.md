@@ -2065,6 +2065,7 @@ effigy --json secrets set database_url
 effigy --json secrets unset database_url
 effigy --json secrets unlock
 effigy --json secrets lock
+effigy --json secrets export --format env --output .effigy/runtime/secrets/local.env --yes
 ```
 
 ```json
@@ -2162,6 +2163,11 @@ Mutation commands add safe operation metadata:
 `secrets unlock` verifies the vault can be decrypted for the current invocation.
 `secrets lock` clears invocation-local state. Effigy does not create a daemon or
 persistent unlock cache in `g05.003`.
+
+`secrets export` is an explicit plaintext compatibility bridge. It requires
+`--yes`, writes only to a file, refuses repo-root `.env`, and never includes
+secret values in JSON or text output. Export metadata adds `action = "export"`,
+`format = "env"`, `output`, `keys_exported`, `changed`, and a plaintext warning.
 
 ## Notes
 
