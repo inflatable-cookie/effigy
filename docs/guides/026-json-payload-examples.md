@@ -1785,7 +1785,9 @@ declares `hook`, Effigy then runs that repo-owned task with a structured
 `EFFIGY_STATE_APPLY_CONTEXT` handoff plus narrow layer env vars. Apply reports
 update `latest-apply.json` and timestamped history. Capture, manual,
 checkpoint, and app-specific payload semantics remain reported as
-`unsupported` by the apply adapter.
+`unsupported` by the apply adapter. `state apply --skip-layer <KEY>` leaves the
+layer in the report with `status = "skipped"` and does not execute its
+task/import/stage step.
 
 ### 28) State Stack Capture (`effigy.state-stack.capture.v1`)
 
@@ -2123,10 +2125,10 @@ This payload is the `result` for:
 effigy --json secrets list
 effigy --json secrets doctor
 effigy --json secrets init
+effigy --json secrets get database_url
 effigy --json secrets set database_url
 effigy --json secrets unset database_url
-effigy --json secrets unlock
-effigy --json secrets lock
+effigy --json secrets change-passphrase
 effigy --json secrets export --format env --output .effigy/runtime/secrets/local.env --yes
 ```
 
@@ -2222,9 +2224,9 @@ Mutation commands add safe operation metadata:
 }
 ```
 
-`secrets unlock` verifies the vault can be decrypted for the current invocation.
-`secrets lock` clears invocation-local state. Effigy does not create a daemon or
-persistent unlock cache in `g05.003`.
+`secrets get` intentionally returns one decrypted value. `secrets
+change-passphrase` preserves stored values while re-encrypting the vault with a
+new passphrase.
 
 `secrets export` is an explicit plaintext compatibility bridge. It requires
 `--yes`, writes only to a file, refuses repo-root `.env`, and never includes

@@ -52,12 +52,6 @@ pub(super) fn run_secrets(args: SecretsArgs) -> Result<String, RunnerError> {
             &name,
             args.output_json,
         ),
-        SecretsSubcommand::Unlock => {
-            run_secrets_unlock(&repo_root, manifest.secrets.as_ref(), args.output_json)
-        }
-        SecretsSubcommand::Lock => {
-            run_secrets_lock(&repo_root, manifest.secrets.as_ref(), args.output_json)
-        }
         SecretsSubcommand::ChangePassphrase => {
             run_secrets_change_passphrase(&repo_root, manifest.secrets.as_ref(), args.output_json)
         }
@@ -127,45 +121,6 @@ fn run_secrets_init(
         &vault_path,
         output_json,
         "created empty vault",
-    )
-}
-
-fn run_secrets_unlock(
-    repo_root: &Path,
-    secrets: Option<&ManifestSecretsConfig>,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    let vault_path = resolve_vault_path(repo_root, secrets)?;
-    let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
-    let payload = read_vault_payload(&vault_path, passphrase.expose())?;
-    render_mutation_result(
-        repo_root,
-        secrets,
-        "unlock",
-        None,
-        &vault_path,
-        output_json,
-        &format!(
-            "unlocked for this invocation; {} stored value(s)",
-            payload.records.len()
-        ),
-    )
-}
-
-fn run_secrets_lock(
-    repo_root: &Path,
-    secrets: Option<&ManifestSecretsConfig>,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    let vault_path = resolve_vault_path(repo_root, secrets)?;
-    render_mutation_result(
-        repo_root,
-        secrets,
-        "lock",
-        None,
-        &vault_path,
-        output_json,
-        "cleared invocation-local unlock state",
     )
 }
 

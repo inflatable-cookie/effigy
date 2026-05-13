@@ -11,6 +11,10 @@ During v0.x, MINOR bumps may include breaking changes.
   or links `~/.local/bin/effigy-dev`. Current-checkout validation should use
   `cargo run --bin effigy -- ...`, while `effigy ...` remains the installed or
   locally linked binary path.
+- **No-op secrets session commands removed:** `effigy secrets unlock` and
+  `effigy secrets lock` are gone. Effigy does not keep a cross-command unlock
+  session, so these commands only added misleading ceremony around the vault
+  flow.
 
 ### Added
 - **Manifest minimum Effigy version gate:** any manifest fragment can now set
@@ -21,10 +25,11 @@ During v0.x, MINOR bumps may include breaking changes.
   with `targets = ["tasks"]` are now loaded from the local Effigy vault and
   injected into task process environments, with missing required values
   blocking before spawn and captured JSON output redacted.
-- **Scoped Rhai secret API:** Rhai scripts can now call
-  `effigy::secret(name)` and `effigy::has_secret(name)` for declared
-  `targets = ["rhai"]` vault secrets, with undeclared or wrong-target reads
-  rejected and known values redacted from Rhai errors and host output maps.
+- **Scoped Rhai secret API:** Rhai scripts can now call `secrets::get(name)`,
+  `secrets::has(name)`, `secrets::set(name, value)`, and
+  `secrets::set_many(map)` for declared `targets = ["rhai"]` vault secrets,
+  with undeclared or wrong-target access rejected and known values redacted
+  from Rhai errors and host output maps.
 - **Structured Rhai data helpers:** Rhai scripts can now write and read JSON
   and TOML files directly through `json::write_file`, `json::read_file`,
   `json::stringify_compact`, `toml::write_file`, and `toml::read_file`, and
@@ -49,6 +54,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - **State capture sets:** `effigy state capture-set <STACK> <PROFILE>...` can
   run multiple named capture profiles with one shared key, reducing app-local
   orchestration glue for DB/media legacy snapshot exports.
+- **State apply layer skipping:** `effigy state apply <STACK> --skip-layer
+  <KEY>` can now leave named layers as `skipped` in the apply report, letting
+  wrapper workflows pre-run prerequisite layers without duplicating work.
 - **Rhai path parent helper:** Rhai scripts can now call `path::parent(...)`
   instead of carrying app-local dirname helpers.
 

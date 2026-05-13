@@ -169,11 +169,11 @@ Target command family:
 ```sh
 effigy secrets init
 effigy secrets list [--json]
+effigy secrets get <name>
 effigy secrets set <name>
 effigy secrets unset <name>
 effigy secrets doctor [--json]
-effigy secrets unlock
-effigy secrets lock
+effigy secrets change-passphrase
 effigy secrets export --format env --output <PATH> --yes
 ```
 

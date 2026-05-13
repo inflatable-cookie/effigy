@@ -320,62 +320,6 @@ fn secrets_set_rejects_undeclared_secret() {
 }
 
 #[test]
-fn secrets_unlock_verifies_vault_without_printing_values() {
-    let root = temp_workspace("secrets-unlock");
-    write_root_manifest(&root, declared_secrets_manifest());
-    let _env = secret_test_env("vault-passphrase", Some("postgres://secret-value"));
-    run_command(Command::Secrets(SecretsArgs {
-        subcommand: SecretsSubcommand::Init,
-        repo_override: Some(root.clone()),
-        output_json: false,
-    }))
-    .expect("init should succeed");
-    run_command(Command::Secrets(SecretsArgs {
-        subcommand: SecretsSubcommand::Set {
-            name: "database_url".to_owned(),
-        },
-        repo_override: Some(root.clone()),
-        output_json: false,
-    }))
-    .expect("set should succeed");
-
-    let out = run_command(Command::Secrets(SecretsArgs {
-        subcommand: SecretsSubcommand::Unlock,
-        repo_override: Some(root.clone()),
-        output_json: true,
-    }))
-    .expect("unlock should succeed");
-
-    assert!(!out.contains("postgres://secret-value"));
-    let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
-    assert_eq!(parsed["action"].as_str(), Some("unlock"));
-    assert_eq!(
-        parsed["summary"].as_str(),
-        Some("unlocked for this invocation; 1 stored value(s)")
-    );
-}
-
-#[test]
-fn secrets_lock_reports_invocation_local_clear() {
-    let root = temp_workspace("secrets-lock");
-    write_root_manifest(&root, declared_secrets_manifest());
-
-    let out = run_command(Command::Secrets(SecretsArgs {
-        subcommand: SecretsSubcommand::Lock,
-        repo_override: Some(root.clone()),
-        output_json: true,
-    }))
-    .expect("lock should succeed");
-
-    let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
-    assert_eq!(parsed["action"].as_str(), Some("lock"));
-    assert_eq!(
-        parsed["summary"].as_str(),
-        Some("cleared invocation-local unlock state")
-    );
-}
-
-#[test]
 fn secrets_doctor_reports_locked_vault_without_passphrase() {
     let root = temp_workspace("secrets-doctor-locked");
     write_root_manifest(&root, declared_secrets_manifest());

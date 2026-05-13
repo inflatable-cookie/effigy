@@ -144,10 +144,10 @@ effigy doctor <task> <args> [--json]
 effigy secrets list [--repo <PATH>] [--json]
 effigy secrets doctor [--repo <PATH>] [--json]
 effigy secrets init [--repo <PATH>] [--json]
+effigy secrets get <NAME> [--repo <PATH>] [--json]
 effigy secrets set <NAME> [--repo <PATH>] [--json]
 effigy secrets unset <NAME> [--repo <PATH>] [--json]
-effigy secrets unlock [--repo <PATH>] [--json]
-effigy secrets lock [--repo <PATH>] [--json]
+effigy secrets change-passphrase [--repo <PATH>] [--json]
 effigy secrets export --format env --output <PATH> --yes [--repo <PATH>] [--json]
 effigy config path [--json]
 effigy config get <containers.backend|containers.profile> [--json]
@@ -285,7 +285,7 @@ effigy distribution <preflight|validate-metadata|check-glibc-floor|first-publish
 effigy state plan [<STACK>] [--repo <PATH>] [--json] [--write-report]
 effigy state plan --manifest <PATH> [--repo <PATH>] [--json] [--write-report]
 effigy state plan --stack <NAME> [--repo <PATH>] [--json] [--write-report]
-effigy state apply [<STACK>] [--yes] [--json]
+effigy state apply [<STACK>] [--yes] [--skip-layer <KEY>]... [--json]
 effigy state capture <STACK> <PROFILE> [--yes] [--push] [--json]
 effigy state capture-set <STACK> <PROFILE>... [--key <KEY>] [--yes] [--push] [--json]
 effigy state capture [<STACK>] --role <ROLE> --source-env <ENV> --key <KEY> [--json]
@@ -390,6 +390,9 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   `apply_mode = "task"` layers, stages `apply_mode = "artifact"` layers, and
   imports `apply_mode = "sql"` layers through the existing DB seed/import path;
   apply reports update `latest-apply.json` and timestamped history
+- `state apply --skip-layer <KEY>` marks a named layer as `skipped` and does
+  not execute its task/import/stage step; this is for wrapper workflows that
+  already ran a prerequisite layer and still want the canonical stack report
 - `state capture` is plan-only unless `--yes --source <PATH> --ref oci://...`
   is supplied; execution stages the already-produced local payload, and `--push`
   explicitly publishes it after local staging; `--task <TASK>` runs one

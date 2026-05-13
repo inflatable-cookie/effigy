@@ -224,8 +224,6 @@ pub enum SecretsSubcommand {
     Unset {
         name: String,
     },
-    Unlock,
-    Lock,
     ChangePassphrase,
     Export {
         format: SecretsExportFormat,
@@ -416,6 +414,7 @@ pub enum StateSubcommand {
         manifest: Option<PathBuf>,
         stack: Option<String>,
         yes: bool,
+        skip_layers: Vec<String>,
     },
     Capture {
         manifest: Option<PathBuf>,

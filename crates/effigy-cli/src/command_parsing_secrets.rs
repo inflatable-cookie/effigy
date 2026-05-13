@@ -23,8 +23,6 @@ where
         "set" => parse_secrets_named_command(args, |name| SecretsSubcommand::Set { name }),
         "get" => parse_secrets_named_command(args, |name| SecretsSubcommand::Get { name }),
         "unset" => parse_secrets_named_command(args, |name| SecretsSubcommand::Unset { name }),
-        "unlock" => parse_secrets_read_command(args, SecretsSubcommand::Unlock),
-        "lock" => parse_secrets_read_command(args, SecretsSubcommand::Lock),
         "change-passphrase" => {
             parse_secrets_read_command(args, SecretsSubcommand::ChangePassphrase)
         }

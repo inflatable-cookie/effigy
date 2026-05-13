@@ -129,15 +129,6 @@ effigy secrets unset render_api_key
 Removes the value from the vault. The declaration stays in the manifest until
 you edit it.
 
-### Unlock for the current session
-
-```sh
-effigy secrets unlock
-```
-
-Verifies the vault can be decrypted. Unlock is per-invocation; Effigy does not
-keep a daemon.
-
 ### Change the vault passphrase
 
 ```sh
@@ -147,14 +138,6 @@ effigy secrets change-passphrase
 Prompts for the current passphrase, then prompts for and confirms the new
 passphrase. Stored secret values are preserved and re-encrypted without being
 printed.
-
-### Lock
-
-```sh
-effigy secrets lock
-```
-
-Clears invocation-local decrypted state.
 
 ### Diagnostics
 
