@@ -15,7 +15,7 @@ pub(super) fn render_workspace_seeded_task_command(task_name: &str, args: &[Stri
         rendered.push(' ');
         rendered.push_str(&rendered_args);
     }
-    rendered
+    crate::runner::secret_session::wrap_command_with_secret_passphrase_env(rendered)
 }
 
 pub(super) fn run_workspace_seeded_task_session(
@@ -52,5 +52,19 @@ mod tests {
         );
 
         assert_eq!(rendered, "effigy 'dev' 'front' '--' '--host' '0.0.0.0'");
+    }
+
+    #[test]
+    fn secret_passphrase_wrapper_prefixes_command() {
+        let rendered =
+            crate::runner::secret_session::wrap_command_with_secret_passphrase_env_value(
+                "effigy 'dev'".to_owned(),
+                Some("vault-passphrase"),
+            );
+
+        assert_eq!(
+            rendered,
+            "env EFFIGY_INTERNAL_SECRET_PASSPHRASE='vault-passphrase' effigy 'dev'"
+        );
     }
 }

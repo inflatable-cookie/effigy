@@ -1,4 +1,5 @@
 use crate::runner::error::RunnerError;
+use effigy_core::shell::shell_quote;
 use effigy_secrets::SecretValue;
 use std::io::IsTerminal;
 use std::process::Command;
@@ -67,4 +68,47 @@ pub(in crate::runner) fn apply_secret_passphrase_to_child(command: &mut Command)
     } else if let Ok(value) = std::env::var(INTERNAL_SECRET_PASSPHRASE_ENV) {
         command.env(INTERNAL_SECRET_PASSPHRASE_ENV, value);
     }
+}
+
+pub(in crate::runner) fn inject_secret_passphrase_into_internal_command(command: String) -> String {
+    let Some(secret) = cached_secret_passphrase().or_else(|| {
+        std::env::var(INTERNAL_SECRET_PASSPHRASE_ENV)
+            .ok()
+            .map(SecretValue::new)
+    }) else {
+        return command;
+    };
+    let original = "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1";
+    let replacement = format!(
+        "env {key}={value} EFFIGY_INTERNAL_SUPPRESS_HEADER=1",
+        key = INTERNAL_SECRET_PASSPHRASE_ENV,
+        value = shell_quote(secret.expose()),
+    );
+    command.replacen(original, &replacement, 1)
+}
+
+pub(in crate::runner) fn wrap_command_with_secret_passphrase_env(command: String) -> String {
+    let passphrase = cached_secret_passphrase()
+        .or_else(|| {
+            std::env::var(INTERNAL_SECRET_PASSPHRASE_ENV)
+                .ok()
+                .map(SecretValue::new)
+        })
+        .map(|value| value.expose().to_owned());
+    wrap_command_with_secret_passphrase_env_value(command, passphrase.as_deref())
+}
+
+pub(in crate::runner) fn wrap_command_with_secret_passphrase_env_value(
+    command: String,
+    passphrase: Option<&str>,
+) -> String {
+    let Some(passphrase) = passphrase else {
+        return command;
+    };
+    format!(
+        "env {key}={value} {command}",
+        key = INTERNAL_SECRET_PASSPHRASE_ENV,
+        value = shell_quote(passphrase),
+        command = command,
+    )
 }

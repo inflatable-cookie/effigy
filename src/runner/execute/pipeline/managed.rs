@@ -323,6 +323,8 @@ fn run_named_container_managed_setup_steps(
         resolver,
     )
     .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let rendered =
+        crate::runner::secret_session::inject_secret_passphrase_into_internal_command(rendered);
     let rendered = wrap_with_managed_secret_env(
         rendered,
         managed_task_secret_pairs,
@@ -701,13 +703,17 @@ fn materialize_special_managed_processes(
             }
             ManagedProcessRole::Standard => {
                 let wrapped_run = wrap_with_managed_secret_env(
-                    process.run.clone(),
+                    crate::runner::secret_session::inject_secret_passphrase_into_internal_command(
+                        process.run.clone(),
+                    ),
                     managed_task_secret_pairs,
                     repo_root,
                 );
                 let wrapped_setup = process.setup.as_ref().map(|setup| {
                     wrap_with_managed_secret_env(
-                        setup.clone(),
+                        crate::runner::secret_session::inject_secret_passphrase_into_internal_command(
+                            setup.clone(),
+                        ),
                         managed_task_secret_pairs,
                         repo_root,
                     )
