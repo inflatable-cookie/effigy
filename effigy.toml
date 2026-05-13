@@ -2,6 +2,7 @@
 alias = "effigy"
 
 [manifest]
+minimum_effigy_version = "0.7.0"
 include = [
   "config/tasks.toml",
   "config/containers.toml",
