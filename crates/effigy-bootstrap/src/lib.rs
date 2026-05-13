@@ -356,9 +356,7 @@ where
     };
     let bootstrap_contract_found = bootstrap.is_some();
     let bootstrap = bootstrap.unwrap_or_default();
-    let submodules_policy = bootstrap
-        .submodules
-        .unwrap_or(ManifestBootstrapSubmodulesPolicy::None);
+    let submodules_policy = resolve_submodule_policy(&effective_destination, bootstrap.submodules);
     report_progress(BootstrapProgressEvent::SubmodulesStarted {
         destination: effective_destination.clone(),
         policy: submodules_policy,
@@ -1130,14 +1128,29 @@ fn apply_submodule_policy(
     match policy {
         ManifestBootstrapSubmodulesPolicy::None => Ok(false),
         ManifestBootstrapSubmodulesPolicy::Init => {
+            run_git(repo_root, &["submodule", "sync"])?;
             run_git(repo_root, &["submodule", "update", "--init"])?;
             Ok(true)
         }
         ManifestBootstrapSubmodulesPolicy::Recursive => {
+            run_git(repo_root, &["submodule", "sync", "--recursive"])?;
             run_git(repo_root, &["submodule", "update", "--init", "--recursive"])?;
             Ok(true)
         }
     }
+}
+
+fn resolve_submodule_policy(
+    repo_root: &Path,
+    configured: Option<ManifestBootstrapSubmodulesPolicy>,
+) -> ManifestBootstrapSubmodulesPolicy {
+    configured.unwrap_or_else(|| {
+        if repo_root.join(".gitmodules").is_file() {
+            ManifestBootstrapSubmodulesPolicy::Recursive
+        } else {
+            ManifestBootstrapSubmodulesPolicy::None
+        }
+    })
 }
 
 fn sync_repo_checkout(

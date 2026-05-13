@@ -347,10 +347,13 @@ The repo declares its own bring-up in `effigy.toml`:
 
 ```toml
 [bootstrap]
-submodules = "recursive"
 run = { task = "bootstrap deps sync" }
 start = "dev"
 ```
+
+If the repo has a `.gitmodules` file, bootstrap initializes and updates those
+submodules recursively before running setup. Set `submodules = "none"` only when
+bootstrap should skip them.
 
 Need companion repos alongside it? Declare child repos in the same manifest:
 

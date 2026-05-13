@@ -1,6 +1,7 @@
 use super::{
     derive_repo_name, normalize_bootstrap_repo_url, resolve_bootstrap_request,
-    resolve_child_destination, submodule_policy_label, BootstrapDbSeedInput,
+    resolve_child_destination, resolve_submodule_policy, submodule_policy_label,
+    BootstrapDbSeedInput,
 };
 use effigy_manifest::ManifestBootstrapSubmodulesPolicy;
 use std::path::{Path, PathBuf};
@@ -98,6 +99,25 @@ fn submodule_policy_label_matches_manifest_variants() {
         submodule_policy_label(ManifestBootstrapSubmodulesPolicy::Recursive),
         "recursive"
     );
+}
+
+#[test]
+fn resolve_submodule_policy_defaults_to_recursive_when_gitmodules_exists() {
+    let root = std::env::temp_dir().join(format!("effigy-submodule-policy-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir root");
+    std::fs::write(root.join(".gitmodules"), "").expect("write gitmodules");
+
+    assert_eq!(
+        resolve_submodule_policy(&root, None),
+        ManifestBootstrapSubmodulesPolicy::Recursive
+    );
+    assert_eq!(
+        resolve_submodule_policy(&root, Some(ManifestBootstrapSubmodulesPolicy::None)),
+        ManifestBootstrapSubmodulesPolicy::None
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]

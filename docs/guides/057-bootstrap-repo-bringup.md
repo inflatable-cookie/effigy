@@ -229,13 +229,12 @@ run = [
   { task = "doctor" },
 ]
 start = "dev"
-submodules = "recursive"
 ```
 
 This means:
 
 - clone or update the root repo
-- sync submodules recursively
+- if `.gitmodules` exists, sync submodules recursively
 - execute the bootstrap `run` sequence
 - unless `--no-start` was passed, run the `[bootstrap].start` selector(s)
   (for example `dev` in the snippet above)

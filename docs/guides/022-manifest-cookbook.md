@@ -592,7 +592,6 @@ run = [
   { task = "doctor" },
 ]
 start = "dev"
-submodules = "recursive"
 
 [[bootstrap.children]]
 path = "aura"
@@ -607,6 +606,8 @@ path after `effigy bootstrap <git-url>`.
 
 Behavior:
 - root bootstrap `run` executes in the cloned or updated root repo
+- repos with `.gitmodules` have their submodules initialized recursively before
+  bootstrap `run`
 - child bootstrap `run` executes inside each child repo
 - `start` only runs when the operator supplies `--start`
 - child `path` values are always relative to the root repo
