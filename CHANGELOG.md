@@ -57,6 +57,9 @@ During v0.x, MINOR bumps may include breaking changes.
   layer is successfully executed, staged, or imported. Apply reports now carry
   hook status/output/error plus a structured
   `EFFIGY_STATE_APPLY_CONTEXT` handoff file for repo-owned finalize work.
+- **Container data seed** now prepares the selected container runtime before
+  import execution, so host-run seed commands can stage local file paths
+  without requiring a manual `effigy container up` first.
 - **Single-step task refs** can now use `run = { task = "..." }` without a
   one-element array wrapper, and the Decodelabs bundle now uses that native
   shape for its `release` deferral wrapper. Shorthand task definitions under

@@ -5,7 +5,7 @@
 //! actual process execution.
 
 use crate::compose::compose_args;
-use crate::{ContainerBackendDetection, ContainerManager};
+use crate::{user_global_backend_preference, BackendId, ContainerBackendDetection, ContainerManager};
 use crate::{EffectiveContainerPolicy, DEFAULT_COLIMA_PROFILE};
 use effigy_manifest::ManifestContainerShutdownMode;
 use serde_yaml::{Mapping, Number, Value};
@@ -59,9 +59,7 @@ pub fn colima_status_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
 
 /// Build the command to start a Colima profile.
 pub fn colima_start_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
-    let runtime = ContainerManager::defaults()
-        .colima_start_runtime(&ContainerBackendDetection::from_env_and_path())
-        .unwrap_or("containerd");
+    let runtime = colima_start_runtime_for_policy();
     let mut args = vec![
         "start".to_string(),
         "--profile".to_string(),
@@ -96,6 +94,17 @@ pub fn colima_start_command(policy: &EffectiveContainerPolicy) -> CommandSpec {
         label: "colima start".to_string(),
         allow_failure: false,
     }
+}
+
+fn colima_start_runtime_for_policy() -> &'static str {
+    let mut detection = ContainerBackendDetection::new(false);
+    detection.backend_override = ContainerBackendDetection::from_env_and_path()
+        .backend_override
+        .or_else(user_global_backend_preference)
+        .or_else(|| Some(BackendId::colima_nerdctl()));
+    ContainerManager::defaults()
+        .colima_start_runtime(&detection)
+        .unwrap_or("containerd")
 }
 
 /// Build the command to stop a Colima profile.

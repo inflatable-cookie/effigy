@@ -1,4 +1,5 @@
 use super::*;
+use effigy_manifest::with_test_user_config_home;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 fn env_lock() -> MutexGuard<'static, ()> {
@@ -48,6 +49,77 @@ fn colima_start_command_uses_profile() {
     assert!(cmd.args.contains(&"1.1.1.1".to_string()));
     assert!(cmd.args.contains(&"8.8.8.8".to_string()));
     assert!(!cmd.allow_failure);
+}
+
+#[test]
+fn colima_start_command_defaults_to_containerd_when_docker_exists() {
+    let _lock = env_lock();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = temp.path().join(".effigy-home");
+    let bin = temp.path().join("bin");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    std::fs::create_dir_all(&bin).expect("mkdir bin");
+    std::fs::write(bin.join("docker"), "#!/bin/sh\n").expect("write docker");
+    let previous_path = std::env::var_os("PATH");
+    let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+    unsafe {
+        std::env::set_var("PATH", bin.display().to_string());
+        std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+    }
+
+    let cmd = with_test_user_config_home(&home, || colima_start_command(&test_policy("effigy")));
+
+    match previous_path {
+        Some(value) => unsafe {
+            std::env::set_var("PATH", value);
+        },
+        None => unsafe {
+            std::env::remove_var("PATH");
+        },
+    }
+    match previous_backend {
+        Some(value) => unsafe {
+            std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
+        },
+        None => unsafe {
+            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+        },
+    }
+
+    assert!(cmd
+        .args
+        .windows(2)
+        .any(|window| window == ["--runtime", "containerd"]));
+}
+
+#[test]
+fn colima_start_command_honors_user_global_docker_preference() {
+    let _lock = env_lock();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = temp.path().join(".effigy-home");
+    std::fs::create_dir_all(&home).expect("mkdir home");
+    std::fs::write(home.join("config.toml"), "[containers]\nbackend = \"docker\"\n")
+        .expect("write config");
+    let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
+    unsafe {
+        std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+    }
+
+    let cmd = with_test_user_config_home(&home, || colima_start_command(&test_policy("effigy")));
+
+    match previous_backend {
+        Some(value) => unsafe {
+            std::env::set_var("EFFIGY_COMPOSE_BACKEND", value);
+        },
+        None => unsafe {
+            std::env::remove_var("EFFIGY_COMPOSE_BACKEND");
+        },
+    }
+
+    assert!(cmd
+        .args
+        .windows(2)
+        .any(|window| window == ["--runtime", "docker"]));
 }
 
 #[test]

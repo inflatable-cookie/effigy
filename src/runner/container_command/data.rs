@@ -27,9 +27,13 @@ use super::RunnerError;
 use super::{runtime_error_from_runner, runtime_volume_capture};
 use crate::runner::artifact_command::capture_artifact_report;
 use crate::runner::command_context::resolve_active_command_context;
+use crate::runner::container_runtime_prep::{
+    activate_container_runtime_for_task, ActivationRequest,
+};
 use crate::runner::db_seed::{
-    db_seed_env, logical_database_targets, maybe_prompt_db_seed_inputs,
-    resolve_db_seed_input_paths, run_db_seed_task, stage_db_seed_files,
+    data_seed_runtime_session_context, db_seed_env, logical_database_targets,
+    maybe_prompt_db_seed_inputs, resolve_db_seed_input_paths, run_db_seed_task,
+    stage_db_seed_files,
 };
 use crate::runner::db_services::collect_manifest_database_services;
 use crate::runner::manifest::load_task_manifest;
@@ -252,6 +256,7 @@ pub(super) fn run_container_data_seed(
 
     let staged = stage_db_seed_files(repo_root, &effective_db_seeds)?;
     maybe_confirm_container_data_seed(&policy.name, &staged, output_json, yes)?;
+    ensure_container_data_seed_runtime(repo_root, &policy)?;
     run_db_seed_task(repo_root, &db_seed_env(&staged))?;
 
     if output_json {
@@ -292,6 +297,24 @@ pub(super) fn run_container_data_seed(
             .join(", ");
         Ok(format!("[ok] seeded local databases from {detail}"))
     }
+}
+
+fn ensure_container_data_seed_runtime(
+    repo_root: &Path,
+    policy: &effigy_containers::EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let session_context = data_seed_runtime_session_context();
+    activate_container_runtime_for_task(
+        repo_root,
+        policy,
+        ActivationRequest {
+            container_name: Some(policy.name.as_str()),
+            repo_override: Some(repo_root.to_path_buf()),
+            route: effigy_runtime_plan::RuntimeActivationRoute::DataSeed,
+            session_context,
+        },
+    )?;
+    Ok(())
 }
 
 pub(super) fn resolve_db_dump_output_paths(

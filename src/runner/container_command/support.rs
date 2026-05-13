@@ -85,6 +85,8 @@ fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
     match error {
         ContainerExecError::Failure { stderr, .. } => {
             stderr.contains("level=fatal msg=\"colima is not running\"")
+                || (stderr.contains("level=fatal msg=\"colima [profile=")
+                    && stderr.contains("] is not running\""))
                 || stderr.contains("Cannot connect to the Docker daemon")
                 || stderr.contains("daemon is not running")
         }
@@ -819,6 +821,13 @@ mod tests {
             stderr: "time=\"2026-04-21T07:59:20+01:00\" level=fatal msg=\"colima is not running\""
                 .to_owned(),
         };
+        let profiled_colima_stopped = ContainerExecError::Failure {
+            command: "colima nerdctl ps".to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "time=\"2026-05-13T11:09:48+01:00\" level=fatal msg=\"colima [profile=effigy] is not running\""
+                .to_owned(),
+        };
         let docker_stopped = ContainerExecError::Failure {
             command: "docker ps".to_owned(),
             code: Some(1),
@@ -827,6 +836,9 @@ mod tests {
         };
 
         assert!(exec_error_means_runtime_not_running(&colima_stopped));
+        assert!(exec_error_means_runtime_not_running(
+            &profiled_colima_stopped
+        ));
         assert!(exec_error_means_runtime_not_running(&docker_stopped));
     }
 
