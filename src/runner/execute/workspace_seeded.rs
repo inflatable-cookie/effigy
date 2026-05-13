@@ -56,11 +56,10 @@ mod tests {
 
     #[test]
     fn secret_passphrase_wrapper_prefixes_command() {
-        let rendered =
-            crate::runner::secret_session::wrap_command_with_secret_passphrase_env_value(
-                "effigy 'dev'".to_owned(),
-                Some("vault-passphrase"),
-            );
+        let rendered = crate::runner::secret_session::wrap_command_with_secret_passphrase_env_value(
+            "effigy 'dev'".to_owned(),
+            Some("vault-passphrase"),
+        );
 
         assert_eq!(
             rendered,
