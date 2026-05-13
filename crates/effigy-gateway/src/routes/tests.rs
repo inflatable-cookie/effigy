@@ -138,6 +138,39 @@ fn save_creates_parent_directories() {
 }
 
 #[test]
+fn concurrent_saves_to_same_path_do_not_collide_on_temp_file_name() {
+    use std::sync::{Arc, Barrier};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("routes.json");
+
+    let mut table_a = RouteTable::new();
+    table_a.upsert(test_route("app-a.test", "127.0.0.1:8080"));
+    let mut table_b = RouteTable::new();
+    table_b.upsert(test_route("app-b.test", "127.0.0.1:3000"));
+
+    let barrier = Arc::new(Barrier::new(2));
+    let path_a = path.clone();
+    let path_b = path.clone();
+    let barrier_a = barrier.clone();
+    let barrier_b = barrier.clone();
+
+    let handle_a = std::thread::spawn(move || {
+        barrier_a.wait();
+        table_a.save(&path_a)
+    });
+    let handle_b = std::thread::spawn(move || {
+        barrier_b.wait();
+        table_b.save(&path_b)
+    });
+
+    handle_a.join().unwrap().unwrap();
+    handle_b.join().unwrap().unwrap();
+
+    assert!(path.exists());
+}
+
+#[test]
 fn save_is_atomic() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("routes.json");

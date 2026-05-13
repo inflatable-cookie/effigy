@@ -3,7 +3,7 @@
 Roadmap: [`g05.005`](../roadmaps/g05/005-container-secret-injection.md)
 Contract: [`032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-12
 
@@ -65,8 +65,7 @@ Rules:
 
 - `717` complete: container secret injection
 - `718` complete: compatibility env export
-- close `g05.005` after container injection and export are documented and
-  validated
+- `g05.005` complete
 
 ## Hard Boundaries
 
@@ -79,12 +78,11 @@ Rules:
 
 ## Acceptance
 
-This lane is complete when `effigy container up` can use declared
+This lane is complete. `effigy container up` can use declared
 container-targeted vault secrets without leaking values, missing required
 container secrets block before startup, compatibility export exists as an
-explicit bridge, and all generated plaintext is either avoided or confined to
-documented runtime-only paths.
+explicit bridge, and generated plaintext is avoided by the injection path.
 
 ## Next Task
 
-Close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`.
+Execute `719` to prove the config/secrets split in Underlay and Acowtancy.

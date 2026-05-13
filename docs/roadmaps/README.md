@@ -38,18 +38,18 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   covered runtime architecture simplification, state stacks, deployment
   transactions, provider packages, post-release reference-grade cleanup, and
   artifact/crate-boundary rejustification.
-- `g05` is active as the secret and local configuration management generation.
+- `g05` is closed as the secret and local configuration management generation.
   [`g05.001`](./g05/001-secret-and-local-config-contract.md),
   [`g05.002`](./g05/002-secret-manifest-and-doctor-surface.md),
   [`g05.003`](./g05/003-local-encrypted-vault.md), and
   [`g05.004`](./g05/004-task-rhai-and-deploy-secret-injection.md) are complete.
-  Strict lane `080` is open for `g05.005`. Container secret injection and
-  explicit compatibility env export are complete. The next work is closing
-  `g05.005` or continuing to the Underlay/Acowtancy proof in `g05.006`.
+  [`g05.005`](./g05/005-container-secret-injection.md),
+  [`g05.006`](./g05/006-underlay-and-acowtancy-config-migration-proof.md), and
+  [`g05.007`](./g05/007-varlock-adapter-and-closeout.md) are complete.
 
 ## Active Strict Lane
 
-Strict lane `080` is active for `g05.005`.
+No strict lane is active.
 
 ## Research Program
 
@@ -85,7 +85,7 @@ Before rollover:
 
 ## Next Task
 
-Close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`.
+No active roadmap task. Open the next generation only after explicit planning.
 
 ## Historical language boundary
 

@@ -100,7 +100,7 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
         ),
         (
             "effigy secrets",
-            "Inspect declaration-only `[secrets]` manifest config",
+            "Inspect declarations and manage the local encrypted secrets vault",
             Some("secrets"),
         ),
         (

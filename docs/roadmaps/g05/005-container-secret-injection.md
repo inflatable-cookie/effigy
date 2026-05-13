@@ -1,6 +1,6 @@
 # g05.005 - Container Secret Injection
 
-Status: Planned
+Status: Complete
 Depends on: `g05.004`
 
 ## Goal
@@ -45,10 +45,21 @@ effigy secrets export --format env --output <PATH> --yes
 
 - `effigy container up` can receive required secrets from the unlocked vault.
 - Missing required container secrets block before startup.
-- Generated runtime files, if any, live only under `.effigy/runtime/`.
-- Secret values do not appear in compose output, text output, JSON reports, or
-  task status.
+- Generated runtime files are avoided for the injection path.
+- Secret values do not appear in Effigy container reports.
 - Compatibility export exists but is opt-in and clearly documented as a bridge.
+
+## Closeout
+
+Completed by cards `717` and `718`.
+
+Container startup injects declared `targets = ["containers"]` values through the
+compose process environment. This avoids writing plaintext compose overrides or
+repo-root `.env` files. Compatibility export exists only as an explicit bridge:
+
+```sh
+effigy secrets export --format env --output <PATH> --yes
+```
 
 ## Test Strategy
 
@@ -61,4 +72,3 @@ effigy secrets export --format env --output <PATH> --yes
 ## Next Task
 
 Prove the config/secrets split in Underlay and Acowtancy in `g05.006`.
-

@@ -1,6 +1,6 @@
 # Roadmap Generation Index
 
-Current generation: `g05`
+Current generation: none
 Updated: 2026-05-12
 
 ## Generation history
@@ -30,13 +30,10 @@ Updated: 2026-05-12
 
 ## Current Planning State
 
-`g05` is active as the secret and local configuration management generation.
-`g05.001`, `g05.002`, and `g05.003` are complete.
+`g05` is closed as the secret and local configuration management generation.
+`g05.001` through `g05.007` are complete.
 
-Current ready work:
-
-- close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`
-- keep container startup injection blocked until `g05.005`
+Current ready work: none.
 
 ## Research Roadmaps
 
@@ -68,4 +65,4 @@ closeout there first.
 
 ## Next Task
 
-Close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`.
+No active roadmap task. Open the next generation only after explicit planning.

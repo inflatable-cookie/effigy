@@ -133,8 +133,18 @@ fn primary_service_for(
     container_name: &str,
 ) -> Result<String, RunnerError> {
     let config = containers.environments.get(container_name).ok_or_else(|| {
+        let available = if containers.environments.is_empty() {
+            "<none>".to_owned()
+        } else {
+            containers
+                .environments
+                .keys()
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         RunnerError::task_invocation(format!(
-            "container `{container_name}` is not defined in `[containers]`"
+            "container `{container_name}` is not defined in `[containers]` (available: {available})"
         ))
     })?;
     container_primary_service(container_name, config)

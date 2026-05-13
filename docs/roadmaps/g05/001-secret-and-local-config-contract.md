@@ -44,7 +44,8 @@ management model.
 - [x] `key-only` is explicitly not the default.
 - [x] Non-secret config migration is documented as first-class work, not treated as
   a side effect of secrets.
-- [x] Varlock is positioned as a possible adapter, not the central Effigy contract.
+- [x] Varlock is positioned outside the central Effigy contract. Later `g05.007`
+  work deferred it as a live adapter for this generation.
 - [x] The roadmap front doors point to `g05` as the active planned generation.
 
 ## Test Strategy

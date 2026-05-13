@@ -60,6 +60,12 @@ pub struct RuntimeActivationPlan {
 impl RuntimeActivationPlan {
     pub fn from_request(request: RuntimeActivationRequest) -> Self {
         let route = request.route;
+        let register_gateway_routes = matches!(
+            route,
+            RuntimeActivationRoute::Managed
+                | RuntimeActivationRoute::Workspace
+                | RuntimeActivationRoute::Bootstrap
+        );
         let lease = RuntimeLeasePlan {
             policy: request.lease_policy,
         };
@@ -85,7 +91,7 @@ impl RuntimeActivationPlan {
             },
             aliases: RuntimeAliasPlan {
                 reconcile_primary_service_aliases: true,
-                register_gateway_routes: true,
+                register_gateway_routes,
             },
             lease,
             stages,
@@ -219,6 +225,24 @@ mod tests {
 
         assert_eq!(plan.request.route, RuntimeActivationRoute::Exec);
         assert_eq!(plan.route, RuntimeActivationRoute::Exec);
+        assert!(!plan.aliases.register_gateway_routes);
+    }
+
+    #[test]
+    fn task_route_skips_gateway_registration_by_default() {
+        let plan = RuntimeActivationRequest::new(PathBuf::from("/tmp/repo"), "web").plan();
+
+        assert_eq!(plan.route, RuntimeActivationRoute::Task);
+        assert!(!plan.aliases.register_gateway_routes);
+    }
+
+    #[test]
+    fn managed_route_keeps_gateway_registration_enabled() {
+        let plan = RuntimeActivationRequest::new(PathBuf::from("/tmp/repo"), "web")
+            .route(RuntimeActivationRoute::Managed)
+            .plan();
+
+        assert!(plan.aliases.register_gateway_routes);
     }
 
     #[test]

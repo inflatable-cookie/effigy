@@ -10,7 +10,8 @@ use super::super::super::exec_command::{
 use super::super::super::locking::io::acquire_scopes;
 use super::super::super::system_command::is_primary_service_running;
 use super::super::api::{
-    resolve_execution_binding_resolution, ContainerExecutionBinding, ExecutionBindingResolution,
+    effective_task_binding_inputs, execution_scope_root, resolve_execution_binding_resolution,
+    ContainerExecutionBinding, ExecutionBindingResolution,
 };
 use super::super::context::ExecutionTaskContext;
 use super::super::planning::ExecutionPreflight;
@@ -49,7 +50,8 @@ use effigy_env::schema_support::{
 use effigy_env::secret::SecretString;
 use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan, TaskStatusStage};
 use effigy_manifest::{
-    ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig, TaskSelection,
+    ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig, ManifestTaskRunIn,
+    TaskSelection,
 };
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload};
@@ -141,15 +143,15 @@ fn run_standard_task_inner(
     }
     let secret_ref = (!secret_pairs.is_empty()).then_some(secret_pairs.as_slice());
 
+    let (default_run_in, systems, containers) =
+        effective_task_binding_inputs(&preflight.invocation_cwd, &preflight.catalogs, selection);
+    let scope_root =
+        execution_scope_root(&preflight.invocation_cwd, &preflight.catalogs, selection);
+
     let binding_resolution = resolve_execution_binding_resolution(
-        selection
-            .catalog
-            .manifest
-            .task_defaults
-            .as_ref()
-            .and_then(|defaults| defaults.run_in),
-        selection.catalog.manifest.systems.as_ref(),
-        selection.catalog.manifest.containers.as_ref(),
+        default_run_in,
+        systems.as_ref(),
+        containers.as_ref(),
         &preflight.selector.task_name,
         selection.task,
         "standard task execution",
@@ -174,7 +176,14 @@ fn run_standard_task_inner(
         return Ok((output, "inline workspace task completed".to_owned()));
     }
 
-    let routed = route_with_running_check(preflight, selection)?;
+    let routed = route_with_running_check(
+        scope_root,
+        preflight,
+        selection,
+        default_run_in,
+        systems.as_ref(),
+        containers.as_ref(),
+    )?;
     let initial_route = routed_container_target(&routed.decision)
         .map(|(container, service)| container_route_summary(container, service))
         .unwrap_or_else(host_route_summary);
@@ -183,10 +192,17 @@ fn run_standard_task_inner(
     let mut task_activation = None;
     let routed = if let Some(container_name) = routed_not_running_container(&routed.decision) {
         task_activation = Some(activate_routed_container_runtime(
-            &selection.catalog.catalog_root,
+            scope_root,
             container_name,
         )?);
-        let rerouted = route_with_running_check(preflight, selection)?;
+        let rerouted = route_with_running_check(
+            scope_root,
+            preflight,
+            selection,
+            default_run_in,
+            systems.as_ref(),
+            containers.as_ref(),
+        )?;
         if rerouted.decision.is_not_running() {
             return Err(RunnerError::task_invocation(format!(
                 "task `{}` requires container `{}` but it is still not running after auto-up",
@@ -197,7 +213,7 @@ fn run_standard_task_inner(
     } else {
         if let Some((container_name, _)) = routed_container_target(&routed.decision) {
             task_activation = Some(activate_routed_container_runtime(
-                &selection.catalog.catalog_root,
+                scope_root,
                 container_name,
             )?);
         }
@@ -229,7 +245,7 @@ fn run_standard_task_inner(
         )?;
         if preflight.output_json {
             let output = capture_routed_task_container_exec(
-                &selection.catalog.catalog_root,
+                scope_root,
                 &preflight.invocation_cwd,
                 &preflight.selector,
                 &preflight.runtime_args_exec.passthrough,
@@ -264,7 +280,7 @@ fn run_standard_task_inner(
         }
 
         run_routed_task_container_exec(
-            &selection.catalog.catalog_root,
+            scope_root,
             &preflight.invocation_cwd,
             &preflight.selector,
             &preflight.runtime_args_exec.passthrough,
@@ -307,24 +323,22 @@ fn run_standard_task_inner(
 }
 
 fn route_with_running_check(
+    scope_root: &Path,
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
+    default_run_in: Option<ManifestTaskRunIn>,
+    systems: Option<&effigy_manifest::ManifestSystemsConfig>,
+    containers: Option<&effigy_manifest::ManifestContainersConfig>,
 ) -> Result<RoutedTaskExecution, RunnerError> {
     route_standard_task_execution(
         &preflight.selector.task_name,
-        selection
-            .catalog
-            .manifest
-            .task_defaults
-            .as_ref()
-            .and_then(|defaults| defaults.run_in),
+        default_run_in,
         selection.task,
-        selection.catalog.manifest.systems.as_ref(),
-        selection.catalog.manifest.containers.as_ref(),
+        systems,
+        containers,
         |container_name| {
-            let policy =
-                load_container_policy(&selection.catalog.catalog_root, Some(container_name))?;
-            is_primary_service_running(&selection.catalog.catalog_root, &policy)
+            let policy = load_container_policy(scope_root, Some(container_name))?;
+            is_primary_service_running(scope_root, &policy)
         },
     )
 }

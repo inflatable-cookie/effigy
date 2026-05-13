@@ -41,7 +41,7 @@ and consumer repo setup.
 - SSH-agent access alone is not enough to make a vault agent-safe.
 - The default Effigy vault must require a human-gated unlock factor, such as a
   passphrase, in addition to any key identity.
-- Effigy may support adapters such as Varlock, but the Effigy manifest contract
+- Effigy may support external adapters later, but the Effigy manifest contract
   is the durable source of truth.
 - Secrets must be redacted in text output, JSON reports, errors, logs, and
   provider script reports.
@@ -126,7 +126,7 @@ Supported policy targets:
 
 - `passphrase`: unlock with a local passphrase only
 - `key-and-passphrase`: require an available key identity and passphrase
-- `external`: delegate unlock to a configured adapter such as Varlock
+- `external`: reserved for a future backend adapter contract
 
 `key-only` is not the default and should not be accepted for the built-in vault
 unless a later roadmap explicitly justifies its safety boundary.
@@ -185,13 +185,42 @@ path.
 `.env.schema` remains useful for validation and legacy task environments, but
 it is not the long-term source of truth for secrets.
 
-The `g05` work should decide whether `.env.schema`:
+Decision for `g05`:
 
-- continues as a compatibility layer
-- gains a bridge to `[secrets]` declarations
-- is superseded for secret values while staying valid for non-secret env config
+- `.env.schema` continues as a compatibility and validation layer
+- `.env.schema @sensitive` behavior is preserved for existing task execution
+- `[secrets]` supersedes `.env.schema` as the portable declaration surface for
+  true secret values
+- no automatic bridge from `.env.schema` to `[secrets]` is added in `g05`
 
 No roadmap should silently remove existing `.env.schema` behavior.
+
+## Varlock Posture
+
+Varlock is deferred for `g05`.
+
+Effigy keeps the parts already internalised from the earlier env-schema work:
+
+- native `.env.schema` parsing
+- validation
+- redaction for `@sensitive` values
+- task-time environment resolution
+
+Effigy does not ship a live Varlock backend adapter in this generation.
+
+Reasons:
+
+- the built-in vault now provides the no-dependency local secret path
+- the `[secrets]` manifest model is the durable cross-surface contract
+- a Varlock adapter would need a separate command, unlock, status, error, and
+  provider boundary review
+- adding that adapter now would increase integration risk after task,
+  container, Rhai, state, artifact, and deploy injection already work through
+  one model
+
+Parser support for `backend = "external"` is a reserved manifest shape only.
+It should not be documented as an operational Varlock path until a future
+roadmap defines and tests the adapter contract.
 
 ## Underlay Contract
 
@@ -226,4 +255,4 @@ Effigy owns the tooling. Underlay owns the app-facing convention.
   one model.
 - Secret values are redacted from normal output and reports.
 - Underlay and Acowtancy can move non-secret `.env` values into ordinary config.
-- Varlock is either supported as an adapter or clearly documented as deferred.
+- Varlock is clearly documented as deferred.

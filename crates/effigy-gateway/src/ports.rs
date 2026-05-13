@@ -29,6 +29,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::atomic_write;
 use crate::error::GatewayError;
 
 /// Default port range start for auto-allocation.
@@ -151,13 +152,7 @@ impl PortRegistry {
                 reason: format!("port registry serialize: {e}"),
             })?;
 
-        let temp_path = path.with_extension(format!(
-            "json.tmp.{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|value| value.as_nanos())
-                .unwrap_or_default()
-        ));
+        let temp_path = atomic_write::temp_path(path, "ports");
         std::fs::write(&temp_path, &content).map_err(|e| GatewayError::RouteTableWriteError {
             path: temp_path.clone(),
             reason: e.to_string(),

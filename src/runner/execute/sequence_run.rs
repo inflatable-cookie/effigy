@@ -469,7 +469,7 @@ fn resolve_task_step(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
 ) -> Result<StepAction, RunnerError> {
-    let (selector, mut args) =
+    let (mut selector, mut args) =
         parse_task_reference_invocation(task_ref).map_err(RunnerError::task_invocation)?;
     args.extend(preflight.runtime_args_exec.passthrough.clone());
     if selector.prefix.is_none()
@@ -487,17 +487,14 @@ fn resolve_task_step(
             cwd: selection.catalog.catalog_root.clone(),
         });
     }
+    if selector.prefix.is_none() {
+        selector.prefix = Some(selection.catalog.alias.clone());
+    }
     let invocation = TaskInvocation {
         name: render_task_selector(&selector),
         args,
     };
-    let cwd = effigy_routing::resolve_task_selection(
-        &selector,
-        &preflight.catalogs,
-        &selection.catalog.catalog_root,
-    )
-    .map(|resolved| resolved.catalog.catalog_root.clone())
-    .unwrap_or_else(|_| selection.catalog.catalog_root.clone());
+    let cwd = preflight.invocation_cwd.clone();
     Ok(StepAction::Task { invocation, cwd })
 }
 
@@ -771,7 +768,14 @@ impl Drop for ScopedEnvOverride {
 #[cfg(test)]
 mod tests {
     use super::parse_builtin_step_command;
+    use super::{resolve_task_step, StepAction};
+    use crate::runner::execute::preflight::ExecutionPreflight;
     use effigy_cli::Command;
+    use effigy_core::resolver::{ResolutionMode, ResolvedTarget};
+    use effigy_execution::{ExecutionDiscoveryPlan, ExecutionSurface};
+    use effigy_manifest::{LoadedCatalog, TaskManifest, TaskSelection};
+    use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
+    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -788,5 +792,107 @@ mod tests {
             Command::Container(args)
                 if args.repo_override == Some(PathBuf::from("/tmp/repo"))
         ));
+    }
+
+    fn manifest_from_toml(body: &str) -> TaskManifest {
+        toml::from_str(body).expect("parse manifest")
+    }
+
+    fn loaded_catalog(
+        alias: &str,
+        root: &str,
+        manifest: TaskManifest,
+        depth: usize,
+    ) -> LoadedCatalog {
+        let root = PathBuf::from(root);
+        LoadedCatalog {
+            alias: alias.to_owned(),
+            manifest_path: root.join("effigy.toml"),
+            catalog_root: root,
+            bundle_root: None,
+            manifest,
+            defer_run: None,
+            deferred_builtins: BTreeSet::new(),
+            depth,
+        }
+    }
+
+    #[test]
+    fn resolve_task_step_keeps_workspace_scope_for_nested_child_tasks() {
+        let root = loaded_catalog(
+            "acowtancy",
+            "/workspace-root/acowtancy",
+            manifest_from_toml(""),
+            0,
+        );
+        let child = loaded_catalog(
+            "farmyard",
+            "/workspace-root/acowtancy/farmyard",
+            manifest_from_toml(
+                r#"
+[tasks."state:apply:schema"]
+run = [{ task = "db:migrate" }]
+"#,
+            ),
+            1,
+        );
+        let preflight = ExecutionPreflight {
+            invocation_cwd: PathBuf::from("/workspace-root/acowtancy"),
+            execution_surface: ExecutionSurface::RunArray,
+            runtime_args_raw: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                passthrough: Vec::new(),
+            },
+            runtime_args_exec: TaskRuntimeArgs {
+                repo_override: None,
+                verbose_root: false,
+                env_schema_override: None,
+                passthrough: Vec::new(),
+            },
+            output_json: false,
+            resolved: ResolvedTarget {
+                resolved_root: PathBuf::from("/workspace-root/acowtancy"),
+                resolution_mode: ResolutionMode::AutoNearest,
+                evidence: Vec::new(),
+                warnings: Vec::new(),
+            },
+            discovery_plan: ExecutionDiscoveryPlan {
+                invocation_cwd: PathBuf::from("/workspace-root/acowtancy"),
+                resolved_root: PathBuf::from("/workspace-root/acowtancy"),
+                selector: TaskSelector {
+                    prefix: Some("farmyard".to_owned()),
+                    task_name: "state:apply:schema".to_owned(),
+                },
+                repo_override: None,
+            },
+            selector: TaskSelector {
+                prefix: Some("farmyard".to_owned()),
+                task_name: "state:apply:schema".to_owned(),
+            },
+            catalogs: vec![root, child],
+            secret_targets: Vec::new(),
+        };
+        let selection = TaskSelection {
+            catalog: &preflight.catalogs[1],
+            task: preflight.catalogs[1]
+                .manifest
+                .tasks
+                .get("state:apply:schema")
+                .expect("state task exists"),
+            mode: CatalogSelectionMode::ExplicitPrefix,
+            evidence: vec!["selected catalog via explicit prefix".to_owned()],
+        };
+
+        let action = resolve_task_step("db:migrate", &preflight, &selection).expect("resolve step");
+
+        match action {
+            StepAction::Task { invocation, cwd } => {
+                assert_eq!(invocation.name, "farmyard/db:migrate");
+                assert_eq!(cwd, PathBuf::from("/workspace-root/acowtancy"));
+            }
+            other => panic!("expected nested task action, got {:?}", other.kind()),
+        }
     }
 }

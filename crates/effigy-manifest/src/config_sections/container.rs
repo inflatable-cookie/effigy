@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use super::ManifestIsolationAdoption;
 
-#[derive(Debug, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Deserialize, Default)]
 pub struct ManifestContainersConfig {
     #[serde(default)]
     pub default: Option<String>,
@@ -10,7 +10,7 @@ pub struct ManifestContainersConfig {
     pub environments: BTreeMap<String, ManifestContainerConfig>,
 }
 
-#[derive(Debug, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Deserialize, Default)]
 pub struct ManifestSystemsConfig {
     #[serde(default)]
     pub default: Option<String>,

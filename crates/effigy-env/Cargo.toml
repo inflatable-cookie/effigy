@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Env schema and varlock contracts for Effigy"
+description = "Env schema parsing, resolution, and validation for Effigy"
 
 [dependencies]
 regex = "1"

@@ -1,10 +1,19 @@
 ---
 title: Varlock Integration Implementation Handoff
-status: active
+status: historical
 owner: nucleus
 updated: 2026-03-07
 tags: [handoff, varlock, secrets, env-spec]
 ---
+
+## Historical Note
+
+This handoff is superseded by `g05`.
+
+Effigy now keeps native `.env.schema` parsing and validation, but Varlock is
+deferred as a live secret backend adapter. The supported local secret path is
+root `[secrets]` plus the built-in Effigy vault. Treat this document as research
+history, not active implementation guidance.
 
 ## Objective
 

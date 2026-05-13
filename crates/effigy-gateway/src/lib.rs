@@ -23,6 +23,8 @@
 //!         -> gateway proxy (port 80) -> localhost:8080
 //! ```
 
+mod atomic_write;
+
 pub mod dns;
 pub mod error;
 pub mod loopback;

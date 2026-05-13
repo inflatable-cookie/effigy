@@ -1,6 +1,6 @@
 # g05.007 - Varlock Adapter And Closeout
 
-Status: Planned
+Status: Complete
 Depends on: `g05.006`
 
 ## Goal
@@ -33,6 +33,29 @@ The Effigy contract remains:
 
 Varlock, if supported, is only one backend implementation.
 
+## Decision
+
+Varlock is deferred for `g05`.
+
+Effigy keeps native `.env.schema` parsing and validation as compatibility
+infrastructure. The supported local secret system is `[secrets]` with the
+built-in Effigy vault. `backend = "external"` remains a reserved parser shape,
+not an operational adapter.
+
+## Closeout
+
+Completed by cards `720` and `721`.
+
+The final `g05` posture is:
+
+- `[secrets]` declares true secret names, target surfaces, and backend posture
+- the built-in Effigy vault is the supported local secret backend
+- task, container, Rhai, deploy, state, and artifact seams consume declared
+  secrets through the Effigy model
+- `.env.schema` remains native validation/task-env compatibility
+- Varlock is deferred as a live backend adapter
+- plaintext env export exists only as an explicit compatibility bridge
+
 ## Non-Goals
 
 - No hosted secret sync.
@@ -62,5 +85,4 @@ Varlock, if supported, is only one backend implementation.
 
 ## Next Task
 
-Close `g05` or open the next generation only after release-readiness review.
-
+No next `g05` task.

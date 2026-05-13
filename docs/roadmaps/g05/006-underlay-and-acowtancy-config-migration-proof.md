@@ -1,6 +1,6 @@
 # g05.006 - Underlay And Acowtancy Config Migration Proof
 
-Status: Planned
+Status: Complete
 Depends on: `g05.005`
 
 ## Goal
@@ -45,11 +45,25 @@ Underlay, even when Effigy implements the command behavior.
 - Acowtancy has a documented split between config and secrets.
 - Underlay docs describe the standard local config and secret declaration
   pattern for bundle apps.
-- Acowtancy local container development can run with secrets injected by
-  Effigy.
+- Acowtancy local container development has declared `containers` targets ready
+  for Effigy injection once the local vault is initialised.
 - No required secret values live in committed files.
 - Any remaining `.env` use is documented as legacy compatibility or
   non-secret config.
+
+## Closeout
+
+Completed by card `719`.
+
+Acowtancy now declares true secret keys in root `effigy.toml`, documents the
+bridge window for existing `.env` files, and links the operator workflow from
+the root README and state/deploy runbook. Underlay now documents the same
+Effigy-backed local vault posture as the source-of-truth convention for
+Underlay-based apps.
+
+The proof intentionally leaves Acowtancy secret declarations optional until
+operators initialise `.effigy/secrets/local.vault`; tightening selected keys to
+`required = true` is the next app-local rollout step, not an Effigy core change.
 
 ## Test Strategy
 
@@ -61,6 +75,4 @@ Underlay, even when Effigy implements the command behavior.
 
 ## Next Task
 
-Decide whether Varlock becomes an adapter or an explicitly deferred integration
-in `g05.007`.
-
+Close the `g05` secret-management suite in `721`.

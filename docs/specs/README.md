@@ -28,7 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`080-container-secret-injection-strict-lane.md`](./080-container-secret-injection-strict-lane.md)
+- none
 
 Queued strict lanes:
 
@@ -41,5 +41,5 @@ Archived strict lanes:
 
 ## Next Task
 
-Close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`.
+No active strict-lane task. Open the next lane only after explicit planning.
 Release execution remains human-owned.

@@ -1,6 +1,6 @@
 # g05 Roadmaps
 
-Status: Active
+Status: Complete
 Theme: Secret and local configuration management
 
 ## Purpose
@@ -12,6 +12,10 @@ secret management model.
 The generation starts from the Underlay and Acowtancy problem: `.env` files
 contain too much non-secret configuration, while real credentials need stronger
 handling than plaintext files can provide.
+
+Final posture: `[secrets]` plus the built-in vault is the supported local secret
+path. `.env.schema` remains validation/task-env compatibility. Varlock is
+deferred as a live backend adapter. Varlock is deferred.
 
 ## Roadmap Sequence
 
@@ -61,9 +65,8 @@ Recommended first cards:
 
 ## Current State
 
-`g05.001`, `g05.002`, `g05.003`, and `g05.004` are complete. Strict lanes
-`076`, `077`, `078`, and `079` are closed. Strict lane `080` is open for
-`g05.005`.
+`g05` is complete. `g05.001` through `g05.007` are complete. Strict lanes
+`076`, `077`, `078`, `079`, and `080` are closed.
 
 Completed cards:
 
@@ -84,11 +87,10 @@ Completed cards:
 - [`716-close-task-rhai-deploy-secret-injection.md`](./batch-cards/716-close-task-rhai-deploy-secret-injection.md)
 - [`717-add-container-secret-injection.md`](./batch-cards/717-add-container-secret-injection.md)
 - [`718-add-compat-env-export.md`](./batch-cards/718-add-compat-env-export.md)
-
-Ready card:
-
-- close `g05.005` or continue to `g05.006`
+- [`719-migrate-underlay-acowtancy-config-proof.md`](./batch-cards/719-migrate-underlay-acowtancy-config-proof.md)
+- [`720-decide-varlock-adapter-or-deferral.md`](./batch-cards/720-decide-varlock-adapter-or-deferral.md)
+- [`721-close-g05-secret-management-suite.md`](./batch-cards/721-close-g05-secret-management-suite.md)
 
 ## Next Task
 
-Close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`.
+No next `g05` task. Open a new generation only after explicit planning.

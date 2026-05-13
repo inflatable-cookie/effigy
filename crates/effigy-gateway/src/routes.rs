@@ -17,6 +17,7 @@ use std::sync::{Arc, RwLock};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::atomic_write;
 use crate::error::GatewayError;
 
 /// A single route entry mapping a domain to an upstream target.
@@ -131,7 +132,7 @@ impl RouteTable {
 
         // Write to a temp file in the same directory, then rename.
         // This ensures atomic replacement.
-        let temp_path = path.with_extension("json.tmp");
+        let temp_path = atomic_write::temp_path(path, "routes");
         std::fs::write(&temp_path, &content).map_err(|e| GatewayError::RouteTableWriteError {
             path: temp_path.clone(),
             reason: e.to_string(),

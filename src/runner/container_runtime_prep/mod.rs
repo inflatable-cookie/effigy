@@ -156,7 +156,9 @@ fn activate_container_runtime_plan_for_task_using(
         plan.request.container_name.as_deref(),
         plan.request.repo_override.clone(),
     )?;
-    ensure_gateway_ready(repo_root, policy)?;
+    if plan.aliases.register_gateway_routes {
+        ensure_gateway_ready(repo_root, policy)?;
+    }
     let refreshed_host_container_lease = refresh_runtime_lease_stage(
         plan,
         policy,

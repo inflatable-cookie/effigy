@@ -4,11 +4,20 @@ This guide explains the `@env-spec` integration that lets projects declare
 environment variable schemas in `.env.schema` files. Effigy parses, resolves,
 validates, and injects these variables at task execution time.
 
+This is native Effigy env-schema support, not a live Varlock backend. Varlock
+inspired the original env-spec work, but Varlock is deferred for `g05`. The
+supported Effigy local secret path is `[secrets]` plus the built-in vault.
+
 Use it when your project needs:
 - declarative required/optional environment variables
 - type-checked values (port, URL, enum, string length)
-- secret handling that never leaks to `ps` output
+- compatibility secret handling for existing task env that never leaks to `ps`
+  output
 - computed defaults via shell commands or variable references
+
+Do not use `.env.schema` as the long-term source of truth for true secrets in
+new Effigy-managed projects. Declare true secrets under `[secrets.keys]` and
+store local values with `effigy secrets`.
 
 ## Vision Alignment
 
@@ -110,6 +119,20 @@ Variables annotated with `@sensitive` receive special treatment:
 
 This dual-injection strategy ensures secrets are available to the task process
 but invisible to system monitoring tools.
+
+For new local secret workflows, prefer the dedicated secrets surface:
+
+```toml
+[secrets]
+backend = "effigy-vault"
+
+[secrets.keys.database_url]
+required = true
+targets = ["tasks", "containers"]
+```
+
+`.env.schema @sensitive` remains supported for compatibility, validation, and
+existing task environments. It is not connected to a Varlock adapter in `g05`.
 
 ## 4) Configuration
 
@@ -257,6 +280,7 @@ project root and returns `Ok(None)` when the default file is absent.
 
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) -- task env patterns
 - [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md) -- test suite env
+- [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) -- `effigy secrets` command surface
 
 ## Next Step
 
