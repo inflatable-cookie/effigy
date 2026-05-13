@@ -11,6 +11,7 @@ use effigy_core::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
 };
 use effigy_env::schema_support::SchemaSupportError;
+use effigy_manifest::ManifestManagedRunStep;
 use effigy_process::ProcessManagerError;
 use effigy_ui::{OutputMode, PlainRenderer, UiError};
 
@@ -57,6 +58,7 @@ pub struct ManagedProcessSpec {
     pub role: ManagedProcessRole,
     pub run: String,
     pub setup: Option<String>,
+    pub setup_steps: Vec<ManifestManagedRunStep>,
     pub cwd: PathBuf,
     pub service: Option<String>,
     pub start_after_ms: u64,

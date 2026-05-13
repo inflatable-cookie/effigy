@@ -60,6 +60,7 @@ pub fn resolve_concurrent_process_entries<'a>(
                 role: normalized.role,
                 run,
                 setup,
+                setup_steps: entry.setup.clone(),
                 cwd,
                 service: normalized.service,
                 start_after_ms: normalized.start_after_ms,

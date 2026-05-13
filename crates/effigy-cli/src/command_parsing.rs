@@ -31,7 +31,7 @@ use crate::{
     BundleArgs, BundleSubcommand, Command, ContractsArgs, ContractsCheckMode,
     ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DoctorArgs, HelpTopic,
     InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalHostProcessStopArgs,
-    InternalHostProcessSuperviseArgs, InternalRhaiArgs, TaskInvocation, TasksArgs,
+    InternalHostProcessSuperviseArgs, InternalScriptRunArgs, TaskInvocation, TasksArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -85,7 +85,7 @@ where
         "release" => parse_release_command(args),
         "doctor" => parse_doctor(args),
         "tasks" => parse_tasks(args),
-        "__rhai-step" => parse_internal_rhai_command(args),
+        "script" => parse_internal_script_command(args),
         "__gateway-run" => Ok(Command::InternalGateway(InternalGatewayArgs)),
         "__container-lease-reaper" => parse_internal_container_lease_reaper_command(args),
         "__host-process-supervise" => parse_internal_host_process_supervise_command(args),
@@ -371,7 +371,7 @@ where
     ))
 }
 
-fn parse_internal_rhai_command<I>(args: I) -> Result<Command, CliParseError>
+fn parse_internal_script_run_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
@@ -425,12 +425,24 @@ where
         });
     };
 
-    Ok(Command::InternalRhai(InternalRhaiArgs {
+    Ok(Command::InternalScriptRun(InternalScriptRunArgs {
         file,
         repo_root,
         task_name,
         args: script_args,
     }))
+}
+
+fn parse_internal_script_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    match args.next().as_deref() {
+        Some("run") => parse_internal_script_run_command(args),
+        Some(other) => Err(unknown_argument(other)),
+        None => Err(CliParseError::MissingTaskNameValue),
+    }
 }
 
 fn parse_version_command<I>(args: I) -> Result<Command, CliParseError>

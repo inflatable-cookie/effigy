@@ -41,7 +41,7 @@ pub enum Command {
     Tasks(TasksArgs),
     Task(TaskInvocation),
     #[doc(hidden)]
-    InternalRhai(InternalRhaiArgs),
+    InternalScriptRun(InternalScriptRunArgs),
     #[doc(hidden)]
     InternalGateway(InternalGatewayArgs),
     #[doc(hidden)]
@@ -55,7 +55,7 @@ pub enum Command {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[doc(hidden)]
-pub struct InternalRhaiArgs {
+pub struct InternalScriptRunArgs {
     pub file: PathBuf,
     pub repo_root: Option<PathBuf>,
     pub task_name: Option<String>,
@@ -218,11 +218,15 @@ pub enum SecretsSubcommand {
     Set {
         name: String,
     },
+    Get {
+        name: String,
+    },
     Unset {
         name: String,
     },
     Unlock,
     Lock,
+    ChangePassphrase,
     Export {
         format: SecretsExportFormat,
         output: PathBuf,

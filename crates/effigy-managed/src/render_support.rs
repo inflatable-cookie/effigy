@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use effigy_core::widgets::{KeyValue, NoticeLevel, SummaryCounts, TableSpec};
+use effigy_manifest::ManifestManagedRunStep;
 use effigy_process::ProcessSpec;
 use effigy_ui::Renderer;
 
@@ -135,16 +136,48 @@ fn managed_plan_process_rows(plan: &ManagedTaskPlan) -> Vec<Vec<String>> {
                 process.name.clone(),
                 managed_process_role_label(process.role).to_owned(),
                 process.cwd.display().to_string(),
-                process
-                    .setup
-                    .clone()
-                    .unwrap_or_else(|| "disabled".to_owned()),
+                managed_process_setup_label(process),
                 process.run.clone(),
                 process.start_after_ms.to_string(),
                 managed_process_shutdown_on_exit_label(process.shutdown_on_exit).to_owned(),
             ]
         })
         .collect::<Vec<Vec<String>>>()
+}
+
+fn managed_process_setup_label(process: &ManagedProcessSpec) -> String {
+    if !process.setup_steps.is_empty() {
+        return process
+            .setup_steps
+            .iter()
+            .map(render_setup_step_preview)
+            .collect::<Vec<_>>()
+            .join(" && ");
+    }
+    process
+        .setup
+        .clone()
+        .unwrap_or_else(|| "disabled".to_owned())
+}
+
+fn render_setup_step_preview(step: &ManifestManagedRunStep) -> String {
+    match step {
+        ManifestManagedRunStep::Command(command) => command.to_owned(),
+        ManifestManagedRunStep::Step(table) => {
+            let table = table.as_ref();
+            match (
+                table.run.as_deref(),
+                table.task.as_deref(),
+                table.rhai.as_deref(),
+            ) {
+                (Some(run), None, None) => run.to_owned(),
+                (None, Some(task), None) => format!("task {task}"),
+                (None, None, Some(path)) => format!("rhai {path}"),
+                (None, None, None) => "env-only".to_owned(),
+                _ => "invalid-step".to_owned(),
+            }
+        }
+    }
 }
 
 fn managed_process_role_label(role: ManagedProcessRole) -> &'static str {
@@ -215,6 +248,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp/repo"),
                 run: "printf lifecycle".to_owned(),
                 setup: None,
+                setup_steps: Vec::new(),
                 start_after_ms: 0,
                 shutdown_on_exit: true,
                 service: None,
@@ -226,6 +260,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp/repo/api"),
                 run: "printf api".to_owned(),
                 setup: None,
+                setup_steps: Vec::new(),
                 start_after_ms: 0,
                 shutdown_on_exit: false,
                 service: None,
@@ -237,6 +272,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp/repo"),
                 run: "sh".to_owned(),
                 setup: None,
+                setup_steps: Vec::new(),
                 start_after_ms: 0,
                 shutdown_on_exit: false,
                 service: Some("workspace".to_owned()),

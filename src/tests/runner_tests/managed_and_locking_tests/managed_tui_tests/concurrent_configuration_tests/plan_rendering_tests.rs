@@ -228,7 +228,7 @@ fn run_manifest_task_managed_tui_plan_renders_explicit_concurrent_setup() {
         expected: &[
             "Managed Task Plan",
             "setup",
-            "__rhai-step --file 'scripts/front-setup.rhai'",
+            "rhai scripts/front-setup.rhai",
             "bun run dev",
         ],
         expected_absent: &[],

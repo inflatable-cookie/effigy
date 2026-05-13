@@ -33,6 +33,16 @@ Rhai steps are for repo automation glue:
 
 They are not the new universal runtime for every repo.
 
+Normal task execution now runs pure Rhai/task-ref step sequences in-process
+instead of shelling out through a nested internal script-run hop. Managed
+process setup sequences now split by route:
+
+- local-route setup runs before launch through the in-process executor
+- named-container setup runs before launch through a routed container exec path
+
+Container-local Rhai setup still uses the remote fallback inside that routed
+container path so container-local script semantics stay intact.
+
 ## 2) Use File-Backed Scripts
 
 File-backed example:

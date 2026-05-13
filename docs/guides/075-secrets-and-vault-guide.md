@@ -73,7 +73,7 @@ description = "Render API key for deployment checks and apply"
 |---|---|
 | `tasks` | task process environments |
 | `containers` | container service environments at startup |
-| `rhai` | Rhai scripts via `effigy::secret(name)` |
+| `rhai` | Rhai scripts via `secrets::get(name)` |
 | `deploy` | deploy provider package Rhai scripts |
 | `state` | state apply hook task environments |
 | `artifacts` | artifact workflow Rhai scripts |
@@ -110,6 +110,16 @@ Prompts for the value and stores it in the vault. For CI or non-TTY use, values
 must be supplied through stdin or environment variables depending on the Effigy
 version; check `effigy secrets set --help`.
 
+### Read one value
+
+```sh
+effigy secrets get render_api_key
+effigy secrets get render_api_key --json
+```
+
+Prints one declared stored secret after unlocking the vault. This intentionally
+reveals the value; use it only for explicit operator handoff or debugging.
+
 ### Remove a value
 
 ```sh
@@ -127,6 +137,16 @@ effigy secrets unlock
 
 Verifies the vault can be decrypted. Unlock is per-invocation; Effigy does not
 keep a daemon.
+
+### Change the vault passphrase
+
+```sh
+effigy secrets change-passphrase
+```
+
+Prompts for the current passphrase, then prompts for and confirms the new
+passphrase. Stored secret values are preserved and re-encrypted without being
+printed.
 
 ### Lock
 
@@ -178,8 +198,8 @@ file is written.
 Scripts that declare `targets = ["rhai"]` can read secrets safely:
 
 ```rhai
-if effigy::has_secret("api_token") {
-    let token = effigy::secret("api_token");
+if secrets::has("api_token") {
+    let token = secrets::get("api_token");
     let result = http::request("GET", "https://api.example.com/v1/status", #{
         headers: #{ "Authorization": `Bearer ${token}` }
     });
@@ -190,15 +210,19 @@ Repo-owned Rhai tasks may also store generated local values:
 
 ```rhai
 let keys = random::jwt_env_keys();
-effigy::set_secret("auth_jwt_private_key", keys["private_key"]);
-effigy::set_secret("auth_jwt_public_key", keys["public_key"]);
+secrets::set_many(#{
+  auth_jwt_private_key: keys["private_key"],
+  auth_jwt_public_key: keys["public_key"],
+});
 ```
 
 Rules:
 
-- `effigy::secret(name)` rejects undeclared or wrong-target reads at runtime
-- `effigy::set_secret(name, value)` requires the secret to be declared for the
-  `rhai` target and writes to the encrypted vault
+- `secrets::get(name)` rejects undeclared or wrong-target reads at runtime
+- `secrets::has(name)` checks whether a declared Rhai secret is available
+- `secrets::set(name, value)` and `secrets::set_many(map)` require each secret
+  to be declared for the `rhai` target and write to the encrypted vault
+- `secrets::set_many(map)` batches validation, unlock, encryption, and write
 - Known values are redacted from Rhai errors and host output maps
 - Never build shell commands that embed secrets; use structured helpers
 

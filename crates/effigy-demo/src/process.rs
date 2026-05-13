@@ -118,7 +118,7 @@ pub fn resolve_demo_launch_mode(
 }
 
 pub fn run_command_prefers_stream_transport(run_command: &str) -> bool {
-    run_command.contains("__rhai-step")
+    run_command.contains(" script run --file ") || run_command.starts_with("script run --file ")
 }
 
 #[cfg(target_os = "macos")]

@@ -50,67 +50,15 @@ pub(super) fn maybe_run_in_process_sequence(
         return Ok(None);
     };
 
-    let mut task_env = env_schema_resolved
-        .as_ref()
-        .map(|resolved| resolved.plain_env())
-        .unwrap_or_default();
-    for (key, value) in &selection.task.env {
-        task_env.insert(key.clone(), value.clone());
-    }
-    let mut env_state = StepEnvAccumulator::new(
-        selection.task.env_file.as_ref(),
-        preflight.runtime_args_raw.env_schema_override.as_deref(),
-    )
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    for (key, value) in &task_env {
-        env_state.chained_env().get(key);
-        let _ = value;
-    }
-
-    let mut planned_steps = Vec::with_capacity(steps.len());
-    for step in steps {
-        env_state
-            .apply_from_step(
-                &preflight.selector.task_name,
-                step,
-                &selection.catalog.manifest.env,
-                &selection.catalog.catalog_root,
-                &preflight.catalogs,
-            )
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        let step_env = merged_step_env(
-            &task_env,
-            env_state.chained_env(),
-            &selection.catalog.catalog_root,
-        );
-        planned_steps.push(StepPlan {
-            action: resolve_step_action(step, preflight, selection)?,
-            policy: step_policy(step),
-            env: step_env,
-        });
-    }
-
-    let schedule = build_run_sequence_schedule(&preflight.selector.task_name, steps)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let overall_failed = if let Some(levels) = schedule {
-        run_scheduled_steps(
-            &planned_steps,
-            &levels,
-            selection,
-            secret_env,
-            &preflight.selector.task_name,
-            &preflight.runtime_args_exec.passthrough,
-        )?
-    } else {
-        run_step_indexes_in_order(
-            planned_steps.iter().enumerate().map(|(index, _)| index),
-            &planned_steps,
-            selection,
-            secret_env,
-            &preflight.selector.task_name,
-            &preflight.runtime_args_exec.passthrough,
-        )?
-    };
+    let overall_failed = run_in_process_sequence_steps_inner(
+        preflight,
+        selection,
+        steps,
+        env_schema_resolved,
+        secret_env,
+        &preflight.selector.task_name,
+        &preflight.runtime_args_exec.passthrough,
+    )?;
 
     if overall_failed {
         return Err(RunnerError::TaskCommandFailure {
@@ -136,6 +84,129 @@ pub(super) fn maybe_run_in_process_sequence(
     Ok(Some(String::new()))
 }
 
+pub(super) fn maybe_run_fully_in_process_sequence(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+    context: &ExecutionTaskContext<'_>,
+    env_schema_resolved: &Option<ResolvedEnv>,
+    secret_env: Option<&[(&str, &SecretString)]>,
+) -> Result<Option<String>, RunnerError> {
+    let Some(run_spec) = selection.task.run.as_ref() else {
+        return Ok(None);
+    };
+    if !run_spec_is_fully_in_process_capable(run_spec) {
+        return Ok(None);
+    }
+    maybe_run_in_process_sequence(
+        preflight,
+        selection,
+        context,
+        env_schema_resolved,
+        secret_env,
+    )
+}
+
+pub(super) fn run_in_process_sequence_steps(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+    steps: &[ManifestManagedRunStep],
+    env_schema_resolved: &Option<ResolvedEnv>,
+    secret_env: Option<&[(&str, &SecretString)]>,
+    task_name: &str,
+    passthrough: &[String],
+) -> Result<(), RunnerError> {
+    let overall_failed = run_in_process_sequence_steps_inner(
+        preflight,
+        selection,
+        steps,
+        env_schema_resolved,
+        secret_env,
+        task_name,
+        passthrough,
+    )?;
+    if overall_failed {
+        return Err(RunnerError::TaskCommandFailure {
+            command: task_name.to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+    }
+    Ok(())
+}
+
+fn run_in_process_sequence_steps_inner(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+    steps: &[ManifestManagedRunStep],
+    env_schema_resolved: &Option<ResolvedEnv>,
+    secret_env: Option<&[(&str, &SecretString)]>,
+    task_name: &str,
+    passthrough: &[String],
+) -> Result<bool, RunnerError> {
+    let mut task_env = env_schema_resolved
+        .as_ref()
+        .map(|resolved| resolved.plain_env())
+        .unwrap_or_default();
+    for (key, value) in &selection.task.env {
+        task_env.insert(key.clone(), value.clone());
+    }
+    let mut env_state = StepEnvAccumulator::new(
+        selection.task.env_file.as_ref(),
+        preflight.runtime_args_raw.env_schema_override.as_deref(),
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    for (key, value) in &task_env {
+        env_state.chained_env().get(key);
+        let _ = value;
+    }
+
+    let mut planned_steps = Vec::with_capacity(steps.len());
+    for step in steps {
+        env_state
+            .apply_from_step(
+                task_name,
+                step,
+                &selection.catalog.manifest.env,
+                &selection.catalog.catalog_root,
+                &preflight.catalogs,
+            )
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        let step_env = merged_step_env(
+            &task_env,
+            env_state.chained_env(),
+            &selection.catalog.catalog_root,
+        );
+        planned_steps.push(StepPlan {
+            action: resolve_step_action(step, preflight, selection, passthrough)?,
+            policy: step_policy(step),
+            env: step_env,
+        });
+    }
+
+    let schedule = build_run_sequence_schedule(task_name, steps)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    if let Some(levels) = schedule {
+        run_scheduled_steps(
+            &planned_steps,
+            &levels,
+            selection,
+            secret_env,
+            task_name,
+            passthrough,
+        )
+    } else {
+        run_step_indexes_in_order(
+            planned_steps.iter().enumerate().map(|(index, _)| index),
+            &planned_steps,
+            selection,
+            secret_env,
+            task_name,
+            passthrough,
+        )
+    }
+}
+
 fn merged_step_env(
     task_env: &BTreeMap<String, String>,
     chained_env: &BTreeMap<String, String>,
@@ -149,6 +220,36 @@ fn merged_step_env(
         merged.insert(key.clone(), render_env_value(value, repo_root));
     }
     merged
+}
+
+fn run_spec_is_fully_in_process_capable(run: &ManifestManagedRun) -> bool {
+    let ManifestManagedRun::Sequence(steps) = run else {
+        return false;
+    };
+    steps.iter().all(step_is_fully_in_process_capable)
+}
+
+pub(super) fn step_is_fully_in_process_capable(step: &ManifestManagedRunStep) -> bool {
+    match step {
+        ManifestManagedRunStep::Command(command) => command
+            .strip_prefix("task:")
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty()),
+        ManifestManagedRunStep::Step(table) => {
+            let table = table.as_ref();
+            match (
+                table.run.as_deref(),
+                table.task.as_deref(),
+                table.rhai.as_deref(),
+            ) {
+                (Some(_), None, None) => false,
+                (None, Some(task_ref), None) => !task_ref.trim().is_empty(),
+                (None, None, Some(path)) => !path.trim().is_empty(),
+                (None, None, None) => table.env.is_some() || table.env_file.is_some(),
+                _ => false,
+            }
+        }
+    }
 }
 
 fn render_env_value(value: &str, repo_root: &Path) -> String {
@@ -412,6 +513,7 @@ fn resolve_step_action(
     step: &ManifestManagedRunStep,
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
+    passthrough: &[String],
 ) -> Result<StepAction, RunnerError> {
     match step {
         ManifestManagedRunStep::Command(command) => {
@@ -426,7 +528,7 @@ fn resolve_step_action(
                 command,
                 &selection.catalog.catalog_root,
                 selection.catalog.bundle_root.as_deref(),
-                &effigy_tasks::render_passthrough_args(&preflight.runtime_args_exec.passthrough),
+                &effigy_tasks::render_passthrough_args(passthrough),
             )))
         }
         ManifestManagedRunStep::Step(table) => {
@@ -440,9 +542,7 @@ fn resolve_step_action(
                     run,
                     &selection.catalog.catalog_root,
                     selection.catalog.bundle_root.as_deref(),
-                    &effigy_tasks::render_passthrough_args(
-                        &preflight.runtime_args_exec.passthrough,
-                    ),
+                    &effigy_tasks::render_passthrough_args(passthrough),
                 ))),
                 (None, Some(task_ref), None) => resolve_task_step(task_ref, preflight, selection),
                 (None, None, Some(path)) => Ok(StepAction::Rhai {

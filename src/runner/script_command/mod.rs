@@ -18,7 +18,7 @@ use effigy_cli::{
     ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs,
     DemoListQuery, DemoSubcommand, DeployArgs, DeployExportProvider, DeploySubcommand, DocsArgs,
     DocsBlockRequirement, DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand,
-    InternalRhaiArgs, ServiceArgs, ServiceSubcommand, StateArgs, StateSubcommand, SystemArgs,
+    InternalScriptRunArgs, ServiceArgs, ServiceSubcommand, StateArgs, StateSubcommand, SystemArgs,
     SystemSubcommand, TaskInvocation, TasksArgs,
 };
 use serde_json::Value;
@@ -31,7 +31,9 @@ use super::container_runtime_prep::{activate_container_runtime_for_task, Activat
 use super::embedded_runner::parse_embedded_command;
 use super::error::RunnerError;
 use super::runtime_session_context::current_runtime_session_context;
-pub(in crate::runner) fn run_internal_rhai(args: InternalRhaiArgs) -> Result<String, RunnerError> {
+pub(in crate::runner) fn run_internal_script_run(
+    args: InternalScriptRunArgs,
+) -> Result<String, RunnerError> {
     execute_repo_rhai_script(
         &required_repo_root(&args)?,
         &required_task_name(&args)?,
@@ -82,7 +84,7 @@ pub(in crate::runner) fn execute_repo_rhai_script_with_secret_targets(
     .map_err(map_rhai_error)
 }
 
-fn required_repo_root(args: &InternalRhaiArgs) -> Result<PathBuf, RunnerError> {
+fn required_repo_root(args: &InternalScriptRunArgs) -> Result<PathBuf, RunnerError> {
     if let Some(path) = &args.repo_root {
         Ok(path.clone())
     } else {
@@ -92,7 +94,7 @@ fn required_repo_root(args: &InternalRhaiArgs) -> Result<PathBuf, RunnerError> {
     }
 }
 
-fn required_task_name(args: &InternalRhaiArgs) -> Result<String, RunnerError> {
+fn required_task_name(args: &InternalScriptRunArgs) -> Result<String, RunnerError> {
     if let Some(task_name) = &args.task_name {
         Ok(task_name.clone())
     } else {
@@ -100,7 +102,7 @@ fn required_task_name(args: &InternalRhaiArgs) -> Result<String, RunnerError> {
     }
 }
 
-fn load_script_args_for_internal(args: &InternalRhaiArgs) -> Result<Vec<String>, RunnerError> {
+fn load_script_args_for_internal(args: &InternalScriptRunArgs) -> Result<Vec<String>, RunnerError> {
     if args.args.is_empty() {
         match load_script_args_from_env() {
             Ok(values) => Ok(values),

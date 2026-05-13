@@ -33,6 +33,7 @@ pub const MODULE_CONTRACTS: &str = "contracts";
 pub const MODULE_UNLOCK: &str = "unlock";
 pub const MODULE_TEST: &str = "test";
 pub const MODULE_EFFIGY: &str = "effigy";
+pub const MODULE_SECRETS: &str = "secrets";
 
 pub const MODULE_NAMES: &[&str] = &[
     MODULE_TIME,
@@ -70,6 +71,7 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_UNLOCK,
     MODULE_TEST,
     MODULE_EFFIGY,
+    MODULE_SECRETS,
 ];
 
 pub const FEATURE_TASKS_LIST: &str = "tasks.list";

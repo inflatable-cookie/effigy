@@ -1,4 +1,6 @@
-use super::super::super::container_command::support::validate_running_container_runtime_match;
+use super::super::super::container_command::{
+    run_container_exec_operation_capture, support::validate_running_container_runtime_match,
+};
 use super::super::super::gateway_command::gateway_up_for_managed_task;
 use super::super::super::locking::io::acquire_scopes;
 use super::super::super::locking::model::LockScope;
@@ -18,20 +20,24 @@ use super::super::api::{
 use super::super::planning::ExecutionPreflight;
 use crate::runner::container_runtime_prep::build_runtime_activation_plan;
 use crate::runner::error::RunnerError;
+use crate::runner::execute::sequence_run::run_in_process_sequence_steps;
 use crate::runner::execute::workspace_seeded::{
     inside_container_handoff, run_workspace_seeded_task_session,
 };
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
-    managed_gateway_command, managed_lifecycle_command, managed_lifecycle_shutdown_command,
-    managed_shell_command, managed_standard_exec_command, resolve_effigy_invocation_prefix,
+    container_exec_command, managed_gateway_command, managed_lifecycle_command,
+    managed_lifecycle_shutdown_command, managed_shell_command, managed_standard_exec_command,
+    resolve_effigy_invocation_prefix,
 };
-use effigy_containers::{load_container_policy, EffectiveContainerPolicy};
+use effigy_containers::{
+    load_container_policy, ContainerCapturedExecOperation, EffectiveContainerPolicy,
+};
 use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
-use effigy_managed::{managed_execution_mode, ManagedExecutionMode};
+use effigy_managed::{managed_execution_mode, render_run_step_sequence, ManagedExecutionMode};
 use effigy_manifest::TaskSelection;
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 use std::process::Command;
@@ -106,6 +112,25 @@ pub(in crate::runner) fn run_managed_task(
         )?;
         return Ok(None);
     };
+    let env_schema_resolved = super::standard::resolve_env_schema_if_present(
+        &selection.catalog.catalog_root,
+        preflight.runtime_args_raw.env_schema_override.as_deref(),
+        selection.catalog.manifest.env_schema.as_ref(),
+    )?;
+    let container_repo_root =
+        binding_resolution.exec_working_dir(&selection.catalog.catalog_root)?;
+    if execution_mode != ManagedExecutionMode::RenderPlan {
+        run_managed_setup_steps(
+            preflight,
+            selection,
+            &mut plan,
+            &env_schema_resolved,
+            &binding_resolution,
+            container_binding,
+            container_handoff,
+            container_repo_root.as_deref(),
+        )?;
+    }
     if !container_handoff
         && execution_mode == ManagedExecutionMode::Tui
         && matches!(
@@ -190,6 +215,118 @@ pub(in crate::runner) fn run_managed_task(
     finish_managed_task(
         result.map(Some).map_err(Into::into),
         lifecycle_cleanup.as_deref(),
+    )
+}
+
+fn run_managed_setup_steps(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+    plan: &mut effigy_managed::ManagedTaskPlan,
+    env_schema_resolved: &Option<effigy_env::resolver::ResolvedEnv>,
+    binding_resolution: &super::super::api::ExecutionBindingResolution,
+    container_binding: &ContainerExecutionBinding,
+    container_handoff: bool,
+    container_repo_root: Option<&std::path::Path>,
+) -> Result<(), RunnerError> {
+    for process in &mut plan.processes {
+        if process.setup_steps.is_empty() {
+            continue;
+        }
+        if managed_setup_steps_can_run_locally(process, container_binding, container_handoff) {
+            run_in_process_sequence_steps(
+                preflight,
+                selection,
+                &process.setup_steps,
+                env_schema_resolved,
+                None,
+                &process.name,
+                &[],
+            )?;
+            process.setup = None;
+            continue;
+        }
+        if matches!(
+            binding_resolution.kind(),
+            super::super::api::ExecutionBindingKind::NamedContainer
+        ) {
+            run_named_container_managed_setup_steps(
+                preflight,
+                selection,
+                process,
+                container_binding,
+                container_repo_root,
+            )?;
+            process.setup = None;
+        }
+    }
+    Ok(())
+}
+
+fn run_named_container_managed_setup_steps(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+    process: &effigy_managed::ManagedProcessSpec,
+    container_binding: &ContainerExecutionBinding,
+    container_repo_root: Option<&std::path::Path>,
+) -> Result<(), RunnerError> {
+    let resolver: effigy_manifest::TaskResolverFn<'_> = &effigy_routing::resolve_task_selection;
+    let rendered = render_run_step_sequence(
+        &process.name,
+        &process.setup_steps,
+        &selection.task.env,
+        selection.task.env_file.as_ref(),
+        &selection.catalog.manifest.env,
+        &selection.catalog.catalog_root,
+        selection.catalog.bundle_root.as_deref(),
+        &preflight.catalogs,
+        &process.cwd,
+        preflight.runtime_args_raw.env_schema_override.as_deref(),
+        resolver,
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let routed = container_exec_command(
+        &rendered,
+        &selection.catalog.catalog_root,
+        &process.cwd,
+        container_repo_root,
+    );
+    let output = run_container_exec_operation_capture(
+        &selection.catalog.catalog_root,
+        container_binding.container_name(),
+        ContainerCapturedExecOperation {
+            service: None,
+            command: vec!["sh".to_owned(), "-lc".to_owned(), routed.clone()],
+            stdin_file: None,
+            cwd: None,
+            env: std::collections::BTreeMap::new(),
+        },
+    )?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(RunnerError::TaskCommandFailure {
+        command: routed,
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+fn managed_setup_steps_can_run_locally(
+    process: &effigy_managed::ManagedProcessSpec,
+    container_binding: &ContainerExecutionBinding,
+    container_handoff: bool,
+) -> bool {
+    // Container-routed managed setup cannot move to the host fast path without
+    // changing Rhai script semantics for `fs::*`, `process::*`, and relative
+    // cwd handling. Those scripts still need a true local route.
+    if process.run_on_host || container_handoff {
+        return true;
+    }
+
+    matches!(
+        container_binding,
+        ContainerExecutionBinding::None | ContainerExecutionBinding::Host
     )
 }
 

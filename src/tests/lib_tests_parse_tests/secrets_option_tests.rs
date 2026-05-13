@@ -87,6 +87,27 @@ fn parse_secrets_set_with_name_and_json() {
 }
 
 #[test]
+fn parse_secrets_get_with_name_and_json() {
+    let cmd = parse_command(vec![
+        "secrets".to_owned(),
+        "get".to_owned(),
+        "database_url".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Secrets(SecretsArgs {
+            subcommand: SecretsSubcommand::Get {
+                name: "database_url".to_owned()
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_secrets_unset_with_name() {
     let cmd = parse_command(vec![
         "secrets".to_owned(),
@@ -139,6 +160,24 @@ fn parse_secrets_lock_with_repo() {
             subcommand: SecretsSubcommand::Lock,
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_secrets_change_passphrase_with_json() {
+    let cmd = parse_command(vec![
+        "secrets".to_owned(),
+        "change-passphrase".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Secrets(SecretsArgs {
+            subcommand: SecretsSubcommand::ChangePassphrase,
+            repo_override: None,
+            output_json: true,
         })
     );
 }

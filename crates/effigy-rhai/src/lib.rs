@@ -153,6 +153,8 @@ struct RhaiSecretStore {
     declared_rhai: BTreeSet<String>,
     declared_other_target: BTreeSet<String>,
     values: BTreeMap<String, String>,
+    unlocked_passphrase: Option<SecretValue>,
+    vault_loaded: bool,
 }
 
 pub fn load_script(path: &Path, cwd: &Path) -> Result<String, RhaiHostError> {
@@ -262,7 +264,7 @@ fn execute_rhai_script_inner(
     scope.push_constant("repo_root", context.repo_root.display().to_string());
     scope.push_constant("catalog_root", catalog_root.display().to_string());
     scope.push_constant("invocation_cwd", invocation_cwd.display().to_string());
-    scope.push_constant("task_name", context.task_name.clone());
+    scope.push("task_name", context.task_name.clone());
 
     with_rhai_secret_store(secret_store, || {
         engine
@@ -373,38 +375,38 @@ fn resolve_rhai_secret_store(
         ));
     }
 
-    let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)?;
-    if !vault_path.exists() {
-        if required.is_empty() {
-            return Ok(store);
+    if !required.is_empty() {
+        let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)?;
+        if !vault_path.exists() {
+            return Err(RhaiHostError::new(format!(
+                "required Rhai secrets are declared but the vault is missing at {}",
+                vault_path.display()
+            )));
         }
-        return Err(RhaiHostError::new(format!(
-            "required Rhai secrets are declared but the vault is missing at {}",
-            vault_path.display()
-        )));
-    }
 
-    let Some(passphrase) = read_rhai_secret_passphrase(required.is_empty())? else {
-        return Ok(store);
-    };
-    let payload = read_rhai_secret_vault_payload(&vault_path, passphrase.expose())?;
-    for name in &store.declared_rhai {
-        if let Some(record) = payload.records.get(name) {
-            store
-                .values
-                .insert(name.clone(), record.value.expose().to_owned());
+        let passphrase = read_rhai_secret_passphrase(false)?
+            .ok_or_else(|| RhaiHostError::new("vault passphrase is required"))?;
+        let payload = read_rhai_secret_vault_payload(&vault_path, passphrase.expose())?;
+        store.unlocked_passphrase = Some(passphrase);
+        store.vault_loaded = true;
+        for name in &store.declared_rhai {
+            if let Some(record) = payload.records.get(name) {
+                store
+                    .values
+                    .insert(name.clone(), record.value.expose().to_owned());
+            }
         }
-    }
 
-    let missing_required = required
-        .into_iter()
-        .filter(|name| !store.values.contains_key(name))
-        .collect::<Vec<_>>();
-    if !missing_required.is_empty() {
-        return Err(RhaiHostError::new(format!(
-            "required Rhai secret(s) missing from the vault: {}",
-            missing_required.join(", ")
-        )));
+        let missing_required = required
+            .into_iter()
+            .filter(|name| !store.values.contains_key(name))
+            .collect::<Vec<_>>();
+        if !missing_required.is_empty() {
+            return Err(RhaiHostError::new(format!(
+                "required Rhai secret(s) missing from the vault: {}",
+                missing_required.join(", ")
+            )));
+        }
     }
 
     Ok(store)
@@ -463,29 +465,35 @@ fn read_rhai_secret_vault_payload(
         .map_err(|error| RhaiHostError::new(error.to_string()))
 }
 
-fn active_rhai_secret(name: &str) -> Result<String, Box<EvalAltResult>> {
+fn active_rhai_secret(repo_root: &Path, name: &str) -> Result<String, Box<EvalAltResult>> {
+    active_rhai_validate_secret_name(name)?;
+    active_rhai_load_vault_if_needed(repo_root, true)
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
     ACTIVE_RHAI_SECRETS.with(|active| {
         let store = active.borrow();
         let store = store
             .as_ref()
             .ok_or_else(|| rhai_runtime_error("Rhai secret store is not active"))?;
-        if !store.declared_rhai.contains(name) {
-            if store.declared_other_target.contains(name) {
-                return Err(rhai_runtime_error(format!(
-                    "secret `{name}` is not declared for the `rhai` target"
-                )));
-            }
-            return Err(rhai_runtime_error(format!(
-                "secret `{name}` is not declared under `[secrets.keys]`"
-            )));
-        }
         store.values.get(name).cloned().ok_or_else(|| {
             rhai_runtime_error(format!("Rhai secret `{name}` is missing from the vault"))
         })
     })
 }
 
-fn active_rhai_has_secret(name: &str) -> Result<bool, Box<EvalAltResult>> {
+fn active_rhai_has_secret(repo_root: &Path, name: &str) -> Result<bool, Box<EvalAltResult>> {
+    active_rhai_validate_secret_name(name)?;
+    active_rhai_load_vault_if_needed(repo_root, false)
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    ACTIVE_RHAI_SECRETS.with(|active| {
+        let store = active.borrow();
+        let store = store
+            .as_ref()
+            .ok_or_else(|| rhai_runtime_error("Rhai secret store is not active"))?;
+        Ok(store.values.contains_key(name))
+    })
+}
+
+fn active_rhai_validate_secret_name(name: &str) -> Result<(), Box<EvalAltResult>> {
     ACTIVE_RHAI_SECRETS.with(|active| {
         let store = active.borrow();
         let store = store
@@ -501,8 +509,76 @@ fn active_rhai_has_secret(name: &str) -> Result<bool, Box<EvalAltResult>> {
                 "secret `{name}` is not declared under `[secrets.keys]`"
             )));
         }
-        Ok(store.values.contains_key(name))
+        Ok(())
     })
+}
+
+fn active_rhai_load_vault_if_needed(
+    repo_root: &Path,
+    require_unlock: bool,
+) -> Result<(), RhaiHostError> {
+    let should_load = ACTIVE_RHAI_SECRETS.with(|active| {
+        let store = active.borrow();
+        let store = store
+            .as_ref()
+            .ok_or_else(|| RhaiHostError::new("Rhai secret store is not active"))?;
+        Ok(!store.vault_loaded)
+    })?;
+    if !should_load {
+        return Ok(());
+    }
+
+    let manifest_path = repo_root.join("effigy.toml");
+    let manifest = effigy_manifest::load_task_manifest(&manifest_path)
+        .map_err(|error| RhaiHostError::new(error.to_string()))?;
+    let secrets = manifest
+        .secrets
+        .as_ref()
+        .ok_or_else(|| RhaiHostError::new("`[secrets]` is not declared"))?;
+    if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
+        return Err(RhaiHostError::new(
+            "Rhai secrets require `[secrets].backend = \"effigy-vault\"",
+        ));
+    }
+    let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)?;
+    if !vault_path.exists() {
+        if require_unlock {
+            return Err(RhaiHostError::new(format!(
+                "secrets vault is missing at {}",
+                vault_path.display()
+            )));
+        }
+        ACTIVE_RHAI_SECRETS.with(|active| {
+            if let Some(store) = active.borrow_mut().as_mut() {
+                store.vault_loaded = true;
+            }
+        });
+        return Ok(());
+    }
+
+    let Some(passphrase) = read_rhai_secret_passphrase(!require_unlock)? else {
+        ACTIVE_RHAI_SECRETS.with(|active| {
+            if let Some(store) = active.borrow_mut().as_mut() {
+                store.vault_loaded = true;
+            }
+        });
+        return Ok(());
+    };
+    let payload = read_rhai_secret_vault_payload(&vault_path, passphrase.expose())?;
+    ACTIVE_RHAI_SECRETS.with(|active| {
+        if let Some(store) = active.borrow_mut().as_mut() {
+            for name in &store.declared_rhai {
+                if let Some(record) = payload.records.get(name) {
+                    store
+                        .values
+                        .insert(name.clone(), record.value.expose().to_owned());
+                }
+            }
+            store.unlocked_passphrase = Some(passphrase);
+            store.vault_loaded = true;
+        }
+    });
+    Ok(())
 }
 
 fn active_rhai_set_secret(
@@ -510,6 +586,36 @@ fn active_rhai_set_secret(
     name: &str,
     value: &str,
 ) -> Result<(), Box<EvalAltResult>> {
+    active_rhai_set_secret_records(
+        repo_root,
+        vec![(name.to_owned(), SecretValue::new(value))].into_iter(),
+    )
+}
+
+fn active_rhai_set_secrets(repo_root: &Path, values: Map) -> Result<(), Box<EvalAltResult>> {
+    let records = values
+        .into_iter()
+        .map(|(name, value)| {
+            let Some(value) = value.try_cast::<ImmutableString>() else {
+                return Err(rhai_runtime_error(format!(
+                    "secret `{name}` value must be a string"
+                )));
+            };
+            Ok((name.to_string(), SecretValue::new(value.as_str())))
+        })
+        .collect::<Result<Vec<_>, Box<EvalAltResult>>>()?;
+    active_rhai_set_secret_records(repo_root, records.into_iter())
+}
+
+fn active_rhai_set_secret_records(
+    repo_root: &Path,
+    records: impl IntoIterator<Item = (String, SecretValue)>,
+) -> Result<(), Box<EvalAltResult>> {
+    let records = records.into_iter().collect::<Vec<_>>();
+    if records.is_empty() {
+        return Ok(());
+    }
+
     let manifest_path = repo_root.join("effigy.toml");
     let manifest = effigy_manifest::load_task_manifest(&manifest_path)
         .map_err(|error| rhai_runtime_error(error.to_string()))?;
@@ -522,32 +628,40 @@ fn active_rhai_set_secret(
             "secret mutation requires `[secrets].backend = \"effigy-vault\"",
         ));
     }
-    let Some(key) = secrets.keys.get(name) else {
-        return Err(rhai_runtime_error(format!(
-            "secret `{name}` is not declared under `[secrets.keys]`"
-        )));
-    };
-    if !key.targets.contains(&ManifestSecretTarget::Rhai) {
-        return Err(rhai_runtime_error(format!(
-            "secret `{name}` is not declared for the `rhai` target"
-        )));
+    for (name, _) in &records {
+        let Some(key) = secrets.keys.get(name) else {
+            return Err(rhai_runtime_error(format!(
+                "secret `{name}` is not declared under `[secrets.keys]`"
+            )));
+        };
+        if !key.targets.contains(&ManifestSecretTarget::Rhai) {
+            return Err(rhai_runtime_error(format!(
+                "secret `{name}` is not declared for the `rhai` target"
+            )));
+        }
     }
 
     let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)
         .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    let passphrase = read_rhai_secret_passphrase(false)
+    let passphrase = match active_rhai_unlocked_passphrase()
         .map_err(|error| rhai_runtime_error(error.to_string()))?
-        .ok_or_else(|| rhai_runtime_error("vault passphrase is required"))?;
+    {
+        Some(passphrase) => passphrase,
+        None => read_rhai_secret_passphrase(false)
+            .map_err(|error| rhai_runtime_error(error.to_string()))?
+            .ok_or_else(|| rhai_runtime_error("vault passphrase is required"))?,
+    };
     let mut payload = if vault_path.exists() {
         read_rhai_secret_vault_payload(&vault_path, passphrase.expose())
             .map_err(|error| rhai_runtime_error(error.to_string()))?
     } else {
         VaultPlaintextPayload::empty()
     };
-    payload.records.insert(
-        name.to_owned(),
-        VaultSecretRecord::new(SecretValue::new(value)),
-    );
+    for (name, value) in &records {
+        payload
+            .records
+            .insert(name.clone(), VaultSecretRecord::new(value.clone()));
+    }
     let envelope = payload
         .encrypt_with_passphrase(passphrase.expose())
         .map_err(|error| rhai_runtime_error(error.to_string()))?;
@@ -556,11 +670,24 @@ fn active_rhai_set_secret(
 
     ACTIVE_RHAI_SECRETS.with(|active| {
         if let Some(store) = active.borrow_mut().as_mut() {
-            store.values.insert(name.to_owned(), value.to_owned());
+            store.unlocked_passphrase = Some(passphrase);
+            for (name, value) in records {
+                store.values.insert(name, value.expose().to_owned());
+            }
         }
     });
 
     Ok(())
+}
+
+fn active_rhai_unlocked_passphrase() -> Result<Option<SecretValue>, RhaiHostError> {
+    ACTIVE_RHAI_SECRETS.with(|active| {
+        let store = active.borrow();
+        let store = store
+            .as_ref()
+            .ok_or_else(|| RhaiHostError::new("Rhai secret store is not active"))?;
+        Ok(store.unlocked_passphrase.clone())
+    })
 }
 
 fn write_rhai_secret_vault_file(

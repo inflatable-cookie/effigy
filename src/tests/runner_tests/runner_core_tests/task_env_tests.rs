@@ -386,6 +386,40 @@ run = "sh -lc 'printf ran > \"{}\"'"
     );
 }
 
+#[test]
+fn run_manifest_rhai_task_does_not_preload_task_secret_env() {
+    let root = temp_workspace("task-vault-secret-rhai-no-preload");
+    let marker = root.join("rhai-ran.out");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        root.join("scripts/write-marker.rhai"),
+        format!(r#"fs::write_file("{}", "ran");"#, marker.display()),
+    )
+    .expect("write rhai script");
+    write_root_manifest(
+        &root,
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.database_url]
+required = true
+targets = ["tasks"]
+
+[tasks.capture]
+run = [{ rhai = "scripts/write-marker.rhai" }]
+"#,
+    );
+
+    assert_run_task_ok_empty(&root, "capture", &[]);
+    assert_file_text_equals(&marker, "ran");
+}
+
 fn write_test_vault(root: &std::path::Path, passphrase: &str, records: &[(&str, &str)]) {
     let mut payload = VaultPlaintextPayload::empty();
     for (name, value) in records {

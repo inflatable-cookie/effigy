@@ -21,9 +21,13 @@ where
         "doctor" => parse_secrets_read_command(args, SecretsSubcommand::Doctor),
         "init" => parse_secrets_read_command(args, SecretsSubcommand::Init),
         "set" => parse_secrets_named_command(args, |name| SecretsSubcommand::Set { name }),
+        "get" => parse_secrets_named_command(args, |name| SecretsSubcommand::Get { name }),
         "unset" => parse_secrets_named_command(args, |name| SecretsSubcommand::Unset { name }),
         "unlock" => parse_secrets_read_command(args, SecretsSubcommand::Unlock),
         "lock" => parse_secrets_read_command(args, SecretsSubcommand::Lock),
+        "change-passphrase" => {
+            parse_secrets_read_command(args, SecretsSubcommand::ChangePassphrase)
+        }
         "export" => parse_secrets_export_command(args),
         other => Err(unknown_argument(other)),
     }

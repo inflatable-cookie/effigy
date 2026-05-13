@@ -102,7 +102,7 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Doctor(_)
         | Command::Tasks(_)
         | Command::InternalGateway(_)
-        | Command::InternalRhai(_)
+        | Command::InternalScriptRun(_)
         | Command::InternalContainerLeaseReaper(_)
         | Command::InternalHostProcessSupervise(_)
         | Command::InternalHostProcessStop(_)

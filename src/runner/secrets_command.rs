@@ -40,6 +40,12 @@ pub(super) fn run_secrets(args: SecretsArgs) -> Result<String, RunnerError> {
             &name,
             args.output_json,
         ),
+        SecretsSubcommand::Get { name } => run_secrets_get(
+            &repo_root,
+            manifest.secrets.as_ref(),
+            &name,
+            args.output_json,
+        ),
         SecretsSubcommand::Unset { name } => run_secrets_unset(
             &repo_root,
             manifest.secrets.as_ref(),
@@ -51,6 +57,9 @@ pub(super) fn run_secrets(args: SecretsArgs) -> Result<String, RunnerError> {
         }
         SecretsSubcommand::Lock => {
             run_secrets_lock(&repo_root, manifest.secrets.as_ref(), args.output_json)
+        }
+        SecretsSubcommand::ChangePassphrase => {
+            run_secrets_change_passphrase(&repo_root, manifest.secrets.as_ref(), args.output_json)
         }
         SecretsSubcommand::Export {
             format,
@@ -160,6 +169,44 @@ fn run_secrets_lock(
     )
 }
 
+fn run_secrets_change_passphrase(
+    repo_root: &Path,
+    secrets: Option<&ManifestSecretsConfig>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let secrets = require_secrets(secrets)?;
+    let vault_path = resolve_vault_path(repo_root, Some(secrets))?;
+    let current = read_secret_input(
+        "Current vault passphrase: ",
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+    )?;
+    let payload = read_vault_payload(&vault_path, current.expose())?;
+    let preserved = payload.records.len();
+    let new_passphrase = read_confirmed_new_passphrase()?;
+    let envelope = payload
+        .encrypt_with_passphrase(new_passphrase.expose())
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    write_vault_file(&vault_path, &envelope)?;
+
+    let mut payload = secrets_payload(repo_root, Some(secrets), Vec::new(), Vec::new());
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("action".to_owned(), json!("change-passphrase"));
+        object.insert(
+            "vault_path".to_owned(),
+            json!(vault_path.display().to_string()),
+        );
+        object.insert("changed".to_owned(), json!(true));
+        object.insert("records_preserved".to_owned(), json!(preserved));
+    }
+    let text = format!(
+        "[secrets] change-passphrase\nrepo: {}\nvault: {}\nstatus: changed vault passphrase; preserved {} stored value(s)",
+        repo_root.display(),
+        vault_path.display(),
+        preserved
+    );
+    render_command_result(output_json, true, payload, text)
+}
+
 fn run_secrets_set(
     repo_root: &Path,
     secrets: Option<&ManifestSecretsConfig>,
@@ -192,6 +239,33 @@ fn run_secrets_set(
         output_json,
         "stored declared secret",
     )
+}
+
+fn run_secrets_get(
+    repo_root: &Path,
+    secrets: Option<&ManifestSecretsConfig>,
+    name: &str,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let secrets = require_secrets(secrets)?;
+    require_declared_key(secrets, name)?;
+    let vault_path = resolve_vault_path(repo_root, Some(secrets))?;
+    let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
+    let payload = read_vault_payload(&vault_path, passphrase.expose())?;
+    let value = payload
+        .records
+        .get(name)
+        .ok_or_else(|| RunnerError::task_invocation(format!("secret `{name}` is not stored")))?
+        .value
+        .expose()
+        .to_owned();
+    let mut json = secrets_payload(repo_root, Some(secrets), Vec::new(), Vec::new());
+    if let Some(object) = json.as_object_mut() {
+        object.insert("action".to_owned(), json!("get"));
+        object.insert("name".to_owned(), json!(name));
+        object.insert("value".to_owned(), json!(value));
+    }
+    render_command_result(output_json, true, json, value)
 }
 
 fn run_secrets_unset(
@@ -615,6 +689,39 @@ fn read_secret_input(prompt: &str, test_env: &str) -> Result<SecretValue, Runner
         RunnerError::task_invocation(format!("failed to read secret input: {error}"))
     })?;
     Ok(SecretValue::new(value))
+}
+
+fn read_confirmed_new_passphrase() -> Result<SecretValue, RunnerError> {
+    if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_NEW_PASSPHRASE") {
+        if value.is_empty() {
+            return Err(RunnerError::task_invocation(
+                "new vault passphrase must not be empty",
+            ));
+        }
+        return Ok(SecretValue::new(value));
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err(RunnerError::task_invocation(
+            "`EFFIGY_TEST_SECRETS_NEW_PASSPHRASE` is not set and passphrase input requires an interactive TTY",
+        ));
+    }
+    let first = rpassword::prompt_password("New vault passphrase: ").map_err(|error| {
+        RunnerError::task_invocation(format!("failed to read new passphrase: {error}"))
+    })?;
+    let second = rpassword::prompt_password("Confirm new vault passphrase: ").map_err(|error| {
+        RunnerError::task_invocation(format!("failed to confirm new passphrase: {error}"))
+    })?;
+    if first != second {
+        return Err(RunnerError::task_invocation(
+            "new vault passphrase confirmation did not match",
+        ));
+    }
+    if first.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "new vault passphrase must not be empty",
+        ));
+    }
+    Ok(SecretValue::new(first))
 }
 
 fn secret_keys_json(secrets: &ManifestSecretsConfig) -> Vec<Value> {

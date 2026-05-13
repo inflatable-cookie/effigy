@@ -27,7 +27,7 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
         Command::Doctor(args) => args.repo_override.clone(),
         Command::Tasks(args) => args.repo_override.clone(),
         Command::InternalGateway(_) => None,
-        Command::InternalRhai(_) => None,
+        Command::InternalScriptRun(_) => None,
         Command::InternalContainerLeaseReaper(_) => None,
         Command::InternalHostProcessSupervise(_) => None,
         Command::InternalHostProcessStop(_) => None,
@@ -74,7 +74,7 @@ pub(in crate::runner) fn apply_repo_target_to_embedded_command(
         | Command::Gateway(_)
         | Command::Bootstrap(_)
         | Command::InternalGateway(_)
-        | Command::InternalRhai(_)
+        | Command::InternalScriptRun(_)
         | Command::InternalContainerLeaseReaper(_)
         | Command::InternalHostProcessSupervise(_)
         | Command::InternalHostProcessStop(_)

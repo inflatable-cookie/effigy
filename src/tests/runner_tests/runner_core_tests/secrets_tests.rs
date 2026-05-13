@@ -168,6 +168,99 @@ fn secrets_set_stores_declared_secret_without_printing_value() {
 }
 
 #[test]
+fn secrets_get_prints_one_declared_secret_value() {
+    let root = temp_workspace("secrets-get");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", Some("postgres://secret-value"));
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Set {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("set should succeed");
+
+    let out = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Get {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("get should succeed");
+
+    assert_eq!(out, "postgres://secret-value");
+}
+
+#[test]
+fn secrets_get_json_returns_one_declared_secret_value() {
+    let root = temp_workspace("secrets-get-json");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", Some("postgres://secret-value"));
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Set {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("set should succeed");
+
+    let out = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Get {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("get should succeed");
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
+    assert_eq!(parsed["action"].as_str(), Some("get"));
+    assert_eq!(parsed["name"].as_str(), Some("database_url"));
+    assert_eq!(parsed["value"].as_str(), Some("postgres://secret-value"));
+}
+
+#[test]
+fn secrets_get_rejects_missing_stored_value() {
+    let root = temp_workspace("secrets-get-missing-value");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env("vault-passphrase", None);
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+
+    let error = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Get {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect_err("get should fail");
+
+    assert!(error
+        .to_string()
+        .contains("secret `database_url` is not stored"));
+}
+
+#[test]
 fn secrets_unset_removes_declared_secret() {
     let root = temp_workspace("secrets-unset");
     write_root_manifest(&root, declared_secrets_manifest());
@@ -483,13 +576,80 @@ fn secrets_export_blocks_missing_required_before_writing() {
     assert!(!root.join(".effigy/runtime/secrets/local.env").exists());
 }
 
+#[test]
+fn secrets_change_passphrase_reencrypts_existing_vault() {
+    let root = temp_workspace("secrets-change-passphrase");
+    write_root_manifest(&root, declared_secrets_manifest());
+    let _env = secret_test_env_with_new_passphrase(
+        "old-vault-passphrase",
+        Some("postgres://secret-value"),
+        Some("new-vault-passphrase"),
+    );
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("init should succeed");
+    run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Set {
+            name: "database_url".to_owned(),
+        },
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("set should succeed");
+
+    let out = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::ChangePassphrase,
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("change-passphrase should succeed");
+
+    assert!(!out.contains("postgres://secret-value"));
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
+    assert_eq!(parsed["action"].as_str(), Some("change-passphrase"));
+    assert_eq!(parsed["changed"].as_bool(), Some(true));
+    assert_eq!(parsed["records_preserved"].as_u64(), Some(1));
+
+    let envelope = read_test_vault(&root.join(".effigy/secrets/local.vault"));
+    assert!(envelope
+        .decrypt_with_passphrase("old-vault-passphrase")
+        .is_err());
+    let decrypted = envelope
+        .decrypt_with_passphrase("new-vault-passphrase")
+        .expect("decrypt with new passphrase");
+    assert_eq!(
+        decrypted
+            .records
+            .get("database_url")
+            .expect("record")
+            .value
+            .expose(),
+        "postgres://secret-value"
+    );
+}
+
 fn secret_test_env(passphrase: &str, value: Option<&str>) -> EnvGuard {
+    secret_test_env_with_new_passphrase(passphrase, value, None)
+}
+
+fn secret_test_env_with_new_passphrase(
+    passphrase: &str,
+    value: Option<&str>,
+    new_passphrase: Option<&str>,
+) -> EnvGuard {
     EnvGuard::set_many(&[
         (
             "EFFIGY_TEST_SECRETS_PASSPHRASE",
             Some(passphrase.to_owned()),
         ),
         ("EFFIGY_TEST_SECRETS_VALUE", value.map(str::to_owned)),
+        (
+            "EFFIGY_TEST_SECRETS_NEW_PASSPHRASE",
+            new_passphrase.map(str::to_owned),
+        ),
     ])
 }
 
@@ -497,6 +657,7 @@ fn secret_test_env_clear() -> EnvGuard {
     EnvGuard::set_many(&[
         ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
         ("EFFIGY_TEST_SECRETS_VALUE", None),
+        ("EFFIGY_TEST_SECRETS_NEW_PASSPHRASE", None),
     ])
 }
 

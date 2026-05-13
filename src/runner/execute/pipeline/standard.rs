@@ -50,8 +50,8 @@ use effigy_env::schema_support::{
 use effigy_env::secret::SecretString;
 use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan, TaskStatusStage};
 use effigy_manifest::{
-    ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig, ManifestTaskRunIn,
-    TaskSelection,
+    ManifestManagedRun, ManifestManagedRunStep, ManifestSecretTarget, ManifestSecretsBackend,
+    ManifestSecretsConfig, ManifestTaskRunIn, TaskSelection,
 };
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload};
@@ -135,13 +135,27 @@ fn run_standard_task_inner(
         .as_ref()
         .map(|resolved| resolved.secret_env())
         .unwrap_or_default();
-    let task_secret_pairs =
-        resolve_task_secret_env(&preflight.resolved.resolved_root, &preflight.secret_targets)?;
+    let task_secret_pairs = if task_uses_direct_shell(selection.task.run.as_ref()) {
+        resolve_task_secret_env(&preflight.resolved.resolved_root, &preflight.secret_targets)?
+    } else {
+        Vec::new()
+    };
     let mut secret_pairs = env_schema_secret_pairs;
     for (key, value) in &task_secret_pairs {
         secret_pairs.push((key.as_str(), value));
     }
     let secret_ref = (!secret_pairs.is_empty()).then_some(secret_pairs.as_slice());
+
+    if let Some(output) = nested::maybe_run_fully_in_process_sequence(
+        preflight,
+        selection,
+        context,
+        env_schema_resolved,
+        secret_ref,
+    )? {
+        status.update_stage(TaskStatusStage::Executing, host_route_summary())?;
+        return Ok((output, "in-process task sequence completed".to_owned()));
+    }
 
     let (default_run_in, systems, containers) =
         effective_task_binding_inputs(&preflight.invocation_cwd, &preflight.catalogs, selection);
@@ -320,6 +334,27 @@ fn run_standard_task_inner(
         secret_ref,
     )?;
     Ok((output, "host task completed".to_owned()))
+}
+
+fn task_uses_direct_shell(run: Option<&ManifestManagedRun>) -> bool {
+    match run {
+        Some(ManifestManagedRun::Command(command)) => !command
+            .strip_prefix("task:")
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty()),
+        Some(ManifestManagedRun::Sequence(steps)) => steps.iter().any(step_uses_direct_shell),
+        None => false,
+    }
+}
+
+fn step_uses_direct_shell(step: &ManifestManagedRunStep) -> bool {
+    match step {
+        ManifestManagedRunStep::Command(command) => !command
+            .strip_prefix("task:")
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty()),
+        ManifestManagedRunStep::Step(table) => table.run.is_some(),
+    }
 }
 
 fn route_with_running_check(
@@ -747,7 +782,7 @@ fn activate_inline_workspace_container_runtime_with(
     )
 }
 
-fn resolve_env_schema_if_present(
+pub(in crate::runner) fn resolve_env_schema_if_present(
     catalog_root: &Path,
     runtime_override: Option<&Path>,
     config: Option<&ManifestEnvSchemaConfig>,

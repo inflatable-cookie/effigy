@@ -55,7 +55,7 @@ pub fn render_rhai_step_invocation(
     ];
 
     let rendered_script_path = render_bundle_template_tokens(script_path, context.bundle_root);
-    let command = format!("__rhai-step --file {}", shell_quote(&rendered_script_path));
+    let command = format!("script run --file {}", shell_quote(&rendered_script_path));
 
     let env_rendered = env_pairs
         .into_iter()

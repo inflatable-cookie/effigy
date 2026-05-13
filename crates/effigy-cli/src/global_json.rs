@@ -61,7 +61,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Tasks(args) => args.output_json = true,
         Command::Doctor(args) => args.output_json = true,
         Command::InternalGateway(_) => {}
-        Command::InternalRhai(_) => {}
+        Command::InternalScriptRun(_) => {}
         Command::InternalContainerLeaseReaper(_) => {}
         Command::InternalHostProcessSupervise(_) => {}
         Command::InternalHostProcessStop(_) => {}
@@ -99,7 +99,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Doctor(args) => args.output_json,
         Command::Task(task) => task.args.iter().any(|arg| arg == "--json"),
         Command::InternalGateway(_) => false,
-        Command::InternalRhai(_) => false,
+        Command::InternalScriptRun(_) => false,
         Command::InternalContainerLeaseReaper(_) => false,
         Command::InternalHostProcessSupervise(_) => false,
         Command::InternalHostProcessStop(_) => false,

@@ -53,6 +53,18 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of carrying app-local dirname helpers.
 
 ### Changed
+- **Rhai task steps** in fully in-process sequences now execute directly inside
+  the runner during normal task execution, and managed-process setup sequences
+  do the same when they can stay on the local route and every setup step is
+  in-process-capable, instead of shelling out through a nested internal script
+  command path. Container-routed managed setup keeps the routed fallback so
+  container-local script behavior does not drift.
+- **Managed setup execution** no longer glues named-container setup onto
+  `process.run`; Effigy now executes those setup sequences through a dedicated
+  routed prelaunch step before the managed process starts.
+- **Remote Rhai setup invocations** now render through the internal
+  `script run --file ...` surface instead of the older raw hidden Rhai
+  pseudo-command.
 - **Manifest version floors** now treat repo-local `+local` development builds
   as ahead of tagged releases, so local feature work is not blocked by
   unreleased `minimum_effigy_version` bumps.

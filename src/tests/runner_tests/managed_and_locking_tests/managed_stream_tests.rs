@@ -25,6 +25,74 @@ concurrent = [
     );
 }
 
+fn setup_managed_stream_rhai_setup(root: &Path) {
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        root.join("scripts/setup.rhai"),
+        r#"
+fs::write_file("setup.txt", "setup-ok");
+"#,
+    )
+    .expect("write rhai setup");
+    write_root_manifest(
+        root,
+        r#"[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "front", setup = [{ rhai = "scripts/setup.rhai" }], run = "printf front-ok" }
+]
+"#,
+    );
+}
+
+fn setup_managed_stream_container_rhai_setup(root: &Path) {
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        root.join("scripts/setup.rhai"),
+        r#"
+fs::write_file("setup.txt", "setup-ok");
+"#,
+    )
+    .expect("write rhai setup");
+    write_root_manifest(
+        root,
+        r#"[task_defaults]
+run_in = "container"
+
+[tasks.dev]
+mode = "tui"
+concurrent = [
+  { name = "front", setup = [{ rhai = "scripts/setup.rhai" }], run = "printf front-ok" }
+]
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[containers]
+default = "web"
+
+[containers.web]
+driver = "colima"
+startup = "detached"
+compose_file = "docker-compose.yml"
+project_name = "demo-web-dev"
+primary_service = "app"
+working_dir = "/workspace"
+"#,
+    );
+    fs::write(
+        root.join("docker-compose.yml"),
+        "services:\n  app:\n    image: alpine:latest\n",
+    )
+    .expect("write docker compose");
+}
+
 fn setup_managed_stream_profile_manifest(root: &Path) {
     write_managed_stream_profile_manifest(root);
 }
@@ -298,6 +366,60 @@ fn run_manifest_task_managed_stream_output_contract_table() {
     ];
 
     assert_managed_output_case_table(&cases);
+}
+
+#[test]
+fn run_manifest_task_managed_stream_executes_rhai_setup_in_process() {
+    let _guard = lock_test();
+    let _env = managed_stream_env();
+    let root = crate::runner::tests::prelude::temp_workspace("managed-stream-rhai-setup");
+    setup_managed_stream_rhai_setup(&root);
+    let _runtime = install_fake_container_runtime(&root);
+    let fake_effigy = write_fake_effigy(&root);
+    let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
+
+    let out =
+        crate::runner::tests::prelude::run_dev(&root, &[]).expect("managed run should succeed");
+    assert!(out.contains("[front] front-ok"), "got: {out}");
+    let setup_path = root.join("setup.txt");
+    wait_for_path_exists(&setup_path, Duration::from_secs(2), "rhai setup output");
+    let setup = fs::read_to_string(&setup_path).expect("read setup output");
+    assert_eq!(setup, "setup-ok");
+
+    let log_path = root.join("fake-effigy.log");
+    assert!(
+        !log_path.exists(),
+        "managed Rhai setup should not invoke nested effigy, but log exists: {}",
+        log_path.display()
+    );
+}
+
+#[test]
+fn run_manifest_task_managed_stream_container_bound_rhai_setup_routes_before_process_launch() {
+    let _guard = lock_test();
+    let _env = managed_stream_env();
+    let root = crate::runner::tests::prelude::temp_workspace("managed-stream-container-rhai-setup");
+    setup_managed_stream_container_rhai_setup(&root);
+    let _runtime = install_fake_container_runtime(&root);
+    let fake_effigy = write_fake_effigy(&root);
+    let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
+
+    let out = crate::runner::tests::prelude::run_dev(&root, &[])
+        .expect("managed container-bound run should succeed");
+    assert!(out.contains("[front] front-ok"), "got: {out}");
+
+    let docker_log =
+        fs::read_to_string(root.join("fake-docker.log")).expect("read fake docker log");
+    assert!(
+        docker_log.contains("compose:exec:app:sh -lc"),
+        "expected routed container exec setup, got: {docker_log}"
+    );
+    let nested_log =
+        fs::read_to_string(root.join("fake-effigy.log")).expect("read fake effigy log");
+    assert!(
+        nested_log.contains("script run --file scripts/setup.rhai"),
+        "expected routed Rhai setup invocation, got: {nested_log}"
+    );
 }
 
 #[test]

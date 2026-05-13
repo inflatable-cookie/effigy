@@ -20,7 +20,7 @@ use super::super::run_internal_container_lease_reaper;
 use super::super::run_internal_gateway;
 use super::super::run_internal_host_process_stop;
 use super::super::run_internal_host_process_supervise;
-use super::super::run_internal_rhai;
+use super::super::run_internal_script_run;
 use super::super::run_release;
 use super::super::run_secrets;
 use super::super::run_service;
@@ -79,7 +79,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         }
         Command::Tasks(args) => run_tasks(args),
         Command::InternalGateway(args) => run_internal_gateway(args),
-        Command::InternalRhai(args) => run_internal_rhai(args),
+        Command::InternalScriptRun(args) => run_internal_script_run(args),
         Command::InternalContainerLeaseReaper(args) => run_internal_container_lease_reaper(args),
         Command::InternalHostProcessSupervise(args) => run_internal_host_process_supervise(args),
         Command::InternalHostProcessStop(args) => run_internal_host_process_stop(args),

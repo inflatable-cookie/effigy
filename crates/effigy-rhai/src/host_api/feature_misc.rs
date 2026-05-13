@@ -73,7 +73,11 @@ pub(super) fn register_misc_feature_modules(
     );
     engine.register_static_module(
         MODULE_EFFIGY,
-        std::rc::Rc::new(build_effigy_module(context, callbacks)),
+        std::rc::Rc::new(build_effigy_module(context.clone(), callbacks)),
+    );
+    engine.register_static_module(
+        MODULE_SECRETS,
+        std::rc::Rc::new(build_secrets_module(context)),
     );
 }
 
@@ -492,27 +496,36 @@ fn build_effigy_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) ->
             rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
         },
     );
+    module
+}
+
+fn build_secrets_module(context: Arc<ScriptContext>) -> rhai::Module {
+    let mut module = rhai::Module::new();
+    let get_context = context.clone();
     module.set_native_fn(
-        "secret",
+        "get",
         move |name: ImmutableString| -> Result<String, Box<EvalAltResult>> {
-            super::active_rhai_secret(name.as_str())
+            super::active_rhai_secret(&get_context.repo_root, name.as_str())
         },
     );
+    let has_context = context.clone();
     module.set_native_fn(
-        "has_secret",
+        "has",
         move |name: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
-            super::active_rhai_has_secret(name.as_str())
+            super::active_rhai_has_secret(&has_context.repo_root, name.as_str())
         },
     );
-    let set_secret_context = context.clone();
+    let set_context = context.clone();
     module.set_native_fn(
-        "set_secret",
+        "set",
         move |name: ImmutableString, value: ImmutableString| -> Result<(), Box<EvalAltResult>> {
-            super::active_rhai_set_secret(
-                &set_secret_context.repo_root,
-                name.as_str(),
-                value.as_str(),
-            )
+            super::active_rhai_set_secret(&set_context.repo_root, name.as_str(), value.as_str())
+        },
+    );
+    module.set_native_fn(
+        "set_many",
+        move |values: Map| -> Result<(), Box<EvalAltResult>> {
+            super::active_rhai_set_secrets(&context.repo_root, values)
         },
     );
     module
