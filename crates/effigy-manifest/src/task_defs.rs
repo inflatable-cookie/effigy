@@ -57,7 +57,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::deserialize_tasks;
-    use crate::{ManifestManagedRun, ManifestManagedRunStep, ManifestTaskRunIn};
+    use crate::{
+        ManifestManagedRun, ManifestManagedRunStep, ManifestTaskRunIn, ManifestTaskSecretsMode,
+    };
 
     #[derive(Debug, serde::Deserialize)]
     struct TasksEnvelope {
@@ -126,5 +128,24 @@ run = { task = "defer release" }
             steps.as_slice(),
             [ManifestManagedRunStep::Step(step)] if step.task.as_deref() == Some("defer release")
         ));
+    }
+
+    #[test]
+    fn task_table_accepts_secrets_required_mode() {
+        let parsed: TasksEnvelope = toml::from_str(
+            r#"
+[tasks.dev]
+mode = "tui"
+container_lifecycle = true
+secrets = "required"
+concurrent = [
+  { role = "lifecycle" },
+]
+"#,
+        )
+        .expect("parse task table definition");
+
+        let task = parsed.tasks.get("dev").expect("missing dev task");
+        assert_eq!(task.secrets, Some(ManifestTaskSecretsMode::Required));
     }
 }

@@ -38,6 +38,7 @@ use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
 use effigy_managed::{managed_execution_mode, render_run_step_sequence, ManagedExecutionMode};
+use effigy_manifest::ManifestTaskSecretsMode;
 use effigy_manifest::TaskSelection;
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 use std::process::Command;
@@ -621,6 +622,10 @@ fn materialize_special_managed_processes(
                         &readiness_probe_urls,
                         &[],
                         &executable,
+                        matches!(
+                            selection.task.secrets,
+                            Some(ManifestTaskSecretsMode::Required)
+                        ),
                     )
                 };
             }

@@ -159,6 +159,7 @@ pub fn managed_lifecycle_command(
     readiness_probe_urls: &[String],
     setup_commands: &[String],
     executable: &str,
+    secrets_required: bool,
 ) -> String {
     let repo = shell_quote(&repo_root.display().to_string());
     let lifecycle_owner_task = owner_task;
@@ -173,6 +174,11 @@ pub fn managed_lifecycle_command(
     );
     let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
     let up = effigy_container_command(executable, selector, "up --detach", &repo);
+    let up = if secrets_required {
+        format!("env EFFIGY_SECRETS_REQUIRED=1 {up}")
+    } else {
+        up
+    };
     let status = effigy_container_command(executable, selector, "status", &repo);
     let down = effigy_container_command(executable, selector, "down", &repo);
     let label = selector.unwrap_or("default");
@@ -549,6 +555,7 @@ mod tests {
             &[],
             &[],
             "effigy",
+            false,
         );
 
         assert!(!rendered.contains("\\033[2J\\033[H"), "got: {rendered}");
@@ -592,6 +599,7 @@ mod tests {
                 "effigy exec --repo /tmp/repo -- sh -lc 'cd /workspace/app && bun install'",
             )],
             "effigy",
+            false,
         );
 
         assert!(
@@ -619,6 +627,7 @@ mod tests {
             &["http://project.test".to_owned()],
             &[],
             "effigy",
+            false,
         );
 
         assert!(
@@ -629,6 +638,27 @@ mod tests {
         let probe_index = rendered.find("curl -k -s -o /dev/null").expect("probe");
         let ready_index = rendered.find("managed ready:").expect("ready banner");
         assert!(probe_index < ready_index, "got: {rendered}");
+    }
+
+    #[test]
+    fn managed_lifecycle_command_can_require_container_secret_injection() {
+        let rendered = managed_lifecycle_command(
+            Path::new("/tmp/repo"),
+            Some("web"),
+            "dev",
+            false,
+            None,
+            &[],
+            &[],
+            &[],
+            "effigy",
+            true,
+        );
+
+        assert!(
+            rendered.contains("env EFFIGY_SECRETS_REQUIRED=1 env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 effigy container web up --detach --repo /tmp/repo"),
+            "got: {rendered}"
+        );
     }
 
     #[test]

@@ -197,6 +197,10 @@ fn materialize_demo_special_managed_processes(
                         &[],
                         &lifecycle_setup_commands,
                         &executable,
+                        matches!(
+                            task.secrets,
+                            Some(effigy_manifest::ManifestTaskSecretsMode::Required)
+                        ),
                     )
                 };
             }

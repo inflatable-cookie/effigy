@@ -28,6 +28,8 @@ pub struct ManifestTask {
     #[serde(default)]
     pub container_lifecycle: Option<bool>,
     #[serde(default)]
+    pub secrets: Option<ManifestTaskSecretsMode>,
+    #[serde(default)]
     pub gateway: Option<bool>,
     #[serde(default)]
     pub health_wait: Option<bool>,
@@ -47,6 +49,12 @@ pub enum ManifestTaskRunIn {
     Host,
     Container,
     Either,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ManifestTaskSecretsMode {
+    Required,
 }
 
 impl ManifestTask {

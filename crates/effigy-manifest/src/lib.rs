@@ -61,7 +61,7 @@ pub use task_runtime::{
     ManifestEnvEntry, ManifestEnvFileDirective, ManifestInlineTaskDefinition,
     ManifestManagedConcurrentEntry, ManifestManagedProfile, ManifestManagedRun,
     ManifestManagedRunStep, ManifestManagedRunStepTable, ManifestRunStepEnv, ManifestTask,
-    ManifestTaskCache, ManifestTaskRunIn,
+    ManifestTaskCache, ManifestTaskRunIn, ManifestTaskSecretsMode,
 };
 use test_config::ManifestTestConfig;
 pub use test_config::{ManifestCargoEnvMatchMode, ManifestTestSuiteTeardownPolicy};

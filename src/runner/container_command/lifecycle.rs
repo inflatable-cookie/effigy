@@ -65,6 +65,8 @@ use crate::runner::host_process::start_host_processes_for_container;
 use crate::runner::manifest::load_task_manifest;
 use crate::runner::system_command::ensure_workspace_effigy_available_for_policy;
 
+const SECRETS_REQUIRED_ENV: &str = "EFFIGY_SECRETS_REQUIRED";
+
 pub(super) fn run_container_up(
     repo_root: &Path,
     name: Option<&str>,
@@ -87,7 +89,7 @@ pub(super) fn run_container_up(
     );
     validate_container_policy(repo_root, &policy)?;
     validate_compose_backend_runtime(repo_root, &policy)?;
-    let secret_env = resolve_container_secret_env(repo_root)?;
+    let secret_env = resolve_container_secret_env(repo_root, secrets_required())?;
     let compose_secret_env = secret_env
         .iter()
         .map(|(key, value)| (key.clone(), OsString::from(value.expose())))
@@ -271,6 +273,7 @@ pub(super) fn run_container_down_command(
 
 fn resolve_container_secret_env(
     repo_root: &Path,
+    force_required: bool,
 ) -> Result<Vec<(String, SecretString)>, RunnerError> {
     let manifest = load_task_manifest(&repo_root.join("effigy.toml"))?;
     let Some(secrets) = manifest.secrets.as_ref() else {
@@ -287,7 +290,7 @@ fn resolve_container_secret_env(
 
     let required_names = container_keys
         .iter()
-        .filter(|(_, key)| key.required)
+        .filter(|(_, key)| force_required || key.required)
         .map(|(name, _)| (*name).clone())
         .collect::<Vec<_>>();
     if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
@@ -322,7 +325,7 @@ fn resolve_container_secret_env(
                 container_secret_env_name(name),
                 SecretString::new(record.value.expose().to_owned()),
             )),
-            None if key.required => missing_required.push(name.to_owned()),
+            None if force_required || key.required => missing_required.push(name.to_owned()),
             None => {}
         }
     }
@@ -333,6 +336,12 @@ fn resolve_container_secret_env(
         )));
     }
     Ok(injected)
+}
+
+fn secrets_required() -> bool {
+    std::env::var(SECRETS_REQUIRED_ENV)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
 }
 
 fn resolve_container_secret_vault_path(
@@ -1170,7 +1179,7 @@ targets = ["containers"]
         );
         let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
 
-        let env = resolve_container_secret_env(&root).expect("resolve secrets");
+        let env = resolve_container_secret_env(&root, false).expect("resolve secrets");
 
         assert_eq!(env.len(), 1);
         assert_eq!(env[0].0, "DATABASE_URL");
@@ -1200,11 +1209,71 @@ targets = ["containers"]
         write_test_vault(&root, "vault-passphrase", &[]);
         let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
 
-        let error = resolve_container_secret_env(&root).expect_err("missing should fail");
+        let error = resolve_container_secret_env(&root, false).expect_err("missing should fail");
 
         assert!(error
             .to_string()
             .contains("required container secret(s) missing from the vault"));
+    }
+
+    #[test]
+    fn container_secret_env_force_required_loads_optional_container_values() {
+        let root = temp_repo("container-secret-force-required");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.api_token]
+required = false
+targets = ["containers"]
+"#,
+        )
+        .expect("write manifest");
+        write_test_vault(&root, "vault-passphrase", &[("api_token", "tok_secret")]);
+        let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
+
+        let env = resolve_container_secret_env(&root, true).expect("resolve secrets");
+
+        assert_eq!(env.len(), 1);
+        assert_eq!(env[0].0, "API_TOKEN");
+        assert_eq!(env[0].1.expose(), "tok_secret");
+    }
+
+    #[test]
+    fn container_secret_env_force_required_blocks_missing_optional_container_values() {
+        let root = temp_repo("container-secret-force-required-missing");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.api_token]
+required = false
+targets = ["containers"]
+"#,
+        )
+        .expect("write manifest");
+        write_test_vault(&root, "vault-passphrase", &[]);
+        let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
+
+        let error = resolve_container_secret_env(&root, true).expect_err("missing should fail");
+
+        assert!(error
+            .to_string()
+            .contains("required container secret(s) missing from the vault: api_token"));
     }
 
     #[test]
