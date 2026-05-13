@@ -217,6 +217,43 @@ pub struct ManifestTaskCache {
     pub env: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestInlineTaskDefinition {
+    #[serde(default)]
+    pub run: Option<String>,
+    #[serde(default)]
+    pub task: Option<String>,
+    #[serde(default)]
+    pub rhai: Option<String>,
+    #[serde(default)]
+    pub run_in: Option<ManifestTaskRunIn>,
+}
+
+impl ManifestInlineTaskDefinition {
+    pub fn into_manifest_task(self) -> ManifestTask {
+        ManifestTask {
+            run: Some(ManifestManagedRun::Sequence(vec![
+                ManifestManagedRunStep::Step(Box::new(ManifestManagedRunStepTable {
+                    run: self.run,
+                    task: self.task,
+                    rhai: self.rhai,
+                    env: None,
+                    env_file: None,
+                    id: None,
+                    depends_on: Vec::new(),
+                    timeout_ms: None,
+                    retry: None,
+                    retry_delay_ms: None,
+                    fail_fast: None,
+                })),
+            ])),
+            run_in: self.run_in,
+            ..ManifestTask::default()
+        }
+    }
+}
+
 impl ManifestManagedProfile {
     pub fn concurrent_entries(&self) -> Option<&[ManifestManagedConcurrentEntry]> {
         if self.concurrent.is_empty() {

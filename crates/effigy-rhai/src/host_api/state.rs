@@ -145,10 +145,8 @@ fn build_state_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> 
     module.set_native_fn(
         "apply_context",
         move || -> Result<Dynamic, Box<EvalAltResult>> {
-            let path = required_state_path_env(
-                &apply_context_reader.cwd,
-                "EFFIGY_STATE_APPLY_CONTEXT",
-            )?;
+            let path =
+                required_state_path_env(&apply_context_reader.cwd, "EFFIGY_STATE_APPLY_CONTEXT")?;
             let contents = std::fs::read_to_string(&path).map_err(|error| {
                 rhai_runtime_error(format!(
                     "failed to read state apply context `{}`: {error}",

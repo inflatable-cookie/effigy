@@ -3,7 +3,7 @@ use std::process::Command as ProcessCommand;
 
 use effigy_manifest::{
     config_sections::ManifestBootstrapChildConfig, load_task_manifest, ManifestBootstrapConfig,
-    ManifestBootstrapSubmodulesPolicy, ManifestManagedRun,
+    ManifestBootstrapRun, ManifestBootstrapSubmodulesPolicy,
 };
 use serde_json::json;
 
@@ -252,7 +252,7 @@ pub fn execute_bootstrap_request<LoadBootstrap, RunBootstrapRun, RunTask>(
 ) -> Result<BootstrapExecutionResult, BootstrapError>
 where
     LoadBootstrap: FnMut(&Path) -> Result<Option<ManifestBootstrapConfig>, BootstrapError>,
-    RunBootstrapRun: FnMut(&Path, &ManifestManagedRun, &str) -> Result<(), BootstrapError>,
+    RunBootstrapRun: FnMut(&Path, &ManifestBootstrapRun, &str) -> Result<(), BootstrapError>,
     RunTask: FnMut(&Path, &str, &str) -> Result<(), BootstrapError>,
 {
     execute_bootstrap_request_with_progress(
@@ -281,7 +281,7 @@ pub fn execute_bootstrap_request_with_progress<
 ) -> Result<BootstrapExecutionResult, BootstrapError>
 where
     LoadBootstrap: FnMut(&Path) -> Result<Option<ManifestBootstrapConfig>, BootstrapError>,
-    RunBootstrapRun: FnMut(&Path, &ManifestManagedRun, &str) -> Result<(), BootstrapError>,
+    RunBootstrapRun: FnMut(&Path, &ManifestBootstrapRun, &str) -> Result<(), BootstrapError>,
     RunTask: FnMut(&Path, &str, &str) -> Result<(), BootstrapError>,
     ReportProgress: FnMut(BootstrapProgressEvent) -> Result<(), BootstrapError>,
     ConfirmDestinationReuse: FnMut(&Path) -> Result<bool, BootstrapError>,
@@ -1061,11 +1061,11 @@ pub fn render_bootstrap_children_sync_result(
 fn run_bootstrap_run_if_present<RunBootstrapRun>(
     run_bootstrap_run: &mut RunBootstrapRun,
     repo_root: &Path,
-    run: Option<&ManifestManagedRun>,
+    run: Option<&ManifestBootstrapRun>,
     phase: &str,
 ) -> Result<Option<String>, BootstrapError>
 where
-    RunBootstrapRun: FnMut(&Path, &ManifestManagedRun, &str) -> Result<(), BootstrapError>,
+    RunBootstrapRun: FnMut(&Path, &ManifestBootstrapRun, &str) -> Result<(), BootstrapError>,
 {
     let Some(run) = run else {
         return Ok(None);
@@ -1074,10 +1074,14 @@ where
     Ok(Some(describe_bootstrap_run(run)))
 }
 
-fn describe_bootstrap_run(run: &ManifestManagedRun) -> String {
+fn describe_bootstrap_run(run: &ManifestBootstrapRun) -> String {
+    let task = run.as_manifest_task();
+    let Some(run) = task.run.as_ref() else {
+        return "task".to_owned();
+    };
     match run {
-        ManifestManagedRun::Command(_) => "command".to_owned(),
-        ManifestManagedRun::Sequence(steps) => format!("sequence:{}", steps.len()),
+        effigy_manifest::ManifestManagedRun::Command(_) => "command".to_owned(),
+        effigy_manifest::ManifestManagedRun::Sequence(steps) => format!("sequence:{}", steps.len()),
     }
 }
 

@@ -6,6 +6,7 @@ let release_triple = if env("EFFIGY_LINUX_RELEASE_TRIPLE") == "" {
 } else {
     env("EFFIGY_LINUX_RELEASE_TRIPLE")
 };
+let active_version = str::trim(effigy::active_version());
 let copied_binary = path::join(host_artifacts_dir, "effigy-" + release_triple);
 let proof_log = path::join(host_artifacts_dir, "rehearsal.txt");
 
@@ -26,27 +27,29 @@ if up.trim() != "" {
     log(up);
 }
 
-let build_script =
-    "set -eu\n"
-    + "mkdir -p /workspace/.effigy/linux-release/artifacts\n"
-    + "export CARGO_TARGET_DIR=/workspace/.effigy/linux-release/target\n"
-    + "export EFFIGY_INTERNAL_SUPPRESS_HEADER=1\n"
-    + "cd /workspace\n"
-    + "rustc --version > /workspace/.effigy/linux-release/artifacts/toolchain.txt\n"
-    + "cargo build --release --bin effigy\n"
-    + "printf '\\n\\n'\n"
-    + "\"${CARGO_TARGET_DIR}/release/effigy\" help >/dev/null\n"
-    + "smoke_output=$(\"${CARGO_TARGET_DIR}/release/effigy\" smoke:release \"${CARGO_TARGET_DIR}/release/effigy\")\n"
-    + "printf '%s\\n\\n' \"$smoke_output\"\n"
-    + "glibc_output=$(\"${CARGO_TARGET_DIR}/release/effigy\" distribution check-glibc-floor --binary \"${CARGO_TARGET_DIR}/release/effigy\" --max-glibc 2.35)\n"
-    + "printf '%s\\n' \"$glibc_output\"\n"
-    + "cp \"${CARGO_TARGET_DIR}/release/effigy\" \"/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + "\"\n"
-    + "{\n"
-    + "  echo \"binary=${CARGO_TARGET_DIR}/release/effigy\"\n"
-    + "  echo \"copied_binary=/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + "\"\n"
-    + "  echo \"release_triple=" + release_triple + "\"\n"
-    + "  echo \"completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n"
-    + "} > /workspace/.effigy/linux-release/artifacts/rehearsal.txt\n";
+let build_script = "set -eu\n";
+build_script += "mkdir -p /workspace/.effigy/linux-release/artifacts\n";
+build_script += "export CARGO_TARGET_DIR=/workspace/.effigy/linux-release/target\n";
+build_script += "export EFFIGY_INTERNAL_SUPPRESS_HEADER=1\n";
+build_script += "export EFFIGY_ACTIVE_VERSION=" + str::shell_quote(active_version) + "\n";
+build_script += "cd /workspace\n";
+build_script += "rustc --version > /workspace/.effigy/linux-release/artifacts/toolchain.txt\n";
+build_script += "cargo build --release --bin effigy\n";
+build_script += "printf '%s\\n' \"$EFFIGY_ACTIVE_VERSION\" > \"${CARGO_TARGET_DIR}/release/effigy.active-version\"\n";
+build_script += "printf '\\n\\n'\n";
+build_script += "\"${CARGO_TARGET_DIR}/release/effigy\" help >/dev/null\n";
+build_script += "smoke_output=$(\"${CARGO_TARGET_DIR}/release/effigy\" smoke:release \"${CARGO_TARGET_DIR}/release/effigy\")\n";
+build_script += "printf '%s\\n\\n' \"$smoke_output\"\n";
+build_script += "glibc_output=$(\"${CARGO_TARGET_DIR}/release/effigy\" distribution check-glibc-floor --binary \"${CARGO_TARGET_DIR}/release/effigy\" --max-glibc 2.35)\n";
+build_script += "printf '%s\\n' \"$glibc_output\"\n";
+build_script += "cp \"${CARGO_TARGET_DIR}/release/effigy\" \"/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + "\"\n";
+build_script += "cp \"${CARGO_TARGET_DIR}/release/effigy.active-version\" \"/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + ".active-version\"\n";
+build_script += "{\n";
+build_script += "  echo \"binary=${CARGO_TARGET_DIR}/release/effigy\"\n";
+build_script += "  echo \"copied_binary=/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + "\"\n";
+build_script += "  echo \"release_triple=" + release_triple + "\"\n";
+build_script += "  echo \"completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n";
+build_script += "} > /workspace/.effigy/linux-release/artifacts/rehearsal.txt\n";
 
 let shell_error = "";
 try {

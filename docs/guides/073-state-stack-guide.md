@@ -75,6 +75,13 @@ artifact_kind = "object-store"
 hook = [{ rhai = "state/apply-media.rhai" }]
 ```
 
+For a single step, hooks can use the compact inline task shape, including
+task-level `run_in`:
+
+```toml
+hook = { rhai = "state/apply-media.rhai", run_in = "host" }
+```
+
 ### Capture profiles
 
 Declare capture presets so operators do not need to remember flags:
@@ -98,6 +105,12 @@ source_env = "legacy"
 source = ".effigy/state/captures/{key}/media"
 ref = "oci://ghcr.io/acme/media:{key}"
 task = [{ rhai = "state/capture-media.rhai" }]
+```
+
+Single-step capture tasks can also use compact inline task syntax:
+
+```toml
+task = { rhai = "state/capture-media.rhai", run_in = "host" }
 ```
 
 ## Commands

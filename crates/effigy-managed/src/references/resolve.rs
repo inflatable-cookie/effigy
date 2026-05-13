@@ -35,7 +35,11 @@ where
 {
     match resolve_reference_target(parsed, catalogs, task_scope_cwd, resolver) {
         Ok(ReferenceTarget::Builtin) => Ok(ResolvedReferenceRun {
-            command: render_builtin_reference_invocation(&parsed.selector_rendered, args_rendered)?,
+            command: render_builtin_reference_invocation(
+                &parsed.selector_rendered,
+                args_rendered,
+                task_scope_cwd,
+            )?,
             cwd: task_scope_cwd.to_path_buf(),
         }),
         Ok(ReferenceTarget::Catalog(selection)) => Ok(ResolvedReferenceRun {
@@ -104,7 +108,11 @@ where
         || has_concurrent_schema(selection.task)
         || execution_binding.is_some()
     {
-        return render_builtin_reference_invocation(selector_rendered, args_rendered);
+        return render_builtin_reference_invocation(
+            selector_rendered,
+            args_rendered,
+            &selection.catalog.catalog_root,
+        );
     }
 
     Err(missing_run_error())

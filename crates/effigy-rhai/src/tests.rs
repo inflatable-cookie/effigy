@@ -512,6 +512,8 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
             if task != "task:demo:task:a,b" { throw("task"); }
             let effigy = effigy::run(["demo", "list"]);
             if !effigy["success"] || effigy["output"] != "demo list" { throw("effigy"); }
+            let active_version = effigy::active_version();
+            if !str::contains(active_version, "0.6.1") { throw("active version"); }
             let json = effigy::run_json(["demo", "list"]);
             if json["json"] != true { throw("json"); }
             if container::up("web", true) != "up:web:true" { throw("up"); }

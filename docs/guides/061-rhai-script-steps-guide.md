@@ -245,6 +245,7 @@ Current v1 helpers:
   - `container::down_all()`
   - `container::shell(name, command)`
   - `container::shell(name, service, command)`
+  - `effigy::active_version()`
   - `effigy::run(args_array)`
   - `effigy::run_json(args_array)`
   - `task::run_json(task, args_array)`
@@ -289,6 +290,9 @@ Similarly, use `http::request(...)` or `http::post(...)` instead of
 Use `search::files(root, pattern, #{ glob: "*.rs" })` plus `regex::*` helpers
 instead of `process::run("rg", [...])` for portable file audits and
 allowlist-style path filtering.
+
+`effigy::active_version()` returns the current running binary's active version,
+including local build metadata like `+local.<hash>`.
 
 `effigy::run(...)` and `effigy::run_json(...)` are escape hatches for surfaces
 that do not yet have a typed helper. First-party scripts should use the typed

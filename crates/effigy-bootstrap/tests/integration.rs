@@ -19,8 +19,8 @@ use effigy_bootstrap::{
     BootstrapResolution,
 };
 use effigy_manifest::{
-    load_task_manifest, ManifestBootstrapConfig, ManifestBootstrapSubmodulesPolicy,
-    ManifestManagedRun, ManifestManagedRunStep,
+    load_task_manifest, ManifestBootstrapConfig, ManifestBootstrapRun,
+    ManifestBootstrapSubmodulesPolicy, ManifestManagedRun, ManifestManagedRunStep,
 };
 use support::{
     attach_remote_and_push, bare_remote_path, clone_remote, commit_all, init_bare_remote,
@@ -232,9 +232,13 @@ fn load_bootstrap_from_manifest(
 
 fn run_bootstrap_run_via_sh(
     repo_root: &Path,
-    run: &ManifestManagedRun,
+    run: &ManifestBootstrapRun,
     phase: &str,
 ) -> Result<(), BootstrapError> {
+    let task = run.as_manifest_task();
+    let Some(run) = task.run.as_ref() else {
+        return Ok(());
+    };
     match run {
         ManifestManagedRun::Command(command) => run_shell_command(repo_root, command, phase),
         ManifestManagedRun::Sequence(steps) => {

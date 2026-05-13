@@ -335,6 +335,9 @@ For subprocess helpers:
 
 ### Effigy escape hatches
 
+`effigy::active_version()` returns the current running binary's active version
+string.
+
 `effigy::run(...)` returns:
 
 ```rhai

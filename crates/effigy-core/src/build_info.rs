@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const ACTIVE_VERSION_ENV: &str = "EFFIGY_ACTIVE_VERSION";
 const LOCAL_ACTIVE_VERSION_EXTENSION: &str = "active-version";
 
 pub fn package_version() -> &'static str {
@@ -8,6 +9,9 @@ pub fn package_version() -> &'static str {
 }
 
 pub fn active_version() -> String {
+    if let Some(version) = read_active_version_env() {
+        return version;
+    }
     std::env::current_exe()
         .ok()
         .and_then(|path| {
@@ -27,6 +31,15 @@ pub fn display_version() -> String {
 
 fn active_version_file_for(executable: &Path) -> PathBuf {
     executable.with_extension(LOCAL_ACTIVE_VERSION_EXTENSION)
+}
+
+fn read_active_version_env() -> Option<String> {
+    let raw = std::env::var(ACTIVE_VERSION_ENV).ok()?;
+    let value = raw.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(value.to_owned())
 }
 
 fn read_active_version_file_for(executable: &Path) -> Option<String> {
@@ -106,8 +119,9 @@ fn display_version_prefix(version: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        active_version_file_for, discover_repo_root_from_executable, display_version_prefix,
-        git_repo_is_dirty, infer_repo_local_version, read_active_version_file_for,
+        active_version, active_version_file_for, discover_repo_root_from_executable,
+        display_version_prefix, git_repo_is_dirty, infer_repo_local_version,
+        read_active_version_env, read_active_version_file_for, ACTIVE_VERSION_ENV,
     };
 
     #[test]
@@ -137,6 +151,24 @@ mod tests {
 
         std::fs::write(active_version_file_for(&executable), "   \n").expect("write empty");
         assert!(read_active_version_file_for(&executable).is_none());
+    }
+
+    #[test]
+    fn read_active_version_env_trims_and_ignores_empty_values() {
+        let _guard = EnvGuard::set(ACTIVE_VERSION_ENV, " v0.3.1+local.abc123 \n");
+        assert_eq!(
+            read_active_version_env().as_deref(),
+            Some("v0.3.1+local.abc123")
+        );
+
+        let _guard = EnvGuard::set(ACTIVE_VERSION_ENV, "   ");
+        assert!(read_active_version_env().is_none());
+    }
+
+    #[test]
+    fn active_version_prefers_explicit_env_override() {
+        let _guard = EnvGuard::set(ACTIVE_VERSION_ENV, "v9.9.9+local.override");
+        assert_eq!(active_version(), "v9.9.9+local.override");
     }
 
     #[test]
@@ -181,5 +213,33 @@ mod tests {
             display_version_prefix("v0.3.1+local.abc123"),
             "v0.3.1+local.abc123"
         );
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe {
+                    std::env::set_var(self.key, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(self.key);
+                },
+            }
+        }
     }
 }

@@ -64,6 +64,16 @@ During v0.x, MINOR bumps may include breaking changes.
   manually.
 - **Rhai path parent helper:** Rhai scripts can now call `path::parent(...)`
   instead of carrying app-local dirname helpers.
+- **Compact task `run_in`:** shorthand task objects under `[tasks]` can now set
+  task-level execution context directly, for example
+  `{ rhai = "scripts/capture.rhai", run_in = "host" }`, instead of wrapping the
+  step in `{ run = { ... }, run_in = "host" }`.
+- **Compact state inline tasks:** state capture `task` definitions and state
+  layer `hook` definitions can now use the same compact single-step inline task
+  shape with `run_in`.
+- **Compact bootstrap inline tasks:** root `[bootstrap].run` and child
+  `bootstrap.children[].run` definitions can now use compact single-step inline
+  task syntax with `run_in`.
 
 ### Changed
 - **Rhai task steps** in fully in-process sequences now execute directly inside
@@ -120,6 +130,10 @@ During v0.x, MINOR bumps may include breaking changes.
   and the old `scripts/check-linux-glibc-floor.sh` wrapper is gone.
 
 ### Fixed
+- **Linux rehearsal version floors** now carry the invoking binary's active
+  version into the container-built Linux binary, so repo-local `+local`
+  development builds still satisfy `[manifest].minimum_effigy_version` during
+  in-container smoke checks.
 - **Rhai state capture context paths** now resolve relative
   `EFFIGY_STATE_CAPTURE_CONTEXT` values against the task runtime CWD, so
   `state::capture_context()` works reliably with `--repo` execution.

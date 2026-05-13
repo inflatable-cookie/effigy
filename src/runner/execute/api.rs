@@ -8,8 +8,8 @@ use effigy_execution::{
     ExecutionEnvironmentPlan, ExecutionSurface, TaskExecutionRequest, TaskExecutionRequestBuilder,
 };
 use effigy_manifest::{
-    LoadedCatalog, ManifestContainersConfig, ManifestManagedRun, ManifestSystemsConfig,
-    ManifestTask, ManifestTaskRunIn, TaskSelection,
+    LoadedCatalog, ManifestContainersConfig, ManifestSystemsConfig, ManifestTask,
+    ManifestTaskRunIn, TaskSelection,
 };
 use effigy_tasks::CatalogSelectionMode;
 
@@ -424,23 +424,6 @@ run = "cargo run -p farmyard-db --bin migrate_dev_db"
         assert!(containers.environments.contains_key("stack"));
         assert!(containers.environments.contains_key("services"));
     }
-}
-
-pub(in crate::runner) fn run_managed_run_with_cwd(
-    run: &ManifestManagedRun,
-    cwd: PathBuf,
-    label: &str,
-) -> Result<String, RunnerError> {
-    run_inline_task_with_cwd_and_env(
-        ManifestTask {
-            run: Some(run.clone()),
-            run_in: Some(ManifestTaskRunIn::Host),
-            ..Default::default()
-        },
-        cwd,
-        label,
-        &BTreeMap::new(),
-    )
 }
 
 pub(in crate::runner) fn run_inline_task_with_cwd_and_env(

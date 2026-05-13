@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use effigy_artifacts::OciArtifactAdapter;
 use effigy_cli::{BootstrapDbSeedInput, StateArgs, StateSubcommand, TaskInvocation};
 use effigy_execution::ExecutionSurface;
-use effigy_manifest::{ManifestManagedRun, ManifestTask};
+use effigy_manifest::{ManifestInlineTaskDefinition, ManifestManagedRun, ManifestTask};
 use effigy_state::{
     capture_produced_layer, state_report_write_paths, StateCaptureMode, StateCapturePlanRequest,
     StateHistoryKind, StateLayerApplyMode, StateLayerRole, StateReportWritePaths,
@@ -1294,6 +1294,7 @@ struct ManifestStateCaptureProfile {
 #[serde(untagged)]
 enum ManifestStateTaskDefinition {
     Reference(String),
+    Inline(Box<ManifestInlineTaskDefinition>),
     Run(ManifestManagedRun),
     Task(Box<ManifestTask>),
 }
@@ -1302,13 +1303,19 @@ impl ManifestStateTaskDefinition {
     fn report_name(&self) -> String {
         match self {
             Self::Reference(name) => name.clone(),
-            Self::Run(_) | Self::Task(_) => "<inline>".to_owned(),
+            Self::Inline(_) | Self::Run(_) | Self::Task(_) => "<inline>".to_owned(),
         }
     }
 
     fn into_manifest_task(self) -> Option<ManifestTask> {
         match self {
             Self::Reference(_) => None,
+            Self::Inline(task) => {
+                let mut task = task.into_manifest_task();
+                task.run_in
+                    .get_or_insert(effigy_manifest::ManifestTaskRunIn::Host);
+                Some(task)
+            }
             Self::Run(run) => Some(ManifestTask {
                 run: Some(run),
                 run_in: Some(effigy_manifest::ManifestTaskRunIn::Host),
@@ -2032,6 +2039,87 @@ mod tests {
         .expect("write test vault");
     }
 
+    fn state_config_with_inline_task(task_key: &str, task_value: &str) -> String {
+        format!(
+            r#"
+[uat]
+schema = "effigy.state-stack.v1"
+name = "uat"
+environment = "uat"
+
+[[uat.layers]]
+key = "legacy"
+role = "legacy-import"
+source = "oci://example.test/acme/legacy:latest"
+apply_mode = "artifact"
+environment_policy = "all"
+{task_key} = {task_value}
+
+[uat.captures.media]
+role = "full-capture"
+source_env = "legacy"
+source = ".effigy/state/captures/{{key}}/media"
+task = {task_value}
+"#
+        )
+    }
+
+    #[test]
+    fn state_layer_hook_accepts_compact_inline_task_run_in() {
+        let config: ManifestStateConfig = toml::from_str(&state_config_with_inline_task(
+            "hook",
+            r#"{ rhai = "state/apply-media.rhai", run_in = "container" }"#,
+        ))
+        .expect("parse state config");
+
+        let mut resolved =
+            select_manifest_state_stack_for_apply(config, Some("uat")).expect("select state stack");
+        let hook = resolved.hooks.remove("legacy").expect("hook");
+        let task = hook.into_manifest_task().expect("inline hook task");
+
+        assert_eq!(
+            task.run_in,
+            Some(effigy_manifest::ManifestTaskRunIn::Container)
+        );
+        let Some(ManifestManagedRun::Sequence(steps)) = task.run else {
+            panic!("expected compact inline task to become one-step sequence");
+        };
+        assert!(matches!(
+            steps.as_slice(),
+            [effigy_manifest::ManifestManagedRunStep::Step(step)]
+                if step.rhai.as_deref() == Some("state/apply-media.rhai")
+        ));
+    }
+
+    #[test]
+    fn state_capture_task_accepts_compact_inline_task_run_in() {
+        let mut config: ManifestStateConfig = toml::from_str(&state_config_with_inline_task(
+            "hook",
+            r#"{ rhai = "state/capture-media.rhai", run_in = "host" }"#,
+        ))
+        .expect("parse state config");
+        let mut stacks = config.stacks;
+        stacks.append(&mut config.named_stacks);
+        let stack = stacks.remove("uat").expect("uat stack");
+        let profile = stack.captures.get("media").expect("media capture");
+        let task = profile
+            .task
+            .clone()
+            .expect("capture task")
+            .into_manifest_task()
+            .expect("inline capture task");
+
+        assert_eq!(task.run_in, Some(effigy_manifest::ManifestTaskRunIn::Host));
+        let Some(ManifestManagedRun::Sequence(steps)) = task.run else {
+            panic!("expected compact inline task to become one-step sequence");
+        };
+        assert!(matches!(
+            steps.as_slice(),
+            [effigy_manifest::ManifestManagedRunStep::Step(step)]
+                if step.rhai.as_deref() == Some("state/capture-media.rhai")
+        ));
+    }
+
     fn lineage() -> StateStackLineageReport {
         StateStackLineageReport {
             schema: effigy_state::STATE_STACK_LINEAGE_SCHEMA.to_owned(),
@@ -2432,10 +2520,9 @@ hook = "apply-hook"
         .expect_err("failed hook should fail state apply");
         assert!(error.to_string().contains("state apply failed"));
 
-        let rendered = fs::read_to_string(
-            repo.join(".effigy/reports/state/acowtancy-uat/latest-apply.json"),
-        )
-        .expect("read failed apply report");
+        let rendered =
+            fs::read_to_string(repo.join(".effigy/reports/state/acowtancy-uat/latest-apply.json"))
+                .expect("read failed apply report");
         let report: Value = serde_json::from_str(&rendered).expect("parse apply report");
         let layer = &report["layers"][0];
 

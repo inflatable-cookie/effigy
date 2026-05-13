@@ -5,6 +5,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 pub const MANAGED_EXEC_READINESS_TIMEOUT_SECS: u64 = 30;
+const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 
 use crate::{
     compose::{on_task_exit_label, shutdown_label},
@@ -374,9 +375,23 @@ fn rewrite_command_for_container(
     repo_root: &Path,
     container_repo_root: &Path,
 ) -> String {
-    command.replace(
+    let rewritten = command.replace(
         &repo_root.display().to_string(),
         &container_repo_root.display().to_string(),
+    );
+    rewrite_effigy_invocation_for_container(&rewritten)
+}
+
+fn rewrite_effigy_invocation_for_container(command: &str) -> String {
+    let Ok(host_invocation) = resolve_effigy_invocation_prefix() else {
+        return command.to_owned();
+    };
+    if host_invocation == shell_quote(CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH) {
+        return command.to_owned();
+    }
+    command.replace(
+        &host_invocation,
+        &shell_quote(CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH),
     )
 }
 
@@ -669,6 +684,29 @@ mod tests {
             "got: {rendered}"
         );
         assert!(rendered.contains("svelte-kit sync"), "got: {rendered}");
+    }
+
+    #[test]
+    fn managed_standard_exec_command_rewrites_host_effigy_invocation_for_container_commands() {
+        let rendered = managed_standard_exec_command(
+            Path::new("/Users/tom/repo"),
+            Some("web"),
+            "dev",
+            Path::new("/Users/tom/repo/acme-admin"),
+            Some(Path::new("/workspace-root/repo")),
+            None,
+            "effigy",
+            "env EFFIGY_INTERNAL_SUPPRESS_HEADER='1' '/Users/tom/Dev/projects/effigy/target/debug/effigy' script run --file '/Users/tom/repo/.effigy/cache/setup.rhai'",
+        );
+
+        assert!(
+            rendered.contains("/usr/local/bin/effigy script run --file"),
+            "got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("/Users/tom/Dev/projects/effigy/target/debug/effigy"),
+            "got: {rendered}"
+        );
     }
 
     #[test]

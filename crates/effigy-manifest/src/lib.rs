@@ -28,9 +28,9 @@ pub use composition::{
     ManifestCompositionOverride, ManifestCompositionValueSource,
 };
 pub use config_sections::{
-    ManifestBootstrapConfig, ManifestBootstrapStart, ManifestBootstrapStartEntry,
-    ManifestBootstrapStartTable, ManifestBootstrapSubmodulesPolicy, ManifestBundleBase,
-    ManifestBundleConfig, ManifestContainerConfig, ManifestContainerDataConfig,
+    ManifestBootstrapConfig, ManifestBootstrapRun, ManifestBootstrapStart,
+    ManifestBootstrapStartEntry, ManifestBootstrapStartTable, ManifestBootstrapSubmodulesPolicy,
+    ManifestBundleBase, ManifestBundleConfig, ManifestContainerConfig, ManifestContainerDataConfig,
     ManifestContainerDnsConfig, ManifestContainerDnsDomainDefaults,
     ManifestContainerDnsRouteConfig, ManifestContainerDriver, ManifestContainerExecAliasConfig,
     ManifestContainerExecAliasTableConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
@@ -58,10 +58,10 @@ pub use execution_binding::{
 pub use loaded_catalog::{DeferredCommand, LoadedCatalog, TaskResolverFn, TaskSelection};
 use task_defs::deserialize_tasks;
 pub use task_runtime::{
-    ManifestEnvEntry, ManifestEnvFileDirective, ManifestManagedConcurrentEntry,
-    ManifestManagedProfile, ManifestManagedRun, ManifestManagedRunStep,
-    ManifestManagedRunStepTable, ManifestRunStepEnv, ManifestTask, ManifestTaskCache,
-    ManifestTaskRunIn,
+    ManifestEnvEntry, ManifestEnvFileDirective, ManifestInlineTaskDefinition,
+    ManifestManagedConcurrentEntry, ManifestManagedProfile, ManifestManagedRun,
+    ManifestManagedRunStep, ManifestManagedRunStepTable, ManifestRunStepEnv, ManifestTask,
+    ManifestTaskCache, ManifestTaskRunIn,
 };
 use test_config::ManifestTestConfig;
 pub use test_config::{ManifestCargoEnvMatchMode, ManifestTestSuiteTeardownPolicy};

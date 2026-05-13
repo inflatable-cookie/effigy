@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    ManifestManagedRun, ManifestManagedRunStep, ManifestManagedRunStepTable, ManifestTask,
+    ManifestInlineTaskDefinition, ManifestManagedRun, ManifestManagedRunStep,
+    ManifestManagedRunStepTable, ManifestTask,
 };
 
 #[derive(Debug, serde::Deserialize)]
@@ -10,6 +11,7 @@ enum ManifestTaskDefinition {
     Run(String),
     RunSequence(Vec<ManifestManagedRunStep>),
     Full(Box<ManifestTask>),
+    Compact(Box<ManifestInlineTaskDefinition>),
     RunStep(Box<ManifestManagedRunStepTable>),
 }
 
@@ -30,6 +32,7 @@ impl ManifestTaskDefinition {
                 ])),
                 ..ManifestTask::default()
             },
+            ManifestTaskDefinition::Compact(task) => task.into_manifest_task(),
             ManifestTaskDefinition::Full(task) => *task,
         }
     }
@@ -54,7 +57,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::deserialize_tasks;
-    use crate::{ManifestManagedRun, ManifestManagedRunStep};
+    use crate::{ManifestManagedRun, ManifestManagedRunStep, ManifestTaskRunIn};
 
     #[derive(Debug, serde::Deserialize)]
     struct TasksEnvelope {
@@ -80,6 +83,28 @@ sync = { task = "defer migrate/media https://www.example.test" }
             steps.as_slice(),
             [ManifestManagedRunStep::Step(step)]
                 if step.task.as_deref() == Some("defer migrate/media https://www.example.test")
+        ));
+    }
+
+    #[test]
+    fn shorthand_task_definition_accepts_task_level_run_in() {
+        let parsed: TasksEnvelope = toml::from_str(
+            r#"
+[tasks]
+capture = { rhai = "scripts/capture.rhai", run_in = "host" }
+"#,
+        )
+        .expect("parse shorthand task definition with run_in");
+
+        let task = parsed.tasks.get("capture").expect("missing capture task");
+        assert_eq!(task.run_in, Some(ManifestTaskRunIn::Host));
+        let Some(ManifestManagedRun::Sequence(steps)) = &task.run else {
+            panic!("expected shorthand single task object to deserialize as one-step sequence");
+        };
+        assert!(matches!(
+            steps.as_slice(),
+            [ManifestManagedRunStep::Step(step)]
+                if step.rhai.as_deref() == Some("scripts/capture.rhai")
         ));
     }
 

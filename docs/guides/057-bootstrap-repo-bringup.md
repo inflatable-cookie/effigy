@@ -231,6 +231,19 @@ run = [
 start = "dev"
 ```
 
+For a single bootstrap step, `run` can also use compact inline task syntax with
+task-level execution policy:
+
+```toml
+[bootstrap]
+run = { rhai = "scripts/bootstrap.rhai", run_in = "host" }
+
+[[bootstrap.children]]
+path = "supporting-repo"
+repo = "git@github.com:example/supporting-repo.git"
+run = { task = "bootstrap:child", run_in = "container" }
+```
+
 This means:
 
 - clone or update the root repo

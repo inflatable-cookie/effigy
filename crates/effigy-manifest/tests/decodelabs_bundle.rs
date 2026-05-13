@@ -155,8 +155,13 @@ version = "11.0"
     assert_eq!(dev.default_workspace.as_deref(), Some("app"));
 
     let bootstrap = manifest.bootstrap.expect("bootstrap");
+    let bootstrap_task = bootstrap
+        .run
+        .as_ref()
+        .expect("bootstrap run")
+        .as_manifest_task();
     assert!(matches!(
-        bootstrap.run.as_ref().expect("bootstrap run"),
+        bootstrap_task.run.as_ref().expect("bootstrap task run"),
         ManifestManagedRun::Sequence(steps)
             if matches!(
                 steps.as_slice(),

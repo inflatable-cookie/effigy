@@ -1,11 +1,11 @@
-use crate::ManifestManagedRun;
+use crate::{ManifestInlineTaskDefinition, ManifestManagedRun, ManifestTask};
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
 pub struct ManifestBootstrapConfig {
     #[serde(default, alias = "setup")]
-    pub run: Option<ManifestManagedRun>,
+    pub run: Option<ManifestBootstrapRun>,
     #[serde(default)]
     pub start: Option<ManifestBootstrapStart>,
     #[serde(default)]
@@ -22,7 +22,7 @@ pub struct ManifestBootstrapConfig {
 /// flexibility of `[bootstrap].run`. Arrays run sequentially in
 /// declaration order; the first failure aborts the chain.
 /// Backward-compatible with the original scalar shape.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(untagged)]
 pub enum ManifestBootstrapStart {
     Single(String),
@@ -79,7 +79,7 @@ pub enum ManifestBootstrapSubmodulesPolicy {
     Recursive,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
 pub struct ManifestBootstrapChildConfig {
@@ -88,11 +88,111 @@ pub struct ManifestBootstrapChildConfig {
     #[serde(default)]
     pub branch: Option<String>,
     #[serde(default, alias = "setup")]
-    pub run: Option<ManifestManagedRun>,
+    pub run: Option<ManifestBootstrapRun>,
     #[serde(default = "default_bootstrap_child_required")]
     pub required: bool,
 }
 
 fn default_bootstrap_child_required() -> bool {
     true
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+pub enum ManifestBootstrapRun {
+    Task(Box<ManifestTask>),
+    Inline(Box<ManifestInlineTaskDefinition>),
+    Run(ManifestManagedRun),
+}
+
+impl ManifestBootstrapRun {
+    pub fn into_manifest_task(self) -> ManifestTask {
+        match self {
+            Self::Task(task) => *task,
+            Self::Inline(task) => task.into_manifest_task(),
+            Self::Run(run) => ManifestTask {
+                run: Some(run),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub fn as_manifest_task(&self) -> ManifestTask {
+        match self {
+            Self::Task(task) => (**task).clone(),
+            Self::Inline(task) => (**task).clone().into_manifest_task(),
+            Self::Run(run) => ManifestTask {
+                run: Some(run.clone()),
+                ..Default::default()
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ManifestBootstrapConfig;
+    use crate::{ManifestManagedRun, ManifestManagedRunStep, ManifestTaskRunIn};
+
+    #[test]
+    fn bootstrap_run_accepts_compact_inline_task_run_in() {
+        let bootstrap: ManifestBootstrapConfig = toml::from_str(
+            r#"
+run = { rhai = "scripts/bootstrap.rhai", run_in = "host" }
+"#,
+        )
+        .expect("parse bootstrap run");
+
+        let task = bootstrap.run.expect("bootstrap run").into_manifest_task();
+        assert_eq!(task.run_in, Some(ManifestTaskRunIn::Host));
+        let Some(ManifestManagedRun::Sequence(steps)) = task.run else {
+            panic!("expected compact inline task to become one-step sequence");
+        };
+        assert!(matches!(
+            steps.as_slice(),
+            [ManifestManagedRunStep::Step(step)]
+                if step.rhai.as_deref() == Some("scripts/bootstrap.rhai")
+        ));
+    }
+
+    #[test]
+    fn bootstrap_child_run_accepts_compact_inline_task_run_in() {
+        let bootstrap: ManifestBootstrapConfig = toml::from_str(
+            r#"
+[[children]]
+path = "app"
+repo = "git@example.test/app.git"
+run = { task = "bootstrap:child", run_in = "container" }
+"#,
+        )
+        .expect("parse bootstrap child run");
+
+        let task = bootstrap.children[0]
+            .run
+            .as_ref()
+            .expect("child run")
+            .as_manifest_task();
+        assert_eq!(task.run_in, Some(ManifestTaskRunIn::Container));
+        let Some(ManifestManagedRun::Sequence(steps)) = task.run else {
+            panic!("expected compact inline task to become one-step sequence");
+        };
+        assert!(matches!(
+            steps.as_slice(),
+            [ManifestManagedRunStep::Step(step)]
+                if step.task.as_deref() == Some("bootstrap:child")
+        ));
+    }
+
+    #[test]
+    fn bootstrap_run_preserves_existing_sequence_shape() {
+        let bootstrap: ManifestBootstrapConfig = toml::from_str(
+            r#"
+run = [{ task = "bootstrap:root" }]
+"#,
+        )
+        .expect("parse bootstrap run sequence");
+
+        let task = bootstrap.run.expect("bootstrap run").into_manifest_task();
+        assert!(matches!(task.run, Some(ManifestManagedRun::Sequence(_))));
+    }
 }

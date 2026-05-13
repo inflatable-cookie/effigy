@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use effigy_core::build_info;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map};
 
 use crate::surface::*;
@@ -469,6 +470,10 @@ fn build_test_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> r
 
 fn build_effigy_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
     let mut module = rhai::Module::new();
+    module.set_native_fn(
+        "active_version",
+        || -> Result<String, Box<EvalAltResult>> { Ok(build_info::active_version()) },
+    );
     let effigy_context = context.clone();
     let effigy_callbacks = callbacks.clone();
     module.set_native_fn(

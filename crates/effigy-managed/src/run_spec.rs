@@ -69,8 +69,9 @@ pub fn render_task_run_spec(
 pub fn render_builtin_reference_invocation(
     task_ref: &str,
     args_rendered: &str,
+    repo_root: &Path,
 ) -> Result<String, ManagedError> {
-    render_builtin_task_reference_invocation(task_ref, args_rendered)
+    render_builtin_task_reference_invocation(task_ref, args_rendered, repo_root)
 }
 
 pub fn render_step_command_template(

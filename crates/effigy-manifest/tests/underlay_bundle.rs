@@ -187,7 +187,12 @@ run = "printf seed"
     }
 
     let bootstrap = manifest.bootstrap.as_ref().expect("bootstrap");
-    let run = bootstrap.run.as_ref().expect("bootstrap run");
+    let bootstrap_task = bootstrap
+        .run
+        .as_ref()
+        .expect("bootstrap run")
+        .as_manifest_task();
+    let run = bootstrap_task.run.as_ref().expect("bootstrap task run");
     let ManifestManagedRun::Sequence(steps) = run else {
         panic!("underlay bootstrap should use a managed sequence");
     };
@@ -433,7 +438,12 @@ poodle = "../../poodle"
 
     let manifest = load_task_manifest(&manifest_path).expect("load manifest");
     let bootstrap = manifest.bootstrap.as_ref().expect("bootstrap");
-    let run = bootstrap.run.as_ref().expect("bootstrap run");
+    let bootstrap_task = bootstrap
+        .run
+        .as_ref()
+        .expect("bootstrap run")
+        .as_manifest_task();
+    let run = bootstrap_task.run.as_ref().expect("bootstrap task run");
     let effigy_manifest::ManifestManagedRun::Sequence(steps) = run else {
         panic!("underlay bootstrap should use a managed sequence");
     };
@@ -482,7 +492,12 @@ mounts = ["../../underlay", "../../poodle"]
 
     let manifest = load_task_manifest(&manifest_path).expect("load manifest");
     let bootstrap = manifest.bootstrap.as_ref().expect("bootstrap");
-    let run = bootstrap.run.as_ref().expect("bootstrap run");
+    let bootstrap_task = bootstrap
+        .run
+        .as_ref()
+        .expect("bootstrap run")
+        .as_manifest_task();
+    let run = bootstrap_task.run.as_ref().expect("bootstrap task run");
     let effigy_manifest::ManifestManagedRun::Sequence(steps) = run else {
         panic!("underlay bootstrap should use a managed sequence");
     };

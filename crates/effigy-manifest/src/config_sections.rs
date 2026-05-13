@@ -8,8 +8,9 @@ mod release;
 mod secrets;
 
 pub use bootstrap::{
-    ManifestBootstrapChildConfig, ManifestBootstrapConfig, ManifestBootstrapStart,
-    ManifestBootstrapStartEntry, ManifestBootstrapStartTable, ManifestBootstrapSubmodulesPolicy,
+    ManifestBootstrapChildConfig, ManifestBootstrapConfig, ManifestBootstrapRun,
+    ManifestBootstrapStart, ManifestBootstrapStartEntry, ManifestBootstrapStartTable,
+    ManifestBootstrapSubmodulesPolicy,
 };
 pub use bundle::{ManifestBundleBase, ManifestBundleConfig};
 pub use common::{

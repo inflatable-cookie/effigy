@@ -21,7 +21,7 @@ use effigy_cli::{
 };
 use effigy_containers::BackendId;
 use effigy_containers::{colima::parse_colima_running, user_global_backend_preference};
-use effigy_manifest::ManifestManagedRun;
+use effigy_manifest::{ManifestBootstrapRun, ManifestTask};
 use effigy_ui::theme::{is_ci_environment, resolve_color_enabled, Theme};
 use effigy_ui::{style_text, OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 
@@ -31,7 +31,7 @@ use crate::runner::db_seed::{
     DB_SEED_TASK,
 };
 use crate::runner::embedded_runner::run_embedded_task;
-use crate::runner::execute::api::{run_managed_run_with_cwd, task_requires_container_runtime};
+use crate::runner::execute::api::task_requires_container_runtime;
 use crate::runner::manifest::load_task_manifest;
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, LeaseRefreshPolicy, PublicWorkspaceCleanupOverride,
@@ -892,13 +892,19 @@ fn render_bootstrap_progress_line(line: &str, color_enabled: bool) -> String {
 
 fn run_bootstrap_run(
     repo_root: &Path,
-    run: &ManifestManagedRun,
+    run: &ManifestBootstrapRun,
     phase: &str,
 ) -> Result<(), RunnerError> {
+    let task: ManifestTask = run.as_manifest_task();
     with_runtime_session_context(bootstrap_runtime_session_context(phase), || {
-        run_managed_run_with_cwd(run, repo_root.to_path_buf(), "bootstrap")
-            .map(|_| ())
-            .map_err(|err| RunnerError::task_invocation(format!("{phase} failed: {err}")))
+        crate::runner::execute::api::run_inline_task_with_cwd_and_env(
+            task,
+            repo_root.to_path_buf(),
+            "bootstrap",
+            &std::collections::BTreeMap::new(),
+        )
+        .map(|_| ())
+        .map_err(|err| RunnerError::task_invocation(format!("{phase} failed: {err}")))
     })
 }
 

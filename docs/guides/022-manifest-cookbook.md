@@ -81,6 +81,13 @@ worker = "cargo run -p worker {args}"
 ```
 
 Use compact syntax for straightforward run commands and lightweight chains.
+Single-step task objects can also carry task-level `run_in` when the task needs
+an explicit execution context:
+
+```toml
+[tasks]
+"state:capture-new-content" = { rhai = "scripts/tasks/state-capture-new-content.rhai", run_in = "host" }
+```
 
 ### Split One Manifest Into Focused Fragments
 
@@ -295,8 +302,10 @@ run_in = "either"
 fail_on_non_zero = true
 ```
 
-Use full task tables when you need settings (`run_in`, `fail_on_non_zero`, `env`, `mode`, `profiles`, etc.).
+Use full task tables when you need broad task settings (`fail_on_non_zero`, `env`, `mode`, `profiles`, etc.).
 `run_in` accepts `host`, `container`, or `either`; `either` is the default and means use the current/default execution context.
+For a single `run`, `task`, or `rhai` step, `run_in` can live in the compact
+inline task object instead.
 
 If a whole catalog should share the same task routing default, set it once at
 the manifest level and only override the exceptions:
@@ -599,6 +608,14 @@ repo = "git@github.com:inflatable-cookie/aura.git"
 branch = "main"
 run = "bun install"
 required = true
+```
+
+Single-step bootstrap `run` values can use compact inline task syntax when they
+need task-level execution policy:
+
+```toml
+[bootstrap]
+run = { rhai = "scripts/bootstrap.rhai", run_in = "host" }
 ```
 
 Use this when the repo should be able to describe its own first-run bring-up

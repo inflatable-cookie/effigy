@@ -7,6 +7,8 @@ use super::RunSpecContext;
 use crate::ManagedError;
 use effigy_core::shell::shell_quote;
 
+const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
+
 pub fn render_task_command(command: &str, context: RunSpecContext<'_>) -> String {
     wrap_command_with_task_env(
         render_command_template(
@@ -33,7 +35,7 @@ pub fn render_rhai_step_invocation(
     context: RunSpecContext<'_>,
     script_path: &str,
 ) -> Result<String, ManagedError> {
-    let executable = resolve_effigy_invocation_prefix()?;
+    let executable = resolve_internal_effigy_invocation_prefix(context.repo_root)?;
     let args_json = serde_json::to_string(context.args_raw)
         .map_err(|error| ManagedError::task_invocation(error.to_string()))?;
     let env_pairs = vec![
@@ -68,8 +70,9 @@ pub fn render_rhai_step_invocation(
 pub fn render_builtin_task_reference_invocation(
     task_ref: &str,
     args_rendered: &str,
+    repo_root: &Path,
 ) -> Result<String, ManagedError> {
-    let executable = resolve_effigy_invocation_prefix()?;
+    let executable = resolve_internal_effigy_invocation_prefix(repo_root)?;
     let task = shell_quote(task_ref);
     if args_rendered.is_empty() {
         Ok(format!(
@@ -149,11 +152,33 @@ fn resolve_effigy_invocation_prefix() -> Result<String, ManagedError> {
     .map_err(ManagedError::Cwd)
 }
 
+fn resolve_internal_effigy_invocation_prefix(repo_root: &Path) -> Result<String, ManagedError> {
+    if path_looks_container_local(repo_root) {
+        return Ok(CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH.to_owned());
+    }
+    resolve_effigy_invocation_prefix()
+}
+
+fn path_looks_container_local(path: &Path) -> bool {
+    match path.to_str() {
+        Some("/workspace") | Some("/workspace-root") => true,
+        Some(value) => value.starts_with("/workspace/") || value.starts_with("/workspace-root/"),
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::Path;
 
-    use super::{render_builtin_task_reference_invocation, render_command_template};
+    use effigy_manifest::ManifestEnvEntry;
+
+    use super::{
+        path_looks_container_local, render_builtin_task_reference_invocation,
+        render_command_template, render_rhai_step_invocation,
+    };
+    use crate::RunSpecContext;
 
     #[test]
     fn command_template_expands_bundle_root_tokens() {
@@ -172,11 +197,71 @@ mod tests {
 
     #[test]
     fn builtin_task_reference_invocation_suppresses_child_header() {
-        let rendered = render_builtin_task_reference_invocation("docs check headings", "--strict")
-            .expect("render task ref");
+        let rendered = render_builtin_task_reference_invocation(
+            "docs check headings",
+            "--strict",
+            Path::new("/repo"),
+        )
+        .expect("render task ref");
 
         assert!(rendered.contains("env EFFIGY_INTERNAL_SUPPRESS_HEADER=1"));
         assert!(rendered.contains("docs check headings"));
         assert!(rendered.ends_with("--strict"));
+    }
+
+    #[test]
+    fn builtin_task_reference_invocation_uses_container_effigy_for_workspace_roots() {
+        let rendered = render_builtin_task_reference_invocation(
+            "docs check headings",
+            "",
+            Path::new("/workspace-root/repo"),
+        )
+        .expect("render task ref");
+
+        assert!(rendered.contains("/usr/local/bin/effigy"));
+    }
+
+    #[test]
+    fn container_local_path_detection_matches_workspace_roots() {
+        assert!(path_looks_container_local(Path::new("/workspace")));
+        assert!(path_looks_container_local(Path::new("/workspace/repo")));
+        assert!(path_looks_container_local(Path::new("/workspace-root")));
+        assert!(path_looks_container_local(Path::new(
+            "/workspace-root/repo"
+        )));
+        assert!(!path_looks_container_local(Path::new(
+            "/Users/tom/Dev/projects/repo"
+        )));
+    }
+
+    #[test]
+    fn rhai_step_invocation_uses_container_effigy_for_workspace_roots() {
+        let env = BTreeMap::<String, String>::new();
+        let env_profiles = BTreeMap::<String, ManifestEnvEntry>::new();
+        let catalogs = Vec::new();
+        let args = Vec::new();
+        let rendered = render_rhai_step_invocation(
+            RunSpecContext {
+                task_name: "admin",
+                task_env: &env,
+                task_env_file: None,
+                env_profiles: &env_profiles,
+                args_rendered: "",
+                args_raw: &args,
+                repo_root: Path::new("/workspace-root/acowtancy"),
+                bundle_root: None,
+                catalogs: &catalogs,
+                task_scope_cwd: Path::new("/workspace-root/acowtancy/dairy"),
+                invocation_cwd: Path::new("/workspace-root/acowtancy/dairy"),
+                runtime_env_schema_override: None,
+                depth: 0,
+                resolver: &|_, _, _| unreachable!("resolver"),
+            },
+            "/workspace-root/acowtancy/.effigy/cache/script.rhai",
+        )
+        .expect("render rhai step");
+
+        assert!(rendered.contains("/usr/local/bin/effigy"));
+        assert!(rendered.contains("script run --file"));
     }
 }
