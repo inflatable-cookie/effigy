@@ -5,8 +5,9 @@ use crate::surface::*;
 
 use super::{
     active_rhai_has_secret, active_rhai_secret, allocate_temp_dir, configure_process_command,
-    dynamic_array_to_strings, effigy_result_map, emit_host_log, generate_jwt_env_keys_dynamic,
-    generate_random_base64, host_command_output_map, map_to_json, module_feature_get_value,
+    active_rhai_set_secret, dynamic_array_to_strings, effigy_result_map, emit_host_log,
+    generate_jwt_env_keys_dynamic, generate_random_base64, host_command_output_map, map_to_json,
+    module_feature_get_value,
     module_feature_no_args, module_feature_options, module_feature_string,
     module_feature_string_options, module_feature_two_strings, process_result_map,
     reject_recursive_effigy_process, resolve_runtime_path, rhai_runtime_error, run_feature_dynamic,

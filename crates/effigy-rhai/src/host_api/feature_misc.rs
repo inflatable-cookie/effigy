@@ -504,5 +504,16 @@ fn build_effigy_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) ->
             super::active_rhai_has_secret(name.as_str())
         },
     );
+    let set_secret_context = context.clone();
+    module.set_native_fn(
+        "set_secret",
+        move |name: ImmutableString, value: ImmutableString| -> Result<(), Box<EvalAltResult>> {
+            super::active_rhai_set_secret(
+                &set_secret_context.repo_root,
+                name.as_str(),
+                value.as_str(),
+            )
+        },
+    );
     module
 }

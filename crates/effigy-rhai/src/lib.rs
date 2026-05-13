@@ -14,7 +14,7 @@ use base64::Engine as _;
 use effigy_context::EffigyRuntimeContext;
 use effigy_core::path_error_text::failed_to_read_path;
 use effigy_manifest::{ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig};
-use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload};
+use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload, VaultSecretRecord};
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -503,6 +503,93 @@ fn active_rhai_has_secret(name: &str) -> Result<bool, Box<EvalAltResult>> {
         }
         Ok(store.values.contains_key(name))
     })
+}
+
+fn active_rhai_set_secret(
+    repo_root: &Path,
+    name: &str,
+    value: &str,
+) -> Result<(), Box<EvalAltResult>> {
+    let manifest_path = repo_root.join("effigy.toml");
+    let manifest = effigy_manifest::load_task_manifest(&manifest_path)
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let secrets = manifest
+        .secrets
+        .as_ref()
+        .ok_or_else(|| rhai_runtime_error("`[secrets]` is not declared"))?;
+    if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
+        return Err(rhai_runtime_error(
+            "secret mutation requires `[secrets].backend = \"effigy-vault\"",
+        ));
+    }
+    let Some(key) = secrets.keys.get(name) else {
+        return Err(rhai_runtime_error(format!(
+            "secret `{name}` is not declared under `[secrets.keys]`"
+        )));
+    };
+    if !key.targets.contains(&ManifestSecretTarget::Rhai) {
+        return Err(rhai_runtime_error(format!(
+            "secret `{name}` is not declared for the `rhai` target"
+        )));
+    }
+
+    let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let passphrase = read_rhai_secret_passphrase(false)
+        .map_err(|error| rhai_runtime_error(error.to_string()))?
+        .ok_or_else(|| rhai_runtime_error("vault passphrase is required"))?;
+    let mut payload = if vault_path.exists() {
+        read_rhai_secret_vault_payload(&vault_path, passphrase.expose())
+            .map_err(|error| rhai_runtime_error(error.to_string()))?
+    } else {
+        VaultPlaintextPayload::empty()
+    };
+    payload.records.insert(
+        name.to_owned(),
+        VaultSecretRecord::new(SecretValue::new(value)),
+    );
+    let envelope = payload
+        .encrypt_with_passphrase(passphrase.expose())
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    write_rhai_secret_vault_file(&vault_path, &envelope)
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+
+    ACTIVE_RHAI_SECRETS.with(|active| {
+        if let Some(store) = active.borrow_mut().as_mut() {
+            store.values.insert(name.to_owned(), value.to_owned());
+        }
+    });
+
+    Ok(())
+}
+
+fn write_rhai_secret_vault_file(
+    vault_path: &Path,
+    envelope: &VaultEnvelope,
+) -> Result<(), RhaiHostError> {
+    if let Some(parent) = vault_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            RhaiHostError::new(format!(
+                "failed to create vault directory {}: {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    let rendered = envelope
+        .to_json_pretty()
+        .map_err(|error| RhaiHostError::new(error.to_string()))?;
+    std::fs::write(vault_path, rendered).map_err(|error| {
+        RhaiHostError::new(format!(
+            "failed to write vault {}: {error}",
+            vault_path.display()
+        ))
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(vault_path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
 }
 
 fn redact_active_rhai_secrets(input: &str) -> String {

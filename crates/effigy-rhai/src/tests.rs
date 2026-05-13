@@ -6,7 +6,7 @@ use super::{
     EFFIGY_RHAI_ARGS_JSON, EFFIGY_RHAI_CATALOG_ROOT, EFFIGY_RHAI_INVOCATION_CWD,
 };
 use crate::surface::{FEATURE_NAMES, MODULE_NAMES};
-use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
+use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload, VaultSecretRecord};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;
@@ -154,6 +154,56 @@ fn execute_rhai_script_exposes_declared_rhai_secrets() {
     execute_rhai_script(&script_context(&root), &script, &[], &callbacks()).expect("execute");
 
     assert_eq!(fs::read_to_string(marker).expect("marker"), "tok_secret");
+}
+
+#[test]
+fn execute_rhai_script_can_store_declared_rhai_secret() {
+    let root = temp_root("rhai-secret-set");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.api_token]
+required = false
+targets = ["tasks", "rhai"]
+"#,
+    )
+    .expect("write manifest");
+    write_test_vault(&root, "vault-passphrase", &[]);
+    let _env = ScopedTestEnv::set_many(&[(
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        "vault-passphrase".to_owned(),
+    )]);
+
+    execute_rhai_script(
+        &script_context(&root),
+        r#"effigy::set_secret("api_token", "generated_secret");"#,
+        &[],
+        &callbacks(),
+    )
+    .expect("execute");
+
+    let raw = fs::read_to_string(root.join(".effigy/secrets/local.vault")).expect("read vault");
+    let envelope = VaultEnvelope::from_json(&raw).expect("parse vault");
+    let payload = envelope
+        .decrypt_with_passphrase("vault-passphrase")
+        .expect("decrypt vault");
+    assert_eq!(
+        payload
+            .records
+            .get("api_token")
+            .expect("stored secret")
+            .value
+            .expose(),
+        "generated_secret"
+    );
 }
 
 #[test]

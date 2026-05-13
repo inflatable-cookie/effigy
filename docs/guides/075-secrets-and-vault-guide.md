@@ -186,9 +186,19 @@ if effigy::has_secret("api_token") {
 }
 ```
 
+Repo-owned Rhai tasks may also store generated local values:
+
+```rhai
+let keys = random::jwt_env_keys();
+effigy::set_secret("auth_jwt_private_key", keys["private_key"]);
+effigy::set_secret("auth_jwt_public_key", keys["public_key"]);
+```
+
 Rules:
 
 - `effigy::secret(name)` rejects undeclared or wrong-target reads at runtime
+- `effigy::set_secret(name, value)` requires the secret to be declared for the
+  `rhai` target and writes to the encrypted vault
 - Known values are redacted from Rhai errors and host output maps
 - Never build shell commands that embed secrets; use structured helpers
 
