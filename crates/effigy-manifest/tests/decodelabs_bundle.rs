@@ -652,7 +652,7 @@ base = {{ type = "path", dir = "{}" }}
     let web = containers.environments.get("web").expect("web container");
     assert_eq!(
         web.project_name.as_deref(),
-        Some("decodelabs-library-collections-dev")
+        Some("collections-decodelabs-library")
     );
     assert_eq!(web.working_dir.as_deref(), Some("/workspace-root"));
     let app = web.services.get("app").expect("app service");

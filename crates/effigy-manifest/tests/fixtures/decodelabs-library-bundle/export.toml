@@ -2,7 +2,7 @@
 default = "{{ inputs.container_name }}"
 
 {% set resolved_workspace_subdir = inputs.workspace_subdir or bundle_workspace_subdir(bundle.manifest_root, inputs.shared_root) %}
-{% set resolved_project_name = inputs.project_name or bundle_default_project_name(bundle.name, resolved_workspace_subdir) %}
+{% set resolved_project_name = inputs.project_name or resolved_workspace_subdir ~ "-" ~ bundle.name %}
 
 [containers.{{ inputs.container_name }}]
 driver = "colima"
