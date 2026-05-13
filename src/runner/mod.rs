@@ -35,6 +35,7 @@ mod release_command;
 mod render;
 mod runtime_session_context;
 mod script_command;
+mod secret_session;
 mod secrets_command;
 mod service_command;
 mod state_command;

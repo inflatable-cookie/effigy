@@ -171,6 +171,18 @@ declared with `targets = ["tasks"]`, stored in the vault, and the task
 references `$DATABASE_URL` or `${DATABASE_URL}`. Missing required values block
 task execution before spawn only for referenced task-target secrets.
 
+Managed tasks can opt into the broader task-secret path explicitly:
+
+```toml
+[tasks.dev]
+mode = "tui"
+secrets = "required"
+```
+
+That forces declared `targets = ["tasks"]` values into the managed child
+process environment before launch, which is useful when the child commands
+expect runtime auth/env keys without spelling them out in the shell command.
+
 ## Use In Containers
 
 Secrets with `targets = ["containers"]` are resolved before `effigy container

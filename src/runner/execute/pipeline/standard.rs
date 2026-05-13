@@ -1,6 +1,5 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use super::super::super::cache::ops::check_task_cache;
@@ -141,6 +140,10 @@ fn run_standard_task_inner(
             &preflight.resolved.resolved_root,
             &preflight.secret_targets,
             selection.task,
+            matches!(
+                selection.task.secrets,
+                Some(effigy_manifest::ManifestTaskSecretsMode::Required)
+            ),
         )?
     } else {
         Vec::new()
@@ -462,10 +465,11 @@ fn route_with_running_check(
     )
 }
 
-fn resolve_task_secret_env(
+pub(in crate::runner::execute) fn resolve_task_secret_env(
     repo_root: &Path,
     extra_targets: &[String],
     task: &effigy_manifest::ManifestTask,
+    eager_load: bool,
 ) -> Result<Vec<(String, SecretString)>, RunnerError> {
     let manifest = load_task_manifest(&repo_root.join("effigy.toml"))?;
     let Some(secrets) = manifest.secrets.as_ref() else {
@@ -473,7 +477,7 @@ fn resolve_task_secret_env(
     };
     let targets = task_secret_targets(extra_targets)?;
     let requested_env_names = referenced_task_secret_env_names(task);
-    if requested_env_names.is_empty() {
+    if requested_env_names.is_empty() && !eager_load {
         return Ok(Vec::new());
     }
     let task_keys = secrets
@@ -481,7 +485,7 @@ fn resolve_task_secret_env(
         .iter()
         .filter(|(name, key)| {
             key.targets.iter().any(|target| targets.contains(target))
-                && requested_env_names.contains(&task_secret_env_name(name))
+                && (eager_load || requested_env_names.contains(&task_secret_env_name(name)))
         })
         .collect::<Vec<_>>();
     if task_keys.is_empty() {
@@ -586,21 +590,11 @@ fn resolve_task_secret_vault_path(
 }
 
 fn read_task_secret_passphrase(optional_only: bool) -> Result<Option<SecretValue>, RunnerError> {
-    if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
-        return Ok(Some(SecretValue::new(value)));
-    }
-    if !std::io::stdin().is_terminal() {
-        if optional_only {
-            return Ok(None);
-        }
-        return Err(RunnerError::task_invocation(
-            "task secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
-        ));
-    }
-    let value = rpassword::prompt_password("Vault passphrase: ").map_err(|error| {
-        RunnerError::task_invocation(format!("failed to read secret input: {error}"))
-    })?;
-    Ok(Some(SecretValue::new(value)))
+    crate::runner::secret_session::read_secret_passphrase(
+        optional_only,
+        "Vault passphrase: ",
+        "task secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
+    )
 }
 
 fn read_task_secret_vault_payload(

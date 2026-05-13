@@ -682,17 +682,18 @@ pub(super) fn run_linux_workspace_effigy_rehearsal(
     effigy_repo_root: &Path,
     target: LinuxWorkspaceTarget,
 ) -> Result<(), RunnerError> {
-    let status = std::process::Command::new(host_binary)
+    let mut command = std::process::Command::new(host_binary);
+    command
         .arg("release:linux:rehearse")
         .env("EFFIGY_LINUX_RELEASE_TRIPLE", target.release_triple())
-        .current_dir(effigy_repo_root)
-        .status()
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "failed to launch linux workspace rehearsal in `{}`: {error}",
-                effigy_repo_root.display()
-            ))
-        })?;
+        .current_dir(effigy_repo_root);
+    crate::runner::secret_session::apply_secret_passphrase_to_child(&mut command);
+    let status = command.status().map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to launch linux workspace rehearsal in `{}`: {error}",
+            effigy_repo_root.display()
+        ))
+    })?;
     if status.success() {
         return Ok(());
     }

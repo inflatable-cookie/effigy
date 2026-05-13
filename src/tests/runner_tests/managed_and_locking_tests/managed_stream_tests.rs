@@ -8,9 +8,43 @@ use crate::runner::tests::prelude::{
     ManagedNonZeroExitCase, ManagedOutputCase, ManagedProfileNotFoundCase,
     ManagedStreamBuiltinTestCase, Path,
 };
+use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
+
+fn fake_container_exec_env(root: &Path, fake_effigy: &Path) -> EnvGuard {
+    EnvGuard::set_many(&[
+        (
+            "EFFIGY_TEST_FAKE_CONTAINER_ROOT",
+            Some(root.display().to_string()),
+        ),
+        (
+            "EFFIGY_TEST_FAKE_CONTAINER_EFFIGY",
+            Some(fake_effigy.display().to_string()),
+        ),
+    ])
+}
+
+fn write_test_vault(root: &Path, passphrase: &str, records: &[(&str, &str)]) {
+    let mut payload = VaultPlaintextPayload::empty();
+    for (name, value) in records {
+        payload.records.insert(
+            (*name).to_owned(),
+            VaultSecretRecord::new(SecretValue::new(*value)),
+        );
+    }
+    let envelope = payload
+        .encrypt_with_passphrase(passphrase)
+        .expect("encrypt test vault");
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    fs::create_dir_all(vault_path.parent().expect("vault parent")).expect("mkdir vault parent");
+    fs::write(
+        vault_path,
+        envelope.to_json_pretty().expect("serialize test vault"),
+    )
+    .expect("write test vault");
+}
 
 fn setup_managed_stream_runtime(root: &Path) {
     write_root_manifest(
@@ -91,6 +125,70 @@ working_dir = "/workspace"
         "services:\n  app:\n    image: alpine:latest\n",
     )
     .expect("write docker compose");
+}
+
+fn setup_managed_stream_container_lifecycle_rhai_setup(root: &Path) {
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        root.join("scripts/setup.rhai"),
+        r#"
+fs::write_file("setup.txt", "setup-ok");
+"#,
+    )
+    .expect("write rhai setup");
+    write_managed_stream_container_lifecycle_manifest(
+        root,
+        r#"[
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "front", setup = [{ rhai = "scripts/setup.rhai" }], run = "printf front-ok", start = 2, tab = 2, shutdown_on_exit = true }
+]"#,
+        "",
+        r#"container = "web""#,
+        "demo-web-dev",
+        r#"working_dir = "/workspace""#,
+        "",
+    );
+}
+
+fn setup_managed_stream_lifecycle_task_secrets(root: &Path) {
+    write_managed_stream_container_lifecycle_manifest(
+        root,
+        r#"[
+  { role = "lifecycle", start = 1, tab = 1 },
+  { name = "api", run = "sh -lc 'printf %s \"$AUTH_JWT_PRIVATE_KEY\" > auth.txt'", start = 2, tab = 2, shutdown_on_exit = true }
+]"#,
+        "secrets = \"required\"",
+        "working_dir = \"/workspace\"\ncontainer = \"web\"",
+        "demo-web-dev",
+        "working_dir = \"/workspace\"",
+        r#"[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.auth_jwt_private_key]
+required = false
+targets = ["tasks", "containers"]
+
+[secrets.keys.auth_google_client_secret]
+required = false
+targets = ["tasks", "containers"]
+
+[secrets.keys.pdf_third_party_api_key]
+required = false
+targets = ["tasks", "containers"]
+
+[secrets.keys.smtp_password]
+required = false
+targets = ["tasks", "containers"]
+
+[secrets.keys.admin_bearer_token]
+required = false
+targets = ["tasks"]"#,
+    );
 }
 
 fn setup_managed_stream_profile_manifest(root: &Path) {
@@ -403,6 +501,7 @@ fn run_manifest_task_managed_stream_container_bound_rhai_setup_routes_before_pro
     let _runtime = install_fake_container_runtime(&root);
     let fake_effigy = write_fake_effigy(&root);
     let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
+    let _container_env = fake_container_exec_env(&root, &fake_effigy);
 
     let out = crate::runner::tests::prelude::run_dev(&root, &[])
         .expect("managed container-bound run should succeed");
@@ -419,6 +518,64 @@ fn run_manifest_task_managed_stream_container_bound_rhai_setup_routes_before_pro
     assert!(
         nested_log.contains("script run --file scripts/setup.rhai"),
         "expected routed Rhai setup invocation, got: {nested_log}"
+    );
+}
+
+#[test]
+fn run_manifest_task_managed_stream_lifecycle_bound_rhai_setup_waits_for_container_startup() {
+    let _guard = lock_test();
+    let _env = managed_stream_env();
+    let root = crate::runner::tests::prelude::temp_workspace("managed-stream-lifecycle-rhai-setup");
+    setup_managed_stream_container_lifecycle_rhai_setup(&root);
+    let _runtime = install_fake_container_runtime(&root);
+    let fake_effigy = write_fake_effigy(&root);
+    let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
+    let _container_env = fake_container_exec_env(&root, &fake_effigy);
+
+    let out = crate::runner::tests::prelude::run_dev(&root, &[])
+        .expect("managed lifecycle-bound run should succeed");
+    assert!(out.contains("process `front` exit=0"), "got: {out}");
+    assert!(out.contains("[lifecycle] managed ready"), "got: {out}");
+
+    let shell_log = fs::read_to_string(root.join("fake-effigy.log")).expect("read fake effigy log");
+    assert!(shell_log.contains("up:web"), "got: {shell_log}");
+    assert!(
+        shell_log.contains("shell:web:--command cd /workspace"),
+        "expected container shell setup log, got: {shell_log}"
+    );
+    assert!(
+        shell_log.contains("script run --file"),
+        "expected routed Rhai setup shell, got: {shell_log}"
+    );
+}
+
+#[test]
+fn run_manifest_task_managed_stream_injects_task_secrets_into_container_processes() {
+    let _guard = lock_test();
+    let _env = managed_stream_env();
+    let _passphrase = EnvGuard::set_many(&[(
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+        Some("vault-passphrase".to_owned()),
+    )]);
+    let root = crate::runner::tests::prelude::temp_workspace("managed-stream-lifecycle-secrets");
+    setup_managed_stream_lifecycle_task_secrets(&root);
+    write_test_vault(
+        &root,
+        "vault-passphrase",
+        &[("auth_jwt_private_key", "dev-secret-key")],
+    );
+    let _runtime = install_fake_container_runtime(&root);
+    let fake_effigy = write_fake_effigy(&root);
+    let _exec = ExecutableOverrideGuard::set(fake_effigy.display().to_string());
+
+    let out = crate::runner::tests::prelude::run_dev(&root, &[])
+        .expect("managed lifecycle-bound secrets run should succeed");
+    assert!(out.contains("process `api` exit=0"), "got: {out}");
+
+    let shell_log = fs::read_to_string(root.join("fake-effigy.log")).expect("read fake effigy log");
+    assert!(
+        shell_log.contains("AUTH_JWT_PRIVATE_KEY=dev-secret-key"),
+        "expected task secret env in managed shell command, got: {shell_log}"
     );
 }
 

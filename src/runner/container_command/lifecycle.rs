@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
-use std::io::IsTerminal;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Output;
@@ -369,21 +368,11 @@ fn resolve_container_secret_vault_path(
 fn read_container_secret_passphrase(
     optional_only: bool,
 ) -> Result<Option<SecretValue>, RunnerError> {
-    if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
-        return Ok(Some(SecretValue::new(value)));
-    }
-    if !std::io::stdin().is_terminal() {
-        if optional_only {
-            return Ok(None);
-        }
-        return Err(RunnerError::task_invocation(
-            "container secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
-        ));
-    }
-    let value = rpassword::prompt_password("Vault passphrase: ").map_err(|error| {
-        RunnerError::task_invocation(format!("failed to read secret input: {error}"))
-    })?;
-    Ok(Some(SecretValue::new(value)))
+    crate::runner::secret_session::read_secret_passphrase(
+        optional_only,
+        "Vault passphrase: ",
+        "container secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
+    )
 }
 
 fn read_container_secret_vault_payload(

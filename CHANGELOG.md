@@ -155,6 +155,16 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Builtin task refs** now resolve against the full shared root-command
   catalog inside `task = "..."` run steps, fixing missing builtins like
   `defer` and `docs` in wrapper-task/task-ref paths.
+- **Managed task secret injection** now reaches managed child processes when a
+  task sets `secrets = "required"`, so container-backed `dev`/TUI tasks can
+  pass declared task-target auth/runtime env values into their API/front/jobs
+  processes instead of only unlocking the vault for lifecycle/container
+  startup.
+- **Vault passphrase reuse within one Effigy invocation** now covers container
+  startup, managed task secret injection, and nested internal Linux workspace
+  rehearsal calls, so `effigy dev` does not need to prompt again just because
+  workspace handoff prepares a Linux Effigy artifact or task/container secret
+  resolution hits a second internal path.
 
 ## [0.6.1] - 2026-05-12
 

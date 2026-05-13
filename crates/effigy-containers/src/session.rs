@@ -318,12 +318,9 @@ pub fn managed_standard_exec_command(
 ) -> String {
     let repo = shell_quote(&repo_root.display().to_string());
     let cwd = shell_quote(&process_cwd.display().to_string());
-    let command = shell_quote(&container_exec_command(
-        command,
-        repo_root,
-        process_cwd,
-        container_repo_root,
-    ));
+    let routed_command =
+        container_exec_command(command, repo_root, process_cwd, container_repo_root);
+    let command = shell_quote(&routed_command);
     let selector = container_name
         .map(str::trim)
         .filter(|value| !value.is_empty() && *value != "default");
@@ -340,7 +337,25 @@ pub fn managed_standard_exec_command(
         &format!("shell --command {command}"),
         &repo,
     );
-    let setup_sequence = setup_command.unwrap_or("");
+    let setup_sequence = setup_command
+        .map(|setup_command| {
+            let routed_setup = shell_quote(&container_exec_command(
+                setup_command,
+                repo_root,
+                process_cwd,
+                container_repo_root,
+            ));
+            format!(
+                "{} && ",
+                effigy_container_command_with_extra(
+                    executable,
+                    selector,
+                    &format!("shell --command {routed_setup}"),
+                    &repo,
+                )
+            )
+        })
+        .unwrap_or_default();
     format!(
         "sh -lc {script}",
         script = shell_quote(&format!(
@@ -395,10 +410,17 @@ fn rewrite_effigy_invocation_for_container(command: &str) -> String {
     if host_invocation == shell_quote(CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH) {
         return command.to_owned();
     }
-    command.replace(
+    let mut rewritten = command.replace(
         &host_invocation,
         &shell_quote(CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH),
-    )
+    );
+    if let Some(raw_host_path) = host_invocation
+        .strip_prefix('\'')
+        .and_then(|value| value.strip_suffix('\''))
+    {
+        rewritten = rewritten.replace(raw_host_path, CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH);
+    }
+    rewritten
 }
 
 pub fn container_exec_command(
@@ -540,7 +562,10 @@ fn yes_no(value: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{managed_lifecycle_command, managed_shell_command, managed_standard_exec_command};
+    use super::{
+        managed_lifecycle_command, managed_shell_command, managed_standard_exec_command,
+        resolve_effigy_invocation_prefix,
+    };
     use std::path::Path;
 
     #[test]
@@ -718,25 +743,30 @@ mod tests {
 
     #[test]
     fn managed_standard_exec_command_rewrites_host_effigy_invocation_for_container_commands() {
+        let host_effigy =
+            resolve_effigy_invocation_prefix().expect("resolve host effigy invocation");
         let rendered = managed_standard_exec_command(
             Path::new("/Users/tom/repo"),
             Some("web"),
             "dev",
             Path::new("/Users/tom/repo/acme-admin"),
             Some(Path::new("/workspace-root/repo")),
-            None,
+            Some(
+                &format!(
+                    "env EFFIGY_INTERNAL_SUPPRESS_HEADER='1' {host_effigy} script run --file '/Users/tom/repo/.effigy/cache/setup.rhai'"
+                ),
+            ),
             "effigy",
-            "env EFFIGY_INTERNAL_SUPPRESS_HEADER='1' '/Users/tom/Dev/projects/effigy/target/debug/effigy' script run --file '/Users/tom/repo/.effigy/cache/setup.rhai'",
+            "bun run dev",
         );
 
         assert!(
-            rendered.contains("/usr/local/bin/effigy script run --file"),
+            rendered.contains("/usr/local/bin/effigy script run --file")
+                || rendered.contains("shell --command 'cd /workspace-root/repo/acme-admin")
+                    && rendered.contains("/usr/local/bin/effigy"),
             "got: {rendered}"
         );
-        assert!(
-            !rendered.contains("/Users/tom/Dev/projects/effigy/target/debug/effigy"),
-            "got: {rendered}"
-        );
+        assert!(!rendered.contains(&host_effigy), "got: {rendered}");
     }
 
     #[test]

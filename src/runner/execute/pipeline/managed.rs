@@ -33,14 +33,18 @@ use effigy_containers::session::{
 use effigy_containers::{
     load_container_policy, ContainerCapturedExecOperation, EffectiveContainerPolicy,
 };
+use effigy_env::secret::SecretString;
 use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::presentation::run_or_render_managed_task;
 use effigy_managed::ManagedProcessRole;
-use effigy_managed::{managed_execution_mode, render_run_step_sequence, ManagedExecutionMode};
+use effigy_managed::{
+    managed_execution_mode, render_run_step_sequence, wrap_command_with_env, ManagedExecutionMode,
+};
 use effigy_manifest::ManifestTaskSecretsMode;
 use effigy_manifest::TaskSelection;
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
+use std::collections::BTreeMap;
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -120,6 +124,20 @@ pub(in crate::runner) fn run_managed_task(
     )?;
     let container_repo_root =
         binding_resolution.exec_working_dir(&selection.catalog.catalog_root)?;
+    let managed_task_secret_pairs = if execution_mode != ManagedExecutionMode::RenderPlan
+        && matches!(
+            selection.task.secrets,
+            Some(ManifestTaskSecretsMode::Required)
+        ) {
+        super::standard::resolve_task_secret_env(
+            &preflight.resolved.resolved_root,
+            &preflight.secret_targets,
+            selection.task,
+            true,
+        )?
+    } else {
+        Vec::new()
+    };
     if execution_mode != ManagedExecutionMode::RenderPlan {
         run_managed_setup_steps(
             preflight,
@@ -130,6 +148,7 @@ pub(in crate::runner) fn run_managed_task(
             container_binding,
             container_handoff,
             container_repo_root.as_deref(),
+            &managed_task_secret_pairs,
         )?;
     }
     if !container_handoff
@@ -167,7 +186,13 @@ pub(in crate::runner) fn run_managed_task(
         )
         .map(Some);
     }
-    materialize_special_managed_processes(&mut plan, preflight, selection, container_handoff)?;
+    materialize_special_managed_processes(
+        &mut plan,
+        preflight,
+        selection,
+        container_handoff,
+        &managed_task_secret_pairs,
+    )?;
 
     let repo_for_task = selection.catalog.catalog_root.clone();
     let mut lock_scopes = vec![crate::runner::manifest::task_lock_scope(
@@ -228,7 +253,17 @@ fn run_managed_setup_steps(
     container_binding: &ContainerExecutionBinding,
     container_handoff: bool,
     container_repo_root: Option<&std::path::Path>,
+    managed_task_secret_pairs: &[(String, SecretString)],
 ) -> Result<(), RunnerError> {
+    let plan_has_lifecycle = plan
+        .processes
+        .iter()
+        .any(|process| process.role == ManagedProcessRole::Lifecycle);
+    let local_secret_refs = managed_task_secret_pairs
+        .iter()
+        .map(|(key, value)| (key.as_str(), value))
+        .collect::<Vec<_>>();
+    let local_secret_ref = (!local_secret_refs.is_empty()).then_some(local_secret_refs.as_slice());
     for process in &mut plan.processes {
         if process.setup_steps.is_empty() {
             continue;
@@ -239,7 +274,7 @@ fn run_managed_setup_steps(
                 selection,
                 &process.setup_steps,
                 env_schema_resolved,
-                None,
+                local_secret_ref,
                 &process.name,
                 &[],
             )?;
@@ -249,13 +284,15 @@ fn run_managed_setup_steps(
         if matches!(
             binding_resolution.kind(),
             super::super::api::ExecutionBindingKind::NamedContainer
-        ) {
+        ) && !plan_has_lifecycle
+        {
             run_named_container_managed_setup_steps(
                 preflight,
                 selection,
                 process,
                 container_binding,
                 container_repo_root,
+                managed_task_secret_pairs,
             )?;
             process.setup = None;
         }
@@ -269,6 +306,7 @@ fn run_named_container_managed_setup_steps(
     process: &effigy_managed::ManagedProcessSpec,
     container_binding: &ContainerExecutionBinding,
     container_repo_root: Option<&std::path::Path>,
+    managed_task_secret_pairs: &[(String, SecretString)],
 ) -> Result<(), RunnerError> {
     let resolver: effigy_manifest::TaskResolverFn<'_> = &effigy_routing::resolve_task_selection;
     let rendered = render_run_step_sequence(
@@ -285,6 +323,11 @@ fn run_named_container_managed_setup_steps(
         resolver,
     )
     .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let rendered = wrap_with_managed_secret_env(
+        rendered,
+        managed_task_secret_pairs,
+        &selection.catalog.catalog_root,
+    );
     let routed = container_exec_command(
         &rendered,
         &selection.catalog.catalog_root,
@@ -525,6 +568,7 @@ fn materialize_special_managed_processes(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
     container_handoff: bool,
+    managed_task_secret_pairs: &[(String, SecretString)],
 ) -> Result<(), RunnerError> {
     if !plan
         .processes
@@ -656,19 +700,33 @@ fn materialize_special_managed_processes(
                 };
             }
             ManagedProcessRole::Standard => {
+                let wrapped_run = wrap_with_managed_secret_env(
+                    process.run.clone(),
+                    managed_task_secret_pairs,
+                    repo_root,
+                );
+                let wrapped_setup = process.setup.as_ref().map(|setup| {
+                    wrap_with_managed_secret_env(
+                        setup.clone(),
+                        managed_task_secret_pairs,
+                        repo_root,
+                    )
+                });
                 if process.run_on_host {
                     // Entry opts out of the parent task's container wrap —
                     // run the raw command on the host. The setup script,
                     // if any, runs in the same shell before the run.
-                    if let Some(setup) = process.setup.as_deref() {
-                        process.run = format!("{setup}\n{}", process.run);
+                    if let Some(setup) = wrapped_setup.as_deref() {
+                        process.run = format!("{setup}\n{wrapped_run}");
+                    } else {
+                        process.run = wrapped_run;
                     }
                     continue;
                 }
                 if container_handoff {
                     process.run = render_handoff_managed_standard_command(
-                        process.setup.as_deref(),
-                        &process.run,
+                        wrapped_setup.as_deref(),
+                        &wrapped_run,
                     );
                     continue;
                 }
@@ -679,8 +737,8 @@ fn materialize_special_managed_processes(
                         &preflight.selector.task_name,
                         &process.cwd,
                         container_repo_root.as_deref(),
-                        process.setup.as_deref(),
-                        &process.run,
+                        wrapped_setup.as_deref(),
+                        &wrapped_run,
                     );
                 } else if container_binding.container_name().is_some() {
                     process.run = managed_standard_exec_command(
@@ -689,15 +747,30 @@ fn materialize_special_managed_processes(
                         &preflight.selector.task_name,
                         &process.cwd,
                         container_repo_root.as_deref(),
-                        process.setup.as_deref(),
+                        wrapped_setup.as_deref(),
                         &executable,
-                        &process.run,
+                        &wrapped_run,
                     );
                 }
             }
         }
     }
     Ok(())
+}
+
+fn wrap_with_managed_secret_env(
+    command: String,
+    managed_task_secret_pairs: &[(String, SecretString)],
+    repo_root: &std::path::Path,
+) -> String {
+    if managed_task_secret_pairs.is_empty() {
+        return command;
+    }
+    let env = managed_task_secret_pairs
+        .iter()
+        .map(|(key, value)| (key.clone(), value.expose().to_owned()))
+        .collect::<BTreeMap<String, String>>();
+    wrap_command_with_env(command, &env, repo_root)
 }
 
 fn managed_ready_message(
