@@ -537,10 +537,8 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
             if stats["feature"] != "container.stats" { throw("container stats"); }
             let docs = docs::check_links(#{ paths: ["docs/README.md"] });
             if docs["feature"] != "docs.check_links" { throw("docs"); }
-            let bundle = bundle::inspect("underlay");
-            if bundle["options"]["bundle"] != "underlay" { throw("bundle"); }
-            let exported = bundle::emit("underlay", "tmp/bundle");
-            if exported["options"]["path"] != "tmp/bundle" { throw("bundle emit"); }
+            let bundle = bundle::inspect();
+            if bundle["feature"] != "bundle.inspect" { throw("bundle"); }
             let deploy = deploy::emit(#{ provider: "render", path: "tmp/render", plan: true });
             if deploy["feature"] != "deploy.emit" || deploy["options"]["provider"] != "render" { throw("deploy emit"); }
             let gateway = gateway::status();

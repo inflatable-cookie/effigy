@@ -150,8 +150,8 @@ Injection rules:
 - avoid putting secrets into shell command strings
 - task execution receives `targets = ["tasks"]` values through process
   environment injection
-- Rhai scripts can request declared values through `effigy::secret(name)` and
-  test availability with `effigy::has_secret(name)`
+- Rhai scripts can request declared values through `secrets::get(name)` and
+  test availability with `secrets::has(name)`
 - deploy provider package scripts run with `targets = ["deploy"]` access
 - state apply hook tasks can receive `targets = ["state"]` values through the
   same process environment injection path

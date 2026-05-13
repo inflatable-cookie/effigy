@@ -146,8 +146,10 @@ Current v1 helpers:
   - `config::user_set(path_string, value)`
   - `config::user_unset(path_string)`
 - secret helpers (requires declared `targets = ["rhai"]`):
-  - `effigy::secret(name)` — returns the vault value, rejects undeclared or wrong-target reads
-  - `effigy::has_secret(name)` — returns true if the named secret is declared and available
+  - `secrets::get(name)` — returns the vault value, rejects undeclared or wrong-target reads
+  - `secrets::has(name)` — returns true if the named secret is declared and available
+  - `secrets::set(name, value)` — stores one declared Rhai-target secret
+  - `secrets::set_many(map)` — stores multiple declared Rhai-target secrets in one write
 - state stack helpers:
   - `state::plan(options_map)`
   - `state::apply(options_map)`
@@ -405,8 +407,8 @@ let charset = dsn["query"]["charset"];
 Reading a vault secret in a Rhai script:
 
 ```rhai
-if effigy::has_secret("api_token") {
-    let token = effigy::secret("api_token");
+if secrets::has("api_token") {
+    let token = secrets::get("api_token");
     let result = http::request("GET", "https://api.example.com/v1/status", #{
         headers: #{ "Authorization": `Bearer ${token}` }
     });
