@@ -25,6 +25,15 @@ fn cache_secret_passphrase(value: &SecretValue) {
     if let Ok(mut guard) = secret_passphrase_cache().lock() {
         *guard = Some(value.clone());
     }
+    // SAFETY: this mutation is process-local and keeps the active invocation's
+    // passphrase visible to same-process Rhai helpers and nested internal calls.
+    unsafe {
+        std::env::set_var(INTERNAL_SECRET_PASSPHRASE_ENV, value.expose());
+    }
+}
+
+pub(in crate::runner) const fn internal_secret_passphrase_env() -> &'static str {
+    INTERNAL_SECRET_PASSPHRASE_ENV
 }
 
 pub(in crate::runner) fn read_secret_passphrase(

@@ -231,6 +231,56 @@ targets = ["tasks", "rhai"]
 }
 
 #[test]
+fn execute_rhai_script_accepts_internal_secret_passphrase_env() {
+    let root = temp_root("rhai-secret-set-internal-passphrase");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.api_token]
+required = false
+targets = ["rhai"]
+"#,
+    )
+    .expect("write manifest");
+    write_test_vault(&root, "vault-passphrase", &[]);
+    let _env = ScopedTestEnv::set_many(&[(
+        "EFFIGY_INTERNAL_SECRET_PASSPHRASE",
+        "vault-passphrase".to_owned(),
+    )]);
+
+    execute_rhai_script(
+        &script_context(&root),
+        r#"secrets::set("api_token", "generated_secret");"#,
+        &[],
+        &callbacks(),
+    )
+    .expect("execute");
+
+    let raw = fs::read_to_string(root.join(".effigy/secrets/local.vault")).expect("read vault");
+    let envelope = VaultEnvelope::from_json(&raw).expect("parse vault");
+    let payload = envelope
+        .decrypt_with_passphrase("vault-passphrase")
+        .expect("decrypt vault");
+    assert_eq!(
+        payload
+            .records
+            .get("api_token")
+            .expect("stored secret")
+            .value
+            .expose(),
+        "generated_secret"
+    );
+}
+
+#[test]
 fn execute_rhai_script_can_store_declared_rhai_secrets_in_batch() {
     let root = temp_root("rhai-secret-set-many");
     fs::write(

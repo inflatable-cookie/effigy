@@ -26,6 +26,10 @@ During v0.x, MINOR bumps may include breaking changes.
   injected into referenced task process environments, with missing required
   values blocking before spawn only when the selected shell task actually
   references that secret env name, and captured JSON output redacted.
+- **Invocation-local vault passphrase reuse** is now generic across the
+  `secrets` command family, task/container secret resolution, and Rhai secret
+  helpers, so one top-level Effigy run reuses the first entered passphrase
+  instead of prompting again at each secret-aware sub-step.
 - **Local vault generator hook:** `[secrets.vault].generate` can now point at
   an inline task such as a host-side Rhai script. `effigy secrets init` and
   `secrets = "required"` task startup use that hook to create or fill the

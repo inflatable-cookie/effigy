@@ -435,6 +435,9 @@ fn read_rhai_secret_passphrase(optional_only: bool) -> Result<Option<SecretValue
     if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
         return Ok(Some(SecretValue::new(value)));
     }
+    if let Ok(value) = std::env::var("EFFIGY_INTERNAL_SECRET_PASSPHRASE") {
+        return Ok(Some(SecretValue::new(value)));
+    }
     if !std::io::stdin().is_terminal() {
         if optional_only {
             return Ok(None);

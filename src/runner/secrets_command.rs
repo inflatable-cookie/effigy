@@ -706,6 +706,20 @@ fn write_vault_file_inner(vault_path: &Path, bytes: &[u8]) -> Result<(), RunnerE
 }
 
 fn read_secret_input(prompt: &str, test_env: &str) -> Result<SecretValue, RunnerError> {
+    if test_env == crate::runner::secret_session::internal_secret_passphrase_env()
+        || test_env == "EFFIGY_TEST_SECRETS_PASSPHRASE"
+    {
+        return crate::runner::secret_session::read_secret_passphrase(
+            false,
+            prompt,
+            &format!("`{test_env}` is not set and secret input requires an interactive TTY"),
+        )?
+        .ok_or_else(|| {
+            RunnerError::task_invocation(format!(
+                "`{test_env}` is not set and secret input requires an interactive TTY"
+            ))
+        });
+    }
     if let Ok(value) = std::env::var(test_env) {
         return Ok(SecretValue::new(value));
     }
