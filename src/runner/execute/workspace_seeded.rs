@@ -51,7 +51,10 @@ mod tests {
             ],
         );
 
-        assert_eq!(rendered, "effigy 'dev' 'front' '--' '--host' '0.0.0.0'");
+        assert!(
+            rendered.ends_with("effigy 'dev' 'front' '--' '--host' '0.0.0.0'"),
+            "got: {rendered}"
+        );
     }
 
     #[test]

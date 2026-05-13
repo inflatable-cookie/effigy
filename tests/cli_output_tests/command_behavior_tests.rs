@@ -6693,6 +6693,10 @@ startup = "attached"
 profile = "dev"
 project_name = "fixture-web-dev"
 primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.host]
+mounts = ["./:/workspace"]
 
 [containers.web.services.app]
 catalog = "php-fpm"

@@ -203,12 +203,7 @@ pub(crate) fn render_inline_managed_standard_exec_command(
             ],
         ),
     );
-    let rewritten = shell_quote(&container_exec_command(
-        command,
-        repo_root,
-        process_cwd,
-        container_repo_root,
-    ));
+    let rewritten = container_exec_command(command, repo_root, process_cwd, container_repo_root);
     let attach = render_inline_compose_command(
         repo_root,
         policy,
@@ -224,7 +219,28 @@ pub(crate) fn render_inline_managed_standard_exec_command(
             ],
         ),
     );
-    let setup_sequence = setup_command.unwrap_or("");
+    let setup_sequence = setup_command
+        .map(|setup_command| {
+            let rewritten =
+                container_exec_command(setup_command, repo_root, process_cwd, container_repo_root);
+            let setup = render_inline_compose_command(
+                repo_root,
+                policy,
+                &compose_args(
+                    policy,
+                    [
+                        "exec",
+                        "-T",
+                        policy.primary_service.as_str(),
+                        "sh",
+                        "-lc",
+                        rewritten.as_str(),
+                    ],
+                ),
+            );
+            format!("{setup} && ")
+        })
+        .unwrap_or_default();
     format!(
         "sh -lc {}",
         shell_quote(&format!(

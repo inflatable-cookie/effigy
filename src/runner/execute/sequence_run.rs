@@ -14,7 +14,7 @@ use effigy_managed::{
     build_run_sequence_schedule, render_step_command_template, StepEnvAccumulator,
 };
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, TaskSelection};
-use effigy_routing::select_catalog_and_task;
+use effigy_routing::resolve_catalog_by_prefix;
 use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
 
 use super::super::cache::ops::update_task_cache_entry;
@@ -573,33 +573,45 @@ fn resolve_task_step(
     let (mut selector, mut args) =
         parse_task_reference_invocation(task_ref).map_err(RunnerError::task_invocation)?;
     args.extend(preflight.runtime_args_exec.passthrough.clone());
-    if selector.prefix.is_none()
-        && effigy_managed::BUILTIN_TASKS
-            .iter()
-            .any(|(name, _)| *name == selector.task_name)
+    if effigy_managed::BUILTIN_TASKS
+        .iter()
+        .any(|(name, _)| *name == selector.task_name)
     {
-        let command = parse_builtin_step_command(
-            &selector.task_name,
-            &args,
-            &selection.catalog.catalog_root,
-        )?;
+        let cwd = if let Some(prefix) = selector.prefix.as_deref() {
+            resolve_catalog_by_prefix(prefix, &preflight.catalogs, &preflight.invocation_cwd)
+                .ok_or_else(|| {
+                    RunnerError::task_invocation(format!(
+                        "unknown catalog prefix `{prefix}` for built-in task `{}`",
+                        selector.task_name
+                    ))
+                })?
+                .catalog_root
+                .clone()
+        } else {
+            selection.catalog.catalog_root.clone()
+        };
+        let command = parse_builtin_step_command(&selector.task_name, &args, &cwd)?;
         return Ok(StepAction::Builtin {
             command: Box::new(command),
-            cwd: selection.catalog.catalog_root.clone(),
+            cwd,
         });
     }
-    if selector.prefix.is_none() {
+    if let Some(prefix) = selector.prefix.as_deref() {
+        resolve_catalog_by_prefix(prefix, &preflight.catalogs, &preflight.invocation_cwd)
+            .ok_or_else(|| {
+                RunnerError::task_invocation(format!(
+                    "unknown catalog prefix `{prefix}` for task `{}`",
+                    selector.task_name
+                ))
+            })?;
+    } else {
         selector.prefix = Some(selection.catalog.alias.clone());
     }
     let invocation = TaskInvocation {
         name: render_task_selector(&selector),
         args,
     };
-    let cwd = select_catalog_and_task(&selector, &preflight.catalogs, &preflight.invocation_cwd)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-        .catalog
-        .catalog_root
-        .clone();
+    let cwd = preflight.resolved.resolved_root.clone();
     Ok(StepAction::Task { invocation, cwd })
 }
 

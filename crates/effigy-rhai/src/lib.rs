@@ -586,10 +586,7 @@ fn active_rhai_set_secret(
     name: &str,
     value: &str,
 ) -> Result<(), Box<EvalAltResult>> {
-    active_rhai_set_secret_records(
-        repo_root,
-        vec![(name.to_owned(), SecretValue::new(value))].into_iter(),
-    )
+    active_rhai_set_secret_records(repo_root, vec![(name.to_owned(), SecretValue::new(value))])
 }
 
 fn active_rhai_set_secrets(repo_root: &Path, values: Map) -> Result<(), Box<EvalAltResult>> {
@@ -604,7 +601,7 @@ fn active_rhai_set_secrets(repo_root: &Path, values: Map) -> Result<(), Box<Eval
             Ok((name.to_string(), SecretValue::new(value.as_str())))
         })
         .collect::<Result<Vec<_>, Box<EvalAltResult>>>()?;
-    active_rhai_set_secret_records(repo_root, records.into_iter())
+    active_rhai_set_secret_records(repo_root, records)
 }
 
 fn active_rhai_set_secret_records(

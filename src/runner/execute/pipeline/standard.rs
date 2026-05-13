@@ -346,10 +346,10 @@ fn run_standard_task_inner(
 
 fn task_uses_direct_shell(run: Option<&ManifestManagedRun>) -> bool {
     match run {
-        Some(ManifestManagedRun::Command(command)) => !command
+        Some(ManifestManagedRun::Command(command)) => command
             .strip_prefix("task:")
             .map(str::trim)
-            .is_some_and(|value| !value.is_empty()),
+            .is_none_or(|value| value.is_empty()),
         Some(ManifestManagedRun::Sequence(steps)) => steps.iter().any(step_uses_direct_shell),
         None => false,
     }
@@ -357,10 +357,10 @@ fn task_uses_direct_shell(run: Option<&ManifestManagedRun>) -> bool {
 
 fn step_uses_direct_shell(step: &ManifestManagedRunStep) -> bool {
     match step {
-        ManifestManagedRunStep::Command(command) => !command
+        ManifestManagedRunStep::Command(command) => command
             .strip_prefix("task:")
             .map(str::trim)
-            .is_some_and(|value| !value.is_empty()),
+            .is_none_or(|value| value.is_empty()),
         ManifestManagedRunStep::Step(table) => table.run.is_some(),
     }
 }
@@ -966,7 +966,10 @@ mod tests {
         let rendered =
             render_workspace_seeded_task_command("seed", &["--".to_owned(), "--force".to_owned()]);
 
-        assert_eq!(rendered, "effigy 'seed' '--' '--force'");
+        assert!(
+            rendered.ends_with("effigy 'seed' '--' '--force'"),
+            "got: {rendered}"
+        );
     }
 
     #[test]

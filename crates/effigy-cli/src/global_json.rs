@@ -42,6 +42,14 @@ pub fn strip_global_cli_flags(
                 )?));
             }
             "--verbose-root" => options.task_verbose_root = true,
+            "--help" | "-h" => {
+                parsing_leading_globals = false;
+                stripped.push(arg);
+            }
+            "--version" => {
+                parsing_leading_globals = false;
+                stripped.push(arg);
+            }
             "--" => {
                 parsing_leading_globals = false;
                 stripped.push(arg);

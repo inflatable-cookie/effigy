@@ -214,10 +214,7 @@ fn copy_directory_contents_inner(
                     .map_err(|_| ArtifactStagingError::Copy {
                         source: path.clone(),
                         destination: staged_root.to_path_buf(),
-                        error: std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            "failed to compute relative artifact path",
-                        ),
+                        error: std::io::Error::other("failed to compute relative artifact path"),
                     })?;
             let staged_payload = staged_root.join(relative_path);
             copy_file(&path, &staged_payload)?;

@@ -212,6 +212,42 @@ fn merge_containers_config(
     }
 }
 
+pub(in crate::runner) fn run_inline_task_with_cwd_and_env(
+    mut task: ManifestTask,
+    cwd: PathBuf,
+    label: &str,
+    env_overrides: &BTreeMap<String, String>,
+) -> Result<String, RunnerError> {
+    let invocation = TaskInvocation {
+        name: label.to_owned(),
+        args: Vec::new(),
+    };
+    let preflight = super::planning::build_execution_preflight(&invocation, cwd)?;
+    let root_catalog = preflight
+        .catalogs
+        .iter()
+        .filter(|catalog| catalog.catalog_root == preflight.resolved.resolved_root)
+        .min_by_key(|catalog| catalog.depth)
+        .ok_or_else(|| {
+            RunnerError::task_invocation(format!(
+                "bootstrap run could not resolve root catalog for {}",
+                preflight.resolved.resolved_root.display()
+            ))
+        })?;
+
+    for (key, value) in env_overrides {
+        task.env.insert(key.clone(), value.clone());
+    }
+    let selection = TaskSelection {
+        catalog: root_catalog,
+        task: &task,
+        mode: CatalogSelectionMode::RootShallowest,
+        evidence: vec!["inline task".to_owned()],
+    };
+    let selection_plan = super::selection::build_execution_selection_plan(&preflight, &selection);
+    super::pipeline::standard::run_standard_task(&preflight, &selection, &selection_plan)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -424,40 +460,4 @@ run = "cargo run -p farmyard-db --bin migrate_dev_db"
         assert!(containers.environments.contains_key("stack"));
         assert!(containers.environments.contains_key("services"));
     }
-}
-
-pub(in crate::runner) fn run_inline_task_with_cwd_and_env(
-    mut task: ManifestTask,
-    cwd: PathBuf,
-    label: &str,
-    env_overrides: &BTreeMap<String, String>,
-) -> Result<String, RunnerError> {
-    let invocation = TaskInvocation {
-        name: label.to_owned(),
-        args: Vec::new(),
-    };
-    let preflight = super::planning::build_execution_preflight(&invocation, cwd)?;
-    let root_catalog = preflight
-        .catalogs
-        .iter()
-        .filter(|catalog| catalog.catalog_root == preflight.resolved.resolved_root)
-        .min_by_key(|catalog| catalog.depth)
-        .ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "bootstrap run could not resolve root catalog for {}",
-                preflight.resolved.resolved_root.display()
-            ))
-        })?;
-
-    for (key, value) in env_overrides {
-        task.env.insert(key.clone(), value.clone());
-    }
-    let selection = TaskSelection {
-        catalog: root_catalog,
-        task: &task,
-        mode: CatalogSelectionMode::RootShallowest,
-        evidence: vec!["inline task".to_owned()],
-    };
-    let selection_plan = super::selection::build_execution_selection_plan(&preflight, &selection);
-    super::pipeline::standard::run_standard_task(&preflight, &selection, &selection_plan)
 }

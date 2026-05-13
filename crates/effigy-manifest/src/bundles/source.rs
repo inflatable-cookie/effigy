@@ -164,7 +164,7 @@ fn resolve_git_bundle_source(
 
     if cache_exists && !refresh_remote {
         let cached_remote_commit = read_cached_git_bundle_remote_status(&remote_status_path)?
-            .filter(|status| git_bundle_remote_status_is_fresh(status))
+            .filter(git_bundle_remote_status_is_fresh)
             .map(|status| status.remote_commit);
         let remote_commit = if let Some(remote_commit) = cached_remote_commit {
             Some(remote_commit)
