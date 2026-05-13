@@ -431,6 +431,24 @@ pub(in crate::runner) fn run_managed_run_with_cwd(
     cwd: PathBuf,
     label: &str,
 ) -> Result<String, RunnerError> {
+    run_inline_task_with_cwd_and_env(
+        ManifestTask {
+            run: Some(run.clone()),
+            run_in: Some(ManifestTaskRunIn::Host),
+            ..Default::default()
+        },
+        cwd,
+        label,
+        &BTreeMap::new(),
+    )
+}
+
+pub(in crate::runner) fn run_inline_task_with_cwd_and_env(
+    mut task: ManifestTask,
+    cwd: PathBuf,
+    label: &str,
+    env_overrides: &BTreeMap<String, String>,
+) -> Result<String, RunnerError> {
     let invocation = TaskInvocation {
         name: label.to_owned(),
         args: Vec::new(),
@@ -448,16 +466,14 @@ pub(in crate::runner) fn run_managed_run_with_cwd(
             ))
         })?;
 
-    let synthetic_task = ManifestTask {
-        run: Some(run.clone()),
-        run_in: Some(ManifestTaskRunIn::Host),
-        ..Default::default()
-    };
+    for (key, value) in env_overrides {
+        task.env.insert(key.clone(), value.clone());
+    }
     let selection = TaskSelection {
         catalog: root_catalog,
-        task: &synthetic_task,
+        task: &task,
         mode: CatalogSelectionMode::RootShallowest,
-        evidence: vec!["bootstrap-local run".to_owned()],
+        evidence: vec!["inline task".to_owned()],
     };
     let selection_plan = super::selection::build_execution_selection_plan(&preflight, &selection);
     super::pipeline::standard::run_standard_task(&preflight, &selection, &selection_plan)

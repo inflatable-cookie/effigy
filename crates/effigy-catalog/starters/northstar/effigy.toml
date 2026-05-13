@@ -1,3 +1,6 @@
+[manifest]
+minimum_effigy_version = "0.7.0"
+
 # Root Effigy manifest for a Northstar + Effigy consumer repo.
 #
 # Shape: single-repo. Adjust task contents, add release config, and

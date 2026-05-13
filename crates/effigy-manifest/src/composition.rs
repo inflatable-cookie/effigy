@@ -364,21 +364,35 @@ fn validate_minimum_effigy_version(
             "`[manifest].minimum_effigy_version` must be a valid semver version: {error}"
         ),
     })?;
-    let current_version =
-        Version::parse(env!("CARGO_PKG_VERSION")).map_err(|error| ManifestError::Compose {
+    let active_version = effigy_core::build_info::active_version();
+    if !active_version_satisfies_minimum_effigy_version(&active_version, &requested_version)
+        .map_err(|detail| ManifestError::Compose {
             path: manifest_path.to_path_buf(),
-            detail: format!("current Effigy version is invalid: {error}"),
-        })?;
-    if current_version < requested_version {
+            detail,
+        })?
+    {
         return Err(ManifestError::Compose {
             path: manifest_path.to_path_buf(),
             detail: format!(
                 "manifest requires Effigy >= {requested_version}, but this binary is {}",
-                env!("CARGO_PKG_VERSION")
+                active_version
             ),
         });
     }
     Ok(())
+}
+
+fn active_version_satisfies_minimum_effigy_version(
+    active_version: &str,
+    requested_version: &Version,
+) -> Result<bool, String> {
+    let normalized = active_version.trim().trim_start_matches('v');
+    if normalized.contains("+local.") {
+        return Ok(true);
+    }
+    let current_version = Version::parse(normalized)
+        .map_err(|error| format!("current Effigy version is invalid: {error}"))?;
+    Ok(current_version >= *requested_version)
 }
 
 fn merge_values(
@@ -688,6 +702,7 @@ fn current_value_source<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use semver::Version;
     use tempfile::tempdir;
 
     fn write_manifest(dir: &Path, name: &str, body: &str) -> PathBuf {
@@ -1150,11 +1165,15 @@ run = "ok"
 minimum_effigy_version = "999.0.0"
 "#,
         );
-
-        let err = load_task_manifest_with_inspection(&root).unwrap_err();
-        let detail = err.to_string();
-        assert!(detail.contains("requires Effigy >= 999.0.0"), "{detail}");
-        assert!(detail.contains(env!("CARGO_PKG_VERSION")), "{detail}");
+        let result = load_task_manifest_with_inspection(&root);
+        if effigy_core::build_info::active_version().contains("+local.") {
+            result.expect("local dev build should bypass manifest floor");
+        } else {
+            let err = result.unwrap_err();
+            let detail = err.to_string();
+            assert!(detail.contains("requires Effigy >= 999.0.0"), "{detail}");
+            assert!(detail.contains(env!("CARGO_PKG_VERSION")), "{detail}");
+        }
     }
 
     #[test]
@@ -1177,11 +1196,15 @@ include = ["overlay.toml"]
 minimum_effigy_version = "999.0.0"
 "#,
         );
-
-        let err = load_task_manifest_with_inspection(&root).unwrap_err();
-        let detail = err.to_string();
-        assert!(detail.contains("overlay.toml"), "{detail}");
-        assert!(detail.contains("requires Effigy >= 999.0.0"), "{detail}");
+        let result = load_task_manifest_with_inspection(&root);
+        if effigy_core::build_info::active_version().contains("+local.") {
+            result.expect("local dev build should bypass included manifest floor");
+        } else {
+            let err = result.unwrap_err();
+            let detail = err.to_string();
+            assert!(detail.contains("overlay.toml"), "{detail}");
+            assert!(detail.contains("requires Effigy >= 999.0.0"), "{detail}");
+        }
     }
 
     #[test]
@@ -1203,5 +1226,38 @@ minimum_effigy_version = "latest"
             detail.contains("`[manifest].minimum_effigy_version` must be a valid semver version"),
             "{detail}"
         );
+    }
+
+    #[test]
+    fn manifest_minimum_effigy_version_accepts_local_dev_builds_for_newer_floors() {
+        let requested = Version::parse("0.7.0").expect("requested");
+        assert!(active_version_satisfies_minimum_effigy_version(
+            "0.6.1+local.67a79ff.dirty",
+            &requested,
+        )
+        .expect("local build should bypass floor"));
+        assert!(active_version_satisfies_minimum_effigy_version(
+            "v0.6.1+local.67a79ff",
+            &requested
+        )
+        .expect("prefixed local build should bypass floor"));
+    }
+
+    #[test]
+    fn manifest_minimum_effigy_version_rejects_newer_floor_for_release_builds() {
+        let requested = Version::parse("0.7.0").expect("requested");
+        assert!(
+            !active_version_satisfies_minimum_effigy_version("0.6.1", &requested)
+                .expect("release build should stay strict")
+        );
+    }
+
+    #[test]
+    fn manifest_minimum_effigy_version_rejects_invalid_current_binary_version() {
+        let requested = Version::parse("0.6.1").expect("requested");
+        let err =
+            active_version_satisfies_minimum_effigy_version("definitely-not-semver", &requested)
+                .expect_err("invalid active version should fail");
+        assert!(err.contains("current Effigy version is invalid"), "{err}");
     }
 }

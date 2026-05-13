@@ -2,6 +2,7 @@
 alias = "render-provider-smoke"
 
 [manifest]
+minimum_effigy_version = "0.7.0"
 root = true
 
 [bundle]

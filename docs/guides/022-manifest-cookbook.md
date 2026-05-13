@@ -104,6 +104,9 @@ build = "bun run build"
 `effigy.docs.toml`
 
 ```toml
+[manifest]
+minimum_effigy_version = "0.6.2"
+
 [docs_policy.indexes.vision]
 file = "docs/vision/README.md"
 dir = "docs/vision"
@@ -117,6 +120,10 @@ Composition rules:
 - `effigy.toml` stays the canonical entrypoint.
 - included paths are resolved relative to the file that declares them.
 - fragments are partial manifests, not standalone alternate roots.
+- any fragment can declare `[manifest].minimum_effigy_version = "X.Y.Z"` to
+  fail early on older Effigy binaries before deeper manifest parsing runs.
+- repo-local development builds like `v0.6.1+local.<hash>` still pass those
+  floors so unreleased feature work is not blocked by the last tagged version.
 - distinct keys merge additively by default.
 - conflicting values fail unless the include entry explicitly names the path in
   `override = [...]`.

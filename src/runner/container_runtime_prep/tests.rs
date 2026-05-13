@@ -995,7 +995,7 @@ fn ensure_runtime_running_stage_uses_plan_identity_when_runtime_is_stopped() {
 }
 
 #[test]
-fn task_activation_side_effects_run_in_shared_order() {
+fn task_activation_side_effects_skip_gateway_for_plain_task_route() {
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
     let events = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -1058,7 +1058,6 @@ fn task_activation_side_effects_run_in_shared_order() {
                 repo_root.display(),
                 policy.name
             ),
-            format!("gateway:{}:{}", repo_root.display(), policy.name),
             format!("lease:{}:{}:false", repo_root.display(), policy.name),
         ]
     );
@@ -1078,7 +1077,7 @@ fn task_activation_side_effects_run_in_shared_order() {
 }
 
 #[test]
-fn task_activation_can_skip_lease_refresh_without_skipping_gateway_readiness() {
+fn task_activation_can_skip_lease_refresh_without_running_task_gateway_readiness() {
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
     let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
@@ -1123,10 +1122,7 @@ fn task_activation_can_skip_lease_refresh_without_skipping_gateway_readiness() {
     )
     .expect("activate container runtime");
 
-    assert_eq!(
-        *events.lock().expect("events lock"),
-        vec!["prepare", "gateway"]
-    );
+    assert_eq!(*events.lock().expect("events lock"), vec!["prepare"]);
     assert_eq!(
         activation,
         ContainerTaskActivation {
@@ -1138,18 +1134,14 @@ fn task_activation_can_skip_lease_refresh_without_skipping_gateway_readiness() {
 }
 
 #[test]
-fn reused_runtime_activation_matrix_keeps_gateway_parity_across_lease_modes() {
+fn reused_task_activation_matrix_keeps_gateway_skipped_across_lease_modes() {
     for (lease_refresh_policy, expected_events, expected_refreshed_lease) in [
         (
             LeaseRefreshPolicy::RefreshOnActivation,
-            vec!["prepare", "gateway", "lease"],
+            vec!["prepare", "lease"],
             true,
         ),
-        (
-            LeaseRefreshPolicy::SkipRefresh,
-            vec!["prepare", "gateway"],
-            false,
-        ),
+        (LeaseRefreshPolicy::SkipRefresh, vec!["prepare"], false),
     ] {
         let repo_root = Path::new("/tmp/demo-repo");
         let policy = test_policy(PathBuf::from("docker-compose.yml"));

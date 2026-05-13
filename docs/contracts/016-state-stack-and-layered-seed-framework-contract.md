@@ -196,6 +196,13 @@ Recommended first-round layer fields:
 - `hook`
 - `notes`
 
+`hook` accepts either a task selector string or an inline task definition using
+the same run-array syntax as `[tasks]`, for example:
+
+```toml
+hook = [{ rhai = "state/apply-media.rhai" }]
+```
+
 The initial schema name is `effigy.state-stack.v1`.
 
 Valid first-round `apply_mode` values:
@@ -476,7 +483,8 @@ Framework-owned shape:
 
 - Effigy resolves the layer source
 - Effigy stages artifacts and computes lineage
-- Effigy invokes the declared app hook with structured context
+- Effigy invokes the declared app hook with structured context. Hooks may be
+  selector strings or inline task definitions in composed Effigy manifests.
 - the app performs transform/apply/finalize logic
 - Effigy records the outer operation report
 
@@ -572,6 +580,13 @@ source_env = "uat"
 source = ".effigy/state/captures/{key}.tar"
 ref = "oci://ghcr.io/acowtancy/state:{key}"
 task = "state:capture-new-content"
+```
+
+`task` accepts either a task selector string or an inline task definition using
+the same run-array syntax as `[tasks]`, for example:
+
+```toml
+task = [{ rhai = "state/capture-new-content.rhai" }]
 ```
 
 `effigy state capture uat new-content --yes` expands the profile, defaults the

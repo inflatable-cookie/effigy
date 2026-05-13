@@ -1,5 +1,6 @@
 use crate::runner::tests::prelude::{
-    assert_tasks_manifest_parse_rejection_case_table, ManifestParseRejectionCase,
+    assert_tasks_manifest_parse_rejection_case_table, run_tasks_with_repo, temp_workspace,
+    write_manifest, ManifestParseRejectionCase,
 };
 
 #[test]
@@ -110,4 +111,48 @@ fn run_tasks_rejects_invalid_manifest_shapes() {
         },
     ];
     assert_tasks_manifest_parse_rejection_case_table(&cases);
+}
+
+#[test]
+fn run_tasks_rejects_included_manifest_minimum_effigy_version_floor() {
+    let root = temp_workspace("reject-included-minimum-effigy-version");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"
+[manifest]
+include = ["config/tasks.toml"]
+"#,
+    );
+    std::fs::create_dir_all(root.join("config")).expect("create config dir");
+    write_manifest(
+        &root.join("config/tasks.toml"),
+        r#"
+[manifest]
+minimum_effigy_version = "999.0.0"
+
+[tasks.health]
+run = "printf ok"
+"#,
+    );
+
+    match run_tasks_with_repo(root) {
+        Ok(rendered) => {
+            assert!(
+                rendered.contains("health"),
+                "local dev build bypassed manifest floor but did not render included task: {rendered}"
+            );
+        }
+        Err(err) => {
+            let rendered = err.to_string();
+            assert!(
+                rendered.contains("strict manifest parse failed"),
+                "{rendered}"
+            );
+            assert!(rendered.contains("config/tasks.toml"), "{rendered}");
+            assert!(
+                rendered.contains("requires Effigy >= 999.0.0"),
+                "{rendered}"
+            );
+        }
+    }
 }

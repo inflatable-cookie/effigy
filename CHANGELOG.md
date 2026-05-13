@@ -53,6 +53,9 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of carrying app-local dirname helpers.
 
 ### Changed
+- **Manifest version floors** now treat repo-local `+local` development builds
+  as ahead of tagged releases, so local feature work is not blocked by
+  unreleased `minimum_effigy_version` bumps.
 - **State apply hooks** now run during `effigy state apply --yes` after a
   layer is successfully executed, staged, or imported. Apply reports now carry
   hook status/output/error plus a structured
@@ -60,6 +63,12 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Container data seed** now prepares the selected container runtime before
   import execution, so host-run seed commands can stage local file paths
   without requiring a manual `effigy container up` first.
+- **State capture profile tasks** can now be declared inline with normal task
+  run syntax, such as `task = [{ rhai = "capture.rhai" }]`, instead of forcing
+  a named `[tasks.*]` indirection.
+- **State apply hooks** in composed manifests can now be declared inline with
+  normal task run syntax, such as `hook = [{ rhai = "apply-media.rhai" }]`,
+  while standalone state manifests keep selector-string hooks.
 - **Single-step task refs** can now use `run = { task = "..." }` without a
   one-element array wrapper, and the Decodelabs bundle now uses that native
   shape for its `release` deferral wrapper. Shorthand task definitions under

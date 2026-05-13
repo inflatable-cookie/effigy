@@ -5,7 +5,9 @@
 //! actual process execution.
 
 use crate::compose::compose_args;
-use crate::{user_global_backend_preference, BackendId, ContainerBackendDetection, ContainerManager};
+use crate::{
+    user_global_backend_preference, BackendId, ContainerBackendDetection, ContainerManager,
+};
 use crate::{EffectiveContainerPolicy, DEFAULT_COLIMA_PROFILE};
 use effigy_manifest::ManifestContainerShutdownMode;
 use serde_yaml::{Mapping, Number, Value};

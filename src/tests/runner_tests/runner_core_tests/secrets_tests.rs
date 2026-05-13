@@ -340,6 +340,7 @@ fn secrets_doctor_blocks_corrupt_vault() {
     let vault_path = root.join(".effigy/secrets/local.vault");
     fs::create_dir_all(vault_path.parent().expect("parent")).expect("mkdir");
     fs::write(&vault_path, "not-json").expect("write corrupt");
+    let _env = secret_test_env("vault-passphrase", None);
 
     let error = run_command(Command::Secrets(SecretsArgs {
         subcommand: SecretsSubcommand::Doctor,

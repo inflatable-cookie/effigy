@@ -36,6 +36,9 @@ Rule:
 - included paths resolve relative to the file that declares them
 - any fragment can declare `[manifest].minimum_effigy_version = "X.Y.Z"` to
   fail early when the active Effigy binary is too old for that manifest shape
+- repo-local development builds like `v0.6.1+local.<hash>` are treated as
+  ahead of tagged releases, so they still pass newer manifest floors during
+  local feature work
 
 Nested fixtures, examples, or child projects can opt into being their own
 Effigy root:

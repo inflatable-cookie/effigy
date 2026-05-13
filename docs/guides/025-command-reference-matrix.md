@@ -393,11 +393,13 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - `state capture` is plan-only unless `--yes --source <PATH> --ref oci://...`
   is supplied; execution stages the already-produced local payload, and `--push`
   explicitly publishes it after local staging; `--task <TASK>` runs one
-  repo-owned capture task before staging, while produced-layer apply hooks still
-  do not run; capture reports update `latest-capture.json` and timestamped
-  history; capture tasks receive `EFFIGY_STATE_CAPTURE_CONTEXT` pointing to a
-  versioned JSON context file, and relative `EFFIGY_STATE_CAPTURE_SOURCE`
-  values are resolved to absolute task-runtime paths
+  repo-owned capture task before staging, and named capture profiles can declare
+  `task` as either a selector string or inline run-array task definition, while
+  produced-layer apply hooks still do not run; capture reports update
+  `latest-capture.json` and timestamped history; capture tasks receive
+  `EFFIGY_STATE_CAPTURE_CONTEXT` pointing to a versioned JSON context file, and
+  relative `EFFIGY_STATE_CAPTURE_SOURCE` values are resolved to absolute
+  task-runtime paths
 - `state capture <STACK> <PROFILE>` resolves `[state.<STACK>.captures.<PROFILE>]`
   from the composed manifest; CLI flags can still override profile fields for
   one-off captures

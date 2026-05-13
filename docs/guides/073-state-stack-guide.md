@@ -59,7 +59,21 @@ environment_policy = "non-production"
 | `environment_policy` | yes | `all`, `dev-only`, `non-production`, `production`, or `capture-only` |
 | `depends_on` | no | keys that must complete before this layer |
 | `artifact_kind` | no | payload type: `sql-dump`, `migrated-base-snapshot`, `content-overlay`, `object-store` |
-| `hook` | no | app-owned task to run after the layer |
+| `hook` | no | app-owned task selector or inline task definition to run after the layer |
+
+Inline hooks use the same run syntax as `[tasks]` and are useful when the
+finalize logic belongs only to one layer:
+
+```toml
+[[state.uat.layers]]
+key = "legacy-media"
+role = "media-library"
+source = "oci://ghcr.io/acme/media:uat"
+apply_mode = "artifact"
+environment_policy = "all"
+artifact_kind = "object-store"
+hook = [{ rhai = "state/apply-media.rhai" }]
+```
 
 ### Capture profiles
 
@@ -72,6 +86,18 @@ source_env = "uat"
 source = ".effigy/state/captures/{key}.tar"
 ref = "oci://ghcr.io/acme/state:{key}"
 task = "state:capture-new-content"
+```
+
+Capture `task` may also be declared inline with normal task run syntax when the
+logic exists only for that capture profile:
+
+```toml
+[state.uat.captures.media]
+role = "full-capture"
+source_env = "legacy"
+source = ".effigy/state/captures/{key}/media"
+ref = "oci://ghcr.io/acme/media:{key}"
+task = [{ rhai = "state/capture-media.rhai" }]
 ```
 
 ## Commands

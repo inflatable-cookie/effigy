@@ -982,6 +982,54 @@ fn cli_state_capture_yes_runs_task_before_staging() {
 }
 
 #[test]
+fn cli_state_capture_named_profile_accepts_inline_rhai_task() {
+    let root = temp_workspace("state-capture-inline-rhai-task");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        root.join("scripts/capture.rhai"),
+        r#"fs::create_dir("captures"); fs::write_file(state::capture_source(), state::capture_context()["key"].to_string());"#,
+    )
+    .expect("write rhai");
+    fs::write(
+        root.join("effigy.toml"),
+        manifest_state_inline_capture_task_fixture(),
+    )
+    .expect("write effigy manifest");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .args([
+            "state",
+            "capture",
+            "uat",
+            "new-content",
+            "--key",
+            "inline-2026-05-13",
+            "--yes",
+        ])
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(
+        output.status.success(),
+        "state capture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload = parse_stdout_json(&output);
+    let result = &payload["result"];
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["tasks"][0]["name"], "<inline>");
+    assert_eq!(result["tasks"][0]["status"], "executed");
+    assert_eq!(
+        fs::read_to_string(root.join("captures/inline-2026-05-13.txt")).expect("read capture"),
+        "inline-2026-05-13"
+    );
+}
+
+#[test]
 fn cli_state_capture_task_failure_prevents_staging() {
     let root = temp_workspace("state-capture-task-failure");
     fs::write(
@@ -1165,6 +1213,31 @@ source_env = "legacy"
 source = "captures/media-{key}.txt"
 ref = "oci://ghcr.io/acowtancy/media:{key}"
 task = "capture:media"
+"#
+}
+
+fn manifest_state_inline_capture_task_fixture() -> &'static str {
+    r#"
+[state]
+
+[state.uat]
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[state.uat.layers]]
+key = "structure"
+role = "structure"
+source = "structure"
+apply_mode = "task"
+environment_policy = "all"
+
+[state.uat.captures.new-content]
+role = "uat-capture"
+source_env = "uat"
+source = "captures/{key}.txt"
+ref = "oci://ghcr.io/acowtancy/state:{key}"
+task = [{ rhai = "scripts/capture.rhai" }]
 "#
 }
 

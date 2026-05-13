@@ -98,8 +98,11 @@ fn colima_start_command_honors_user_global_docker_preference() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = temp.path().join(".effigy-home");
     std::fs::create_dir_all(&home).expect("mkdir home");
-    std::fs::write(home.join("config.toml"), "[containers]\nbackend = \"docker\"\n")
-        .expect("write config");
+    std::fs::write(
+        home.join("config.toml"),
+        "[containers]\nbackend = \"docker\"\n",
+    )
+    .expect("write config");
     let previous_backend = std::env::var_os("EFFIGY_COMPOSE_BACKEND");
     unsafe {
         std::env::remove_var("EFFIGY_COMPOSE_BACKEND");

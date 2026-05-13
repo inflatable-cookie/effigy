@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use effigy_artifacts::OciArtifactAdapter;
 use effigy_cli::{BootstrapDbSeedInput, StateArgs, StateSubcommand, TaskInvocation};
 use effigy_execution::ExecutionSurface;
+use effigy_manifest::{ManifestManagedRun, ManifestTask};
 use effigy_state::{
     capture_produced_layer, state_report_write_paths, StateCaptureMode, StateCapturePlanRequest,
     StateHistoryKind, StateLayerApplyMode, StateLayerRole, StateReportWritePaths,
@@ -73,7 +74,7 @@ pub(super) fn run_state(args: StateArgs) -> Result<String, RunnerError> {
                 source,
                 destination_ref,
                 hook,
-                task,
+                task: task.map(ManifestStateTaskDefinition::Reference),
                 yes,
                 push,
             },
@@ -156,8 +157,9 @@ fn run_state_apply(
     execute: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let manifest = resolve_state_stack_manifest(manifest, stack, invocation_cwd, repo_root)?;
-    let lineage = manifest
+    let resolved = resolve_state_stack_for_apply(manifest, stack, invocation_cwd, repo_root)?;
+    let lineage = resolved
+        .manifest
         .plan_lineage()
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
         .report("planned");
@@ -185,6 +187,7 @@ fn run_state_apply(
                                 &report.lineage_id,
                                 layer,
                                 repo_root,
+                                resolved.hooks.get(&layer.key),
                             ) {
                                 layer.hook_status = Some(StateStackApplyHookStatus::Failed);
                                 layer.hook_error = Some(error.to_string());
@@ -217,6 +220,7 @@ fn run_state_apply(
                                 &report.lineage_id,
                                 layer,
                                 repo_root,
+                                resolved.hooks.get(&layer.key),
                             ) {
                                 layer.hook_status = Some(StateStackApplyHookStatus::Failed);
                                 layer.hook_error = Some(error.to_string());
@@ -247,6 +251,7 @@ fn run_state_apply(
                                 &report.lineage_id,
                                 layer,
                                 repo_root,
+                                resolved.hooks.get(&layer.key),
                             ) {
                                 layer.hook_status = Some(StateStackApplyHookStatus::Failed);
                                 layer.hook_error = Some(error.to_string());
@@ -292,6 +297,7 @@ fn execute_state_apply_hook(
     lineage_id: &str,
     layer: &mut StateStackApplyLayerReport,
     repo_root: &Path,
+    hook_definition: Option<&ManifestStateTaskDefinition>,
 ) -> Result<(), RunnerError> {
     let Some(hook) = layer.hook.clone() else {
         return Ok(());
@@ -299,16 +305,44 @@ fn execute_state_apply_hook(
     let context_path =
         write_state_apply_hook_context(repo_root, stack_name, environment, lineage_id, layer)?;
     layer.hook_context_path = Some(context_path.clone());
-    match crate::runner::execute::api::run_manifest_task_with_surface_env_and_secret_targets(
-        &TaskInvocation {
-            name: hook,
-            args: Vec::new(),
-        },
-        repo_root.to_path_buf(),
-        ExecutionSurface::DirectCli,
-        &state_apply_hook_env(stack_name, environment, lineage_id, layer, &context_path),
-        &["state"],
-    ) {
+    let hook_env = state_apply_hook_env(stack_name, environment, lineage_id, layer, &context_path);
+    let result = match hook_definition {
+        Some(ManifestStateTaskDefinition::Reference(name)) => {
+            crate::runner::execute::api::run_manifest_task_with_surface_env_and_secret_targets(
+                &TaskInvocation {
+                    name: name.clone(),
+                    args: Vec::new(),
+                },
+                repo_root.to_path_buf(),
+                ExecutionSurface::DirectCli,
+                &hook_env,
+                &["state"],
+            )
+        }
+        None => crate::runner::execute::api::run_manifest_task_with_surface_env_and_secret_targets(
+            &TaskInvocation {
+                name: hook,
+                args: Vec::new(),
+            },
+            repo_root.to_path_buf(),
+            ExecutionSurface::DirectCli,
+            &hook_env,
+            &["state"],
+        ),
+        Some(definition) => definition
+            .clone()
+            .into_manifest_task()
+            .ok_or_else(|| RunnerError::task_invocation("missing inline apply hook".to_owned()))
+            .and_then(|inline_task| {
+                crate::runner::execute::api::run_inline_task_with_cwd_and_env(
+                    inline_task,
+                    repo_root.to_path_buf(),
+                    "state apply inline hook",
+                    &hook_env,
+                )
+            }),
+    };
+    match result {
         Ok(output) => {
             layer.hook_status = Some(StateStackApplyHookStatus::Executed);
             layer.hook_output = Some(output);
@@ -569,6 +603,43 @@ fn load_composed_manifest_stack(
     select_manifest_state_stack(config, stack)
 }
 
+#[derive(Debug)]
+struct ResolvedStateStackForApply {
+    manifest: StateStackManifest,
+    hooks: BTreeMap<String, ManifestStateTaskDefinition>,
+}
+
+fn resolve_state_stack_for_apply(
+    manifest: Option<&Path>,
+    stack: Option<&str>,
+    invocation_cwd: &Path,
+    repo_root: &Path,
+) -> Result<ResolvedStateStackForApply, RunnerError> {
+    if manifest.is_some() {
+        return Ok(ResolvedStateStackForApply {
+            manifest: resolve_state_stack_manifest(manifest, stack, invocation_cwd, repo_root)?,
+            hooks: BTreeMap::new(),
+        });
+    }
+    let manifest_path = repo_root.join(effigy_manifest::TASK_MANIFEST_FILE);
+    let loaded = load_task_manifest_with_inspection(&manifest_path)?;
+    let state_value = loaded
+        .effective_value
+        .get("state")
+        .cloned()
+        .ok_or_else(|| {
+            RunnerError::task_invocation(
+                "no `[state]` section found in the composed manifest; add `[state.stacks.<name>]` or pass `effigy state plan <MANIFEST>` for a standalone state-stack manifest".to_owned(),
+            )
+        })?;
+    let config: ManifestStateConfig = state_value.try_into().map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to parse composed `[state]` config: {error}"
+        ))
+    })?;
+    select_manifest_state_stack_for_apply(config, stack)
+}
+
 fn select_manifest_state_stack(
     mut config: ManifestStateConfig,
     stack: Option<&str>,
@@ -595,6 +666,40 @@ fn select_manifest_state_stack(
     stacks
         .remove(&selected)
         .map(ManifestStateStackConfig::into_manifest)
+        .ok_or_else(|| {
+            RunnerError::task_invocation(format!(
+                "state stack `{selected}` is not defined in `[state]`; available stacks: {}",
+                stacks.keys().cloned().collect::<Vec<_>>().join(", ")
+            ))
+        })
+}
+
+fn select_manifest_state_stack_for_apply(
+    mut config: ManifestStateConfig,
+    stack: Option<&str>,
+) -> Result<ResolvedStateStackForApply, RunnerError> {
+    let mut stacks = config.stacks;
+    stacks.append(&mut config.named_stacks);
+    let selected = if let Some(stack) = stack {
+        stack.to_owned()
+    } else if let Some(default_stack) = config.default.clone().or(config.default_stack.clone()) {
+        default_stack
+    } else if stacks.len() == 1 {
+        stacks.keys().next().cloned().expect("one stack")
+    } else if stacks.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "`[state]` does not define any named state stacks".to_owned(),
+        ));
+    } else {
+        return Err(RunnerError::task_invocation(format!(
+            "multiple state stacks are defined; set `state.default` or pass `--stack <NAME>`: {}",
+            stacks.keys().cloned().collect::<Vec<_>>().join(", ")
+        )));
+    };
+
+    stacks
+        .remove(&selected)
+        .map(ManifestStateStackConfig::into_apply)
         .ok_or_else(|| {
             RunnerError::task_invocation(format!(
                 "state stack `{selected}` is not defined in `[state]`; available stacks: {}",
@@ -1000,7 +1105,7 @@ struct ManifestStateStackConfig {
     schema: String,
     name: String,
     environment: effigy_state::StateEnvironment,
-    layers: Vec<effigy_state::StateStackLayer>,
+    layers: Vec<ManifestStateStackLayerConfig>,
     #[serde(default)]
     captures: BTreeMap<String, ManifestStateCaptureProfile>,
     #[serde(default)]
@@ -1022,8 +1127,92 @@ impl ManifestStateStackConfig {
             schema,
             name,
             environment,
-            layers,
+            layers: layers
+                .into_iter()
+                .map(ManifestStateStackLayerConfig::into_layer)
+                .collect(),
         }
+    }
+
+    fn into_apply(self) -> ResolvedStateStackForApply {
+        let mut hooks = BTreeMap::new();
+        let layers = self
+            .layers
+            .into_iter()
+            .map(|layer| {
+                let key = layer.key.clone();
+                let (state_layer, hook_definition) = layer.into_layer_and_hook();
+                if let Some(definition) = hook_definition {
+                    hooks.insert(key, definition);
+                }
+                state_layer
+            })
+            .collect();
+        ResolvedStateStackForApply {
+            manifest: StateStackManifest {
+                schema: self.schema,
+                name: self.name,
+                environment: self.environment,
+                layers,
+            },
+            hooks,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestStateStackLayerConfig {
+    key: String,
+    role: StateLayerRole,
+    source: String,
+    apply_mode: StateLayerApplyMode,
+    environment_policy: effigy_state::StateLayerEnvironmentPolicy,
+    #[serde(default)]
+    depends_on: Vec<String>,
+    #[serde(default)]
+    artifact_kind: Option<effigy_artifacts::ArtifactKind>,
+    #[serde(default)]
+    snapshot_identity: Option<String>,
+    #[serde(default)]
+    hook: Option<ManifestStateTaskDefinition>,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default, alias = "target")]
+    sql_target: Option<String>,
+}
+
+impl ManifestStateStackLayerConfig {
+    fn into_layer(self) -> effigy_state::StateStackLayer {
+        self.into_layer_and_hook().0
+    }
+
+    fn into_layer_and_hook(
+        self,
+    ) -> (
+        effigy_state::StateStackLayer,
+        Option<ManifestStateTaskDefinition>,
+    ) {
+        let hook_label = self
+            .hook
+            .as_ref()
+            .map(ManifestStateTaskDefinition::report_name);
+        (
+            effigy_state::StateStackLayer {
+                key: self.key,
+                role: self.role,
+                source: self.source,
+                apply_mode: self.apply_mode,
+                environment_policy: self.environment_policy,
+                depends_on: self.depends_on,
+                artifact_kind: self.artifact_kind,
+                snapshot_identity: self.snapshot_identity,
+                hook: hook_label,
+                notes: self.notes,
+                sql_target: self.sql_target,
+            },
+            self.hook,
+        )
     }
 }
 
@@ -1042,9 +1231,38 @@ struct ManifestStateCaptureProfile {
     #[serde(default)]
     hook: Option<String>,
     #[serde(default)]
-    task: Option<String>,
+    task: Option<ManifestStateTaskDefinition>,
     #[serde(default)]
     push: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum ManifestStateTaskDefinition {
+    Reference(String),
+    Run(ManifestManagedRun),
+    Task(Box<ManifestTask>),
+}
+
+impl ManifestStateTaskDefinition {
+    fn report_name(&self) -> String {
+        match self {
+            Self::Reference(name) => name.clone(),
+            Self::Run(_) | Self::Task(_) => "<inline>".to_owned(),
+        }
+    }
+
+    fn into_manifest_task(self) -> Option<ManifestTask> {
+        match self {
+            Self::Reference(_) => None,
+            Self::Run(run) => Some(ManifestTask {
+                run: Some(run),
+                run_in: Some(effigy_manifest::ManifestTaskRunIn::Host),
+                ..Default::default()
+            }),
+            Self::Task(task) => Some(*task),
+        }
+    }
 }
 
 fn parse_state_history_kind(kind: &str) -> Result<StateHistoryKind, RunnerError> {
@@ -1064,7 +1282,7 @@ struct StateCaptureRequest {
     source: Option<String>,
     destination_ref: Option<String>,
     hook: Option<String>,
-    task: Option<String>,
+    task: Option<ManifestStateTaskDefinition>,
     yes: bool,
     push: bool,
 }
@@ -1177,17 +1395,17 @@ impl StateStackCaptureReport {
                     .to_owned(),
             );
         }
-        let mut tasks = request
-            .task
-            .clone()
-            .into_iter()
-            .map(|name| StateStackCaptureTask {
-                name,
+        let capture_task = request.task.clone();
+        let mut tasks = capture_task
+            .as_ref()
+            .map(|definition| StateStackCaptureTask {
+                name: definition.report_name(),
                 status: StateStackCaptureTaskStatus::Planned,
                 context_path: None,
                 output: None,
                 error: None,
             })
+            .into_iter()
             .collect::<Vec<_>>();
         if request.yes {
             let context_path = if tasks.is_empty() {
@@ -1203,22 +1421,42 @@ impl StateStackCaptureReport {
             };
             for task in &mut tasks {
                 task.context_path.clone_from(&context_path);
-                match crate::runner::execute::api::run_manifest_task_with_surface_and_env(
-                    &TaskInvocation {
-                        name: task.name.clone(),
-                        args: Vec::new(),
-                    },
-                    repo_root.to_path_buf(),
-                    ExecutionSurface::DirectCli,
-                    &state_capture_task_env(
-                        repo_root,
-                        lineage,
-                        &request,
-                        capture_role,
-                        capture_mode,
-                        context_path.as_deref(),
-                    ),
-                ) {
+                let task_env = state_capture_task_env(
+                    repo_root,
+                    lineage,
+                    &request,
+                    capture_role,
+                    capture_mode,
+                    context_path.as_deref(),
+                );
+                let result = match capture_task.clone() {
+                    Some(ManifestStateTaskDefinition::Reference(name)) => {
+                        crate::runner::execute::api::run_manifest_task_with_surface_and_env(
+                            &TaskInvocation {
+                                name,
+                                args: Vec::new(),
+                            },
+                            repo_root.to_path_buf(),
+                            ExecutionSurface::DirectCli,
+                            &task_env,
+                        )
+                    }
+                    Some(definition) => {
+                        let inline_task = definition.into_manifest_task().ok_or_else(|| {
+                            RunnerError::task_invocation("missing inline capture task".to_owned())
+                        });
+                        inline_task.and_then(|inline_task| {
+                            crate::runner::execute::api::run_inline_task_with_cwd_and_env(
+                                inline_task,
+                                repo_root.to_path_buf(),
+                                "state capture inline task",
+                                &task_env,
+                            )
+                        })
+                    }
+                    None => Ok(String::new()),
+                };
+                match result {
                     Ok(output) => {
                         task.status = StateStackCaptureTaskStatus::Executed;
                         task.output = Some(output);
@@ -1948,6 +2186,49 @@ hook = "apply-hook"
             fs::read_to_string(repo.join("state-secret.txt")).expect("read marker"),
             "state_secret"
         );
+    }
+
+    #[test]
+    fn state_apply_accepts_inline_hook_task_in_composed_manifest() {
+        let repo = temp_repo("apply-inline-hook");
+        fs::write(repo.join("payload.txt"), "payload\n").expect("write payload");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[state]
+
+[state.uat]
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[state.uat.layers]]
+key = "legacy-media"
+role = "media-library"
+source = "./payload.txt"
+apply_mode = "artifact"
+environment_policy = "all"
+artifact_kind = "object-store"
+target = "media"
+hook = [{ run = "sh -lc 'printf \"%s\" \"$EFFIGY_STATE_APPLY_CONTEXT\" > inline-hook-path.txt'" }]
+"#,
+        )
+        .expect("write effigy manifest");
+
+        let rendered =
+            run_state_apply(None, Some("uat"), &repo, &repo, true, true).expect("run state apply");
+        let report: Value = serde_json::from_str(&rendered).expect("parse apply report");
+        let layer = &report["layers"][0];
+
+        assert_eq!(report["ok"], true);
+        assert_eq!(layer["status"], "staged");
+        assert_eq!(layer["hook"], "<inline>");
+        assert_eq!(layer["hook_status"], "executed");
+        let hook_context_path = fs::read_to_string(repo.join("inline-hook-path.txt"))
+            .expect("read hook path marker")
+            .trim()
+            .to_owned();
+        assert_eq!(layer["hook_context_path"], hook_context_path);
     }
 
     #[test]
