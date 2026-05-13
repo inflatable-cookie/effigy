@@ -1,6 +1,7 @@
 use crate::runner::tests::prelude::{
-    assert_run_array_builtin_test_task_ref_case_table, assert_run_array_task_output_case_table,
-    assert_run_array_task_output_derived_case_table, assert_run_array_validate_marker_case_table,
+    assert_file_text_equals, assert_run_array_builtin_test_task_ref_case_table,
+    assert_run_array_task_output_case_table, assert_run_array_task_output_derived_case_table,
+    assert_run_array_validate_marker_case_table,
     assert_run_array_validate_task_ref_parse_error_case_table, fs, run_validate_ok, temp_workspace,
     write_capture_task_ref_validate_manifest, write_catalog_builtin_test_suite_manifest,
     write_manifest, write_validate_manifest, write_validate_manifest_template,
@@ -36,6 +37,29 @@ run = [{ task = "catalog_a/test" }, "printf validate-ok"]
 "#,
     );
     write_catalog_builtin_test_suite_manifest(root, "catalog_a", "catalog_a", "unit", marker);
+}
+
+fn setup_prefixed_task_ref_cwd(root: &Path, marker: &Path) {
+    write_validate_manifest(
+        root,
+        r#"[tasks.validate]
+run = [{ task = "catalog_a/capture-cwd" }]
+"#,
+    );
+    let catalog_a = root.join("catalog_a");
+    fs::create_dir_all(&catalog_a).expect("mkdir catalog");
+    write_manifest(
+        &catalog_a.join("effigy.toml"),
+        &format!(
+            r#"[catalog]
+alias = "catalog_a"
+
+[tasks.capture-cwd]
+run = "pwd > '{}'"
+"#,
+            marker.display()
+        ),
+    );
 }
 
 fn setup_task_ref_referenced_task_env(root: &Path, marker: &Path) {
@@ -197,6 +221,21 @@ fn run_manifest_task_run_array_supports_prefixed_builtin_test_task_reference_ste
     }];
 
     assert_run_array_validate_marker_case_table(&cases);
+}
+
+#[test]
+fn run_manifest_task_run_array_prefixed_task_reference_uses_selected_catalog_cwd() {
+    let root = temp_workspace("run-array-prefixed-task-ref-cwd");
+    let marker = root.join("cwd.log");
+    setup_prefixed_task_ref_cwd(&root, &marker);
+
+    run_validate_ok(&root, &[]);
+
+    let expected = fs::canonicalize(root.join("catalog_a"))
+        .expect("canonicalize catalog")
+        .display()
+        .to_string();
+    assert_file_text_equals(&marker, &format!("{expected}\n"));
 }
 
 #[test]

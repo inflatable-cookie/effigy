@@ -14,6 +14,7 @@ use effigy_managed::{
     build_run_sequence_schedule, render_step_command_template, StepEnvAccumulator,
 };
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, TaskSelection};
+use effigy_routing::select_catalog_and_task;
 use effigy_tasks::{parse_task_reference_invocation, render_task_selector};
 
 use super::super::cache::ops::update_task_cache_entry;
@@ -594,7 +595,11 @@ fn resolve_task_step(
         name: render_task_selector(&selector),
         args,
     };
-    let cwd = preflight.invocation_cwd.clone();
+    let cwd = select_catalog_and_task(&selector, &preflight.catalogs, &preflight.invocation_cwd)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        .catalog
+        .catalog_root
+        .clone();
     Ok(StepAction::Task { invocation, cwd })
 }
 

@@ -858,6 +858,7 @@ pub enum StateStackApplyLayerStatus {
     Executed,
     Staged,
     Imported,
+    Skipped,
     Unsupported,
     Failed,
 }
@@ -874,6 +875,7 @@ impl fmt::Display for StateStackApplyLayerStatus {
             Self::Executed => "executed",
             Self::Staged => "staged",
             Self::Imported => "imported",
+            Self::Skipped => "skipped",
             Self::Unsupported => "unsupported",
             Self::Failed => "failed",
         };

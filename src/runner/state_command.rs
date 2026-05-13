@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -40,12 +40,14 @@ pub(super) fn run_state(args: StateArgs) -> Result<String, RunnerError> {
             manifest,
             stack,
             yes,
+            skip_layers,
         } => run_state_apply(
             manifest.as_deref(),
             stack.as_deref(),
             &context.invocation_cwd,
             &context.resolved.resolved_root,
             yes,
+            &skip_layers,
             args.output_json,
         ),
         StateSubcommand::Capture {
@@ -155,6 +157,7 @@ fn run_state_apply(
     invocation_cwd: &Path,
     repo_root: &Path,
     execute: bool,
+    skip_layers: &[String],
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let resolved = resolve_state_stack_for_apply(manifest, stack, invocation_cwd, repo_root)?;
@@ -164,6 +167,7 @@ fn run_state_apply(
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
         .report("planned");
     let mut report = StateStackApplyReport::from_lineage(&lineage, execute);
+    mark_skipped_state_apply_layers(&mut report, skip_layers)?;
 
     if execute {
         validate_sql_layers(repo_root, &report.layers)?;
@@ -283,12 +287,62 @@ fn run_state_apply(
     report.written_history_path = Some(path_display(&paths.history_path, repo_root));
     write_state_report(repo_root, &paths, &report)?;
 
+    if execute && !report.ok {
+        let report_path = report
+            .written_report_path
+            .as_deref()
+            .unwrap_or("<not written>");
+        return Err(RunnerError::task_invocation(format!(
+            "state apply failed; report: {report_path}"
+        )));
+    }
+
     if output_json {
         return serde_json::to_string(&report)
             .map_err(|error| RunnerError::task_invocation(error.to_string()));
     }
 
     Ok(render_state_apply_text(&report))
+}
+
+fn mark_skipped_state_apply_layers(
+    report: &mut StateStackApplyReport,
+    skip_layers: &[String],
+) -> Result<(), RunnerError> {
+    if skip_layers.is_empty() {
+        return Ok(());
+    }
+
+    let known_layers = report
+        .layers
+        .iter()
+        .map(|layer| layer.key.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut unknown_layers = skip_layers
+        .iter()
+        .filter(|layer| !known_layers.contains(layer.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    unknown_layers.sort();
+    unknown_layers.dedup();
+    if !unknown_layers.is_empty() {
+        return Err(RunnerError::task_invocation(format!(
+            "state apply skip layer(s) not found: {}",
+            unknown_layers.join(", ")
+        )));
+    }
+
+    let skip_layers = skip_layers
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    for layer in &mut report.layers {
+        if skip_layers.contains(layer.key.as_str()) {
+            layer.status = StateStackApplyLayerStatus::Skipped;
+        }
+    }
+
+    Ok(())
 }
 
 fn execute_state_apply_hook(
@@ -1778,7 +1832,7 @@ fn write_state_apply_hook_context(
             path_display(&absolute_path, repo_root)
         ))
     })?;
-    Ok(path_display(&absolute_path, repo_root))
+    Ok(absolute_path.display().to_string())
 }
 
 #[derive(Debug, Serialize)]
@@ -2089,6 +2143,7 @@ hook = "apply-hook"
             &repo,
             &repo,
             true,
+            &[],
             true,
         )
         .expect("run state apply");
@@ -2178,6 +2233,7 @@ hook = "apply-hook"
             &repo,
             &repo,
             true,
+            &[],
             true,
         )
         .expect("run state apply");
@@ -2215,8 +2271,8 @@ hook = [{ run = "sh -lc 'printf \"%s\" \"$EFFIGY_STATE_APPLY_CONTEXT\" > inline-
         )
         .expect("write effigy manifest");
 
-        let rendered =
-            run_state_apply(None, Some("uat"), &repo, &repo, true, true).expect("run state apply");
+        let rendered = run_state_apply(None, Some("uat"), &repo, &repo, true, &[], true)
+            .expect("run state apply");
         let report: Value = serde_json::from_str(&rendered).expect("parse apply report");
         let layer = &report["layers"][0];
 
@@ -2229,6 +2285,107 @@ hook = [{ run = "sh -lc 'printf \"%s\" \"$EFFIGY_STATE_APPLY_CONTEXT\" > inline-
             .trim()
             .to_owned();
         assert_eq!(layer["hook_context_path"], hook_context_path);
+    }
+
+    #[test]
+    fn state_apply_can_skip_selected_layers() {
+        let repo = temp_repo("apply-skip-layer");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[state]
+
+[state.uat]
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[state.uat.layers]]
+key = "structure"
+role = "structure"
+source = "schema"
+apply_mode = "task"
+environment_policy = "all"
+
+[[state.uat.layers]]
+key = "overlay"
+role = "dev-overlay"
+source = "overlay"
+apply_mode = "task"
+environment_policy = "all"
+
+[tasks.schema]
+run = "sh -lc 'echo schema > schema-ran.txt'"
+
+[tasks.overlay]
+run = "sh -lc 'echo overlay > overlay-ran.txt'"
+"#,
+        )
+        .expect("write effigy manifest");
+
+        let rendered = run_state_apply(
+            None,
+            Some("uat"),
+            &repo,
+            &repo,
+            true,
+            &["structure".to_owned()],
+            true,
+        )
+        .expect("run state apply");
+        let report: Value = serde_json::from_str(&rendered).expect("parse apply report");
+
+        assert_eq!(report["ok"], true);
+        assert_eq!(report["layers"][0]["status"], "skipped");
+        assert_eq!(report["layers"][1]["status"], "executed");
+        assert!(!repo.join("schema-ran.txt").exists());
+        assert_eq!(
+            fs::read_to_string(repo.join("overlay-ran.txt")).expect("read overlay marker"),
+            "overlay\n"
+        );
+    }
+
+    #[test]
+    fn state_apply_rejects_unknown_skip_layers() {
+        let repo = temp_repo("apply-skip-layer-missing");
+        fs::write(
+            repo.join("effigy.toml"),
+            r#"
+[state]
+
+[state.uat]
+schema = "effigy.state-stack.v1"
+name = "acowtancy-uat"
+environment = "uat"
+
+[[state.uat.layers]]
+key = "structure"
+role = "structure"
+source = "schema"
+apply_mode = "task"
+environment_policy = "all"
+
+[tasks.schema]
+run = "sh -lc 'echo schema > schema-ran.txt'"
+"#,
+        )
+        .expect("write effigy manifest");
+
+        let error = run_state_apply(
+            None,
+            Some("uat"),
+            &repo,
+            &repo,
+            true,
+            &["missing".to_owned()],
+            true,
+        )
+        .expect_err("unknown skipped layer should fail");
+
+        assert!(error
+            .to_string()
+            .contains("state apply skip layer(s) not found: missing"));
+        assert!(!repo.join("schema-ran.txt").exists());
     }
 
     #[test]
@@ -2263,15 +2420,22 @@ hook = "apply-hook"
         )
         .expect("write state manifest");
 
-        let rendered = run_state_apply(
+        let error = run_state_apply(
             Some(Path::new("state.toml")),
             None,
             &repo,
             &repo,
             true,
+            &[],
             true,
         )
-        .expect("run state apply");
+        .expect_err("failed hook should fail state apply");
+        assert!(error.to_string().contains("state apply failed"));
+
+        let rendered = fs::read_to_string(
+            repo.join(".effigy/reports/state/acowtancy-uat/latest-apply.json"),
+        )
+        .expect("read failed apply report");
         let report: Value = serde_json::from_str(&rendered).expect("parse apply report");
         let layer = &report["layers"][0];
 

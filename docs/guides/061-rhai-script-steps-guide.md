@@ -160,6 +160,9 @@ Current v1 helpers:
   - `state::capture_context_path()`
   - `state::capture_source()`
   - `state::capture_destination_ref()`
+- state apply hook context helpers:
+  - `state::apply_context()`
+  - `state::apply_context_path()`
 - artifact helpers:
   - `artifact::inspect(options_map)`
   - `artifact::stage(options_map)`

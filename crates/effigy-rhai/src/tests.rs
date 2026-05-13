@@ -776,6 +776,51 @@ fn execute_rhai_script_exposes_state_capture_context_helpers() {
 }
 
 #[test]
+fn execute_rhai_script_exposes_state_apply_context_helpers() {
+    let root = temp_root("state-apply-context");
+    let context_path = root.join(".effigy/state/apply-context/acowtancy-uat/legacy-media.json");
+    fs::create_dir_all(context_path.parent().unwrap()).expect("context dir");
+    fs::write(
+        &context_path,
+        r#"{
+  "schema": "effigy.state-stack.apply-context.v1",
+  "schema_version": 1,
+  "stack_name": "acowtancy-uat",
+  "layer": {
+    "key": "legacy-media",
+    "artifact_report": {
+      "metadata": {
+        "primary_files": ["/tmp/media.oci"]
+      }
+    }
+  }
+}
+"#,
+    )
+    .expect("context");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "state:hook:legacy-media".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let _env = ScopedTestEnv::set_many(&[(
+        "EFFIGY_STATE_APPLY_CONTEXT",
+        ".effigy/state/apply-context/acowtancy-uat/legacy-media.json".to_owned(),
+    )]);
+    let script = r#"
+        let context = state::apply_context();
+        if context["stack_name"] != "acowtancy-uat" { throw("stack"); }
+        if context["layer"]["key"] != "legacy-media" { throw("layer"); }
+        if context["layer"]["artifact_report"]["metadata"]["primary_files"][0] != "/tmp/media.oci" { throw("artifact"); }
+        if !str::ends_with(state::apply_context_path(), "/.effigy/state/apply-context/acowtancy-uat/legacy-media.json") { throw("context path"); }
+    "#;
+
+    execute_rhai_script_with_runtime_context(&context, None, script, &[], &callbacks())
+        .expect("execute");
+}
+
+#[test]
 fn execute_rhai_script_exposes_deploy_provider_context_and_report_helpers() {
     let root = temp_root("deploy-provider-context");
     let context_path = root.join(".effigy/runtime/deploy/provider/context.json");

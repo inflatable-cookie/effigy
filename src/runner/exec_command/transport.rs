@@ -331,6 +331,8 @@ pub(super) fn run_command_capture_allow_failure_with_stdin(
                 error,
             })?;
         command.stdin(Stdio::from(file));
+    } else {
+        command.stdin(Stdio::null());
     }
     command
         .output()

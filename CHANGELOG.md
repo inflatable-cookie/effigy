@@ -57,6 +57,10 @@ During v0.x, MINOR bumps may include breaking changes.
 - **State apply layer skipping:** `effigy state apply <STACK> --skip-layer
   <KEY>` can now leave named layers as `skipped` in the apply report, letting
   wrapper workflows pre-run prerequisite layers without duplicating work.
+- **Rhai state apply context helpers:** state apply hooks can now call
+  `state::apply_context()` and `state::apply_context_path()` to consume the
+  structured layer handoff without reading `EFFIGY_STATE_APPLY_CONTEXT`
+  manually.
 - **Rhai path parent helper:** Rhai scripts can now call `path::parent(...)`
   instead of carrying app-local dirname helpers.
 

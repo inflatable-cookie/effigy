@@ -141,6 +141,37 @@ fn build_state_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> 
             .map(|path| path.display().to_string())
         },
     );
+    let apply_context_reader = context.clone();
+    module.set_native_fn(
+        "apply_context",
+        move || -> Result<Dynamic, Box<EvalAltResult>> {
+            let path = required_state_path_env(
+                &apply_context_reader.cwd,
+                "EFFIGY_STATE_APPLY_CONTEXT",
+            )?;
+            let contents = std::fs::read_to_string(&path).map_err(|error| {
+                rhai_runtime_error(format!(
+                    "failed to read state apply context `{}`: {error}",
+                    path.display()
+                ))
+            })?;
+            let value = serde_json::from_str::<Value>(&contents).map_err(|error| {
+                rhai_runtime_error(format!(
+                    "failed to parse state apply context `{}`: {error}",
+                    path.display()
+                ))
+            })?;
+            Ok(json_to_dynamic(value))
+        },
+    );
+    let apply_context_path_reader = context.clone();
+    module.set_native_fn(
+        "apply_context_path",
+        move || -> Result<String, Box<EvalAltResult>> {
+            required_state_path_env(&apply_context_path_reader.cwd, "EFFIGY_STATE_APPLY_CONTEXT")
+                .map(|path| path.display().to_string())
+        },
+    );
     module.set_native_fn(
         "capture_source",
         || -> Result<String, Box<EvalAltResult>> {

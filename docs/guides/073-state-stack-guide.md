@@ -129,10 +129,15 @@ effigy state apply uat
 
 # Execute the stack
 effigy state apply uat --yes
+
+# Execute while skipping a prerequisite layer already run by a wrapper task
+effigy state apply uat --yes --skip-layer structure
 ```
 
 Apply runs layers in order. Failures stop later layers. Reports are written to
-`.effigy/reports/state/<stack>/`.
+`.effigy/reports/state/<stack>/`. Skipped layers remain visible in the apply
+report with `status = "skipped"` so wrapper workflows can avoid duplicate work
+without hiding stack lineage.
 
 ### Capture
 

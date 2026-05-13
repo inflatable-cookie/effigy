@@ -153,6 +153,7 @@ fn parse_state_apply_plan_only() {
                 manifest: None,
                 stack: None,
                 yes: false,
+                skip_layers: Vec::new(),
             },
             repo_override: None,
             output_json: false,
@@ -179,6 +180,7 @@ fn parse_state_apply_with_stack_yes_and_json() {
                 manifest: None,
                 stack: Some("uat".to_owned()),
                 yes: true,
+                skip_layers: Vec::new(),
             },
             repo_override: None,
             output_json: true,
@@ -202,6 +204,35 @@ fn parse_state_apply_with_positional_stack() {
                 manifest: None,
                 stack: Some("uat".to_owned()),
                 yes: false,
+                skip_layers: Vec::new(),
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_state_apply_with_skip_layers() {
+    let cmd = parse_command(vec![
+        "state".to_owned(),
+        "apply".to_owned(),
+        "uat".to_owned(),
+        "--skip-layer".to_owned(),
+        "structure".to_owned(),
+        "--skip-layer".to_owned(),
+        "dev-overlay".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::State(StateArgs {
+            subcommand: StateSubcommand::Apply {
+                manifest: None,
+                stack: Some("uat".to_owned()),
+                yes: false,
+                skip_layers: vec!["structure".to_owned(), "dev-overlay".to_owned()],
             },
             repo_override: None,
             output_json: false,

@@ -182,12 +182,21 @@ where
     let mut manifest: Option<PathBuf> = None;
     let mut stack: Option<String> = None;
     let mut yes = false;
+    let mut skip_layers = Vec::new();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
             "--yes" => yes = true,
+            "--skip-layer" => {
+                skip_layers.push(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--skip-layer".to_owned(),
+                    },
+                )?);
+            }
             "--manifest" => {
                 manifest = Some(PathBuf::from(next_required_value(
                     &mut args,
@@ -226,6 +235,7 @@ where
             manifest,
             stack,
             yes,
+            skip_layers,
         },
         repo_override,
         output_json,

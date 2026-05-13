@@ -362,6 +362,7 @@ fn run_rhai_feature(
                     manifest: path_option(&options, "manifest")?,
                     stack: string_option(&options, "stack")?,
                     yes: bool_option(&options, "yes")?.unwrap_or(true),
+                    skip_layers: string_array(&options, "skip_layers")?,
                 },
                 repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
