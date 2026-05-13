@@ -387,6 +387,102 @@ run = "sh -lc 'printf %s \"$DATABASE_URL\" > \"{}\"'"
 }
 
 #[test]
+fn run_manifest_task_required_secrets_generate_missing_vault_before_spawn() {
+    let root = temp_workspace("task-vault-secret-generate-missing-vault");
+    let marker = root.join("generated-secret.out");
+    write_root_manifest(
+        &root,
+        &format!(
+            r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+generate = {{ task = "secrets:generate-dev" }}
+
+[secrets.keys.api_token]
+required = true
+targets = ["tasks"]
+
+[tasks.capture]
+run = "sh -lc 'printf %s \"$API_TOKEN\" > \"{}\"'"
+secrets = "required"
+
+[tasks."secrets:generate-dev"]
+run = [
+  {{ task = "secrets init" }},
+  {{ task = "secrets set api_token" }},
+]
+"#,
+            marker.display()
+        ),
+    );
+    let _env = EnvGuard::set_many(&[
+        (
+            "EFFIGY_TEST_SECRETS_PASSPHRASE",
+            Some("vault-passphrase".to_owned()),
+        ),
+        (
+            "EFFIGY_TEST_SECRETS_VALUE",
+            Some("tok_generated".to_owned()),
+        ),
+    ]);
+
+    assert_run_task_ok_empty(&root, "capture", &[]);
+    assert_file_text_equals(&marker, "tok_generated");
+}
+
+#[test]
+fn run_manifest_task_required_secrets_generate_missing_key_in_existing_vault() {
+    let root = temp_workspace("task-vault-secret-generate-missing-key");
+    let marker = root.join("generated-secret-existing-vault.out");
+    write_root_manifest(
+        &root,
+        &format!(
+            r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+generate = {{ task = "secrets:generate-dev" }}
+
+[secrets.keys.api_token]
+required = true
+targets = ["tasks"]
+
+[tasks.capture]
+run = "sh -lc 'printf %s \"$API_TOKEN\" > \"{}\"'"
+secrets = "required"
+
+[tasks."secrets:generate-dev"]
+run = {{ task = "secrets set api_token" }}
+"#,
+            marker.display()
+        ),
+    );
+    write_test_vault(&root, "vault-passphrase", &[]);
+    let _env = EnvGuard::set_many(&[
+        (
+            "EFFIGY_TEST_SECRETS_PASSPHRASE",
+            Some("vault-passphrase".to_owned()),
+        ),
+        (
+            "EFFIGY_TEST_SECRETS_VALUE",
+            Some("tok_generated".to_owned()),
+        ),
+    ]);
+
+    assert_run_task_ok_empty(&root, "capture", &[]);
+    assert_file_text_equals(&marker, "tok_generated");
+}
+
+#[test]
 fn run_manifest_task_skips_unreferenced_required_vault_secret_for_shell_task() {
     let root = temp_workspace("task-vault-secret-unreferenced");
     let marker = root.join("unrelated-task.out");

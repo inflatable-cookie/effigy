@@ -19,6 +19,8 @@ use crate::runner::render::render_command_result;
 
 use super::error::RunnerError;
 
+const TASK_SECRET_GENERATION_ACTIVE_ENV: &str = "EFFIGY_INTERNAL_TASK_SECRET_GENERATION_ACTIVE";
+
 pub(super) fn run_secrets(args: SecretsArgs) -> Result<String, RunnerError> {
     let resolved = resolve_active_repo_root(args.repo_override.clone())?;
     let repo_root = resolved.resolved_root;
@@ -102,6 +104,17 @@ fn run_secrets_init(
 ) -> Result<String, RunnerError> {
     let vault_path = resolve_vault_path(repo_root, secrets)?;
     if vault_path.exists() {
+        if std::env::var_os(TASK_SECRET_GENERATION_ACTIVE_ENV).is_some() {
+            return render_mutation_result(
+                repo_root,
+                secrets,
+                "init",
+                None,
+                &vault_path,
+                output_json,
+                "vault already exists",
+            );
+        }
         return Err(RunnerError::task_invocation(format!(
             "secrets vault already exists at {}",
             vault_path.display()
@@ -113,6 +126,17 @@ fn run_secrets_init(
         .encrypt_with_passphrase(passphrase.expose())
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     write_vault_file(&vault_path, &envelope)?;
+    if run_configured_vault_generate_task(repo_root, secrets)? {
+        return render_mutation_result(
+            repo_root,
+            secrets,
+            "init",
+            None,
+            &vault_path,
+            output_json,
+            "generated local vault via configured task",
+        );
+    }
     render_mutation_result(
         repo_root,
         secrets,
@@ -122,6 +146,56 @@ fn run_secrets_init(
         output_json,
         "created empty vault",
     )
+}
+
+pub(in crate::runner) fn run_configured_vault_generate_task(
+    repo_root: &Path,
+    secrets: Option<&ManifestSecretsConfig>,
+) -> Result<bool, RunnerError> {
+    if std::env::var_os(TASK_SECRET_GENERATION_ACTIVE_ENV).is_some() {
+        return Ok(false);
+    }
+    let Some(generate) = secrets
+        .and_then(|secrets| secrets.vault.as_ref())
+        .and_then(|vault| vault.generate.as_ref())
+        .cloned()
+    else {
+        return Ok(false);
+    };
+    if generate.run.is_none() && generate.task.is_none() && generate.rhai.is_none() {
+        return Err(RunnerError::task_invocation(
+            "`[secrets.vault].generate` must define `task`, `run`, or `rhai`",
+        ));
+    }
+    // SAFETY: this scoped mutation is process-local and restored by `ScopedVaultGenerateTask`.
+    unsafe {
+        std::env::set_var(TASK_SECRET_GENERATION_ACTIVE_ENV, "1");
+    }
+    let _guard = ScopedVaultGenerateTask;
+    crate::runner::execute::api::run_inline_task_with_cwd_and_env(
+        generate.into_manifest_task(),
+        repo_root.to_path_buf(),
+        "secrets vault generate task",
+        &std::collections::BTreeMap::new(),
+    )
+    .map(|_| true)
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "task secret generation failed via `[secrets.vault].generate`: {error}"
+        ))
+    })
+}
+
+struct ScopedVaultGenerateTask;
+
+impl Drop for ScopedVaultGenerateTask {
+    fn drop(&mut self) {
+        // SAFETY: this scoped mutation is process-local and paired with the set in
+        // `run_configured_vault_generate_task`.
+        unsafe {
+            std::env::remove_var(TASK_SECRET_GENERATION_ACTIVE_ENV);
+        }
+    }
 }
 
 fn run_secrets_change_passphrase(

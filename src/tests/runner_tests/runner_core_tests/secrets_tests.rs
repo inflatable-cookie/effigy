@@ -128,6 +128,62 @@ fn secrets_init_creates_empty_encrypted_vault() {
 }
 
 #[test]
+fn secrets_init_runs_configured_generate_task_when_present() {
+    let root = temp_workspace("secrets-init-generate");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        root.join("scripts/generate-dev-secrets.rhai"),
+        r#"secrets::set("database_url", "postgres://secret-value");"#,
+    )
+    .expect("write generator script");
+    write_root_manifest(
+        &root,
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+generate = { rhai = "scripts/generate-dev-secrets.rhai", run_in = "host" }
+
+[secrets.keys.database_url]
+required = false
+targets = ["rhai"]
+"#,
+    );
+    let _env = secret_test_env("vault-passphrase", None);
+
+    let out = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Init,
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("init should succeed");
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
+    assert_eq!(parsed["action"].as_str(), Some("init"));
+    assert_eq!(
+        parsed["summary"].as_str(),
+        Some("generated local vault via configured task")
+    );
+    let envelope = read_test_vault(&root.join(".effigy/secrets/local.vault"));
+    let decrypted = envelope
+        .decrypt_with_passphrase("vault-passphrase")
+        .expect("decrypt");
+    assert_eq!(
+        decrypted
+            .records
+            .get("database_url")
+            .expect("record")
+            .value
+            .expose(),
+        "postgres://secret-value"
+    );
+}
+
+#[test]
 fn secrets_set_stores_declared_secret_without_printing_value() {
     let root = temp_workspace("secrets-set");
     write_root_manifest(&root, declared_secrets_manifest());

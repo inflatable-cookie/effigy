@@ -59,6 +59,7 @@ backend = "effigy-vault"
 path = ".effigy/secrets/local.vault"
 identity = "ssh-agent"
 unlock = "key-and-passphrase"
+generate = { rhai = "scripts/generate-dev-secrets.rhai", run_in = "host" }
 
 [secrets.keys.database_url]
 required = true
@@ -79,6 +80,12 @@ consistent with existing manifest grammar, but the semantic model is fixed:
 - backend-specific configuration under `[secrets.<backend>]`
 - named secret declarations under `[secrets.keys.<name>]`
 - explicit consumer targets
+
+For the built-in `effigy-vault` backend, `[secrets.vault].generate` is a
+local/dev bootstrap hook only. Effigy may use it from `effigy secrets init`
+and from `secrets = "required"` task startup when a required local vault is
+missing or incomplete. It is not a generic deploy/state/artifact generation
+hook.
 
 ## Config Versus Secrets
 
@@ -119,6 +126,9 @@ novel crypto design:
 
 The MVP should support one local operator vault. Team recipient management,
 remote sharing, and hosted secret sync are future work.
+
+The built-in `effigy-vault` backend is the local/dev backend. Production or
+team-hosted secret storage remains a separate concern.
 
 ## Unlock Policy
 
@@ -182,6 +192,10 @@ effigy secrets export --format env --output <PATH> --yes
 
 The `export` command is a compatibility escape hatch, not the default runtime
 path.
+
+If `[secrets.vault].generate` is configured, `effigy secrets init` should
+create the local vault and then run that hook instead of stopping at an empty
+vault.
 
 ## `.env.schema` Relationship
 

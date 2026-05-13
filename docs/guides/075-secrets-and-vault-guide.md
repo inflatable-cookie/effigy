@@ -11,6 +11,11 @@ file. At runtime, Effigy injects declared secrets into the right consumers
 (tasks, containers, Rhai scripts, deploy hooks) without writing plaintext to
 repo files or exposing values in command output.
 
+`effigy-vault` is the local/dev backend. It is meant for operator-controlled
+development flows, not as a production hosted secret store. The optional
+`[secrets.vault].generate` hook belongs to that same boundary: local vault
+bootstrap for dev flows, not a general remote secret provisioning system.
+
 ## When To Use It
 
 Use `[secrets]` for:
@@ -42,6 +47,7 @@ backend = "effigy-vault"
 path = ".effigy/secrets/local.vault"
 identity = "ssh-agent"
 unlock = "key-and-passphrase"
+generate = { rhai = "scripts/generate-dev-secrets.rhai", run_in = "host" }
 
 [secrets.keys.database_url]
 required = true
@@ -62,6 +68,7 @@ description = "Render API key for deployment checks and apply"
 | `[secrets.vault]` | no | backend-specific config |
 | `path` | no | vault file location (default: `.effigy/secrets/local.vault`) |
 | `unlock` | no | unlock policy: `passphrase`, `key-and-passphrase`, or `external` |
+| `generate` | no | local task hook Effigy may run during `secrets = "required"` task startup when the vault is missing or incomplete |
 | `[secrets.keys.<name>]` | per-key | one block per secret |
 | `required` | no | whether the value must exist before operations that need it |
 | `targets` | yes | which consumers receive this secret at runtime |
@@ -88,7 +95,10 @@ A secret can target multiple consumers: `targets = ["tasks", "containers", "rhai
 effigy secrets init
 ```
 
-Creates the vault file if it does not exist and prints guidance.
+Creates the vault file if it does not exist and prints guidance. If
+`[secrets.vault].generate` is configured, `effigy secrets init` creates the
+local vault and then runs that configured inline hook instead of stopping at
+an empty vault.
 
 ### List declared secrets
 
@@ -182,6 +192,22 @@ secrets = "required"
 That forces declared `targets = ["tasks"]` values into the managed child
 process environment before launch, which is useful when the child commands
 expect runtime auth/env keys without spelling them out in the shell command.
+
+If `[secrets.vault].generate` is configured, Effigy may run `effigy secrets init`
+during `secrets = "required"` startup when required task-target secrets are
+missing. `secrets init` then delegates to the configured generator hook. The
+common local-dev shape is a direct Rhai script that fills repo-local defaults:
+
+```toml
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+generate = { rhai = "scripts/generate-dev-secrets.rhai", run_in = "host" }
+```
+
+This hook is only consumed from task startup. Effigy does not treat it as a
+general deploy/state/artifact generation hook.
 
 ## Use In Containers
 

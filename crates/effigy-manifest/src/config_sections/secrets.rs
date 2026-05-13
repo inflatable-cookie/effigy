@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use crate::ManifestInlineTaskDefinition;
+
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestSecretsConfig {
@@ -29,6 +31,8 @@ pub struct ManifestSecretsVaultConfig {
     pub identity: Option<ManifestSecretsVaultIdentity>,
     #[serde(default)]
     pub unlock: Option<ManifestSecretsUnlockPolicy>,
+    #[serde(default)]
+    pub generate: Option<ManifestInlineTaskDefinition>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]

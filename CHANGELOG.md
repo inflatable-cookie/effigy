@@ -26,6 +26,11 @@ During v0.x, MINOR bumps may include breaking changes.
   injected into referenced task process environments, with missing required
   values blocking before spawn only when the selected shell task actually
   references that secret env name, and captured JSON output redacted.
+- **Local vault generator hook:** `[secrets.vault].generate` can now point at
+  an inline task such as a host-side Rhai script. `effigy secrets init` and
+  `secrets = "required"` task startup use that hook to create or fill the
+  built-in local vault before launch instead of only failing on a missing or
+  incomplete vault.
 - **Scoped Rhai secret API:** Rhai scripts can now call `secrets::get(name)`,
   `secrets::has(name)`, `secrets::set(name, value)`, and
   `secrets::set_many(map)` for declared `targets = ["rhai"]` vault secrets,

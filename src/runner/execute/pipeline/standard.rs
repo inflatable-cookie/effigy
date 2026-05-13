@@ -39,6 +39,7 @@ use crate::runner::manifest::load_task_manifest;
 use crate::runner::runtime_session_context::{
     current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
 };
+use effigy_cli::{SecretsArgs, SecretsSubcommand};
 use effigy_containers::compose::compose_args;
 use effigy_containers::exec::run_compose_capture;
 use effigy_containers::load_container_policy;
@@ -507,24 +508,38 @@ pub(in crate::runner::execute) fn resolve_task_secret_env(
     }
 
     let vault_path = resolve_task_secret_vault_path(repo_root, secrets)?;
-    if !vault_path.exists() {
+    if !vault_path.exists() && eager_load {
+        crate::runner::run_command(effigy_cli::Command::Secrets(SecretsArgs {
+            subcommand: SecretsSubcommand::Init,
+            repo_override: Some(repo_root.to_path_buf()),
+            output_json: false,
+        }))?;
         if required_names.is_empty() {
             return Ok(Vec::new());
         }
-        return Err(RunnerError::task_invocation(format!(
-            "required task secrets are declared but the vault is missing at {}",
-            vault_path.display()
-        )));
+        if !vault_path.exists() {
+            return Err(RunnerError::task_invocation(format!(
+                "required task secrets are declared but the vault is missing at {}",
+                vault_path.display()
+            )));
+        }
     }
 
     let passphrase = read_task_secret_passphrase(required_names.is_empty())?;
     let Some(passphrase) = passphrase else {
         return Ok(Vec::new());
     };
-    let payload = read_task_secret_vault_payload(&vault_path, passphrase.expose())?;
+    let mut payload = read_task_secret_vault_payload(&vault_path, passphrase.expose())?;
+
+    let mut missing_required =
+        task_required_secret_names_missing_from_payload(&payload, &task_keys);
+    if !missing_required.is_empty() && eager_load {
+        maybe_generate_required_task_secrets(repo_root, secrets)?;
+        payload = read_task_secret_vault_payload(&vault_path, passphrase.expose())?;
+        missing_required = task_required_secret_names_missing_from_payload(&payload, &task_keys);
+    }
 
     let mut injected = Vec::new();
-    let mut missing_required = Vec::new();
     for (name, key) in task_keys {
         match payload.records.get(name.as_str()) {
             Some(record) => injected.push((
@@ -544,6 +559,17 @@ pub(in crate::runner::execute) fn resolve_task_secret_env(
     }
 
     Ok(injected)
+}
+
+fn task_required_secret_names_missing_from_payload(
+    payload: &VaultPlaintextPayload,
+    task_keys: &[(&String, &effigy_manifest::ManifestSecretKeyConfig)],
+) -> Vec<String> {
+    task_keys
+        .iter()
+        .filter(|(name, key)| key.required && !payload.records.contains_key(name.as_str()))
+        .map(|(name, _)| (*name).clone())
+        .collect()
 }
 
 fn task_secret_targets(extra_targets: &[String]) -> Result<Vec<ManifestSecretTarget>, RunnerError> {
@@ -587,6 +613,14 @@ fn resolve_task_secret_vault_path(
     } else {
         Ok(repo_root.join(path))
     }
+}
+
+fn maybe_generate_required_task_secrets(
+    repo_root: &Path,
+    secrets: &ManifestSecretsConfig,
+) -> Result<(), RunnerError> {
+    crate::runner::secrets_command::run_configured_vault_generate_task(repo_root, Some(secrets))
+        .map(|_| ())
 }
 
 fn read_task_secret_passphrase(optional_only: bool) -> Result<Option<SecretValue>, RunnerError> {
