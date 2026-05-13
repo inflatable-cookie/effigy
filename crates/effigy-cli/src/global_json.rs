@@ -1,4 +1,61 @@
-use crate::Command;
+use std::path::PathBuf;
+
+use crate::{unknown_argument, CliParseError, Command};
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GlobalCliOptions {
+    pub json_mode: bool,
+    pub repo_override: Option<PathBuf>,
+    pub task_verbose_root: bool,
+    pub task_env_schema: Option<PathBuf>,
+}
+
+pub fn strip_global_cli_flags(
+    args: Vec<String>,
+) -> Result<(Vec<String>, GlobalCliOptions), CliParseError> {
+    let mut stripped = Vec::with_capacity(args.len());
+    let mut options = GlobalCliOptions::default();
+    let mut args = args.into_iter();
+    let mut parsing_leading_globals = true;
+
+    while let Some(arg) = args.next() {
+        if !parsing_leading_globals {
+            stripped.push(arg);
+            stripped.extend(args);
+            break;
+        }
+
+        match arg.as_str() {
+            "--json" => options.json_mode = true,
+            "--repo" => {
+                options.repo_override = Some(PathBuf::from(args.next().ok_or(
+                    CliParseError::MissingFlagValue {
+                        flag: "--repo".to_owned(),
+                    },
+                )?));
+            }
+            "--env-schema" => {
+                options.task_env_schema = Some(PathBuf::from(args.next().ok_or(
+                    CliParseError::MissingFlagValue {
+                        flag: "--env-schema".to_owned(),
+                    },
+                )?));
+            }
+            "--verbose-root" => options.task_verbose_root = true,
+            "--" => {
+                parsing_leading_globals = false;
+                stripped.push(arg);
+            }
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => {
+                parsing_leading_globals = false;
+                stripped.push(arg);
+            }
+        }
+    }
+
+    Ok((stripped, options))
+}
 
 pub(super) fn strip_global_json_flags(args: Vec<String>) -> (Vec<String>, bool) {
     let mut stripped = Vec::with_capacity(args.len());
@@ -17,6 +74,136 @@ pub(super) fn strip_global_json_flags(args: Vec<String>) -> (Vec<String>, bool) 
         stripped.push(arg);
     }
     (stripped, json_mode)
+}
+
+pub fn apply_global_cli_options(
+    mut cmd: Command,
+    options: &GlobalCliOptions,
+) -> Result<Command, CliParseError> {
+    if let Some(repo_override) = options.repo_override.as_ref() {
+        match &mut cmd {
+            Command::Bundle(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Changelog(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Deploy(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Secrets(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Defer(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Exec(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::State(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::System(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Workspace(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Service(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Demo(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Docs(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Contracts(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Distribution(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Artifact(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Container(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Release(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Doctor(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Tasks(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
+            Command::Task(task) => {
+                if !task.args.iter().any(|arg| arg == "--repo") {
+                    task.args.insert(0, repo_override.display().to_string());
+                    task.args.insert(0, "--repo".to_owned());
+                }
+            }
+            Command::Version
+            | Command::Bootstrap(_)
+            | Command::Gateway(_)
+            | Command::InternalGateway(_)
+            | Command::InternalScriptRun(_)
+            | Command::InternalContainerLeaseReaper(_)
+            | Command::InternalHostProcessSupervise(_)
+            | Command::InternalHostProcessStop(_) => return Err(unknown_argument("--repo")),
+            Command::Help(_) => {}
+        }
+    }
+
+    if options.task_verbose_root {
+        match &mut cmd {
+            Command::Task(task) => {
+                if !task.args.iter().any(|arg| arg == "--verbose-root") {
+                    task.args.insert(0, "--verbose-root".to_owned());
+                }
+            }
+            _ => return Err(unknown_argument("--verbose-root")),
+        }
+    }
+
+    if let Some(env_schema) = options.task_env_schema.as_ref() {
+        match &mut cmd {
+            Command::Task(task) => {
+                if !task.args.iter().any(|arg| arg == "--env-schema") {
+                    task.args.insert(0, env_schema.display().to_string());
+                    task.args.insert(0, "--env-schema".to_owned());
+                }
+            }
+            _ => return Err(unknown_argument("--env-schema")),
+        }
+    }
+
+    if options.json_mode {
+        cmd = apply_global_json_flag(cmd, true);
+    }
+
+    Ok(cmd)
 }
 
 pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Command {

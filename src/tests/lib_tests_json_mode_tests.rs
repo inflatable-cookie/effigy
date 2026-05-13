@@ -1,7 +1,8 @@
 use super::prelude::{
-    apply_global_json_flag, command_requests_json, BootstrapArgs, BootstrapSubcommand, Command,
-    DemoArgs, DemoListQuery, DemoSubcommand, DeployArgs, DeploySubcommand, DoctorArgs, GatewayArgs,
-    GatewaySubcommand, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
+    apply_global_json_flag, command_requests_json, parse_command, BootstrapArgs,
+    BootstrapSubcommand, Command, DemoArgs, DemoListQuery, DemoSubcommand, DeployArgs,
+    DeploySubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, ReleaseArgs, ReleaseSubcommand,
+    TaskInvocation, TasksArgs,
 };
 
 #[test]
@@ -219,4 +220,18 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         Command::Deploy(args) => assert!(args.output_json),
         other => panic!("expected deploy command, got: {other:?}"),
     }
+}
+
+#[test]
+fn parse_command_applies_leading_json_to_builtin_commands() {
+    let command = parse_command(vec!["--json".to_owned(), "doctor".to_owned()])
+        .expect("parse should succeed");
+
+    assert!(matches!(
+        command,
+        Command::Doctor(DoctorArgs {
+            output_json: true,
+            ..
+        })
+    ));
 }

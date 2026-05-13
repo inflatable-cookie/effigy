@@ -15,6 +15,8 @@ pub mod header;
 pub mod help;
 mod value_parsing;
 
+pub use global_json::GlobalCliOptions;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Version,
@@ -1022,8 +1024,21 @@ pub fn strip_global_json_flag(args: Vec<String>) -> (Vec<String>, bool) {
     strip_global_json_flags(args)
 }
 
+pub fn strip_global_cli_flags(
+    args: Vec<String>,
+) -> Result<(Vec<String>, GlobalCliOptions), CliParseError> {
+    global_json::strip_global_cli_flags(args)
+}
+
 pub fn apply_global_json_flag(cmd: Command, json_mode: bool) -> Command {
     global_json::apply_global_json_flag(cmd, json_mode)
+}
+
+pub fn apply_global_cli_flags(
+    cmd: Command,
+    options: &GlobalCliOptions,
+) -> Result<Command, CliParseError> {
+    global_json::apply_global_cli_options(cmd, options)
 }
 
 pub fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bool {
@@ -1034,7 +1049,10 @@ pub fn parse_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
-    command_parsing::parse_command(args)
+    let args = args.into_iter().collect::<Vec<_>>();
+    let (args, options) = global_json::strip_global_cli_flags(args)?;
+    let command = command_parsing::parse_command(args)?;
+    global_json::apply_global_cli_options(command, &options)
 }
 
 fn unknown_argument(arg: impl Into<String>) -> CliParseError {

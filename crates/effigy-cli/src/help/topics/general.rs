@@ -181,7 +181,7 @@ pub(crate) fn render_general_help<R: HelpRenderer>(
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "Generic task invocations also accept `--repo <PATH>`, `--verbose-root`, and `--env-schema <PATH>` before passthrough arguments.",
+        "Global `--json` and `--repo <PATH>` now work before built-ins and task selectors. Generic task invocations also accept `--verbose-root` and `--env-schema <PATH>` before the selector.",
     )?;
     renderer.key_values(&[
         KeyValue::new("-h, --help", "Print this help panel"),

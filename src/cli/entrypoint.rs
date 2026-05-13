@@ -4,7 +4,8 @@ use crate::{
     run_help_command, CliExecutionContext,
 };
 use effigy_cli::{
-    apply_global_json_flag, command_requests_json, parse_command, strip_global_json_flags, Command,
+    apply_global_cli_flags, command_requests_json, parse_command, strip_global_cli_flags, Command,
+    GlobalCliOptions,
 };
 use effigy_context::EffigyRuntimeContext;
 use effigy_core::widgets::MessageBlock;
@@ -13,10 +14,33 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 pub fn run_cli(raw_args: Vec<String>) {
-    let (args, global_json_mode) = strip_global_json_flags(raw_args);
+    let requested_root_json = raw_args.iter().any(|arg| arg == "--json");
+    let (args, global_options) = match strip_global_cli_flags(raw_args) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            let output_mode = OutputMode::from_env();
+            if requested_root_json {
+                emit_json_envelope_error(
+                    2,
+                    "cli",
+                    "parse",
+                    "CliParseError",
+                    &err.to_string(),
+                    Some(parse_error_json_details()),
+                );
+            }
+            let mut renderer = PlainRenderer::stderr(output_mode);
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let resolved_root = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
+                .map_or(cwd, |r| r.resolved_root);
+            let _ = render_parse_error(&mut renderer, &resolved_root, &err.to_string());
+            std::process::exit(2);
+        }
+    };
+    let global_json_mode = global_options.json_mode;
     let output_mode = OutputMode::from_env();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let parsed = match parse_command_with_builtin_deferral(args, &cwd) {
+    let parsed = match parse_command_with_builtin_deferral(args, &cwd, &global_options) {
         Ok(cmd) => cmd,
         Err(err) => {
             if global_json_mode {
@@ -36,7 +60,26 @@ pub fn run_cli(raw_args: Vec<String>) {
             std::process::exit(2);
         }
     };
-    let cmd = apply_global_json_flag(parsed, global_json_mode);
+    let cmd = match apply_global_cli_flags(parsed, &global_options) {
+        Ok(cmd) => cmd,
+        Err(err) => {
+            if global_json_mode {
+                emit_json_envelope_error(
+                    2,
+                    "cli",
+                    "parse",
+                    "CliParseError",
+                    &err.to_string(),
+                    Some(parse_error_json_details()),
+                );
+            }
+            let mut renderer = PlainRenderer::stderr(output_mode);
+            let resolved_root = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
+                .map_or(cwd, |r| r.resolved_root);
+            let _ = render_parse_error(&mut renderer, &resolved_root, &err.to_string());
+            std::process::exit(2);
+        }
+    };
     let internal_suppress_header = std::env::var("EFFIGY_INTERNAL_SUPPRESS_HEADER")
         .ok()
         .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"));
@@ -215,12 +258,14 @@ fn transient_spinner_label(command: &Command) -> &'static str {
 fn parse_command_with_builtin_deferral(
     args: Vec<String>,
     cwd: &Path,
+    global_options: &GlobalCliOptions,
 ) -> Result<Command, effigy_cli::CliParseError> {
     let Some(first) = args.first() else {
         return parse_command(args);
     };
 
-    let Some(root) = deferred_builtin_root(&args[1..], cwd) else {
+    let Some(root) = deferred_builtin_root(&args[1..], cwd, global_options.repo_override.clone())
+    else {
         return parse_command(args);
     };
     let deferred_builtins = crate::runner::deferred_builtins_for_root(&root);
@@ -234,8 +279,12 @@ fn parse_command_with_builtin_deferral(
     }))
 }
 
-fn deferred_builtin_root(tail: &[String], cwd: &Path) -> Option<PathBuf> {
-    let repo_override = repo_override_from_args(tail);
+fn deferred_builtin_root(
+    tail: &[String],
+    cwd: &Path,
+    global_repo_override: Option<PathBuf>,
+) -> Option<PathBuf> {
+    let repo_override = global_repo_override.or_else(|| repo_override_from_args(tail));
     effigy_core::resolver::resolve_target_root(cwd.to_path_buf(), repo_override)
         .ok()
         .map(|resolved| resolved.resolved_root)
@@ -256,7 +305,7 @@ fn repo_override_from_args(args: &[String]) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::parse_command_with_builtin_deferral;
-    use effigy_cli::Command;
+    use effigy_cli::{Command, GlobalCliOptions};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -279,8 +328,12 @@ mod tests {
         )
         .expect("write manifest");
 
-        let parsed =
-            parse_command_with_builtin_deferral(vec!["deploy".to_owned()], &root).expect("parse");
+        let parsed = parse_command_with_builtin_deferral(
+            vec!["deploy".to_owned()],
+            &root,
+            &GlobalCliOptions::default(),
+        )
+        .expect("parse");
 
         assert!(matches!(
             parsed,
@@ -297,13 +350,43 @@ mod tests {
         )
         .expect("write manifest");
 
-        let parsed =
-            parse_command_with_builtin_deferral(vec!["deploy".to_owned(), "uat".to_owned()], &root)
-                .expect("parse");
+        let parsed = parse_command_with_builtin_deferral(
+            vec!["deploy".to_owned(), "uat".to_owned()],
+            &root,
+            &GlobalCliOptions::default(),
+        )
+        .expect("parse");
 
         assert!(matches!(
             parsed,
             Command::Task(task) if task.name == "deploy" && task.args == vec!["uat".to_owned()]
+        ));
+    }
+
+    #[test]
+    fn parse_command_with_builtin_deferral_honors_leading_repo_override() {
+        let root = temp_root("builtin-global-repo");
+        let target = root.join("target");
+        fs::create_dir_all(&target).expect("mkdir target");
+        fs::write(
+            target.join("effigy.toml"),
+            "[tasks.test]\nrun = \"printf ok\"\n",
+        )
+        .expect("write manifest");
+
+        let parsed = parse_command_with_builtin_deferral(
+            vec!["test".to_owned(), "--plan".to_owned()],
+            &root,
+            &GlobalCliOptions {
+                repo_override: Some(target.clone()),
+                ..GlobalCliOptions::default()
+            },
+        )
+        .expect("parse");
+
+        assert!(matches!(
+            parsed,
+            Command::Task(task) if task.name == "test" && task.args == vec!["--plan".to_owned()]
         ));
     }
 }

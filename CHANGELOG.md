@@ -130,6 +130,11 @@ During v0.x, MINOR bumps may include breaking changes.
   and the old `scripts/check-linux-glibc-floor.sh` wrapper is gone.
 
 ### Fixed
+- **Leading global CLI flags** now work consistently across built-ins and task
+  selectors: top-level `--repo <PATH>` and `--json` apply before built-in
+  commands like `doctor`, `tasks`, and deferred built-ins like `test`, while
+  task-only globals `--verbose-root` and `--env-schema <PATH>` now work before
+  the selector instead of only after it.
 - **Linux rehearsal version floors** now carry the invoking binary's active
   version into the container-built Linux binary, so repo-local `+local`
   development builds still satisfy `[manifest].minimum_effigy_version` during

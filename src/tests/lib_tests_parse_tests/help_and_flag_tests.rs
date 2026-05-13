@@ -1,6 +1,6 @@
 use crate::tests::prelude::{
-    parse_command, strip_global_json_flag, strip_global_json_flags, Command, HelpTopic,
-    TaskInvocation,
+    parse_command, strip_global_json_flag, strip_global_json_flags, Command, DoctorArgs, HelpTopic,
+    PathBuf, TaskInvocation, TasksArgs,
 };
 
 #[test]
@@ -55,6 +55,120 @@ fn parse_command_rejects_unknown_global_flag_token() {
 fn parse_command_rejects_removed_json_raw_flag_token() {
     let err = parse_command(vec!["--json-raw".to_owned()]).expect_err("parse should fail");
     assert_eq!(err.to_string(), "unknown argument: --json-raw");
+}
+
+#[test]
+fn parse_command_applies_leading_repo_to_doctor() {
+    let cmd = parse_command(vec![
+        "--repo".to_owned(),
+        "/tmp/workspace".to_owned(),
+        "doctor".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Doctor(DoctorArgs {
+            repo_override: Some(PathBuf::from("/tmp/workspace")),
+            output_json: false,
+            fix: false,
+            verbose: false,
+            explain: None,
+        })
+    );
+}
+
+#[test]
+fn parse_command_preserves_command_local_repo_override_over_leading_repo() {
+    let cmd = parse_command(vec![
+        "--repo".to_owned(),
+        "/tmp/global".to_owned(),
+        "doctor".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/local".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Doctor(DoctorArgs {
+            repo_override: Some(PathBuf::from("/tmp/local")),
+            output_json: false,
+            fix: false,
+            verbose: false,
+            explain: None,
+        })
+    );
+}
+
+#[test]
+fn parse_command_applies_leading_repo_and_json_to_tasks_builtin() {
+    let cmd = parse_command(vec![
+        "--repo".to_owned(),
+        "/tmp/workspace".to_owned(),
+        "--json".to_owned(),
+        "tasks".to_owned(),
+        "status".to_owned(),
+        "api/dev".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Tasks(TasksArgs {
+            repo_override: Some(PathBuf::from("/tmp/workspace")),
+            task_name: None,
+            resolve_selector: None,
+            status_selector: Some("api/dev".to_owned()),
+            status_all: false,
+            output_json: true,
+            pretty_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_command_applies_leading_task_runtime_flags_to_task_selectors() {
+    let cmd = parse_command(vec![
+        "--repo".to_owned(),
+        "/tmp/workspace".to_owned(),
+        "--verbose-root".to_owned(),
+        "--env-schema".to_owned(),
+        "config/env.schema.toml".to_owned(),
+        "snapshot".to_owned(),
+        "--plan".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Task(TaskInvocation {
+            name: "snapshot".to_owned(),
+            args: vec![
+                "--env-schema".to_owned(),
+                "config/env.schema.toml".to_owned(),
+                "--verbose-root".to_owned(),
+                "--repo".to_owned(),
+                "/tmp/workspace".to_owned(),
+                "--plan".to_owned(),
+            ],
+        })
+    );
+}
+
+#[test]
+fn parse_command_rejects_task_only_global_flags_for_builtin_commands() {
+    let err = parse_command(vec!["--verbose-root".to_owned(), "doctor".to_owned()])
+        .expect_err("parse should fail");
+    assert_eq!(err.to_string(), "unknown argument: --verbose-root");
+}
+
+#[test]
+fn parse_command_allows_leading_repo_on_builtin_help() {
+    let cmd = parse_command(vec![
+        "--repo".to_owned(),
+        "/tmp/workspace".to_owned(),
+        "doctor".to_owned(),
+        "--help".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Doctor));
 }
 
 #[test]
