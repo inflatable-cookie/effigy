@@ -158,8 +158,8 @@ hatch, not the default runtime path. Requires `--yes`.
 
 ## Use In Tasks
 
-Secrets with `targets = ["tasks"]` are injected into task processes
-automatically:
+Secrets with `targets = ["tasks"]` are injected into task processes when the
+selected shell task actually references the corresponding env names:
 
 ```toml
 [tasks.migrate]
@@ -167,8 +167,9 @@ run = "dbmate migrate"
 ```
 
 The task receives `DATABASE_URL` in its environment if `database_url` is
-declared with `targets = ["tasks"]` and stored in the vault. Missing required
-values block task execution before spawn.
+declared with `targets = ["tasks"]`, stored in the vault, and the task
+references `$DATABASE_URL` or `${DATABASE_URL}`. Missing required values block
+task execution before spawn only for referenced task-target secrets.
 
 ## Use In Containers
 

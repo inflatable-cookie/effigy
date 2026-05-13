@@ -148,8 +148,8 @@ Injection rules:
 
 - pass secret values directly to child process environments where possible
 - avoid putting secrets into shell command strings
-- task execution receives `targets = ["tasks"]` values through process
-  environment injection
+- task execution receives referenced `targets = ["tasks"]` values through
+  process environment injection
 - Rhai scripts can request declared values through `secrets::get(name)` and
   test availability with `secrets::has(name)`
 - deploy provider package scripts run with `targets = ["deploy"]` access

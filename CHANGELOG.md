@@ -23,8 +23,9 @@ During v0.x, MINOR bumps may include breaking changes.
   manifest.
 - **Vault-backed task secret injection:** declared `[secrets.keys.*]` entries
   with `targets = ["tasks"]` are now loaded from the local Effigy vault and
-  injected into task process environments, with missing required values
-  blocking before spawn and captured JSON output redacted.
+  injected into referenced task process environments, with missing required
+  values blocking before spawn only when the selected shell task actually
+  references that secret env name, and captured JSON output redacted.
 - **Scoped Rhai secret API:** Rhai scripts can now call `secrets::get(name)`,
   `secrets::has(name)`, `secrets::set(name, value)`, and
   `secrets::set_many(map)` for declared `targets = ["rhai"]` vault secrets,

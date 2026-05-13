@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -136,7 +137,11 @@ fn run_standard_task_inner(
         .map(|resolved| resolved.secret_env())
         .unwrap_or_default();
     let task_secret_pairs = if task_uses_direct_shell(selection.task.run.as_ref()) {
-        resolve_task_secret_env(&preflight.resolved.resolved_root, &preflight.secret_targets)?
+        resolve_task_secret_env(
+            &preflight.resolved.resolved_root,
+            &preflight.secret_targets,
+            selection.task,
+        )?
     } else {
         Vec::new()
     };
@@ -357,6 +362,85 @@ fn step_uses_direct_shell(step: &ManifestManagedRunStep) -> bool {
     }
 }
 
+fn referenced_task_secret_env_names(task: &effigy_manifest::ManifestTask) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    if let Some(run) = task.run.as_ref() {
+        collect_task_secret_env_names_from_run(run, &mut names);
+    }
+    names
+}
+
+fn collect_task_secret_env_names_from_run(run: &ManifestManagedRun, names: &mut BTreeSet<String>) {
+    match run {
+        ManifestManagedRun::Command(command) => {
+            collect_task_secret_env_names_from_shell(command, names);
+        }
+        ManifestManagedRun::Sequence(steps) => {
+            for step in steps {
+                match step {
+                    ManifestManagedRunStep::Command(command) => {
+                        collect_task_secret_env_names_from_shell(command, names);
+                    }
+                    ManifestManagedRunStep::Step(table) => {
+                        if let Some(run) = table.run.as_deref() {
+                            collect_task_secret_env_names_from_shell(run, names);
+                        }
+                        if let Some(effigy_manifest::ManifestRunStepEnv::Inline(env)) =
+                            table.env.as_ref()
+                        {
+                            names.extend(env.keys().cloned());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn collect_task_secret_env_names_from_shell(command: &str, names: &mut BTreeSet<String>) {
+    let bytes = command.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b'$' {
+            index += 1;
+            continue;
+        }
+        if index + 1 >= bytes.len() {
+            break;
+        }
+        if bytes[index + 1] == b'{' {
+            let start = index + 2;
+            let mut end = start;
+            while end < bytes.len() && is_env_name_char(bytes[end]) {
+                end += 1;
+            }
+            if end > start && end < bytes.len() && bytes[end] == b'}' {
+                names.insert(command[start..end].to_owned());
+                index = end + 1;
+                continue;
+            }
+        } else if is_env_name_start(bytes[index + 1]) {
+            let start = index + 1;
+            let mut end = start + 1;
+            while end < bytes.len() && is_env_name_char(bytes[end]) {
+                end += 1;
+            }
+            names.insert(command[start..end].to_owned());
+            index = end;
+            continue;
+        }
+        index += 1;
+    }
+}
+
+fn is_env_name_start(byte: u8) -> bool {
+    byte == b'_' || byte.is_ascii_alphabetic()
+}
+
+fn is_env_name_char(byte: u8) -> bool {
+    byte == b'_' || byte.is_ascii_alphanumeric()
+}
+
 fn route_with_running_check(
     scope_root: &Path,
     preflight: &ExecutionPreflight,
@@ -381,16 +465,24 @@ fn route_with_running_check(
 fn resolve_task_secret_env(
     repo_root: &Path,
     extra_targets: &[String],
+    task: &effigy_manifest::ManifestTask,
 ) -> Result<Vec<(String, SecretString)>, RunnerError> {
     let manifest = load_task_manifest(&repo_root.join("effigy.toml"))?;
     let Some(secrets) = manifest.secrets.as_ref() else {
         return Ok(Vec::new());
     };
     let targets = task_secret_targets(extra_targets)?;
+    let requested_env_names = referenced_task_secret_env_names(task);
+    if requested_env_names.is_empty() {
+        return Ok(Vec::new());
+    }
     let task_keys = secrets
         .keys
         .iter()
-        .filter(|(_, key)| key.targets.iter().any(|target| targets.contains(target)))
+        .filter(|(name, key)| {
+            key.targets.iter().any(|target| targets.contains(target))
+                && requested_env_names.contains(&task_secret_env_name(name))
+        })
         .collect::<Vec<_>>();
     if task_keys.is_empty() {
         return Ok(Vec::new());

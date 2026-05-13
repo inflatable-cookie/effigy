@@ -361,7 +361,7 @@ required = true
 targets = ["tasks"]
 
 [tasks.capture]
-run = "sh -lc 'printf ran > \"{}\"'"
+run = "sh -lc 'printf %s \"$DATABASE_URL\" > \"{}\"'"
 "#,
             marker.display()
         ),
@@ -384,6 +384,37 @@ run = "sh -lc 'printf ran > \"{}\"'"
         !marker.exists(),
         "task should not execute when a required vault secret is missing"
     );
+}
+
+#[test]
+fn run_manifest_task_skips_unreferenced_required_vault_secret_for_shell_task() {
+    let root = temp_workspace("task-vault-secret-unreferenced");
+    let marker = root.join("unrelated-task.out");
+    write_root_manifest(
+        &root,
+        &format!(
+            r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.database_url]
+required = true
+targets = ["tasks"]
+
+[tasks.capture]
+run = "sh -lc 'printf ok > \"{}\"'"
+"#,
+            marker.display()
+        ),
+    );
+
+    assert_run_task_ok_empty(&root, "capture", &[]);
+    assert_file_text_equals(&marker, "ok");
 }
 
 #[test]
