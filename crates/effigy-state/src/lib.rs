@@ -12,6 +12,7 @@ pub const STATE_STACK_SCHEMA: &str = "effigy.state-stack.v1";
 pub const STATE_STACK_LINEAGE_SCHEMA: &str = "effigy.state-stack.lineage.v1";
 pub const STATE_STACK_APPLY_SCHEMA: &str = "effigy.state-stack.apply.v1";
 pub const STATE_STACK_CAPTURE_SCHEMA: &str = "effigy.state-stack.capture.v1";
+pub const STATE_STACK_CAPTURE_SET_SCHEMA: &str = "effigy.state-stack.capture-set.v1";
 pub const STATE_STACK_HISTORY_SCHEMA: &str = "effigy.state-stack.history.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -499,9 +500,15 @@ fn state_history_summary(kind: StateHistoryKind, value: &Value) -> String {
             .map(|layers| format!("{} apply layer(s)", layers.len()))
             .unwrap_or_else(|| "apply report".to_owned()),
         StateHistoryKind::Capture => value
-            .get("produced_layers")
+            .get("captures")
             .and_then(Value::as_array)
-            .map(|layers| format!("{} produced layer(s)", layers.len()))
+            .map(|captures| format!("{} capture set item(s)", captures.len()))
+            .or_else(|| {
+                value
+                    .get("produced_layers")
+                    .and_then(Value::as_array)
+                    .map(|layers| format!("{} produced layer(s)", layers.len()))
+            })
             .unwrap_or_else(|| "capture report".to_owned()),
     }
 }
@@ -535,7 +542,7 @@ impl StateHistoryKind {
         match schema {
             STATE_STACK_LINEAGE_SCHEMA => Some(Self::Plan),
             STATE_STACK_APPLY_SCHEMA => Some(Self::Apply),
-            STATE_STACK_CAPTURE_SCHEMA => Some(Self::Capture),
+            STATE_STACK_CAPTURE_SCHEMA | STATE_STACK_CAPTURE_SET_SCHEMA => Some(Self::Capture),
             _ => None,
         }
     }

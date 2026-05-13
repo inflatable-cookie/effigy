@@ -222,9 +222,13 @@ impl OciArtifactAdapter for OrasCliArtifactAdapter {
         command
             .arg("push")
             .arg(request.reference.reference())
-            .arg(&request.metadata_path);
+            .current_dir(&request.staged_root)
+            .arg(path_relative_to_root(
+                &request.staged_root,
+                &request.metadata_path,
+            ));
         for file in &request.primary_files {
-            command.arg(file);
+            command.arg(path_relative_to_root(&request.staged_root, file));
         }
         command.arg("--format").arg("json");
         let output = command

@@ -13,6 +13,7 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
         &[
             "Canonical strict-valid effigy.toml schema template",
             "[manifest]",
+            "minimum_effigy_version = \"0.6.2\"",
             "include = [",
             "[distribution.package]",
             "repo-url = \"https://github.com/example/my-tool.git\"",
@@ -60,6 +61,7 @@ fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
         &[
             "Minimal strict-valid effigy.toml starter",
             "[manifest]",
+            "minimum_effigy_version = \"0.6.2\"",
             "[distribution.package]",
             "[distribution.publish]",
             "[distribution.closeout]",
@@ -102,6 +104,7 @@ fn run_manifest_task_builtin_config_schema_target_manifest_prints_composition_sn
         &[
             "(manifest target)",
             "[manifest]",
+            "minimum_effigy_version = \"0.6.2\"",
             "\"effigy.tasks.toml\"",
             "{ path = \"effigy.docs.toml\", override = [\"docs_policy.indexes.vision\"] }",
         ],

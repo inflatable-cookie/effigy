@@ -159,6 +159,9 @@ Details: `references/bundle-sources.md`. Full reference:
 - `[bootstrap]` — first-run setup steps
 - `[release]` — release configuration
 - `[bundle]` — bundle source and inputs
+- `[secrets]` — secret declarations with consumer targets (tasks, containers, rhai, deploy, state, artifacts)
+- `[state]` — state stack declarations for ordered schema/seed/import/capture layers
+- `[deploy]` — deployment environment configs for UAT/production transactions
 
 Details: `references/config-shapes.md`. Full reference:
 `docs/guides/025-command-reference-matrix.md`.
@@ -195,6 +198,56 @@ Hand back to the human rather than guess when:
 - A failing gate suggests the fix is "skip the gate."
 - The user asks for a behavior that conflicts with a footgun rule above.
 
+## Secrets and vault
+
+Repos declare secrets in `effigy.toml` and store values in an encrypted local vault:
+
+```toml
+[secrets]
+backend = "effigy-vault"
+
+[secrets.keys.database_url]
+required = true
+targets = ["tasks", "containers"]
+```
+
+Key commands:
+
+```bash
+effigy secrets init
+effigy secrets set database_url
+effigy secrets list
+effigy secrets doctor
+```
+
+Values are injected into task processes, container environments, Rhai scripts
+(`effigy::secret(name)`), deploy provider packages, and state hooks without
+writing plaintext to repo files. Values are redacted in JSON output, logs, and
+errors.
+
+Details: `docs/guides/075-secrets-and-vault-guide.md`.
+
+## State stacks and deployment
+
+For repos that manage database schema/seed layers or deploy to UAT/production:
+
+```bash
+# State stacks
+effigy state plan uat
+effigy state apply uat --yes
+effigy state capture uat new-content --yes --push
+
+# Deployment transactions
+effigy deploy plan uat
+effigy deploy apply uat --yes
+effigy deploy status uat
+effigy deploy history uat
+```
+
+Details:
+- State stacks: `docs/guides/073-state-stack-guide.md`
+- Deployment: `docs/guides/074-deployment-guide.md`
+
 ## Deeper docs
 
 For depth beyond this skill, read the canonical guides in the Effigy repo:
@@ -207,6 +260,9 @@ For depth beyond this skill, read the canonical guides in the Effigy repo:
 | Command reference | `docs/guides/025-command-reference-matrix.md` |
 | Bundle sources | `docs/guides/066-local-manifest-bundles.md` |
 | Underlay starter | `docs/guides/065-underlay-starter.md` |
+| Secrets and vault | `docs/guides/075-secrets-and-vault-guide.md` |
+| State stacks | `docs/guides/073-state-stack-guide.md` |
+| Deployment | `docs/guides/074-deployment-guide.md` |
 | Agent adoption | `docs/guides/047-agent-and-cross-repo-adoption.md` |
 | CI + release protocol | `docs/guides/049-ci-binary-distribution-and-release-protocol.md` |
 | Release orchestration | `docs/guides/051-release-orchestration.md` |

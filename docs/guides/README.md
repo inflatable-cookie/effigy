@@ -81,6 +81,17 @@ Use when:
 - you want manifest-owned proof demos
 - you need receipts, history, artifacts, or the demo browser
 
+### Manage secrets and credentials
+
+Read:
+- [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md)
+- [`050-env-schema-integration.md`](./050-env-schema-integration.md)
+
+Use when:
+- you need to store API tokens, database URLs, or signing keys
+- you want human-gated vault unlock instead of committed `.env` files
+- you need to inject secrets into tasks, containers, Rhai, or deploy hooks
+
 ### Script Effigy with Rhai
 
 Read:
@@ -205,6 +216,7 @@ This section is inventory, not a recommended reading order.
 - [`071-catalog-service-authoring.md`](./071-catalog-service-authoring.md)
 - [`073-state-stack-guide.md`](./073-state-stack-guide.md)
 - [`074-deployment-guide.md`](./074-deployment-guide.md)
+- [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md)
 - [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md)
 - [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
 - [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)

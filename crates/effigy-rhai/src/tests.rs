@@ -609,7 +609,7 @@ fn execute_rhai_script_exposes_state_capture_context_helpers() {
     let _env = ScopedTestEnv::set_many(&[
         (
             "EFFIGY_STATE_CAPTURE_CONTEXT",
-            context_path.display().to_string(),
+            ".effigy/state/capture-context/acowtancy-uat/new-content.json".to_owned(),
         ),
         (
             "EFFIGY_STATE_CAPTURE_SOURCE",
@@ -624,6 +624,7 @@ fn execute_rhai_script_exposes_state_capture_context_helpers() {
         let context = state::capture_context();
         if context["stack_name"] != "acowtancy-uat" { throw("stack"); }
         if context["key"] != "new-content" { throw("key"); }
+        if !str::ends_with(state::capture_context_path(), "/.effigy/state/capture-context/acowtancy-uat/new-content.json") { throw("context path"); }
         if state::capture_source() != ".effigy/state/captures/new-content.json" { throw("source"); }
         if state::capture_destination_ref() != "oci://ghcr.io/acowtancy/state:new-content" { throw("ref"); }
     "#;
@@ -1039,6 +1040,8 @@ fn execute_rhai_script_exposes_low_level_string_and_file_helpers() {
             if !str::starts_with("alpha beta", "alpha") { throw("starts"); }
             if !str::ends_with("alpha beta", "beta") { throw("ends"); }
             if str::replace("alpha beta", "beta", "gamma") != "alpha gamma" { throw("replace"); }
+            if path::parent("nested/copied.txt") != "nested" { throw("path parent"); }
+            if path::parent("source.txt") != "" { throw("path parent empty"); }
 
             let inline = str::split_lines("one\ntwo\n");
             if inline.len() != 2 || inline[0] != "one" || inline[1] != "two" { throw("split"); }

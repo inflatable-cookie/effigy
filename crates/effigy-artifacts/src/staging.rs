@@ -98,14 +98,8 @@ pub fn stage_local_artifact(
     request: &LocalArtifactStagingRequest,
 ) -> Result<StagedArtifactReport, ArtifactStagingError> {
     let source_path = resolve_local_path(&request.base_dir, request.source.path());
-    let file_name =
-        source_path
-            .file_name()
-            .ok_or_else(|| ArtifactStagingError::MissingFileName {
-                path: source_path.clone(),
-            })?;
 
-    if !source_path.is_file() {
+    if !source_path.is_file() && !source_path.is_dir() {
         return Err(ArtifactStagingError::SourceNotFile { path: source_path });
     }
 
@@ -122,15 +116,21 @@ pub fn stage_local_artifact(
         error,
     })?;
 
-    let staged_payload = staged_root.join(file_name);
-    fs::copy(&source_path, &staged_payload).map_err(|error| ArtifactStagingError::Copy {
-        source: source_path.clone(),
-        destination: staged_payload.clone(),
-        error,
-    })?;
+    let staged_files = if source_path.is_dir() {
+        copy_directory_contents(&source_path, &staged_root)?
+    } else {
+        let file_name =
+            source_path
+                .file_name()
+                .ok_or_else(|| ArtifactStagingError::MissingFileName {
+                    path: source_path.clone(),
+                })?;
+        let staged_payload = staged_root.join(file_name);
+        copy_file(&source_path, &staged_payload)?;
+        vec![staged_payload]
+    };
 
-    let mut metadata =
-        ArtifactMetadata::new(kind, &source_ref, staged_root.clone(), vec![staged_payload]);
+    let mut metadata = ArtifactMetadata::new(kind, &source_ref, staged_root.clone(), staged_files);
     if let Some(label) = &request.environment_label {
         metadata = metadata.with_environment_label(label.clone());
     }
@@ -157,21 +157,11 @@ pub fn stage_oci_artifact(
     let mut staged_files = Vec::with_capacity(request.primary_files.len());
     for primary_file in &request.primary_files {
         let source_path = resolve_local_path(&request.pulled_root, primary_file);
-        let file_name =
-            source_path
-                .file_name()
-                .ok_or_else(|| ArtifactStagingError::MissingFileName {
-                    path: source_path.clone(),
-                })?;
         if !source_path.is_file() {
             return Err(ArtifactStagingError::SourceNotFile { path: source_path });
         }
-        let staged_payload = staged_root.join(file_name);
-        fs::copy(&source_path, &staged_payload).map_err(|error| ArtifactStagingError::Copy {
-            source: source_path.clone(),
-            destination: staged_payload.clone(),
-            error,
-        })?;
+        let staged_payload = staged_root.join(primary_file);
+        copy_file(&source_path, &staged_payload)?;
         staged_files.push(staged_payload);
     }
 
@@ -185,6 +175,71 @@ pub fn stage_oci_artifact(
     }
 
     write_staged_report(staged_root, metadata)
+}
+
+fn copy_directory_contents(
+    source_root: &Path,
+    staged_root: &Path,
+) -> Result<Vec<PathBuf>, ArtifactStagingError> {
+    let mut staged_files = Vec::new();
+    copy_directory_contents_inner(source_root, source_root, staged_root, &mut staged_files)?;
+    staged_files.sort();
+    if staged_files.is_empty() {
+        return Err(ArtifactStagingError::NoPrimaryFiles);
+    }
+    Ok(staged_files)
+}
+
+fn copy_directory_contents_inner(
+    source_root: &Path,
+    current: &Path,
+    staged_root: &Path,
+    staged_files: &mut Vec<PathBuf>,
+) -> Result<(), ArtifactStagingError> {
+    let entries = fs::read_dir(current).map_err(|error| ArtifactStagingError::ReadDir {
+        path: current.to_path_buf(),
+        error,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| ArtifactStagingError::ReadDir {
+            path: current.to_path_buf(),
+            error,
+        })?;
+        let path = entry.path();
+        if path.is_dir() {
+            copy_directory_contents_inner(source_root, &path, staged_root, staged_files)?;
+        } else if path.is_file() {
+            let relative_path =
+                path.strip_prefix(source_root)
+                    .map_err(|_| ArtifactStagingError::Copy {
+                        source: path.clone(),
+                        destination: staged_root.to_path_buf(),
+                        error: std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "failed to compute relative artifact path",
+                        ),
+                    })?;
+            let staged_payload = staged_root.join(relative_path);
+            copy_file(&path, &staged_payload)?;
+            staged_files.push(staged_payload);
+        }
+    }
+    Ok(())
+}
+
+fn copy_file(source: &Path, destination: &Path) -> Result<(), ArtifactStagingError> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| ArtifactStagingError::CreateDir {
+            path: parent.to_path_buf(),
+            error,
+        })?;
+    }
+    fs::copy(source, destination).map_err(|error| ArtifactStagingError::Copy {
+        source: source.to_path_buf(),
+        destination: destination.to_path_buf(),
+        error,
+    })?;
+    Ok(())
 }
 
 fn write_staged_report(

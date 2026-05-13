@@ -209,6 +209,44 @@ mod tests {
     }
 
     #[test]
+    fn stages_local_directory_artifact_with_relative_payload_paths() {
+        let repo = temp_dir();
+        let media = repo.join("media");
+        fs::create_dir_all(media.join("nested")).expect("create media dir");
+        fs::write(media.join("root.txt"), b"root").expect("write root");
+        fs::write(media.join("nested/file.txt"), b"nested").expect("write nested");
+
+        let source = ArtifactSourceRef::parse("media").expect("parse ref");
+        let ArtifactSourceRef::Local(local) = source else {
+            panic!("expected local source");
+        };
+        let request = LocalArtifactStagingRequest::new(
+            local,
+            repo.clone(),
+            default_local_artifact_root(&repo),
+        )
+        .with_kind(ArtifactKind::ObjectStore);
+
+        let report = stage_local_artifact(&request).expect("stage artifact");
+
+        assert_eq!(report.metadata.kind, ArtifactKind::ObjectStore);
+        assert_eq!(report.metadata.primary_files.len(), 2);
+        assert!(report.metadata.primary_files.iter().any(|path| path
+            .strip_prefix(&report.metadata.staged_root)
+            .expect("staged relative")
+            == PathBuf::from("nested/file.txt")));
+        assert!(report.metadata.primary_files.iter().any(|path| path
+            .strip_prefix(&report.metadata.staged_root)
+            .expect("staged relative")
+            == PathBuf::from("root.txt")));
+        assert_eq!(
+            fs::read(report.metadata.staged_root.join("nested/file.txt"))
+                .expect("read staged nested"),
+            b"nested"
+        );
+    }
+
+    #[test]
     fn redacts_oci_userinfo_from_reportable_ref() {
         let parsed =
             ArtifactSourceRef::parse("oci://token:secret@ghcr.io/acowtancy/private:latest")
@@ -248,9 +286,10 @@ mod tests {
     fn stages_pulled_oci_artifact_with_same_metadata_model() {
         let repo = temp_dir();
         let pulled_root = repo.join("pulled");
-        fs::create_dir_all(&pulled_root).expect("create pulled root");
+        fs::create_dir_all(pulled_root.join("nested")).expect("create pulled root");
         fs::write(pulled_root.join("legacy.sql"), b"create table legacy;")
             .expect("write pulled payload");
+        fs::write(pulled_root.join("nested/media.bin"), b"media").expect("write pulled nested");
 
         let parsed = ArtifactSourceRef::parse("oci://ghcr.io/acowtancy/legacy@sha256:abc123")
             .expect("parse ref");
@@ -261,7 +300,10 @@ mod tests {
             oci,
             pulled_root,
             default_local_artifact_root(&repo),
-            vec![PathBuf::from("legacy.sql")],
+            vec![
+                PathBuf::from("legacy.sql"),
+                PathBuf::from("nested/media.bin"),
+            ],
             ArtifactKind::LegacySourceSnapshot,
         )
         .with_digest("sha256:abc123")
@@ -277,10 +319,15 @@ mod tests {
         );
         assert_eq!(report.metadata.digest.as_deref(), Some("sha256:abc123"));
         assert_eq!(report.metadata.environment_label.as_deref(), Some("uat"));
-        assert_eq!(report.metadata.primary_files.len(), 1);
+        assert_eq!(report.metadata.primary_files.len(), 2);
         assert_eq!(
             fs::read(&report.metadata.primary_files[0]).expect("read staged payload"),
             b"create table legacy;"
+        );
+        assert_eq!(
+            fs::read(report.metadata.staged_root.join("nested/media.bin"))
+                .expect("read staged nested payload"),
+            b"media"
         );
         assert!(report.metadata_path.is_file());
     }

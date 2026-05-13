@@ -283,10 +283,19 @@ Command shape:
 ```sh
 effigy state capture --stack <NAME> --role uat-capture --source-env uat
 effigy state capture --stack <NAME> --role full-capture --source-env uat
+effigy state capture-set <STACK> <PROFILE>... [--key <KEY>] [--yes] [--push]
 ```
 
 The first implementation is plan-only unless `--yes` is supplied, like
 `state apply`.
+
+`state capture-set` is an aggregate convenience surface for named capture
+profiles. It runs each listed profile with the same capture key, generating a
+timestamp key when `--key` is omitted. It does not change individual capture
+semantics; each child capture still writes its normal capture report and
+history entry. The aggregate capture-set report is also written to
+`latest-capture-set.json` and a timestamped history file so an operator can
+audit the grouped capture as one action.
 
 Report schema:
 
@@ -304,6 +313,28 @@ Report schema:
 - `capture_artifacts[]`
 - `tasks[]`
 - `warnings[]`
+
+Capture-set report schema:
+
+- `schema`: `effigy.state-stack.capture-set.v1`
+- `schema_version`: `1`
+- `ok`
+- `executed`
+- `stack`
+- `key`
+- `created_at`
+- `profiles[]`
+- `captures[]`
+- `written_report_path`
+- `written_history_path`
+
+`captures[]` contains:
+
+- `profile`
+- `ok`
+- `report` with the normal `effigy.state-stack.capture.v1` payload when the
+  child capture reached report generation
+- `error` when capture setup failed before a child report existed
 
 `produced_layers[]` describes the state-stack layer material that the capture
 would add or has added:
@@ -375,6 +406,11 @@ Environment aliases:
 - `EFFIGY_STATE_CAPTURE_SOURCE` when supplied
 - `EFFIGY_STATE_CAPTURE_DESTINATION_REF` when supplied
 - `EFFIGY_STATE_CAPTURE_CONTEXT` when a task context file is written
+
+Path aliases are task-runtime paths. Relative capture sources are resolved to
+absolute paths before task execution so repo tasks do not accidentally write to
+the caller's current directory when `--repo` is used. The context JSON preserves
+the manifest-level source value for reporting and reproducibility.
 
 Rhai capture helpers:
 

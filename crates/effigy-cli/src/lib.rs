@@ -427,6 +427,13 @@ pub enum StateSubcommand {
         yes: bool,
         push: bool,
     },
+    CaptureSet {
+        stack: String,
+        profiles: Vec<String>,
+        key: Option<String>,
+        yes: bool,
+        push: bool,
+    },
     History {
         stack: String,
         kind: Option<String>,

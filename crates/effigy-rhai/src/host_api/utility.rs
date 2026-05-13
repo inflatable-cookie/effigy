@@ -83,6 +83,15 @@ fn build_path_module() -> rhai::Module {
                 .unwrap_or_default())
         },
     );
+    module.set_native_fn(
+        "parent",
+        |path: ImmutableString| -> Result<String, Box<EvalAltResult>> {
+            Ok(Path::new(path.as_str())
+                .parent()
+                .map(|parent| parent.display().to_string())
+                .unwrap_or_default())
+        },
+    );
     module
 }
 

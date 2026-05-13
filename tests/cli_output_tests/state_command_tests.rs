@@ -682,6 +682,70 @@ fn cli_state_capture_uses_named_profile_from_stack_config() {
 }
 
 #[test]
+fn cli_state_capture_set_runs_named_profiles_with_shared_key() {
+    let root = temp_workspace("state-capture-set");
+    fs::write(
+        root.join("effigy.toml"),
+        manifest_state_named_profile_fixture(),
+    )
+    .expect("write effigy manifest");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .args([
+            "state",
+            "capture-set",
+            "uat",
+            "new-content",
+            "media",
+            "--key",
+            "snapshot-1",
+            "--yes",
+        ])
+        .arg("--repo")
+        .arg(&root)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(
+        output.status.success(),
+        "state capture-set failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload = parse_stdout_json(&output);
+    let result = &payload["result"];
+    assert_eq!(result["schema"], "effigy.state-stack.capture-set.v1");
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["executed"], true);
+    assert_eq!(result["stack"], "uat");
+    assert_eq!(result["key"], "snapshot-1");
+    assert_eq!(
+        result["written_report_path"],
+        ".effigy/reports/state/uat/latest-capture-set.json"
+    );
+    assert!(result["written_history_path"]
+        .as_str()
+        .expect("capture set history path")
+        .contains("-capture-set-snapshot-1.json"));
+    assert_eq!(result["captures"].as_array().expect("captures").len(), 2);
+    assert_eq!(result["captures"][0]["profile"], "new-content");
+    assert_eq!(
+        result["captures"][0]["report"]["produced_layers"][0]["key"],
+        "snapshot-1"
+    );
+    assert_eq!(
+        result["captures"][1]["report"]["capture_artifacts"][0]["ref"],
+        "oci://ghcr.io/acowtancy/media:snapshot-1"
+    );
+    assert!(root.join("captures/snapshot-1.txt").exists());
+    assert!(root.join("captures/media-snapshot-1.txt").exists());
+    assert!(root
+        .join(".effigy/reports/state/uat/latest-capture-set.json")
+        .exists());
+}
+
+#[test]
 fn cli_state_capture_uses_named_profile_from_single_default_stack() {
     let root = temp_workspace("state-capture-profile-single-stack");
     fs::write(
@@ -1061,7 +1125,10 @@ artifact_kind = "migrated-base-snapshot"
 fn manifest_state_named_profile_fixture() -> &'static str {
     r#"
 [tasks."capture:new-content"]
-run = "mkdir -p captures && printf '%s\n' \"$EFFIGY_STATE_CAPTURE_CONTEXT\" > captures/new-content.txt"
+run = "mkdir -p captures && printf '%s\n' \"$EFFIGY_STATE_CAPTURE_CONTEXT\" > \"$EFFIGY_STATE_CAPTURE_SOURCE\""
+
+[tasks."capture:media"]
+run = "mkdir -p captures && printf '%s\n' \"$EFFIGY_STATE_CAPTURE_CONTEXT\" > captures/media-$EFFIGY_STATE_CAPTURE_KEY.txt"
 
 [state]
 
@@ -1091,6 +1158,13 @@ source_env = "uat"
 source = "captures/{key}.txt"
 ref = "oci://ghcr.io/acowtancy/state:{key}"
 task = "capture:new-content"
+
+[state.uat.captures.media]
+role = "full-capture"
+source_env = "legacy"
+source = "captures/media-{key}.txt"
+ref = "oci://ghcr.io/acowtancy/media:{key}"
+task = "capture:media"
 "#
 }
 

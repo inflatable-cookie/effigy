@@ -980,6 +980,7 @@ dependencies = [
  "effigy-core",
  "indexmap",
  "minijinja",
+ "semver",
  "serde",
  "sha2",
  "tempfile",

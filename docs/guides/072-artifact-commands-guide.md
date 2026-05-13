@@ -90,17 +90,23 @@ effigy artifact capture ./dumps/uat.sql.gz \
 effigy artifact capture ./dumps/uat.sql.gz \
   --ref oci://ghcr.io/acme/uat-content:2026-05-06 \
   --environment uat --push --json
+
+# Directory/object-tree capture
+effigy artifact capture ./state/media \
+  --ref oci://ghcr.io/acme/media:uat \
+  --kind object-store --push --json
 ```
 
 Capture rules:
 
-- capture always stages a local artifact first
+- capture always stages a local file or directory artifact first
+- directory capture preserves relative paths below the captured directory
 - `--push` is required for live registry writes
 - digest-pinned refs are invalid push destinations
 - the pushed digest is reported in JSON output
 - artifact kinds include `sql-dump`, `legacy-source-snapshot`,
   `migrated-base-snapshot`, `uat-content-snapshot`, `content-overlay`,
-  `app-specific`
+  `object-store`, `app-specific`
 
 ## Artifact Kinds
 

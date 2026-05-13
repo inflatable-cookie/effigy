@@ -12,6 +12,7 @@ effigy-core = { path = "../effigy-core" }
 indexmap = { version = "2", features = ["serde"] }
 minijinja = "2"
 serde = { version = "1", features = ["derive"] }
+semver = "1"
 sha2 = "0.10"
 toml = "1"
 

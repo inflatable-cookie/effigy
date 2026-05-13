@@ -17,6 +17,7 @@ where
         "plan" => parse_state_plan_command(args),
         "apply" => parse_state_apply_command(args),
         "capture" => parse_state_capture_command(args),
+        "capture-set" => parse_state_capture_set_command(args),
         "history" => parse_state_history_command(args),
         other if other.starts_with('-') => Err(unknown_argument(other)),
         other => Err(CliParseError::InvalidArguments(format!(
@@ -225,6 +226,72 @@ where
             manifest,
             stack,
             yes,
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_state_capture_set_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut stack: Option<String> = None;
+    let mut profiles: Vec<String> = Vec::new();
+    let mut key: Option<String> = None;
+    let mut yes = false;
+    let mut push = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--stack" => {
+                stack = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--stack".to_owned(),
+                    },
+                )?);
+            }
+            "--key" => {
+                key = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--key".to_owned(),
+                    },
+                )?);
+            }
+            "--yes" => yes = true,
+            "--push" => push = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::State)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ if stack.is_none() => stack = Some(arg),
+            _ => profiles.push(arg),
+        }
+    }
+
+    let stack = stack.ok_or_else(|| {
+        CliParseError::InvalidArguments(
+            "`state capture-set` requires <STACK> and at least one <PROFILE>".to_owned(),
+        )
+    })?;
+    if profiles.is_empty() {
+        return Err(CliParseError::InvalidArguments(
+            "`state capture-set` requires at least one <PROFILE>".to_owned(),
+        ));
+    }
+
+    Ok(Command::State(StateArgs {
+        subcommand: StateSubcommand::CaptureSet {
+            stack,
+            profiles,
+            key,
+            yes,
+            push,
         },
         repo_override,
         output_json,

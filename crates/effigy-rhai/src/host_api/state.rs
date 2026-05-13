@@ -107,27 +107,38 @@ fn build_state_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> 
         context.clone(),
         callbacks.clone(),
     );
+    let capture_context_reader = context.clone();
     module.set_native_fn(
         "capture_context",
-        || -> Result<Dynamic, Box<EvalAltResult>> {
-            let path = required_state_env("EFFIGY_STATE_CAPTURE_CONTEXT")?;
+        move || -> Result<Dynamic, Box<EvalAltResult>> {
+            let path = required_state_path_env(
+                &capture_context_reader.cwd,
+                "EFFIGY_STATE_CAPTURE_CONTEXT",
+            )?;
             let contents = std::fs::read_to_string(&path).map_err(|error| {
                 rhai_runtime_error(format!(
-                    "failed to read state capture context `{path}`: {error}"
+                    "failed to read state capture context `{}`: {error}",
+                    path.display()
                 ))
             })?;
             let value = serde_json::from_str::<Value>(&contents).map_err(|error| {
                 rhai_runtime_error(format!(
-                    "failed to parse state capture context `{path}`: {error}"
+                    "failed to parse state capture context `{}`: {error}",
+                    path.display()
                 ))
             })?;
             Ok(json_to_dynamic(value))
         },
     );
+    let capture_context_path_reader = context.clone();
     module.set_native_fn(
         "capture_context_path",
-        || -> Result<String, Box<EvalAltResult>> {
-            required_state_env("EFFIGY_STATE_CAPTURE_CONTEXT")
+        move || -> Result<String, Box<EvalAltResult>> {
+            required_state_path_env(
+                &capture_context_path_reader.cwd,
+                "EFFIGY_STATE_CAPTURE_CONTEXT",
+            )
+            .map(|path| path.display().to_string())
         },
     );
     module.set_native_fn(
@@ -147,6 +158,14 @@ fn build_state_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> 
 
 fn required_state_env(name: &str) -> Result<String, Box<EvalAltResult>> {
     std::env::var(name).map_err(|_| rhai_runtime_error(format!("missing {name}")))
+}
+
+fn required_state_path_env(
+    cwd: &std::path::Path,
+    name: &str,
+) -> Result<std::path::PathBuf, Box<EvalAltResult>> {
+    let path = required_state_env(name)?;
+    Ok(super::resolve_runtime_path(cwd, &path))
 }
 
 fn json_to_dynamic(value: Value) -> Dynamic {

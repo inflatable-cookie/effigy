@@ -26,7 +26,7 @@ host = "contact-patch.legacy.test"
 project_name = "contactpatch-dev"
 databases = ["contactpatch"]
 
-[containers.web.services.db]
+[containers.web.services.mysql]
 version = "11.0"
 "#,
             decodelabs_bundle_dir().display()
@@ -121,7 +121,7 @@ version = "11.0"
         ]
     );
 
-    let db = web.services.get("db").expect("db service");
+    let db = web.services.get("mysql").expect("mysql service");
     assert_eq!(db.catalog, "mariadb");
     assert_eq!(
         db.params.get("version").and_then(|value| value.as_str()),
@@ -136,7 +136,7 @@ version = "11.0"
     assert_eq!(web_service.catalog, "nginx");
     assert_eq!(web_service.variant.as_deref(), Some("decodelabs"));
 
-    let mail = web.services.get("mail").expect("mail service");
+    let mail = web.services.get("mailpit").expect("mailpit service");
     assert_eq!(mail.catalog, "mailpit");
 
     let dns = web.dns.as_ref().expect("dns");
@@ -344,8 +344,8 @@ databases = ["contactpatch", "contactpatch_test"]
         .containers
         .as_ref()
         .and_then(|containers| containers.environments.get("web"))
-        .and_then(|web| web.services.get("db"))
-        .expect("db service");
+        .and_then(|web| web.services.get("mysql"))
+        .expect("mysql service");
 
     assert_eq!(
         db.params.get("database").and_then(|value| value.as_str()),
@@ -425,7 +425,7 @@ zest_port = 8938
             ("pma.gideon.legacy.test", Some("pma"), None, Some(true)),
             (
                 "mailpit.gideon.legacy.test",
-                Some("mail"),
+                Some("mailpit"),
                 Some(8025),
                 Some(true)
             ),
@@ -485,7 +485,7 @@ routes = [
         vec![
             ("cbs.legacy.test", Some("web"), Some(true)),
             ("pma.cbs.legacy.test", Some("pma"), Some(true)),
-            ("mailpit.cbs.legacy.test", Some("mail"), Some(true)),
+            ("mailpit.cbs.legacy.test", Some("mailpit"), Some(true)),
             ("borderway.legacy.test", Some("web"), Some(true)),
         ]
     );
@@ -547,7 +547,7 @@ routes = [
         vec![
             ("cbs.legacy.test", Some("web"), Some(true)),
             ("pma.cbs.legacy.test", Some("pma"), Some(true)),
-            ("mailpit.cbs.legacy.test", Some("mail"), Some(true)),
+            ("mailpit.cbs.legacy.test", Some("mailpit"), Some(true)),
             ("borderway.legacy.test", Some("web"), Some(true)),
         ]
     );
@@ -611,7 +611,7 @@ routes = [
         vec![
             ("cbs.legacy.test", Some("web"), Some(true)),
             ("pma.cbs.legacy.test", Some("pma"), Some(true)),
-            ("mailpit.cbs.legacy.test", Some("mail"), Some(true)),
+            ("mailpit.cbs.legacy.test", Some("mailpit"), Some(true)),
             ("borderway.legacy.test", Some("web"), Some(true)),
         ]
     );

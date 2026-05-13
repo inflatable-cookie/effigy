@@ -34,6 +34,8 @@ Rule:
 - `effigy.toml` is the canonical entrypoint
 - included files are partial manifests
 - included paths resolve relative to the file that declares them
+- any fragment can declare `[manifest].minimum_effigy_version = "X.Y.Z"` to
+  fail early when the active Effigy binary is too old for that manifest shape
 
 Nested fixtures, examples, or child projects can opt into being their own
 Effigy root:

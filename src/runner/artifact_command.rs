@@ -693,6 +693,49 @@ mod tests {
     }
 
     #[test]
+    fn capture_local_directory_reports_all_staged_payloads() {
+        let repo = temp_dir("repo-capture-dir");
+        let cwd = temp_dir("cwd-capture-dir");
+        fs::create_dir_all(cwd.join("media/nested")).expect("create media tree");
+        fs::write(cwd.join("media/root.txt"), "root").expect("write root");
+        fs::write(cwd.join("media/nested/file.txt"), "nested").expect("write nested");
+
+        let report = capture_artifact_report(
+            "media",
+            "oci://ghcr.io/acme/media:2026-05-13",
+            Some("object-store"),
+            Some("uat"),
+            &repo,
+            &cwd,
+            true,
+            false,
+        )
+        .expect("capture");
+
+        assert_eq!(report["schema"], "effigy.artifact.capture.v1");
+        assert_eq!(report["metadata"]["kind"], "object-store");
+        assert_eq!(
+            report["metadata"]["primary_files"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        let files = report["metadata"]["primary_files"]
+            .as_array()
+            .expect("primary files")
+            .iter()
+            .map(|value| value.as_str().expect("file").to_owned())
+            .collect::<Vec<_>>();
+        assert!(files.iter().any(|path| path.ends_with("nested/file.txt")));
+        assert!(files.iter().any(|path| path.ends_with("root.txt")));
+        assert_eq!(
+            report["farmyard_handoff"]["schema"],
+            "effigy.farmyard-artifact-handoff.v1"
+        );
+    }
+
+    #[test]
     fn capture_rejects_digest_pinned_destination() {
         let repo = temp_dir("repo-capture-digest");
         let cwd = temp_dir("cwd-capture-digest");

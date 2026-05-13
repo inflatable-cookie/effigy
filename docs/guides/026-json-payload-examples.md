@@ -1860,6 +1860,68 @@ available in `EFFIGY_STATE_CAPTURE_CONTEXT`.
 }
 ```
 
+### 28b) State Capture Set (`effigy.state-stack.capture-set.v1`)
+
+This payload is the aggregate report shape for `effigy state capture-set`, which
+runs multiple named capture profiles with one shared key.
+
+```json
+{
+  "schema": "effigy.state-stack.capture-set.v1",
+  "schema_version": 1,
+  "ok": true,
+  "executed": true,
+  "stack": "legacy-source",
+  "key": "20260513-070000",
+  "created_at": "2026-05-13T07:00:00Z",
+  "profiles": ["db", "media"],
+  "captures": [
+    {
+      "profile": "db",
+      "ok": true,
+      "report": {
+        "schema": "effigy.state-stack.capture.v1",
+        "schema_version": 1,
+        "ok": true,
+        "executed": true,
+        "stack_name": "acowtancy-legacy-source",
+        "source_environment": "dev",
+        "capture_role": "full-capture",
+        "capture_mode": "full-snapshot",
+        "parent_lineage_id": "acowtancy-legacy-source:Dev:legacy-source-root",
+        "created_at": "planned",
+        "produced_layers": [],
+        "capture_artifacts": [],
+        "tasks": [],
+        "warnings": []
+      }
+    },
+    {
+      "profile": "media",
+      "ok": true,
+      "report": {
+        "schema": "effigy.state-stack.capture.v1",
+        "schema_version": 1,
+        "ok": true,
+        "executed": true,
+        "stack_name": "acowtancy-legacy-source",
+        "source_environment": "dev",
+        "capture_role": "full-capture",
+        "capture_mode": "full-snapshot",
+        "parent_lineage_id": "acowtancy-legacy-source:Dev:legacy-source-root",
+        "created_at": "planned",
+        "produced_layers": [],
+        "capture_artifacts": [],
+        "tasks": [],
+        "warnings": []
+      }
+    }
+  ],
+  "written_report_path": ".effigy/reports/state/legacy-source/latest-capture-set.json",
+  "written_history_path": ".effigy/reports/state/legacy-source/history/20260513T070000Z-capture-set-20260513-070000.json"
+}
+```
+
 Staged local capture:
 
 ```json

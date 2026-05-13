@@ -43,7 +43,7 @@ fn render_artifact_help_shows_stage_and_handoff_options() {
     assert!(rendered.contains("artifact Help"));
     assert!(rendered.contains("effigy artifact inspect <REF|PATH>"));
     assert!(rendered.contains("effigy artifact stage <REF|PATH>"));
-    assert!(rendered.contains("effigy artifact capture <SOURCE_PATH> --ref oci://<REF>"));
+    assert!(rendered.contains("effigy artifact capture <SOURCE_PATH|DIR> --ref oci://<REF>"));
     assert!(rendered.contains("--environment <LABEL>"));
     assert!(rendered.contains("--farmyard-handoff"));
     assert!(rendered.contains("--push"));

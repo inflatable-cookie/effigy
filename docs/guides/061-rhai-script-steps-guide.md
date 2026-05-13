@@ -68,17 +68,22 @@ Current v1 helpers:
   - `time::now_utc()`
   - `path::join(base, child)`
   - `path::file_name(path)`
+  - `path::parent(path)`
   - `str::trim(value)`
   - `str::contains(value, needle)`
   - `str::starts_with(value, prefix)`
   - `str::ends_with(value, suffix)`
   - `str::replace(value, from, to)`
   - `str::split_lines(value)`
+  - `str::parse_int(value)`
+  - `str::shell_quote(value)`
   - `regex::is_match(pattern, value)`
+  - `regex::captures(pattern, value)`
   - `regex::replace(pattern, value, replacement)`
   - `regex::escape(value)`
 - file helpers:
   - `fs::make_temp_dir(prefix)`
+  - `fs::make_temp_file(prefix)`
   - `fs::append_file(path, contents)`
   - `fs::read_file(path)`
   - `fs::read_lines(path)`
@@ -88,11 +93,14 @@ Current v1 helpers:
   - `fs::copy_if_missing(source, destination)`
   - `fs::env_file_entries(path)`
   - `fs::env_file_get(path, key)`
+  - `fs::env_file_map(path)`
   - `fs::env_file_remove(path, key)`
   - `fs::env_file_set(path, key, value)`
+  - `fs::env_file_get_detail(path, key)`
   - `fs::exists(path)`
   - `fs::is_dir(path)`
   - `fs::list(path)`
+  - `fs::list_recursive(path)`
   - `fs::is_file(path)`
   - `fs::is_symlink(path)`
   - `fs::file_size(path)`
@@ -122,7 +130,32 @@ Current v1 helpers:
   - `config::raw()`
   - `config::effective()`
   - `config::get(path_string)`
+  - `config::get_or(path_string, default_value)`
+  - `config::user_path()`
+  - `config::user_get(path_string)`
+  - `config::user_set(path_string, value)`
+  - `config::user_unset(path_string)`
+- secret helpers (requires declared `targets = ["rhai"]`):
+  - `effigy::secret(name)` — returns the vault value, rejects undeclared or wrong-target reads
+  - `effigy::has_secret(name)` — returns true if the named secret is declared and available
+- state stack helpers:
+  - `state::plan(options_map)`
+  - `state::apply(options_map)`
+  - `state::capture(options_map)`
+  - `state::history(options_map)`
+- state capture context helpers:
+  - `state::capture_context()`
+  - `state::capture_context_path()`
+  - `state::capture_source()`
+  - `state::capture_destination_ref()`
+- artifact helpers:
+  - `artifact::inspect(options_map)`
+  - `artifact::stage(options_map)`
+  - `artifact::capture(options_map)`
+- runtime context:
+  - `runtime::context()` — returns the current `EffigyRuntimeContext` map
 - execution helpers:
+  - `exec::run(options_map)` — routed execution through Effigy's execution helpers
   - `time::stop_requested()`
   - `time::process_id()`
   - `time::sleep_ms(milliseconds)`
@@ -133,6 +166,7 @@ Current v1 helpers:
   - `http::post(url)` / `http::post(url, options_map)`
   - `http::request(method, url, options_map)`
   - `http::download(url, path)` / `http::download(url, path, options_map)`
+  - `http::capture(url, path)`
   - `task::run(task, args_array)`
   - `task::list()` / `task::list(options_map)`
   - `task::resolve(selector)`
@@ -356,6 +390,29 @@ let pg = url::parse_pg_dsn("postgres://postgres:secret@db:5432/acowtancy?sslmode
 let host = dsn["host"];
 let database = dsn["database"];
 let charset = dsn["query"]["charset"];
+```
+
+Reading a vault secret in a Rhai script:
+
+```rhai
+if effigy::has_secret("api_token") {
+    let token = effigy::secret("api_token");
+    let result = http::request("GET", "https://api.example.com/v1/status", #{
+        headers: #{ "Authorization": `Bearer ${token}` }
+    });
+    if !result["success"] {
+        throw result["body"];
+    }
+}
+```
+
+State capture context inside a capture hook:
+
+```rhai
+let ctx = state::capture_context();
+let src = state::capture_source();
+let dst = state::capture_destination_ref();
+log(`capturing from ${src} to ${dst}`);
 ```
 
 Structured process call:

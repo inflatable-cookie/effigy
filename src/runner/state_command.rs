@@ -79,6 +79,22 @@ pub(super) fn run_state(args: StateArgs) -> Result<String, RunnerError> {
             },
             args.output_json,
         ),
+        StateSubcommand::CaptureSet {
+            stack,
+            profiles,
+            key,
+            yes,
+            push,
+        } => run_state_capture_set(
+            &stack,
+            &profiles,
+            key,
+            &context.invocation_cwd,
+            &context.resolved.resolved_root,
+            yes,
+            push,
+            args.output_json,
+        ),
         StateSubcommand::History {
             stack,
             kind,
@@ -328,6 +344,23 @@ fn run_state_capture(
     request: StateCaptureRequest,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    let report = run_state_capture_report(manifest, stack, invocation_cwd, repo_root, request)?;
+
+    if output_json {
+        return serde_json::to_string(&report)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()));
+    }
+
+    Ok(render_state_capture_text(&report))
+}
+
+fn run_state_capture_report(
+    manifest: Option<&Path>,
+    stack: Option<&str>,
+    invocation_cwd: &Path,
+    repo_root: &Path,
+    request: StateCaptureRequest,
+) -> Result<StateStackCaptureReport, RunnerError> {
     let request = resolve_state_capture_request(repo_root, stack, manifest, request)?;
     let manifest = resolve_state_stack_manifest(manifest, stack, invocation_cwd, repo_root)?;
     let lineage = manifest
@@ -347,12 +380,89 @@ fn run_state_capture(
     report.written_history_path = Some(path_display(&paths.history_path, repo_root));
     write_state_report(repo_root, &paths, &report)?;
 
+    Ok(report)
+}
+
+fn run_state_capture_set(
+    stack: &str,
+    profiles: &[String],
+    key: Option<String>,
+    invocation_cwd: &Path,
+    repo_root: &Path,
+    yes: bool,
+    push: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let key = key.unwrap_or_else(default_capture_set_key);
+    let mut captures = Vec::new();
+    let mut ok = true;
+
+    for profile in profiles {
+        match run_state_capture_report(
+            None,
+            Some(stack),
+            invocation_cwd,
+            repo_root,
+            StateCaptureRequest {
+                profile: Some(profile.clone()),
+                key: Some(key.clone()),
+                role: None,
+                source_env: None,
+                source: None,
+                destination_ref: None,
+                hook: None,
+                task: None,
+                yes,
+                push,
+            },
+        ) {
+            Ok(report) => {
+                ok &= report.ok;
+                captures.push(StateCaptureSetEntry {
+                    profile: profile.clone(),
+                    ok: report.ok,
+                    report: Some(report),
+                    error: None,
+                });
+            }
+            Err(error) => {
+                ok = false;
+                captures.push(StateCaptureSetEntry {
+                    profile: profile.clone(),
+                    ok: false,
+                    report: None,
+                    error: Some(error.to_string()),
+                });
+                break;
+            }
+        }
+    }
+
+    let report = StateCaptureSetReport {
+        schema: "effigy.state-stack.capture-set.v1".to_owned(),
+        schema_version: 1,
+        ok,
+        executed: yes,
+        stack: stack.to_owned(),
+        key: key.clone(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        profiles: profiles.to_vec(),
+        captures,
+        written_report_path: None,
+        written_history_path: None,
+    };
+    let mut report = report;
+    let paths = state_capture_set_report_write_paths(repo_root, stack, &key);
+    report.written_report_path = Some(path_display(&paths.latest_path, repo_root));
+    report.written_history_path = Some(path_display(&paths.history_path, repo_root));
+    write_state_report(repo_root, &paths, &report)?;
+
     if output_json {
         return serde_json::to_string(&report)
             .map_err(|error| RunnerError::task_invocation(error.to_string()));
     }
 
-    Ok(render_state_capture_text(&report))
+    Ok(render_state_capture_set_text(&report))
 }
 
 fn run_state_history(
@@ -742,6 +852,35 @@ fn render_state_capture_text(report: &StateStackCaptureReport) -> String {
     lines.join("\n")
 }
 
+fn render_state_capture_set_text(report: &StateCaptureSetReport) -> String {
+    let mut lines = vec![
+        "State capture set".to_owned(),
+        format!("stack: {}", report.stack),
+        format!("key: {}", report.key),
+        format!("executed: {}", report.executed),
+        format!("ok: {}", report.ok),
+        report
+            .written_report_path
+            .as_ref()
+            .map(|path| format!("report: {path}"))
+            .unwrap_or_else(|| "report: not written".to_owned()),
+        report
+            .written_history_path
+            .as_ref()
+            .map(|path| format!("history: {path}"))
+            .unwrap_or_else(|| "history: not written".to_owned()),
+        "captures:".to_owned(),
+    ];
+    for capture in &report.captures {
+        if let Some(error) = &capture.error {
+            lines.push(format!("- {}: failed ({error})", capture.profile));
+        } else {
+            lines.push(format!("- {}: {}", capture.profile, capture.ok));
+        }
+    }
+    lines.join("\n")
+}
+
 fn render_state_history_text(report: &StateStackHistoryReport) -> String {
     let mut lines = vec![
         "State stack history".to_owned(),
@@ -798,6 +937,29 @@ fn write_state_report<T: Serialize>(
         })?;
     }
     Ok(())
+}
+
+fn state_capture_set_report_write_paths(
+    repo_root: &Path,
+    stack_name: &str,
+    key: &str,
+) -> StateReportWritePaths {
+    let stack_dir = repo_root
+        .join(".effigy")
+        .join("reports")
+        .join("state")
+        .join(safe_path_component(stack_name));
+    let latest_path = stack_dir.join("latest-capture-set.json");
+    let history_path = stack_dir.join("history").join(format!(
+        "{}-capture-set-{}.json",
+        chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
+        safe_path_component(key)
+    ));
+    StateReportWritePaths {
+        compatibility_path: None,
+        latest_path,
+        history_path,
+    }
 }
 
 fn safe_path_component(value: &str) -> String {
@@ -908,6 +1070,33 @@ struct StateCaptureRequest {
 }
 
 #[derive(Debug, Serialize)]
+struct StateCaptureSetReport {
+    schema: String,
+    schema_version: u8,
+    ok: bool,
+    executed: bool,
+    stack: String,
+    key: String,
+    created_at: String,
+    profiles: Vec<String>,
+    captures: Vec<StateCaptureSetEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    written_report_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    written_history_path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct StateCaptureSetEntry {
+    profile: String,
+    ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    report: Option<StateStackCaptureReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct StateStackCaptureReport {
     schema: String,
     schema_version: u8,
@@ -927,6 +1116,10 @@ struct StateStackCaptureReport {
     written_report_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     written_history_path: Option<String>,
+}
+
+fn default_capture_set_key() -> String {
+    chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string()
 }
 
 impl StateStackCaptureReport {
@@ -1018,6 +1211,7 @@ impl StateStackCaptureReport {
                     repo_root.to_path_buf(),
                     ExecutionSurface::DirectCli,
                     &state_capture_task_env(
+                        repo_root,
                         lineage,
                         &request,
                         capture_role,
@@ -1121,6 +1315,7 @@ impl StateStackCaptureReport {
 }
 
 fn state_capture_task_env(
+    repo_root: &Path,
     lineage: &StateStackLineageReport,
     request: &StateCaptureRequest,
     capture_role: StateLayerRole,
@@ -1157,7 +1352,10 @@ fn state_capture_task_env(
         request.key.clone().unwrap_or_default(),
     );
     if let Some(source) = request.source.as_ref() {
-        env.insert("EFFIGY_STATE_CAPTURE_SOURCE".to_owned(), source.clone());
+        env.insert(
+            "EFFIGY_STATE_CAPTURE_SOURCE".to_owned(),
+            resolve_repo_relative_env_path(repo_root, source),
+        );
     }
     if let Some(destination) = request.destination_ref.as_ref() {
         env.insert(
@@ -1172,6 +1370,15 @@ fn state_capture_task_env(
         );
     }
     env
+}
+
+fn resolve_repo_relative_env_path(repo_root: &Path, path: &str) -> String {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        path.display().to_string()
+    } else {
+        repo_root.join(path).display().to_string()
+    }
 }
 
 fn write_state_capture_task_context(

@@ -13,6 +13,10 @@ During v0.x, MINOR bumps may include breaking changes.
   locally linked binary path.
 
 ### Added
+- **Manifest minimum Effigy version gate:** any manifest fragment can now set
+  `[manifest].minimum_effigy_version = "X.Y.Z"` so older Effigy binaries fail
+  early, including when the requirement comes from an included partial
+  manifest.
 - **Vault-backed task secret injection:** declared `[secrets.keys.*]` entries
   with `targets = ["tasks"]` are now loaded from the local Effigy vault and
   injected into task process environments, with missing required values
@@ -39,6 +43,14 @@ During v0.x, MINOR bumps may include breaking changes.
   missing required values before compose mutation, and passes resolved values
   through the compose process environment instead of writing repo-root
   plaintext files.
+- **Directory artifact capture:** `effigy artifact capture` and staging now
+  accept local directories as artifact payloads, preserving relative file paths
+  for object-store/media-library bundles and OCI push inputs.
+- **State capture sets:** `effigy state capture-set <STACK> <PROFILE>...` can
+  run multiple named capture profiles with one shared key, reducing app-local
+  orchestration glue for DB/media legacy snapshot exports.
+- **Rhai path parent helper:** Rhai scripts can now call `path::parent(...)`
+  instead of carrying app-local dirname helpers.
 
 ### Changed
 - **State apply hooks** now run during `effigy state apply --yes` after a
@@ -71,6 +83,12 @@ During v0.x, MINOR bumps may include breaking changes.
   and the old `scripts/check-linux-glibc-floor.sh` wrapper is gone.
 
 ### Fixed
+- **Rhai state capture context paths** now resolve relative
+  `EFFIGY_STATE_CAPTURE_CONTEXT` values against the task runtime CWD, so
+  `state::capture_context()` works reliably with `--repo` execution.
+- **State capture task source paths** are now passed to repo tasks as absolute
+  paths when the manifest source is relative, preventing capture scripts from
+  writing into the caller's current directory.
 - **Rhai container exec cwd mapping** now translates explicit repo-host `cwd`
   paths into the matching in-container working directory before `docker
   compose exec -w ...`, while still preserving true container-native absolute

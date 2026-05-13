@@ -175,10 +175,12 @@ State reports are plain files under `.effigy/reports/state/`:
   latest-plan.json
   latest-apply.json
   latest-capture.json
+  latest-capture-set.json
   history/
     <timestamp>-plan-<lineage>.json
     <timestamp>-apply-<lineage>.json
     <timestamp>-capture-<lineage>.json
+    <timestamp>-capture-set-<key>.json
 ```
 
 These are operator artifacts, not proof of execution. The canonical proof is the

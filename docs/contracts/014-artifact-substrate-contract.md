@@ -241,13 +241,15 @@ Write-side OCI behavior must be explicit and two-phase by default.
 Command shape:
 
 ```sh
-effigy artifact capture <SOURCE_PATH> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--push]
+effigy artifact capture <SOURCE_PATH|DIR> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--push]
 effigy container data dump <TARGET>=oci://<REF> [--push]
 ```
 
 Implementation rule:
 
-- capture always stages a local artifact first
+- capture always stages a local file or directory artifact first
+- directory capture preserves relative payload paths below the captured
+  directory in staged metadata and OCI push inputs
 - push requires explicit `--push`
 - `container data dump <target>=oci://...` dumps to a local staged artifact and
   reports the planned target ref

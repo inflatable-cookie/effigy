@@ -248,7 +248,22 @@ effigy --json test --plan
 
 Use JSON mode when CI, scripts, or agents are consuming Effigy output.
 
-## 6) Choose the Next Detail Page
+## 6) Manage Secrets
+
+If the repo declares secrets under `[secrets.keys]`:
+
+```sh
+effigy secrets init              # create the vault
+effigy secrets set database_url  # store a value
+effigy secrets list              # inspect declarations
+effigy secrets doctor            # check vault health
+```
+
+Secrets are injected into tasks, containers, Rhai scripts, and deploy hooks
+without writing plaintext to repo files. See
+[`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md).
+
+## 7) Choose the Next Detail Page
 
 - Day-to-day workflows:
   [`055-everyday-workflows.md`](./055-everyday-workflows.md)
@@ -288,6 +303,9 @@ After this guide, you should be able to:
 - [`058-demo-system-guide.md`](./058-demo-system-guide.md)
 - [`059-manifest-composition-guide.md`](./059-manifest-composition-guide.md)
 - [`060-consumer-demo-migration-guide.md`](./060-consumer-demo-migration-guide.md)
+- [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md)
+- [`073-state-stack-guide.md`](./073-state-stack-guide.md)
+- [`074-deployment-guide.md`](./074-deployment-guide.md)
 
 ## Next Step
 

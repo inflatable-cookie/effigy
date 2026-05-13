@@ -128,6 +128,9 @@ fn manifest_include_comment(profile: ConfigDocProfile) -> &'static str {
 pub(super) fn manifest_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     vec![
         "[manifest]",
+        "# Optional binary floor for this manifest fragment and anything that includes it.",
+        "minimum_effigy_version = \"0.6.2\"",
+        "",
         manifest_include_comment(profile),
         "include = [",
         "  \"effigy.tasks.toml\",",

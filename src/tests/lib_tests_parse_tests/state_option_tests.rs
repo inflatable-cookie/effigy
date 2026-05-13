@@ -427,6 +427,38 @@ fn parse_state_capture_with_push() {
 }
 
 #[test]
+fn parse_state_capture_set_with_shared_key() {
+    let cmd = parse_command(vec![
+        "state".to_owned(),
+        "capture-set".to_owned(),
+        "legacy-source".to_owned(),
+        "db".to_owned(),
+        "media".to_owned(),
+        "--key".to_owned(),
+        "20260513-070000".to_owned(),
+        "--yes".to_owned(),
+        "--push".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::State(StateArgs {
+            subcommand: StateSubcommand::CaptureSet {
+                stack: "legacy-source".to_owned(),
+                profiles: vec!["db".to_owned(), "media".to_owned()],
+                key: Some("20260513-070000".to_owned()),
+                yes: true,
+                push: true,
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_state_history_with_filters() {
     let cmd = parse_command(vec![
         "state".to_owned(),

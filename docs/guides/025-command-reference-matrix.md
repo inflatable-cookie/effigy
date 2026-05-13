@@ -81,7 +81,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy defer` | Run the configured `[defer]` fallback explicitly (same routing container semantics as selector-miss deferral) | `--repo`, `--json` | command envelope; payload follows the deferred execution path | `015-deferral-fallback-migration.md` |
 | `effigy service` | Inspect the layered service catalog and extract bundled fragments into repo-owned overrides | `list`, `extract`, `--repo`, `--dir`, `--json` | service commands render command-envelope JSON with catalog payloads | `063-container-system-guide.md` |
 | `effigy exec` | Run one ad-hoc command inside the manifest's dev-context container | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
-| `effigy secrets` | Inspect declared secret metadata and manage the local encrypted vault without printing values | `list`, `doctor`, `init`, `set`, `unset`, `unlock`, `lock`, `export`, `--repo`, `--json` | `effigy.secrets.v1` | [`../contracts/032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md) |
+| `effigy secrets` | Inspect declared secret metadata and manage the local encrypted vault without printing values | `list`, `doctor`, `init`, `set`, `unset`, `unlock`, `lock`, `export`, `--repo`, `--json` | `effigy.secrets.v1` | `075-secrets-and-vault-guide.md`, [`../contracts/032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md) |
 | `effigy gateway` | Operate the host-native local DNS and reverse-proxy gateway for container-owned routes | `up`, `down`, `status`, `setup-tls`, `--json` | gateway commands render command-envelope JSON with gateway payloads | `063-container-system-guide.md` |
 | `effigy doctor` | Run health checks and optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md` |
 | `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion | `check <KIND>`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1` | `029-docs-qa-checklist-and-validation.md` |
@@ -287,6 +287,7 @@ effigy state plan --manifest <PATH> [--repo <PATH>] [--json] [--write-report]
 effigy state plan --stack <NAME> [--repo <PATH>] [--json] [--write-report]
 effigy state apply [<STACK>] [--yes] [--json]
 effigy state capture <STACK> <PROFILE> [--yes] [--push] [--json]
+effigy state capture-set <STACK> <PROFILE>... [--key <KEY>] [--yes] [--push] [--json]
 effigy state capture [<STACK>] --role <ROLE> --source-env <ENV> --key <KEY> [--json]
 effigy state capture [<STACK>] --role <ROLE> --source-env <ENV> --key <KEY> --source <PATH> --ref oci://<REF> --yes [--push] [--json]
 effigy state history [<STACK>] [--kind plan|apply|capture] [--limit <N>] [--lineage <ID>] [--json]
@@ -395,10 +396,16 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   repo-owned capture task before staging, while produced-layer apply hooks still
   do not run; capture reports update `latest-capture.json` and timestamped
   history; capture tasks receive `EFFIGY_STATE_CAPTURE_CONTEXT` pointing to a
-  versioned JSON context file
+  versioned JSON context file, and relative `EFFIGY_STATE_CAPTURE_SOURCE`
+  values are resolved to absolute task-runtime paths
 - `state capture <STACK> <PROFILE>` resolves `[state.<STACK>.captures.<PROFILE>]`
   from the composed manifest; CLI flags can still override profile fields for
   one-off captures
+- `state capture-set <STACK> <PROFILE>...` runs multiple named capture profiles
+  with one shared key; omit `--key` to let Effigy generate a timestamp key, and
+  use `--push` to publish all captured artifacts after local staging; aggregate
+  reports update `latest-capture-set.json` and timestamped history alongside
+  the normal child capture reports
 - `state history` is read-only; it scans report JSON files and ignores malformed
   files with warnings instead of maintaining an index
 
@@ -437,6 +444,7 @@ effigy state plan uat
 effigy state apply uat
 effigy state apply uat --yes
 effigy state capture uat new-content --yes
+effigy state capture-set legacy-source db media --yes --push
 effigy --json state plan ./state/acowtancy-uat.toml
 effigy release simulate
 effigy release prepare --plan

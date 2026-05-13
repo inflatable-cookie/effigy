@@ -46,6 +46,10 @@ pub enum ArtifactStagingError {
         destination: PathBuf,
         error: io::Error,
     },
+    ReadDir {
+        path: PathBuf,
+        error: io::Error,
+    },
     SerializeMetadata(serde_json::Error),
     WriteMetadata {
         path: PathBuf,
@@ -84,6 +88,13 @@ impl fmt::Display for ArtifactStagingError {
                 source.display(),
                 destination.display()
             ),
+            Self::ReadDir { path, error } => {
+                write!(
+                    f,
+                    "failed to read artifact directory {}: {error}",
+                    path.display()
+                )
+            }
             Self::SerializeMetadata(error) => {
                 write!(f, "failed to serialize artifact metadata: {error}")
             }

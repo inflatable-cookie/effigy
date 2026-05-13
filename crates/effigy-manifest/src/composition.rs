@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use semver::Version;
 use serde::Deserialize;
 use toml::Value;
 
@@ -51,6 +52,8 @@ struct ManifestSectionConfig {
     include: Vec<ManifestIncludeEntry>,
     #[serde(default)]
     extend: Vec<String>,
+    #[serde(default)]
+    minimum_effigy_version: Option<String>,
     #[serde(default)]
     #[serde(rename = "root")]
     _root: bool,
@@ -324,6 +327,7 @@ fn take_include_specs(
             path: manifest_path.to_path_buf(),
             detail: format!("invalid `[manifest]` section: {error}"),
         })?;
+    validate_minimum_effigy_version(manifest_path, config.minimum_effigy_version.as_deref())?;
     let parent = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let mut specs = Vec::with_capacity(config.include.len());
     for entry in config.include {
@@ -345,6 +349,36 @@ fn take_include_specs(
         });
     }
     Ok((specs, config.extend))
+}
+
+fn validate_minimum_effigy_version(
+    manifest_path: &Path,
+    requested: Option<&str>,
+) -> Result<(), ManifestError> {
+    let Some(requested) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    let requested_version = Version::parse(requested).map_err(|error| ManifestError::Compose {
+        path: manifest_path.to_path_buf(),
+        detail: format!(
+            "`[manifest].minimum_effigy_version` must be a valid semver version: {error}"
+        ),
+    })?;
+    let current_version =
+        Version::parse(env!("CARGO_PKG_VERSION")).map_err(|error| ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!("current Effigy version is invalid: {error}"),
+        })?;
+    if current_version < requested_version {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+                "manifest requires Effigy >= {requested_version}, but this binary is {}",
+                env!("CARGO_PKG_VERSION")
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn merge_values(
@@ -1080,5 +1114,94 @@ include = ["overlay/**"]
         let loaded = load_task_manifest_with_inspection(&root).expect("load");
         let domains = array_strings(&loaded.effective_value, "scan.god_files.include");
         assert_eq!(domains, vec!["src/**".to_owned(), "overlay/**".to_owned()]);
+    }
+
+    #[test]
+    fn manifest_minimum_effigy_version_accepts_current_version() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            &format!(
+                r#"
+[manifest]
+minimum_effigy_version = "{}"
+
+[shell]
+run = "ok"
+"#,
+                env!("CARGO_PKG_VERSION")
+            ),
+        );
+
+        load_task_manifest_with_inspection(&root).expect("load");
+    }
+
+    #[test]
+    fn manifest_minimum_effigy_version_rejects_newer_root_requirement() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+minimum_effigy_version = "999.0.0"
+"#,
+        );
+
+        let err = load_task_manifest_with_inspection(&root).unwrap_err();
+        let detail = err.to_string();
+        assert!(detail.contains("requires Effigy >= 999.0.0"), "{detail}");
+        assert!(detail.contains(env!("CARGO_PKG_VERSION")), "{detail}");
+    }
+
+    #[test]
+    fn manifest_minimum_effigy_version_rejects_newer_included_fragment_requirement() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = ["overlay.toml"]
+"#,
+        );
+        write_manifest(
+            dir,
+            "overlay.toml",
+            r#"
+[manifest]
+minimum_effigy_version = "999.0.0"
+"#,
+        );
+
+        let err = load_task_manifest_with_inspection(&root).unwrap_err();
+        let detail = err.to_string();
+        assert!(detail.contains("overlay.toml"), "{detail}");
+        assert!(detail.contains("requires Effigy >= 999.0.0"), "{detail}");
+    }
+
+    #[test]
+    fn manifest_minimum_effigy_version_rejects_invalid_semver() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+minimum_effigy_version = "latest"
+"#,
+        );
+
+        let err = load_task_manifest_with_inspection(&root).unwrap_err();
+        let detail = err.to_string();
+        assert!(
+            detail.contains("`[manifest].minimum_effigy_version` must be a valid semver version"),
+            "{detail}"
+        );
     }
 }

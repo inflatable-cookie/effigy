@@ -281,8 +281,12 @@ project root and returns `Ok(None)` when the default file is absent.
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md) -- task env patterns
 - [`048-built-in-test-suite-lifecycle-and-env.md`](./048-built-in-test-suite-lifecycle-and-env.md) -- test suite env
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md) -- `effigy secrets` command surface
+- [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md) -- dedicated secret management and vault workflow
 
 ## Next Step
 
 Create a `.env.schema` file in your project root and run a task. Effigy
 auto-detects the schema file -- no configuration needed to get started.
+
+For true secrets, declare them under `[secrets.keys]` and store values with
+`effigy secrets set` instead of `.env.schema`.
