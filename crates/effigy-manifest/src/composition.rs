@@ -471,25 +471,35 @@ fn merge_value_inner(
     if !path.is_empty() && extend_set.contains(path) {
         let existing_source =
             current_value_source(path, current_sources, root_manifest_path).to_path_buf();
-        match (current.as_array_mut(), incoming.as_array()) {
-            (Some(current_array), Some(incoming_array)) => {
-                current_array.extend(incoming_array.iter().cloned());
-                used_extends.insert(path.to_owned());
-                return Ok(());
-            }
-            _ => {
-                return Err(ManifestError::Compose {
-                    path: root_manifest_path.to_path_buf(),
-                    detail: format!(
-                        "extend path `{path}` requires arrays on both sides; got {} from {} and {} from {}",
-                        value_kind(current),
-                        existing_source.display(),
-                        value_kind(incoming),
-                        incoming_fragment.display()
-                    ),
-                });
-            }
+        if let (Some(current_array), Some(incoming_array)) =
+            (current.as_array_mut(), incoming.as_array())
+        {
+            current_array.extend(incoming_array.iter().cloned());
+            used_extends.insert(path.to_owned());
+            return Ok(());
         }
+        if current.is_table() && incoming.is_table() {
+            merge_extended_table(
+                path,
+                current,
+                incoming,
+                incoming_sources,
+                current_sources,
+                incoming_fragment,
+            );
+            used_extends.insert(path.to_owned());
+            return Ok(());
+        }
+        return Err(ManifestError::Compose {
+            path: root_manifest_path.to_path_buf(),
+            detail: format!(
+                "extend path `{path}` requires arrays or tables on both sides; got {} from {} and {} from {}",
+                value_kind(current),
+                existing_source.display(),
+                value_kind(incoming),
+                incoming_fragment.display()
+            ),
+        });
     }
 
     if !path.is_empty() && override_set.contains(path) {
@@ -593,6 +603,67 @@ fn merge_value_inner(
             incoming_fragment.display(),
         ),
     })
+}
+
+fn merge_extended_table(
+    path: &str,
+    current: &mut Value,
+    incoming: &Value,
+    incoming_sources: &BTreeMap<String, PathBuf>,
+    current_sources: &mut BTreeMap<String, PathBuf>,
+    incoming_fragment: &Path,
+) {
+    let (Some(current_table), Some(incoming_table)) = (current.as_table_mut(), incoming.as_table())
+    else {
+        *current = incoming.clone();
+        remove_source_entries(path, current_sources);
+        copy_source_entries(
+            path,
+            incoming_sources,
+            current_sources,
+            incoming_fragment,
+            incoming,
+        );
+        return;
+    };
+
+    for (key, incoming_value) in incoming_table {
+        let child_path = join_path(path, key);
+        match current_table.get_mut(key) {
+            Some(current_value) => {
+                if current_value.is_table() && incoming_value.is_table() {
+                    merge_extended_table(
+                        &child_path,
+                        current_value,
+                        incoming_value,
+                        incoming_sources,
+                        current_sources,
+                        incoming_fragment,
+                    );
+                } else {
+                    *current_value = incoming_value.clone();
+                    remove_source_entries(&child_path, current_sources);
+                    copy_source_entries(
+                        &child_path,
+                        incoming_sources,
+                        current_sources,
+                        incoming_fragment,
+                        incoming_value,
+                    );
+                }
+            }
+            None => {
+                current_table.insert(key.clone(), incoming_value.clone());
+                copy_source_entries(
+                    &child_path,
+                    incoming_sources,
+                    current_sources,
+                    incoming_fragment,
+                    incoming_value,
+                );
+            }
+        }
+    }
 }
 
 fn canonical_manifest_identity(path: &Path) -> PathBuf {
@@ -814,7 +885,65 @@ paths = ["c", "d"]
     }
 
     #[test]
-    fn extend_on_non_array_path_errors() {
+    fn extend_merges_table_entries() {
+        let tmp = tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let root = write_manifest(
+            dir,
+            "effigy.toml",
+            r#"
+[manifest]
+include = ["overlay.toml"]
+
+[secrets]
+backend = "external"
+
+[secrets.keys.local_token]
+required = true
+"#,
+        );
+        write_manifest(
+            dir,
+            "overlay.toml",
+            r#"
+[manifest]
+extend = ["secrets"]
+
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+
+[secrets.keys.shared_token]
+required = false
+"#,
+        );
+
+        let loaded = load_task_manifest_with_inspection(&root).expect("load");
+        let secrets = loaded
+            .effective_value
+            .as_table()
+            .and_then(|table| table.get("secrets"))
+            .and_then(Value::as_table)
+            .expect("secrets table");
+        assert_eq!(
+            secrets.get("backend").and_then(Value::as_str),
+            Some("effigy-vault")
+        );
+        assert!(secrets
+            .get("vault")
+            .and_then(Value::as_table)
+            .and_then(|table| table.get("path"))
+            .and_then(Value::as_str)
+            .is_some());
+        let keys = secrets.get("keys").and_then(Value::as_table).expect("keys");
+        assert!(keys.contains_key("local_token"));
+        assert!(keys.contains_key("shared_token"));
+    }
+
+    #[test]
+    fn extend_on_scalar_path_errors() {
         let tmp = tempdir().expect("tempdir");
         let dir = tmp.path();
         let root = write_manifest(
@@ -843,7 +972,10 @@ run = "secondary"
         let err = load_task_manifest_with_inspection(&root).unwrap_err();
         let detail = format!("{err}");
         assert!(detail.contains("extend path `shell.run`"), "{detail}");
-        assert!(detail.contains("requires arrays on both sides"), "{detail}");
+        assert!(
+            detail.contains("requires arrays or tables on both sides"),
+            "{detail}"
+        );
         assert!(detail.contains("effigy.toml"), "{detail}");
         assert!(detail.contains("overlay.toml"), "{detail}");
     }

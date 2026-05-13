@@ -814,26 +814,47 @@ fn apply_bundle_extend_path(
     let Some(current_value) = lookup_value_at_path_mut(current, path) else {
         return Ok(());
     };
-    let default_array = default_value
-        .as_array()
-        .ok_or_else(|| ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!(
-            "invalid `[bundle]` section: extend path `{path}` requires an array in bundle defaults"
+    if let (Some(default_array), Some(current_array)) =
+        (default_value.as_array(), current_value.as_array_mut())
+    {
+        let mut combined = default_array.clone();
+        combined.extend(current_array.iter().cloned());
+        *current_array = combined;
+        return Ok(());
+    }
+    if let (Some(default_table), Some(current_table)) =
+        (default_value.as_table(), current_value.as_table())
+    {
+        let mut combined = Value::Table(default_table.clone());
+        merge_values_with_incoming_overrides(&mut combined, &Value::Table(current_table.clone()));
+        *current_value = combined;
+        return Ok(());
+    }
+    Err(ManifestError::Compose {
+        path: manifest_path.to_path_buf(),
+        detail: format!(
+            "invalid `[bundle]` section: extend path `{path}` requires arrays or tables in both bundle defaults and the manifest"
         ),
-        })?;
-    let current_array = current_value
-        .as_array_mut()
-        .ok_or_else(|| ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!(
-                "invalid `[bundle]` section: extend path `{path}` requires an array in the manifest"
-            ),
-        })?;
-    let mut combined = default_array.clone();
-    combined.extend(current_array.iter().cloned());
-    *current_array = combined;
-    Ok(())
+    })
+}
+
+fn merge_values_with_incoming_overrides(current: &mut Value, incoming: &Value) {
+    if let (Some(current_table), Some(incoming_table)) =
+        (current.as_table_mut(), incoming.as_table())
+    {
+        for (key, incoming_value) in incoming_table {
+            match current_table.get_mut(key) {
+                Some(current_value) => {
+                    merge_values_with_incoming_overrides(current_value, incoming_value)
+                }
+                None => {
+                    current_table.insert(key.clone(), incoming_value.clone());
+                }
+            }
+        }
+    } else {
+        *current = incoming.clone();
+    }
 }
 
 pub(super) fn lookup_value_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {

@@ -3,8 +3,8 @@ use std::path::Path;
 use effigy_manifest::config_sections::{ManifestJsPackageManager, ManifestWorkspaceContainerRef};
 use effigy_manifest::load_task_manifest;
 use effigy_manifest::load_task_manifest_with_inspection;
-use effigy_manifest::ManifestTaskRunIn;
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep};
+use effigy_manifest::{ManifestSecretsBackend, ManifestSecretsUnlockPolicy, ManifestTaskRunIn};
 
 fn underlay_fixture_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/underlay-bundle")
@@ -55,6 +55,10 @@ mounts = ["../underlay", "../poodle"]
 [tasks.seed]
 run_in = "host"
 run = "printf seed"
+
+[secrets.keys.ai_router_api_key]
+required = false
+targets = ["tasks", "containers", "rhai"]
 "#,
     )
     .expect("write manifest");
@@ -101,6 +105,14 @@ run = "printf seed"
 
     let package_manager = manifest.package_manager.expect("package manager");
     assert_eq!(package_manager.js, Some(ManifestJsPackageManager::Bun));
+
+    let secrets = manifest.secrets.expect("secrets");
+    assert_eq!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault));
+    let vault = secrets.vault.expect("secrets vault");
+    assert_eq!(vault.path.as_deref(), Some(".effigy/secrets/local.vault"));
+    assert_eq!(vault.unlock, Some(ManifestSecretsUnlockPolicy::Passphrase));
+    assert!(secrets.keys.contains_key("auth_jwt_private_key"));
+    assert!(secrets.keys.contains_key("ai_router_api_key"));
 
     let systems = manifest.systems.expect("systems");
     assert_eq!(systems.default.as_deref(), Some("dev"));
