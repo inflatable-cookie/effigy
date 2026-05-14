@@ -1286,16 +1286,20 @@ minimum_effigy_version = "latest"
     #[test]
     fn manifest_minimum_effigy_version_accepts_local_dev_builds_for_newer_floors() {
         let requested = Version::parse("0.7.0").expect("requested");
-        assert!(crate::manifest_section::active_version_satisfies_minimum_effigy_version(
-            "0.6.1+local.67a79ff.dirty",
-            &requested,
-        )
-        .expect("local build should bypass floor"));
-        assert!(crate::manifest_section::active_version_satisfies_minimum_effigy_version(
-            "v0.6.1+local.67a79ff",
-            &requested
-        )
-        .expect("prefixed local build should bypass floor"));
+        assert!(
+            crate::manifest_section::active_version_satisfies_minimum_effigy_version(
+                "0.6.1+local.67a79ff.dirty",
+                &requested,
+            )
+            .expect("local build should bypass floor")
+        );
+        assert!(
+            crate::manifest_section::active_version_satisfies_minimum_effigy_version(
+                "v0.6.1+local.67a79ff",
+                &requested
+            )
+            .expect("prefixed local build should bypass floor")
+        );
     }
 
     #[test]
@@ -1303,22 +1307,20 @@ minimum_effigy_version = "latest"
         let requested = Version::parse("0.7.0").expect("requested");
         assert!(
             !crate::manifest_section::active_version_satisfies_minimum_effigy_version(
-                "0.6.1",
-                &requested
+                "0.6.1", &requested
             )
-                .expect("release build should stay strict")
+            .expect("release build should stay strict")
         );
     }
 
     #[test]
     fn manifest_minimum_effigy_version_rejects_invalid_current_binary_version() {
         let requested = Version::parse("0.6.1").expect("requested");
-        let err =
-            crate::manifest_section::active_version_satisfies_minimum_effigy_version(
-                "definitely-not-semver",
-                &requested,
-            )
-            .expect_err("invalid active version should fail");
+        let err = crate::manifest_section::active_version_satisfies_minimum_effigy_version(
+            "definitely-not-semver",
+            &requested,
+        )
+        .expect_err("invalid active version should fail");
         assert!(err.contains("current Effigy version is invalid"), "{err}");
     }
 }

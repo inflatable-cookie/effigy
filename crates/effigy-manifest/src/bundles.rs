@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use toml::Value;
 
-use crate::manifest_section::{ManifestSectionConfig, validate_minimum_effigy_version};
+use crate::manifest_section::{validate_minimum_effigy_version, ManifestSectionConfig};
 use crate::ManifestError;
 
 mod source;

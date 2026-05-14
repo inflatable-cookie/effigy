@@ -1065,6 +1065,66 @@ This is useful when:
 - a target should participate in seed/dump but not in bundle-level deployment
   modeling
 
+## Secrets
+
+Declare secrets with consumer targets:
+
+```toml
+[secrets]
+backend = "effigy-vault"
+
+[secrets.keys.database_url]
+required = true
+targets = ["tasks", "containers"]
+description = "Application database connection URL"
+```
+
+Store values with `effigy secrets set database_url`. Values inject into task
+processes, containers, Rhai scripts, deploy hooks, and state hooks without
+writing plaintext to repo files. See
+[`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md).
+
+## State Stacks
+
+Declare ordered schema/seed/import/capture layers:
+
+```toml
+[state.uat]
+schema = "effigy.state-stack.v1"
+name = "acme-uat"
+environment = "uat"
+
+[[state.uat.layers]]
+key = "structure"
+role = "structure"
+source = "db:migrate"
+apply_mode = "task"
+environment_policy = "all"
+```
+
+Plan with `effigy state plan uat`, apply with `effigy state apply uat --yes`,
+capture with `effigy state capture uat new-content --yes`. See
+[`073-state-stack-guide.md`](./073-state-stack-guide.md).
+
+## Deploy Config
+
+Declare UAT and production deployment environments:
+
+```toml
+[deploy.uat]
+state = "uat"
+code_ref = "branch:main"
+release_policy = "optional"
+provider_project = "acme-uat"
+artifact_policy = "digest-preferred"
+
+[deploy.uat.provider]
+adapter = "railway"
+```
+
+Plan with `effigy deploy plan uat`, apply with `effigy deploy apply uat --yes`.
+See [`074-deployment-guide.md`](./074-deployment-guide.md).
+
 ## Notes
 
 - Discovery scans for `effigy.toml` recursively.

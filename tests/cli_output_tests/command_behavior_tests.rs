@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use super::support::{
     attach_bare_remote, git_commit_all, git_stdout, init_git_repo, parse_stdout_json,
-    run_json_cli_command, run_json_cli_command_with_manifest, run_json_task_success, temp_workspace,
-    wait_for_path_exists, write_fake_effigy_install_repo, write_release_changelog,
+    run_json_cli_command, run_json_cli_command_with_manifest, run_json_task_success,
+    temp_workspace, wait_for_path_exists, write_fake_effigy_install_repo, write_release_changelog,
     write_release_manifest,
 };
 

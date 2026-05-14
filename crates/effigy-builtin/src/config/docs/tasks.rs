@@ -274,6 +274,111 @@ pub(super) fn demos_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     ]
 }
 
+fn secrets_section_comment(profile: ConfigDocProfile) -> &'static str {
+    match profile {
+        ConfigDocProfile::Reference => {
+            "# Secret declarations with consumer targets (tasks, containers, rhai, deploy, state, artifacts)."
+        }
+        ConfigDocProfile::Schema => {
+            "# Secret declarations with consumer targets."
+        }
+    }
+}
+
+pub(super) fn secrets_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
+    vec![
+        "[secrets]",
+        secrets_section_comment(profile),
+        "backend = \"effigy-vault\"",
+        "",
+        "[secrets.vault]",
+        "# Local encrypted vault file path.",
+        "path = \".effigy/secrets/local.vault\"",
+        "# Unlock policy: passphrase, key-and-passphrase, or external.",
+        "unlock = \"key-and-passphrase\"",
+        "",
+        "[secrets.keys.database_url]",
+        "required = true",
+        "targets = [\"tasks\", \"containers\"]",
+        "description = \"Application database connection URL\"",
+        "",
+        "[secrets.keys.render_api_key]",
+        "required = false",
+        "targets = [\"deploy\"]",
+        "description = \"Render API key for deployment checks and apply\"",
+        "",
+    ]
+}
+
+fn state_section_comment(profile: ConfigDocProfile) -> &'static str {
+    match profile {
+        ConfigDocProfile::Reference => {
+            "# Ordered state stacks for schema, seed, import, and capture layers."
+        }
+        ConfigDocProfile::Schema => {
+            "# Ordered state stacks for schema, seed, import, and capture layers."
+        }
+    }
+}
+
+pub(super) fn state_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
+    vec![
+        "[state.uat]",
+        state_section_comment(profile),
+        "schema = \"effigy.state-stack.v1\"",
+        "name = \"acme-uat\"",
+        "environment = \"uat\"",
+        "",
+        "[[state.uat.layers]]",
+        "key = \"structure\"",
+        "role = \"structure\"",
+        "source = \"db:migrate\"",
+        "apply_mode = \"task\"",
+        "environment_policy = \"all\"",
+        "",
+        "[state.uat.captures.new-content]",
+        "role = \"uat-capture\"",
+        "source_env = \"uat\"",
+        "source = \".effigy/state/captures/{key}.tar\"",
+        "ref = \"oci://ghcr.io/acme/state:{key}\"",
+        "task = \"state:capture-new-content\"",
+        "",
+    ]
+}
+
+fn deploy_section_comment(profile: ConfigDocProfile) -> &'static str {
+    match profile {
+        ConfigDocProfile::Reference => {
+            "# Deployment environment configs for UAT and production transactions."
+        }
+        ConfigDocProfile::Schema => {
+            "# Deployment environment configs for UAT and production transactions."
+        }
+    }
+}
+
+pub(super) fn deploy_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
+    vec![
+        "[deploy.uat]",
+        deploy_section_comment(profile),
+        "state = \"uat\"",
+        "code_ref = \"branch:main\"",
+        "release_policy = \"optional\"",
+        "provider_project = \"acme-uat\"",
+        "artifact_policy = \"digest-preferred\"",
+        "",
+        "[deploy.uat.provider]",
+        "adapter = \"railway\"",
+        "",
+        "[deploy.uat.preflight]",
+        "require_clean_worktree = false",
+        "require_provider_resources = true",
+        "require_provider_variables = true",
+        "require_domains = true",
+        "",
+    ]
+}
+
 pub(super) fn tasks_canonical_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     let mut lines = Vec::with_capacity(
         SECTION_TASKS_CANONICAL_PREFIX.len() + 1 + SECTION_TASKS_CANONICAL_SUFFIX.len(),

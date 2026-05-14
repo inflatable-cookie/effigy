@@ -23,6 +23,9 @@ pub(super) fn render_builtin_config_schema() -> String {
         &mut doc,
         docs::test_section_lines(true, ConfigDocProfile::Schema, None),
     );
+    append_doc_lines(&mut doc, docs::secrets_lines(ConfigDocProfile::Schema));
+    append_doc_lines(&mut doc, docs::state_lines(ConfigDocProfile::Schema));
+    append_doc_lines(&mut doc, docs::deploy_lines(ConfigDocProfile::Schema));
     append_doc_lines(&mut doc, docs::defer_lines().iter().copied());
     append_doc_lines(&mut doc, docs::shell_lines().iter().copied());
     append_doc_lines(&mut doc, docs::scan_lines().iter().copied());

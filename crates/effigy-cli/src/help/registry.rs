@@ -261,7 +261,10 @@ pub(crate) fn general_help_command_rows(
     })
 }
 
-fn render_general(renderer: &mut dyn HelpRenderer, deferred_builtins: &BTreeSet<String>) -> HelpResult<()> {
+fn render_general(
+    renderer: &mut dyn HelpRenderer,
+    deferred_builtins: &BTreeSet<String>,
+) -> HelpResult<()> {
     topics::render_general_help(renderer, deferred_builtins)
 }
 

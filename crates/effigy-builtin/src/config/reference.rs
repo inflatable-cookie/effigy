@@ -84,6 +84,27 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
         docs::scan_lines().iter().copied(),
     )?;
 
+    renderer.section("Secrets")?;
+    emit_doc_lines(
+        &mut renderer,
+        color_enabled,
+        docs::secrets_lines(ConfigDocProfile::Reference),
+    )?;
+
+    renderer.section("State Stacks")?;
+    emit_doc_lines(
+        &mut renderer,
+        color_enabled,
+        docs::state_lines(ConfigDocProfile::Reference),
+    )?;
+
+    renderer.section("Deploy")?;
+    emit_doc_lines(
+        &mut renderer,
+        color_enabled,
+        docs::deploy_lines(ConfigDocProfile::Reference),
+    )?;
+
     renderer.section("Built-in Test")?;
     emit_doc_lines(
         &mut renderer,

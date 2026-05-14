@@ -36,10 +36,7 @@ pub fn render_cli_header<R: Renderer>(
     let path_line = fit_cli_header_path(&title_line, &path_line, pkg_version);
     let combined_line = format!("{title_line}  {path_line}");
     let version = format!(" {pkg_version} ");
-    let inner_width = combined_line
-        .chars()
-        .count()
-        .max(version.chars().count());
+    let inner_width = combined_line.chars().count().max(version.chars().count());
     let top = format!("╭{}╮", "─".repeat(inner_width + 2));
     let middle_padding = " ".repeat(inner_width.saturating_sub(combined_line.chars().count()));
     let middle = format!("│ {combined_line}{middle_padding} │");

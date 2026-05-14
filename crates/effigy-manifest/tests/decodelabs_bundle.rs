@@ -801,5 +801,8 @@ base = {{ type = "path", dir = "{}" }}
         .tasks
         .get("bundle-default")
         .expect("bundle task");
-    assert_eq!(task.run, Some(ManifestManagedRun::Command("true".to_owned())));
+    assert_eq!(
+        task.run,
+        Some(ManifestManagedRun::Command("true".to_owned()))
+    );
 }
