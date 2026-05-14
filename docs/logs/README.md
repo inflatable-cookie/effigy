@@ -76,6 +76,16 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/14-174005-reusable-core-hardening-closeout.md`](./2026-05/14-174005-reusable-core-hardening-closeout.md)
+- [`2026-05/14-173811-process-execution-boundary-review.md`](./2026-05/14-173811-process-execution-boundary-review.md)
+- [`2026-05/14-170346-rhai-host-surface-test-ownership.md`](./2026-05/14-170346-rhai-host-surface-test-ownership.md)
+- [`2026-05/14-165009-low-risk-deduplication-follow-through.md`](./2026-05/14-165009-low-risk-deduplication-follow-through.md)
+- [`2026-05/14-164045-state-domain-extraction-follow-through.md`](./2026-05/14-164045-state-domain-extraction-follow-through.md)
+- [`2026-05/14-163146-active-docs-product-neutrality-cleanup.md`](./2026-05/14-163146-active-docs-product-neutrality-cleanup.md)
+- [`2026-05/14-162901-provider-source-materialization-convergence.md`](./2026-05/14-162901-provider-source-materialization-convergence.md)
+- [`2026-05/14-153500-deploy-provider-contract-hardening.md`](./2026-05/14-153500-deploy-provider-contract-hardening.md)
+- [`2026-05/14-150000-reusable-core-hardening-lane-opened.md`](./2026-05/14-150000-reusable-core-hardening-lane-opened.md)
+- [`2026-05/14-145505-schema-shape-convergence-closeout.md`](./2026-05/14-145505-schema-shape-convergence-closeout.md)
 - [`2026-05/14-012000-manifest-section-convergence-lane-closeout.md`](./2026-05/14-012000-manifest-section-convergence-lane-closeout.md)
 - [`2026-05/14-011500-manifest-section-owner-convergence-slices.md`](./2026-05/14-011500-manifest-section-owner-convergence-slices.md)
 - [`2026-05/14-010500-g05-reopened-cleanup-suite-closeout.md`](./2026-05/14-010500-g05-reopened-cleanup-suite-closeout.md)
