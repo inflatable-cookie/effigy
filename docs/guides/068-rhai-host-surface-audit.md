@@ -57,13 +57,26 @@ Policy:
 | Scan | `scan::god_files`, `scan::generated_assets`, `scan::generated_in_src`, `scan::duplicate_blocks`, `scan::comment_ratio`, `scan::attention_markers`, `scan::stale_suppressions` | Exposed |
 | Cache | `cache::inspect`, `cache::invalidate` | Exposed |
 | Contracts | `contracts::check_json`, `contracts::validate_selection` | Exposed |
-| Deploy | `deploy::model`, `deploy::emit` | Exposed |
+| Deploy | `deploy::model`, `deploy::emit`, `deploy::provider_context`, `deploy::provider_context_path`, `deploy::provider_report_path`, `deploy::provider_report` | Exposed |
 | System | `system::status`, `system::logs` | Exposed |
 | Demo | `demo::list`, `demo::inspect`, `demo::history` | Exposed |
 | Changelog | `changelog::validate`, `changelog::extract` | Exposed |
 | Test | `test::plan` | Exposed |
 | Unlock | `unlock::scopes` | Exposed |
-| Effigy | `effigy::run`, `effigy::run_json` | Exposed |
+| Secrets | `secrets::get`, `secrets::has`, `secrets::set`, `secrets::set_many` | Exposed |
+| Effigy | `effigy::active_version`, `effigy::run`, `effigy::run_json` | Exposed |
+
+## Missing But Planned
+
+| Surface | Status | Notes |
+| --- | --- | --- |
+| `state::capture_set` | missing | CLI has `state capture-set`; Rhai only has `state::capture` |
+| `deploy::plan` | missing | CLI has full deploy transaction surface |
+| `deploy::apply` | missing | CLI has full deploy transaction surface |
+| `deploy::status` | missing | CLI has full deploy transaction surface |
+| `deploy::history` | missing | CLI has full deploy transaction surface |
+| `deploy::redeploy` | missing | CLI has full deploy transaction surface |
+| `distribution` | missing | CLI has `distribution preflight`, `check-glibc-floor`, `validate-artifacts` |
 
 ## Intentionally CLI-First
 
@@ -75,6 +88,9 @@ Policy:
 | Workspace sessions | Interactive/container session lifecycle |
 | Demo browser/input sessions | Long-running human-facing UI |
 | Attached/following logs | Long-running terminal ownership |
+| Init | Interactive scaffolding with TTY prompts |
+| Watch | Long-running file-watching loops |
+| Tasks migrate | One-shot import utility |
 
 ## Return Shapes
 

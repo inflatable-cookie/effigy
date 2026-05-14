@@ -14,8 +14,8 @@ Expose a small declaration-bound secret API to Rhai scripts.
 
 ## Scope
 
-- add `effigy.secret(name)` or equivalent module-native helper
-- add `effigy.has_secret(name)` or equivalent module-native helper
+- add `secrets.get(name)` or equivalent module-native helper
+- add `secrets.has(name)` or equivalent module-native helper
 - enforce `targets = ["rhai"]`
 - block undeclared reads
 - redact values from Rhai host logs, reports, and errors
@@ -37,7 +37,7 @@ Expose a small declaration-bound secret API to Rhai scripts.
 
 ## Completed
 
-- Added `effigy::secret(name)` and `effigy::has_secret(name)` for declared
+- Added `secrets::get(name)` and `secrets::has(name)` for declared
   Rhai-targeted vault secrets.
 - Added invocation-local Rhai secret preflight so missing required Rhai secrets
   block before script execution.

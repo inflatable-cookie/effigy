@@ -221,7 +221,7 @@ effigy secrets doctor
 ```
 
 Values are injected into task processes, container environments, Rhai scripts
-(`effigy::secret(name)`), deploy provider packages, and state hooks without
+(`secrets::get(name)`), deploy provider packages, and state hooks without
 writing plaintext to repo files. Values are redacted in JSON output, logs, and
 errors.
 

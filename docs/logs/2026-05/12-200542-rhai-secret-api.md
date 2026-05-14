@@ -4,7 +4,7 @@ Implemented batch card `714` for `g05.004`.
 
 ## Changed
 
-- Added `effigy::secret(name)` and `effigy::has_secret(name)` for declared
+- Added `secrets::get(name)` and `secrets::has(name)` for declared
   Rhai-targeted vault secrets.
 - Added Rhai secret preflight so required missing secrets block before script
   execution.
