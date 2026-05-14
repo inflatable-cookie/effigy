@@ -54,7 +54,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-nextest
+        if: runner.os != 'macOS'
         uses: taiki-e/install-action@cargo-nextest
+
+      - name: Install cargo-nextest (macOS)
+        if: runner.os == 'macOS'
+        run: cargo install cargo-nextest --locked
 
       - name: Install Node.js
         uses: actions/setup-node@v6

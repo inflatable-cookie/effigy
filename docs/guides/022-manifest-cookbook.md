@@ -1151,6 +1151,9 @@ See [`074-deployment-guide.md`](./074-deployment-guide.md).
 - [`055-everyday-workflows.md`](./055-everyday-workflows.md)
 - [`063-container-system-guide.md`](./063-container-system-guide.md)
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
+- [`073-state-stack-guide.md`](./073-state-stack-guide.md)
+- [`074-deployment-guide.md`](./074-deployment-guide.md)
+- [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md)
 
 ## Expected Outcome
 
