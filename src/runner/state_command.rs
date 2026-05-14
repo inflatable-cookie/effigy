@@ -7,11 +7,16 @@ use effigy_cli::{BootstrapDbSeedInput, StateArgs, StateSubcommand, TaskInvocatio
 use effigy_execution::ExecutionSurface;
 use effigy_manifest::{ManifestInlineTaskDefinition, ManifestManagedRun, ManifestTask};
 use effigy_state::{
-    capture_produced_layer, state_report_write_paths, StateCaptureMode, StateCapturePlanRequest,
-    StateHistoryKind, StateLayerApplyMode, StateLayerRole, StateReportWritePaths,
-    StateStackApplyHookStatus, StateStackApplyLayerReport, StateStackApplyLayerStatus,
-    StateStackApplyReport, StateStackCaptureProducedLayer, StateStackHistoryReport,
-    StateStackLineageReport, StateStackManifest,
+    capture_produced_layer, parse_capture_role, plain_state_environment,
+    plain_state_layer_apply_mode, plain_state_layer_role, state_report_write_paths,
+    StateApplyHookContext, StateApplyHookLayerContext, StateCaptureArtifactOperation,
+    StateCaptureMode, StateCapturePlanRequest, StateCaptureSetEntry, StateCaptureSetReport,
+    StateCaptureTaskContext, StateHistoryKind, StateLayerApplyMode, StateLayerRole,
+    StateReportWritePaths, StateStackApplyHookStatus, StateStackApplyLayerReport,
+    StateStackApplyLayerStatus, StateStackApplyReport, StateStackCaptureArtifact,
+    StateStackCaptureReport, StateStackCaptureTask, StateStackCaptureTaskStatus,
+    StateStackHistoryReport, StateStackLineageReport, StateStackManifest,
+    STATE_STACK_APPLY_CONTEXT_SCHEMA, STATE_STACK_CAPTURE_CONTEXT_SCHEMA,
 };
 use serde::Deserialize;
 use serde::Serialize;
@@ -20,6 +25,10 @@ use serde_json::Value;
 use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::load_task_manifest_with_inspection;
+use crate::runner::state_command_render::{
+    render_state_apply_text, render_state_capture_set_text, render_state_capture_text,
+    render_state_history_text, render_state_plan_text,
+};
 
 pub(super) fn run_state(args: StateArgs) -> Result<String, RunnerError> {
     let context = resolve_active_command_context(args.repo_override.clone())?;
@@ -456,7 +465,7 @@ fn run_state_capture_report(
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
         .report("planned");
     let adapter = crate::runner::artifact_transport::OrasCliArtifactAdapter::default();
-    let mut report = StateStackCaptureReport::from_request(&lineage, request, repo_root, &adapter)?;
+    let mut report = build_state_stack_capture_report(&lineage, request, repo_root, &adapter)?;
     let paths = state_report_write_paths(
         repo_root,
         &report.stack_name,
@@ -884,189 +893,6 @@ fn expand_capture_template(value: &str, stack: &str, profile: &str, key: &str) -
         .replace("{key}", key)
 }
 
-fn render_state_plan_text(report: &StateStackLineageReport) -> String {
-    let mut lines = vec![
-        "State stack plan".to_owned(),
-        format!("schema: {}", report.schema),
-        format!("stack: {}", report.stack_name),
-        format!("environment: {:?}", report.environment),
-        format!("lineage: {}", report.lineage_id),
-        report
-            .written_report_path
-            .as_ref()
-            .map(|path| format!("report: {path}"))
-            .unwrap_or_else(|| "report: not written".to_owned()),
-        report
-            .written_history_path
-            .as_ref()
-            .map(|path| format!("history: {path}"))
-            .unwrap_or_else(|| "history: not written".to_owned()),
-        "layers:".to_owned(),
-    ];
-    for layer in &report.layers {
-        lines.push(format!(
-            "- {}: {:?} via {:?} ({:?})",
-            layer.key, layer.role, layer.apply_mode, layer.environment_policy
-        ));
-    }
-    if !report.artifact_reports.is_empty() {
-        lines.push("artifact operations:".to_owned());
-        for artifact in &report.artifact_reports {
-            lines.push(format!(
-                "- {}: {:?} {}",
-                artifact.layer_key, artifact.operation, artifact.source_ref
-            ));
-        }
-    }
-    lines.join("\n")
-}
-
-fn render_state_apply_text(report: &StateStackApplyReport) -> String {
-    let mut lines = vec![
-        "State stack apply".to_owned(),
-        format!("schema: {}", report.schema),
-        format!("stack: {}", report.stack_name),
-        format!("environment: {:?}", report.environment),
-        format!("mode: {}", if report.executed { "execute" } else { "plan" }),
-        report
-            .written_report_path
-            .as_ref()
-            .map(|path| format!("report: {path}"))
-            .unwrap_or_else(|| "report: not written".to_owned()),
-        report
-            .written_history_path
-            .as_ref()
-            .map(|path| format!("history: {path}"))
-            .unwrap_or_else(|| "history: not written".to_owned()),
-        "layers:".to_owned(),
-    ];
-    for layer in &report.layers {
-        lines.push(format!(
-            "- {}: {:?} via {:?} ({})",
-            layer.key, layer.role, layer.apply_mode, layer.status
-        ));
-        if let Some(hook) = layer.hook.as_deref() {
-            let hook_status = layer
-                .hook_status
-                .map(|status| status.to_string())
-                .unwrap_or_else(|| "not-run".to_owned());
-            lines.push(format!("  hook: {hook} ({hook_status})"));
-        }
-        if let Some(error) = layer.error.as_deref() {
-            lines.push(format!("  error: {error}"));
-        }
-        if let Some(error) = layer.hook_error.as_deref() {
-            lines.push(format!("  hook error: {error}"));
-        }
-    }
-    lines.join("\n")
-}
-
-fn render_state_capture_text(report: &StateStackCaptureReport) -> String {
-    let mut lines = vec![
-        "State stack capture".to_owned(),
-        format!("schema: {}", report.schema),
-        format!("stack: {}", report.stack_name),
-        format!("source environment: {}", report.source_environment),
-        format!("mode: {}", report.capture_mode),
-        format!(
-            "execution: {}",
-            if report.executed {
-                "staged local artifact"
-            } else {
-                "plan-only"
-            }
-        ),
-        report
-            .written_report_path
-            .as_ref()
-            .map(|path| format!("report: {path}"))
-            .unwrap_or_else(|| "report: not written".to_owned()),
-        report
-            .written_history_path
-            .as_ref()
-            .map(|path| format!("history: {path}"))
-            .unwrap_or_else(|| "history: not written".to_owned()),
-        "produced layers:".to_owned(),
-    ];
-    for layer in &report.produced_layers {
-        lines.push(format!(
-            "- {}: {:?} via {:?}",
-            layer.key, layer.role, layer.apply_mode
-        ));
-    }
-    if !report.capture_artifacts.is_empty() {
-        lines.push("capture artifacts:".to_owned());
-        for artifact in &report.capture_artifacts {
-            lines.push(format!(
-                "- {}: {}",
-                artifact.layer_key,
-                artifact
-                    .ref_
-                    .as_deref()
-                    .unwrap_or("destination ref not specified")
-            ));
-        }
-    }
-    lines.join("\n")
-}
-
-fn render_state_capture_set_text(report: &StateCaptureSetReport) -> String {
-    let mut lines = vec![
-        "State capture set".to_owned(),
-        format!("stack: {}", report.stack),
-        format!("key: {}", report.key),
-        format!("executed: {}", report.executed),
-        format!("ok: {}", report.ok),
-        report
-            .written_report_path
-            .as_ref()
-            .map(|path| format!("report: {path}"))
-            .unwrap_or_else(|| "report: not written".to_owned()),
-        report
-            .written_history_path
-            .as_ref()
-            .map(|path| format!("history: {path}"))
-            .unwrap_or_else(|| "history: not written".to_owned()),
-        "captures:".to_owned(),
-    ];
-    for capture in &report.captures {
-        if let Some(error) = &capture.error {
-            lines.push(format!("- {}: failed ({error})", capture.profile));
-        } else {
-            lines.push(format!("- {}: {}", capture.profile, capture.ok));
-        }
-    }
-    lines.join("\n")
-}
-
-fn render_state_history_text(report: &StateStackHistoryReport) -> String {
-    let mut lines = vec![
-        "State stack history".to_owned(),
-        format!("schema: {}", report.schema),
-        format!("stack: {}", report.stack_name),
-        format!("reports: {}", report.reports.len()),
-    ];
-    for item in &report.reports {
-        lines.push(format!(
-            "- {}: {} ({})",
-            item.kind,
-            item.path,
-            item.lineage_id
-                .as_deref()
-                .or(item.parent_lineage_id.as_deref())
-                .unwrap_or("lineage unknown")
-        ));
-    }
-    if !report.warnings.is_empty() {
-        lines.push("warnings:".to_owned());
-        for warning in &report.warnings {
-            lines.push(format!("- {warning}"));
-        }
-    }
-    lines.join("\n")
-}
-
 fn write_state_report<T: Serialize>(
     repo_root: &Path,
     paths: &StateReportWritePaths,
@@ -1348,269 +1174,222 @@ struct StateCaptureRequest {
     push: bool,
 }
 
-#[derive(Debug, Serialize)]
-struct StateCaptureSetReport {
-    schema: String,
-    schema_version: u8,
-    ok: bool,
-    executed: bool,
-    stack: String,
-    key: String,
-    created_at: String,
-    profiles: Vec<String>,
-    captures: Vec<StateCaptureSetEntry>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    written_report_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    written_history_path: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct StateCaptureSetEntry {
-    profile: String,
-    ok: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    report: Option<StateStackCaptureReport>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct StateStackCaptureReport {
-    schema: String,
-    schema_version: u8,
-    ok: bool,
-    executed: bool,
-    stack_name: String,
-    source_environment: String,
-    capture_role: StateLayerRole,
-    capture_mode: StateCaptureMode,
-    parent_lineage_id: String,
-    created_at: String,
-    produced_layers: Vec<StateStackCaptureProducedLayer>,
-    capture_artifacts: Vec<StateStackCaptureArtifact>,
-    tasks: Vec<StateStackCaptureTask>,
-    warnings: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    written_report_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    written_history_path: Option<String>,
-}
-
 fn default_capture_set_key() -> String {
     chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string()
 }
 
-impl StateStackCaptureReport {
-    fn from_request(
-        lineage: &StateStackLineageReport,
-        request: StateCaptureRequest,
-        repo_root: &Path,
-        adapter: &dyn OciArtifactAdapter,
-    ) -> Result<Self, RunnerError> {
-        let role = request
-            .role
-            .as_deref()
-            .ok_or_else(|| RunnerError::task_invocation("missing state capture role".to_owned()))?;
-        let source_env = request.source_env.clone().ok_or_else(|| {
-            RunnerError::task_invocation("missing state capture source environment".to_owned())
-        })?;
-        let key = request
-            .key
-            .clone()
-            .ok_or_else(|| RunnerError::task_invocation("missing state capture key".to_owned()))?;
-        let capture_role = parse_capture_role(role)?;
-        let capture_mode = StateCaptureMode::from_role(capture_role).ok_or_else(|| {
-            RunnerError::task_invocation(format!(
-                "`state capture` role must be `uat-capture` or `full-capture`, got `{role}`"
-            ))
-        })?;
-        if request.yes && request.source.is_none() {
-            return Err(RunnerError::task_invocation(
+fn build_state_stack_capture_report(
+    lineage: &StateStackLineageReport,
+    request: StateCaptureRequest,
+    repo_root: &Path,
+    adapter: &dyn OciArtifactAdapter,
+) -> Result<StateStackCaptureReport, RunnerError> {
+    let role = request
+        .role
+        .as_deref()
+        .ok_or_else(|| RunnerError::task_invocation("missing state capture role".to_owned()))?;
+    let source_env = request.source_env.clone().ok_or_else(|| {
+        RunnerError::task_invocation("missing state capture source environment".to_owned())
+    })?;
+    let key = request
+        .key
+        .clone()
+        .ok_or_else(|| RunnerError::task_invocation("missing state capture key".to_owned()))?;
+    let capture_role = parse_capture_role(role).ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "`state capture` role must be `uat-capture` or `full-capture`, got `{role}`"
+        ))
+    })?;
+    let capture_mode = StateCaptureMode::from_role(capture_role).ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "`state capture` role must be `uat-capture` or `full-capture`, got `{role}`"
+        ))
+    })?;
+    if request.yes && request.source.is_none() {
+        return Err(RunnerError::task_invocation(
                 "`state capture --yes` requires `--source <PATH>` for an already-produced capture payload".to_owned(),
             ));
-        }
-        if request.yes && request.destination_ref.is_none() {
-            return Err(RunnerError::task_invocation(
+    }
+    if request.yes && request.destination_ref.is_none() {
+        return Err(RunnerError::task_invocation(
                 "`state capture --yes` requires `--ref oci://<REF>` so the staged capture has an explicit future destination".to_owned(),
             ));
-        }
-        if request.push && !request.yes {
-            return Err(RunnerError::task_invocation(
-                "`state capture --push` requires `--yes` so publish is explicit".to_owned(),
-            ));
-        }
-        let produced_layer = capture_produced_layer(
-            lineage,
-            capture_role,
-            &StateCapturePlanRequest::new(source_env.clone(), key.clone())
-                .source(request.source.clone())
-                .destination_ref(request.destination_ref.clone())
-                .hook(request.hook.clone()),
-        )
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        let mut warnings = lineage.warnings.clone();
-        if request.destination_ref.is_none() {
-            warnings.push(
-                "capture destination ref is not specified; produced layer source is unresolved"
-                    .to_owned(),
+    }
+    if request.push && !request.yes {
+        return Err(RunnerError::task_invocation(
+            "`state capture --push` requires `--yes` so publish is explicit".to_owned(),
+        ));
+    }
+    let produced_layer = capture_produced_layer(
+        lineage,
+        capture_role,
+        &StateCapturePlanRequest::new(source_env.clone(), key.clone())
+            .source(request.source.clone())
+            .destination_ref(request.destination_ref.clone())
+            .hook(request.hook.clone()),
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let mut warnings = lineage.warnings.clone();
+    if request.destination_ref.is_none() {
+        warnings.push(
+            "capture destination ref is not specified; produced layer source is unresolved"
+                .to_owned(),
+        );
+    }
+    let capture_task = request.task.clone();
+    let mut tasks = capture_task
+        .as_ref()
+        .map(|definition| StateStackCaptureTask {
+            name: definition.report_name(),
+            status: StateStackCaptureTaskStatus::Planned,
+            context_path: None,
+            output: None,
+            error: None,
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
+    if request.yes {
+        let context_path = if tasks.is_empty() {
+            None
+        } else {
+            Some(write_state_capture_task_context(
+                repo_root,
+                lineage,
+                &request,
+                capture_role,
+                capture_mode,
+            )?)
+        };
+        for task in &mut tasks {
+            task.context_path.clone_from(&context_path);
+            let task_env = state_capture_task_env(
+                repo_root,
+                lineage,
+                &request,
+                capture_role,
+                capture_mode,
+                context_path.as_deref(),
             );
-        }
-        let capture_task = request.task.clone();
-        let mut tasks = capture_task
-            .as_ref()
-            .map(|definition| StateStackCaptureTask {
-                name: definition.report_name(),
-                status: StateStackCaptureTaskStatus::Planned,
-                context_path: None,
-                output: None,
-                error: None,
-            })
-            .into_iter()
-            .collect::<Vec<_>>();
-        if request.yes {
-            let context_path = if tasks.is_empty() {
-                None
-            } else {
-                Some(write_state_capture_task_context(
-                    repo_root,
-                    lineage,
-                    &request,
-                    capture_role,
-                    capture_mode,
-                )?)
-            };
-            for task in &mut tasks {
-                task.context_path.clone_from(&context_path);
-                let task_env = state_capture_task_env(
-                    repo_root,
-                    lineage,
-                    &request,
-                    capture_role,
-                    capture_mode,
-                    context_path.as_deref(),
-                );
-                let result = match capture_task.clone() {
-                    Some(ManifestStateTaskDefinition::Reference(name)) => {
-                        crate::runner::execute::api::run_manifest_task_with_surface_and_env(
-                            &TaskInvocation {
-                                name,
-                                args: Vec::new(),
-                            },
+            let result = match capture_task.clone() {
+                Some(ManifestStateTaskDefinition::Reference(name)) => {
+                    crate::runner::execute::api::run_manifest_task_with_surface_and_env(
+                        &TaskInvocation {
+                            name,
+                            args: Vec::new(),
+                        },
+                        repo_root.to_path_buf(),
+                        ExecutionSurface::DirectCli,
+                        &task_env,
+                    )
+                }
+                Some(definition) => {
+                    let inline_task = definition.into_manifest_task().ok_or_else(|| {
+                        RunnerError::task_invocation("missing inline capture task".to_owned())
+                    });
+                    inline_task.and_then(|inline_task| {
+                        crate::runner::execute::api::run_inline_task_with_cwd_and_env(
+                            inline_task,
                             repo_root.to_path_buf(),
-                            ExecutionSurface::DirectCli,
+                            "state capture inline task",
                             &task_env,
                         )
-                    }
-                    Some(definition) => {
-                        let inline_task = definition.into_manifest_task().ok_or_else(|| {
-                            RunnerError::task_invocation("missing inline capture task".to_owned())
-                        });
-                        inline_task.and_then(|inline_task| {
-                            crate::runner::execute::api::run_inline_task_with_cwd_and_env(
-                                inline_task,
-                                repo_root.to_path_buf(),
-                                "state capture inline task",
-                                &task_env,
-                            )
-                        })
-                    }
-                    None => Ok(String::new()),
-                };
-                match result {
-                    Ok(output) => {
-                        task.status = StateStackCaptureTaskStatus::Executed;
-                        task.output = Some(output);
-                    }
-                    Err(error) => {
-                        task.status = StateStackCaptureTaskStatus::Failed;
-                        task.error = Some(error.to_string());
-                        return Ok(Self {
-                            schema: "effigy.state-stack.capture.v1".to_owned(),
-                            schema_version: 1,
-                            ok: false,
-                            executed: true,
-                            stack_name: lineage.stack_name.clone(),
-                            source_environment: source_env.clone(),
-                            capture_role,
-                            capture_mode,
-                            parent_lineage_id: lineage.lineage_id.clone(),
-                            created_at: "planned".to_owned(),
-                            produced_layers: vec![produced_layer],
-                            capture_artifacts: vec![StateStackCaptureArtifact {
-                                layer_key: key,
-                                operation: StateCaptureArtifactOperation::PlannedCapture,
-                                ref_: request.destination_ref,
-                                digest: None,
-                                artifact_report: None,
-                            }],
-                            tasks,
-                            warnings,
-                            written_report_path: None,
-                            written_history_path: None,
-                        });
-                    }
+                    })
+                }
+                None => Ok(String::new()),
+            };
+            match result {
+                Ok(output) => {
+                    task.status = StateStackCaptureTaskStatus::Executed;
+                    task.output = Some(output);
+                }
+                Err(error) => {
+                    task.status = StateStackCaptureTaskStatus::Failed;
+                    task.error = Some(error.to_string());
+                    return Ok(StateStackCaptureReport {
+                        schema: "effigy.state-stack.capture.v1".to_owned(),
+                        schema_version: 1,
+                        ok: false,
+                        executed: true,
+                        stack_name: lineage.stack_name.clone(),
+                        source_environment: source_env.clone(),
+                        capture_role,
+                        capture_mode,
+                        parent_lineage_id: lineage.lineage_id.clone(),
+                        created_at: "planned".to_owned(),
+                        produced_layers: vec![produced_layer],
+                        capture_artifacts: vec![StateStackCaptureArtifact {
+                            layer_key: key,
+                            operation: StateCaptureArtifactOperation::PlannedCapture,
+                            ref_: request.destination_ref,
+                            digest: None,
+                            artifact_report: None,
+                        }],
+                        tasks,
+                        warnings,
+                        written_report_path: None,
+                        written_history_path: None,
+                    });
                 }
             }
         }
-        let artifact_report = match (
-            request.yes,
-            request.source.as_deref(),
-            request.destination_ref.as_deref(),
-        ) {
-            (true, Some(source), Some(destination)) => Some(
-                crate::runner::artifact_command::capture_artifact_report_with_adapter(
-                    source,
-                    destination,
-                    Some("app-specific"),
-                    Some(&source_env),
-                    repo_root,
-                    repo_root,
-                    false,
-                    request.push,
-                    adapter,
-                )?,
-            ),
-            _ => None,
-        };
-        let digest = artifact_report
-            .as_ref()
-            .and_then(|report| report.pointer("/destination/digest"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        let operation = if request.push && artifact_report.is_some() {
-            StateCaptureArtifactOperation::Pushed
-        } else if artifact_report.is_some() {
-            StateCaptureArtifactOperation::CapturedLocal
-        } else {
-            StateCaptureArtifactOperation::PlannedCapture
-        };
-
-        Ok(Self {
-            schema: "effigy.state-stack.capture.v1".to_owned(),
-            schema_version: 1,
-            ok: true,
-            executed: request.yes,
-            stack_name: lineage.stack_name.clone(),
-            source_environment: source_env,
-            capture_role,
-            capture_mode,
-            parent_lineage_id: lineage.lineage_id.clone(),
-            created_at: "planned".to_owned(),
-            produced_layers: vec![produced_layer],
-            capture_artifacts: vec![StateStackCaptureArtifact {
-                layer_key: key,
-                operation,
-                ref_: request.destination_ref,
-                digest,
-                artifact_report,
-            }],
-            tasks,
-            warnings,
-            written_report_path: None,
-            written_history_path: None,
-        })
     }
+    let artifact_report = match (
+        request.yes,
+        request.source.as_deref(),
+        request.destination_ref.as_deref(),
+    ) {
+        (true, Some(source), Some(destination)) => Some(
+            crate::runner::artifact_command::capture_artifact_report_with_adapter(
+                source,
+                destination,
+                Some("app-specific"),
+                Some(&source_env),
+                repo_root,
+                repo_root,
+                false,
+                request.push,
+                adapter,
+            )?,
+        ),
+        _ => None,
+    };
+    let digest = artifact_report
+        .as_ref()
+        .and_then(|report| report.pointer("/destination/digest"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let operation = if request.push && artifact_report.is_some() {
+        StateCaptureArtifactOperation::Pushed
+    } else if artifact_report.is_some() {
+        StateCaptureArtifactOperation::CapturedLocal
+    } else {
+        StateCaptureArtifactOperation::PlannedCapture
+    };
+
+    Ok(StateStackCaptureReport {
+        schema: "effigy.state-stack.capture.v1".to_owned(),
+        schema_version: 1,
+        ok: true,
+        executed: request.yes,
+        stack_name: lineage.stack_name.clone(),
+        source_environment: source_env,
+        capture_role,
+        capture_mode,
+        parent_lineage_id: lineage.lineage_id.clone(),
+        created_at: "planned".to_owned(),
+        produced_layers: vec![produced_layer],
+        capture_artifacts: vec![StateStackCaptureArtifact {
+            layer_key: key,
+            operation,
+            ref_: request.destination_ref,
+            digest,
+            artifact_report,
+        }],
+        tasks,
+        warnings,
+        written_report_path: None,
+        written_history_path: None,
+    })
 }
 
 fn state_capture_task_env(
@@ -1636,7 +1415,7 @@ fn state_capture_task_env(
     );
     env.insert(
         "EFFIGY_STATE_CAPTURE_ROLE".to_owned(),
-        serde_plain_role(capture_role),
+        plain_state_layer_role(capture_role),
     );
     env.insert(
         "EFFIGY_STATE_CAPTURE_MODE".to_owned(),
@@ -1709,11 +1488,11 @@ fn write_state_capture_task_context(
         ))
     })?;
     let context = StateCaptureTaskContext {
-        schema: "effigy.state-stack.capture-context.v1".to_owned(),
+        schema: STATE_STACK_CAPTURE_CONTEXT_SCHEMA.to_owned(),
         schema_version: 1,
         stack_name: lineage.stack_name.clone(),
         parent_lineage_id: lineage.lineage_id.clone(),
-        capture_role: serde_plain_role(capture_role),
+        capture_role: plain_state_layer_role(capture_role),
         capture_mode: capture_mode.to_string(),
         source_environment: request.source_env.clone().unwrap_or_default(),
         key: request.key.clone().unwrap_or_default(),
@@ -1746,7 +1525,7 @@ fn state_apply_hook_env(
     env.insert("EFFIGY_STATE_APPLY_STACK".to_owned(), stack_name.to_owned());
     env.insert(
         "EFFIGY_STATE_APPLY_ENVIRONMENT".to_owned(),
-        serde_plain_state_environment(environment),
+        plain_state_environment(environment),
     );
     env.insert(
         "EFFIGY_STATE_APPLY_LINEAGE_ID".to_owned(),
@@ -1755,11 +1534,11 @@ fn state_apply_hook_env(
     env.insert("EFFIGY_STATE_APPLY_LAYER_KEY".to_owned(), layer.key.clone());
     env.insert(
         "EFFIGY_STATE_APPLY_LAYER_ROLE".to_owned(),
-        serde_plain_role(layer.role),
+        plain_state_layer_role(layer.role),
     );
     env.insert(
         "EFFIGY_STATE_APPLY_LAYER_MODE".to_owned(),
-        serde_plain_apply_mode(layer.apply_mode),
+        plain_state_layer_apply_mode(layer.apply_mode),
     );
     env.insert(
         "EFFIGY_STATE_APPLY_LAYER_SOURCE".to_owned(),
@@ -1812,16 +1591,16 @@ fn write_state_apply_hook_context(
         ))
     })?;
     let context = StateApplyHookContext {
-        schema: "effigy.state-stack.apply-context.v1".to_owned(),
+        schema: STATE_STACK_APPLY_CONTEXT_SCHEMA.to_owned(),
         schema_version: 1,
         stack_name: stack_name.to_owned(),
-        environment: serde_plain_state_environment(environment),
+        environment: plain_state_environment(environment),
         lineage_id: lineage_id.to_owned(),
         layer: StateApplyHookLayerContext {
             index: layer.index,
             key: layer.key.clone(),
-            role: serde_plain_role(layer.role),
-            apply_mode: serde_plain_apply_mode(layer.apply_mode),
+            role: plain_state_layer_role(layer.role),
+            apply_mode: plain_state_layer_apply_mode(layer.apply_mode),
             source: layer.source.clone(),
             target: layer.target.clone(),
             hook: layer.hook.clone(),
@@ -1840,123 +1619,6 @@ fn write_state_apply_hook_context(
         ))
     })?;
     Ok(absolute_path.display().to_string())
-}
-
-#[derive(Debug, Serialize)]
-struct StateCaptureTaskContext {
-    schema: String,
-    schema_version: u8,
-    stack_name: String,
-    parent_lineage_id: String,
-    capture_role: String,
-    capture_mode: String,
-    source_environment: String,
-    key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    source: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    destination_ref: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct StateApplyHookContext {
-    schema: String,
-    schema_version: u8,
-    stack_name: String,
-    environment: String,
-    lineage_id: String,
-    layer: StateApplyHookLayerContext,
-}
-
-#[derive(Debug, Serialize)]
-struct StateApplyHookLayerContext {
-    index: usize,
-    key: String,
-    role: String,
-    apply_mode: String,
-    source: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    target: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    hook: Option<String>,
-    status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    output: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    artifact_report: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    sql_report: Option<Value>,
-}
-
-fn serde_plain_role(role: StateLayerRole) -> String {
-    serde_json::to_value(role)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| format!("{role:?}"))
-}
-
-fn serde_plain_apply_mode(mode: StateLayerApplyMode) -> String {
-    serde_json::to_value(mode)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| format!("{mode:?}"))
-}
-
-fn serde_plain_state_environment(environment: effigy_state::StateEnvironment) -> String {
-    serde_json::to_value(environment)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| format!("{environment:?}"))
-}
-
-fn parse_capture_role(role: &str) -> Result<StateLayerRole, RunnerError> {
-    match role {
-        "uat-capture" => Ok(StateLayerRole::UatCapture),
-        "full-capture" => Ok(StateLayerRole::FullCapture),
-        _ => Err(RunnerError::task_invocation(format!(
-            "`state capture` role must be `uat-capture` or `full-capture`, got `{role}`"
-        ))),
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct StateStackCaptureArtifact {
-    layer_key: String,
-    operation: StateCaptureArtifactOperation,
-    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
-    ref_: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    digest: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    artifact_report: Option<Value>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum StateCaptureArtifactOperation {
-    PlannedCapture,
-    CapturedLocal,
-    Pushed,
-}
-
-#[derive(Debug, Serialize)]
-struct StateStackCaptureTask {
-    name: String,
-    status: StateStackCaptureTaskStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    context_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    output: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum StateStackCaptureTaskStatus {
-    Planned,
-    Executed,
-    Failed,
 }
 
 #[cfg(test)]
@@ -2152,7 +1814,7 @@ task = {task_value}
         fs::create_dir_all(repo.join("captures")).expect("create captures dir");
         fs::write(repo.join("captures/uat.json"), "{}\n").expect("write capture payload");
 
-        let report = StateStackCaptureReport::from_request(
+        let report = build_state_stack_capture_report(
             &lineage(),
             StateCaptureRequest {
                 profile: None,

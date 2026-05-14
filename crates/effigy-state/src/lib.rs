@@ -14,6 +14,8 @@ pub const STATE_STACK_APPLY_SCHEMA: &str = "effigy.state-stack.apply.v1";
 pub const STATE_STACK_CAPTURE_SCHEMA: &str = "effigy.state-stack.capture.v1";
 pub const STATE_STACK_CAPTURE_SET_SCHEMA: &str = "effigy.state-stack.capture-set.v1";
 pub const STATE_STACK_HISTORY_SCHEMA: &str = "effigy.state-stack.history.v1";
+pub const STATE_STACK_CAPTURE_CONTEXT_SCHEMA: &str = "effigy.state-stack.capture-context.v1";
+pub const STATE_STACK_APPLY_CONTEXT_SCHEMA: &str = "effigy.state-stack.apply-context.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StateStackManifest {
@@ -691,6 +693,141 @@ pub struct StateStackApplyLayerReport {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StateCaptureSetReport {
+    pub schema: String,
+    pub schema_version: u8,
+    pub ok: bool,
+    pub executed: bool,
+    pub stack: String,
+    pub key: String,
+    pub created_at: String,
+    pub profiles: Vec<String>,
+    pub captures: Vec<StateCaptureSetEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub written_report_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub written_history_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StateCaptureSetEntry {
+    pub profile: String,
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<StateStackCaptureReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StateStackCaptureReport {
+    pub schema: String,
+    pub schema_version: u8,
+    pub ok: bool,
+    pub executed: bool,
+    pub stack_name: String,
+    pub source_environment: String,
+    pub capture_role: StateLayerRole,
+    pub capture_mode: StateCaptureMode,
+    pub parent_lineage_id: String,
+    pub created_at: String,
+    pub produced_layers: Vec<StateStackCaptureProducedLayer>,
+    pub capture_artifacts: Vec<StateStackCaptureArtifact>,
+    pub tasks: Vec<StateStackCaptureTask>,
+    pub warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub written_report_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub written_history_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StateCaptureTaskContext {
+    pub schema: String,
+    pub schema_version: u8,
+    pub stack_name: String,
+    pub parent_lineage_id: String,
+    pub capture_role: String,
+    pub capture_mode: String,
+    pub source_environment: String,
+    pub key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StateApplyHookContext {
+    pub schema: String,
+    pub schema_version: u8,
+    pub stack_name: String,
+    pub environment: String,
+    pub lineage_id: String,
+    pub layer: StateApplyHookLayerContext,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StateApplyHookLayerContext {
+    pub index: usize,
+    pub key: String,
+    pub role: String,
+    pub apply_mode: String,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook: Option<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_report: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql_report: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StateStackCaptureArtifact {
+    pub layer_key: String,
+    pub operation: StateCaptureArtifactOperation,
+    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
+    pub ref_: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_report: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StateCaptureArtifactOperation {
+    PlannedCapture,
+    CapturedLocal,
+    Pushed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StateStackCaptureTask {
+    pub name: String,
+    pub status: StateStackCaptureTaskStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StateStackCaptureTaskStatus {
+    Planned,
+    Executed,
+    Failed,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateCapturePlanRequest {
     pub source_environment: String,
@@ -800,6 +937,35 @@ impl StateCaptureMode {
             Self::FullSnapshot => "full-system-capture",
         }
     }
+}
+
+pub fn parse_capture_role(value: &str) -> Option<StateLayerRole> {
+    match value {
+        "uat-capture" => Some(StateLayerRole::UatCapture),
+        "full-capture" => Some(StateLayerRole::FullCapture),
+        _ => None,
+    }
+}
+
+pub fn plain_state_layer_role(role: StateLayerRole) -> String {
+    serde_json::to_value(role)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{role:?}"))
+}
+
+pub fn plain_state_layer_apply_mode(mode: StateLayerApplyMode) -> String {
+    serde_json::to_value(mode)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{mode:?}"))
+}
+
+pub fn plain_state_environment(environment: StateEnvironment) -> String {
+    serde_json::to_value(environment)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{environment:?}"))
 }
 
 impl fmt::Display for StateCaptureMode {

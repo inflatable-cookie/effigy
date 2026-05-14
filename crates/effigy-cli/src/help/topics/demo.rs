@@ -4,7 +4,7 @@ use super::shared::{
     render_bullet_section, render_info_notices, render_options_section, render_usage_section,
 };
 
-pub(crate) fn render_demo_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
+pub(crate) fn render_demo_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> HelpResult<()> {
     renderer.section("demo Help")?;
     renderer.text("Discover, inspect, execute, and control the repo-owned demo registry.")?;
     renderer.text("")?;

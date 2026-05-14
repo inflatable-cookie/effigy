@@ -87,7 +87,7 @@ Also inspect:
 - src/runner/**
 - src/cli/**
 - crates/*/src/**
-- docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md
+- docs/specs/archive/010-effigy-modularization-and-crate-boundaries-strict-lane.md
 - recent docs/specs/ and docs/roadmaps/g04/ entries
 - docs/contracts/
 - current command/reference guides
@@ -278,7 +278,7 @@ Recommended inspection targets:
 - `src/cli/**`
 - `src/tests/**`
 - `crates/*/src/**`
-- `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
+- `docs/specs/archive/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
 - latest `docs/specs/0*.md`
 - latest `docs/roadmaps/g04/*.md`
 - `docs/contracts/`

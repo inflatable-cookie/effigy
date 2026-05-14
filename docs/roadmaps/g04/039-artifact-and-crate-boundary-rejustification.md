@@ -17,8 +17,9 @@ package map reflects current ownership rather than historical extraction steps.
 
 - `crates/effigy-artifacts/src/lib.rs` is 1,334 lines in one file
 - several small crates may still be justified, but need current ownership notes
-- `docs/specs/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
-  is useful but partly historical after multiple completed extraction waves
+- `docs/specs/archive/010-effigy-modularization-and-crate-boundaries-strict-lane.md`
+  is useful as historical context, but current ownership should come from the
+  package map and accepted crate-boundary contracts after later extraction waves
 - object-store/media migration work will increase pressure on artifact and
   state boundaries
 

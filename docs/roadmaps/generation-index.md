@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
-Current generation: none
-Updated: 2026-05-12
+Current generation: g05
+Updated: 2026-05-14
 
 ## Generation history
 
@@ -30,8 +30,13 @@ Updated: 2026-05-12
 
 ## Current Planning State
 
-`g05` is closed as the secret and local configuration management generation.
-`g05.001` through `g05.007` are complete.
+`g05` remains the current generation.
+
+- `g05.001` through `g05.007` remain complete from the secret and local
+  configuration management generation.
+- `g05.008` through `g05.015` completed the post-release ownership and
+  maintainability cleanup follow-through identified by the latest codebase
+  sweep.
 
 Current ready work: none.
 
@@ -65,4 +70,5 @@ closeout there first.
 
 ## Next Task
 
-No active roadmap task. Open the next generation only after explicit planning.
+No active roadmap task inside `g05`. Open the next lane only after explicit
+planning.

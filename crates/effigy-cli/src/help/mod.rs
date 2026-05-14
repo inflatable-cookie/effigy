@@ -15,6 +15,7 @@ use crate::HelpTopic;
 
 pub use effigy_core::widgets::{KeyValue, NoticeLevel, TableSpec};
 
+mod registry;
 pub mod topics;
 pub mod ui;
 
@@ -51,32 +52,14 @@ pub fn render_help_with_deferred_builtins<R: HelpRenderer>(
     topic: HelpTopic,
     deferred_builtins: &BTreeSet<String>,
 ) -> HelpResult<()> {
-    match topic {
-        HelpTopic::General => topics::render_general_help(renderer, deferred_builtins),
-        HelpTopic::Bundle => topics::render_bundle_help(renderer),
-        HelpTopic::Changelog => topics::render_changelog_help(renderer),
-        HelpTopic::Deploy => topics::render_deploy_help(renderer),
-        HelpTopic::Secrets => topics::render_secrets_help(renderer),
-        HelpTopic::Defer => topics::render_defer_help(renderer),
-        HelpTopic::Exec => topics::render_exec_help(renderer),
-        HelpTopic::State => topics::render_state_help(renderer),
-        HelpTopic::System => topics::render_system_help(renderer),
-        HelpTopic::Workspace => topics::render_workspace_help(renderer),
-        HelpTopic::Gateway => topics::render_gateway_help(renderer),
-        HelpTopic::Service => topics::render_service_help(renderer),
-        HelpTopic::Demo => topics::render_demo_help(renderer),
-        HelpTopic::Docs => topics::render_docs_help(renderer),
-        HelpTopic::Contracts => topics::render_contracts_help(renderer),
-        HelpTopic::Distribution => topics::render_distribution_help(renderer),
-        HelpTopic::Artifact => topics::render_artifact_help(renderer),
-        HelpTopic::Container => topics::render_container_help(renderer),
-        HelpTopic::Bootstrap => topics::render_bootstrap_help(renderer),
-        HelpTopic::Release => topics::render_release_help(renderer),
-        HelpTopic::Doctor => topics::render_doctor_help(renderer),
-        HelpTopic::Tasks => topics::render_tasks_help(renderer),
-        HelpTopic::Test => topics::render_test_help(renderer),
-        HelpTopic::Watch => topics::render_watch_help(renderer),
-        HelpTopic::Init => topics::render_init_help(renderer),
-        HelpTopic::Migrate => topics::render_migrate_help(renderer),
-    }
+    registry::render_help_topic(renderer, topic, deferred_builtins)
+}
+
+pub(crate) fn builtin_help_topic(command: &str) -> Option<HelpTopic> {
+    registry::builtin_help_topic(command)
+}
+
+pub(crate) fn general_help_command_rows(
+) -> impl Iterator<Item = (&'static str, &'static str, Option<&'static str>)> {
+    registry::general_help_command_rows()
 }

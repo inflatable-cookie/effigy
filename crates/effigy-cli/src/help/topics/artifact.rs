@@ -1,7 +1,7 @@
 use super::super::{HelpRenderer, HelpResult};
 use super::shared::render_standard_topic_help;
 
-pub(crate) fn render_artifact_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
+pub(crate) fn render_artifact_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> HelpResult<()> {
     render_standard_topic_help(
         renderer,
         "artifact",

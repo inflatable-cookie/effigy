@@ -461,27 +461,7 @@ where
 }
 
 fn builtin_help_topic(cmd: &str) -> Option<HelpTopic> {
-    match cmd {
-        "test" => Some(HelpTopic::Test),
-        "watch" => Some(HelpTopic::Watch),
-        "init" => Some(HelpTopic::Init),
-        "defer" => Some(HelpTopic::Defer),
-        "exec" => Some(HelpTopic::Exec),
-        "bundle" => Some(HelpTopic::Bundle),
-        "deploy" => Some(HelpTopic::Deploy),
-        "system" => Some(HelpTopic::System),
-        "workspace" => Some(HelpTopic::Workspace),
-        "gateway" => Some(HelpTopic::Gateway),
-        "demo" => Some(HelpTopic::Demo),
-        "service" => Some(HelpTopic::Service),
-        "docs" => Some(HelpTopic::Docs),
-        "contracts" => Some(HelpTopic::Contracts),
-        "distribution" => Some(HelpTopic::Distribution),
-        "container" => Some(HelpTopic::Container),
-        "bootstrap" => Some(HelpTopic::Bootstrap),
-        "release" => Some(HelpTopic::Release),
-        _ => None,
-    }
+    crate::help::builtin_help_topic(cmd)
 }
 
 fn parse_bundle_command<I>(args: I) -> Result<Command, CliParseError>

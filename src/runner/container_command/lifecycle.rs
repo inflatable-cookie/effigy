@@ -1,49 +1,22 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::fs;
 use std::path::Path;
-use std::path::PathBuf;
 use std::process::Output;
 
-use effigy_containers::{
-    compose::{resolve_compose_backend_for_repo, ComposeBackend},
-    effective_attach_mode, eject_generated_compose, eject_report,
-    exec::{
-        colima_profile_warnings, ensure_runtime_backend_running, runtime_backend_is_running,
-        selected_backend_label, shutdown_container as shutdown_container_via_exec,
-    },
-    load_container_exec_working_dir, load_container_policy, up_detached_report,
-    validate_compose_backend_runtime, validate_container_policy, write_runtime_backend_override,
-    EffectiveAttachMode, EffectiveContainerPolicy,
+use super::closeout::{
+    finish_container_up_failure, maybe_confirm_container_reset_wipe_data,
+    render_interrupted_up_closeout, stop_host_processes_best_effort,
 };
-use effigy_containers::{ContainerAction, ContainerRuntimeState};
-use effigy_containers::{
-    ContainerCapturedExecOperation, ContainerExecOperation, ContainerLifecycleOperation,
-    ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
-};
-use effigy_env::secret::SecretString;
-use effigy_exec::CwdMapper;
-use effigy_manifest::{ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig};
-use effigy_runtime::read::{
-    run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
-    run_container_status_under_path,
-};
-use effigy_runtime::session::run_attached_container_session_with_hook;
-use effigy_runtime::shell::run_container_shell as run_runtime_container_shell;
-use effigy_runtime::signals::{
-    install_stop_requested_flag, run_compose_plan_inherit_with_stop_flag_and_env, ComposeRunOutcome,
-};
-use effigy_runtime::write::{
-    run_container_down, run_container_down_all_with_hook, run_container_down_under_path_with_hook,
-    run_container_reset,
-};
-use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload};
-
 use super::deregister_runtime_gateway_routes;
 use super::gateway_registration::{
     deregister_gateway_routes_for_container, register_gateway_routes_for_container,
 };
 use super::runtime_error_from_runner;
+use super::secret_env::resolve_container_secret_env;
+use super::shell_prep::{
+    append_container_exec_env, maybe_refresh_workspace_effigy_for_shell,
+    resolve_container_exec_working_dir_for_operation, resolve_container_shell_session,
+};
 use super::support;
 use super::support::{
     annotate_registered_gateway_routes, annotate_shared_service_notes,
@@ -61,8 +34,35 @@ use crate::runner::exec_command::{
 };
 use crate::runner::host_container_lease::clear_host_container_lease;
 use crate::runner::host_process::start_host_processes_for_container;
-use crate::runner::manifest::load_task_manifest;
-use crate::runner::system_command::ensure_workspace_effigy_available_for_policy;
+use effigy_containers::{
+    compose::{resolve_compose_backend_for_repo, ComposeBackend},
+    effective_attach_mode, eject_generated_compose, eject_report,
+    exec::{
+        colima_profile_warnings, ensure_runtime_backend_running,
+        shutdown_container as shutdown_container_via_exec,
+    },
+    load_container_exec_working_dir, load_container_policy, up_detached_report,
+    validate_compose_backend_runtime, validate_container_policy, write_runtime_backend_override,
+    EffectiveAttachMode, EffectiveContainerPolicy,
+};
+use effigy_containers::{ContainerAction, ContainerRuntimeState};
+use effigy_containers::{
+    ContainerCapturedExecOperation, ContainerExecOperation, ContainerLifecycleOperation,
+    ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
+};
+use effigy_runtime::read::{
+    run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
+    run_container_status_under_path,
+};
+use effigy_runtime::session::run_attached_container_session_with_hook;
+use effigy_runtime::shell::run_container_shell as run_runtime_container_shell;
+use effigy_runtime::signals::{
+    install_stop_requested_flag, run_compose_plan_inherit_with_stop_flag_and_env, ComposeRunOutcome,
+};
+use effigy_runtime::write::{
+    run_container_down, run_container_down_all_with_hook, run_container_down_under_path_with_hook,
+    run_container_reset,
+};
 
 const SECRETS_REQUIRED_ENV: &str = "EFFIGY_SECRETS_REQUIRED";
 
@@ -98,7 +98,13 @@ pub(super) fn run_container_up(
     let attach_mode = effective_attach_mode(&policy, attach, detach);
     let colima_started = ensure_runtime_backend_running(&policy, repo_root)?;
     if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-        return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
+        return render_interrupted_up_closeout(
+            repo_root,
+            &policy,
+            colima_started,
+            attach_mode,
+            lifecycle_cleanup_failed_container_up,
+        );
     }
     let shared_service_notes = ensure_shared_services_running(&policy)?;
     let _manager_report = effigy_runtime::container_manager::lifecycle_operation_report(
@@ -129,10 +135,11 @@ pub(super) fn run_container_up(
                     &policy,
                     colima_started,
                     attach_mode,
+                    lifecycle_cleanup_failed_container_up,
                 );
             }
             ComposeRunOutcome::Failed(status) => {
-                let cleanup_result = cleanup_failed_container_up(repo_root, &policy);
+                let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &policy);
                 return Err(finish_container_up_failure(
                     RunnerError::task_invocation(format!(
                         "docker compose up exited with status {status}"
@@ -154,31 +161,43 @@ pub(super) fn run_container_up(
     };
     let _ = write_runtime_backend_override(repo_root, Some(policy.name.as_str()), &backend_id);
     if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-        return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
+        return render_interrupted_up_closeout(
+            repo_root,
+            &policy,
+            colima_started,
+            attach_mode,
+            lifecycle_cleanup_failed_container_up,
+        );
     }
     let health = wait_for_container_ready(&policy, Some(&stop_flag))?;
     if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-        return render_interrupted_up_closeout(repo_root, &policy, colima_started, attach_mode);
+        return render_interrupted_up_closeout(
+            repo_root,
+            &policy,
+            colima_started,
+            attach_mode,
+            lifecycle_cleanup_failed_container_up,
+        );
     }
     let working_dir = load_container_exec_working_dir(repo_root, Some(policy.name.as_str()))
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     if let Err(error) =
         ensure_primary_service_exec_ready_for_runtime(repo_root, &policy, &working_dir)
     {
-        let cleanup_result = cleanup_failed_container_up(repo_root, &policy);
+        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
     let gateway_routes = match register_gateway_routes_for_container(repo_root, &policy) {
         Ok(routes) => routes,
         Err(error) => {
-            let cleanup_result = cleanup_failed_container_up(repo_root, &policy);
+            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &policy);
             return Err(finish_container_up_failure(error, cleanup_result));
         }
     };
     let tcp_alias_host_notes = match reconcile_primary_service_tcp_alias_hosts(repo_root, &policy) {
         Ok(notes) => notes,
         Err(error) => {
-            let cleanup_result = cleanup_failed_container_up(repo_root, &policy);
+            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &policy);
             return Err(finish_container_up_failure(error, cleanup_result));
         }
     };
@@ -270,138 +289,10 @@ pub(super) fn run_container_down_command(
     }
 }
 
-fn resolve_container_secret_env(
-    repo_root: &Path,
-    force_required: bool,
-) -> Result<Vec<(String, SecretString)>, RunnerError> {
-    let manifest = load_task_manifest(&repo_root.join("effigy.toml"))?;
-    let Some(secrets) = manifest.secrets.as_ref() else {
-        return Ok(Vec::new());
-    };
-    let container_keys = secrets
-        .keys
-        .iter()
-        .filter(|(_, key)| key.targets.contains(&ManifestSecretTarget::Containers))
-        .collect::<Vec<_>>();
-    if container_keys.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let required_names = container_keys
-        .iter()
-        .filter(|(_, key)| force_required || key.required)
-        .map(|(name, _)| (*name).clone())
-        .collect::<Vec<_>>();
-    if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
-        if required_names.is_empty() {
-            return Ok(Vec::new());
-        }
-        return Err(RunnerError::task_invocation(
-            "required container secrets need `[secrets].backend = \"effigy-vault\"`",
-        ));
-    }
-
-    let vault_path = resolve_container_secret_vault_path(repo_root, secrets)?;
-    if !vault_path.exists() {
-        if required_names.is_empty() {
-            return Ok(Vec::new());
-        }
-        return Err(RunnerError::task_invocation(format!(
-            "required container secrets are declared but the vault is missing at {}",
-            vault_path.display()
-        )));
-    }
-
-    let Some(passphrase) = read_container_secret_passphrase(required_names.is_empty())? else {
-        return Ok(Vec::new());
-    };
-    let payload = read_container_secret_vault_payload(&vault_path, passphrase.expose())?;
-    let mut injected = Vec::new();
-    let mut missing_required = Vec::new();
-    for (name, key) in container_keys {
-        match payload.records.get(name.as_str()) {
-            Some(record) => injected.push((
-                container_secret_env_name(name),
-                SecretString::new(record.value.expose().to_owned()),
-            )),
-            None if force_required || key.required => missing_required.push(name.to_owned()),
-            None => {}
-        }
-    }
-    if !missing_required.is_empty() {
-        return Err(RunnerError::task_invocation(format!(
-            "required container secret(s) missing from the vault: {}",
-            missing_required.join(", ")
-        )));
-    }
-    Ok(injected)
-}
-
 fn secrets_required() -> bool {
     std::env::var(SECRETS_REQUIRED_ENV)
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
         .unwrap_or(false)
-}
-
-fn resolve_container_secret_vault_path(
-    repo_root: &Path,
-    secrets: &ManifestSecretsConfig,
-) -> Result<PathBuf, RunnerError> {
-    let vault = secrets.vault.as_ref().ok_or_else(|| {
-        RunnerError::task_invocation(
-            "`[secrets]` selects `effigy-vault` but `[secrets.vault]` is missing",
-        )
-    })?;
-    let path = vault.path.as_deref().ok_or_else(|| {
-        RunnerError::task_invocation(
-            "`[secrets.vault].path` is required for container secret injection",
-        )
-    })?;
-    let path = PathBuf::from(path);
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        Ok(repo_root.join(path))
-    }
-}
-
-fn read_container_secret_passphrase(
-    optional_only: bool,
-) -> Result<Option<SecretValue>, RunnerError> {
-    crate::runner::secret_session::read_secret_passphrase(
-        optional_only,
-        "Vault passphrase: ",
-        "container secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
-    )
-}
-
-fn read_container_secret_vault_payload(
-    vault_path: &Path,
-    passphrase: &str,
-) -> Result<VaultPlaintextPayload, RunnerError> {
-    let raw = fs::read_to_string(vault_path).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to read vault {}: {error}",
-            vault_path.display()
-        ))
-    })?;
-    let envelope = VaultEnvelope::from_json(&raw)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    envelope
-        .decrypt_with_passphrase(passphrase)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn container_secret_env_name(name: &str) -> String {
-    name.chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 pub(super) fn run_container_status_command(
@@ -497,33 +388,18 @@ fn lifecycle_backend_id(policy: &EffectiveContainerPolicy) -> &'static str {
     }
 }
 
-fn cleanup_failed_container_up(
+fn lifecycle_cleanup_failed_container_up(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
-    let shutdown_result = shutdown_container_via_exec(repo_root, policy).map_err(RunnerError::from);
-    let deregister_result = deregister_gateway_routes_for_container(policy).map(|_| ());
-    match (shutdown_result, deregister_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-        (Err(shutdown_error), Err(deregister_error)) => Err(RunnerError::task_invocation(
-            format!(
-                "{shutdown_error}\ncontainer up cleanup also failed while removing gateway routes: {deregister_error}"
-            ),
-        )),
-    }
-}
-
-fn finish_container_up_failure(
-    startup_error: RunnerError,
-    cleanup_result: Result<(), RunnerError>,
-) -> RunnerError {
-    match cleanup_result {
-        Ok(()) => startup_error,
-        Err(cleanup_error) => RunnerError::task_invocation(format!(
-            "{startup_error}\ncontainer up cleanup also failed: {cleanup_error}"
-        )),
-    }
+    super::closeout::cleanup_failed_container_up(
+        repo_root,
+        policy,
+        |repo_root, policy| {
+            shutdown_container_via_exec(repo_root, policy).map_err(RunnerError::from)
+        },
+        |policy| deregister_gateway_routes_for_container(policy).map(|_| ()),
+    )
 }
 
 fn run_container_down_adapter(
@@ -578,82 +454,6 @@ pub(in crate::runner) fn run_container_reset_adapter(
         },
     )
     .map_err(Into::into)
-}
-
-fn maybe_confirm_container_reset_wipe_data(
-    policy: &EffectiveContainerPolicy,
-    confirmation: effigy_containers::ContainerConfirmationPolicy,
-    output_json: bool,
-    yes: bool,
-) -> Result<(), RunnerError> {
-    if matches!(
-        confirmation,
-        effigy_containers::ContainerConfirmationPolicy::NoConfirmationRequired
-    ) {
-        return Ok(());
-    }
-    super::data::maybe_confirm_destructive_container_action(
-        &format!("`effigy container {} reset --wipe-data`", policy.name),
-        &format!(
-            "Reset container `{}` and delete persistent generated-compose data volumes.",
-            policy.name
-        ),
-        output_json,
-        yes,
-    )
-}
-
-fn stop_host_processes_best_effort(repo_root: &Path, name: Option<&str>) {
-    if let Ok(policy) = load_container_policy(repo_root, name) {
-        let _ = crate::runner::host_process::stop_host_processes_for_container(repo_root, &policy);
-    }
-}
-
-/// Render a clean closeout when the user interrupts `effigy container up`
-/// (via Ctrl+C / SIGTERM). We always stop the containers and deregister
-/// gateway routes regardless of `on_task_exit`, because the user
-/// explicitly asked to abort the bring-up.
-fn render_interrupted_up_closeout(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    colima_started: bool,
-    attach_mode: EffectiveAttachMode,
-) -> Result<String, RunnerError> {
-    let cleanup_result = cleanup_failed_container_up(repo_root, policy);
-    Ok(render_interrupted_up_closeout_text(
-        policy,
-        colima_started,
-        attach_mode,
-        cleanup_result.as_ref().err().map(ToString::to_string),
-    ))
-}
-
-fn render_interrupted_up_closeout_text(
-    policy: &EffectiveContainerPolicy,
-    colima_started: bool,
-    attach_mode: EffectiveAttachMode,
-    cleanup_error: Option<String>,
-) -> String {
-    let mode_label = match attach_mode {
-        EffectiveAttachMode::Attached => "attached",
-        EffectiveAttachMode::Detached => "detached",
-    };
-    let mut lines = Vec::new();
-    if colima_started {
-        lines.push(format!("[ok] started Colima profile `{}`", policy.profile));
-    }
-    lines.push(format!(
-        "[ok] container `{}` {mode_label} bring-up interrupted by Ctrl+C; stopped cleanly",
-        policy.name
-    ));
-    if let Some(error) = cleanup_error {
-        lines.push(format!("[warn] cleanup after interrupt: {error}"));
-    }
-    lines.push(format!(
-        "[next] rerun `effigy container {} up` when ready",
-        policy.name
-    ));
-    lines.join("\n")
 }
 
 pub(super) fn run_container_eject(
@@ -801,73 +601,6 @@ pub(in crate::runner) fn run_container_exec_operation_capture(
     run_compose_exec_plan_with_options(&policy, &plan, true, operation.stdin_file.as_deref())
 }
 
-fn resolve_container_exec_working_dir_for_service(
-    repo_root: &Path,
-    name: Option<&str>,
-    policy: &EffectiveContainerPolicy,
-    service: &str,
-) -> Result<Option<std::path::PathBuf>, RunnerError> {
-    if service != policy.primary_service {
-        return Ok(None);
-    }
-
-    load_container_exec_working_dir(repo_root, name)
-        .map(Some)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
-}
-
-fn resolve_container_exec_working_dir_for_operation(
-    repo_root: &Path,
-    name: Option<&str>,
-    policy: &EffectiveContainerPolicy,
-    service: &str,
-    explicit_cwd: Option<&Path>,
-) -> Result<Option<std::path::PathBuf>, RunnerError> {
-    if let Some(cwd) = explicit_cwd {
-        return resolve_explicit_container_exec_working_dir(repo_root, name, cwd);
-    }
-
-    resolve_container_exec_working_dir_for_service(repo_root, name, policy, service)
-}
-
-fn resolve_explicit_container_exec_working_dir(
-    repo_root: &Path,
-    name: Option<&str>,
-    cwd: &Path,
-) -> Result<Option<std::path::PathBuf>, RunnerError> {
-    let container_working_dir = load_container_exec_working_dir(repo_root, name)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    if let Ok(relative) = cwd.strip_prefix(repo_root) {
-        return Ok(Some(join_container_working_dir(
-            &container_working_dir,
-            relative,
-        )));
-    }
-    let mapper = CwdMapper::new(repo_root.to_path_buf(), container_working_dir);
-    match mapper.host_to_container(cwd) {
-        Ok(mapped) => Ok(Some(mapped)),
-        Err(_) => Ok(Some(cwd.to_path_buf())),
-    }
-}
-
-fn join_container_working_dir(container_working_dir: &Path, relative: &Path) -> PathBuf {
-    if relative.as_os_str().is_empty() {
-        container_working_dir.to_path_buf()
-    } else {
-        container_working_dir.join(relative)
-    }
-}
-
-fn append_container_exec_env(args: &mut Vec<OsString>, env: &BTreeMap<String, OsString>) {
-    for (key, value) in env {
-        args.push(OsString::from("-e"));
-        let mut assignment = OsString::from(key);
-        assignment.push("=");
-        assignment.push(value);
-        args.push(assignment);
-    }
-}
-
 fn validate_runtime_shell_match(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -900,64 +633,15 @@ fn emit_warning_lines(warnings: &[String]) {
     }
 }
 
-fn resolve_container_shell_session(
-    repo_root: &Path,
-    name: Option<&str>,
-    service: Option<&str>,
-) -> Result<(EffectiveContainerPolicy, String, std::path::PathBuf), RunnerError> {
-    let policy = load_container_policy(repo_root, name)?;
-    validate_container_policy(repo_root, &policy)?;
-    validate_compose_backend_runtime(repo_root, &policy)?;
-    if !runtime_backend_is_running(&policy, repo_root)? {
-        return Err(RunnerError::task_invocation(format!(
-            "{} runtime is not available for container `{}`",
-            selected_backend_label(&policy, repo_root),
-            policy.name
-        )));
-    }
-    validate_running_container_runtime_match(repo_root, &policy)?;
-    let service = service
-        .unwrap_or(policy.primary_service.as_str())
-        .to_owned();
-    let working_dir = load_container_exec_working_dir(repo_root, name)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    Ok((policy, service, working_dir))
-}
-
-fn maybe_refresh_workspace_effigy_for_shell(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    service: &str,
-) -> Result<(), RunnerError> {
-    if !service_requires_workspace_effigy_refresh(policy, service) {
-        return Ok(());
-    }
-    ensure_workspace_effigy_available_for_policy(repo_root, policy, None)
-}
-
-fn service_requires_workspace_effigy_refresh(
-    policy: &EffectiveContainerPolicy,
-    service: &str,
-) -> bool {
-    policy.workspace_user.is_some() && service == policy.primary_service
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        append_container_exec_env, exec_operation_plan, finish_container_up_failure,
-        lifecycle_operation_plan, render_interrupted_up_closeout_text,
-        resolve_container_exec_working_dir_for_operation,
-        resolve_container_exec_working_dir_for_service, resolve_container_secret_env,
-        run_container_eject, service_requires_workspace_effigy_refresh, EffectiveAttachMode,
-    };
+    use super::{exec_operation_plan, lifecycle_operation_plan, run_container_eject};
     use crate::runner::container_command::support::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
-    use crate::runner::RunnerError;
     use effigy_containers::{
-        down_report, load_container_policy, up_detached_report, EffectiveComposeSource,
-        EffectiveContainerPolicy, SharedServiceBinding,
+        down_report, up_detached_report, EffectiveComposeSource, EffectiveContainerPolicy,
+        SharedServiceBinding,
     };
     use effigy_containers::{
         ContainerConfirmationPolicy, ContainerExecOperation, ContainerLifecycleOperation,
@@ -968,315 +652,9 @@ mod tests {
         ManifestContainerStartup,
     };
     use effigy_runtime::write::{run_container_reset, select_generated_service_image_refs};
-    use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
     use serde_json::json;
-    use std::collections::BTreeMap;
-    use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
-
-    #[test]
-    fn non_primary_service_exec_does_not_force_primary_working_dir() {
-        let root = temp_repo("non-primary-service-exec-no-cwd");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers.web]
-primary_service = "app"
-working_dir = "/var/www/contact-patch"
-
-[containers.web.services.app]
-catalog = "php-fpm"
-
-[containers.web.services.db]
-catalog = "mariadb"
-"#,
-        )
-        .expect("write manifest");
-
-        let policy = load_container_policy(&root, Some("web")).expect("load policy");
-        let working_dir =
-            resolve_container_exec_working_dir_for_service(&root, Some("web"), &policy, "db")
-                .expect("resolve working dir");
-        assert_eq!(working_dir, None);
-    }
-
-    #[test]
-    fn primary_service_exec_keeps_primary_working_dir() {
-        let root = temp_repo("primary-service-exec-cwd");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers.web]
-primary_service = "app"
-working_dir = "/var/www/contact-patch"
-
-[containers.web.services.app]
-catalog = "php-fpm"
-"#,
-        )
-        .expect("write manifest");
-
-        let policy = load_container_policy(&root, Some("web")).expect("load policy");
-        let working_dir =
-            resolve_container_exec_working_dir_for_service(&root, Some("web"), &policy, "app")
-                .expect("resolve working dir");
-        assert_eq!(working_dir, Some(PathBuf::from("/var/www/contact-patch")));
-    }
-
-    #[test]
-    fn explicit_exec_working_dir_overrides_service_default() {
-        let root = temp_repo("explicit-exec-working-dir");
-        fs::write(root.join("docker-compose.yml"), "services: {}\n").expect("write compose");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers.web]
-context = "dev"
-compose_file = "docker-compose.yml"
-primary_service = "app"
-working_dir = "/var/www/contact-patch"
-"#,
-        )
-        .expect("write manifest");
-        let policy = load_container_policy(&root, Some("web")).expect("load policy");
-        fs::create_dir_all(root.join("db/migrations")).expect("create host cwd");
-
-        let working_dir = resolve_container_exec_working_dir_for_operation(
-            &root,
-            Some("web"),
-            &policy,
-            "app",
-            Some(&root.join("db/migrations")),
-        )
-        .expect("working dir");
-
-        assert_eq!(
-            working_dir,
-            Some(PathBuf::from("/var/www/contact-patch/db/migrations"))
-        );
-    }
-
-    #[test]
-    fn explicit_exec_working_dir_maps_nonexistent_repo_relative_subpaths() {
-        let root = temp_repo("explicit-exec-working-dir-nonexistent");
-        fs::write(root.join("docker-compose.yml"), "services: {}\n").expect("write compose");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers.web]
-context = "dev"
-compose_file = "docker-compose.yml"
-primary_service = "app"
-working_dir = "/var/www/contact-patch"
-"#,
-        )
-        .expect("write manifest");
-        let policy = load_container_policy(&root, Some("web")).expect("load policy");
-
-        let working_dir = resolve_container_exec_working_dir_for_operation(
-            &root,
-            Some("web"),
-            &policy,
-            "app",
-            Some(&root.join("db/future-migrations")),
-        )
-        .expect("working dir");
-
-        assert_eq!(
-            working_dir,
-            Some(PathBuf::from("/var/www/contact-patch/db/future-migrations"))
-        );
-    }
-
-    #[test]
-    fn explicit_exec_working_dir_preserves_container_native_paths() {
-        let root = temp_repo("explicit-exec-working-dir-container-native");
-        fs::write(root.join("docker-compose.yml"), "services: {}\n").expect("write compose");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers.web]
-context = "dev"
-compose_file = "docker-compose.yml"
-primary_service = "app"
-working_dir = "/var/www/contact-patch"
-"#,
-        )
-        .expect("write manifest");
-        let policy = load_container_policy(&root, Some("web")).expect("load policy");
-
-        let working_dir = resolve_container_exec_working_dir_for_operation(
-            &root,
-            Some("web"),
-            &policy,
-            "app",
-            Some(Path::new("/workspace/custom")),
-        )
-        .expect("working dir");
-
-        assert_eq!(working_dir, Some(PathBuf::from("/workspace/custom")));
-    }
-
-    #[test]
-    fn explicit_exec_env_is_appended_to_exec_args() {
-        let mut args = vec![OsString::from("exec"), OsString::from("-T")];
-        let env = BTreeMap::from([
-            ("A".to_owned(), OsString::from("1")),
-            ("B".to_owned(), OsString::from("two")),
-        ]);
-
-        append_container_exec_env(&mut args, &env);
-
-        assert_eq!(
-            args,
-            vec![
-                OsString::from("exec"),
-                OsString::from("-T"),
-                OsString::from("-e"),
-                OsString::from("A=1"),
-                OsString::from("-e"),
-                OsString::from("B=two"),
-            ]
-        );
-    }
-
-    #[test]
-    fn container_secret_env_resolves_declared_container_target_values() {
-        let root = temp_repo("container-secret-env");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[secrets]
-backend = "effigy-vault"
-
-[secrets.vault]
-path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
-
-[secrets.keys.database_url]
-required = true
-targets = ["containers"]
-"#,
-        )
-        .expect("write manifest");
-        write_test_vault(
-            &root,
-            "vault-passphrase",
-            &[("database_url", "postgres://secret-value")],
-        );
-        let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
-
-        let env = resolve_container_secret_env(&root, false).expect("resolve secrets");
-
-        assert_eq!(env.len(), 1);
-        assert_eq!(env[0].0, "DATABASE_URL");
-        assert_eq!(env[0].1.expose(), "postgres://secret-value");
-    }
-
-    #[test]
-    fn container_secret_env_blocks_missing_required_before_startup() {
-        let root = temp_repo("container-secret-missing");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[secrets]
-backend = "effigy-vault"
-
-[secrets.vault]
-path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
-
-[secrets.keys.database_url]
-required = true
-targets = ["containers"]
-"#,
-        )
-        .expect("write manifest");
-        write_test_vault(&root, "vault-passphrase", &[]);
-        let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
-
-        let error = resolve_container_secret_env(&root, false).expect_err("missing should fail");
-
-        assert!(error
-            .to_string()
-            .contains("required container secret(s) missing from the vault"));
-    }
-
-    #[test]
-    fn container_secret_env_force_required_loads_optional_container_values() {
-        let root = temp_repo("container-secret-force-required");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[secrets]
-backend = "effigy-vault"
-
-[secrets.vault]
-path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
-
-[secrets.keys.api_token]
-required = false
-targets = ["containers"]
-"#,
-        )
-        .expect("write manifest");
-        write_test_vault(&root, "vault-passphrase", &[("api_token", "tok_secret")]);
-        let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
-
-        let env = resolve_container_secret_env(&root, true).expect("resolve secrets");
-
-        assert_eq!(env.len(), 1);
-        assert_eq!(env[0].0, "API_TOKEN");
-        assert_eq!(env[0].1.expose(), "tok_secret");
-    }
-
-    #[test]
-    fn container_secret_env_force_required_blocks_missing_optional_container_values() {
-        let root = temp_repo("container-secret-force-required-missing");
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[secrets]
-backend = "effigy-vault"
-
-[secrets.vault]
-path = ".effigy/secrets/local.vault"
-identity = "passphrase"
-unlock = "passphrase"
-
-[secrets.keys.api_token]
-required = false
-targets = ["containers"]
-"#,
-        )
-        .expect("write manifest");
-        write_test_vault(&root, "vault-passphrase", &[]);
-        let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
-
-        let error = resolve_container_secret_env(&root, true).expect_err("missing should fail");
-
-        assert!(error
-            .to_string()
-            .contains("required container secret(s) missing from the vault: api_token"));
-    }
-
-    #[test]
-    fn non_primary_service_shell_skips_workspace_effigy_refresh() {
-        let mut policy = test_policy(Vec::new());
-        policy.primary_service = "workspace".to_owned();
-        policy.workspace_user = Some("dev".to_owned());
-
-        assert!(!service_requires_workspace_effigy_refresh(&policy, "app"));
-        assert!(service_requires_workspace_effigy_refresh(
-            &policy,
-            "workspace"
-        ));
-    }
 
     fn temp_repo(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -1288,56 +666,6 @@ targets = ["containers"]
         ));
         fs::create_dir_all(&root).expect("mkdir");
         root
-    }
-
-    struct ScopedEnvVar {
-        key: String,
-        previous: Option<String>,
-    }
-
-    impl ScopedEnvVar {
-        fn set(key: &str, value: &str) -> Self {
-            let previous = std::env::var(key).ok();
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            Self {
-                key: key.to_owned(),
-                previous,
-            }
-        }
-    }
-
-    impl Drop for ScopedEnvVar {
-        fn drop(&mut self) {
-            unsafe {
-                if let Some(previous) = &self.previous {
-                    std::env::set_var(&self.key, previous);
-                } else {
-                    std::env::remove_var(&self.key);
-                }
-            }
-        }
-    }
-
-    fn write_test_vault(root: &Path, passphrase: &str, records: &[(&str, &str)]) {
-        let mut payload = VaultPlaintextPayload::empty();
-        for (name, value) in records {
-            payload.records.insert(
-                (*name).to_owned(),
-                VaultSecretRecord::new(SecretValue::new(*value)),
-            );
-        }
-        let envelope = payload
-            .encrypt_with_passphrase(passphrase)
-            .expect("encrypt test vault");
-        let vault_path = root.join(".effigy/secrets/local.vault");
-        fs::create_dir_all(vault_path.parent().expect("vault parent")).expect("mkdir vault parent");
-        fs::write(
-            vault_path,
-            envelope.to_json_pretty().expect("serialize test vault"),
-        )
-        .expect("write test vault");
     }
 
     fn test_policy(shared_services: Vec<SharedServiceBinding>) -> EffectiveContainerPolicy {
@@ -1614,53 +942,6 @@ services:
                     "cache [redis] -> host.docker.internal:8110"
                 ]
             })
-        );
-    }
-
-    #[test]
-    fn interrupted_up_closeout_mentions_mode_and_clean_stop() {
-        let policy = test_policy(vec![]);
-        let rendered =
-            render_interrupted_up_closeout_text(&policy, true, EffectiveAttachMode::Detached, None);
-        assert!(rendered.contains("[ok] started Colima profile `effigy`"));
-        assert!(rendered.contains(
-            "[ok] container `web` detached bring-up interrupted by Ctrl+C; stopped cleanly"
-        ));
-        assert!(rendered.contains("[next] rerun `effigy container web up` when ready"));
-        assert!(!rendered.contains("[warn]"));
-    }
-
-    #[test]
-    fn interrupted_up_closeout_surfaces_cleanup_failures_as_warning() {
-        let policy = test_policy(vec![]);
-        let rendered = render_interrupted_up_closeout_text(
-            &policy,
-            false,
-            EffectiveAttachMode::Attached,
-            Some("docker compose down failed".to_owned()),
-        );
-        assert!(!rendered.contains("[ok] started Colima profile"));
-        assert!(rendered.contains(
-            "[ok] container `web` attached bring-up interrupted by Ctrl+C; stopped cleanly"
-        ));
-        assert!(rendered.contains("[warn] cleanup after interrupt: docker compose down failed"));
-    }
-
-    #[test]
-    fn finish_container_up_failure_preserves_startup_error_when_cleanup_succeeds() {
-        let startup_error = RunnerError::task_invocation("gateway registration failed");
-        let rendered = finish_container_up_failure(startup_error, Ok(()));
-        assert_eq!(rendered.to_string(), "gateway registration failed");
-    }
-
-    #[test]
-    fn finish_container_up_failure_reports_cleanup_failure_too() {
-        let startup_error = RunnerError::task_invocation("gateway registration failed");
-        let cleanup_error = RunnerError::task_invocation("docker compose down failed");
-        let rendered = finish_container_up_failure(startup_error, Err(cleanup_error));
-        assert_eq!(
-            rendered.to_string(),
-            "gateway registration failed\ncontainer up cleanup also failed: docker compose down failed"
         );
     }
 

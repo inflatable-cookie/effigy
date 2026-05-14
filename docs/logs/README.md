@@ -76,6 +76,18 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/14-010500-g05-reopened-cleanup-suite-closeout.md`](./2026-05/14-010500-g05-reopened-cleanup-suite-closeout.md)
+- [`2026-05/14-010000-active-docs-reference-refresh.md`](./2026-05/14-010000-active-docs-reference-refresh.md)
+- [`2026-05/14-005400-duplicate-proof-and-residual-deferrals.md`](./2026-05/14-005400-duplicate-proof-and-residual-deferrals.md)
+- [`2026-05/14-004900-cli-output-release-fixture-builder-cleanup.md`](./2026-05/14-004900-cli-output-release-fixture-builder-cleanup.md)
+- [`2026-05/14-004200-cli-help-topic-descriptor-convergence.md`](./2026-05/14-004200-cli-help-topic-descriptor-convergence.md)
+- [`2026-05/14-003500-rhai-streaming-search-and-http-support-split.md`](./2026-05/14-003500-rhai-streaming-search-and-http-support-split.md)
+- [`2026-05/14-003000-rhai-secrets-and-process-support-split.md`](./2026-05/14-003000-rhai-secrets-and-process-support-split.md)
+- [`2026-05/14-002200-container-lifecycle-closeout-owner-split.md`](./2026-05/14-002200-container-lifecycle-closeout-owner-split.md)
+- [`2026-05/14-001300-container-lifecycle-secrets-and-shell-prep-split.md`](./2026-05/14-001300-container-lifecycle-secrets-and-shell-prep-split.md)
+- [`2026-05/14-000100-shared-vault-runner-and-container-caller-migration.md`](./2026-05/14-000100-shared-vault-runner-and-container-caller-migration.md)
+- [`2026-05/13-235900-state-command-render-owner-split.md`](./2026-05/13-235900-state-command-render-owner-split.md)
+- [`2026-05/13-235616-g05-post-release-follow-through-lane-opened-and-first-state-slice.md`](./2026-05/13-235616-g05-post-release-follow-through-lane-opened-and-first-state-slice.md)
 - [`2026-05/13-074500-g05-secret-management-closeout.md`](./2026-05/13-074500-g05-secret-management-closeout.md)
 - [`2026-05/13-073000-varlock-deferral-decision.md`](./2026-05/13-073000-varlock-deferral-decision.md)
 - [`2026-05/13-072147-underlay-acowtancy-config-proof.md`](./2026-05/13-072147-underlay-acowtancy-config-proof.md)

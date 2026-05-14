@@ -22,8 +22,8 @@ fn collect_matches_many(roots, pattern, options) {
     combined
 }
 
-fn normalize_path(path) {
-    let rendered = path.to_string();
+fn normalize_path(entry_path) {
+    let rendered = entry_path.to_string();
     let prefix = repo_root + "/";
     if str::starts_with(rendered, prefix) {
         return str::replace(rendered, prefix, "");

@@ -1,7 +1,7 @@
 # g05 Roadmaps
 
-Status: Complete
-Theme: Secret and local configuration management
+Status: Active
+Theme: Secret and local configuration management plus post-release ownership cleanup
 
 ## Purpose
 
@@ -13,9 +13,14 @@ The generation starts from the Underlay and Acowtancy problem: `.env` files
 contain too much non-secret configuration, while real credentials need stronger
 handling than plaintext files can provide.
 
-Final posture: `[secrets]` plus the built-in vault is the supported local secret
-path. `.env.schema` remains validation/task-env compatibility. Varlock is
-deferred as a live backend adapter. Varlock is deferred.
+Final posture from `g05.001` through `g05.007`: `[secrets]` plus the built-in
+vault is the supported local secret path. `.env.schema` remains
+validation/task-env compatibility. Varlock is deferred as a live backend
+adapter.
+
+`g05` is now reopened for the next post-release cleanup tranche because the new
+work is directly coupled to the just-landed secret/runtime/container/Rhai
+surfaces and does not justify a generation rollover yet.
 
 ## Roadmap Sequence
 
@@ -26,6 +31,14 @@ deferred as a live backend adapter. Varlock is deferred.
 - [`005-container-secret-injection.md`](./005-container-secret-injection.md)
 - [`006-underlay-and-acowtancy-config-migration-proof.md`](./006-underlay-and-acowtancy-config-migration-proof.md)
 - [`007-varlock-adapter-and-closeout.md`](./007-varlock-adapter-and-closeout.md)
+- [`008-post-release-reference-grade-follow-through-suite.md`](./008-post-release-reference-grade-follow-through-suite.md)
+- [`009-state-command-thin-shell-follow-through.md`](./009-state-command-thin-shell-follow-through.md)
+- [`010-shared-secrets-vault-access-boundary.md`](./010-shared-secrets-vault-access-boundary.md)
+- [`011-container-lifecycle-owner-split.md`](./011-container-lifecycle-owner-split.md)
+- [`012-rhai-internal-boundary-follow-through.md`](./012-rhai-internal-boundary-follow-through.md)
+- [`013-cli-help-topic-descriptor-convergence.md`](./013-cli-help-topic-descriptor-convergence.md)
+- [`014-area-local-test-builder-cleanup.md`](./014-area-local-test-builder-cleanup.md)
+- [`015-active-docs-reference-refresh-and-g05-closeout.md`](./015-active-docs-reference-refresh-and-g05-closeout.md)
 
 ## Execution Rule
 
@@ -65,8 +78,8 @@ Recommended first cards:
 
 ## Current State
 
-`g05` is complete. `g05.001` through `g05.007` are complete. Strict lanes
-`076`, `077`, `078`, `079`, and `080` are closed.
+`g05.001` through `g05.015` are complete. Strict lanes `076`, `077`, `078`,
+`079`, `080`, and `081` are closed.
 
 Completed cards:
 
@@ -93,4 +106,5 @@ Completed cards:
 
 ## Next Task
 
-No next `g05` task. Open a new generation only after explicit planning.
+No active `g05` task right now. The reopened cleanup suite is closed, but the
+generation remains open for future work.

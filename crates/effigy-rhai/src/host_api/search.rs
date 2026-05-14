@@ -4,7 +4,8 @@ use rhai::{Engine, EvalAltResult, ImmutableString, Map};
 
 use crate::surface::MODULE_SEARCH;
 
-use super::{resolve_runtime_path, search_files, ScriptContext};
+use super::{resolve_runtime_path, ScriptContext};
+use crate::network_support::search_files;
 
 pub(super) fn register_search_module(engine: &mut Engine, context: Arc<ScriptContext>) {
     engine.register_static_module(

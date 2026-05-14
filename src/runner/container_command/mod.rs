@@ -25,9 +25,12 @@ pub(in crate::runner) use lifecycle::{
 };
 
 mod cache;
+mod closeout;
 mod data;
 mod gateway_registration;
 mod lifecycle;
+mod secret_env;
+mod shell_prep;
 pub(in crate::runner) mod support;
 mod volume;
 

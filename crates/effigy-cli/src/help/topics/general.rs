@@ -2,169 +2,55 @@ use std::collections::BTreeSet;
 
 use super::super::{HelpRenderer, HelpResult, KeyValue, NoticeLevel, TableSpec};
 
-pub(crate) fn render_general_help<R: HelpRenderer>(
+pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
     renderer: &mut R,
     deferred_builtins: &BTreeSet<String>,
 ) -> HelpResult<()> {
-    let commands = vec![
-        ("effigy help", "Show general help (same as --help)", None),
-        (
-            "effigy version",
-            "Print the current Effigy version (same as --version)",
-            None,
-        ),
-        (
-            "effigy bundle",
-            "Inspect or refresh the active repo bundle source",
-            Some("bundle"),
-        ),
-        (
-            "effigy tasks",
-            "List discovered catalogs/task commands and probe routing",
-            Some("tasks"),
-        ),
-        (
-            "effigy tasks migrate",
-            "Import package scripts into `[tasks]` with preview/apply flow",
-            None,
-        ),
-        (
-            "effigy tasks unlock",
-            "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)",
-            None,
-        ),
-        (
-            "effigy tasks cache",
-            "Inspect/invalidate phase-1 task cache metadata (`inspect`, `invalidate`)",
-            None,
-        ),
-        (
-            "effigy service",
-            "Inspect the layered service catalog and extract bundled fragments for override ownership",
-            Some("service"),
-        ),
-        (
-            "effigy defer",
-            "Run the configured `[defer]` fallback explicitly instead of relying on selector miss routing",
-            Some("defer"),
-        ),
-        (
-            "effigy exec",
-            "Run one ad-hoc command inside the manifest's dev-context container",
-            None,
-        ),
-        (
-            "effigy state",
-            "Plan layered state-stack manifests and lineage without executing app hooks",
-            None,
-        ),
-        (
-            "effigy system",
-            "Operate the manifest default system substrate through its default workspace container",
-            None,
-        ),
-        (
-            "effigy workspace",
-            "Ensure the selected system is up, then open the resolved workspace shell",
-            None,
-        ),
-        (
-            "effigy gateway",
-            "Operate the host-native local DNS and reverse-proxy gateway",
-            None,
-        ),
-        (
-            "effigy config",
-            "Show config keys/examples, bundle schema guidance, or inspect the effective composed manifest and focused path sources",
-            None,
-        ),
-        (
-            "effigy config completion",
-            "Generate shell completion scripts and selector candidates",
-            None,
-        ),
-        (
-            "effigy demo",
-            "List declared demos and inspect the latest known proof state without starting execution",
-            None,
-        ),
-        (
-            "effigy doctor",
-            "Run remedial-first health checks for environment, manifests, and task references",
-            Some("doctor"),
-        ),
-        (
-            "effigy deploy",
-            "Inspect the provider-neutral production deployment model derived from the effective manifest",
-            Some("deploy"),
-        ),
-        (
-            "effigy secrets",
-            "Inspect declarations and manage the local encrypted secrets vault",
-            Some("secrets"),
-        ),
-        (
-            "effigy docs",
-            "Run reusable docs QA checks such as markdown link, JSON example, and index validation",
-            Some("docs"),
-        ),
-        (
-            "effigy contracts",
-            "Validate reusable JSON contract artifacts such as selection payloads",
-            Some("contracts"),
-        ),
-        (
-            "effigy distribution",
-            "Validate distribution metadata/artifact bundles and generate closeout evidence",
-            Some("distribution"),
-        ),
-        (
-            "effigy artifact",
-            "Inspect and stage standalone seed/apply/capture data artifacts",
-            Some("artifact"),
-        ),
-        (
-            "effigy container",
-            "Operate manifest-defined local container environments",
-            Some("container"),
-        ),
-        (
-            "effigy bootstrap",
-            "Clone/update a repo from a git URL and apply its repo-owned `[bootstrap]` contract",
-            Some("bootstrap"),
-        ),
-        (
-            "effigy release",
-            "Inspect release readiness from changelog, version files, and optional gates",
-            Some("release"),
-        ),
-        (
-            "effigy test",
-            "Run built-in auto-detected tests (or explicit tasks.test); supports <catalog>/test fallback",
-            None,
-        ),
-        (
-            "effigy watch",
-            "Watch mode phase-1 runtime with explicit owner policy and debounce/glob controls",
-            None,
-        ),
-        (
-            "effigy init",
-            "Initialize baseline effigy.toml scaffold with safe overwrite/dry-run controls",
-            None,
-        ),
-        (
-            "effigy scan",
-            "Run built-in repository scanners such as `god-files` and `attention-markers`",
-            None,
-        ),
-        ("effigy <task>", "Resolve task across discovered catalogs", None),
-        (
-            "effigy <catalog>/<task>",
-            "Run task from explicit catalog alias",
-            None,
-        ),
-    ];
+    let commands = crate::help::general_help_command_rows()
+        .chain([
+            (
+                "effigy version",
+                "Print the current Effigy version (same as --version)",
+                None,
+            ),
+            (
+                "effigy tasks migrate",
+                "Import package scripts into `[tasks]` with preview/apply flow",
+                None,
+            ),
+            (
+                "effigy tasks unlock",
+                "Manually clear lock scopes (`workspace`, `shared:*`, `task:*`, `profile:*/*`)",
+                None,
+            ),
+            (
+                "effigy tasks cache",
+                "Inspect/invalidate phase-1 task cache metadata (`inspect`, `invalidate`)",
+                None,
+            ),
+            (
+                "effigy config",
+                "Show config keys/examples, bundle schema guidance, or inspect the effective composed manifest and focused path sources",
+                None,
+            ),
+            (
+                "effigy config completion",
+                "Generate shell completion scripts and selector candidates",
+                None,
+            ),
+            (
+                "effigy scan",
+                "Run built-in repository scanners such as `god-files` and `attention-markers`",
+                None,
+            ),
+            ("effigy <task>", "Resolve task across discovered catalogs", None),
+            (
+                "effigy <catalog>/<task>",
+                "Run task from explicit catalog alias",
+                None,
+            ),
+        ])
+        .collect::<Vec<_>>();
     renderer.section("Commands")?;
     renderer.table(&TableSpec::new(
         Vec::new(),

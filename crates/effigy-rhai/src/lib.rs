@@ -1,11 +1,9 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use std::process::{Command as ProcessCommand, Stdio};
+use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anstyle::Style;
@@ -13,13 +11,12 @@ use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine as _;
 use effigy_context::EffigyRuntimeContext;
 use effigy_core::path_error_text::failed_to_read_path;
-use effigy_manifest::{ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig};
-use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload, VaultSecretRecord};
+use effigy_manifest::ManifestSecretTarget;
+use effigy_secrets::SecretValue;
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use rhai::module_resolvers::FileModuleResolver;
-use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Position, Scope};
+use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Scope};
 use ring::rand::SecureRandom;
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair};
@@ -142,14 +139,14 @@ impl RhaiSecretTarget {
     }
 }
 
-struct ProcessExecutionOptions {
+pub(crate) struct ProcessExecutionOptions {
     cwd: PathBuf,
     env: Vec<(String, String)>,
     stdin_file: Option<PathBuf>,
 }
 
 #[derive(Clone, Default)]
-struct RhaiSecretStore {
+pub(crate) struct RhaiSecretStore {
     declared_rhai: BTreeSet<String>,
     declared_other_target: BTreeSet<String>,
     values: BTreeMap<String, String>,
@@ -308,280 +305,22 @@ fn with_rhai_runtime_context<T>(
 }
 
 fn with_rhai_secret_store<T>(store: RhaiSecretStore, run: impl FnOnce() -> T) -> T {
-    ACTIVE_RHAI_SECRETS.with(|active| {
-        let previous = active.replace(Some(store));
-        let output = run();
-        active.replace(previous);
-        output
-    })
+    rhai_secrets::with_rhai_secret_store(store, run)
 }
 
 fn resolve_rhai_secret_store(
     repo_root: &Path,
     secret_targets: &[RhaiSecretTarget],
 ) -> Result<RhaiSecretStore, RhaiHostError> {
-    let manifest_path = repo_root.join("effigy.toml");
-    if !manifest_path.exists() {
-        return Ok(RhaiSecretStore::default());
-    }
-    let manifest = match effigy_manifest::load_task_manifest(&manifest_path) {
-        Ok(manifest) => manifest,
-        Err(error) => {
-            return Err(RhaiHostError::new(error.to_string()));
-        }
-    };
-    let Some(secrets) = manifest.secrets.as_ref() else {
-        return Ok(RhaiSecretStore::default());
-    };
-    let allowed_targets = secret_targets
-        .iter()
-        .copied()
-        .map(RhaiSecretTarget::manifest_target)
-        .collect::<Vec<_>>();
-    let mut store = RhaiSecretStore::default();
-    for (name, key) in &secrets.keys {
-        if key
-            .targets
-            .iter()
-            .any(|target| allowed_targets.contains(target))
-        {
-            store.declared_rhai.insert(name.clone());
-        } else {
-            store.declared_other_target.insert(name.clone());
-        }
-    }
-    if store.declared_rhai.is_empty() {
-        return Ok(store);
-    }
-
-    let required = secrets
-        .keys
-        .iter()
-        .filter(|(_, key)| {
-            key.required
-                && key
-                    .targets
-                    .iter()
-                    .any(|target| allowed_targets.contains(target))
-        })
-        .map(|(name, _)| name.clone())
-        .collect::<Vec<_>>();
-    if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
-        if required.is_empty() {
-            return Ok(store);
-        }
-        return Err(RhaiHostError::new(
-            "required Rhai secrets need `[secrets].backend = \"effigy-vault\"`",
-        ));
-    }
-
-    if !required.is_empty() {
-        let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)?;
-        if !vault_path.exists() {
-            return Err(RhaiHostError::new(format!(
-                "required Rhai secrets are declared but the vault is missing at {}",
-                vault_path.display()
-            )));
-        }
-
-        let passphrase = read_rhai_secret_passphrase(false)?
-            .ok_or_else(|| RhaiHostError::new("vault passphrase is required"))?;
-        let payload = read_rhai_secret_vault_payload(&vault_path, passphrase.expose())?;
-        store.unlocked_passphrase = Some(passphrase);
-        store.vault_loaded = true;
-        for name in &store.declared_rhai {
-            if let Some(record) = payload.records.get(name) {
-                store
-                    .values
-                    .insert(name.clone(), record.value.expose().to_owned());
-            }
-        }
-
-        let missing_required = required
-            .into_iter()
-            .filter(|name| !store.values.contains_key(name))
-            .collect::<Vec<_>>();
-        if !missing_required.is_empty() {
-            return Err(RhaiHostError::new(format!(
-                "required Rhai secret(s) missing from the vault: {}",
-                missing_required.join(", ")
-            )));
-        }
-    }
-
-    Ok(store)
-}
-
-fn resolve_rhai_secret_vault_path(
-    repo_root: &Path,
-    secrets: &ManifestSecretsConfig,
-) -> Result<PathBuf, RhaiHostError> {
-    let vault = secrets.vault.as_ref().ok_or_else(|| {
-        RhaiHostError::new("`[secrets]` selects `effigy-vault` but `[secrets.vault]` is missing")
-    })?;
-    let path = vault
-        .path
-        .as_deref()
-        .ok_or_else(|| RhaiHostError::new("`[secrets.vault].path` is required for Rhai secrets"))?;
-    let path = PathBuf::from(path);
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        Ok(repo_root.join(path))
-    }
-}
-
-fn read_rhai_secret_passphrase(optional_only: bool) -> Result<Option<SecretValue>, RhaiHostError> {
-    if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
-        return Ok(Some(SecretValue::new(value)));
-    }
-    if let Ok(value) = std::env::var("EFFIGY_INTERNAL_SECRET_PASSPHRASE") {
-        return Ok(Some(SecretValue::new(value)));
-    }
-    if !std::io::stdin().is_terminal() {
-        if optional_only {
-            return Ok(None);
-        }
-        return Err(RhaiHostError::new(
-            "Rhai secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
-        ));
-    }
-    let value = rpassword::prompt_password("Vault passphrase: ")
-        .map_err(|error| RhaiHostError::new(format!("failed to read secret input: {error}")))?;
-    Ok(Some(SecretValue::new(value)))
-}
-
-fn read_rhai_secret_vault_payload(
-    vault_path: &Path,
-    passphrase: &str,
-) -> Result<VaultPlaintextPayload, RhaiHostError> {
-    let raw = std::fs::read_to_string(vault_path).map_err(|error| {
-        RhaiHostError::new(format!(
-            "failed to read vault {}: {error}",
-            vault_path.display()
-        ))
-    })?;
-    let envelope =
-        VaultEnvelope::from_json(&raw).map_err(|error| RhaiHostError::new(error.to_string()))?;
-    envelope
-        .decrypt_with_passphrase(passphrase)
-        .map_err(|error| RhaiHostError::new(error.to_string()))
+    rhai_secrets::resolve_rhai_secret_store(repo_root, secret_targets)
 }
 
 fn active_rhai_secret(repo_root: &Path, name: &str) -> Result<String, Box<EvalAltResult>> {
-    active_rhai_validate_secret_name(name)?;
-    active_rhai_load_vault_if_needed(repo_root, true)
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    ACTIVE_RHAI_SECRETS.with(|active| {
-        let store = active.borrow();
-        let store = store
-            .as_ref()
-            .ok_or_else(|| rhai_runtime_error("Rhai secret store is not active"))?;
-        store.values.get(name).cloned().ok_or_else(|| {
-            rhai_runtime_error(format!("Rhai secret `{name}` is missing from the vault"))
-        })
-    })
+    rhai_secrets::active_rhai_secret(repo_root, name)
 }
 
 fn active_rhai_has_secret(repo_root: &Path, name: &str) -> Result<bool, Box<EvalAltResult>> {
-    active_rhai_validate_secret_name(name)?;
-    active_rhai_load_vault_if_needed(repo_root, false)
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    ACTIVE_RHAI_SECRETS.with(|active| {
-        let store = active.borrow();
-        let store = store
-            .as_ref()
-            .ok_or_else(|| rhai_runtime_error("Rhai secret store is not active"))?;
-        Ok(store.values.contains_key(name))
-    })
-}
-
-fn active_rhai_validate_secret_name(name: &str) -> Result<(), Box<EvalAltResult>> {
-    ACTIVE_RHAI_SECRETS.with(|active| {
-        let store = active.borrow();
-        let store = store
-            .as_ref()
-            .ok_or_else(|| rhai_runtime_error("Rhai secret store is not active"))?;
-        if !store.declared_rhai.contains(name) {
-            if store.declared_other_target.contains(name) {
-                return Err(rhai_runtime_error(format!(
-                    "secret `{name}` is not declared for the `rhai` target"
-                )));
-            }
-            return Err(rhai_runtime_error(format!(
-                "secret `{name}` is not declared under `[secrets.keys]`"
-            )));
-        }
-        Ok(())
-    })
-}
-
-fn active_rhai_load_vault_if_needed(
-    repo_root: &Path,
-    require_unlock: bool,
-) -> Result<(), RhaiHostError> {
-    let should_load = ACTIVE_RHAI_SECRETS.with(|active| {
-        let store = active.borrow();
-        let store = store
-            .as_ref()
-            .ok_or_else(|| RhaiHostError::new("Rhai secret store is not active"))?;
-        Ok(!store.vault_loaded)
-    })?;
-    if !should_load {
-        return Ok(());
-    }
-
-    let manifest_path = repo_root.join("effigy.toml");
-    let manifest = effigy_manifest::load_task_manifest(&manifest_path)
-        .map_err(|error| RhaiHostError::new(error.to_string()))?;
-    let secrets = manifest
-        .secrets
-        .as_ref()
-        .ok_or_else(|| RhaiHostError::new("`[secrets]` is not declared"))?;
-    if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
-        return Err(RhaiHostError::new(
-            "Rhai secrets require `[secrets].backend = \"effigy-vault\"",
-        ));
-    }
-    let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)?;
-    if !vault_path.exists() {
-        if require_unlock {
-            return Err(RhaiHostError::new(format!(
-                "secrets vault is missing at {}",
-                vault_path.display()
-            )));
-        }
-        ACTIVE_RHAI_SECRETS.with(|active| {
-            if let Some(store) = active.borrow_mut().as_mut() {
-                store.vault_loaded = true;
-            }
-        });
-        return Ok(());
-    }
-
-    let Some(passphrase) = read_rhai_secret_passphrase(!require_unlock)? else {
-        ACTIVE_RHAI_SECRETS.with(|active| {
-            if let Some(store) = active.borrow_mut().as_mut() {
-                store.vault_loaded = true;
-            }
-        });
-        return Ok(());
-    };
-    let payload = read_rhai_secret_vault_payload(&vault_path, passphrase.expose())?;
-    ACTIVE_RHAI_SECRETS.with(|active| {
-        if let Some(store) = active.borrow_mut().as_mut() {
-            for name in &store.declared_rhai {
-                if let Some(record) = payload.records.get(name) {
-                    store
-                        .values
-                        .insert(name.clone(), record.value.expose().to_owned());
-                }
-            }
-            store.unlocked_passphrase = Some(passphrase);
-            store.vault_loaded = true;
-        }
-    });
-    Ok(())
+    rhai_secrets::active_rhai_has_secret(repo_root, name)
 }
 
 fn active_rhai_set_secret(
@@ -589,149 +328,15 @@ fn active_rhai_set_secret(
     name: &str,
     value: &str,
 ) -> Result<(), Box<EvalAltResult>> {
-    active_rhai_set_secret_records(repo_root, vec![(name.to_owned(), SecretValue::new(value))])
+    rhai_secrets::active_rhai_set_secret(repo_root, name, value)
 }
 
 fn active_rhai_set_secrets(repo_root: &Path, values: Map) -> Result<(), Box<EvalAltResult>> {
-    let records = values
-        .into_iter()
-        .map(|(name, value)| {
-            let Some(value) = value.try_cast::<ImmutableString>() else {
-                return Err(rhai_runtime_error(format!(
-                    "secret `{name}` value must be a string"
-                )));
-            };
-            Ok((name.to_string(), SecretValue::new(value.as_str())))
-        })
-        .collect::<Result<Vec<_>, Box<EvalAltResult>>>()?;
-    active_rhai_set_secret_records(repo_root, records)
-}
-
-fn active_rhai_set_secret_records(
-    repo_root: &Path,
-    records: impl IntoIterator<Item = (String, SecretValue)>,
-) -> Result<(), Box<EvalAltResult>> {
-    let records = records.into_iter().collect::<Vec<_>>();
-    if records.is_empty() {
-        return Ok(());
-    }
-
-    let manifest_path = repo_root.join("effigy.toml");
-    let manifest = effigy_manifest::load_task_manifest(&manifest_path)
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    let secrets = manifest
-        .secrets
-        .as_ref()
-        .ok_or_else(|| rhai_runtime_error("`[secrets]` is not declared"))?;
-    if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
-        return Err(rhai_runtime_error(
-            "secret mutation requires `[secrets].backend = \"effigy-vault\"",
-        ));
-    }
-    for (name, _) in &records {
-        let Some(key) = secrets.keys.get(name) else {
-            return Err(rhai_runtime_error(format!(
-                "secret `{name}` is not declared under `[secrets.keys]`"
-            )));
-        };
-        if !key.targets.contains(&ManifestSecretTarget::Rhai) {
-            return Err(rhai_runtime_error(format!(
-                "secret `{name}` is not declared for the `rhai` target"
-            )));
-        }
-    }
-
-    let vault_path = resolve_rhai_secret_vault_path(repo_root, secrets)
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    let passphrase = match active_rhai_unlocked_passphrase()
-        .map_err(|error| rhai_runtime_error(error.to_string()))?
-    {
-        Some(passphrase) => passphrase,
-        None => read_rhai_secret_passphrase(false)
-            .map_err(|error| rhai_runtime_error(error.to_string()))?
-            .ok_or_else(|| rhai_runtime_error("vault passphrase is required"))?,
-    };
-    let mut payload = if vault_path.exists() {
-        read_rhai_secret_vault_payload(&vault_path, passphrase.expose())
-            .map_err(|error| rhai_runtime_error(error.to_string()))?
-    } else {
-        VaultPlaintextPayload::empty()
-    };
-    for (name, value) in &records {
-        payload
-            .records
-            .insert(name.clone(), VaultSecretRecord::new(value.clone()));
-    }
-    let envelope = payload
-        .encrypt_with_passphrase(passphrase.expose())
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    write_rhai_secret_vault_file(&vault_path, &envelope)
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-
-    ACTIVE_RHAI_SECRETS.with(|active| {
-        if let Some(store) = active.borrow_mut().as_mut() {
-            store.unlocked_passphrase = Some(passphrase);
-            for (name, value) in records {
-                store.values.insert(name, value.expose().to_owned());
-            }
-        }
-    });
-
-    Ok(())
-}
-
-fn active_rhai_unlocked_passphrase() -> Result<Option<SecretValue>, RhaiHostError> {
-    ACTIVE_RHAI_SECRETS.with(|active| {
-        let store = active.borrow();
-        let store = store
-            .as_ref()
-            .ok_or_else(|| RhaiHostError::new("Rhai secret store is not active"))?;
-        Ok(store.unlocked_passphrase.clone())
-    })
-}
-
-fn write_rhai_secret_vault_file(
-    vault_path: &Path,
-    envelope: &VaultEnvelope,
-) -> Result<(), RhaiHostError> {
-    if let Some(parent) = vault_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            RhaiHostError::new(format!(
-                "failed to create vault directory {}: {error}",
-                parent.display()
-            ))
-        })?;
-    }
-    let rendered = envelope
-        .to_json_pretty()
-        .map_err(|error| RhaiHostError::new(error.to_string()))?;
-    std::fs::write(vault_path, rendered).map_err(|error| {
-        RhaiHostError::new(format!(
-            "failed to write vault {}: {error}",
-            vault_path.display()
-        ))
-    })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(vault_path, std::fs::Permissions::from_mode(0o600));
-    }
-    Ok(())
+    rhai_secrets::active_rhai_set_secrets(repo_root, values)
 }
 
 fn redact_active_rhai_secrets(input: &str) -> String {
-    ACTIVE_RHAI_SECRETS.with(|active| {
-        let Some(store) = active.borrow().as_ref().cloned() else {
-            return input.to_owned();
-        };
-        let mut redacted = input.to_owned();
-        for value in store.values.values() {
-            if !value.is_empty() {
-                redacted = redacted.replace(value, "[REDACTED]");
-            }
-        }
-        redacted
-    })
+    rhai_secrets::redact_active_rhai_secrets(input)
 }
 
 pub(crate) fn active_runtime_context_for_script(
@@ -748,6 +353,9 @@ pub(crate) fn active_runtime_context_for_script(
 }
 
 mod host_api;
+mod network_support;
+mod process_support;
+mod rhai_secrets;
 pub mod surface;
 use host_api::register_host_api;
 
@@ -848,78 +456,11 @@ fn style_prefix(prefix: &str, color_enabled: bool, style: Style) -> String {
 }
 
 fn process_result_map(output: std::process::Output) -> Map {
-    process_status_and_streams_map(
-        output.status.code().unwrap_or(-1).into(),
-        output.status.success(),
-        String::from_utf8_lossy(&output.stdout).to_string(),
-        String::from_utf8_lossy(&output.stderr).to_string(),
-    )
-}
-
-fn process_status_and_streams_map(
-    status: i64,
-    success: bool,
-    stdout: String,
-    stderr: String,
-) -> Map {
-    let mut map = Map::new();
-    map.insert("status".into(), Dynamic::from_int(status));
-    map.insert("success".into(), Dynamic::from_bool(success));
-    map.insert("stdout".into(), redact_active_rhai_secrets(&stdout).into());
-    map.insert("stderr".into(), redact_active_rhai_secrets(&stderr).into());
-    map
+    process_support::process_result_map(output)
 }
 
 fn reject_recursive_effigy_process(program: &str) -> Result<(), Box<EvalAltResult>> {
-    if program == "effigy" || program == "effigy.exe" {
-        return Err(rhai_runtime_error(
-            "Rhai scripts must not call `run_process(\"effigy\", ...)`; use a typed host helper or add a new Rhai host surface",
-        ));
-    }
-    Ok(())
-}
-
-fn resolve_process_execution_options(
-    base_cwd: &Path,
-    options: Map,
-) -> Result<ProcessExecutionOptions, Box<EvalAltResult>> {
-    let options = map_to_json_object(options)?;
-    let cwd = options
-        .get("cwd")
-        .map(|value| match value {
-            Value::String(value) => Ok(resolve_runtime_path(base_cwd, value)),
-            _ => Err(rhai_runtime_error("`cwd` must be a string")),
-        })
-        .transpose()?
-        .unwrap_or_else(|| base_cwd.to_path_buf());
-    let env = options
-        .get("env")
-        .map(|value| match value {
-            Value::Object(map) => map
-                .iter()
-                .map(|(key, value)| match value {
-                    Value::String(value) => Ok((key.clone(), value.clone())),
-                    _ => Err(rhai_runtime_error("`env` values must be strings")),
-                })
-                .collect::<Result<Vec<_>, _>>(),
-            _ => Err(rhai_runtime_error("`env` must be a map of string values")),
-        })
-        .transpose()?
-        .unwrap_or_default();
-    let stdin_file = options
-        .get("stdin_file")
-        .map(|value| match value {
-            Value::String(value) => Ok(Some(resolve_runtime_path(&cwd, value))),
-            Value::Null => Ok(None),
-            _ => Err(rhai_runtime_error("`stdin_file` must be a string")),
-        })
-        .transpose()?
-        .flatten();
-    Ok(ProcessExecutionOptions {
-        cwd,
-        env,
-        stdin_file,
-    })
+    process_support::reject_recursive_effigy_process(program)
 }
 
 fn configure_process_command(
@@ -927,224 +468,11 @@ fn configure_process_command(
     base_cwd: &Path,
     options: Option<Map>,
 ) -> Result<PathBuf, Box<EvalAltResult>> {
-    let resolved = if let Some(options) = options {
-        resolve_process_execution_options(base_cwd, options)?
-    } else {
-        ProcessExecutionOptions {
-            cwd: base_cwd.to_path_buf(),
-            env: Vec::new(),
-            stdin_file: None,
-        }
-    };
-    process.current_dir(&resolved.cwd);
-    for (key, value) in &resolved.env {
-        process.env(key, value);
-    }
-    if let Some(stdin_file) = &resolved.stdin_file {
-        let file = std::fs::File::open(stdin_file)
-            .map_err(|error| rhai_runtime_error(failed_to_read_path(stdin_file, error)))?;
-        process.stdin(Stdio::from(file));
-    }
-    Ok(resolved.cwd)
-}
-
-fn search_files(root: &Path, pattern: &str, options: Map) -> Result<Map, Box<EvalAltResult>> {
-    let options = map_to_json_object(options)?;
-    let glob = json_object_string_option(&options, "glob")?;
-    let literal = json_object_bool_option(&options, "literal")?.unwrap_or(false);
-    let matcher = if literal {
-        None
-    } else {
-        Some(regex::Regex::new(pattern).map_err(|error| rhai_runtime_error(error.to_string()))?)
-    };
-    let mut matches = Vec::<Value>::new();
-    for path in search_candidate_files(root, glob.as_deref())? {
-        let contents = std::fs::read_to_string(&path)
-            .map_err(|error| rhai_runtime_error(failed_to_read_path(&path, error)))?;
-        for (index, line) in contents.lines().enumerate() {
-            let matched = if let Some(matcher) = &matcher {
-                matcher.is_match(line)
-            } else {
-                line.contains(pattern)
-            };
-            if matched {
-                matches.push(json!({
-                    "path": path.display().to_string(),
-                    "line": index + 1,
-                    "text": line,
-                }));
-            }
-        }
-    }
-
-    let stdout = matches
-        .iter()
-        .filter_map(|entry| {
-            Some(format!(
-                "{}:{}:{}",
-                entry.get("path")?.as_str()?,
-                entry.get("line")?.as_u64()?,
-                entry.get("text")?.as_str()?
-            ))
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let mut map = Map::new();
-    map.insert(
-        "status".into(),
-        Dynamic::from_int(if matches.is_empty() { 1 } else { 0 }),
-    );
-    map.insert("success".into(), Dynamic::from_bool(!matches.is_empty()));
-    map.insert(
-        "count".into(),
-        Dynamic::from_int(i64::try_from(matches.len()).unwrap_or(i64::MAX)),
-    );
-    map.insert("stdout".into(), stdout.into());
-    map.insert("stderr".into(), String::new().into());
-    map.insert(
-        "matches".into(),
-        rhai::serde::to_dynamic(Value::Array(matches))
-            .map_err(|error| rhai_runtime_error(error.to_string()))?,
-    );
-    Ok(map)
-}
-
-fn search_candidate_files(
-    root: &Path,
-    glob: Option<&str>,
-) -> Result<Vec<PathBuf>, Box<EvalAltResult>> {
-    if root.is_file() {
-        return Ok(vec![root.to_path_buf()]);
-    }
-    if !root.is_dir() {
-        return Err(rhai_runtime_error(format!(
-            "search root not found: {}",
-            root.display()
-        )));
-    }
-    let mut files = Vec::new();
-    for entry in walkdir::WalkDir::new(root) {
-        let entry = entry.map_err(|error| rhai_runtime_error(error.to_string()))?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if let Some(glob) = glob {
-            if !path_matches_simple_glob(path, glob) {
-                continue;
-            }
-        }
-        files.push(path.to_path_buf());
-    }
-    files.sort();
-    Ok(files)
-}
-
-fn path_matches_simple_glob(path: &Path, glob: &str) -> bool {
-    let rendered = path.display().to_string();
-    if let Some(suffix) = glob.strip_prefix('*') {
-        return rendered.ends_with(suffix);
-    }
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name == glob)
-}
-
-fn process_status_map(status: std::process::ExitStatus) -> Map {
-    let mut map = Map::new();
-    map.insert(
-        "status".into(),
-        Dynamic::from_int(status.code().unwrap_or(-1).into()),
-    );
-    map.insert("success".into(), Dynamic::from_bool(status.success()));
-    map.insert("stdout".into(), String::new().into());
-    map.insert("stderr".into(), String::new().into());
-    map
-}
-
-fn run_http_request(method: &str, url: &str, options: Map) -> Result<Map, Box<EvalAltResult>> {
-    let options = map_to_json_object(options)?;
-    let timeout_ms = json_object_usize_option(&options, "timeout_ms")?.unwrap_or(30_000);
-    let mut builder =
-        reqwest::blocking::Client::builder().timeout(Duration::from_millis(timeout_ms as u64));
-    if json_object_bool_option(&options, "danger_accept_invalid_certs")?.unwrap_or(false) {
-        builder = builder.danger_accept_invalid_certs(true);
-    }
-    let client = builder
-        .build()
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    let method = reqwest::Method::from_bytes(method.as_bytes())
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    let mut request = client.request(method, url);
-    if let Some(headers) = options.get("headers") {
-        let headers = headers.as_object().ok_or_else(|| {
-            rhai_runtime_error("`headers` must be a map of string names to string values")
-        })?;
-        for (name, value) in headers {
-            let value = value
-                .as_str()
-                .ok_or_else(|| rhai_runtime_error("`headers` values must be strings"))?;
-            request = request.header(name, value);
-        }
-    }
-    if let Some(body) = options.get("body") {
-        let body = body
-            .as_str()
-            .ok_or_else(|| rhai_runtime_error("`body` must be a string"))?;
-        request = request.body(body.to_owned());
-    }
-    if let Some(json_body) = options.get("json") {
-        let body = serde_json::to_string(json_body)
-            .map_err(|error| rhai_runtime_error(error.to_string()))?;
-        request = request
-            .header("content-type", "application/json")
-            .body(body);
-    }
-    let response = request
-        .send()
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    let status = response.status();
-    let headers = response
-        .headers()
-        .iter()
-        .map(|(name, value)| {
-            (
-                name.as_str().to_owned(),
-                Value::String(value.to_str().unwrap_or_default().to_owned()),
-            )
-        })
-        .collect::<serde_json::Map<String, Value>>();
-    let body = response
-        .text()
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    let mut map = Map::new();
-    map.insert(
-        "status".into(),
-        Dynamic::from_int(i64::from(status.as_u16())),
-    );
-    map.insert("success".into(), Dynamic::from_bool(status.is_success()));
-    map.insert("body".into(), body.into());
-    map.insert(
-        "headers".into(),
-        rhai::serde::to_dynamic(Value::Object(headers))
-            .map_err(|error| rhai_runtime_error(error.to_string()))?,
-    );
-    Ok(map)
+    process_support::configure_process_command(process, base_cwd, options)
 }
 
 fn host_command_output_map(output: HostCommandOutput) -> Map {
-    let mut map = Map::new();
-    map.insert("status".into(), Dynamic::from_int(output.status));
-    map.insert("success".into(), Dynamic::from_bool(output.success));
-    map.insert(
-        "stdout".into(),
-        redact_active_rhai_secrets(&output.stdout).into(),
-    );
-    map.insert(
-        "stderr".into(),
-        redact_active_rhai_secrets(&output.stderr).into(),
-    );
-    map
+    process_support::host_command_output_map(output)
 }
 
 // Module-based registration helpers
@@ -1422,22 +750,7 @@ fn allocate_temp_dir(prefix: &str) -> Result<PathBuf, RhaiHostError> {
 }
 
 fn with_local_node_bin_path(process: &mut ProcessCommand, cwd: &Path) {
-    let Some(merged) = local_node_bin_path_env(cwd) else {
-        return;
-    };
-    process.env("PATH", merged);
-}
-
-fn local_node_bin_path_env(cwd: &Path) -> Option<String> {
-    let local_bin = cwd.join("node_modules/.bin");
-    if !local_bin.is_dir() {
-        return None;
-    }
-    let local_rendered = local_bin.display().to_string();
-    Some(match std::env::var("PATH") {
-        Ok(path) if !path.is_empty() => format!("{local_rendered}:{path}"),
-        _ => local_rendered,
-    })
+    process_support::with_local_node_bin_path(process, cwd)
 }
 
 fn run_process_streaming(
@@ -1445,7 +758,7 @@ fn run_process_streaming(
     args: &[String],
     cwd: &Path,
 ) -> Result<Map, Box<EvalAltResult>> {
-    run_process_streaming_with_options(program, args, cwd, None)
+    process_support::run_process_streaming(program, args, cwd)
 }
 
 fn run_process_streaming_with_options(
@@ -1454,111 +767,7 @@ fn run_process_streaming_with_options(
     base_cwd: &Path,
     options: Option<Map>,
 ) -> Result<Map, Box<EvalAltResult>> {
-    let resolved = if let Some(options) = options {
-        resolve_process_execution_options(base_cwd, options)?
-    } else {
-        ProcessExecutionOptions {
-            cwd: base_cwd.to_path_buf(),
-            env: Vec::new(),
-            stdin_file: None,
-        }
-    };
-
-    if resolved.stdin_file.is_none() {
-        match run_process_streaming_with_pty(program, args, &resolved) {
-            Ok(result) => return Ok(result),
-            Err(error) => {
-                debug_assert!(
-                    !error.to_string().is_empty(),
-                    "pty streaming fallback should preserve the underlying error"
-                );
-            }
-        }
-    }
-
-    let mut process = ProcessCommand::new(program);
-    process.args(args);
-    if resolved.stdin_file.is_none() {
-        process.stdin(Stdio::null());
-    }
-    process.current_dir(&resolved.cwd);
-    if let Some(stdin_file) = &resolved.stdin_file {
-        let file = std::fs::File::open(stdin_file)
-            .map_err(|error| rhai_runtime_error(failed_to_read_path(stdin_file, error)))?;
-        process.stdin(Stdio::from(file));
-    }
-    process.stdout(Stdio::inherit());
-    process.stderr(Stdio::inherit());
-    for (key, value) in &resolved.env {
-        process.env(key, value);
-    }
-    with_local_node_bin_path(&mut process, &resolved.cwd);
-    let status = process
-        .status()
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    Ok(process_status_map(status))
-}
-
-fn run_process_streaming_with_pty(
-    program: &str,
-    args: &[String],
-    options: &ProcessExecutionOptions,
-) -> Result<Map, Box<EvalAltResult>> {
-    use std::io::{self, Read, Write};
-
-    let pty_system = native_pty_system();
-    let pair = pty_system
-        .openpty(PtySize::default())
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-
-    let mut command = CommandBuilder::new(program);
-    command.args(args);
-    command.cwd(&options.cwd);
-    for (key, value) in &options.env {
-        command.env(key, value);
-    }
-    if let Some(path) = local_node_bin_path_env(&options.cwd) {
-        command.env("PATH", path);
-    }
-
-    let mut child = pair
-        .slave
-        .spawn_command(command)
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    drop(pair.slave);
-
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    let reader_thread = std::thread::spawn(move || -> std::io::Result<()> {
-        let mut stdout = io::stdout().lock();
-        let mut buffer = [0_u8; 8192];
-        loop {
-            let read = reader.read(&mut buffer)?;
-            if read == 0 {
-                break;
-            }
-            stdout.write_all(&buffer[..read])?;
-            stdout.flush()?;
-        }
-        Ok(())
-    });
-
-    let status = child
-        .wait()
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    reader_thread
-        .join()
-        .map_err(|_| rhai_runtime_error("pty reader thread panicked"))?
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-
-    Ok(process_status_and_streams_map(
-        status.exit_code().into(),
-        status.success(),
-        String::new(),
-        String::new(),
-    ))
+    process_support::run_process_streaming_with_options(program, args, base_cwd, options)
 }
 
 fn run_process_teeing(
@@ -1566,7 +775,7 @@ fn run_process_teeing(
     args: &[String],
     cwd: &Path,
 ) -> Result<Map, Box<EvalAltResult>> {
-    run_process_teeing_with_options(program, args, cwd, None)
+    process_support::run_process_teeing(program, args, cwd)
 }
 
 fn run_process_teeing_with_options(
@@ -1575,84 +784,11 @@ fn run_process_teeing_with_options(
     base_cwd: &Path,
     options: Option<Map>,
 ) -> Result<Map, Box<EvalAltResult>> {
-    use std::io::{Read, Write};
-
-    let mut process = ProcessCommand::new(program);
-    process.args(args);
-    if options.is_none() {
-        process.stdin(Stdio::null());
-    }
-    let resolved_cwd = configure_process_command(&mut process, base_cwd, options)?;
-    process.stdout(Stdio::piped());
-    process.stderr(Stdio::piped());
-    with_local_node_bin_path(&mut process, &resolved_cwd);
-
-    let mut child = process
-        .spawn()
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-
-    let mut stdout_reader = child
-        .stdout
-        .take()
-        .ok_or_else(|| rhai_runtime_error("failed to capture stdout pipe"))?;
-    let stdout_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
-        let mut stdout = std::io::stdout().lock();
-        let mut captured = Vec::new();
-        let mut buffer = [0_u8; 8192];
-        loop {
-            let read = stdout_reader.read(&mut buffer)?;
-            if read == 0 {
-                break;
-            }
-            stdout.write_all(&buffer[..read])?;
-            stdout.flush()?;
-            captured.extend_from_slice(&buffer[..read]);
-        }
-        Ok(captured)
-    });
-
-    let mut stderr_reader = child
-        .stderr
-        .take()
-        .ok_or_else(|| rhai_runtime_error("failed to capture stderr pipe"))?;
-    let stderr_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
-        let mut stderr = std::io::stderr().lock();
-        let mut captured = Vec::new();
-        let mut buffer = [0_u8; 8192];
-        loop {
-            let read = stderr_reader.read(&mut buffer)?;
-            if read == 0 {
-                break;
-            }
-            stderr.write_all(&buffer[..read])?;
-            stderr.flush()?;
-            captured.extend_from_slice(&buffer[..read]);
-        }
-        Ok(captured)
-    });
-
-    let status = child
-        .wait()
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    let stdout = stdout_thread
-        .join()
-        .map_err(|_| rhai_runtime_error("stdout tee thread panicked"))?
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-    let stderr = stderr_thread
-        .join()
-        .map_err(|_| rhai_runtime_error("stderr tee thread panicked"))?
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-
-    Ok(process_status_and_streams_map(
-        status.code().unwrap_or(-1).into(),
-        status.success(),
-        String::from_utf8_lossy(&stdout).to_string(),
-        String::from_utf8_lossy(&stderr).to_string(),
-    ))
+    process_support::run_process_teeing_with_options(program, args, base_cwd, options)
 }
 
 fn rhai_runtime_error(message: impl Into<String>) -> Box<EvalAltResult> {
-    EvalAltResult::ErrorRuntime(message.into().into(), Position::NONE).into()
+    process_support::rhai_runtime_error(message)
 }
 
 #[cfg(test)]

@@ -8,7 +8,8 @@ use serde_json::Value;
 
 use crate::surface::MODULE_HTTP;
 
-use super::{resolve_runtime_path, rhai_runtime_error, run_http_request, ScriptContext};
+use super::{resolve_runtime_path, rhai_runtime_error, ScriptContext};
+use crate::network_support::run_http_request;
 
 pub(super) fn register_http_module(engine: &mut Engine, context: Arc<ScriptContext>) {
     engine.register_static_module(MODULE_HTTP, std::rc::Rc::new(build_http_module(context)));

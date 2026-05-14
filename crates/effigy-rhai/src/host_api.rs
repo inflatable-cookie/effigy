@@ -10,9 +10,9 @@ use super::{
     map_to_json, module_feature_get_value, module_feature_no_args, module_feature_options,
     module_feature_string, module_feature_string_options, module_feature_two_strings,
     process_result_map, reject_recursive_effigy_process, resolve_runtime_path, rhai_runtime_error,
-    run_feature_dynamic, run_http_request, run_process_streaming,
-    run_process_streaming_with_options, run_process_teeing, run_process_teeing_with_options,
-    search_files, with_local_node_bin_path, HostCallbacks, ScriptContext,
+    run_feature_dynamic, run_process_streaming, run_process_streaming_with_options,
+    run_process_teeing, run_process_teeing_with_options, with_local_node_bin_path, HostCallbacks,
+    ScriptContext,
 };
 
 #[path = "host_api/container.rs"]

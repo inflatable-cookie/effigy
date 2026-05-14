@@ -36,9 +36,11 @@ mod render;
 mod runtime_session_context;
 mod script_command;
 mod secret_session;
+mod secret_vault;
 mod secrets_command;
 mod service_command;
 mod state_command;
+mod state_command_render;
 mod system_command;
 mod tasks_command;
 #[cfg(test)]

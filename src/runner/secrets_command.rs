@@ -604,20 +604,11 @@ fn resolve_vault_path(
             ));
         }
     }
-    let vault = secrets.vault.as_ref().ok_or_else(|| {
-        RunnerError::task_invocation(
-            "`[secrets]` selects `effigy-vault` but `[secrets.vault]` is missing",
-        )
-    })?;
-    let path = vault.path.as_deref().ok_or_else(|| {
-        RunnerError::task_invocation("`[secrets.vault].path` is required for local vault commands")
-    })?;
-    let path = PathBuf::from(path);
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        Ok(repo_root.join(path))
-    }
+    crate::runner::secret_vault::resolve_effigy_vault_path(
+        repo_root,
+        secrets,
+        "local vault commands",
+    )
 }
 
 fn require_declared_key(secrets: &ManifestSecretsConfig, name: &str) -> Result<(), RunnerError> {
@@ -634,17 +625,7 @@ fn read_vault_payload(
     vault_path: &Path,
     passphrase: &str,
 ) -> Result<VaultPlaintextPayload, RunnerError> {
-    let raw = fs::read_to_string(vault_path).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to read vault {}: {error}",
-            vault_path.display()
-        ))
-    })?;
-    let envelope = VaultEnvelope::from_json(&raw)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    envelope
-        .decrypt_with_passphrase(passphrase)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+    crate::runner::secret_vault::read_effigy_vault_payload(vault_path, passphrase)
 }
 
 fn write_vault_file(vault_path: &Path, envelope: &VaultEnvelope) -> Result<(), RunnerError> {

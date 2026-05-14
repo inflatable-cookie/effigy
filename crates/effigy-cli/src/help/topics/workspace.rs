@@ -1,6 +1,6 @@
 use super::super::{HelpRenderer, HelpResult, KeyValue, NoticeLevel};
 
-pub(crate) fn render_workspace_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
+pub(crate) fn render_workspace_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> HelpResult<()> {
     renderer.notice(
         NoticeLevel::Info,
         "Ensure the selected system substrate is up, then open the resolved workspace shell.",

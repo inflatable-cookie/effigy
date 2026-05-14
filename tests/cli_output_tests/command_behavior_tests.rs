@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 
 use super::support::{
     attach_bare_remote, git_commit_all, git_stdout, init_git_repo, parse_stdout_json,
-    run_json_cli_command, run_json_cli_command_with_manifest, run_json_task_success,
-    temp_workspace, wait_for_path_exists, write_fake_effigy_install_repo,
+    run_json_cli_command, run_json_cli_command_with_manifest, run_json_task_success, temp_workspace,
+    wait_for_path_exists, write_fake_effigy_install_repo, write_release_changelog,
+    write_release_manifest,
 };
 
 static CLI_PROCESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -38,18 +39,14 @@ fn write_cargo_release_prepare_fixture(root: &std::path::Path, with_sync_files: 
     )
     .expect("write cargo manifest");
     fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("write main");
-    fs::write(
-        root.join("CHANGELOG.md"),
-        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Prepare release parity fixture\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
-    )
-    .expect("write changelog");
+    write_release_changelog(root, "Fixed", "Prepare release parity fixture", "0.2.4");
 
     let manifest = if with_sync_files {
         "[release]\nversion-file = \"Cargo.toml\"\nchangelog = \"CHANGELOG.md\"\nsync-files = [\"Cargo.lock\"]\ntag-format = \"release-{version}\"\n"
     } else {
         "[release]\nversion-file = \"Cargo.toml\"\nchangelog = \"CHANGELOG.md\"\ntag-format = \"release-{version}\"\n"
     };
-    fs::write(root.join("effigy.toml"), manifest).expect("write effigy manifest");
+    write_release_manifest(root, manifest);
 }
 
 fn write_node_release_fixture(root: &std::path::Path, with_gate: bool) {
@@ -58,17 +55,13 @@ fn write_node_release_fixture(root: &std::path::Path, with_gate: bool) {
         "{\n  \"name\": \"fixture-node\",\n  \"version\": \"1.4.2\",\n  \"scripts\": {\n    \"test\": \"printf node-test\"\n  }\n}\n",
     )
     .expect("write package");
-    fs::write(
-        root.join("CHANGELOG.md"),
-        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Node release fixture update\n\n## [1.4.2] - 2026-03-10\n\n### Fixed\n- Prior release\n",
-    )
-    .expect("write changelog");
+    write_release_changelog(root, "Fixed", "Node release fixture update", "1.4.2");
     let manifest = if with_gate {
         "[release]\nchangelog = \"CHANGELOG.md\"\ntag-format = \"node-v{version}\"\n[release.gates]\nsmoke = \"sh -lc 'printf node-gate-ok > node-gate.txt'\"\n"
     } else {
         "[release]\nchangelog = \"CHANGELOG.md\"\ntag-format = \"node-v{version}\"\n"
     };
-    fs::write(root.join("effigy.toml"), manifest).expect("write manifest");
+    write_release_manifest(root, manifest);
 }
 
 fn write_python_release_fixture(root: &std::path::Path) {
@@ -81,30 +74,20 @@ fn write_python_release_fixture(root: &std::path::Path) {
         "[project]\nname = \"fixture-python\"\nversion = \"0.2.4\"\n",
     )
     .expect("write pyproject");
-    fs::write(
-        root.join("CHANGELOG.md"),
-        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Added\n- Python release fixture update\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
-    )
-    .expect("write changelog");
-    fs::write(
-        root.join("effigy.toml"),
+    write_release_changelog(root, "Added", "Python release fixture update", "0.2.4");
+    write_release_manifest(
+        root,
         "[release]\nchangelog = \"CHANGELOG.md\"\ntag-format = \"py-v{version}\"\n",
-    )
-    .expect("write manifest");
+    );
 }
 
 fn write_version_file_release_fixture(root: &std::path::Path) {
     fs::write(root.join("VERSION"), "3.1.4\n").expect("write version");
-    fs::write(
-        root.join("CHANGELOG.md"),
-        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- VERSION release fixture update\n\n## [3.1.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
-    )
-    .expect("write changelog");
-    fs::write(
-        root.join("effigy.toml"),
+    write_release_changelog(root, "Fixed", "VERSION release fixture update", "3.1.4");
+    write_release_manifest(
+        root,
         "[release]\nversion-file = \"VERSION\"\nchangelog = \"CHANGELOG.md\"\ntag-format = \"version-{version}\"\n[release.gates]\nsmoke = \"sh -lc 'printf version-gate-ok > version-gate.txt'\"\n",
-    )
-    .expect("write manifest");
+    );
 }
 
 fn cargo_check_quiet(root: &std::path::Path) {

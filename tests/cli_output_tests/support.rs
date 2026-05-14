@@ -46,6 +46,25 @@ pub(super) fn write_manifest_task(root: &Path, task: &str, run: &str) {
     .expect("write manifest");
 }
 
+pub(super) fn write_release_changelog(
+    root: &Path,
+    unreleased_heading: &str,
+    unreleased_item: &str,
+    released_version: &str,
+) {
+    fs::write(
+        root.join("CHANGELOG.md"),
+        format!(
+            "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### {unreleased_heading}\n- {unreleased_item}\n\n## [{released_version}] - 2026-03-10\n\n### Fixed\n- Prior release\n"
+        ),
+    )
+    .expect("write changelog");
+}
+
+pub(super) fn write_release_manifest(root: &Path, manifest: &str) {
+    fs::write(root.join("effigy.toml"), manifest).expect("write manifest");
+}
+
 pub(super) fn run_json_cli_command(root: &Path, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
     command.arg("--json");

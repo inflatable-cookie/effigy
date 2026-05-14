@@ -36,10 +36,14 @@ pub fn render_cli_header<R: Renderer>(
     let path_line = fit_cli_header_path(&title_line, &path_line, pkg_version);
     let combined_line = format!("{title_line}  {path_line}");
     let version = format!(" {pkg_version} ");
-    let inner_width = combined_line.len().max(pkg_version.len());
+    let inner_width = combined_line
+        .chars()
+        .count()
+        .max(version.chars().count());
     let top = format!("╭{}╮", "─".repeat(inner_width + 2));
-    let middle = format!("│ {:<width$} │", combined_line, width = inner_width);
-    let bottom_fill = (inner_width + 2).saturating_sub(version.len());
+    let middle_padding = " ".repeat(inner_width.saturating_sub(combined_line.chars().count()));
+    let middle = format!("│ {combined_line}{middle_padding} │");
+    let bottom_fill = (inner_width + 2).saturating_sub(version.chars().count());
     let bottom = format!("╰{}{}╯", "─".repeat(bottom_fill), version);
 
     renderer.text("")?;
@@ -129,6 +133,33 @@ mod tests {
     use effigy_ui::PlainRenderer;
     use std::path::Path;
 
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(previous) = &self.previous {
+                    std::env::set_var(self.key, previous);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
     #[test]
     fn truncate_path_for_header_keeps_tail_when_space_is_tight() {
         assert_eq!(
@@ -139,6 +170,7 @@ mod tests {
 
     #[test]
     fn render_cli_header_width_grows_to_fit_long_version() {
+        let _no_color = ScopedEnvVar::set("NO_COLOR", "1");
         let mut renderer = PlainRenderer::new(Vec::<u8>::new(), false);
         render_cli_header(
             &mut renderer,

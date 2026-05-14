@@ -1962,8 +1962,19 @@ fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
             contents.contains("process::run(\n    \"colima\",")
         }
         "crates/effigy-catalog/starters/underlay/scripts/dev/ui-setup.rhai"
-        | "crates/effigy-manifest/bundles/underlay/scripts/dev/ui-setup.rhai" => {
+        | "crates/effigy-catalog/starters/underlay/bundles/underlay/scripts/dev/ui-setup.rhai"
+        | "crates/effigy-manifest/tests/fixtures/underlay-bundle/scripts/dev/ui-setup.rhai"
+        | "external/bundles/underlay/scripts/dev/ui-setup.rhai" => {
             contents.contains("process::stream(\"sh\", [\"-lc\", shell])")
+        }
+        "external/providers/render/scripts/apply.rhai"
+        | "external/providers/render/scripts/preflight.rhai"
+        | "external/providers/render/scripts/status.rhai" => {
+            contents.contains("process::run(\"curl\",")
+                && contents.contains("process::run(\"curl\", [\"--version\"])")
+        }
+        "scripts/write-json-contract-artifacts.rhai" => {
+            contents.contains("process::tee(")
         }
         "scripts/build-local-bin.rhai" => {
             contents.contains("process::stream(program, process_args, options)")

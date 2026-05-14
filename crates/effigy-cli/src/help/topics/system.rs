@@ -1,6 +1,6 @@
 use super::super::{HelpRenderer, HelpResult, KeyValue, NoticeLevel};
 
-pub(crate) fn render_system_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
+pub(crate) fn render_system_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> HelpResult<()> {
     renderer.notice(
         NoticeLevel::Info,
         "Operate the manifest default system substrate by resolving its default workspace container.",

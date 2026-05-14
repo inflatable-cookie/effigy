@@ -3,7 +3,7 @@ use super::shared::{
     render_bullet_section, render_info_notices, render_options_section, render_usage_section,
 };
 
-pub(crate) fn render_migrate_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
+pub(crate) fn render_migrate_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> HelpResult<()> {
     renderer.section("tasks migrate Help")?;
     render_info_notices(
         renderer,

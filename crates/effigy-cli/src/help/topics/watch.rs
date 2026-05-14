@@ -50,7 +50,7 @@ fn watch_scope_items() -> Vec<&'static str> {
     ]
 }
 
-pub(crate) fn render_watch_help<R: HelpRenderer>(renderer: &mut R) -> HelpResult<()> {
+pub(crate) fn render_watch_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> HelpResult<()> {
     renderer.section("watch Help")?;
     render_info_notices(
         renderer,

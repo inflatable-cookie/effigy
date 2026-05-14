@@ -4,7 +4,7 @@ fn owned_strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|item| (*item).to_owned()).collect()
 }
 
-pub(super) fn render_info_notices<R: HelpRenderer>(
+pub(super) fn render_info_notices<R: HelpRenderer + ?Sized>(
     renderer: &mut R,
     notices: &[&str],
 ) -> HelpResult<()> {
@@ -17,7 +17,7 @@ pub(super) fn render_info_notices<R: HelpRenderer>(
     Ok(())
 }
 
-pub(super) fn render_usage_section<R: HelpRenderer>(
+pub(super) fn render_usage_section<R: HelpRenderer + ?Sized>(
     renderer: &mut R,
     lines: &[&str],
 ) -> HelpResult<()> {
@@ -29,7 +29,7 @@ pub(super) fn render_usage_section<R: HelpRenderer>(
     Ok(())
 }
 
-pub(super) fn render_options_section<R: HelpRenderer>(
+pub(super) fn render_options_section<R: HelpRenderer + ?Sized>(
     renderer: &mut R,
     rows: &[(&str, &str)],
 ) -> HelpResult<()> {
@@ -44,7 +44,7 @@ pub(super) fn render_options_section<R: HelpRenderer>(
     Ok(())
 }
 
-pub(super) fn render_bullet_section<R: HelpRenderer>(
+pub(super) fn render_bullet_section<R: HelpRenderer + ?Sized>(
     renderer: &mut R,
     title: &str,
     label: &str,
@@ -89,7 +89,7 @@ impl CommonOption {
     }
 }
 
-pub(super) fn render_standard_topic_help_with_common_options<R: HelpRenderer>(
+pub(super) fn render_standard_topic_help_with_common_options<R: HelpRenderer + ?Sized>(
     renderer: &mut R,
     topic: &str,
     notices: &[&str],
@@ -118,7 +118,7 @@ pub(super) fn render_standard_topic_help_with_common_options<R: HelpRenderer>(
     render_standard_topic_help(renderer, topic, notices, usage, &rows, examples)
 }
 
-pub(super) fn render_standard_topic_help<R: HelpRenderer>(
+pub(super) fn render_standard_topic_help<R: HelpRenderer + ?Sized>(
     renderer: &mut R,
     topic: &str,
     notices: &[&str],

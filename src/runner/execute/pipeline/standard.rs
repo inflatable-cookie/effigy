@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::super::super::cache::ops::check_task_cache;
@@ -55,7 +54,7 @@ use effigy_manifest::{
     ManifestSecretsConfig, ManifestTaskRunIn, TaskSelection,
 };
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
-use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload};
+use effigy_secrets::{SecretValue, VaultPlaintextPayload};
 
 pub(in crate::runner) fn run_standard_task(
     preflight: &ExecutionPreflight,
@@ -599,20 +598,11 @@ fn resolve_task_secret_vault_path(
     repo_root: &Path,
     secrets: &ManifestSecretsConfig,
 ) -> Result<PathBuf, RunnerError> {
-    let vault = secrets.vault.as_ref().ok_or_else(|| {
-        RunnerError::task_invocation(
-            "`[secrets]` selects `effigy-vault` but `[secrets.vault]` is missing",
-        )
-    })?;
-    let path = vault.path.as_deref().ok_or_else(|| {
-        RunnerError::task_invocation("`[secrets.vault].path` is required for task secret injection")
-    })?;
-    let path = PathBuf::from(path);
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        Ok(repo_root.join(path))
-    }
+    crate::runner::secret_vault::resolve_effigy_vault_path(
+        repo_root,
+        secrets,
+        "task secret injection",
+    )
 }
 
 fn maybe_generate_required_task_secrets(
@@ -635,17 +625,7 @@ fn read_task_secret_vault_payload(
     vault_path: &Path,
     passphrase: &str,
 ) -> Result<VaultPlaintextPayload, RunnerError> {
-    let raw = fs::read_to_string(vault_path).map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to read vault {}: {error}",
-            vault_path.display()
-        ))
-    })?;
-    let envelope = VaultEnvelope::from_json(&raw)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    envelope
-        .decrypt_with_passphrase(passphrase)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+    crate::runner::secret_vault::read_effigy_vault_payload(vault_path, passphrase)
 }
 
 fn task_secret_env_name(name: &str) -> String {
