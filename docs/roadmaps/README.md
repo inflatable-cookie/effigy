@@ -38,14 +38,15 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   covered runtime architecture simplification, state stacks, deployment
   transactions, provider packages, post-release reference-grade cleanup, and
   artifact/crate-boundary rejustification.
-- `g05` is closed again. `g05.001` through `g05.007` remain complete from the
-  secret and local configuration management suite, and `g05.008` through
-  `g05.015` completed the post-release ownership and maintainability cleanup
-  follow-through.
+- `g05` remains the current generation. `g05.001` through `g05.007` remain
+  complete from the secret and local configuration management suite,
+  `g05.008` through `g05.015` completed the post-release ownership and
+  maintainability cleanup follow-through, and `g05.016` through `g05.019` are
+  now queued for schema-shape consolidation.
 
 ## Active Strict Lane
 
-No strict lane is active.
+- [`082-manifest-section-schema-owner-convergence-strict-lane.md`](../specs/082-manifest-section-schema-owner-convergence-strict-lane.md)
 
 ## Research Program
 
@@ -81,7 +82,8 @@ Before rollover:
 
 ## Next Task
 
-No active roadmap task. Open the next lane only after explicit planning.
+Execute `737` inside strict lane `082` and continue through the bounded ready
+chain while each card closes green.
 
 ## Historical language boundary
 

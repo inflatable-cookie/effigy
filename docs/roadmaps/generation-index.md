@@ -37,8 +37,10 @@ Updated: 2026-05-14
 - `g05.008` through `g05.015` completed the post-release ownership and
   maintainability cleanup follow-through identified by the latest codebase
   sweep.
+- `g05.016` through `g05.019` are now queued for schema-shape consolidation
+  across `[manifest]` and task-like definition owners.
 
-Current ready work: none.
+Current ready work: `737`.
 
 ## Research Roadmaps
 
@@ -70,5 +72,4 @@ closeout there first.
 
 ## Next Task
 
-No active roadmap task inside `g05`. Open the next lane only after explicit
-planning.
+Execute `737` inside strict lane `082`.

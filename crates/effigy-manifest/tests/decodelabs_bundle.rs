@@ -752,3 +752,54 @@ base = {{ type = "path", dir = "{}" }}
     assert_eq!(defer.run_in, Some(ManifestTaskRunIn::Container));
     assert!(manifest.tasks.get("seed").is_none());
 }
+
+#[test]
+fn bundle_defaults_accept_manifest_minimum_effigy_version() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bundle_dir = tmp.path().join("bundle");
+    std::fs::create_dir_all(&bundle_dir).expect("mkdir bundle dir");
+    std::fs::write(
+        bundle_dir.join("bundle.toml"),
+        r#"
+[bundle]
+name = "test-bundle"
+defaults = "effigy.toml"
+"#,
+    )
+    .expect("write bundle descriptor");
+    std::fs::write(
+        bundle_dir.join("effigy.toml"),
+        format!(
+            r#"
+[manifest]
+minimum_effigy_version = "{}"
+
+[tasks]
+bundle-default = "true"
+"#,
+            env!("CARGO_PKG_VERSION")
+        ),
+    )
+    .expect("write bundle defaults");
+
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        format!(
+            r#"
+[bundle]
+base = {{ type = "path", dir = "{}" }}
+"#,
+            bundle_dir.display()
+        ),
+    )
+    .expect("write manifest");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
+    let task = loaded
+        .manifest
+        .tasks
+        .get("bundle-default")
+        .expect("bundle task");
+    assert_eq!(task.run, Some(ManifestManagedRun::Command("true".to_owned())));
+}

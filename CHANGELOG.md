@@ -139,6 +139,9 @@ During v0.x, MINOR bumps may include breaking changes.
   and the old `scripts/check-linux-glibc-floor.sh` wrapper is gone.
 
 ### Fixed
+- **Bundle manifest version floors:** remote and path bundle defaults now
+  accept and validate `[manifest].minimum_effigy_version` instead of rejecting
+  the field as an unknown bundle manifest key during defaults composition.
 - **Leading global CLI flags** now work consistently across built-ins and task
   selectors: top-level `--repo <PATH>` and `--json` apply before built-in
   commands like `doctor`, `tasks`, and deferred built-ins like `test`, while

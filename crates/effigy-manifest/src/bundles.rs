@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use semver::Version;
 use toml::Value;
 
 use crate::ManifestError;
@@ -171,6 +172,8 @@ fn default_local_bundle_defaults_file() -> String {
 struct BundleManifestSectionConfig {
     #[serde(default)]
     extend: Vec<String>,
+    #[serde(default)]
+    minimum_effigy_version: Option<String>,
 }
 
 pub(super) fn parse_bundle_descriptor_source(
@@ -765,7 +768,55 @@ fn take_bundle_extend_paths(
             path: manifest_path.to_path_buf(),
             detail: format!("invalid bundle `[manifest]` section: {error}"),
         })?;
+    validate_bundle_minimum_effigy_version(
+        manifest_path,
+        config.minimum_effigy_version.as_deref(),
+    )?;
     Ok(config.extend)
+}
+
+fn validate_bundle_minimum_effigy_version(
+    manifest_path: &Path,
+    requested: Option<&str>,
+) -> Result<(), ManifestError> {
+    let Some(requested) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    let requested_version = Version::parse(requested).map_err(|error| ManifestError::Compose {
+        path: manifest_path.to_path_buf(),
+        detail: format!(
+            "`[manifest].minimum_effigy_version` must be a valid semver version: {error}"
+        ),
+    })?;
+    let active_version = effigy_core::build_info::active_version();
+    if !bundle_active_version_satisfies_minimum_effigy_version(&active_version, &requested_version)
+        .map_err(|detail| ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail,
+        })?
+    {
+        return Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail: format!(
+                "manifest requires Effigy >= {requested_version}, but this binary is {}",
+                active_version
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn bundle_active_version_satisfies_minimum_effigy_version(
+    active_version: &str,
+    requested_version: &Version,
+) -> Result<bool, String> {
+    let normalized = active_version.trim().trim_start_matches('v');
+    if normalized.contains("+local.") {
+        return Ok(true);
+    }
+    let current_version = Version::parse(normalized)
+        .map_err(|error| format!("current Effigy version is invalid: {error}"))?;
+    Ok(current_version >= *requested_version)
 }
 
 pub(super) fn apply_bundle_extend_paths(

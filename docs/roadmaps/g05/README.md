@@ -39,6 +39,10 @@ surfaces and does not justify a generation rollover yet.
 - [`013-cli-help-topic-descriptor-convergence.md`](./013-cli-help-topic-descriptor-convergence.md)
 - [`014-area-local-test-builder-cleanup.md`](./014-area-local-test-builder-cleanup.md)
 - [`015-active-docs-reference-refresh-and-g05-closeout.md`](./015-active-docs-reference-refresh-and-g05-closeout.md)
+- [`016-schema-shape-consolidation-suite.md`](./016-schema-shape-consolidation-suite.md)
+- [`017-manifest-section-schema-owner-convergence.md`](./017-manifest-section-schema-owner-convergence.md)
+- [`018-task-like-definition-schema-convergence.md`](./018-task-like-definition-schema-convergence.md)
+- [`019-schema-shape-regression-proof-and-closeout.md`](./019-schema-shape-regression-proof-and-closeout.md)
 
 ## Execution Rule
 
@@ -78,8 +82,8 @@ Recommended first cards:
 
 ## Current State
 
-`g05.001` through `g05.015` are complete. Strict lanes `076`, `077`, `078`,
-`079`, `080`, and `081` are closed.
+`g05.001` through `g05.015` are complete. `g05.016` through `g05.019` are now
+queued. Strict lanes `076`, `077`, `078`, `079`, `080`, and `081` are closed.
 
 Completed cards:
 
@@ -106,5 +110,7 @@ Completed cards:
 
 ## Next Task
 
-No active `g05` task right now. The reopened cleanup suite is closed, but the
-generation remains open for future work.
+No active `g05` task right now. The reopened cleanup suite is closed, and the
+next queued tranche is `g05.016` to `g05.019` for schema-shape consolidation.
+
+Current ready work: `737`.
