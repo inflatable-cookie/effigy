@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-14
+
 ### Breaking
 - **Maintainer dev wrapper removed:** the repo no longer ships `scripts/effigy-dev`
   or links `~/.local/bin/effigy-dev`. Current-checkout validation should use
