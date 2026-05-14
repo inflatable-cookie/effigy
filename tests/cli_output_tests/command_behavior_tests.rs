@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -15,10 +16,62 @@ use super::support::{
 
 static CLI_PROCESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-fn lock_cli_process_tests() -> std::sync::MutexGuard<'static, ()> {
-    CLI_PROCESS_TEST_LOCK
+struct CliProcessTestGuard {
+    _thread_guard: std::sync::MutexGuard<'static, ()>,
+    lock_path: PathBuf,
+}
+
+impl Drop for CliProcessTestGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.lock_path);
+    }
+}
+
+fn lock_cli_process_tests() -> CliProcessTestGuard {
+    let thread_guard = CLI_PROCESS_TEST_LOCK
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+        .unwrap_or_else(|poison| poison.into_inner());
+    let lock_path = std::env::temp_dir().join("effigy-cli-process-tests.lock");
+    let started = Instant::now();
+
+    loop {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(mut file) => {
+                writeln!(file, "{}", std::process::id()).expect("write cli process test lock pid");
+                return CliProcessTestGuard {
+                    _thread_guard: thread_guard,
+                    lock_path,
+                };
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if let Ok(metadata) = fs::metadata(&lock_path) {
+                    if metadata
+                        .modified()
+                        .ok()
+                        .and_then(|modified| modified.elapsed().ok())
+                        .is_some_and(|elapsed| elapsed > Duration::from_secs(120))
+                    {
+                        let _ = fs::remove_file(&lock_path);
+                        continue;
+                    }
+                }
+                assert!(
+                    started.elapsed() < Duration::from_secs(120),
+                    "timed out waiting for cross-process CLI process test lock: {}",
+                    lock_path.display()
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => panic!(
+                "failed to create cross-process CLI process test lock {}: {error}",
+                lock_path.display()
+            ),
+        }
+    }
 }
 
 fn install_rejecting_pre_receive_hook(remote: &std::path::Path) {
@@ -385,6 +438,33 @@ fn wait_for_demo_active_terminal_session(
         assert!(
             started.elapsed() < timeout,
             "{label} did not expose an active terminal session in time"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn wait_for_demo_active_projection_shape_kind(
+    root: &std::path::Path,
+    demo_id: &str,
+    expected_kind: &str,
+    timeout: Duration,
+    label: &str,
+) -> Value {
+    let started = Instant::now();
+    loop {
+        let output = run_json_cli_command(root, &["demo", "inspect", demo_id]);
+        if output.status.success() {
+            let parsed = parse_stdout_json(&output);
+            if parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projection_shape"]
+                ["kind"]
+                == expected_kind
+            {
+                return parsed;
+            }
+        }
+        assert!(
+            started.elapsed() < timeout,
+            "{label} did not expose projection shape `{expected_kind}` in time"
         );
         std::thread::sleep(Duration::from_millis(25));
     }
@@ -1512,9 +1592,13 @@ fn cli_demo_inspect_json_projects_multi_process_concurrent_runner_shape_when_act
         "multi concurrent runner inspect state",
     );
 
-    let output = run_json_cli_command(&root, &["demo", "inspect", "stack"]);
-    assert!(output.status.success(), "demo inspect failed: {output:?}");
-    let parsed = parse_stdout_json(&output);
+    let parsed = wait_for_demo_active_projection_shape_kind(
+        &root,
+        "stack",
+        "projected-multi-process",
+        Duration::from_secs(60),
+        "multi concurrent runner projection shape",
+    );
     assert_eq!(
         parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["projection_shape"]["kind"],
         "projected-multi-process"
