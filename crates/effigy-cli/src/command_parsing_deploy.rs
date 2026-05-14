@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::{Command, DeployArgs, DeployExportProvider, DeploySubcommand, HelpTopic};
+use crate::{Command, DeployArgs, DeploySubcommand, HelpTopic};
 
 use crate::value_parsing::{next_required_value, parse_repo_path};
 
@@ -63,11 +63,9 @@ where
         });
     };
 
-    let provider = match provider.as_str() {
-        "render" => DeployExportProvider::Render,
-        "railway" => DeployExportProvider::Railway,
-        other => return Err(unknown_argument(other)),
-    };
+    if provider.starts_with('-') || provider.trim().is_empty() {
+        return Err(unknown_argument(&provider));
+    }
 
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;

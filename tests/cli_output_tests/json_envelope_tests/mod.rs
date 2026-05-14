@@ -82,11 +82,19 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn setup_underlay_path_bundle(root: &Path) {
+fn setup_workspace_app_path_bundle(root: &Path) {
     let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("crates/effigy-manifest/tests/fixtures/underlay-bundle");
-    let bundle_dir = root.join("bundles/underlay");
+        .join("crates/effigy-manifest/tests/fixtures/workspace-app-bundle");
+    let bundle_dir = root.join("bundles/workspace-app");
     copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
+}
+
+fn deploy_provider_source(provider: &str) -> String {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    format!(
+        "[deploy.providers.{provider}]\nsource = {{ type = \"path\", dir = \"{}/external/providers/{provider}\" }}\n",
+        repo_root.display()
+    )
 }
 
 fn assert_scan_success(parsed: &Value, schema: &str, scan: &str) {

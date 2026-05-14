@@ -136,9 +136,9 @@ pub(in crate::runner::tests) fn workspace_with_empty_manifest(name: &str) -> Pat
     root
 }
 
-pub(in crate::runner::tests) fn underlay_fixture_dir() -> PathBuf {
+pub(in crate::runner::tests) fn workspace_app_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("crates/effigy-manifest/tests/fixtures/underlay-bundle")
+        .join("crates/effigy-manifest/tests/fixtures/workspace-app-bundle")
 }
 
 pub(in crate::runner::tests) fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
@@ -156,9 +156,9 @@ pub(in crate::runner::tests) fn copy_dir_all(src: &Path, dst: &Path) -> std::io:
     Ok(())
 }
 
-pub(in crate::runner::tests) fn setup_underlay_path_bundle(root: &Path) -> PathBuf {
-    let bundle_dir = root.join("bundles/underlay");
-    copy_dir_all(&underlay_fixture_dir(), &bundle_dir).expect("copy underlay fixture");
+pub(in crate::runner::tests) fn setup_workspace_app_path_bundle(root: &Path) -> PathBuf {
+    let bundle_dir = root.join("bundles/workspace-app");
+    copy_dir_all(&workspace_app_fixture_dir(), &bundle_dir).expect("copy workspace app fixture");
     bundle_dir
 }
 

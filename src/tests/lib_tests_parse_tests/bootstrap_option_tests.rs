@@ -398,7 +398,7 @@ fn parse_bootstrap_deps_sync_subcommand() {
         "bootstrap".to_owned(),
         "deps".to_owned(),
         "sync".to_owned(),
-        "../underlay".to_owned(),
+        "../platform".to_owned(),
         "api".to_owned(),
         "--rust-only".to_owned(),
         "--json".to_owned(),
@@ -410,7 +410,7 @@ fn parse_bootstrap_deps_sync_subcommand() {
         Command::Bootstrap(BootstrapArgs {
             subcommand: BootstrapSubcommand::DepsSync {
                 mode: BootstrapDepsSyncMode::RustOnly,
-                paths: vec!["../underlay".to_owned(), "api".to_owned()],
+                paths: vec!["../platform".to_owned(), "api".to_owned()],
             },
             output_json: true,
         })

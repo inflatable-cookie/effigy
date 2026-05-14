@@ -115,20 +115,20 @@ host = "acme.test"
 }
 
 #[test]
-fn exported_underlay_bundle_can_be_used_as_base_path() {
+fn exported_workspace_app_bundle_can_be_used_as_base_path() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle_dir = tmp.path().join("bundles/underlay");
-    let fixture_dir =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/underlay-bundle");
+    let bundle_dir = tmp.path().join("bundles/workspace-app");
+    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/workspace-app-bundle");
     copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture bundle");
 
     std::fs::write(
         tmp.path().join("effigy.toml"),
         r#"[bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
 project_name = "acme-dev"
-workspace_subdir = "underlay-reference"
+workspace_subdir = "workspace-app-reference"
 databases = ["acme", "acme_test"]
 "#,
     )
@@ -182,20 +182,20 @@ databases = ["acme", "acme_test"]
 }
 
 #[test]
-fn exported_underlay_bundle_honors_name_overrides() {
+fn exported_workspace_app_bundle_honors_name_overrides() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle_dir = tmp.path().join("bundles/underlay");
-    let fixture_dir =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/underlay-bundle");
+    let bundle_dir = tmp.path().join("bundles/workspace-app");
+    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/workspace-app-bundle");
     copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture bundle");
 
     std::fs::write(
         tmp.path().join("effigy.toml"),
         r#"[bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
 project_name = "acme-dev"
-workspace_subdir = "underlay-reference"
+workspace_subdir = "workspace-app-reference"
 databases = ["acme"]
 system_name = "stage"
 container_name = "infra"
@@ -225,17 +225,17 @@ default_workspace = "rust"
 }
 
 #[test]
-fn exported_decodelabs_bundle_can_be_used_as_base_path() {
+fn exported_php_app_bundle_can_be_used_as_base_path() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle_dir = tmp.path().join("bundles/decodelabs");
-    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/decodelabs-bundle");
+    let bundle_dir = tmp.path().join("bundles/php-app");
+    let fixture_dir =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/php-app-bundle");
     copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture bundle");
 
     std::fs::write(
         tmp.path().join("effigy.toml"),
         r#"[bundle]
-base = { type = "path", dir = "bundles/decodelabs" }
+base = { type = "path", dir = "bundles/php-app" }
 host = "legacy.test"
 project_name = "legacy-dev"
 databases = ["legacy", "legacy_test"]
@@ -255,11 +255,11 @@ databases = ["legacy", "legacy_test"]
 }
 
 #[test]
-fn exported_decodelabs_library_bundle_can_be_used_as_base_path() {
+fn exported_php_app_library_bundle_can_be_used_as_base_path() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle_dir = tmp.path().join("bundles/decodelabs-library");
+    let bundle_dir = tmp.path().join("bundles/php-library");
     let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/decodelabs-library-bundle");
+        .join("tests/fixtures/php-library-bundle");
     copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture bundle");
     let shared_root = tmp.path().join("libraries");
     let repo_root = shared_root.join("clockwork");
@@ -271,7 +271,7 @@ fn exported_decodelabs_library_bundle_can_be_used_as_base_path() {
     std::fs::write(
         repo_root.join("effigy.toml"),
         r#"[bundle]
-base = { type = "path", dir = "../../bundles/decodelabs-library" }
+base = { type = "path", dir = "../../bundles/php-library" }
 "#,
     )
     .expect("write manifest");

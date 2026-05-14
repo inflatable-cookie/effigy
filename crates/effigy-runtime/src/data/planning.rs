@@ -200,8 +200,8 @@ mod tests {
     #[test]
     fn project_name_inference_handles_workspace_cache_volumes() {
         assert_eq!(
-            project_name_from_volume_name("underlay-reference-dev-workspace-acme-api-target"),
-            Some("underlay-reference-dev".to_owned())
+            project_name_from_volume_name("workspace-app-reference-dev-workspace-acme-api-target"),
+            Some("workspace-app-reference-dev".to_owned())
         );
         assert_eq!(
             project_name_from_volume_name("acowtancy-dev-workspace-cargo-git"),
@@ -212,18 +212,18 @@ mod tests {
     #[test]
     fn project_name_inference_handles_stack_iso_cache_volumes() {
         assert_eq!(
-            project_name_from_volume_name("underlay-reference-dev_stack-iso-poodle-node-modules"),
-            Some("underlay-reference-dev".to_owned())
+            project_name_from_volume_name(
+                "workspace-app-reference-dev_stack-iso-poodle-node-modules"
+            ),
+            Some("workspace-app-reference-dev".to_owned())
         );
     }
 
     #[test]
     fn project_name_inference_handles_duplicated_project_prefix_volumes() {
         assert_eq!(
-            project_name_from_volume_name(
-                "underlay-reference-dev_underlay-reference-dev-cargo-registry"
-            ),
-            Some("underlay-reference-dev".to_owned())
+            project_name_from_volume_name("acme-reference-dev_acme-reference-dev-cargo-registry"),
+            Some("acme-reference-dev".to_owned())
         );
         assert_eq!(
             project_name_from_volume_name("compli-me-dev_compli-me-dev-api-target"),
@@ -242,13 +242,13 @@ mod tests {
     #[test]
     fn global_cache_entries_mark_running_projects_in_use() {
         let mut running_projects = BTreeSet::new();
-        running_projects.insert("underlay-reference-dev".to_owned());
+        running_projects.insert("workspace-app-reference-dev".to_owned());
 
         let mut metadata = BTreeMap::new();
         metadata.insert(
-            "underlay-reference-dev-workspace-acme-api-target".to_owned(),
+            "workspace-app-reference-dev-workspace-acme-api-target".to_owned(),
             RuntimeVolumeMetadata {
-                name: "underlay-reference-dev-workspace-acme-api-target".to_owned(),
+                name: "workspace-app-reference-dev-workspace-acme-api-target".to_owned(),
                 mount_point: Some("/var/lib/mock/target".to_owned()),
                 size_bytes: Some(1024),
                 labels: BTreeMap::new(),
@@ -266,7 +266,7 @@ mod tests {
 
         let entries = collect_global_cache_entries_from_names(
             vec![
-                "underlay-reference-dev-workspace-acme-api-target".to_owned(),
+                "workspace-app-reference-dev-workspace-acme-api-target".to_owned(),
                 "contact-patch-dev-workspace-cargo-git".to_owned(),
                 "contact-patch-dev-db-data".to_owned(),
             ],
@@ -280,7 +280,7 @@ mod tests {
         assert!(!entries[0].in_use);
         assert_eq!(
             entries[1].name,
-            "underlay-reference-dev-workspace-acme-api-target"
+            "workspace-app-reference-dev-workspace-acme-api-target"
         );
         assert!(entries[1].in_use);
         assert_eq!(entries[1].kind, "rust-target");

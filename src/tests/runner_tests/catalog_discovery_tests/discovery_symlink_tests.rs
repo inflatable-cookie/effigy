@@ -7,7 +7,7 @@ use crate::runner::tests::prelude::{
 fn discover_catalogs_includes_symlinked_catalog_directories() {
     let root = temp_workspace("catalog-symlink-discovery");
     let external = create_workspace_dir(&root, "external");
-    let underlay_src = create_workspace_dir(&external, "underlay");
+    let platform_src = create_workspace_dir(&external, "platform");
     write_manifest(
         &root.join("effigy.toml"),
         r#"[catalog]
@@ -15,19 +15,19 @@ alias = "acowtancy"
 "#,
     );
     write_catalog_tasks(
-        &underlay_src,
-        Some("underlay"),
-        &[("ping", "printf underlay")],
+        &platform_src,
+        Some("platform"),
+        &[("ping", "printf platform")],
     );
-    symlink(&underlay_src, root.join("underlay")).expect("symlink underlay");
+    symlink(&platform_src, root.join("platform")).expect("symlink platform");
 
     let catalogs = discover_catalogs(&root).expect("discover catalogs");
     assert!(
-        catalogs.iter().any(|catalog| catalog.alias == "underlay"),
-        "symlinked underlay catalog should be discovered"
+        catalogs.iter().any(|catalog| catalog.alias == "platform"),
+        "symlinked platform catalog should be discovered"
     );
 
-    assert_builtin_ok_empty(root, "underlay/ping", &[]);
+    assert_builtin_ok_empty(root, "platform/ping", &[]);
 }
 
 #[cfg(unix)]
@@ -36,7 +36,7 @@ fn discover_catalogs_reports_alias_conflict_for_symlinked_catalog() {
     let root = temp_workspace("catalog-symlink-alias-conflict");
     let catalog_b = create_workspace_dir(&root, "catalog_b");
     let external = create_workspace_dir(&root, "external");
-    let underlay_src = create_workspace_dir(&external, "underlay");
+    let platform_src = create_workspace_dir(&external, "platform");
 
     write_manifest(&root.join("effigy.toml"), "");
 
@@ -47,12 +47,12 @@ alias = "catalog_b"
 "#,
     );
     write_manifest(
-        &underlay_src.join("effigy.toml"),
+        &platform_src.join("effigy.toml"),
         r#"[catalog]
 alias = "catalog_b"
 "#,
     );
-    symlink(&underlay_src, root.join("underlay")).expect("symlink underlay");
+    symlink(&platform_src, root.join("platform")).expect("symlink platform");
 
     let err = discover_catalogs(&root).expect_err("expected alias conflict");
     assert_catalog_alias_conflict(err.into(), "catalog_b");
@@ -83,7 +83,7 @@ alias = "catalog_a"
 fn discover_catalogs_includes_system_mount_catalog_directories() {
     let root = temp_workspace("catalog-system-mount-discovery");
     let external = create_workspace_dir(&root, "external");
-    let underlay_src = create_workspace_dir(&external, "underlay");
+    let platform_src = create_workspace_dir(&external, "platform");
 
     write_manifest(
         &root.join("effigy.toml"),
@@ -91,33 +91,33 @@ fn discover_catalogs_includes_system_mount_catalog_directories() {
 alias = "acowtancy"
 
 [systems.dev]
-mounts = ["./external/underlay"]
+mounts = ["./external/platform"]
 "#,
     );
     write_manifest(
-        &underlay_src.join("effigy.toml"),
+        &platform_src.join("effigy.toml"),
         r#"[catalog]
-alias = "underlay"
+alias = "platform"
 
 [tasks."check:exports"]
-run = "printf underlay-checks"
+run = "printf platform-checks"
 "#,
     );
 
     let catalogs = discover_catalogs(&root).expect("discover catalogs");
     assert!(
-        catalogs.iter().any(|catalog| catalog.alias == "underlay"),
-        "mounted underlay catalog should be discovered"
+        catalogs.iter().any(|catalog| catalog.alias == "platform"),
+        "mounted platform catalog should be discovered"
     );
 
-    assert_builtin_ok_empty(root, "underlay/check:exports", &[]);
+    assert_builtin_ok_empty(root, "platform/check:exports", &[]);
 }
 
 #[test]
 fn discover_catalogs_includes_workspace_mount_catalog_directories() {
     let root = temp_workspace("catalog-workspace-mount-discovery");
     let external = create_workspace_dir(&root, "external");
-    let underlay_src = create_workspace_dir(&external, "underlay");
+    let platform_src = create_workspace_dir(&external, "platform");
 
     write_manifest(
         &root.join("effigy.toml"),
@@ -125,22 +125,22 @@ fn discover_catalogs_includes_workspace_mount_catalog_directories() {
 alias = "acowtancy"
 
 [systems.dev.workspaces.app]
-mounts = ["./external/underlay:/workspace-root/underlay"]
+mounts = ["./external/platform:/workspace-root/platform"]
 "#,
     );
     write_catalog_tasks(
-        &underlay_src,
-        Some("underlay"),
-        &[("validate", "printf underlay-validate")],
+        &platform_src,
+        Some("platform"),
+        &[("validate", "printf platform-validate")],
     );
 
     let catalogs = discover_catalogs(&root).expect("discover catalogs");
     assert!(
-        catalogs.iter().any(|catalog| catalog.alias == "underlay"),
-        "workspace-mounted underlay catalog should be discovered"
+        catalogs.iter().any(|catalog| catalog.alias == "platform"),
+        "workspace-mounted platform catalog should be discovered"
     );
 
-    assert_builtin_ok_empty(root, "underlay/validate", &[]);
+    assert_builtin_ok_empty(root, "platform/validate", &[]);
 }
 
 #[test]

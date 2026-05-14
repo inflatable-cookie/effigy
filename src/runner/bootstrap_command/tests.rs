@@ -277,11 +277,11 @@ js = "bun"
 
 [bootstrap]
 run = [
-  {{ task = "bootstrap deps sync ../underlay" }}
+  {{ task = "bootstrap deps sync ../platform" }}
 ]
 
 [[bootstrap.children]]
-path = "../underlay"
+path = "../platform"
 repo = "{}"
 required = true
 "#,
@@ -979,7 +979,7 @@ fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
 
 #[test]
 fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_root() {
-    let child_remote = create_js_child_remote("underlay-sibling");
+    let child_remote = create_js_child_remote("workspace-app-sibling");
     let root_remote = create_root_remote_with_sibling_bootstrap_deps(&child_remote);
     let cwd = temp_dir("bootstrap-sibling-deps");
     let bin_dir = cwd.join("bin");
@@ -997,7 +997,7 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
         BootstrapArgs {
             subcommand: BootstrapSubcommand::Clone {
                 repo_url: root_remote.display().to_string(),
-                path: Some(PathBuf::from("underlay-reference")),
+                path: Some(PathBuf::from("workspace-app-reference")),
                 branch: None,
                 backend: None,
                 db_seeds: Vec::new(),
@@ -1015,7 +1015,7 @@ fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_r
 
     assert!(out.contains("[ok] bootstrap completed"));
     assert!(
-        cwd.join("underlay/bun.marker").is_file(),
+        cwd.join("platform/bun.marker").is_file(),
         "bun marker should be written under the cloned repo sibling, not the bootstrap parent"
     );
 }

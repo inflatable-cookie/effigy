@@ -6,8 +6,8 @@ use effigy_manifest::load_task_manifest_with_inspection;
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep};
 use effigy_manifest::{ManifestSecretsBackend, ManifestSecretsUnlockPolicy, ManifestTaskRunIn};
 
-fn underlay_fixture_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/underlay-bundle")
+fn workspace_app_fixture_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/workspace-app-bundle")
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
@@ -25,32 +25,32 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn setup_underlay_path_bundle(root: &Path) -> std::path::PathBuf {
-    let bundle_dir = root.join("bundles/underlay");
-    copy_dir_all(&underlay_fixture_dir(), &bundle_dir).expect("copy fixture bundle");
+fn setup_workspace_app_path_bundle(root: &Path) -> std::path::PathBuf {
+    let bundle_dir = root.join("bundles/workspace-app");
+    copy_dir_all(&workspace_app_fixture_dir(), &bundle_dir).expect("copy fixture bundle");
     bundle_dir
 }
 
 #[test]
-fn underlay_bundle_resolves_defaults_and_allows_repo_overrides() {
+fn workspace_app_bundle_resolves_defaults_and_allows_repo_overrides() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    setup_underlay_path_bundle(tmp.path());
+    setup_workspace_app_path_bundle(tmp.path());
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
-project_name = "underlay-reference-dev"
-workspace_subdir = "underlay-reference"
+project_name = "workspace-app-reference-dev"
+workspace_subdir = "workspace-app-reference"
 databases = ["acme"]
 
 [bundle.dirs]
 docs = "acme-docs"
 
 [systems.dev]
-mounts = ["../underlay", "../poodle"]
+mounts = ["../platform", "../poodle"]
 
 [tasks.seed]
 run_in = "host"
@@ -65,18 +65,18 @@ targets = ["tasks", "containers", "rhai"]
     std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
     let stale_bundle_root = tmp
         .path()
-        .join(".effigy/runtime/bundles/underlay/stale-hash/scripts/dev");
+        .join(".effigy/runtime/bundles/workspace-app/stale-hash/scripts/dev");
     std::fs::create_dir_all(&stale_bundle_root).expect("stale cache dir");
     std::fs::write(stale_bundle_root.join("ui-setup.rhai"), "stale").expect("stale asset");
 
     let loaded = load_task_manifest_with_inspection(&manifest_path).expect("load manifest");
     let bundle_root = loaded.bundle_root.clone().expect("bundle root");
-    assert_eq!(bundle_root, tmp.path().join("bundles/underlay"));
+    assert_eq!(bundle_root, tmp.path().join("bundles/workspace-app"));
     let setup_script = bundle_root.join("scripts/dev/ui-setup.rhai");
     let setup_script_source = std::fs::read_to_string(&setup_script).expect("setup script");
     assert!(
         setup_script_source.contains("unsupported ui setup target"),
-        "underlay bundle should expose its Rhai assets at {}",
+        "workspace app bundle should expose its Rhai assets at {}",
         setup_script.display()
     );
     let bootstrap_env_script = bundle_root.join("scripts/generate-dev-secrets.rhai");
@@ -84,7 +84,7 @@ targets = ["tasks", "containers", "rhai"]
         std::fs::read_to_string(&bootstrap_env_script).expect("dev secret generator script");
     assert!(
         bootstrap_env_source.contains("local dev secret generation complete"),
-        "underlay bundle should expose local secret generator helpers at {}",
+        "workspace app bundle should expose local secret generator helpers at {}",
         bootstrap_env_script.display()
     );
     let error_reporting_script = bundle_root.join("scripts/error-reporting.rhai");
@@ -92,7 +92,7 @@ targets = ["tasks", "containers", "rhai"]
         std::fs::read_to_string(&error_reporting_script).expect("error reporting script");
     assert!(
         error_reporting_source.contains("smoke:error-logging"),
-        "underlay bundle should expose error-reporting helpers at {}",
+        "workspace app bundle should expose error-reporting helpers at {}",
         error_reporting_script.display()
     );
     let manifest = loaded.manifest;
@@ -100,7 +100,7 @@ targets = ["tasks", "containers", "rhai"]
     let bundle = manifest.bundle.expect("bundle");
     assert!(matches!(
         bundle.base.as_ref(),
-        Some(effigy_manifest::ManifestBundleBase::Path { dir }) if dir.ends_with("bundles/underlay")
+        Some(effigy_manifest::ManifestBundleBase::Path { dir }) if dir.ends_with("bundles/workspace-app")
     ));
 
     let package_manager = manifest.package_manager.expect("package manager");
@@ -119,11 +119,11 @@ targets = ["tasks", "containers", "rhai"]
     let dev = systems.systems.get("dev").expect("systems.dev");
     assert_eq!(
         dev.working_dir.as_deref(),
-        Some("/workspace-root/underlay-reference")
+        Some("/workspace-root/workspace-app-reference")
     );
     assert_eq!(dev.user.as_deref(), Some("dev"));
     assert_eq!(dev.home.as_deref(), Some("/home/dev"));
-    assert_eq!(dev.mounts, vec!["../underlay", "../poodle"]);
+    assert_eq!(dev.mounts, vec!["../platform", "../poodle"]);
     assert!(dev.workspaces.contains_key("app"));
 
     let containers = manifest.containers.expect("containers");
@@ -131,7 +131,7 @@ targets = ["tasks", "containers", "rhai"]
     let stack = containers.environments.get("stack").expect("stack");
     assert_eq!(
         stack.project_name.as_deref(),
-        Some("underlay-reference-dev")
+        Some("workspace-app-reference-dev")
     );
     assert_eq!(stack.primary_service.as_deref(), Some("workspace"));
 
@@ -142,7 +142,7 @@ targets = ["tasks", "containers", "rhai"]
             .params
             .get("working_subdir")
             .and_then(|value| value.as_str()),
-        Some("underlay-reference")
+        Some("workspace-app-reference")
     );
     let host_ports = workspace
         .params
@@ -206,7 +206,7 @@ targets = ["tasks", "containers", "rhai"]
         .as_manifest_task();
     let run = bootstrap_task.run.as_ref().expect("bootstrap task run");
     let ManifestManagedRun::Sequence(steps) = run else {
-        panic!("underlay bootstrap should use a managed sequence");
+        panic!("workspace app bootstrap should use a managed sequence");
     };
     assert_eq!(
         steps.len(),
@@ -218,7 +218,7 @@ targets = ["tasks", "containers", "rhai"]
     };
     assert_eq!(
         sync_step.task.as_deref(),
-        Some("bootstrap deps sync ../underlay app-api app-client app-ui app-front app-admin")
+        Some("bootstrap deps sync ../platform app-api app-client app-ui app-front app-admin")
     );
     assert_eq!(
         bootstrap
@@ -273,7 +273,7 @@ targets = ["tasks", "containers", "rhai"]
     assert_eq!(
         validate_tasks,
         vec![
-            "underlay/validate",
+            "platform/validate",
             "acme-docs/validate",
             "app-api/validate",
             "app-client/validate",
@@ -353,18 +353,18 @@ targets = ["tasks", "containers", "rhai"]
 }
 
 #[test]
-fn underlay_bundle_renames_system_container_and_workspace_service() {
+fn workspace_app_bundle_renames_system_container_and_workspace_service() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    setup_underlay_path_bundle(tmp.path());
+    setup_workspace_app_path_bundle(tmp.path());
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
-project_name = "underlay-reference-dev"
-workspace_subdir = "underlay-reference"
+project_name = "workspace-app-reference-dev"
+workspace_subdir = "workspace-app-reference"
 databases = ["acme"]
 system_name = "stage"
 container_name = "infra"
@@ -420,18 +420,18 @@ default_workspace = "rust"
 }
 
 #[test]
-fn underlay_bundle_uses_client_and_ui_dirs_for_bootstrap_sync() {
+fn workspace_app_bundle_uses_client_and_ui_dirs_for_bootstrap_sync() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    setup_underlay_path_bundle(tmp.path());
+    setup_workspace_app_path_bundle(tmp.path());
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
-project_name = "underlay-reference-dev"
-workspace_subdir = "underlay-reference"
+project_name = "workspace-app-reference-dev"
+workspace_subdir = "workspace-app-reference"
 databases = ["acme"]
 
 [bundle.dirs]
@@ -442,7 +442,7 @@ front = "acme-front"
 admin = "acme-admin"
 
 [bundle.sources]
-underlay = "../../underlay"
+platform = "../../platform"
 poodle = "../../poodle"
 "#,
     )
@@ -457,7 +457,7 @@ poodle = "../../poodle"
         .as_manifest_task();
     let run = bootstrap_task.run.as_ref().expect("bootstrap task run");
     let effigy_manifest::ManifestManagedRun::Sequence(steps) = run else {
-        panic!("underlay bootstrap should use a managed sequence");
+        panic!("workspace app bootstrap should use a managed sequence");
     };
     let Some(effigy_manifest::ManifestManagedRunStep::Step(sync_step)) = steps.get(3) else {
         panic!("expected bootstrap deps sync step");
@@ -465,28 +465,28 @@ poodle = "../../poodle"
     assert_eq!(
         sync_step.task.as_deref(),
         Some(
-            "bootstrap deps sync ../../underlay acme-api acme-client acme-ui acme-front acme-admin"
+            "bootstrap deps sync ../../platform acme-api acme-client acme-ui acme-front acme-admin"
         )
     );
 
     let children = &manifest.bootstrap.as_ref().expect("bootstrap").children;
     let child_paths: Vec<&str> = children.iter().map(|child| child.path.as_str()).collect();
-    assert_eq!(child_paths, vec!["../../underlay", "../../poodle"]);
+    assert_eq!(child_paths, vec!["../../platform", "../../poodle"]);
 }
 
 #[test]
-fn underlay_bundle_infers_sources_from_system_mounts() {
+fn workspace_app_bundle_infers_sources_from_system_mounts() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    setup_underlay_path_bundle(tmp.path());
+    setup_workspace_app_path_bundle(tmp.path());
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
-project_name = "underlay-reference-dev"
-workspace_subdir = "underlay-reference"
+project_name = "workspace-app-reference-dev"
+workspace_subdir = "workspace-app-reference"
 databases = ["acme"]
 
 [bundle.dirs]
@@ -497,7 +497,7 @@ front = "acme-front"
 admin = "acme-admin"
 
 [systems.dev]
-mounts = ["../../underlay", "../../poodle"]
+mounts = ["../../platform", "../../poodle"]
 "#,
     )
     .expect("write manifest");
@@ -511,34 +511,34 @@ mounts = ["../../underlay", "../../poodle"]
         .as_manifest_task();
     let run = bootstrap_task.run.as_ref().expect("bootstrap task run");
     let effigy_manifest::ManifestManagedRun::Sequence(steps) = run else {
-        panic!("underlay bootstrap should use a managed sequence");
+        panic!("workspace app bootstrap should use a managed sequence");
     };
     let Some(effigy_manifest::ManifestManagedRunStep::Step(sync_step)) = steps.get(3) else {
         panic!("expected bootstrap deps sync step");
     };
     assert_eq!(
         sync_step.task.as_deref(),
-        Some("bootstrap deps sync ../underlay acme-api acme-client acme-ui acme-front acme-admin")
+        Some("bootstrap deps sync ../platform acme-api acme-client acme-ui acme-front acme-admin")
     );
 
     let children = &manifest.bootstrap.as_ref().expect("bootstrap").children;
     let child_paths: Vec<&str> = children.iter().map(|child| child.path.as_str()).collect();
-    assert_eq!(child_paths, vec!["../underlay", "../poodle"]);
+    assert_eq!(child_paths, vec!["../platform", "../poodle"]);
 }
 
 #[test]
-fn underlay_bundle_merges_repo_bootstrap_children_with_bundle_children() {
+fn workspace_app_bundle_merges_repo_bootstrap_children_with_bundle_children() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    setup_underlay_path_bundle(tmp.path());
+    setup_workspace_app_path_bundle(tmp.path());
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
-project_name = "underlay-reference-dev"
-workspace_subdir = "underlay-reference"
+project_name = "workspace-app-reference-dev"
+workspace_subdir = "workspace-app-reference"
 databases = ["acme"]
 
 [[bootstrap.children]]
@@ -551,22 +551,22 @@ repo = "git@github.com:acme/ledger.git"
     let manifest = load_task_manifest(&manifest_path).expect("load manifest");
     let children = &manifest.bootstrap.as_ref().expect("bootstrap").children;
     let child_paths: Vec<&str> = children.iter().map(|child| child.path.as_str()).collect();
-    assert_eq!(child_paths, vec!["../underlay", "../poodle", "../ledger"]);
+    assert_eq!(child_paths, vec!["../platform", "../poodle", "../ledger"]);
 }
 
 #[test]
-fn underlay_bundle_hydrates_primary_database_from_databases_list() {
+fn workspace_app_bundle_hydrates_primary_database_from_databases_list() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    setup_underlay_path_bundle(tmp.path());
+    setup_workspace_app_path_bundle(tmp.path());
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
-project_name = "underlay-reference-dev"
-workspace_subdir = "underlay-reference"
+project_name = "workspace-app-reference-dev"
+workspace_subdir = "workspace-app-reference"
 databases = ["acme", "acme_test"]
 "#,
     )
@@ -603,18 +603,18 @@ databases = ["acme", "acme_test"]
 }
 
 #[test]
-fn underlay_bundle_emits_per_subproject_volume_dirs() {
+fn workspace_app_bundle_emits_per_subproject_volume_dirs() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    setup_underlay_path_bundle(tmp.path());
+    setup_workspace_app_path_bundle(tmp.path());
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
-project_name = "underlay-reference-dev"
-workspace_subdir = "underlay-reference"
+project_name = "workspace-app-reference-dev"
+workspace_subdir = "workspace-app-reference"
 databases = ["acme"]
 
 [bundle.dirs]
@@ -654,23 +654,23 @@ admin = "acme-admin"
             "acme-front/node_modules",
             "acme-admin/node_modules",
         ],
-        "underlay bundle should expose each isolated writable dir through one shared list"
+        "workspace app bundle should expose each isolated writable dir through one shared list"
     );
 }
 
 #[test]
-fn underlay_bundle_volume_dirs_default_to_app_star() {
+fn workspace_app_bundle_volume_dirs_default_to_app_star() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    setup_underlay_path_bundle(tmp.path());
+    setup_workspace_app_path_bundle(tmp.path());
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "app.test"
-project_name = "underlay-app-dev"
-workspace_subdir = "underlay-app"
+project_name = "workspace-app-dev"
+workspace_subdir = "workspace-app"
 databases = ["acme"]
 "#,
     )
@@ -707,15 +707,15 @@ databases = ["acme"]
 }
 
 #[test]
-fn underlay_bundle_uses_route_label_overrides() {
+fn workspace_app_bundle_uses_route_label_overrides() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    setup_underlay_path_bundle(tmp.path());
+    setup_workspace_app_path_bundle(tmp.path());
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acowtancy.test"
 project_name = "acowtancy-dev"
 workspace_subdir = "acowtancy"
@@ -760,15 +760,15 @@ api = "farmyard"
 }
 
 #[test]
-fn underlay_bundle_s3_route_override_flows_from_bundle_input_without_rust_changes() {
+fn workspace_app_bundle_s3_route_override_flows_from_bundle_input_without_rust_changes() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    setup_underlay_path_bundle(tmp.path());
+    setup_workspace_app_path_bundle(tmp.path());
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acowtancy.test"
 project_name = "acowtancy-dev"
 workspace_subdir = "acowtancy"

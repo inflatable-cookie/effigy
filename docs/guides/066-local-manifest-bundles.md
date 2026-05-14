@@ -22,7 +22,7 @@ base = { type = "oci", url = "ghcr.io/org/acme-bundle:v1" }
 
 Legacy forms are removed:
 
-- `base = "underlay"`
+- `base = "workspace-app"`
 - `[bundle].name`
 - `[bundle].base_path`
 

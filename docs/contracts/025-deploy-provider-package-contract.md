@@ -207,7 +207,7 @@ glue:
 
 - runtime context: repo root, invocation cwd, catalog root
 - provider context/report helpers under `deploy::*`
-- JSON/TOML read/write helpers
+- JSON/TOML/YAML read/write helpers
 - template rendering or deterministic text file writing
 - HTTP helpers with redaction support
 - process helpers for provider CLIs with redacted output capture
@@ -219,8 +219,8 @@ When a provider script needs a shell escape or raw env secret lookup, that is a
 signal to widen the typed Rhai surface before making the provider package
 canonical.
 
-## Built-In Compatibility
+## Core Boundary
 
-Existing built-in Render and Railway behavior may remain as compatibility
-adapters while provider packages stabilize. New provider-specific behavior
-should prefer provider packages over hardcoded core branches.
+Provider-specific behavior belongs in provider packages. Core Effigy should
+keep provider dispatch, context/report validation, transaction persistence, and
+safety gates generic.

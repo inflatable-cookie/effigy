@@ -16,10 +16,10 @@ use effigy_cli::{
     ChangelogArgs, ChangelogSubcommand, ContainerArgs, ContainerCacheSubcommand,
     ContainerDataSubcommand, ContainerDbDumpInput, ContainerSubcommand, ContainerVolumeSubcommand,
     ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs,
-    DemoListQuery, DemoSubcommand, DeployArgs, DeployExportProvider, DeploySubcommand, DocsArgs,
-    DocsBlockRequirement, DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand,
-    InternalScriptRunArgs, ServiceArgs, ServiceSubcommand, StateArgs, StateSubcommand, SystemArgs,
-    SystemSubcommand, TaskInvocation, TasksArgs,
+    DemoListQuery, DemoSubcommand, DeployArgs, DeploySubcommand, DocsArgs, DocsBlockRequirement,
+    DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, InternalScriptRunArgs, ServiceArgs,
+    ServiceSubcommand, StateArgs, StateSubcommand, SystemArgs, SystemSubcommand, TaskInvocation,
+    TasksArgs,
 };
 use serde_json::Value;
 
@@ -868,15 +868,7 @@ fn run_rhai_feature(
             repo_root,
             effigy_cli::Command::Deploy(DeployArgs {
                 subcommand: DeploySubcommand::Export {
-                    provider: match required_string(&options, "provider")?.as_str() {
-                        "render" => DeployExportProvider::Render,
-                        "railway" => DeployExportProvider::Railway,
-                        other => {
-                            return Err(RunnerError::task_invocation(format!(
-                                "`deploy::emit(...)` does not support provider `{other}`"
-                            )));
-                        }
-                    },
+                    provider: required_string(&options, "provider")?,
                     path: PathBuf::from(required_string(&options, "path")?),
                     plan: bool_option(&options, "plan")?.unwrap_or(false),
                 },

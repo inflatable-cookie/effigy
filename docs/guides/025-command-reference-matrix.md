@@ -90,14 +90,14 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy container` | Operate manifest-defined local container environments across Colima/containerd or Docker, along with data lifecycle, cleanup surfaces, shared-service reuse, and cross-project status views | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `volume`, `cache`, `--repo`, `--attach`, `--detach`, `--service`, `--command`, `--follow`, `--global`, `--dormant`, `--orphans`, `--project`, `--kind`, `--db-seed`, `--db-dump`, `--no-prompt`, `--push`, `--keep-data`, `--yes`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1` | `063-container-system-guide.md` |
 | `effigy system` | Operate the manifest's declared default system substrate (VM + compose + gateway) with lifecycle, log streaming, and recovery surfaces | `up`, `down`, `status`, `logs`, `repair`, `reset-runtime`, `--system`, `--repo`, `--follow`, `--json` | `effigy.system.recover.v1` | `064-system-workspace-and-dev-contract.md` |
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
-| `effigy bundle` | Inspect the active repo bundle source and refresh repo-local git/OCI bundle sources | `inspect`, `sync`, `--repo`, `--json` | `effigy.bundle.inspect.v1`, `effigy.bundle.sync.v1` | `065-underlay-starter.md` |
-| `effigy deploy` | Derive a provider-neutral production deployment model, export bounded provider files, and run provider-neutral deployment transactions with state, artifact, release, hook, health, and report evidence | `model`, `export render`, `export railway`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../contracts/019-deployment-transaction-system-contract.md) |
+| `effigy bundle` | Inspect the active repo bundle source and refresh repo-local git/OCI bundle sources | `inspect`, `sync`, `--repo`, `--json` | `effigy.bundle.inspect.v1`, `effigy.bundle.sync.v1` | `065-external-bundle-adoption.md` |
+| `effigy deploy` | Derive a provider-neutral production deployment model, export bounded provider files through configured provider packages, and run provider-neutral deployment transactions with state, artifact, release, hook, health, and report evidence | `model`, `export <PROVIDER>`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../contracts/019-deployment-transaction-system-contract.md) |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, optionally stage DB seed dumps and run the standard `bootstrap:db-seed` task, optionally prompt for missing bundle DB dumps on a real TTY, optionally isolate generated-compose runtime state with `--fresh`, optionally pin this bootstrap session to `containerd` or `docker` with `--backend`, run `[bootstrap].start` after setup by default (`--no-start` to skip), and expose `bootstrap deps sync`, `bootstrap children status/sync`, and `bootstrap teardown` for typed dependency hydration, child checkout inspection/refresh, and fresh-session cleanup | `<git-url>`, `teardown`, `deps sync`, `children status`, `children sync`, `--path`, `--branch`, `--backend <containerd|docker>`, `--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>`, `--fresh`, `--no-prompt`, `--reuse-path`, `--no-start`, `--start`, `--plan`, `--yes`, `--js-only`, `--rust-only`, `--fetch-only`, `--checkout`, `--json` | `effigy.bootstrap.v1`, `effigy.bootstrap.deps.v1`, `effigy.bootstrap.children-status.v1`, `effigy.bootstrap.children-sync.v1`, `effigy.bootstrap-teardown.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--threshold/--warn`, `--high`, `--critical`, `--include`, `--exclude`, `--source-root`, marker overrides (`--warning-marker/--high-marker/--critical-marker`), `--show-warnings`, `--no-gitignore`, `--fail-on-findings`, `--markdown`, `--out`, `--json` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Run built-in or explicit `tasks.test` test orchestration | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
-| `effigy init` | Scaffold baseline `effigy.toml` (and any extra starter files such as root `README.md`) from a named starter (e.g. `minimal`, `underlay`, `northstar`) or list available starters | `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-foundation.md` |
+| `effigy init` | Scaffold baseline `effigy.toml` (and any extra starter files such as root `README.md`) from a named starter (e.g. `minimal`, `northstar`) or list available starters | `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy tasks migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy config` | Render config reference/schema snippets, inspect the effective composed manifest, or manage user-global container defaults | `inspect`, `schema`, `path`, `get`, `set`, `unset`, `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--user-inspect`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy tasks unlock` | Clear lock scopes manually | `--all`, `--yes`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
@@ -240,8 +240,7 @@ bootstrap/data seed/data dump without becoming part of `[bundle].databases`.
 effigy bundle inspect [--repo <PATH>] [--json]
 effigy bundle sync [--json]
 effigy deploy model [--repo <PATH>] --json
-effigy deploy export render [--repo <PATH>] --path <DIR> [--plan] [--json]
-effigy deploy export railway [--repo <PATH>] --path <DIR> [--plan] [--json]
+effigy deploy export <PROVIDER> [--repo <PATH>] --path <DIR> [--plan] [--json]
 effigy deploy plan <ENV> [--repo <PATH>] [--write-report] [--json]
 effigy deploy apply <ENV> [--repo <PATH>] --yes [--json]
 effigy deploy status <ENV> [--repo <PATH>] [--json]
@@ -322,8 +321,10 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   the current repo; local path bundle sources report not-applicable
 - `deploy model` is intentionally JSON-only and reads the active rendered
   `[deploy.model]` section from the effective manifest
-- `deploy export render` currently generates only `render.yaml`
-- `deploy export railway` currently generates service-local `railway.toml`
+- `deploy export <PROVIDER>` requires a matching
+  `[deploy.providers.<provider>]` package with an export capability
+- the Render provider package currently writes `render.yaml`
+- the Railway provider package currently writes service-local `railway.toml`
   files plus `report.json`
 - v0.6.0 deployment transactions are separate from `deploy export`:
   `deploy plan/apply/status/history/redeploy` compose code refs, provider
@@ -332,12 +333,10 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   comes from configured deploy-provider packages rather than built-in
   Railway/Render transaction stubs
 - `[deploy.providers.<name>]` can resolve path and git deploy-provider packages
-  with `provider.toml` descriptors during deploy planning; declared
-  `preflight.rhai` scripts run through `deploy::provider_context()` and
-  receive `[deploy.<env>.provider]` as raw provider-owned config;
-  `deploy::provider_report(...)` checks/blockers are merged into the deploy
-  plan; `apply.rhai` and `status.rhai` own provider execution and status
-  reporting for configured packages
+  with `provider.toml` descriptors during deploy export and deployment
+  transactions; declared `export.rhai`, `preflight.rhai`, `apply.rhai`, and
+  `status.rhai` scripts run through `deploy::provider_context()` and report
+  through `deploy::provider_report(...)`
 - `deploy apply` must validate provider setup and block with
   remediation instead of creating provider projects, services, resources,
   domains, variables, or secrets

@@ -2,7 +2,6 @@ use crate::tests::prelude::{
     parse_command, Command, DeployArgs, DeploySubcommand, DoctorArgs, PathBuf, TaskInvocation,
     TasksArgs,
 };
-use effigy_cli::DeployExportProvider;
 
 #[test]
 fn parse_doctor_with_repo_fix_and_json() {
@@ -186,15 +185,15 @@ fn parse_deploy_model_with_repo_and_json() {
 }
 
 #[test]
-fn parse_deploy_export_render_with_path_plan_and_json() {
+fn parse_deploy_export_provider_with_path_plan_and_json() {
     let cmd = parse_command(vec![
         "deploy".to_owned(),
         "export".to_owned(),
-        "render".to_owned(),
+        "acme-cloud".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "--path".to_owned(),
-        "infra/render".to_owned(),
+        "infra/deploy".to_owned(),
         "--plan".to_owned(),
         "--json".to_owned(),
     ])
@@ -203,8 +202,8 @@ fn parse_deploy_export_render_with_path_plan_and_json() {
         cmd,
         Command::Deploy(DeployArgs {
             subcommand: DeploySubcommand::Export {
-                provider: DeployExportProvider::Render,
-                path: PathBuf::from("infra/render"),
+                provider: "acme-cloud".to_owned(),
+                path: PathBuf::from("infra/deploy"),
                 plan: true,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
@@ -309,15 +308,15 @@ fn parse_deploy_redeploy_with_deployment_and_yes() {
 }
 
 #[test]
-fn parse_deploy_export_railway_with_path_plan_and_json() {
+fn parse_deploy_export_provider_after_global_json_and_repo() {
     let cmd = parse_command(vec![
         "deploy".to_owned(),
         "export".to_owned(),
-        "railway".to_owned(),
+        "acme-cloud".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "--path".to_owned(),
-        "infra/railway".to_owned(),
+        "infra/deploy".to_owned(),
         "--plan".to_owned(),
         "--json".to_owned(),
     ])
@@ -326,8 +325,8 @@ fn parse_deploy_export_railway_with_path_plan_and_json() {
         cmd,
         Command::Deploy(DeployArgs {
             subcommand: DeploySubcommand::Export {
-                provider: DeployExportProvider::Railway,
-                path: PathBuf::from("infra/railway"),
+                provider: "acme-cloud".to_owned(),
+                path: PathBuf::from("infra/deploy"),
                 plan: true,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),

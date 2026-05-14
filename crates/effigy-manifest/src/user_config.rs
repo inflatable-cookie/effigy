@@ -14,9 +14,9 @@
 //! backend = "containerd"
 //! profile = "effigy"
 //!
-//! [bundle.decodelabs]
+//! [bundle.php_app]
 //! library_mounts = [
-//!   "~/Dev/legacy/libraries/decodelabs",
+//!   "~/Dev/legacy/libraries/php-app",
 //! ]
 //! ```
 //!
@@ -276,32 +276,32 @@ mod tests {
         std::fs::write(
             &path,
             r#"
-[bundle.decodelabs]
+[bundle.php_app]
 library_mounts = [
-  "~/Dev/legacy/libraries/decodelabs",
+  "~/Dev/legacy/libraries/php-app",
   "/abs/path/libs",
 ]
 
-[bundle.underlay]
+[bundle.platform]
 library_mounts = ["~/Dev/u-libs"]
 "#,
         )
         .expect("write");
         let cfg = load_user_config_from(&path).expect("load");
 
-        let decodelabs = cfg.library_mounts_for("decodelabs");
-        assert_eq!(decodelabs.len(), 2);
-        assert_eq!(decodelabs[1].host_path, PathBuf::from("/abs/path/libs"));
+        let php_app = cfg.library_mounts_for("php-app");
+        assert_eq!(php_app.len(), 2);
+        assert_eq!(php_app[1].host_path, PathBuf::from("/abs/path/libs"));
         // First entry should have `~` expanded.
-        let first = &decodelabs[0].host_path;
+        let first = &php_app[0].host_path;
         assert!(
             !first.starts_with("~"),
             "expected `~` to expand, got {first:?}"
         );
-        assert!(first.ends_with("Dev/legacy/libraries/decodelabs"));
+        assert!(first.ends_with("Dev/legacy/libraries/php-app"));
 
-        let underlay = cfg.library_mounts_for("underlay");
-        assert_eq!(underlay.len(), 1);
+        let platform = cfg.library_mounts_for("platform");
+        assert_eq!(platform.len(), 1);
 
         let unknown = cfg.library_mounts_for("does-not-exist");
         assert!(unknown.is_empty());
@@ -363,7 +363,7 @@ backend = "colima-nerdctl"
         std::fs::write(
             &path,
             r#"
-[bundle.decodelabs]
+[bundle.php_app]
 library_mounts = []
 unexpected_field = "nope"
 "#,
@@ -380,14 +380,14 @@ unexpected_field = "nope"
         std::fs::write(
             home.join("config.toml"),
             r#"
-[bundle.decodelabs]
+[bundle.php_app]
 library_mounts = ["~/from-override"]
 "#,
         )
         .expect("write");
         with_test_user_config_home(home, || {
             let cfg = load_user_config().expect("load via default path");
-            let mounts = cfg.library_mounts_for("decodelabs");
+            let mounts = cfg.library_mounts_for("php-app");
             assert_eq!(mounts.len(), 1);
             assert_eq!(mounts[0].raw, "~/from-override");
         });

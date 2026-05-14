@@ -259,12 +259,12 @@ fn cli_json_mode_missing_task_wraps_runner_failure() {
 #[test]
 fn cli_json_mode_deploy_model_wraps_deploy_payload() {
     let root = temp_workspace("cli-json-deploy-model");
-    setup_underlay_path_bundle(&root);
+    setup_workspace_app_path_bundle(&root);
     fs::write(
         root.join("effigy.toml"),
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -314,17 +314,20 @@ api = "acme-api"
     assert_eq!(parsed["command"]["kind"], "deploy");
     assert_eq!(parsed["command"]["name"], "deploy");
     assert_eq!(parsed["result"]["schema"], "deploy.model.v1");
-    assert_eq!(parsed["result"]["app"]["bundle"], "underlay");
+    assert_eq!(parsed["result"]["app"]["bundle"], "workspace-app");
     assert_eq!(parsed["result"]["backing_services"][0]["name"], "postgres");
 }
 
 #[test]
 fn cli_json_mode_deploy_export_render_wraps_export_payload() {
     let root = temp_workspace("cli-json-deploy-export-render");
-    setup_underlay_path_bundle(&root);
+    setup_workspace_app_path_bundle(&root);
     fs::write(
         root.join("effigy.toml"),
-        "[bundle]\nbase = { type = \"path\", dir = \"bundles/underlay\" }\nhost = \"acme.test\"\nproject_name = \"acme-dev\"\nworkspace_subdir = \"acme\"\ndatabases = [\"acme\"]\n",
+        format!(
+            "[bundle]\nbase = {{ type = \"path\", dir = \"bundles/workspace-app\" }}\nhost = \"acme.test\"\nproject_name = \"acme-dev\"\nworkspace_subdir = \"acme\"\ndatabases = [\"acme\"]\n{}",
+            deploy_provider_source("render")
+        ),
     )
     .expect("write root manifest");
     fs::create_dir_all(root.join("app-front")).expect("mkdir front");
@@ -385,10 +388,13 @@ fn cli_json_mode_deploy_export_render_wraps_export_payload() {
 #[test]
 fn cli_json_mode_deploy_export_railway_wraps_export_payload() {
     let root = temp_workspace("cli-json-deploy-export-railway");
-    setup_underlay_path_bundle(&root);
+    setup_workspace_app_path_bundle(&root);
     fs::write(
         root.join("effigy.toml"),
-        "[bundle]\nbase = { type = \"path\", dir = \"bundles/underlay\" }\nhost = \"acme.test\"\nproject_name = \"acme-dev\"\nworkspace_subdir = \"acme\"\ndatabases = [\"acme\"]\n",
+        format!(
+            "[bundle]\nbase = {{ type = \"path\", dir = \"bundles/workspace-app\" }}\nhost = \"acme.test\"\nproject_name = \"acme-dev\"\nworkspace_subdir = \"acme\"\ndatabases = [\"acme\"]\n{}",
+            deploy_provider_source("railway")
+        ),
     )
     .expect("write root manifest");
     fs::create_dir_all(root.join("app-front")).expect("mkdir front");

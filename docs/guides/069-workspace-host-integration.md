@@ -53,7 +53,7 @@ Consumer repos then just mount the sibling repo normally:
 
 ```toml
 [systems.dev]
-mounts = ["../underlay", "../poodle"]
+mounts = ["../platform", "../poodle"]
 ```
 
 Effigy auto-adopts any producer-declared `[isolation].paths` from those mounted
@@ -104,19 +104,19 @@ bind-mounted into the workspace container under
 
 ```toml
 # ~/.effigy/config.toml
-[bundle.decodelabs]
+[bundle.php-app]
 library_mounts = [
-  "/Users/tom/Dev/legacy/libraries/decodelabs",
+  "/Users/tom/Dev/libraries/acme",
   "/Users/tom/Dev/legacy/libraries/df-r7",
   "/Users/tom/Dev/legacy/libraries/icf",
 ]
 ```
 
-A consumer project under any decodelabs site sees those three trees inside
+A consumer project under any php-app site sees those three trees inside
 the container at:
 
 ```
-/workspace-libraries/decodelabs
+/workspace-libraries/acme
 /workspace-libraries/df-r7
 /workspace-libraries/icf
 ```

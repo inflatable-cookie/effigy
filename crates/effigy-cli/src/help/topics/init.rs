@@ -10,7 +10,7 @@ pub(crate) fn render_init_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
         &[
             "Emit a named starter's file set into the current repo.",
             "Defaults to the `minimal` starter when no name is supplied.",
-            "Multi-file starters (e.g. `underlay`) write every declared target; nested parent directories are created automatically.",
+            "Multi-file starters write every declared target; nested parent directories are created automatically.",
             "An existing root `README.md` is never overwritten unless `--force` is set (other targets still use the normal conflict rules).",
         ],
     )?;
@@ -50,7 +50,7 @@ pub(crate) fn render_init_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
         "init scope",
         &[
             "default `minimal` starter emits a baseline `effigy.toml` plus a first-read `README.md` (skipped when a root README already exists)",
-            "`underlay` starter emits the Underlay system/workspace/managed-dev shape across five files",
+            "named starters can emit system, workspace, and managed-dev files as one scaffold",
             "`--list` reports available starters in human and JSON shapes",
             "safe file existence handling (`--dry-run`/`--force`) checks every target before writing",
             "starters can ship post-emission guidance, printed after `Created ...` lines",

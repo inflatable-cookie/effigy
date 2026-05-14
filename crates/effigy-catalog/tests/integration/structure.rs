@@ -515,9 +515,15 @@ fn assembled_yaml_is_structurally_valid_compose() {
     );
 
     // 5. Validate volume metadata.
-    assert_eq!(result.volumes.len(), 1);
-    assert_eq!(result.volumes[0].name, "client-project-db-data");
-    assert!(result.volumes[0].persist);
+    assert_eq!(result.volumes.len(), 3);
+    assert!(result
+        .volumes
+        .iter()
+        .any(|volume| volume.name == "client-project-db-data" && volume.persist));
+    assert!(result
+        .volumes
+        .iter()
+        .any(|volume| volume.name == "client-project-app-pnpm-store" && !volume.persist));
 }
 
 #[test]
@@ -634,9 +640,11 @@ fn rust_postgres_stack_assembles_correctly() {
         "missing named Postgres data volume:\n{}",
         result.compose_yaml
     );
-    assert_eq!(result.volumes.len(), 1);
-    assert_eq!(result.volumes[0].name, "rust-svc-db-data");
-    assert!(result.volumes[0].persist);
+    assert_eq!(result.volumes.len(), 2);
+    assert!(result
+        .volumes
+        .iter()
+        .any(|volume| volume.name == "rust-svc-db-data" && volume.persist));
 }
 
 #[test]
@@ -683,7 +691,7 @@ fn empty_services_rejected() {
 }
 
 #[test]
-fn single_service_assembles_without_volumes() {
+fn single_redis_service_assembles_with_persistent_data_volume() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
 
@@ -701,6 +709,8 @@ fn single_service_assembles_without_volumes() {
     let doc = validate_compose_structure(&result.compose_yaml);
 
     validate_service(&doc, "cache");
-    assert!(result.volumes.is_empty());
-    assert!(doc.get("volumes").is_none());
+    assert_eq!(result.volumes.len(), 1);
+    assert_eq!(result.volumes[0].name, "minimal-cache-data");
+    assert!(result.volumes[0].persist);
+    assert!(doc.get("volumes").is_some());
 }

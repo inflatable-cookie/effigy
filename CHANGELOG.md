@@ -44,6 +44,10 @@ During v0.x, MINOR bumps may include breaking changes.
   and TOML files directly through `json::write_file`, `json::read_file`,
   `json::stringify_compact`, `toml::write_file`, and `toml::read_file`, and
   can extract regex groups through `regex::captures(...)`.
+- **YAML Rhai helpers:** Rhai scripts can now parse, stringify, read, and
+  write YAML through `yaml::parse`, `yaml::stringify`, `yaml::read_file`, and
+  `yaml::write_file`, giving provider packages enough structured file support
+  to own deployment exports outside Effigy core.
 - **Rhai URL and DSN helpers:** Rhai scripts can now parse generic URLs with
   `url::parse(...)` and MySQL DSNs with `url::parse_mysql_dsn(...)` instead of
   hand-rolling regex extraction for host, port, database, and query params.
@@ -53,6 +57,10 @@ During v0.x, MINOR bumps may include breaking changes.
   opt into `deploy`, `state`, and `artifacts` secret targets. Deploy provider
   packages run with `deploy` secret access, and state apply hook tasks receive
   declared `state` secrets through process environment injection.
+- **Provider-package deployment exports:** `effigy deploy export <PROVIDER>`
+  now dispatches to the configured `[deploy.providers.<provider>]` package
+  export capability instead of a fixed built-in provider list, and
+  `deploy::emit(...)` can target any configured provider id.
 - **Container startup secret injection:** `effigy container up` now resolves
   declared `targets = ["containers"]` vault secrets before startup, blocks
   missing required values before compose mutation, and passes resolved values

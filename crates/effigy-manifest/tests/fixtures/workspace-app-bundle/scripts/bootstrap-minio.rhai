@@ -12,7 +12,7 @@ fn optional_config_string(path, fallback) {
 fn bundle_host() {
     let host = optional_config_string("bundle.host", "");
     if host == "" {
-        throw "underlay minio bootstrap helper requires `[bundle].host`";
+        throw "workspace app minio bootstrap helper requires `[bundle].host`";
     }
     return host;
 }
@@ -20,7 +20,7 @@ fn bundle_host() {
 fn project_name() {
     let name = optional_config_string("bundle.project_name", "");
     if name == "" {
-        throw "underlay minio bootstrap helper requires `[bundle].project_name`";
+        throw "workspace app minio bootstrap helper requires `[bundle].project_name`";
     }
     return name;
 }

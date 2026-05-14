@@ -28,7 +28,7 @@ mount_source = "{{ bundle_host_path(bundle.manifest_root, inputs.shared_root) }}
 isolated_dirs = ["vendor"]
 node_version = "24"
 node_global_packages = ["eclint"]
-composer_global_packages = ["decodelabs/effigy"]
+composer_global_packages = ["acme/effigy"]
 extensions = [
   "bcmath",
   "apcu",

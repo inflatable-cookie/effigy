@@ -48,7 +48,7 @@ Use when:
 Read:
 - [`063-container-system-guide.md`](./063-container-system-guide.md)
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
-- [`065-underlay-starter.md`](./065-underlay-starter.md)
+- [`065-external-bundle-adoption.md`](./065-external-bundle-adoption.md)
 - [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
 - [`071-catalog-service-authoring.md`](./071-catalog-service-authoring.md)
 - [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
@@ -210,7 +210,7 @@ This section is inventory, not a recommended reading order.
 - [`062-distribution-system-guide.md`](./062-distribution-system-guide.md)
 - [`063-container-system-guide.md`](./063-container-system-guide.md)
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
-- [`065-underlay-starter.md`](./065-underlay-starter.md)
+- [`065-external-bundle-adoption.md`](./065-external-bundle-adoption.md)
 - [`066-local-manifest-bundles.md`](./066-local-manifest-bundles.md)
 - [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
 - [`071-catalog-service-authoring.md`](./071-catalog-service-authoring.md)

@@ -46,10 +46,10 @@ pub(crate) mod harness {
         Ok(())
     }
 
-    pub(crate) fn setup_underlay_path_bundle(root: &std::path::Path) {
+    pub(crate) fn setup_workspace_app_path_bundle(root: &std::path::Path) {
         let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("crates/effigy-manifest/tests/fixtures/underlay-bundle");
-        let bundle_dir = root.join("bundles/underlay");
+            .join("crates/effigy-manifest/tests/fixtures/workspace-app-bundle");
+        let bundle_dir = root.join("bundles/workspace-app");
         copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
     }
 }

@@ -1,6 +1,6 @@
 [bundle]
-name = "decodelabs"
-description = "DecodeLabs legacy PHP stack with nginx, php-fpm, MariaDB, phpMyAdmin, Mailpit, Redis, Memcached, a dev workspace, and local gateway routes."
+name = "php-app"
+description = "PHP app legacy PHP stack with nginx, php-fpm, MariaDB, phpMyAdmin, Mailpit, Redis, Memcached, a dev workspace, and local gateway routes."
 defaults = "export.toml"
 
 [[inputs]]
@@ -13,8 +13,8 @@ example = "contact-patch.legacy.test"
 [[inputs]]
 name = "project_name"
 type = "string"
-description = "Compose project name used for the generated container environment. Defaults to `<host-label>-decodelabs`."
-example = "contactpatch-decodelabs"
+description = "Compose project name used for the generated container environment. Defaults to `<host-label>-php-app`."
+example = "contactpatch-php-app"
 
 [[inputs]]
 name = "databases"

@@ -138,7 +138,7 @@ fn workspace_rust_bun_publishes_host_ports_when_requested() {
             );
             p.insert(
                 "working_subdir".to_string(),
-                toml::Value::String("underlay-reference".to_string()),
+                toml::Value::String("workspace-app-reference".to_string()),
             );
             p
         },
@@ -149,7 +149,7 @@ fn workspace_rust_bun_publishes_host_ports_when_requested() {
     let result = assembler
         .assemble(
             &services,
-            "underlay-dev",
+            "workspace-dev",
             ".",
             ".effigy-catalog",
             1000,
@@ -174,7 +174,7 @@ fn workspace_rust_bun_publishes_host_ports_when_requested() {
     // working_subdir shapes the compose working_dir.
     assert_eq!(
         workspace.get("working_dir").unwrap().as_str().unwrap(),
-        "/workspace-root/underlay-reference"
+        "/workspace-root/workspace-app-reference"
     );
 }
 
@@ -190,7 +190,7 @@ fn workspace_rust_bun_emits_named_volumes_for_subproject_dirs() {
             let mut p = HashMap::new();
             p.insert(
                 "working_subdir".to_string(),
-                toml::Value::String("underlay-reference".to_string()),
+                toml::Value::String("workspace-app-reference".to_string()),
             );
             p.insert(
                 "isolated_dirs".to_string(),
@@ -209,7 +209,7 @@ fn workspace_rust_bun_emits_named_volumes_for_subproject_dirs() {
     let result = assembler
         .assemble(
             &services,
-            "underlay-reference-dev",
+            "workspace-app-reference-dev",
             ".",
             ".effigy-catalog",
             1000,
@@ -229,19 +229,19 @@ fn workspace_rust_bun_emits_named_volumes_for_subproject_dirs() {
 
     assert!(
         volume_strings.contains(
-            &"underlay-reference-dev-workspace-workspace-root-underlay-reference-acme-api-target:/workspace-root/underlay-reference/acme-api/target"
+            &"workspace-app-reference-dev-workspace-workspace-root-workspace-app-reference-acme-api-target:/workspace-root/workspace-app-reference/acme-api/target"
         ),
         "expected isolated target volume mount; got {volume_strings:?}"
     );
     assert!(
         volume_strings.contains(
-            &"underlay-reference-dev-workspace-workspace-root-underlay-reference-acme-client-node-modules:/workspace-root/underlay-reference/acme-client/node_modules"
+            &"workspace-app-reference-dev-workspace-workspace-root-workspace-app-reference-acme-client-node-modules:/workspace-root/workspace-app-reference/acme-client/node_modules"
         ),
         "expected isolated node_modules volume mount; got {volume_strings:?}"
     );
     assert!(
         volume_strings.contains(
-            &"underlay-reference-dev-workspace-workspace-root-underlay-reference-acme-ui-node-modules:/workspace-root/underlay-reference/acme-ui/node_modules"
+            &"workspace-app-reference-dev-workspace-workspace-root-workspace-app-reference-acme-ui-node-modules:/workspace-root/workspace-app-reference/acme-ui/node_modules"
         ),
         "expected isolated node_modules volume mount; got {volume_strings:?}"
     );
@@ -249,20 +249,20 @@ fn workspace_rust_bun_emits_named_volumes_for_subproject_dirs() {
     // Top-level named volumes should include the isolated-dir ones, so
     // compose actually creates persistent volumes rather than anonymous ones.
     let vol_names: Vec<&str> = result.volumes.iter().map(|v| v.name.as_str()).collect();
-    assert!(vol_names.contains(&"underlay-reference-dev-workspace-cargo-registry"));
-    assert!(vol_names.contains(&"underlay-reference-dev-workspace-cargo-git"));
+    assert!(vol_names.contains(&"workspace-app-reference-dev-workspace-cargo-registry"));
+    assert!(vol_names.contains(&"workspace-app-reference-dev-workspace-cargo-git"));
     assert!(vol_names.contains(
-        &"underlay-reference-dev-workspace-workspace-root-underlay-reference-acme-api-target"
+        &"workspace-app-reference-dev-workspace-workspace-root-workspace-app-reference-acme-api-target"
     ));
-    assert!(vol_names.contains(&"underlay-reference-dev-workspace-workspace-root-underlay-reference-acme-client-node-modules"));
+    assert!(vol_names.contains(&"workspace-app-reference-dev-workspace-workspace-root-workspace-app-reference-acme-client-node-modules"));
     assert!(vol_names.contains(
-        &"underlay-reference-dev-workspace-workspace-root-underlay-reference-acme-ui-node-modules"
+        &"workspace-app-reference-dev-workspace-workspace-root-workspace-app-reference-acme-ui-node-modules"
     ));
 }
 
 #[test]
-fn underlay_style_stack_assembles_with_bundled_fragments_only() {
-    // This is the proof against underlay-reference: the exact service shape
+fn workspace_app_style_stack_assembles_with_bundled_fragments_only() {
+    // This is the proof against workspace-app-reference: the exact service shape
     // that repo's `infra/dev/docker-compose.yml` + `workspace.Dockerfile`
     // carry today can be expressed with only bundled catalog fragments.
     let resolver = bundled_resolver();
@@ -276,7 +276,7 @@ fn underlay_style_stack_assembles_with_bundled_fragments_only() {
                 let mut p = HashMap::new();
                 p.insert(
                     "working_subdir".to_string(),
-                    toml::Value::String("underlay-reference".to_string()),
+                    toml::Value::String("workspace-app-reference".to_string()),
                 );
                 p.insert(
                     "host_ports".to_string(),
@@ -342,7 +342,7 @@ fn underlay_style_stack_assembles_with_bundled_fragments_only() {
     let result = assembler
         .assemble(
             &services,
-            "underlay-reference-dev",
+            "workspace-app-reference-dev",
             ".",
             ".effigy-catalog",
             1000,
@@ -369,7 +369,7 @@ fn underlay_style_stack_assembles_with_bundled_fragments_only() {
     assert!(workspace_ports.contains(&"41002:41002"));
     assert!(workspace_ports.contains(&"41003:41003"));
 
-    // postgres comes up with the underlay DB name and pinned password.
+    // postgres comes up with the workspace app DB name and pinned password.
     let postgres = validate_service(&doc, "postgres");
     let pg_env = postgres.get("environment").unwrap();
     assert_eq!(pg_env.get("POSTGRES_DB").unwrap().as_str().unwrap(), "acme");
@@ -401,11 +401,11 @@ fn underlay_style_stack_assembles_with_bundled_fragments_only() {
     let vol_names: std::collections::BTreeSet<&str> =
         result.volumes.iter().map(|v| v.name.as_str()).collect();
     for expected in &[
-        "underlay-reference-dev-workspace-cargo-registry",
-        "underlay-reference-dev-workspace-cargo-git",
-        "underlay-reference-dev-postgres-data",
-        "underlay-reference-dev-minio-data",
-        "underlay-reference-dev-dbgate-data",
+        "workspace-app-reference-dev-workspace-cargo-registry",
+        "workspace-app-reference-dev-workspace-cargo-git",
+        "workspace-app-reference-dev-postgres-data",
+        "workspace-app-reference-dev-minio-data",
+        "workspace-app-reference-dev-dbgate-data",
     ] {
         assert!(
             vol_names.contains(expected),
@@ -723,9 +723,15 @@ memory = 128
         "MariaDB should have a healthcheck"
     );
 
-    assert_eq!(assembly.volumes.len(), 1);
-    assert_eq!(assembly.volumes[0].name, "client-project-db-data");
-    assert!(assembly.volumes[0].persist);
+    assert_eq!(assembly.volumes.len(), 3);
+    assert!(assembly
+        .volumes
+        .iter()
+        .any(|volume| volume.name == "client-project-db-data" && volume.persist));
+    assert!(assembly
+        .volumes
+        .iter()
+        .any(|volume| volume.name == "client-project-app-pnpm-store" && !volume.persist));
 
     // 8. Verify second write is cached.
     let write2 = output.write(&assembly, manifest_content).unwrap();

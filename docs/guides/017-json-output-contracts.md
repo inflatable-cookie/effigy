@@ -155,8 +155,7 @@ effigy --json config path
 effigy --json config get containers.backend
 effigy --json config --schema --target test
 effigy --json deploy model --repo /path/to/workspace
-effigy --json deploy export render --repo /path/to/workspace --path infra/render --plan
-effigy --json deploy export railway --repo /path/to/workspace --path infra/railway --plan
+effigy --json deploy export <PROVIDER> --repo /path/to/workspace --path infra/deploy --plan
 effigy --json deploy plan uat --repo /path/to/workspace
 effigy --json deploy apply uat --repo /path/to/workspace --yes
 effigy --json test --plan

@@ -155,8 +155,8 @@ pub enum DeploySubcommand {
     Model,
     /// Export provider files without live provider mutation.
     Export {
-        /// Static export target.
-        provider: DeployExportProvider,
+        /// Provider package id from `[deploy.providers.<id>]`.
+        provider: String,
         /// Output directory for generated files.
         path: PathBuf,
         /// Preview generated paths without writing files.
@@ -197,12 +197,6 @@ pub enum DeploySubcommand {
         /// Required confirmation flag for replay execution.
         yes: bool,
     },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DeployExportProvider {
-    Render,
-    Railway,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -15,8 +15,9 @@ a provider deployment in a predictable, repeatable way. It answers:
 - which provider services are targeted
 - whether health checks passed
 
-It is provider-neutral at the plan level. Railway and Render adapters ship with
-Effigy; provider packages extend support without core changes.
+It is provider-neutral at the plan level. Core Effigy owns the transaction
+frame. Render, Railway, and other provider-specific behavior lives in
+configured deploy-provider packages.
 
 ## When To Use It
 
@@ -48,6 +49,9 @@ artifact_policy = "digest-preferred"
 [deploy.uat.provider]
 adapter = "railway"
 
+[deploy.providers.railway]
+source = { type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-railway.git", ref = "main" }
+
 [deploy.uat.preflight]
 require_clean_worktree = false
 require_provider_resources = true
@@ -72,6 +76,9 @@ artifact_policy = "digest-pinned"
 [deploy.production.provider]
 adapter = "railway"
 
+[deploy.providers.railway]
+source = { type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-railway.git", ref = "main" }
+
 [deploy.production.preflight]
 require_clean_worktree = true
 require_provider_resources = true
@@ -84,7 +91,7 @@ require_release_gates = true
 
 | Field | Required | Description |
 |---|---|---|
-| `adapter` | yes | provider: `railway`, `render` |
+| `adapter` | yes | provider id matching `[deploy.providers.<id>]` |
 | `state` | no | named state stack to apply before deploy |
 | `code_ref` | no | `branch:<name>`, `tag:<name>`, `sha:<hash>`, `release-tag` |
 | `release_policy` | no | `none`, `optional`, `required` |
@@ -104,6 +111,18 @@ effigy deploy model --json
 
 This emits `deploy.model.v1` with services, backing services, domains, secrets,
 and warnings. It is the same model used by `deploy export`.
+
+### Export (read-only)
+
+```sh
+# Export provider files through a configured provider package
+effigy deploy export railway --path infra/railway --plan
+effigy deploy export render --path infra/render --plan
+```
+
+`deploy export <PROVIDER>` requires `[deploy.providers.<provider>]`. The
+Render package currently emits `render.yaml`. The Railway package currently
+emits service-local `railway.toml` files plus `report.json`.
 
 ### Plan (read-only)
 
@@ -192,18 +211,20 @@ promised.
   evidence.
 - `artifact_policy = "digest-pinned"` blocks mutable OCI tags.
 - `require_clean_worktree = true` blocks deploys with uncommitted changes.
-- Provider adapters do not create projects, services, databases, secrets, or
-domains. Missing setup surfaces as explicit blockers.
+- Provider packages should not create projects, services, databases, secrets,
+or domains unless their descriptor policy explicitly allows it. The current
+Render and Railway packages validate existing setup and surface missing setup
+as explicit blockers.
 
-## Provider Adapters
+## Provider Packages
 
 | Provider | Status | Notes |
 |---|---|---|
-| Railway | available | full plan/apply/status/history |
-| Render | available | preflight checks enforced; live mutation gated |
+| Railway | package-backed | export proof; transaction phases depend on the configured provider package |
+| Render | package-backed | export proof plus guarded preflight/status/apply for existing services |
 
-External deploy-provider packages extend support. A provider package provides
-`preflight.rhai`, `apply.rhai`, and `status.rhai` scripts. Core Effigy keeps the
+Deploy-provider packages provide `export.rhai`, `preflight.rhai`, `apply.rhai`,
+and `status.rhai` scripts as declared in `provider.toml`. Core Effigy keeps the
 transaction frame, report persistence, and safety gates.
 
 ## Integration With State Stacks

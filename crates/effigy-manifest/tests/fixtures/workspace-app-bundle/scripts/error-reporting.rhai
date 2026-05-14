@@ -1,4 +1,4 @@
-// Error-reporting smoke, metrics, and validation helpers for Underlay bundles.
+// Error-reporting smoke, metrics, and validation helpers for workspace app bundles.
 //
 // These are invoked through Effigy tasks. They expect `effigy dev` to be
 // running when the smoke path is exercised.

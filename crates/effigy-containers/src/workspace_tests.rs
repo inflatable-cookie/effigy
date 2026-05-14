@@ -25,7 +25,7 @@ mod library_mount_tests {
     #[test]
     fn renders_canonical_bind_mount_under_workspace_libraries_root() {
         let parent = temp_dir("renders");
-        let libraries = parent.join("decodelabs");
+        let libraries = parent.join("php-app");
         fs::create_dir_all(libraries.join("archetype")).expect("mkdir libraries");
         let canonical = libraries.canonicalize().expect("canonicalize");
 
@@ -36,10 +36,10 @@ mod library_mount_tests {
         .expect("build mounts");
 
         assert_eq!(mounts.len(), 1);
-        assert_eq!(mounts[0].target, "/workspace-libraries/decodelabs");
+        assert_eq!(mounts[0].target, "/workspace-libraries/php-app");
         assert_eq!(
             mounts[0].rendered,
-            format!("{}:/workspace-libraries/decodelabs", canonical.display())
+            format!("{}:/workspace-libraries/php-app", canonical.display())
         );
         assert_eq!(mounts[0].source.as_deref(), Some(canonical.as_path()));
     }
@@ -56,8 +56,8 @@ mod library_mount_tests {
     #[test]
     fn rejects_basename_collisions_between_two_parents() {
         let parent = temp_dir("collision");
-        let first = parent.join("a").join("decodelabs");
-        let second = parent.join("b").join("decodelabs");
+        let first = parent.join("a").join("php-app");
+        let second = parent.join("b").join("php-app");
         fs::create_dir_all(&first).expect("mkdir first");
         fs::create_dir_all(&second).expect("mkdir second");
 
@@ -75,7 +75,7 @@ mod library_mount_tests {
             other => panic!("unexpected error variant: {other:?}"),
         };
         assert!(
-            message.contains("/workspace-libraries/decodelabs"),
+            message.contains("/workspace-libraries/php-app"),
             "error should name the colliding container path: {message}"
         );
     }

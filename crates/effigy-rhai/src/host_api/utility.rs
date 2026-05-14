@@ -11,7 +11,7 @@ use url::Url;
 
 use crate::surface::{
     MODULE_JSON, MODULE_PATH, MODULE_RANDOM, MODULE_REGEX, MODULE_STR, MODULE_TIME, MODULE_TOML,
-    MODULE_URL,
+    MODULE_URL, MODULE_YAML,
 };
 
 use super::{
@@ -33,6 +33,10 @@ pub(super) fn register_utility_modules(engine: &mut Engine, context: Arc<ScriptC
     engine.register_static_module(
         MODULE_TOML,
         std::rc::Rc::new(build_toml_module(context.clone())),
+    );
+    engine.register_static_module(
+        MODULE_YAML,
+        std::rc::Rc::new(build_yaml_module(context.clone())),
     );
     engine.register_static_module(MODULE_STR, std::rc::Rc::new(build_str_module()));
     engine.register_static_module(MODULE_REGEX, std::rc::Rc::new(build_regex_module()));
@@ -292,6 +296,59 @@ fn build_toml_module(context: Arc<ScriptContext>) -> rhai::Module {
             let decoded: toml::Value = rhai::serde::from_dynamic(&value)
                 .map_err(|error| rhai_runtime_error(error.to_string()))?;
             let rendered = toml::to_string_pretty(&decoded)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            std::fs::write(&path, rendered).map_err(|error| {
+                rhai_runtime_error(format!("failed to write {}: {error}", path.display()))
+            })
+        },
+    );
+    module
+}
+
+fn build_yaml_module(context: Arc<ScriptContext>) -> rhai::Module {
+    let mut module = rhai::Module::new();
+    module.set_native_fn(
+        "parse",
+        |raw: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
+            let value: serde_yaml::Value = serde_yaml::from_str(raw.as_str())
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
+        },
+    );
+    module.set_native_fn(
+        "stringify",
+        |value: Dynamic| -> Result<String, Box<EvalAltResult>> {
+            let decoded: serde_yaml::Value = rhai::serde::from_dynamic(&value)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            serde_yaml::to_string(&decoded).map_err(|error| rhai_runtime_error(error.to_string()))
+        },
+    );
+    let file_context = context.clone();
+    module.set_native_fn(
+        "read_file",
+        move |path: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            let raw = std::fs::read_to_string(&path).map_err(|error| {
+                rhai_runtime_error(format!("failed to read {}: {error}", path.display()))
+            })?;
+            let value: serde_yaml::Value = serde_yaml::from_str(&raw)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
+        },
+    );
+    let file_context = context.clone();
+    module.set_native_fn(
+        "write_file",
+        move |path: ImmutableString, value: Dynamic| -> Result<(), Box<EvalAltResult>> {
+            let path = resolve_runtime_path(&file_context.cwd, path.as_str());
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    rhai_runtime_error(format!("failed to create {}: {error}", parent.display()))
+                })?;
+            }
+            let decoded: serde_yaml::Value = rhai::serde::from_dynamic(&value)
+                .map_err(|error| rhai_runtime_error(error.to_string()))?;
+            let rendered = serde_yaml::to_string(&decoded)
                 .map_err(|error| rhai_runtime_error(error.to_string()))?;
             std::fs::write(&path, rendered).map_err(|error| {
                 rhai_runtime_error(format!("failed to write {}: {error}", path.display()))

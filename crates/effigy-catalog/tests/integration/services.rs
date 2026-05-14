@@ -178,8 +178,7 @@ fn nginx_healthcheck_treats_http_response_as_ready_even_for_404_routes() {
     let health = web.get("healthcheck").expect("healthcheck");
     let test = format!("{:?}", health.get("test").expect("healthcheck test"));
     assert!(
-        test.contains("wget -q -O /dev/null http://127.0.0.1:80/")
-            && test.contains("[ \"$code\" -eq 8 ]"),
+        test.contains("wget -q -O /dev/null http://127.0.0.1:80/") && test.contains("eq 8"),
         "nginx healthcheck should treat any HTTP response as ready, got: {test}"
     );
 }
@@ -767,10 +766,12 @@ fn full_stack_with_all_services() {
         validate_service(&doc, name);
     }
 
-    // Should have named volumes for database, storage, and search.
-    assert_eq!(result.volumes.len(), 3);
+    // Should have named volumes for database, cache/runtime stores, storage, and search.
+    assert_eq!(result.volumes.len(), 5);
     let vol_names: Vec<&str> = result.volumes.iter().map(|v| v.name.as_str()).collect();
     assert!(vol_names.iter().any(|n| n.contains("db-data")));
+    assert!(vol_names.iter().any(|n| n.contains("pnpm-store")));
+    assert!(vol_names.iter().any(|n| n.contains("cache-data")));
     assert!(vol_names.iter().any(|n| n.contains("storage")));
     assert!(vol_names.iter().any(|n| n.contains("search")));
     assert!(

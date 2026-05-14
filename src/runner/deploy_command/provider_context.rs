@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde_json::{json, Value};
 
 use super::model::DeployModel;
@@ -14,6 +16,8 @@ pub(super) struct DeployProviderContextRequest<'a> {
     pub(super) release_policy: &'a str,
     pub(super) artifact_policy: &'a str,
     pub(super) model: &'a DeployModel,
+    pub(super) export_path: Option<&'a Path>,
+    pub(super) plan: bool,
 }
 
 pub(super) fn build_provider_context(request: DeployProviderContextRequest<'_>) -> Value {
@@ -36,6 +40,8 @@ pub(super) fn build_provider_context(request: DeployProviderContextRequest<'_>) 
             "artifact_policy": request.artifact_policy,
         },
         "model": request.model,
+        "export_path": request.export_path.map(|p| p.display().to_string()),
+        "plan": request.plan,
     })
 }
 

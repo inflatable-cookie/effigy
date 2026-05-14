@@ -1,6 +1,6 @@
 [bundle]
-name = "underlay"
-description = "Underlay-style Rust + Bun workspace stack with one long-running workspace container, bundled postgres/dbgate/mailpit/minio services, gateway-published HTTPS app/S3/helper routes, and loopback alias discovery for db/smtp/s3."
+name = "workspace-app"
+description = "workspace app-style Rust + Bun workspace stack with one long-running workspace container, bundled postgres/dbgate/mailpit/minio services, gateway-published HTTPS app/S3/helper routes, and loopback alias discovery for db/smtp/s3."
 defaults = "export.toml"
 
 [[inputs]]
@@ -13,15 +13,15 @@ example = "acme.test"
 [[inputs]]
 name = "project_name"
 type = "string"
-description = "Compose project name used for the generated dev stack. Defaults to `<workspace_subdir>-underlay`."
-example = "acme-underlay"
+description = "Compose project name used for the generated dev stack. Defaults to `<workspace_subdir>-workspace-app`."
+example = "acme-workspace-app"
 
 [[inputs]]
 name = "workspace_subdir"
 type = "string"
 required = true
 description = "Repo path under `/workspace-root` for the workspace container's working directory."
-example = "underlay-reference"
+example = "workspace-app-reference"
 
 [[inputs]]
 name = "databases"
@@ -51,27 +51,27 @@ default = 41003
 [[inputs]]
 name = "dirs.api"
 type = "string"
-description = "API package directory for bootstrap env generation and dependency sync. When omitted, the bundle falls back to the shipped Underlay guesses."
+description = "API package directory for bootstrap env generation and dependency sync. When omitted, the bundle falls back to the shipped workspace app guesses."
 example = "farmyard"
 
 [[inputs]]
 name = "dirs.front"
 type = "string"
-description = "Front-end package directory for the bundled UI setup helper. When omitted, the helper falls back to the shipped Underlay guesses."
+description = "Front-end package directory for the bundled UI setup helper. When omitted, the helper falls back to the shipped workspace app guesses."
 example = "cream"
 
 [[inputs]]
 name = "dirs.admin"
 type = "string"
-description = "Admin package directory for the bundled UI setup helper. When omitted, the helper falls back to the shipped Underlay guesses."
+description = "Admin package directory for the bundled UI setup helper. When omitted, the helper falls back to the shipped workspace app guesses."
 example = "dairy"
 
 [[inputs]]
-name = "sources.underlay"
+name = "sources.platform"
 type = "string"
-description = "Relative path from the consumer repo to the sibling underlay checkout used by bootstrap sync, bootstrap children, and the bundled UI setup helper."
-default = "../underlay"
-example = "../../underlay"
+description = "Relative path from the consumer repo to the sibling workspace app checkout used by bootstrap sync, bootstrap children, and the bundled UI setup helper."
+default = "../platform"
+example = "../../platform"
 
 [[inputs]]
 name = "sources.poodle"
@@ -83,13 +83,13 @@ example = "../../poodle"
 [[inputs]]
 name = "dirs.client"
 type = "string"
-description = "Shared client package directory the bundled UI setup helper should hydrate before front/admin startup. When omitted, the helper falls back to the shipped Underlay guesses."
+description = "Shared client package directory the bundled UI setup helper should hydrate before front/admin startup. When omitted, the helper falls back to the shipped workspace app guesses."
 example = "froyo"
 
 [[inputs]]
 name = "dirs.ui"
 type = "string"
-description = "Optional UI package directory to include in bootstrap dependency sync and UI hydration. When omitted, the helper falls back to the shipped Underlay guesses."
+description = "Optional UI package directory to include in bootstrap dependency sync and UI hydration. When omitted, the helper falls back to the shipped workspace app guesses."
 example = "app-ui"
 
 [[inputs]]

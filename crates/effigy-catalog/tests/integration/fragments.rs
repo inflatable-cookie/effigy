@@ -203,7 +203,7 @@ fn assemble_php_mariadb_redis_stack() {
     assert!(
         result
             .compose_yaml
-            .contains("test-project-redis-data:/data"),
+            .contains("test-project-cache-data:/data"),
         "missing named Redis data volume:\n{}",
         result.compose_yaml
     );
@@ -212,7 +212,7 @@ fn assemble_php_mariadb_redis_stack() {
     assert!(result.dockerfiles.contains_key("app"));
     assert!(result.dockerfiles["app"].contains("PHP_VERSION"));
 
-    assert_eq!(result.volumes.len(), 2);
+    assert_eq!(result.volumes.len(), 3);
     assert!(result
         .volumes
         .iter()
@@ -220,7 +220,11 @@ fn assemble_php_mariadb_redis_stack() {
     assert!(result
         .volumes
         .iter()
-        .any(|volume| volume.name == "test-project-redis-data" && volume.persist));
+        .any(|volume| volume.name == "test-project-cache-data" && volume.persist));
+    assert!(result
+        .volumes
+        .iter()
+        .any(|volume| volume.name == "test-project-app-pnpm-store" && !volume.persist));
 }
 
 #[test]
@@ -294,7 +298,7 @@ fn php_fpm_skips_container_composer_globals_when_host_mount_is_enabled() {
             );
             p.insert(
                 "composer_global_packages".to_string(),
-                toml::Value::Array(vec![toml::Value::String("decodelabs/effigy".to_string())]),
+                toml::Value::Array(vec![toml::Value::String("acme/effigy".to_string())]),
             );
             p
         },
@@ -403,7 +407,7 @@ fn php_fpm_supports_node_globals_and_pnpm_tooling() {
 }
 
 #[test]
-fn php_fpm_supports_explicit_decodelabs_style_service_params() {
+fn php_fpm_supports_explicit_php_app_style_service_params() {
     let resolver = bundled_resolver();
     let assembler = ComposeAssembler::new(resolver);
 
@@ -430,7 +434,7 @@ fn php_fpm_supports_explicit_decodelabs_style_service_params() {
             );
             p.insert(
                 "composer_global_packages".to_string(),
-                toml::Value::Array(vec![toml::Value::String("decodelabs/effigy".to_string())]),
+                toml::Value::Array(vec![toml::Value::String("acme/effigy".to_string())]),
             );
             p.insert(
                 "isolated_dirs".to_string(),
@@ -472,7 +476,7 @@ fn php_fpm_supports_explicit_decodelabs_style_service_params() {
     assert!(
         result
             .compose_yaml
-            .contains("COMPOSER_GLOBAL_PACKAGES: decodelabs/effigy"),
+            .contains("COMPOSER_GLOBAL_PACKAGES: acme/effigy"),
         "php-fpm explicit params should apply Composer globals:\n{}",
         result.compose_yaml
     );

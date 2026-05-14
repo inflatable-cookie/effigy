@@ -3,7 +3,7 @@
 This contract defines the first neutral production deployment model for
 Effigy.
 
-It is the model that provider export adapters should consume.
+It is the model that provider packages should consume.
 
 It is not a local-dev compose export, and it is not provider-specific config.
 
@@ -12,26 +12,25 @@ It is not a local-dev compose export, and it is not provider-specific config.
 Effigy needs one inspectable model between:
 
 - effective manifest, including any bundle-owned `[deploy.model]` content
-- provider-specific deployment output
+- provider-specific deployment output owned by provider packages
 
 That middle layer should let Effigy:
 
 - explain what it thinks the production shape is
-- export provider files without duplicating bundle heuristics in each adapter
+- export provider files without duplicating bundle heuristics in each package
 - warn clearly when human production policy is still required
 
-## First target
+## First Shape
 
-The first target for this model is Underlay.
-
-That means the first version should be strong for:
+The first version should be strong for common managed-platform app shapes:
 
 - frontend plus admin plus API apps
 - jobs workers
 - standard backing services
 - managed-platform deployment files
 
-It should not pretend Decodelabs is fully production-exportable yet.
+Product-specific bundle repos can provide their own `[deploy.model]` defaults,
+but core Effigy should keep this model provider-neutral and product-neutral.
 
 ## Command surface
 
@@ -46,9 +45,10 @@ effigy deploy model --json
 Provider export should build on that model:
 
 ```bash
-effigy deploy export render
-effigy deploy export railway
+effigy deploy export <PROVIDER> --path <DIR>
 ```
+
+`<PROVIDER>` is a provider id configured under `[deploy.providers]`.
 
 The first model output should use schema id:
 
@@ -84,7 +84,7 @@ Recommended first envelope:
   "schema_version": 1,
   "app": {
     "name": "contact-patch",
-    "bundle": "underlay",
+    "bundle": "acme",
     "project_name": "contact-patch"
   },
   "services": [],
@@ -467,7 +467,7 @@ Those are future concerns if the export surface proves trustworthy first.
 
 ## Next Task
 
-Use this contract to define the first concrete model shape for Underlay:
+Use this contract to define concrete model shapes in provider or bundle repos:
 
 - web services
 - jobs worker

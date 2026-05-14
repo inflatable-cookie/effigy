@@ -123,8 +123,8 @@ fn resolve_submodule_policy_defaults_to_recursive_when_gitmodules_exists() {
 #[test]
 fn resolve_child_destination_allows_sibling_paths_under_root_parent() {
     let root = Path::new("/tmp/dev/effigy");
-    let resolved = resolve_child_destination(root, "../underlay").expect("resolve child");
-    assert_eq!(resolved, Path::new("/tmp/dev/underlay"));
+    let resolved = resolve_child_destination(root, "../dev-platform").expect("resolve child");
+    assert_eq!(resolved, Path::new("/tmp/dev/dev-platform"));
 }
 
 #[test]

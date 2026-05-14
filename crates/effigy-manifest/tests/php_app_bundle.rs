@@ -4,16 +4,16 @@ use effigy_manifest::config_sections::ManifestWorkspaceContainerRef;
 use effigy_manifest::load_task_manifest_with_inspection;
 use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, ManifestTaskRunIn};
 
-fn decodelabs_bundle_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/decodelabs-bundle")
+fn php_app_bundle_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/php-app-bundle")
 }
 
-fn decodelabs_library_bundle_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/decodelabs-library-bundle")
+fn php_library_bundle_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/php-library-bundle")
 }
 
 #[test]
-fn decodelabs_bundle_resolves_defaults_and_allows_block_overrides() {
+fn php_app_bundle_resolves_defaults_and_allows_block_overrides() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
@@ -29,7 +29,7 @@ databases = ["contactpatch"]
 [containers.web.services.mysql]
 version = "11.0"
 "#,
-            decodelabs_bundle_dir().display()
+            php_app_bundle_dir().display()
         ),
     )
     .expect("write manifest");
@@ -41,7 +41,7 @@ version = "11.0"
     let env_script_source = std::fs::read_to_string(&env_script).expect("env script");
     assert!(
         env_script_source.contains("bootstrap .env template not present"),
-        "decodelabs bundle should materialize its env helper at {}",
+        "php_app bundle should materialize its env helper at {}",
         env_script.display()
     );
     let manifest = loaded.manifest;
@@ -134,7 +134,7 @@ version = "11.0"
 
     let web_service = web.services.get("web").expect("web service");
     assert_eq!(web_service.catalog, "nginx");
-    assert_eq!(web_service.variant.as_deref(), Some("decodelabs"));
+    assert_eq!(web_service.variant.as_deref(), Some("php-app"));
 
     let mail = web.services.get("mailpit").expect("mailpit service");
     assert_eq!(mail.catalog, "mailpit");
@@ -186,7 +186,7 @@ version = "11.0"
     ));
     assert!(
         !manifest.tasks.contains_key("bootstrap:db-seed"),
-        "decodelabs bundle should rely on Effigy's built-in data seed fallback"
+        "php_app bundle should rely on Effigy's built-in data seed fallback"
     );
 
     let release_task = manifest.tasks.get("release").expect("release task");
@@ -209,7 +209,7 @@ version = "11.0"
 }
 
 #[test]
-fn decodelabs_bundle_renames_system_container_and_workspace_service() {
+fn php_app_bundle_renames_system_container_and_workspace_service() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
@@ -226,7 +226,7 @@ container_name = "shop"
 workspace_service_name = "php"
 default_workspace = "frontend"
 "#,
-            decodelabs_bundle_dir().display()
+            php_app_bundle_dir().display()
         ),
     )
     .expect("write manifest");
@@ -270,7 +270,7 @@ default_workspace = "frontend"
 }
 
 #[test]
-fn decodelabs_bundle_derives_working_dir_from_host_label() {
+fn php_app_bundle_derives_working_dir_from_host_label() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
@@ -283,7 +283,7 @@ host = "cbs.legacy.test"
 project_name = "cbs-dev"
 databases = ["cbs"]
 "#,
-            decodelabs_bundle_dir().display()
+            php_app_bundle_dir().display()
         ),
     )
     .expect("write manifest");
@@ -300,7 +300,7 @@ databases = ["cbs"]
 }
 
 #[test]
-fn decodelabs_bundle_rejects_legacy_name_key() {
+fn php_app_bundle_rejects_legacy_name_key() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
@@ -308,7 +308,7 @@ fn decodelabs_bundle_rejects_legacy_name_key() {
         format!(
             r#"
 [bundle]
-name = "decodelabs"
+name = "php-app"
 host = "contact-patch.legacy.test"
 project_name = "contactpatch-dev"
 databases = ["contactpatch"]
@@ -320,12 +320,12 @@ databases = ["contactpatch"]
     let result = load_task_manifest_with_inspection(&manifest_path);
     assert!(
         result.is_err(),
-        "legacy `name` key should be rejected when decodelabs is resolved through typed bundle sources"
+        "legacy `name` key should be rejected when php_app is resolved through typed bundle sources"
     );
 }
 
 #[test]
-fn decodelabs_bundle_hydrates_primary_database_from_databases_list() {
+fn php_app_bundle_hydrates_primary_database_from_databases_list() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
@@ -338,7 +338,7 @@ host = "contact-patch.legacy.test"
 project_name = "contactpatch-dev"
 databases = ["contactpatch", "contactpatch_test"]
 "#,
-            decodelabs_bundle_dir().display()
+            php_app_bundle_dir().display()
         ),
     )
     .expect("write manifest");
@@ -369,7 +369,7 @@ databases = ["contactpatch", "contactpatch_test"]
 }
 
 #[test]
-fn decodelabs_bundle_can_publish_optional_zest_route() {
+fn php_app_bundle_can_publish_optional_zest_route() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
@@ -383,7 +383,7 @@ project_name = "gideon-dev"
 databases = ["gideon"]
 zest_port = 8938
 "#,
-            decodelabs_bundle_dir().display()
+            php_app_bundle_dir().display()
         ),
     )
     .expect("write manifest");
@@ -445,7 +445,7 @@ zest_port = 8938
 }
 
 #[test]
-fn decodelabs_bundle_can_extend_bundle_provided_dns_routes() {
+fn php_app_bundle_can_extend_bundle_provided_dns_routes() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
@@ -466,7 +466,7 @@ routes = [
   {{ domain = "borderway.legacy.test", tls = true, service = "web" }},
 ]
 "#,
-            decodelabs_bundle_dir().display()
+            php_app_bundle_dir().display()
         ),
     )
     .expect("write manifest");
@@ -497,7 +497,7 @@ routes = [
 }
 
 #[test]
-fn decodelabs_bundle_in_imported_fragment_honors_child_manifest_extend() {
+fn php_app_bundle_in_imported_fragment_honors_child_manifest_extend() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root_path = tmp.path().join("effigy.toml");
     let local_path = tmp.path().join("effigy.local.toml");
@@ -527,7 +527,7 @@ routes = [
   {{ domain = "borderway.legacy.test", tls = true, service = "web" }},
 ]
 "#,
-            decodelabs_bundle_dir().display()
+            php_app_bundle_dir().display()
         ),
     )
     .expect("write local manifest");
@@ -559,7 +559,7 @@ routes = [
 }
 
 #[test]
-fn decodelabs_bundle_in_imported_fragment_ignores_unrelated_child_extend_paths() {
+fn php_app_bundle_in_imported_fragment_ignores_unrelated_child_extend_paths() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root_path = tmp.path().join("effigy.toml");
     let local_path = tmp.path().join("effigy.local.toml");
@@ -591,7 +591,7 @@ routes = [
   {{ domain = "borderway.legacy.test", tls = true, service = "web" }},
 ]
 "#,
-            decodelabs_bundle_dir().display()
+            php_app_bundle_dir().display()
         ),
     )
     .expect("write local manifest");
@@ -623,7 +623,7 @@ routes = [
 }
 
 #[test]
-fn decodelabs_library_bundle_derives_shared_workspace_runtime() {
+fn php_app_library_bundle_derives_shared_workspace_runtime() {
     let shared_root = tempfile::tempdir().expect("shared root tempdir");
     let shared_root_path = shared_root
         .path()
@@ -640,7 +640,7 @@ fn decodelabs_library_bundle_derives_shared_workspace_runtime() {
 [bundle]
 base = {{ type = "path", dir = "{}" }}
 "#,
-            decodelabs_library_bundle_dir().display()
+            php_library_bundle_dir().display()
         ),
     )
     .expect("write manifest");
@@ -655,10 +655,7 @@ base = {{ type = "path", dir = "{}" }}
 
     let containers = manifest.containers.expect("containers");
     let web = containers.environments.get("web").expect("web container");
-    assert_eq!(
-        web.project_name.as_deref(),
-        Some("collections-decodelabs-library")
-    );
+    assert_eq!(web.project_name.as_deref(), Some("collections-php-library"));
     assert_eq!(web.working_dir.as_deref(), Some("/workspace-root"));
     let app = web.services.get("app").expect("app service");
     assert_eq!(app.catalog, "php-fpm");

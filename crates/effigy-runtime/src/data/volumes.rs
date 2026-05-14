@@ -690,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_inference_recovers_common_decodelabs_volume_details() {
+    fn legacy_inference_recovers_common_php_app_volume_details() {
         let inferred = infer_legacy_volume_details("cbs-dev", "cbs-dev-app-var-www-cbs-vendor");
 
         assert_eq!(inferred.service.as_deref(), Some("app"));
@@ -746,23 +746,23 @@ mod tests {
     #[test]
     fn repo_scope_marks_running_unmounted_legacy_volume_as_stale() {
         let declared = DeclaredRepoVolumes {
-            repo_root: "/tmp/underlay-reference".to_owned(),
+            repo_root: "/tmp/workspace-app-reference".to_owned(),
             by_project: BTreeMap::from([(
-                "underlay-reference-dev".to_owned(),
+                "workspace-app-reference-dev".to_owned(),
                 DeclaredProjectVolumes {
                     runtime_names: BTreeSet::from([
-                        "underlay-reference-dev-postgres-data".to_owned()
+                        "workspace-app-reference-dev-postgres-data".to_owned()
                     ]),
                     mount_keys: BTreeSet::new(),
                 },
             )]),
-            running_projects: BTreeSet::from(["underlay-reference-dev".to_owned()]),
+            running_projects: BTreeSet::from(["workspace-app-reference-dev".to_owned()]),
         };
         let reconciled = declared.reconcile_entry(ContainerVolumeGlobalEntry {
             name: "efv-f1958972bdd653b9".to_owned(),
             backend: "containerd".to_owned(),
             profile: "effigy".to_owned(),
-            project_name: Some("underlay-reference-dev".to_owned()),
+            project_name: Some("workspace-app-reference-dev".to_owned()),
             repo_root: None,
             service: None,
             mount_target: None,
@@ -775,7 +775,7 @@ mod tests {
 
         assert_eq!(
             reconciled.repo_root.as_deref(),
-            Some("/tmp/underlay-reference")
+            Some("/tmp/workspace-app-reference")
         );
         assert!(reconciled.orphaned);
         assert_eq!(
@@ -787,12 +787,12 @@ mod tests {
     #[test]
     fn repo_scope_marks_stopped_legacy_generated_volume_as_stale() {
         let declared = DeclaredRepoVolumes {
-            repo_root: "/tmp/underlay-reference".to_owned(),
+            repo_root: "/tmp/workspace-app-reference".to_owned(),
             by_project: BTreeMap::from([(
-                "underlay-reference-dev".to_owned(),
+                "workspace-app-reference-dev".to_owned(),
                 DeclaredProjectVolumes {
                     runtime_names: BTreeSet::from([
-                        "underlay-reference-dev-postgres-data".to_owned()
+                        "workspace-app-reference-dev-postgres-data".to_owned()
                     ]),
                     mount_keys: BTreeSet::new(),
                 },
@@ -803,7 +803,7 @@ mod tests {
             name: "efv-f1958972bdd653b9".to_owned(),
             backend: "containerd".to_owned(),
             profile: "effigy".to_owned(),
-            project_name: Some("underlay-reference-dev".to_owned()),
+            project_name: Some("workspace-app-reference-dev".to_owned()),
             repo_root: None,
             service: None,
             mount_target: None,
@@ -824,12 +824,12 @@ mod tests {
     #[test]
     fn repo_scope_keeps_current_runtime_name_declared() {
         let declared = DeclaredRepoVolumes {
-            repo_root: "/tmp/underlay-reference".to_owned(),
+            repo_root: "/tmp/workspace-app-reference".to_owned(),
             by_project: BTreeMap::from([(
-                "underlay-reference-dev".to_owned(),
+                "workspace-app-reference-dev".to_owned(),
                 DeclaredProjectVolumes {
                     runtime_names: BTreeSet::from([
-                        "underlay-reference-dev-postgres-data".to_owned()
+                        "workspace-app-reference-dev-postgres-data".to_owned()
                     ]),
                     mount_keys: BTreeSet::from([DeclaredMountKey {
                         service: "postgres".to_owned(),
@@ -841,10 +841,10 @@ mod tests {
             running_projects: BTreeSet::new(),
         };
         let reconciled = declared.reconcile_entry(ContainerVolumeGlobalEntry {
-            name: "underlay-reference-dev-postgres-data".to_owned(),
+            name: "workspace-app-reference-dev-postgres-data".to_owned(),
             backend: "containerd".to_owned(),
             profile: "effigy".to_owned(),
-            project_name: Some("underlay-reference-dev".to_owned()),
+            project_name: Some("workspace-app-reference-dev".to_owned()),
             repo_root: None,
             service: Some("postgres".to_owned()),
             mount_target: None,

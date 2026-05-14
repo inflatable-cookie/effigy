@@ -15,10 +15,10 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result
     Ok(())
 }
 
-fn setup_underlay_path_bundle(root: &std::path::Path) {
+fn setup_workspace_app_path_bundle(root: &std::path::Path) {
     let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../effigy-manifest/tests/fixtures/underlay-bundle");
-    let bundle_dir = root.join("bundles/underlay");
+        .join("../effigy-manifest/tests/fixtures/workspace-app-bundle");
+    let bundle_dir = root.join("bundles/workspace-app");
     copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
 }
 
@@ -86,20 +86,20 @@ primary_service = "app"
 #[test]
 fn load_container_exec_working_dir_ignores_host_task_defaults_for_workspace_inference() {
     let root = temp_repo("bundle-host-default-workdir");
-    setup_underlay_path_bundle(&root);
+    setup_workspace_app_path_bundle(&root);
     let manifest_path = root.join("effigy.toml");
     fs::write(
         &manifest_path,
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
-project_name = "underlay-reference-dev"
-workspace_subdir = "underlay-reference"
+project_name = "workspace-app-reference-dev"
+workspace_subdir = "workspace-app-reference"
 databases = ["acme"]
 
 [systems.dev]
-mounts = ["../underlay"]
+mounts = ["../platform"]
 
 [task_defaults]
 run_in = "host"
@@ -112,7 +112,7 @@ run_in = "host"
 
     assert_eq!(
         working_dir,
-        PathBuf::from("/workspace-root/underlay-reference")
+        PathBuf::from("/workspace-root/workspace-app-reference")
     );
 }
 
@@ -147,7 +147,7 @@ fn load_container_policy_uses_catalog_alias_as_single_container_project_name() {
         root.join("effigy.toml"),
         r#"
 [catalog]
-alias = "underlay-reference"
+alias = "workspace-app-reference"
 
 [containers]
 default = "web"
@@ -163,7 +163,7 @@ primary_service = "app"
 
     let policy = load_container_policy(&root, None).expect("policy");
 
-    assert_eq!(policy.project_name, "underlay-reference-dev");
+    assert_eq!(policy.project_name, "workspace-app-reference-dev");
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn load_container_policy_rejects_duplicate_effective_project_names() {
         root.join("effigy.toml"),
         r#"
 [catalog]
-alias = "underlay-reference"
+alias = "workspace-app-reference"
 
 [containers]
 default = "web"
@@ -181,12 +181,12 @@ default = "web"
 [containers.web]
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
-project_name = "underlay-reference-dev"
+project_name = "workspace-app-reference-dev"
 
 [containers.worker]
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "jobs"
-project_name = "underlay-reference-dev"
+project_name = "workspace-app-reference-dev"
 "#,
     )
     .expect("write manifest");
@@ -196,7 +196,7 @@ project_name = "underlay-reference-dev"
     let error = load_container_policy(&root, None).expect_err("should fail");
 
     assert!(error.to_string().contains("unique `project_name` values"));
-    assert!(error.to_string().contains("`underlay-reference-dev`"));
+    assert!(error.to_string().contains("`workspace-app-reference-dev`"));
     assert!(error.to_string().contains("`web`"));
     assert!(error.to_string().contains("`worker`"));
 }
@@ -208,7 +208,7 @@ fn load_container_policy_uses_distinct_default_project_names_for_multiple_contai
         root.join("effigy.toml"),
         r#"
 [catalog]
-alias = "underlay-reference"
+alias = "workspace-app-reference"
 
 [containers]
 default = "web"
@@ -230,9 +230,12 @@ primary_service = "jobs"
 
     assert_eq!(policies.len(), 2);
     assert_eq!(policies[0].name, "web");
-    assert_eq!(policies[0].project_name, "underlay-reference-web-dev");
+    assert_eq!(policies[0].project_name, "workspace-app-reference-web-dev");
     assert_eq!(policies[1].name, "worker");
-    assert_eq!(policies[1].project_name, "underlay-reference-worker-dev");
+    assert_eq!(
+        policies[1].project_name,
+        "workspace-app-reference-worker-dev"
+    );
 }
 
 #[test]

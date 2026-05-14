@@ -185,13 +185,15 @@ mod tests {
         let rendered = render_command_template(
             "printf '{{ bundle.root }}/scripts/setup.rhai {{bundle}}/asset {args}'",
             Path::new("/repo"),
-            Some(Path::new("/repo/.effigy/runtime/bundles/underlay/hash")),
+            Some(Path::new(
+                "/repo/.effigy/runtime/bundles/workspace-app/hash",
+            )),
             "--flag",
         );
 
         assert_eq!(
             rendered,
-            "printf '/repo/.effigy/runtime/bundles/underlay/hash/scripts/setup.rhai /repo/.effigy/runtime/bundles/underlay/hash/asset --flag'"
+            "printf '/repo/.effigy/runtime/bundles/workspace-app/hash/scripts/setup.rhai /repo/.effigy/runtime/bundles/workspace-app/hash/asset --flag'"
         );
     }
 

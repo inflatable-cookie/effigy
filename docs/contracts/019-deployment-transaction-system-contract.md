@@ -24,7 +24,7 @@ but it does not answer the larger operational question:
 
 This contract defines the app-agnostic transaction layer above the existing
 deploy model, state-stack framework, artifact substrate, release system, and
-provider adapters.
+provider packages.
 
 ## Scope
 
@@ -36,7 +36,7 @@ The deployment transaction system owns:
 - release-policy evaluation
 - state-stack orchestration as one deploy stage
 - artifact digest-policy checks
-- provider preflight and apply adapter boundaries
+- provider package preflight and apply boundaries
 - repo-owned hook invocation
 - health/smoke check orchestration
 - active/latest/history deployment reports
@@ -57,7 +57,8 @@ The deployment transaction system does not own:
 
 `effigy deploy model --json` remains the provider-neutral shape derivation.
 
-`effigy deploy export render|railway` remains static file generation.
+`effigy deploy export <PROVIDER>` remains static file generation through a
+configured provider package.
 
 The new transaction surface is separate:
 
@@ -87,6 +88,9 @@ artifact_policy = "digest-preferred"
 
 [deploy.uat.provider]
 adapter = "railway"
+
+[deploy.providers.railway]
+source = { type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-railway.git", ref = "main" }
 ```
 
 Production shape:
@@ -101,6 +105,9 @@ artifact_policy = "digest-pinned"
 
 [deploy.production.provider]
 adapter = "railway"
+
+[deploy.providers.railway]
+source = { type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-railway.git", ref = "main" }
 
 [deploy.production.preflight]
 require_clean_worktree = true
@@ -225,16 +232,14 @@ trait DeployProviderAdapter {
 }
 ```
 
-Railway is the first apply adapter.
-
-Render uses the same transaction boundary. In the v0.6.0 planning slice it
-must report explicit preflight checks for the adapter, required variable names,
-and domains. Live Render mutation remains gated behind existing provider
-credentials and already-created services/resources.
+Railway and Render use the same transaction boundary through provider packages.
+Render must report explicit preflight checks for required provider config,
+required variable names, and domains. Live mutation remains gated behind
+existing provider credentials and already-created services/resources.
 
 Provider credentials are operator-owned.
 
-Provider adapters must not:
+Provider packages must not:
 
 - create projects in v0.6.0
 - create services in v0.6.0
@@ -246,11 +251,11 @@ Provider adapters must not:
 
 Missing provider setup should become explicit blockers with remediation.
 
-Provider-specific behavior should move to external deploy-provider packages
-once the provider package contract is implemented. Core Effigy keeps the
-provider-neutral transaction, report persistence, safety gates, and built-in
-compatibility adapters. Provider packages own provider-specific checklists,
-exports, validation, preflight evidence, apply/status calls, and templates. See
+Provider-specific behavior belongs in external deploy-provider packages. Core
+Effigy keeps the provider-neutral transaction, report persistence, safety gates,
+and generic provider dispatch. Provider packages own provider-specific
+checklists, exports, validation, preflight evidence, apply/status calls, and
+templates. See
 [`025-deploy-provider-package-contract.md`](./025-deploy-provider-package-contract.md).
 
 ## Reports

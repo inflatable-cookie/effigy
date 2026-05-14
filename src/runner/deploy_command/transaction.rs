@@ -601,6 +601,8 @@ fn deploy_provider_context(
         release_policy: env_config.release_policy.as_str(),
         artifact_policy: env_config.artifact_policy.as_str(),
         model,
+        export_path: None,
+        plan: false,
     })
 }
 

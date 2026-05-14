@@ -9,9 +9,9 @@ use super::RenderedWorkspaceMount;
 /// Container path under which user-global library mounts are exposed.
 ///
 /// Stable convention so the legacy `effigy mount` command (which lives inside
-/// the decodelabs bundle container) has a predictable place to point at when
-/// resolving Composer `path` repositories - e.g. `~/Dev/legacy/libraries/decodelabs`
-/// becomes available at `/workspace-libraries/decodelabs/<package>` inside
+/// the php-app bundle container) has a predictable place to point at when
+/// resolving Composer `path` repositories - e.g. `~/Dev/legacy/libraries/php-app`
+/// becomes available at `/workspace-libraries/php-app/<package>` inside
 /// the workspace container.
 const WORKSPACE_LIBRARIES_ROOT: &str = "/workspace-libraries";
 

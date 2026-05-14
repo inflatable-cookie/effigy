@@ -9,10 +9,10 @@ fn load_workspace_ownership_targets_collects_named_volume_targets() {
             .expect("time")
             .as_nanos()
     ));
-    let root = parent.join("underlay-reference");
-    let underlay = parent.join("underlay");
+    let root = parent.join("workspace-app-reference");
+    let platform = parent.join("platform");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir repo");
-    fs::create_dir_all(&underlay).expect("mkdir underlay");
+    fs::create_dir_all(&platform).expect("mkdir workspace app");
     fs::write(
         root.join("effigy.toml"),
         r#"
@@ -23,8 +23,8 @@ default = "stack"
 container = "stack"
 user = "dev"
 home = "/home/dev"
-working_dir = "/workspace-root/underlay-reference"
-mounts = ["../underlay"]
+working_dir = "/workspace-root/workspace-app-reference"
+mounts = ["../platform"]
 
 [containers.stack]
 compose_file = "infra/dev/docker-compose.yml"
@@ -41,7 +41,7 @@ services:
     volumes:
       - ../../../:/workspace-root
       - stack-cache:/cache
-      - stack-node-modules:/workspace-root/underlay-reference/acme-client/node_modules
+      - stack-node-modules:/workspace-root/workspace-app-reference/acme-client/node_modules
       - /tmp/host-path:/workspace-root/host-cache
 "#,
     )
@@ -54,13 +54,13 @@ services:
     assert!(targets.iter().any(|value| value == "/cache"));
     assert!(targets
         .iter()
-        .any(|value| value == "/workspace-root/underlay-reference/acme-client/node_modules"));
+        .any(|value| value == "/workspace-root/workspace-app-reference/acme-client/node_modules"));
     assert!(!targets
         .iter()
         .any(|value| value == "/workspace-root/host-cache"));
     assert!(!targets
         .iter()
-        .any(|value| value == "/workspace-root/underlay-reference"));
+        .any(|value| value == "/workspace-root/workspace-app-reference"));
 }
 
 #[test]
@@ -568,11 +568,11 @@ fn cache_list_global_report_groups_by_project_in_text() {
         "profile-wide cache inventory",
         &[
             crate::ContainerCacheGlobalEntry {
-                name: "underlay-reference-dev-workspace-acme-api-target".to_owned(),
+                name: "workspace-app-reference-dev-workspace-acme-api-target".to_owned(),
                 kind: "rust-target".to_owned(),
                 size_bytes: Some(2048),
                 mount_point: Some("/var/lib/mock/acme-api-target".to_owned()),
-                project_name: Some("underlay-reference-dev".to_owned()),
+                project_name: Some("workspace-app-reference-dev".to_owned()),
                 in_use: true,
             },
             crate::ContainerCacheGlobalEntry {
@@ -595,7 +595,7 @@ fn cache_list_global_report_groups_by_project_in_text() {
     assert!(report.success_text.contains("contact-patch-dev:\n- "));
     assert!(report
         .success_text
-        .contains("\n\nunderlay-reference-dev:\n- "));
+        .contains("\n\nworkspace-app-reference-dev:\n- "));
     assert!(!report.success_text.contains("project="));
 }
 
@@ -653,14 +653,14 @@ fn volume_list_report_renders_orphan_contract() {
 #[test]
 fn volume_list_report_renders_dormant_contract() {
     let report = crate::volume_list_report(
-        "repo volume inventory for /tmp/underlay-reference",
+        "repo volume inventory for /tmp/workspace-app-reference",
         Some("dormant"),
         &[crate::ContainerVolumeGlobalEntry {
             name: "efv-f1958972bdd653b9".to_owned(),
             backend: "containerd".to_owned(),
             profile: "effigy".to_owned(),
-            project_name: Some("underlay-reference-dev".to_owned()),
-            repo_root: Some("/tmp/underlay-reference".to_owned()),
+            project_name: Some("workspace-app-reference-dev".to_owned()),
+            repo_root: Some("/tmp/workspace-app-reference".to_owned()),
             service: None,
             mount_target: None,
             persist: None,
@@ -683,14 +683,14 @@ fn volume_list_report_renders_dormant_contract() {
 #[test]
 fn volume_prune_report_renders_contract() {
     let report = crate::volume_prune_report(
-        "repo volume inventory for /tmp/underlay-reference",
+        "repo volume inventory for /tmp/workspace-app-reference",
         "dormant",
         &[
             crate::ContainerVolumePruneEntry {
                 name: "legacy-postgres".to_owned(),
                 backend: "containerd".to_owned(),
                 profile: "effigy".to_owned(),
-                project_name: Some("underlay-reference-dev".to_owned()),
+                project_name: Some("workspace-app-reference-dev".to_owned()),
                 size_bytes: Some(1024),
                 removed: true,
                 in_use: false,
@@ -731,7 +731,7 @@ fn cache_prune_report_renders_size_totals() {
                 name: "workspace-cargo-registry".to_owned(),
                 kind: "cargo-registry".to_owned(),
                 size_bytes: Some(2048),
-                project_name: Some("underlay-reference-dev".to_owned()),
+                project_name: Some("workspace-app-reference-dev".to_owned()),
                 removed: true,
                 in_use: false,
             },

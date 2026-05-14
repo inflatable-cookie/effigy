@@ -34,7 +34,7 @@ main user-facing set:
 - `062` distribution system guide
 - `063` container system guide
 - `064` system, workspace, and dev contract
-- `065` underlay starter
+- `065` external bundle adoption
 - `067` catalog services reference
 - `069` workspace host integration
 - `070` per-machine overlays and external mounts

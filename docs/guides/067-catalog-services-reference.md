@@ -56,7 +56,7 @@ service definition.
 ### `workspace-rust-bun`
 
 Long-running Rust + Bun workspace container. Used by `[bundle].base =
-"underlay"` as the default workspace service and by managed tasks that open
+"workspace-app"` as the default workspace service and by managed tasks that open
 `role = "shell" service = "workspace"`.
 
 - Image: custom Dockerfile (Rust + Bun base).
@@ -68,7 +68,7 @@ Long-running Rust + Bun workspace container. Used by `[bundle].base =
   - `working_subdir` (default `""`) — subdirectory of `workspace_mount` used
     as the container's `working_dir`.
   - `host_ports` (default `[]`) — explicit host port bindings (for example
-    filled in by the `underlay` bundle from `api_port`/`admin_port`/
+    filled in by a workspace-app bundle from `api_port`/`admin_port`/
     `front_port`).
 - Exposed ports: driven by `host_ports`.
 - Volumes: `cargo-registry` at `/usr/local/cargo/registry` and `cargo-git` at
@@ -101,7 +101,7 @@ PostgreSQL database server.
 Modern SQL/NoSQL database manager with a spreadsheet-style data grid,
 row editing, foreign-key lookups, form view for wide tables, and a SQL
 editor with history. This is the default database UI in the shipped
-`underlay` bundle.
+`workspace-app` bundle.
 
 - Image: `dbgate/dbgate:latest` (override via `version`).
 - Parameters: `version` (`"latest"`), `database_host` (`"postgres"`),
@@ -270,10 +270,10 @@ the bundle that owns the service):
   `asset_fallback`, `front_controller_fallback`, and `error_page_404`.
   Includes static-asset caching, deny rules for hidden/sensitive files,
   gzip, and standard FastCGI tuning.
-- `decodelabs` — minimal monolithic front controller used by the
-  `decodelabs` bundle. Rewrites every request to `/vendor/genesis.php`
+- `php-app` — minimal monolithic front controller used by the
+  `php-app` bundle. Rewrites every request to `/vendor/genesis.php`
   and hands off to php-fpm. No `try_files`, no asset caching, no security
-  locations — DecodeLabs apps handle routing, asset serving, and error
+  locations — PHP app apps handle routing, asset serving, and error
   pages in PHP. The `rewrite_all_to`, `asset_fallback`, and
   `error_page_404` params are not consumed under this variant.
 - `laravel`, `spa`, `wordpress` — additional shipped variants tuned for
@@ -373,7 +373,7 @@ the loopback IP pool, alias hostname behavior, and resolver details.
 - [`025-command-reference-matrix.md`](./025-command-reference-matrix.md)
 - [`063-container-system-guide.md`](./063-container-system-guide.md)
 - [`064-system-workspace-and-dev-contract.md`](./064-system-workspace-and-dev-contract.md)
-- [`065-underlay-starter.md`](./065-underlay-starter.md)
+- [`065-external-bundle-adoption.md`](./065-external-bundle-adoption.md)
 
 ## Expected Outcome
 

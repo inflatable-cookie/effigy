@@ -121,173 +121,6 @@ pub(crate) struct DeployExportResult {
     pub(crate) warnings: Vec<DeployWarning>,
 }
 
-pub(crate) struct RenderExportPlan {
-    pub(crate) render_yaml: String,
-    pub(crate) warnings: Vec<DeployWarning>,
-}
-
-pub(crate) struct RailwayExportPlan {
-    pub(crate) files: Vec<DeployExportFile>,
-    pub(crate) warnings: Vec<DeployWarning>,
-}
-
-pub(crate) struct DeployExportFile {
-    pub(crate) relative_path: String,
-    pub(crate) contents: String,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RenderBlueprint {
-    pub(crate) services: Vec<RenderService>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) databases: Vec<RenderDatabase>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RenderService {
-    pub(crate) name: String,
-    #[serde(rename = "type")]
-    pub(crate) service_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) runtime: Option<String>,
-    #[serde(rename = "rootDir", skip_serializing_if = "Option::is_none")]
-    pub(crate) root_dir: Option<String>,
-    #[serde(rename = "buildCommand", skip_serializing_if = "Option::is_none")]
-    pub(crate) build_command: Option<String>,
-    #[serde(rename = "startCommand", skip_serializing_if = "Option::is_none")]
-    pub(crate) start_command: Option<String>,
-    #[serde(rename = "preDeployCommand", skip_serializing_if = "Option::is_none")]
-    pub(crate) pre_deploy_command: Option<String>,
-    #[serde(rename = "staticPublishPath", skip_serializing_if = "Option::is_none")]
-    pub(crate) static_publish_path: Option<String>,
-    #[serde(rename = "healthCheckPath", skip_serializing_if = "Option::is_none")]
-    pub(crate) health_check_path: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) domains: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) routes: Vec<RenderRoute>,
-    #[serde(rename = "envVars", skip_serializing_if = "Vec::is_empty")]
-    pub(crate) env_vars: Vec<RenderEnvVar>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RenderRoute {
-    #[serde(rename = "type")]
-    pub(crate) route_type: String,
-    pub(crate) source: String,
-    pub(crate) destination: String,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RenderEnvVar {
-    pub(crate) key: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) value: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) sync: Option<bool>,
-    #[serde(rename = "fromDatabase", skip_serializing_if = "Option::is_none")]
-    pub(crate) from_database: Option<RenderFromDatabase>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RenderFromDatabase {
-    pub(crate) name: String,
-    pub(crate) property: String,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RenderDatabase {
-    pub(crate) name: String,
-    pub(crate) plan: String,
-    #[serde(rename = "databaseName", skip_serializing_if = "Option::is_none")]
-    pub(crate) database_name: Option<String>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RailwayConfigFile {
-    pub(crate) build: RailwayBuildConfig,
-    pub(crate) deploy: RailwayDeployConfig,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RailwayBuildConfig {
-    pub(crate) builder: String,
-    #[serde(rename = "buildCommand", skip_serializing_if = "Option::is_none")]
-    pub(crate) build_command: Option<String>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RailwayDeployConfig {
-    #[serde(rename = "startCommand", skip_serializing_if = "Option::is_none")]
-    pub(crate) start_command: Option<String>,
-    #[serde(rename = "preDeployCommand", skip_serializing_if = "Option::is_none")]
-    pub(crate) pre_deploy_command: Option<String>,
-    #[serde(rename = "healthcheckPath", skip_serializing_if = "Option::is_none")]
-    pub(crate) healthcheck_path: Option<String>,
-    #[serde(rename = "healthcheckTimeout", skip_serializing_if = "Option::is_none")]
-    pub(crate) healthcheck_timeout: Option<u64>,
-    #[serde(rename = "restartPolicyType", skip_serializing_if = "Option::is_none")]
-    pub(crate) restart_policy_type: Option<String>,
-    #[serde(
-        rename = "restartPolicyMaxRetries",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub(crate) restart_policy_max_retries: Option<u64>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RailwayExportReport {
-    pub(crate) schema: String,
-    pub(crate) schema_version: u64,
-    pub(crate) app_name: String,
-    pub(crate) path: String,
-    pub(crate) services: Vec<RailwayReportService>,
-    pub(crate) required_resources: Vec<RailwayReportResource>,
-    pub(crate) required_variables: Vec<RailwayReportVariable>,
-    pub(crate) required_domains: Vec<RailwayReportDomain>,
-    pub(crate) warnings: Vec<DeployWarning>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RailwayReportService {
-    pub(crate) name: String,
-    pub(crate) role: String,
-    pub(crate) source_root: String,
-    pub(crate) config_path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) start_command: Option<String>,
-    pub(crate) domains: Vec<String>,
-    pub(crate) operator_steps: Vec<String>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RailwayReportResource {
-    pub(crate) kind: String,
-    pub(crate) name: String,
-    pub(crate) required: bool,
-    pub(crate) consumers: Vec<String>,
-    pub(crate) action: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) notes: Option<String>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RailwayReportVariable {
-    pub(crate) service: String,
-    pub(crate) name: String,
-    pub(crate) source: String,
-    pub(crate) required: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) notes: Option<String>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct RailwayReportDomain {
-    pub(crate) service: String,
-    pub(crate) hosts: Vec<String>,
-    pub(crate) action: String,
-}
-
 pub(crate) fn detect_static_fallback(repo_root: &Path, dir: &str) -> Option<String> {
     let service_root = repo_root.join(dir);
     let config_names = [
@@ -326,4 +159,18 @@ pub(crate) fn missing_static_fallback_warning(target: &str, missing: bool) -> Ve
             .to_owned(),
         severity: "warn".to_owned(),
     }]
+}
+
+pub(crate) fn collect_model_warnings(model: &DeployModel) -> Vec<DeployWarning> {
+    model
+        .warnings
+        .iter()
+        .cloned()
+        .chain(
+            model
+                .services
+                .iter()
+                .flat_map(|service| service.warnings.clone()),
+        )
+        .collect()
 }

@@ -432,7 +432,7 @@ fn resolve_local_effigy_repo_root_ignores_cached_download_artifact_in_auto_mode(
             .expect("time")
             .as_nanos()
     ));
-    let workspace = root.join("underlay-reference");
+    let workspace = root.join("workspace-app-reference");
     let local_effigy = root.join("effigy");
     std::fs::create_dir_all(&workspace).expect("mkdir workspace");
     std::fs::create_dir_all(local_effigy.join("config")).expect("mkdir config");
@@ -513,7 +513,7 @@ fn sibling_effigy_repo_root_prefers_adjacent_effigy_checkout() {
             .expect("time")
             .as_nanos()
     ));
-    let workspace = parent.join("underlay-reference");
+    let workspace = parent.join("workspace-app-reference");
     let effigy = parent.join("effigy");
     std::fs::create_dir_all(&workspace).expect("mkdir workspace");
     std::fs::create_dir_all(effigy.join("config")).expect("mkdir config");
@@ -593,7 +593,7 @@ fn resolve_local_effigy_repo_root_prefers_live_sibling_checkout_over_configured_
             .expect("time")
             .as_nanos()
     ));
-    let workspace = root.join("underlay-reference");
+    let workspace = root.join("workspace-app-reference");
     let sibling_effigy = root.join("effigy");
     let configured_effigy = temp_home.join("old-effigy");
     std::fs::create_dir_all(&workspace).expect("mkdir workspace");

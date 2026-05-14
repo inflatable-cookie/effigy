@@ -868,10 +868,10 @@ mod tests {
         Ok(())
     }
 
-    fn setup_underlay_path_bundle(root: &Path) {
+    fn setup_workspace_app_path_bundle(root: &Path) {
         let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("crates/effigy-manifest/tests/fixtures/underlay-bundle");
-        let bundle_dir = root.join("bundles/underlay");
+            .join("crates/effigy-manifest/tests/fixtures/workspace-app-bundle");
+        let bundle_dir = root.join("bundles/workspace-app");
         copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
     }
 
@@ -1055,14 +1055,14 @@ database = "app"
     #[test]
     fn run_container_data_dump_reports_planned_oci_artifact_capture() {
         let root = temp_repo("data-dump-oci-planned");
-        setup_underlay_path_bundle(&root);
+        setup_workspace_app_path_bundle(&root);
         let home = temp_repo("data-dump-oci-planned-home");
         let _home = HomeGuard::set(&home);
         fs::write(
             root.join("effigy.toml"),
             r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "app.test"
 project_name = "data-dump-oci-planned-dev"
 workspace_subdir = "data-dump-oci-planned"
@@ -1116,14 +1116,14 @@ databases = ["app"]
     #[test]
     fn run_container_data_dump_reports_pushed_oci_artifact_capture() {
         let root = temp_repo("data-dump-oci-pushed");
-        setup_underlay_path_bundle(&root);
+        setup_workspace_app_path_bundle(&root);
         let home = temp_repo("data-dump-oci-pushed-home");
         let _home = HomeGuard::set(&home);
         fs::write(
             root.join("effigy.toml"),
             r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "app.test"
 project_name = "data-dump-oci-pushed-dev"
 workspace_subdir = "data-dump-oci-pushed"
@@ -1179,7 +1179,7 @@ databases = ["app"]
         let manifest: TaskManifest = toml::from_str(
             r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 databases = ["acowtancy", "acowtancy_test"]
 
 [containers]
@@ -1231,7 +1231,7 @@ database = "acowtancy"
         let manifest: TaskManifest = toml::from_str(
             r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 databases = ["acowtancy", "acowtancy_test"]
 
 [data.targets.legacy_mysql]

@@ -124,6 +124,7 @@ pub(super) fn resolve_provider_package(
     provider_name: &str,
     providers: &BTreeMap<String, ManifestDeployProviderConfig>,
 ) -> Result<Option<DeployProviderPackage>, RunnerError> {
+    validate_provider_name(provider_name)?;
     let Some(config) = providers.get(provider_name) else {
         return Ok(None);
     };
@@ -204,6 +205,26 @@ pub(super) fn run_provider_status(
         return Ok(None);
     };
     run_provider_phase(repo_root, provider_name, package, "status", script, context)
+}
+
+pub(super) fn run_provider_export(
+    repo_root: &Path,
+    provider_name: &str,
+    package: &DeployProviderPackage,
+    context: Value,
+) -> Result<DeployProviderPhaseReport, RunnerError> {
+    let Some(script) = &package.descriptor.capabilities.export else {
+        return Err(RunnerError::task_invocation(format!(
+            "deploy provider `{provider_name}` package does not declare an export capability"
+        )));
+    };
+    run_provider_phase(repo_root, provider_name, package, "export", script, context)?.ok_or_else(
+        || {
+            RunnerError::task_invocation(format!(
+                "deploy provider `{provider_name}` export capability did not produce a report"
+            ))
+        },
+    )
 }
 
 fn run_provider_phase(
@@ -357,6 +378,7 @@ fn validate_capability_paths(
         let Some(path) = path else {
             continue;
         };
+        validate_provider_relative_path(provider_name, phase, path)?;
         let resolved = root.join(path);
         if !resolved.is_file() {
             return Err(RunnerError::task_invocation(format!(
@@ -366,6 +388,37 @@ fn validate_capability_paths(
         }
     }
     Ok(())
+}
+
+fn validate_provider_name(provider_name: &str) -> Result<(), RunnerError> {
+    let valid = !provider_name.is_empty()
+        && provider_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+    if valid {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(format!(
+        "deploy provider `{provider_name}` has an invalid id; use ASCII letters, numbers, `.`, `_`, or `-`"
+    )))
+}
+
+fn validate_provider_relative_path(
+    provider_name: &str,
+    phase: &str,
+    path: &str,
+) -> Result<(), RunnerError> {
+    let candidate = Path::new(path);
+    let valid = !candidate.is_absolute()
+        && candidate
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)));
+    if valid {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(format!(
+        "deploy provider `{provider_name}` capability `{phase}` must be a package-relative file path"
+    )))
 }
 
 fn resolve_git_provider_source(

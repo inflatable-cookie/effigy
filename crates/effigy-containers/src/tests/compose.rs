@@ -96,39 +96,39 @@ variant = "default"
 }
 
 #[test]
-fn generated_compose_underlay_shape_keeps_runtime_paths_and_external_mounts_stable() {
-    with_temp_effigy_home("underlay-generated-compose-paths", |_| {
-        let parent = tempfile::tempdir().expect("underlay parent tempdir");
-        let root = parent.path().join("underlay-reference");
-        let underlay = parent.path().join("underlay");
+fn generated_compose_workspace_app_shape_keeps_runtime_paths_and_external_mounts_stable() {
+    with_temp_effigy_home("workspace-app-generated-compose-paths", |_| {
+        let parent = tempfile::tempdir().expect("workspace app parent tempdir");
+        let root = parent.path().join("workspace-app-reference");
+        let platform = parent.path().join("platform");
         fs::create_dir_all(&root).expect("mkdir root");
-        fs::create_dir_all(&underlay).expect("mkdir underlay sibling");
+        fs::create_dir_all(&platform).expect("mkdir workspace app sibling");
         let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../effigy-manifest/tests/fixtures/underlay-bundle");
-        let bundle_dir = root.join("bundles/underlay");
+            .join("../effigy-manifest/tests/fixtures/workspace-app-bundle");
+        let bundle_dir = root.join("bundles/workspace-app");
         copy_dir_all(&fixture_dir, &bundle_dir).expect("copy fixture");
         fs::write(
             root.join("effigy.toml"),
             format!(
                 r#"
 [bundle]
-base = {{ type = "path", dir = "bundles/underlay" }}
-host = "underlay.test"
-databases = ["underlay"]
-project_name = "underlay-reference-dev"
-workspace_subdir = "underlay-reference"
+base = {{ type = "path", dir = "bundles/workspace-app" }}
+host = "workspace-app.test"
+databases = ["workspace-app"]
+project_name = "workspace-app-reference-dev"
+workspace_subdir = "workspace-app-reference"
 
 [containers]
 default = "web"
 
 [containers.web]
 primary_service = "app"
-working_dir = "/workspace-root/underlay-reference"
+working_dir = "/workspace-root/workspace-app-reference"
 
 [containers.web.host]
 mounts = [
   {{ host = "{}",
-     container = "/workspace-root/underlay",
+     container = "/workspace-root/platform",
      external = true }},
 ]
 
@@ -140,7 +140,7 @@ version = "8.3"
 catalog = "nginx"
 variant = "default"
 "#,
-                underlay.display()
+                platform.display()
             ),
         )
         .expect("write manifest");
@@ -148,11 +148,11 @@ variant = "default"
         let policy = load_container_policy(&root, None).expect("policy");
         let compose = fs::read_to_string(&policy.compose_files[0]).expect("read compose");
         let canonical_root = root.canonicalize().expect("canonical root");
-        let canonical_underlay = underlay.canonicalize().expect("canonical underlay");
+        let canonical_platform = platform.canonicalize().expect("canonical platform");
         let runtime_compose_dir = root.join(".effigy/runtime/compose");
 
         assert_eq!(policy.compose_source, EffectiveComposeSource::Generated);
-        assert_eq!(policy.project_name, "underlay-reference-web-dev");
+        assert_eq!(policy.project_name, "workspace-app-reference-web-dev");
         assert!(policy.compose_files[0].starts_with(&runtime_compose_dir));
         assert!(
             policy.compose_files[0].exists(),
@@ -167,17 +167,17 @@ variant = "default"
         );
         assert!(
             compose.contains(&format!(
-                "{}:/workspace-root/underlay-reference",
+                "{}:/workspace-root/workspace-app-reference",
                 canonical_root.display()
             )),
-            "generated compose should mount the target repo at the Underlay workspace path: {compose}"
+            "generated compose should mount the target repo at the workspace app workspace path: {compose}"
         );
         assert!(
             compose.contains(&format!(
-                "{}:/workspace-root/underlay",
-                canonical_underlay.display()
+                "{}:/workspace-root/platform",
+                canonical_platform.display()
             )),
-            "generated compose should preserve the external Underlay sibling mount: {compose}"
+            "generated compose should preserve the external workspace app sibling mount: {compose}"
         );
     });
 }
@@ -1045,11 +1045,11 @@ fn direct_compose_policy_rewrites_workspace_mounts_from_manifest_contract() {
             .expect("time")
             .as_nanos()
     ));
-    let root = parent.join("underlay-reference");
-    let underlay = parent.join("underlay");
+    let root = parent.join("workspace-app-reference");
+    let platform = parent.join("platform");
     let poodle = parent.join("poodle");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir repo");
-    fs::create_dir_all(&underlay).expect("mkdir underlay");
+    fs::create_dir_all(&platform).expect("mkdir workspace app");
     fs::create_dir_all(&poodle).expect("mkdir poodle");
     fs::write(
         poodle.join("effigy.toml"),
@@ -1074,8 +1074,8 @@ default = "stack"
 container = "stack"
 user = "dev"
 home = "/home/dev"
-working_dir = "/workspace-root/underlay-reference"
-mounts = ["../underlay", "../poodle"]
+working_dir = "/workspace-root/workspace-app-reference"
+mounts = ["../platform", "../poodle"]
 
 [containers.stack]
 compose_file = "infra/dev/docker-compose.yml"
@@ -1109,11 +1109,11 @@ volumes:
     assert_eq!(policy.compose_files[0], expected_rewrite_path);
     assert!(expected_rewrite_path.exists(), "rewrite path should exist");
     assert!(
-        rewritten.contains(":/workspace-root/underlay-reference"),
+        rewritten.contains(":/workspace-root/workspace-app-reference"),
         "rewritten compose: {rewritten}"
     );
     assert!(
-        rewritten.contains(":/workspace-root/underlay"),
+        rewritten.contains(":/workspace-root/platform"),
         "rewritten compose: {rewritten}"
     );
     assert!(

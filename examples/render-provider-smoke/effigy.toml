@@ -6,7 +6,7 @@ minimum_effigy_version = "0.7.0"
 root = true
 
 [bundle]
-base = { type = "path", dir = "../../crates/effigy-manifest/tests/fixtures/underlay-bundle" }
+base = { type = "path", dir = "../../crates/effigy-manifest/tests/fixtures/workspace-app-bundle" }
 host = "render-provider-smoke.test"
 project_name = "render-provider-smoke-dev"
 workspace_subdir = "examples/render-provider-smoke"

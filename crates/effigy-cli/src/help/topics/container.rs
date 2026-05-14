@@ -128,7 +128,7 @@ pub(crate) fn render_container_help<R: HelpRenderer + ?Sized>(renderer: &mut R) 
             "effigy container stats --global",
             "effigy container volume list",
             "effigy container volume list --dormant",
-            "effigy container volume list --repo ~/Dev/projects/underlay-reference --dormant",
+            "effigy container volume list --repo ~/projects/my-app --dormant",
             "effigy container volume list --global",
             "effigy container volume list --global --orphans",
             "effigy container volume prune --dormant --yes",

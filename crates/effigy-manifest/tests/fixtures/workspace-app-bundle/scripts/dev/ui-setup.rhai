@@ -1,11 +1,11 @@
-// Underlay starter - frontend hydration helper for `dev` tab setup.
+// workspace app starter - frontend hydration helper for `dev` tab setup.
 //
 // Invoked by `tasks.dev` concurrent entries as a `setup = [{ rhai = ... }]`
 // step. Runs before the app's dev server starts and ensures bun
 // dependencies are installed on a fingerprint-controlled basis.
 //
 // This is starter-owned helper glue, not Effigy runtime. It supports the
-// generic `app-*` layout and the Underlay reference `acme-*` layout by
+// generic `app-*` layout and the workspace app reference `acme-*` layout by
 // default, and repos can override the package directories through
 // `[bundle.dirs]`.
 // The Effigy runtime already supplies
@@ -40,9 +40,9 @@ let front_dir = optional_config_string("bundle.dirs.front", "");
 let admin_dir = optional_config_string("bundle.dirs.admin", "");
 let client_dir = optional_config_string("bundle.dirs.client", "");
 let ui_dir = optional_config_string("bundle.dirs.ui", "");
-let underlay_source = optional_config_string("bundle.sources.underlay", "../underlay");
+let workspace_app_source = optional_config_string("bundle.sources.platform", "../platform");
 let poodle_source = optional_config_string("bundle.sources.poodle", "../poodle");
-let underlay_dir = path::join(repo_root, underlay_source);
+let workspace_app_dir = path::join(repo_root, workspace_app_source);
 let poodle_dir = path::join(repo_root, poodle_source);
 let app_client_dir = path::join(repo_root, "app-client");
 let acme_client_dir = path::join(repo_root, "acme-client");
@@ -205,7 +205,7 @@ let shell_layout_helpers = "ensure_bun_install_if_present() {\n"
     + "}\n"
     + "\n";
 
-let shell_targets = "ensure_bun_install_if_present \"" + underlay_dir + "\" \"underlay\"\n"
+let shell_targets = "ensure_bun_install_if_present \"" + workspace_app_dir + "\" \"platform\"\n"
     + "ensure_bun_install_if_present \"" + poodle_dir + "\" \"poodle\"\n";
 
 if client_dir != "" {

@@ -8,6 +8,7 @@ pub const MODULE_EXEC: &str = "exec";
 pub const MODULE_HTTP: &str = "http";
 pub const MODULE_JSON: &str = "json";
 pub const MODULE_TOML: &str = "toml";
+pub const MODULE_YAML: &str = "yaml";
 pub const MODULE_STR: &str = "str";
 pub const MODULE_REGEX: &str = "regex";
 pub const MODULE_RANDOM: &str = "random";
@@ -46,6 +47,7 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_HTTP,
     MODULE_JSON,
     MODULE_TOML,
+    MODULE_YAML,
     MODULE_STR,
     MODULE_REGEX,
     MODULE_RANDOM,

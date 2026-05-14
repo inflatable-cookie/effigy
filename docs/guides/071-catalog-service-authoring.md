@@ -187,4 +187,4 @@ cargo test -p effigy-catalog --test integration resolve_workspace_rust_bun_fragm
 
 - Consumer reference: [`067-catalog-services-reference.md`](./067-catalog-services-reference.md)
 - Local dev systems and containers: [`063-container-system-guide.md`](./063-container-system-guide.md)
-- Underlay starter: [`065-underlay-starter.md`](./065-underlay-starter.md)
+- External bundle adoption: [`065-external-bundle-adoption.md`](./065-external-bundle-adoption.md)

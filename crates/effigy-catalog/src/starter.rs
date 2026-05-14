@@ -158,7 +158,7 @@ impl StarterResolver {
     ///
     /// A directory is "registered" when it contains a parseable
     /// `starter.toml`. Directories without one are silently skipped so
-    /// reference-only starter trees (e.g. awaiting later batches) do not
+    /// reference-only starter trees do not
     /// show up in listings.
     pub fn list(&self) -> Vec<StarterInfo> {
         let mut names = BTreeSet::new();
@@ -263,10 +263,6 @@ mod tests {
             names.contains(&"northstar"),
             "northstar should be listed; got {listing:?}"
         );
-        assert!(
-            names.contains(&"underlay"),
-            "underlay should be listed; got {listing:?}"
-        );
         // Listing is sorted so `--list` output is stable.
         let mut sorted = names.clone();
         sorted.sort();
@@ -280,31 +276,6 @@ mod tests {
             Err(StarterError::NotFound { name }) => assert_eq!(name, "does-not-exist"),
             other => panic!("expected NotFound, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn underlay_starter_resolves_with_all_declared_files_and_guidance() {
-        let resolver = StarterResolver::new();
-        let starter = resolver
-            .resolve("underlay")
-            .expect("underlay starter should resolve");
-
-        assert_eq!(starter.name, "underlay");
-        let targets: Vec<&str> = starter.files.iter().map(|f| f.target.as_str()).collect();
-        for expected in ["effigy.toml"] {
-            assert!(
-                targets.contains(&expected),
-                "expected underlay to declare {expected}; got {targets:?}"
-            );
-        }
-        // Bundle-owned helpers (e.g. `scripts/dev/ui-setup.rhai`) are materialized
-        // from the runtime bundle cache, not scaffolded into the consumer repo.
-        assert!(
-            !targets.contains(&"scripts/dev/ui-setup.rhai"),
-            "starter should not scaffold bundle-owned Rhai helpers; got {targets:?}"
-        );
-        let guidance = starter.guidance.expect("underlay ships guidance text");
-        assert!(guidance.contains("[bundle].host"));
     }
 
     #[test]

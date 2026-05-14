@@ -4,8 +4,8 @@ Effigy should grow a production deployment export surface, but it should not
 export local dev infrastructure directly.
 
 The source of truth stays the effective manifest and bundle model. Deployment
-export derives a provider-neutral production model from that source, then
-renders provider-specific files from that model.
+export derives a provider-neutral production model from that source, then hands
+that model to configured provider packages.
 
 ## Why this exists
 
@@ -25,11 +25,9 @@ So the boundary should be:
 - translate that intent into provider-specific files
 - report anything that still needs human policy or secret input
 
-## Primary target
+## Primary Shape
 
-The first serious target is Underlay.
-
-Underlay apps already have a strong structural shape:
+The first serious shape is a managed-platform web app:
 
 - front
 - admin
@@ -40,12 +38,11 @@ Underlay apps already have a strong structural shape:
 That makes them good candidates for:
 
 - a neutral deployment model
-- Render and Railway export adapters
+- Render and Railway provider-package proofs
 - one or more real consumer proofs
 
-Decodelabs stays secondary for now. It has dedicated-server deployment habits
-that should remain manually owned in the near term, even if Effigy later grows
-a managed-host strategy for that ecosystem too.
+Product-specific bundle repos should own product naming, starter content, and
+local heuristics.
 
 ## Core decision
 
@@ -55,7 +52,7 @@ Do this instead:
 
 1. Resolve the effective manifest and bundle state.
 2. Derive a provider-neutral production deployment model.
-3. Render provider-specific templates from that model.
+3. Dispatch the selected provider package with that model.
 4. Emit a report describing:
    - what was generated
    - what was inferred
@@ -98,37 +95,36 @@ effigy deploy model --json
 That keeps the core contract inspectable and testable before provider adapters
 grow wider.
 
-## Provider adapters
+## Provider Packages
 
-Provider adapters should stay thin.
+Provider packages should stay thin.
 
 Their job is to translate the neutral model into files for a target such as:
 
 - Render
 - Railway
 
-Likely commands:
+The command is provider-id driven:
 
 ```bash
-effigy deploy export render
-effigy deploy export railway
+effigy deploy export <PROVIDER> --path <DIR>
 ```
 
-The adapter should not own bundle heuristics. It should consume the derived
-deployment model and render files plus warnings.
+The provider id must be configured under `[deploy.providers.<provider>]`. The
+package should not own bundle heuristics. It should consume the derived
+deployment model and emit files plus warnings.
 
 ## Template ownership
 
 Like bundles and catalogs, provider export templates should live as real files
-in the repo and ship embedded in the binary.
+inside the provider package.
 
-That keeps the source visible and editable while preserving the one-binary
-distribution model.
+That keeps provider behavior visible, testable, and movable outside Effigy core.
 
 The split should be:
 
-- file templates own static structure
-- Rust owns derivation, validation, and rendering
+- provider packages own provider-specific Rhai scripts and templates
+- Rust owns derivation, provider dispatch, context validation, and report shape
 
 ## First release boundary
 
@@ -137,9 +133,9 @@ The first version of this feature should stay bounded.
 Include:
 
 - neutral deployment model
-- Underlay derivation
-- Render export
-- Railway export
+- bundle-provided deploy-model defaults
+- Render provider-package export proof
+- Railway provider-package export proof
 - generated file bundle
 - warnings and missing-input report
 
@@ -149,7 +145,7 @@ Do not include yet:
 - secret sync
 - automatic production cutover
 - one-click deploy
-- a fake claim that Decodelabs is production-export-ready
+- fake claims that every external bundle is production-export-ready
 
 The first contract anchor for that bounded surface lives in:
 
@@ -175,6 +171,6 @@ That warning surface is part of the product, not an afterthought.
 Open `g03` around this architecture:
 
 - `g03.001` defines the neutral deployment model and export contract
-- `g03.002` proves Underlay export for managed platforms
-- `g03.003` scopes the future Decodelabs production strategy without forcing
+- `g03.002` proves one external bundle export for managed platforms
+- `g03.003` scopes future product-specific production strategy without forcing
   premature automation

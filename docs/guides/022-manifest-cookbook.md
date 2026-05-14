@@ -152,7 +152,7 @@ Consumer repo:
 
 ```toml
 [systems.dev]
-mounts = ["../underlay", "../poodle"]
+mounts = ["../platform", "../poodle"]
 ```
 
 Use this when a mounted sibling repo needs Linux/container-owned install or
@@ -628,7 +628,7 @@ Behavior:
 - child bootstrap `run` executes inside each child repo
 - `start` only runs when the operator supplies `--start`
 - child `path` values are always relative to the root repo
-- sibling repos via `../underlay`-style paths are allowed when they stay under
+- sibling repos via `../platform`-style paths are allowed when they stay under
   the root repo's parent directory
 - optional children (`required = false`) degrade to warnings instead of failing
   the whole bootstrap
@@ -1039,7 +1039,7 @@ Use catalog aliases to keep task ownership local while retaining root-level orch
 
 ```toml
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 databases = ["acowtancy", "acowtancy_test"]
 
 [data.targets.legacy_mysql]

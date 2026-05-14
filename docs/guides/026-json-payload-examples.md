@@ -154,9 +154,9 @@ Companion references:
   "schema": "deploy.model.v1",
   "schema_version": 1,
   "app": {
-    "name": "underlay-reference",
-    "bundle": "underlay",
-    "project_name": "underlay-reference-dev",
+    "name": "workspace-app-reference",
+    "bundle": "workspace-app",
+    "project_name": "workspace-app-reference-dev",
     "source_root": "."
   },
   "services": [
@@ -1148,8 +1148,7 @@ Read these fields first:
 ```
 
 Notes:
-- starters may emit more than one file (for example `underlay` emits one
-  `effigy.toml` plus one starter-owned Rhai fragment); each file has its own
+- starters may emit more than one file; each file has its own
   `target`/`path`/`contents`/`existed`/`written` entry
 - `guidance` carries optional post-emission text the starter wants operators
   to see (for example environment variables to export or a follow-up command)
@@ -1164,7 +1163,6 @@ Notes:
   "schema_version": 1,
   "starters": [
     { "name": "minimal", "description": "Minimal Effigy scaffold" },
-    { "name": "underlay", "description": "Underlay dev-contract starter" },
     { "name": "northstar", "description": "Northstar-profile starter" }
   ]
 }

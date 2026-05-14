@@ -83,12 +83,12 @@ The default path is internal module decomposition under `src/runner/deploy_comma
 - `provider_package.rs`: provider package manifest parsing; path/git source
   materialization; descriptor validation; phase script workspace/context/report
   handling; phase report validation; scoped env overrides.
-- `model.rs`: static `deploy.model.v1` domain model plus Render/Railway export
-  report models.
+- `model.rs`: static `deploy.model.v1` domain model plus generic export result
+  and warning helpers.
 - `derive.rs`: derives provider-neutral deploy model from effective manifest,
   bundle defaults, and child task manifests.
-- `render.rs` and `railway.rs`: static file export adapters for Render and
-  Railway.
+- provider export scripts: static file export lives in configured provider
+  packages, not core Rust modules.
 
 ## Test Coverage Map
 

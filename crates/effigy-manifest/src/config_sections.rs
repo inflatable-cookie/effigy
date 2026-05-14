@@ -270,7 +270,7 @@ home = "/home/dev"
 
 [systems.dev.workspaces.app]
 working_dir = "/workspace-root/app"
-mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
+mounts = ["../platform", "../poodle:/workspace-root/poodle"]
 "#,
         )
         .expect("parse systems");
@@ -296,7 +296,7 @@ mounts = ["../underlay", "../poodle:/workspace-root/poodle"]
         assert_eq!(
             workspace.mounts,
             vec![
-                "../underlay".to_owned(),
+                "../platform".to_owned(),
                 "../poodle:/workspace-root/poodle".to_owned()
             ]
         );
@@ -332,7 +332,7 @@ working_dir = "/workspace-root/app"
             r#"
 [systems.dev]
 container = "stack"
-isolation = [{ repo = "../poodle" }, { repo = "../underlay" }]
+isolation = [{ repo = "../poodle" }, { repo = "../platform" }]
 "#,
         )
         .expect("parse systems");
@@ -344,7 +344,7 @@ isolation = [{ repo = "../poodle" }, { repo = "../underlay" }]
                 .iter()
                 .map(|entry| entry.repo.as_str())
                 .collect::<Vec<_>>(),
-            vec!["../poodle", "../underlay"]
+            vec!["../poodle", "../platform"]
         );
     }
 

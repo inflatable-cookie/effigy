@@ -42,7 +42,7 @@ host_ports = []
 mount_host_ssh_dir = true
 node_version = "24"
 node_global_packages = ["eclint"]
-composer_global_packages = ["decodelabs/effigy"]
+composer_global_packages = ["acme/effigy"]
 extensions = [
   "bcmath",
   "apcu",
@@ -71,7 +71,7 @@ extensions = [
 
 [containers.{{ inputs.container_name }}.services.web]
 catalog = "nginx"
-variant = "decodelabs"
+variant = "php-app"
 document_root = "."
 
 [containers.{{ inputs.container_name }}.services.mysql]

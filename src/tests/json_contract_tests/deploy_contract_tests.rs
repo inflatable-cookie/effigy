@@ -1,15 +1,15 @@
 use crate::runner::json_contract_tests::prelude::{execution::*, harness::*, json::*};
-use effigy_cli::{Command, DeployArgs, DeployExportProvider, DeploySubcommand};
+use effigy_cli::{Command, DeployArgs, DeploySubcommand};
 
 #[test]
 fn deploy_model_json_contract_has_versioned_shape() {
     let root = temp_workspace("deploy-model-json-contract");
-    setup_underlay_path_bundle(&root);
+    setup_workspace_app_path_bundle(&root);
     write_manifest(
         &root.join("effigy.toml"),
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
@@ -74,7 +74,7 @@ run = "cargo run -p acme-jobs {args}"
         .expect("run deploy model"),
     );
     assert_schema_v1(&parsed, "deploy.model.v1");
-    assert_eq!(parsed["app"]["bundle"], "underlay");
+    assert_eq!(parsed["app"]["bundle"], "workspace-app");
     assert!(parsed["services"].is_array());
     assert!(parsed["backing_services"].is_array());
     assert!(parsed["domains"].is_array());
@@ -94,17 +94,23 @@ run = "cargo run -p acme-jobs {args}"
 #[test]
 fn deploy_export_render_json_contract_has_versioned_shape() {
     let root = temp_workspace("deploy-export-render-json-contract");
-    setup_underlay_path_bundle(&root);
+    setup_workspace_app_path_bundle(&root);
+    let repo_root = env!("CARGO_MANIFEST_DIR");
     write_manifest(
         &root.join("effigy.toml"),
-        r#"
+        &format!(
+            r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = {{ type = "path", dir = "bundles/workspace-app" }}
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
 databases = ["acme"]
-"#,
+
+[deploy.providers.render]
+source = {{ type = "path", dir = "{repo_root}/external/providers/render" }}
+"#
+        ),
     );
     std::fs::create_dir_all(root.join("app-front")).expect("mkdir front");
     std::fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
@@ -135,7 +141,7 @@ databases = ["acme"]
     let parsed = parse_json(
         &run_command(Command::Deploy(DeployArgs {
             subcommand: DeploySubcommand::Export {
-                provider: DeployExportProvider::Render,
+                provider: "render".to_owned(),
                 path: root.join("infra/render"),
                 plan: true,
             },
@@ -154,17 +160,23 @@ databases = ["acme"]
 #[test]
 fn deploy_export_railway_json_contract_has_versioned_shape() {
     let root = temp_workspace("deploy-export-railway-json-contract");
-    setup_underlay_path_bundle(&root);
+    setup_workspace_app_path_bundle(&root);
+    let repo_root = env!("CARGO_MANIFEST_DIR");
     write_manifest(
         &root.join("effigy.toml"),
-        r#"
+        &format!(
+            r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = {{ type = "path", dir = "bundles/workspace-app" }}
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
 databases = ["acme"]
-"#,
+
+[deploy.providers.railway]
+source = {{ type = "path", dir = "{repo_root}/external/providers/railway" }}
+"#
+        ),
     );
     std::fs::create_dir_all(root.join("app-front")).expect("mkdir front");
     std::fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
@@ -195,7 +207,7 @@ databases = ["acme"]
     let parsed = parse_json(
         &run_command(Command::Deploy(DeployArgs {
             subcommand: DeploySubcommand::Export {
-                provider: DeployExportProvider::Railway,
+                provider: "railway".to_owned(),
                 path: root.join("infra/railway"),
                 plan: true,
             },
@@ -215,12 +227,12 @@ databases = ["acme"]
 #[test]
 fn deploy_model_json_contract_uses_expected_top_level_fields() {
     let root = temp_workspace("deploy-model-json-contract-top-level");
-    setup_underlay_path_bundle(&root);
+    setup_workspace_app_path_bundle(&root);
     write_manifest(
         &root.join("effigy.toml"),
         r#"
 [bundle]
-base = { type = "path", dir = "bundles/underlay" }
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"

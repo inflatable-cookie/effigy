@@ -101,14 +101,14 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result
     Ok(())
 }
 
-fn decodelabs_library_fixture_dir() -> std::path::PathBuf {
+fn php_library_fixture_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("crates/effigy-manifest/tests/fixtures/decodelabs-library-bundle")
+        .join("crates/effigy-manifest/tests/fixtures/php-library-bundle")
 }
 
-fn setup_decodelabs_library_path_bundle(root: &std::path::Path) {
-    let bundle_dir = root.join("bundles/decodelabs-library");
-    copy_dir_all(&decodelabs_library_fixture_dir(), &bundle_dir).expect("copy fixture bundle");
+fn setup_php_library_path_bundle(root: &std::path::Path) {
+    let bundle_dir = root.join("bundles/php-library");
+    copy_dir_all(&php_library_fixture_dir(), &bundle_dir).expect("copy fixture bundle");
 }
 
 #[test]
@@ -182,15 +182,15 @@ fn run_manifest_task_legacy_root_markers_no_longer_enable_deferral() {
 }
 
 #[test]
-fn run_manifest_task_decodelabs_bundle_defers_inside_container() {
+fn run_manifest_task_php_app_bundle_defers_inside_container() {
     let _guard = lock_test();
-    let root = temp_workspace("decodelabs-container-deferral");
+    let root = temp_workspace("php_app-container-deferral");
     std::fs::create_dir(root.join(".git")).expect("git dir");
-    setup_decodelabs_library_path_bundle(&root);
+    setup_php_library_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"[bundle]
-base = { type = "path", dir = "bundles/decodelabs-library" }
+base = { type = "path", dir = "bundles/php-library" }
 "#,
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
@@ -199,7 +199,7 @@ base = { type = "path", dir = "bundles/decodelabs-library" }
         &root,
         "missing-task",
         &["--watch"],
-        "decodelabs bundle container deferral should succeed",
+        "php_app bundle container deferral should succeed",
     );
 
     let log = fs::read_to_string(&docker_log).expect("read fake docker log");
@@ -246,16 +246,16 @@ base = { type = "path", dir = "bundles/decodelabs-library" }
 }
 
 #[test]
-fn run_manifest_task_decodelabs_bundle_defers_locally_inside_handoff_container() {
+fn run_manifest_task_php_app_bundle_defers_locally_inside_handoff_container() {
     let _guard = lock_test();
-    let root = temp_workspace("decodelabs-container-deferral-handoff");
+    let root = temp_workspace("php_app-container-deferral-handoff");
     std::fs::create_dir(root.join(".git")).expect("git dir");
     std::fs::create_dir_all(root.join("app")).expect("app dir");
-    setup_decodelabs_library_path_bundle(&root);
+    setup_php_library_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"[bundle]
-base = { type = "path", dir = "bundles/decodelabs-library" }
+base = { type = "path", dir = "bundles/php-library" }
 "#,
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
@@ -278,7 +278,7 @@ base = { type = "path", dir = "bundles/decodelabs-library" }
         &root,
         "missing-task",
         &["--watch"],
-        "decodelabs bundle handoff-local deferral should succeed",
+        "php_app bundle handoff-local deferral should succeed",
     );
 
     let docker = fs::read_to_string(&docker_log).expect("read fake docker log");
@@ -289,16 +289,16 @@ base = { type = "path", dir = "bundles/decodelabs-library" }
 }
 
 #[test]
-fn run_manifest_task_decodelabs_handoff_local_deferral_prefers_composer_global_bin() {
+fn run_manifest_task_php_app_handoff_local_deferral_prefers_composer_global_bin() {
     let _guard = lock_test();
-    let root = temp_workspace("decodelabs-container-deferral-handoff-composer-bin");
+    let root = temp_workspace("php_app-container-deferral-handoff-composer-bin");
     std::fs::create_dir(root.join(".git")).expect("git dir");
     std::fs::create_dir_all(root.join("app")).expect("app dir");
-    setup_decodelabs_library_path_bundle(&root);
+    setup_php_library_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"[bundle]
-base = { type = "path", dir = "bundles/decodelabs-library" }
+base = { type = "path", dir = "bundles/php-library" }
 "#,
     );
     let (docker_log, _env) = setup_fake_docker_deferral_runtime(&root, false);
@@ -321,7 +321,7 @@ base = { type = "path", dir = "bundles/decodelabs-library" }
         &root,
         "missing-task",
         &["--watch"],
-        "decodelabs bundle handoff-local deferral should prefer composer global bin",
+        "php_app bundle handoff-local deferral should prefer composer global bin",
     );
 
     let docker = fs::read_to_string(&docker_log).expect("read fake docker log");
@@ -334,15 +334,15 @@ base = { type = "path", dir = "bundles/decodelabs-library" }
 }
 
 #[test]
-fn run_manifest_task_decodelabs_container_lease_reaper_shuts_down_expired_env() {
+fn run_manifest_task_php_app_container_lease_reaper_shuts_down_expired_env() {
     let _guard = lock_test();
-    let root = temp_workspace("decodelabs-container-deferral-reaper");
+    let root = temp_workspace("php_app-container-deferral-reaper");
     std::fs::create_dir(root.join(".git")).expect("git dir");
-    setup_decodelabs_library_path_bundle(&root);
+    setup_php_library_path_bundle(&root);
     write_root_manifest(
         &root,
         r#"[bundle]
-base = { type = "path", dir = "bundles/decodelabs-library" }
+base = { type = "path", dir = "bundles/php-library" }
 project_name = "legacy-dev"
 "#,
     );
@@ -356,7 +356,7 @@ project_name = "legacy-dev"
         &root,
         "missing-task",
         &["--watch"],
-        "decodelabs bundle container deferral should succeed",
+        "php_app bundle container deferral should succeed",
     );
 
     let token = crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
@@ -386,25 +386,25 @@ project_name = "legacy-dev"
 }
 
 #[test]
-fn run_manifest_task_decodelabs_library_bundle_isolates_leases_across_repos_by_default() {
+fn run_manifest_task_php_app_library_bundle_isolates_leases_across_repos_by_default() {
     let _guard = lock_test();
-    let root = temp_workspace("decodelabs-library-shared-lease");
-    let shared_root = root.join("libraries/decodelabs");
+    let root = temp_workspace("php_library-shared-lease");
+    let shared_root = root.join("libraries/php-app");
     let repo_a = shared_root.join("clockwork");
     let repo_b = shared_root.join("clocksmith");
     std::fs::create_dir_all(&repo_a).expect("mkdir repo a");
     std::fs::create_dir_all(&repo_b).expect("mkdir repo b");
     std::fs::create_dir(repo_a.join(".git")).expect("git dir a");
     std::fs::create_dir(repo_b.join(".git")).expect("git dir b");
-    let bundle_a = repo_a.join("bundles/decodelabs-library");
-    let bundle_b = repo_b.join("bundles/decodelabs-library");
-    copy_dir_all(&decodelabs_library_fixture_dir(), &bundle_a).expect("copy fixture bundle a");
-    copy_dir_all(&decodelabs_library_fixture_dir(), &bundle_b).expect("copy fixture bundle b");
+    let bundle_a = repo_a.join("bundles/php-library");
+    let bundle_b = repo_b.join("bundles/php-library");
+    copy_dir_all(&php_library_fixture_dir(), &bundle_a).expect("copy fixture bundle a");
+    copy_dir_all(&php_library_fixture_dir(), &bundle_b).expect("copy fixture bundle b");
     write_root_manifest(
         &repo_a,
         &format!(
             r#"[bundle]
-base = {{ type = "path", dir = "bundles/decodelabs-library" }}
+base = {{ type = "path", dir = "bundles/php-library" }}
 shared_root = "{}"
 "#,
             shared_root.display()
@@ -414,7 +414,7 @@ shared_root = "{}"
         &repo_b,
         &format!(
             r#"[bundle]
-base = {{ type = "path", dir = "bundles/decodelabs-library" }}
+base = {{ type = "path", dir = "bundles/php-library" }}
 shared_root = "{}"
 "#,
             shared_root.display()
@@ -426,7 +426,7 @@ shared_root = "{}"
         &repo_a,
         "missing-task",
         &["--watch"],
-        "decodelabs-library bundle container deferral should succeed",
+        "php_library bundle container deferral should succeed",
     );
 
     let token_a = crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
@@ -446,7 +446,7 @@ shared_root = "{}"
         &repo_b,
         "missing-task",
         &["--watch"],
-        "second decodelabs-library bundle container deferral should also succeed",
+        "second php_library bundle container deferral should also succeed",
     );
     let token_b = crate::runner::host_container_lease::read_host_container_lease_token_for_tests(
         &repo_b, "web",
@@ -460,20 +460,20 @@ shared_root = "{}"
 }
 
 #[test]
-fn run_manifest_task_decodelabs_library_bundle_prepares_workspace_permissions_before_exec() {
+fn run_manifest_task_php_app_library_bundle_prepares_workspace_permissions_before_exec() {
     let _guard = lock_test();
-    let root = temp_workspace("decodelabs-library-permission-prep");
-    let shared_root = root.join("libraries/decodelabs");
+    let root = temp_workspace("php_library-permission-prep");
+    let shared_root = root.join("libraries/php-app");
     let repo = shared_root.join("zest");
     std::fs::create_dir_all(&repo).expect("mkdir repo");
     std::fs::create_dir(repo.join(".git")).expect("git dir");
-    let bundle = repo.join("bundles/decodelabs-library");
-    copy_dir_all(&decodelabs_library_fixture_dir(), &bundle).expect("copy fixture bundle");
+    let bundle = repo.join("bundles/php-library");
+    copy_dir_all(&php_library_fixture_dir(), &bundle).expect("copy fixture bundle");
     write_root_manifest(
         &repo,
         &format!(
             r#"[bundle]
-base = {{ type = "path", dir = "bundles/decodelabs-library" }}
+base = {{ type = "path", dir = "bundles/php-library" }}
 shared_root = "{}"
 "#,
             shared_root.display()
@@ -485,7 +485,7 @@ shared_root = "{}"
         &repo,
         "missing-task",
         &["--watch"],
-        "decodelabs-library bundle container deferral should prepare permissions",
+        "php_library bundle container deferral should prepare permissions",
     );
 
     let log = fs::read_to_string(&docker_log).expect("read fake docker log");

@@ -7,12 +7,11 @@ pub(crate) fn render_deploy_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
         "deploy",
         &[
             "Inspect the provider-neutral production deployment model derived from the effective manifest and bundle state.",
-            "The model/export surfaces remain Underlay-first. Export remains file-oriented. Deployment transactions compose code refs, state stacks, artifact policy, release evidence, provider adapters, hooks, health checks, and reports.",
+            "Export is provider-package driven and file-oriented. Deployment transactions compose code refs, state stacks, artifact policy, release evidence, provider adapters, hooks, health checks, and reports.",
         ],
         &[
             "effigy deploy model [--repo <PATH>] --json",
-            "effigy deploy export render [--repo <PATH>] --path <DIR> [--plan] [--json]",
-            "effigy deploy export railway [--repo <PATH>] --path <DIR> [--plan] [--json]",
+            "effigy deploy export <PROVIDER> [--repo <PATH>] --path <DIR> [--plan] [--json]",
             "effigy deploy plan <ENV> [--repo <PATH>] [--write-report] [--json]",
             "effigy deploy apply <ENV> [--repo <PATH>] --yes [--json]",
             "effigy deploy status <ENV> [--repo <PATH>] [--json]",
@@ -22,6 +21,7 @@ pub(crate) fn render_deploy_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
         ],
         &[
             ("--repo <PATH>", "Override target repository path"),
+            ("<PROVIDER>", "Provider id configured under `[deploy.providers]`"),
             ("--path <DIR>", "Write export files under this directory"),
             ("--plan", "Preview the export without writing files"),
             ("--write-report", "Persist deploy plan output under .effigy/reports/deploy/<env>/"),
@@ -33,8 +33,7 @@ pub(crate) fn render_deploy_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> 
         ],
         &[
             "effigy deploy model --json",
-            "effigy deploy export render --path infra/render --plan",
-            "effigy deploy export railway --path infra/railway --plan",
+            "effigy deploy export acme-cloud --path infra/deploy --plan",
             "effigy deploy plan uat --write-report",
             "effigy deploy apply uat --yes",
             "effigy deploy history production --limit 5",

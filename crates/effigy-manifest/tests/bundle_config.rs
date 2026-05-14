@@ -45,7 +45,7 @@ base = { type = "oci", url = "ghcr.io/acme/effigy-bundle:v1.2.3" }
 fn bundle_config_rejects_legacy_string_base_with_migration_error() {
     let error = toml::from_str::<ManifestBundleConfig>(
         r#"
-base = "underlay"
+base = "workspace-app"
 "#,
     )
     .expect_err("legacy string base should be rejected");
@@ -53,7 +53,7 @@ base = "underlay"
     assert!(
         error
             .to_string()
-            .contains("string `[bundle].base` value `underlay` has been removed"),
+            .contains("string `[bundle].base` value `workspace-app` has been removed"),
         "{error}"
     );
 }
@@ -79,7 +79,7 @@ base_path = "bundles/acme"
 fn bundle_config_rejects_legacy_name_with_migration_error() {
     let error = toml::from_str::<ManifestBundleConfig>(
         r#"
-name = "underlay"
+name = "workspace-app"
 "#,
     )
     .expect_err("legacy bundle name should be rejected");

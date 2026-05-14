@@ -340,7 +340,7 @@ required = false
 Rules:
 
 - `path` is always relative to the root repo
-- sibling repos via `../underlay`-style paths are allowed when they stay under
+- sibling repos via `../platform`-style paths are allowed when they stay under
   the root repo's parent directory
 - child `run` executes inside the child repo after clone or update
 

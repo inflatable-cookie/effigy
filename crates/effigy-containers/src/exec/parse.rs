@@ -304,10 +304,10 @@ mod tests {
     fn infer_host_working_dir_from_inspect_maps_container_working_dir_through_bind_mount() {
         let inferred = infer_host_working_dir_from_inspect(
             r#"[{
-              "Config": { "WorkingDir": "/workspace-root/underlay-reference" },
+              "Config": { "WorkingDir": "/workspace-root/workspace-app-reference" },
               "Mounts": [
-                { "Type": "bind", "Source": "/Users/tom/Dev/projects/underlay-reference", "Destination": "/workspace-root/underlay-reference" },
-                { "Type": "bind", "Source": "/Users/tom/Dev/projects/underlay", "Destination": "/workspace-root/underlay" }
+                { "Type": "bind", "Source": "/Users/tom/Dev/projects/workspace-app-reference", "Destination": "/workspace-root/workspace-app-reference" },
+                { "Type": "bind", "Source": "/Users/tom/Dev/projects/platform", "Destination": "/workspace-root/platform" }
               ]
             }]"#,
         )
@@ -315,7 +315,7 @@ mod tests {
 
         assert_eq!(
             inferred.as_deref(),
-            Some("/Users/tom/Dev/projects/underlay-reference")
+            Some("/Users/tom/Dev/projects/workspace-app-reference")
         );
     }
 

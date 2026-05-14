@@ -1075,8 +1075,8 @@ fn execute_rhai_script_maps_host_exec_paths_into_local_workspace_during_handoff(
 }
 
 #[test]
-fn execute_rhai_script_proves_decodelabs_mysql_seed_uses_container_exec_with_stdin_file() {
-    let root = temp_root("decodelabs-mysql-seed");
+fn execute_rhai_script_proves_mysql_seed_uses_container_exec_with_stdin_file() {
+    let root = temp_root("mysql-seed");
     let seed_path = root.join("bundle/database/seeds/contactpatch.sql");
     fs::create_dir_all(seed_path.parent().expect("seed parent")).expect("seed parent dir");
     fs::write(&seed_path, "insert into contacts values (1);\n").expect("seed sql");
@@ -1702,6 +1702,19 @@ fn execute_rhai_script_can_capture_regex_groups_and_write_structured_files() {
             if roundtrip_toml["tasks"]["sync_task"]["task"] != "defer migrate/media https://www.acowtancy.com" {
                 throw("toml task");
             }
+
+            let blueprint = #{
+                services: [
+                    #{
+                        name: "api",
+                        envVars: [#{ key: "DATABASE_URL", "sync": false }]
+                    }
+                ]
+            };
+            yaml::write_file("tmp/blueprint.yaml", blueprint);
+            let roundtrip_yaml = yaml::read_file("tmp/blueprint.yaml");
+            if roundtrip_yaml["services"][0]["name"] != "api" { throw("yaml service"); }
+            if roundtrip_yaml["services"][0]["envVars"][0]["sync"] != false { throw("yaml sync"); }
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
@@ -1710,6 +1723,9 @@ fn execute_rhai_script_can_capture_regex_groups_and_write_structured_files() {
     let toml_payload = fs::read_to_string(root.join("tmp/manifest.toml")).expect("toml payload");
     assert!(toml_payload.contains("[bundle]"));
     assert!(toml_payload.contains("task = \"defer migrate/media https://www.acowtancy.com\""));
+    let yaml_payload = fs::read_to_string(root.join("tmp/blueprint.yaml")).expect("yaml payload");
+    assert!(yaml_payload.contains("services:"));
+    assert!(yaml_payload.contains("envVars:"));
 }
 
 #[test]
@@ -1961,10 +1977,8 @@ fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
         "scripts/rehearse-linux-release-container.rhai" => {
             contents.contains("process::run(\n    \"colima\",")
         }
-        "crates/effigy-catalog/starters/underlay/scripts/dev/ui-setup.rhai"
-        | "crates/effigy-catalog/starters/underlay/bundles/underlay/scripts/dev/ui-setup.rhai"
-        | "crates/effigy-manifest/tests/fixtures/underlay-bundle/scripts/dev/ui-setup.rhai"
-        | "external/bundles/underlay/scripts/dev/ui-setup.rhai" => {
+        "crates/effigy-manifest/tests/fixtures/workspace-app-bundle/scripts/dev/ui-setup.rhai"
+        | "external/bundles/workspace-app/scripts/dev/ui-setup.rhai" => {
             contents.contains("process::stream(\"sh\", [\"-lc\", shell])")
         }
         "external/providers/render/scripts/apply.rhai"
