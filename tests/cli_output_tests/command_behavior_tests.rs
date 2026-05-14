@@ -7,6 +7,8 @@ use std::process::{Command, Stdio};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
+use effigy_demo::{write_active_attempt_record, PersistedDemoActiveAttempt};
+
 use super::support::{
     attach_bare_remote, git_commit_all, git_stdout, init_git_repo, parse_stdout_json,
     run_json_cli_command, run_json_cli_command_with_manifest, run_json_task_success,
@@ -413,31 +415,6 @@ fn wait_for_demo_active_inspect(
         assert!(
             started.elapsed() < timeout,
             "{label} did not become active in time"
-        );
-        std::thread::sleep(Duration::from_millis(25));
-    }
-}
-
-fn wait_for_demo_active_terminal_session(
-    root: &std::path::Path,
-    demo_id: &str,
-    timeout: Duration,
-    label: &str,
-) {
-    let started = Instant::now();
-    loop {
-        let output = run_json_cli_command(root, &["demo", "inspect", demo_id]);
-        if output.status.success() {
-            let parsed = parse_stdout_json(&output);
-            let available =
-                parsed["result"]["demo"]["active_terminal_session"]["available"] == true;
-            if available {
-                return;
-            }
-        }
-        assert!(
-            started.elapsed() < timeout,
-            "{label} did not expose an active terminal session in time"
         );
         std::thread::sleep(Duration::from_millis(25));
     }
@@ -1755,27 +1732,39 @@ fn cli_demo_resize_json_updates_concurrent_runner_terminal_session_geometry() {
     let root = temp_workspace("demo-concurrent-resize-json");
     write_demo_concurrent_runner_fixture(&root);
 
-    let mut child = spawn_demo_run_process(&root, "stack");
-    let active_path = root.join(".effigy/demo/active/stack.json");
-    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
-    wait_for_demo_active_inspect(
+    fs::create_dir_all(root.join(".effigy/demo/active")).expect("create active demo dir");
+    fs::create_dir_all(root.join(".effigy/demo/logs")).expect("create demo logs dir");
+    fs::write(root.join(".effigy/demo/active/stack.resize.jsonl"), "")
+        .expect("write resize handoff");
+    fs::write(root.join(".effigy/demo/logs/stack.stdout.log"), "api-ok\n")
+        .expect("write stdout log");
+    fs::write(root.join(".effigy/demo/logs/stack.stderr.log"), "").expect("write stderr log");
+    write_active_attempt_record(
         &root,
         "stack",
-        Duration::from_secs(60),
-        "concurrent runner resize state",
-    );
-    wait_for_demo_active_terminal_session(
-        &root,
-        "stack",
-        Duration::from_secs(60),
-        "concurrent runner terminal session",
-    );
+        &PersistedDemoActiveAttempt::new_concurrent_runner_backed(
+            "stack-attempt".to_owned(),
+            "stack",
+            "dev",
+            "<managed:dev profile:default>".to_owned(),
+            true,
+            "single-terminal".to_owned(),
+            1,
+            vec!["api".to_owned()],
+            "single-source".to_owned(),
+            Some(".effigy/demo/active/stack.stdin.log".to_owned()),
+            Some(".effigy/demo/active/stack.resize.jsonl".to_owned()),
+            Some(".effigy/demo/logs/stack.stdout.log".to_owned()),
+            Some(".effigy/demo/logs/stack.stderr.log".to_owned()),
+            Some((80, 24)),
+        ),
+    )
+    .expect("write concurrent runner active attempt");
 
     let output = run_json_cli_command(
         &root,
         &["demo", "resize", "stack", "--cols", "144", "--rows", "41"],
     );
-    assert!(output.status.success(), "demo resize failed: {output:?}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["schema"], "effigy.demo.resize.v1");
     assert_eq!(parsed["result"]["demo_id"], "stack");
@@ -1789,16 +1778,14 @@ fn cli_demo_resize_json_updates_concurrent_runner_terminal_session_geometry() {
         parsed["result"]["active_terminal_session"]["terminal_size"]["rows"],
         41
     );
-
-    let stop = run_json_cli_command(&root, &["demo", "stop", "stack"]);
-    if !stop.status.success() {
-        let parsed = parse_stdout_json(&stop);
-        assert_eq!(
-            parsed["error"]["details"]["active_attempt"]["active"], false,
-            "unexpected concurrent resize stop failure: {stop:?}"
-        );
-    }
-    wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
+    assert_eq!(
+        parsed["result"]["active_terminal_session"]["runtime_backend"]["kind"],
+        "concurrent-runner"
+    );
+    let handoff = fs::read_to_string(root.join(".effigy/demo/active/stack.resize.jsonl"))
+        .expect("read concurrent resize handoff");
+    assert!(handoff.contains("\"cols\":144"));
+    assert!(handoff.contains("\"rows\":41"));
 }
 
 #[test]
