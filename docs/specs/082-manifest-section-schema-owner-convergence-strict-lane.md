@@ -2,7 +2,7 @@
 
 Roadmap: [`g05.017`](../roadmaps/g05/017-manifest-section-schema-owner-convergence.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-14
 
@@ -13,7 +13,7 @@ fragments, and bundle defaults parse and validate through one canonical shape.
 
 ## Lane Posture
 
-Posture: `strict-ready`
+Posture: `strict-closed`
 
 This lane is executable because the duplicated owner surfaces are identified,
 the user-facing schema is already known, and the work can land in bounded
@@ -31,17 +31,16 @@ manifest-crate slices.
 ## Execution Order
 
 1. `737` open the manifest-section convergence lane and wire the ready chain
-2. `738` extract one canonical manifest-section owner in `effigy-manifest`
-3. `739` switch root composition and bundle defaults to the canonical owner and
-   add regression proof
-4. `740` close the lane and refresh currentness surfaces
+2. `738` complete: canonical manifest-section owner extracted in `effigy-manifest`
+3. `739` complete: root composition and bundle defaults now reuse the canonical owner with regression proof
+4. `740` complete: lane closed and currentness surfaces refreshed
 
 ## Ready Chain
 
-- `737` is ready now
-- `738` is ready after `737`
-- `739` is ready after `738`
-- `740` is ready after `739`
+- `737` is complete
+- `738` is complete
+- `739` is complete
+- `740` is complete
 
 ## Auto-Continuation Envelope
 
@@ -65,4 +64,4 @@ This lane is complete when:
 
 ## Next Task
 
-Execute `737` now, then continue directly into `738`.
+No next task. Lane `082` is closed.

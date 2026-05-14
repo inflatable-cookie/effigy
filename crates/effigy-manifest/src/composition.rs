@@ -1,13 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use semver::Version;
-use serde::Deserialize;
 use toml::Value;
 
 use super::TaskManifest;
 use crate::bundles::apply_bundle_defaults;
 use crate::config_sections::ManifestBundleConfig;
+use crate::manifest_section::{
+    resolve_include_path, validate_minimum_effigy_version, ManifestIncludeEntry,
+    ManifestSectionConfig,
+};
 use crate::ManifestError;
 
 #[derive(Debug)]
@@ -43,37 +45,6 @@ pub struct ManifestCompositionOverride {
 pub struct ManifestCompositionValueSource {
     pub path: String,
     pub source: PathBuf,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManifestSectionConfig {
-    #[serde(default)]
-    include: Vec<ManifestIncludeEntry>,
-    #[serde(default)]
-    extend: Vec<String>,
-    #[serde(default)]
-    minimum_effigy_version: Option<String>,
-    #[serde(default)]
-    #[serde(rename = "root")]
-    _root: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-enum ManifestIncludeEntry {
-    Path(String),
-    Detailed(ManifestIncludeDirective),
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManifestIncludeDirective {
-    path: String,
-    #[serde(default, rename = "override")]
-    override_paths: Vec<String>,
-    #[serde(default)]
-    optional: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -337,11 +308,7 @@ fn take_include_specs(
                 (detail.path, detail.override_paths, detail.optional)
             }
         };
-        let resolved_path = if Path::new(&path).is_absolute() {
-            PathBuf::from(&path)
-        } else {
-            parent.join(&path)
-        };
+        let resolved_path = resolve_include_path(parent, &path);
         specs.push(ManifestIncludeSpec {
             resolved_path,
             override_paths,
@@ -349,50 +316,6 @@ fn take_include_specs(
         });
     }
     Ok((specs, config.extend))
-}
-
-fn validate_minimum_effigy_version(
-    manifest_path: &Path,
-    requested: Option<&str>,
-) -> Result<(), ManifestError> {
-    let Some(requested) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(());
-    };
-    let requested_version = Version::parse(requested).map_err(|error| ManifestError::Compose {
-        path: manifest_path.to_path_buf(),
-        detail: format!(
-            "`[manifest].minimum_effigy_version` must be a valid semver version: {error}"
-        ),
-    })?;
-    let active_version = effigy_core::build_info::active_version();
-    if !active_version_satisfies_minimum_effigy_version(&active_version, &requested_version)
-        .map_err(|detail| ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail,
-        })?
-    {
-        return Err(ManifestError::Compose {
-            path: manifest_path.to_path_buf(),
-            detail: format!(
-                "manifest requires Effigy >= {requested_version}, but this binary is {}",
-                active_version
-            ),
-        });
-    }
-    Ok(())
-}
-
-fn active_version_satisfies_minimum_effigy_version(
-    active_version: &str,
-    requested_version: &Version,
-) -> Result<bool, String> {
-    let normalized = active_version.trim().trim_start_matches('v');
-    if normalized.contains("+local.") {
-        return Ok(true);
-    }
-    let current_version = Version::parse(normalized)
-        .map_err(|error| format!("current Effigy version is invalid: {error}"))?;
-    Ok(current_version >= *requested_version)
 }
 
 fn merge_values(
@@ -1363,12 +1286,12 @@ minimum_effigy_version = "latest"
     #[test]
     fn manifest_minimum_effigy_version_accepts_local_dev_builds_for_newer_floors() {
         let requested = Version::parse("0.7.0").expect("requested");
-        assert!(active_version_satisfies_minimum_effigy_version(
+        assert!(crate::manifest_section::active_version_satisfies_minimum_effigy_version(
             "0.6.1+local.67a79ff.dirty",
             &requested,
         )
         .expect("local build should bypass floor"));
-        assert!(active_version_satisfies_minimum_effigy_version(
+        assert!(crate::manifest_section::active_version_satisfies_minimum_effigy_version(
             "v0.6.1+local.67a79ff",
             &requested
         )
@@ -1379,7 +1302,10 @@ minimum_effigy_version = "latest"
     fn manifest_minimum_effigy_version_rejects_newer_floor_for_release_builds() {
         let requested = Version::parse("0.7.0").expect("requested");
         assert!(
-            !active_version_satisfies_minimum_effigy_version("0.6.1", &requested)
+            !crate::manifest_section::active_version_satisfies_minimum_effigy_version(
+                "0.6.1",
+                &requested
+            )
                 .expect("release build should stay strict")
         );
     }
@@ -1388,8 +1314,11 @@ minimum_effigy_version = "latest"
     fn manifest_minimum_effigy_version_rejects_invalid_current_binary_version() {
         let requested = Version::parse("0.6.1").expect("requested");
         let err =
-            active_version_satisfies_minimum_effigy_version("definitely-not-semver", &requested)
-                .expect_err("invalid active version should fail");
+            crate::manifest_section::active_version_satisfies_minimum_effigy_version(
+                "definitely-not-semver",
+                &requested,
+            )
+            .expect_err("invalid active version should fail");
         assert!(err.contains("current Effigy version is invalid"), "{err}");
     }
 }

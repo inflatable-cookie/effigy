@@ -40,7 +40,7 @@ Updated: 2026-05-14
 - `g05.016` through `g05.019` are now queued for schema-shape consolidation
   across `[manifest]` and task-like definition owners.
 
-Current ready work: `737`.
+Current ready work: none.
 
 ## Research Roadmaps
 
@@ -72,4 +72,5 @@ closeout there first.
 
 ## Next Task
 
-Execute `737` inside strict lane `082`.
+No active roadmap task inside `g05`. Open the next lane only after explicit
+planning.

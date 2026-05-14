@@ -3,7 +3,7 @@
 Roadmap: [`../017-manifest-section-schema-owner-convergence.md`](../017-manifest-section-schema-owner-convergence.md)
 Strict lane: [`../../../specs/082-manifest-section-schema-owner-convergence-strict-lane.md`](../../../specs/082-manifest-section-schema-owner-convergence-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-14
 
@@ -24,6 +24,12 @@ canonical `[manifest]` owner slice.
 - `738` is the first ready implementation card
 - active planning front doors point at the lane correctly
 
+## Completed
+
+- Opened strict lane `082` for `g05.017`.
+- Sequenced the ready chain through cards `738`, `739`, and `740`.
+- Pointed active planning front doors at the new lane.
+
 ## Next Task
 
-Execute `738` to extract the canonical `[manifest]` section owner.
+Execute `740` after the canonical owner and caller-adoption slices.

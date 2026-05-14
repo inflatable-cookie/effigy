@@ -6,6 +6,7 @@ mod composition;
 pub mod config_sections;
 pub mod execution_binding;
 mod loaded_catalog;
+mod manifest_section;
 mod task_defs;
 pub mod task_runtime;
 mod test_config;

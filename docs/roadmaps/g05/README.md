@@ -110,7 +110,8 @@ Completed cards:
 
 ## Next Task
 
-No active `g05` task right now. The reopened cleanup suite is closed, and the
-next queued tranche is `g05.016` to `g05.019` for schema-shape consolidation.
+No active `g05` task right now. The reopened cleanup suite is closed,
+`g05.017` is complete, and the next queued tranche is `g05.018` to `g05.019`
+for task-like definition convergence and regression proof.
 
-Current ready work: `737`.
+Current ready work: none.

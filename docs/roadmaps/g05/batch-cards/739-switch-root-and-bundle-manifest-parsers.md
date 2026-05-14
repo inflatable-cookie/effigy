@@ -3,7 +3,7 @@
 Roadmap: [`../017-manifest-section-schema-owner-convergence.md`](../017-manifest-section-schema-owner-convergence.md)
 Strict lane: [`../../../specs/082-manifest-section-schema-owner-convergence-strict-lane.md`](../../../specs/082-manifest-section-schema-owner-convergence-strict-lane.md)
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-05-14
 
@@ -25,6 +25,14 @@ defaults parsing, then prove the shared behavior with regressions.
 - root and bundle callers use the same canonical `[manifest]` owner
 - the bundle-path version-floor bug is covered by regression tests
 - no behavior drift is introduced in the current supported `[manifest]` fields
+
+## Completed
+
+- Switched bundle defaults parsing to the same canonical `[manifest]` owner used
+  by root composition.
+- Added a regression test proving bundle defaults accept
+  `[manifest].minimum_effigy_version`.
+- Kept the current supported `[manifest]` field behavior stable.
 
 ## Next Task
 

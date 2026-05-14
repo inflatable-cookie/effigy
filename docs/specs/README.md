@@ -28,7 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`082-manifest-section-schema-owner-convergence-strict-lane.md`](./082-manifest-section-schema-owner-convergence-strict-lane.md)
+- none
 
 Queued strict lanes:
 
@@ -41,6 +41,5 @@ Archived strict lanes:
 
 ## Next Task
 
-Execute ready card `737`, then continue through the bounded ready chain in
-`082`.
+No active strict-lane task. Open the next lane only after explicit planning.
 Release execution remains human-owned.

@@ -1,6 +1,6 @@
 # g05.017 - Manifest Section Schema Owner Convergence
 
-Status: Planned
+Status: Complete
 Depends on: `g05.016`
 
 ## Goal
@@ -48,5 +48,5 @@ included fragments, and bundle defaults cannot drift when new fields are added.
 
 ## Next Task
 
-Open the implementation lane for canonical `[manifest]` owner extraction and the
-bundle/root reuse pass.
+No next task inside this roadmap. The manifest-section schema owner convergence
+lane is complete.

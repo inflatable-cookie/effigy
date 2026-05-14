@@ -46,7 +46,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Active Strict Lane
 
-- [`082-manifest-section-schema-owner-convergence-strict-lane.md`](../specs/082-manifest-section-schema-owner-convergence-strict-lane.md)
+No strict lane is active.
 
 ## Research Program
 
@@ -82,8 +82,7 @@ Before rollover:
 
 ## Next Task
 
-Execute `737` inside strict lane `082` and continue through the bounded ready
-chain while each card closes green.
+No active roadmap task. Open the next lane only after explicit planning.
 
 ## Historical language boundary
 

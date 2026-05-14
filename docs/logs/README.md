@@ -76,6 +76,8 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/14-012000-manifest-section-convergence-lane-closeout.md`](./2026-05/14-012000-manifest-section-convergence-lane-closeout.md)
+- [`2026-05/14-011500-manifest-section-owner-convergence-slices.md`](./2026-05/14-011500-manifest-section-owner-convergence-slices.md)
 - [`2026-05/14-010500-g05-reopened-cleanup-suite-closeout.md`](./2026-05/14-010500-g05-reopened-cleanup-suite-closeout.md)
 - [`2026-05/14-010000-active-docs-reference-refresh.md`](./2026-05/14-010000-active-docs-reference-refresh.md)
 - [`2026-05/14-005400-duplicate-proof-and-residual-deferrals.md`](./2026-05/14-005400-duplicate-proof-and-residual-deferrals.md)

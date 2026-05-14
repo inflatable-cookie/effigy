@@ -3,7 +3,7 @@
 Roadmap: [`../017-manifest-section-schema-owner-convergence.md`](../017-manifest-section-schema-owner-convergence.md)
 Strict lane: [`../../../specs/082-manifest-section-schema-owner-convergence-strict-lane.md`](../../../specs/082-manifest-section-schema-owner-convergence-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-14
 
@@ -25,6 +25,14 @@ owner inside `effigy-manifest`.
 - root composition no longer owns a private duplicate shape
 - focused manifest tests still pass
 
+## Completed
+
+- Added `crates/effigy-manifest/src/manifest_section.rs` as the canonical
+  `[manifest]` section owner.
+- Moved shared `[manifest]` serde fields and minimum-version validation into the
+  canonical owner.
+- Rewired root composition to use the shared owner.
+
 ## Validation
 
 - `cargo test -p effigy-manifest minimum_effigy_version`
@@ -38,5 +46,4 @@ owner inside `effigy-manifest`.
 
 ## Next Task
 
-Execute `739` to switch bundle defaults and root composition to the shared
-owner and add bundle-path regression proof.
+Execute `740` after the caller-adoption and regression-proof slice.
