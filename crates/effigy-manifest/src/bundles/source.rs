@@ -1,12 +1,12 @@
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use effigy_artifacts::{
     ArtifactSourceRef, OciArtifactAdapter, OciArtifactPullRequest, OrasCliArtifactAdapter,
 };
-use sha2::{Digest, Sha256};
+use effigy_core::git_exec::run_git_output;
+use effigy_core::git_source::{canonical_git_cache_identity, sanitize_cache_segment, sha256_hex};
 
 use crate::ManifestError;
 
@@ -384,60 +384,18 @@ fn run_git(
             error,
         })?;
     }
-    let mut command = Command::new("git");
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    command.args(args);
-    let output = command.output().map_err(|error| ManifestError::Read {
-        path: manifest_path.to_path_buf(),
-        error,
-    })?;
-    if output.status.success() {
-        return Ok(output);
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    let detail = if stderr.is_empty() {
-        format!("git {} failed", args.join(" "))
-    } else {
-        format!("git {} failed: {stderr}", args.join(" "))
-    };
-    Err(ManifestError::Compose {
-        path: manifest_path.to_path_buf(),
-        detail,
-    })
-}
-
-fn canonical_git_cache_identity(url: &str) -> String {
-    let trimmed = url.trim();
-    if let Some(rest) = trimmed.strip_prefix("git@") {
-        if let Some((host, path)) = rest.split_once(':') {
-            return format!(
-                "{}/{}",
-                host.to_ascii_lowercase(),
-                normalize_git_repo_path(path)
-            );
-        }
-    }
-
-    for prefix in ["ssh://", "https://", "http://", "git://"] {
-        if let Some(rest) = trimmed.strip_prefix(prefix) {
-            let rest = rest.split('@').next_back().unwrap_or(rest);
-            if let Some((host, path)) = rest.split_once('/') {
-                return format!(
-                    "{}/{}",
-                    host.to_ascii_lowercase(),
-                    normalize_git_repo_path(path)
-                );
-            }
-        }
-    }
-
-    if let Some(path) = trimmed.strip_prefix("file://") {
-        return format!("local/{}", normalize_local_git_path(path));
-    }
-
-    format!("local/{}", normalize_local_git_path(trimmed))
+    run_git_output(
+        cwd,
+        args,
+        |error| ManifestError::Read {
+            path: manifest_path.to_path_buf(),
+            error,
+        },
+        |detail| ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail,
+        },
+    )
 }
 
 fn emit_git_bundle_status_line(message: &str) {
@@ -456,35 +414,6 @@ fn abbreviate_revision(revision: &str) -> &str {
     revision.get(..7).unwrap_or(revision)
 }
 
-fn normalize_git_repo_path(path: &str) -> String {
-    path.trim_start_matches('/')
-        .trim_end_matches(".git")
-        .trim_end_matches('/')
-        .to_ascii_lowercase()
-        .to_owned()
-}
-
-fn normalize_local_git_path(path: &str) -> String {
-    let raw = Path::new(path);
-    std::fs::canonicalize(raw)
-        .unwrap_or_else(|_| raw.to_path_buf())
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
-fn sanitize_bundle_cache_segment(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 fn git_bundle_cache_path(
     manifest_path: &Path,
     url: &str,
@@ -499,7 +428,7 @@ fn git_bundle_cache_path(
         .unwrap_or("main");
     Ok(cache_root
         .join(cache_key)
-        .join(sanitize_bundle_cache_segment(reference)))
+        .join(sanitize_cache_segment(reference)))
 }
 
 fn oci_bundle_cache_path(manifest_path: &Path, reference: &str) -> Result<PathBuf, ManifestError> {
@@ -694,7 +623,7 @@ struct OciBundleCacheLocator {
 fn oci_bundle_cache_locator(reference: &str) -> OciBundleCacheLocator {
     let (without_digest, version_segment) = if let Some((path, digest)) = reference.rsplit_once('@')
     {
-        (path, sanitize_bundle_cache_segment(digest))
+        (path, sanitize_cache_segment(digest))
     } else {
         let slash_index = reference.rfind('/').unwrap_or(0);
         let tag_index = reference[slash_index..]
@@ -703,7 +632,7 @@ fn oci_bundle_cache_locator(reference: &str) -> OciBundleCacheLocator {
         if let Some(tag_index) = tag_index {
             (
                 &reference[..tag_index],
-                sanitize_bundle_cache_segment(&reference[tag_index + 1..]),
+                sanitize_cache_segment(&reference[tag_index + 1..]),
             )
         } else {
             (reference, "latest".to_owned())
@@ -716,20 +645,14 @@ fn oci_bundle_cache_locator(reference: &str) -> OciBundleCacheLocator {
         .unwrap_or_else(|| ("oci".to_owned(), without_digest.to_owned()));
 
     OciBundleCacheLocator {
-        registry: sanitize_bundle_cache_segment(&registry),
+        registry: sanitize_cache_segment(&registry),
         repository_path: repository_path
             .split('/')
-            .map(sanitize_bundle_cache_segment)
+            .map(sanitize_cache_segment)
             .collect::<Vec<_>>()
             .join("/"),
         version_segment,
     }
-}
-
-fn sha256_hex(input: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(input);
-    format!("{:x}", hasher.finalize())
 }
 
 fn bundle_cache_home_dir(manifest_path: &Path) -> Result<PathBuf, ManifestError> {

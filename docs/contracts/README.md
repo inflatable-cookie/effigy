@@ -11,6 +11,16 @@ This folder contains both:
 - Target envelope: machine-readable contracts stay stable, discoverable, and auditable as commands evolve.
 - Vision target delta: contract docs now include explicit ownership and drift-trigger rules instead of relying on implicit process memory.
 
+## Active Posture
+
+Active core anchors for the reusable Effigy repo are the provider-neutral and
+domain-neutral contracts such as `002`, `019`, `020`, `025`, `027`, `029`,
+`030`, `031`, and `032`.
+
+The older product-specific contracts in this folder remain as historical
+evidence and concrete examples. They are not current core ownership anchors for
+new reusable-core work.
+
 ## Artifacts
 
 - [`001-working-rules.md`](./001-working-rules.md): strict execution rules for
@@ -18,10 +28,11 @@ This folder contains both:
 - [`002-production-deployment-model.md`](./002-production-deployment-model.md):
   provider-neutral production deployment contract for the new export surface.
 - [`003-underlay-deployment-derivation.md`](./003-underlay-deployment-derivation.md):
-  first concrete bundle-owned `deploy.model.v1` shape for the git-hosted
-  `underlay` bundle.
+  historical first concrete bundle-owned `deploy.model.v1` derivation example
+  for the git-hosted `underlay` bundle.
 - [`004-underlay-reference-deploy-model-example.md`](./004-underlay-reference-deploy-model-example.md):
-  first concrete example model for the shipped `underlay-reference` repo.
+  historical first concrete example model for the shipped
+  `underlay-reference` repo.
 - [`005-container-runtime-contract.md`](./005-container-runtime-contract.md):
   runtime guarantee contract for container-backed task execution, including
   handoff semantics, alias scope, and backend-fallback ownership.
@@ -29,18 +40,19 @@ This folder contains both:
   compose-backend capability matrix for the supported local runtime paths,
   including backend-required versus Effigy-repaired behavior.
 - [`007-render-export-contract.md`](./007-render-export-contract.md):
-  first provider-export contract for the managed deployment lane, defining the
-  bounded `render.yaml` mapping.
+  provider-package export proof contract for Render, defining the bounded
+  `render.yaml` mapping used by the external Render package.
 - [`008-railway-export-contract.md`](./008-railway-export-contract.md):
-  second provider-export contract for the managed deployment lane, defining the
-  first bounded service-local `railway.toml` plus `report.json` export shape.
+  provider-package export proof contract for Railway, defining the bounded
+  service-local `railway.toml` plus `report.json` export shape used by the
+  external Railway package.
 - [`009-execution-surface-convergence.md`](./009-execution-surface-convergence.md):
   common-path convergence contract for repo targeting, binding resolution,
   runtime activation, session ownership, and embedded command re-entry across
   Effigy's execution surfaces.
 - [`010-decodelabs-production-strategy.md`](./010-decodelabs-production-strategy.md):
-  the short-term production-truth contract for Decodelabs, defining the
-  no-fake-automation boundary before any future deployment widening.
+  historical product-boundary contract for Decodelabs, preserving the
+  no-fake-automation posture before any future deployment widening.
 - [`011-runtime-context-contract.md`](./011-runtime-context-contract.md):
   boot-time runtime context contract for cwd, repo target, host facts, and
   container handoff state.
@@ -116,7 +128,8 @@ This folder contains both:
 - [`032-secret-and-local-config-management-contract.md`](./032-secret-and-local-config-management-contract.md):
   `g05` secret and local configuration contract covering config/secret
   separation, the built-in human-gated vault posture, secret declarations,
-  runtime injection, Underlay conventions, and Varlock adapter positioning.
+  runtime injection, consumer-repo config conventions, and Varlock adapter
+  positioning.
 - [`json-schema-index.json`](./json-schema-index.json): canonical schema inventory and validation command mapping.
 - [`json-selection-contract.json`](./json-selection-contract.json): CI selection artifact contract used by JSON contract validation flows.
 
@@ -127,7 +140,7 @@ This folder contains both:
 | `005-container-runtime-contract.md` | Platform maintainers | Container-backed handoff semantics, runtime prep ordering, alias guarantee scope, backend fallback ownership | Targeted runtime compatibility tests on the supported local backend path |
 | `006-compose-backend-compatibility.md` | Platform maintainers | Supported backend set, backend-required versus repaired capability boundary, named compatibility cases | Targeted runtime compatibility tests on the supported local backend path |
 | `009-execution-surface-convergence.md` | Platform maintainers | Execution-surface parity rules, repo-targeting propagation, activation/session ownership, embedded command re-entry semantics | Targeted parity tests across explicit tasks, deferred execution, exec, bootstrap, workspace, and embedded command surfaces |
-| `010-decodelabs-production-strategy.md` | Platform maintainers | Decodelabs production boundary, provider-readiness claims, operator-owned production concerns, future widening target | Planning review against `g03.003` plus any future Decodelabs deploy-surface proofs |
+| `010-decodelabs-production-strategy.md` | Platform maintainers | Historical Decodelabs production boundary, provider-readiness claims, operator-owned production concerns, and future widening target for that product family | Review only when explicitly revisiting Decodelabs-specific deployment planning |
 | `011-runtime-context-contract.md` | Platform maintainers | Cwd/root resolution, repo override propagation, boot-time host facts, container handoff marker semantics | `cargo test -p effigy-context` plus targeted runner context tests |
 | `012-container-manager-contract.md` | Platform maintainers | Supported backend ids, backend capability boundaries, interrupt/shutdown policy, manager report fields, public report exposure if added | `cargo test -p effigy-containers` plus targeted runner container migration tests |
 | `013-task-execution-request-contract.md` | Platform maintainers | Execution request fields, route selection rules, Rhai execution helper behavior, embedded task dispatch behavior, public plan exposure if added | `cargo test -p effigy-execution` plus targeted embedded dispatch parity tests |
@@ -149,7 +162,7 @@ This folder contains both:
 | `029-deploy-domain-boundary-contract.md` | Platform maintainers | Deploy transaction ownership, report persistence paths, provider-package dispatch context, text rendering boundary, JSON schema compatibility, and provider-specific behavior staying outside core | Planning review against `g04.037` plus focused deploy transaction and provider package fixture tests once implementation starts |
 | `030-low-risk-deduplication-contract.md` | Platform maintainers | Docs-policy test ownership, CLI help topic normalization, private fixture-builder boundaries, and no-behavior-change duplication cleanup rules | Planning review against `g04.038` plus focused docs-policy, help, fixture, and duplicate-block scan proofs once implementation starts |
 | `031-artifact-and-crate-boundary-contract.md` | Platform maintainers | Artifact refs/staging/OCI/module ownership, small-crate retention rules, merge-candidate evidence rules, and package-map refresh triggers | Planning review against `g04.039` plus artifact tests, crate-boundary docs review, god-file scan, and cargo check once implementation starts |
-| `032-secret-and-local-config-management-contract.md` | Platform maintainers | `[secrets]` manifest shape, built-in vault unlock policy, redaction rules, task/container/Rhai/deploy injection, `.env.schema` relationship, Underlay config convention, and Varlock adapter posture | Planning review against `g05.001` plus focused secrets, vault, injection, redaction, container, Rhai, and deploy-provider tests once implementation starts |
+| `032-secret-and-local-config-management-contract.md` | Platform maintainers | `[secrets]` manifest shape, built-in vault unlock policy, redaction rules, task/container/Rhai/deploy injection, `.env.schema` relationship, consumer-repo config convention, and Varlock adapter posture | Planning review against `g05.001` plus focused secrets, vault, injection, redaction, container, Rhai, and deploy-provider tests once implementation starts |
 | `json-schema-index.json` | Platform maintainers | New JSON command schema, schema version bump, deprecation/removal | `effigy contracts check-json --fast --print-selected` |
 | `json-selection-contract.json` | Platform maintainers + CI owner | Selection artifact shape change, validator behavior change | `effigy contracts validate-selection --artifact json-contracts-selected.json` |
 
@@ -164,14 +177,12 @@ This folder contains both:
 
 Keep both the machine contracts and the active working-rules contract aligned
 to the real validation commands and live execution posture, and use
-`002-production-deployment-model.md` plus
-`003-underlay-deployment-derivation.md` and
-`004-underlay-reference-deploy-model-example.md` as the contract anchors for
-`g03.001`, plus `007-render-export-contract.md` as the first provider-adapter
-contract anchor for the same lane, plus
-`008-railway-export-contract.md` as the second provider-adapter contract
-anchor for the same lane, `010-decodelabs-production-strategy.md` as the
-contract anchor for the active `g03.003` Decodelabs planning lane,
+`002-production-deployment-model.md` as the active provider-neutral deploy
+model anchor, and treat `003-underlay-deployment-derivation.md`,
+`004-underlay-reference-deploy-model-example.md`,
+`007-render-export-contract.md`, `008-railway-export-contract.md`, and
+`010-decodelabs-production-strategy.md` as retained historical or example
+evidence rather than current reusable-core anchors, while keeping
 `005-container-runtime-contract.md` as the contract anchor for the `g03.004`
 to `g03.006` runtime-hardening lane, `006-compose-backend-compatibility.md`
 as the backend capability matrix for `g03.006`,

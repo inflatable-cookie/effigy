@@ -23,7 +23,8 @@ use std::io::Cursor;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use support::{
-    attach_remote_and_push, bare_remote_path, commit_all, init_bare_remote, init_git_repo, temp_dir,
+    attach_remote_and_push, bare_remote_path, commit_all, create_root_remote_with_bootstrap,
+    create_root_remote_with_optional_missing_child, init_bare_remote, init_git_repo, temp_dir,
 };
 
 /// RAII guard that prepends `bin_dir` to `PATH` for the duration of a test
@@ -217,55 +218,6 @@ fn create_plain_remote(name: &str) -> PathBuf {
     remote
 }
 
-fn create_root_remote_with_bootstrap(child_remote: &Path) -> PathBuf {
-    let worktree = temp_dir("root-worktree");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
-    fs::write(
-        worktree.join("effigy.toml"),
-        format!(
-            r#"[bootstrap]
-run = "sh ./scripts/root-setup.sh"
-start = "bootstrap:start"
-
-[[bootstrap.children]]
-path = "child-app"
-repo = "{}"
-run = "sh ./scripts/child-setup.sh"
-required = true
-
-[tasks."bootstrap:start"]
-run = "sh ./scripts/start.sh"
-"#,
-            child_remote.display()
-        ),
-    )
-    .expect("write manifest");
-    fs::write(
-        worktree.join("scripts/root-setup.sh"),
-        "#!/bin/sh\nset -eu\nprintf root-setup > root-setup.txt\n",
-    )
-    .expect("write root setup");
-    fs::write(
-        worktree.join("scripts/start.sh"),
-        "#!/bin/sh\nset -eu\nprintf started > start.txt\n",
-    )
-    .expect("write start");
-    for name in ["root-setup.sh", "start.sh"] {
-        let script = worktree.join("scripts").join(name);
-        let mut perms = fs::metadata(&script)
-            .expect("script metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script, perms).expect("chmod script");
-    }
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init root");
-    let remote = bare_remote_path("root-bare");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
 fn create_root_remote_with_sibling_bootstrap_deps(child_remote: &Path) -> PathBuf {
     let worktree = temp_dir("root-sibling-deps-worktree");
     fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
@@ -292,41 +244,6 @@ required = true
     init_git_repo(&worktree);
     commit_all(&worktree, "init root sibling deps");
     let remote = bare_remote_path("root-sibling-deps-bare");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_root_remote_with_optional_missing_child() -> PathBuf {
-    let worktree = temp_dir("root-optional-child-worktree");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
-    fs::write(
-        worktree.join("effigy.toml"),
-        r#"[bootstrap]
-run = "sh ./scripts/root-setup.sh"
-
-[[bootstrap.children]]
-path = "missing-child"
-repo = "/definitely/not/a/real/repo.git"
-run = "sh ./scripts/child-setup.sh"
-required = false
-"#,
-    )
-    .expect("write manifest");
-    fs::write(
-        worktree.join("scripts/root-setup.sh"),
-        "#!/bin/sh\nset -eu\nprintf root-setup > root-setup.txt\n",
-    )
-    .expect("write root setup");
-    let script = worktree.join("scripts/root-setup.sh");
-    let mut perms = fs::metadata(&script)
-        .expect("script metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&script, perms).expect("chmod script");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init root optional child");
-    let remote = bare_remote_path("root-optional-child-bare");
     init_bare_remote(&remote);
     attach_remote_and_push(&worktree, &remote);
     remote

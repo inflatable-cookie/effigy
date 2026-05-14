@@ -1,42 +1,6 @@
 use std::collections::BTreeMap;
 
-use super::{
-    ManifestInlineTaskDefinition, ManifestManagedRun, ManifestManagedRunStep,
-    ManifestManagedRunStepTable, ManifestTask,
-};
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-enum ManifestTaskDefinition {
-    Run(String),
-    RunSequence(Vec<ManifestManagedRunStep>),
-    Full(Box<ManifestTask>),
-    Compact(Box<ManifestInlineTaskDefinition>),
-    RunStep(Box<ManifestManagedRunStepTable>),
-}
-
-impl ManifestTaskDefinition {
-    fn into_manifest_task(self) -> ManifestTask {
-        match self {
-            ManifestTaskDefinition::Run(command) => ManifestTask {
-                run: Some(ManifestManagedRun::Command(command)),
-                ..ManifestTask::default()
-            },
-            ManifestTaskDefinition::RunSequence(sequence) => ManifestTask {
-                run: Some(ManifestManagedRun::Sequence(sequence)),
-                ..ManifestTask::default()
-            },
-            ManifestTaskDefinition::RunStep(step) => ManifestTask {
-                run: Some(ManifestManagedRun::Sequence(vec![
-                    ManifestManagedRunStep::Step(step),
-                ])),
-                ..ManifestTask::default()
-            },
-            ManifestTaskDefinition::Compact(task) => task.into_manifest_task(),
-            ManifestTaskDefinition::Full(task) => *task,
-        }
-    }
-}
+use super::{ManifestTask, ManifestTaskLikeDefinition};
 
 pub fn deserialize_tasks<'de, D>(
     deserializer: D,
@@ -45,7 +9,7 @@ where
     D: serde::Deserializer<'de>,
 {
     let definitions =
-        <BTreeMap<String, ManifestTaskDefinition> as serde::Deserialize>::deserialize(
+        <BTreeMap<String, ManifestTaskLikeDefinition> as serde::Deserialize>::deserialize(
             deserializer,
         )?;
     Ok(definitions

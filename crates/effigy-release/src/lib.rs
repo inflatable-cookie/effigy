@@ -2,6 +2,8 @@ mod git;
 mod prepare_helpers;
 mod render_json;
 mod review;
+#[cfg(test)]
+pub mod test_support;
 mod text;
 mod verify_install;
 mod version;

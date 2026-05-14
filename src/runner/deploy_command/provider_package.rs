@@ -1,16 +1,16 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use effigy_core::git_exec::run_git_output;
+use effigy_core::git_source::{canonical_git_cache_identity, sanitize_cache_segment, sha256_hex};
+use effigy_rhai::RhaiSecretTarget;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use crate::runner::error::RunnerError;
 use crate::runner::script_command::execute_repo_rhai_script_with_secret_targets;
-use effigy_rhai::RhaiSecretTarget;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -98,7 +98,7 @@ pub(super) struct DeployProviderPhaseReport {
     pub schema: String,
     pub phase: String,
     pub provider: String,
-    pub status: String,
+    pub status: DeployProviderReportStatus,
     #[serde(default)]
     pub checks: Vec<DeployProviderPhaseCheck>,
     #[serde(default)]
@@ -112,11 +112,71 @@ pub(super) struct DeployProviderPhaseReport {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub(super) struct DeployProviderPhaseCheck {
     pub name: String,
-    pub status: String,
+    pub status: DeployProviderCheckStatus,
     #[serde(default)]
     pub target: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum DeployProviderReportStatus {
+    Planned,
+    Ok,
+    Warning,
+    Blocked,
+    Succeeded,
+    Failed,
+    Skipped,
+}
+
+impl DeployProviderReportStatus {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Ok => "ok",
+            Self::Warning => "warning",
+            Self::Blocked => "blocked",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Skipped => "skipped",
+        }
+    }
+
+    pub(super) fn allows_preflight_progress(self) -> bool {
+        matches!(self, Self::Planned | Self::Ok)
+    }
+
+    pub(super) fn allows_apply_success(self) -> bool {
+        matches!(self, Self::Succeeded | Self::Planned | Self::Ok)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum DeployProviderCheckStatus {
+    Planned,
+    Ok,
+    Warning,
+    Blocked,
+    Succeeded,
+    Failed,
+    Skipped,
+}
+
+impl DeployProviderCheckStatus {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Ok => "ok",
+            Self::Warning => "warning",
+            Self::Blocked => "blocked",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Skipped => "skipped",
+        }
+    }
 }
 
 pub(super) fn resolve_provider_package(
@@ -343,7 +403,57 @@ fn validate_provider_phase_report(
             report.phase
         )));
     }
+    validate_provider_report_status(provider_name, phase, report)?;
     Ok(())
+}
+
+fn validate_provider_report_status(
+    provider_name: &str,
+    phase: &str,
+    report: &DeployProviderPhaseReport,
+) -> Result<(), RunnerError> {
+    let valid = match phase {
+        "preflight" => matches!(
+            report.status,
+            DeployProviderReportStatus::Planned
+                | DeployProviderReportStatus::Ok
+                | DeployProviderReportStatus::Warning
+                | DeployProviderReportStatus::Blocked
+                | DeployProviderReportStatus::Failed
+                | DeployProviderReportStatus::Skipped
+        ),
+        "apply" => matches!(
+            report.status,
+            DeployProviderReportStatus::Succeeded
+                | DeployProviderReportStatus::Failed
+                | DeployProviderReportStatus::Skipped
+        ),
+        "status" => matches!(
+            report.status,
+            DeployProviderReportStatus::Planned
+                | DeployProviderReportStatus::Ok
+                | DeployProviderReportStatus::Warning
+                | DeployProviderReportStatus::Blocked
+                | DeployProviderReportStatus::Failed
+                | DeployProviderReportStatus::Skipped
+        ),
+        "export" => matches!(
+            report.status,
+            DeployProviderReportStatus::Planned
+                | DeployProviderReportStatus::Succeeded
+                | DeployProviderReportStatus::Warning
+                | DeployProviderReportStatus::Failed
+                | DeployProviderReportStatus::Skipped
+        ),
+        _ => true,
+    };
+    if valid {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(format!(
+        "deploy provider `{provider_name}` {phase} report returned unsupported status `{}`",
+        report.status.as_str()
+    )))
 }
 
 fn read_provider_descriptor(root: &Path) -> Result<DeployProviderDescriptor, RunnerError> {
@@ -487,92 +597,18 @@ fn ensure_git_checkout(
 }
 
 fn run_git(manifest_root: &Path, cwd: Option<&Path>, args: &[&str]) -> Result<(), RunnerError> {
-    let mut command = ProcessCommand::new("git");
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    let output = command.args(args).output().map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to run git for deploy provider package in {}: {error}",
-            manifest_root.display()
-        ))
-    })?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    Err(RunnerError::task_invocation(if stderr.is_empty() {
-        format!("git {} failed for deploy provider package", args.join(" "))
-    } else {
-        format!(
-            "git {} failed for deploy provider package: {stderr}",
-            args.join(" ")
-        )
-    }))
-}
-
-fn canonical_git_cache_identity(url: &str) -> String {
-    let trimmed = url.trim();
-    if let Some(rest) = trimmed.strip_prefix("git@") {
-        if let Some((host, path)) = rest.split_once(':') {
-            return format!(
-                "{}/{}",
-                host.to_ascii_lowercase(),
-                normalize_git_repo_path(path)
-            );
-        }
-    }
-    for prefix in ["ssh://", "https://", "http://", "git://"] {
-        if let Some(rest) = trimmed.strip_prefix(prefix) {
-            let rest = rest.split('@').next_back().unwrap_or(rest);
-            if let Some((host, path)) = rest.split_once('/') {
-                return format!(
-                    "{}/{}",
-                    host.to_ascii_lowercase(),
-                    normalize_git_repo_path(path)
-                );
-            }
-        }
-    }
-    if let Some(path) = trimmed.strip_prefix("file://") {
-        return format!("local/{}", normalize_local_git_path(path));
-    }
-    format!("local/{}", normalize_local_git_path(trimmed))
-}
-
-fn normalize_git_repo_path(path: &str) -> String {
-    path.trim_start_matches('/')
-        .trim_end_matches(".git")
-        .trim_end_matches('/')
-        .to_ascii_lowercase()
-        .to_owned()
-}
-
-fn normalize_local_git_path(path: &str) -> String {
-    let raw = Path::new(path);
-    std::fs::canonicalize(raw)
-        .unwrap_or_else(|_| raw.to_path_buf())
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
-fn sanitize_cache_segment(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-fn sha256_hex(input: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(input);
-    format!("{:x}", hasher.finalize())
+    run_git_output(
+        cwd,
+        args,
+        |error| {
+            RunnerError::task_invocation(format!(
+                "failed to run git for deploy provider package in {}: {error}",
+                manifest_root.display()
+            ))
+        },
+        |detail| RunnerError::task_invocation(format!("{detail} for deploy provider package")),
+    )
+    .map(|_| ())
 }
 
 struct ScopedProviderEnvOverride {

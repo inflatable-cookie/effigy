@@ -37,18 +37,24 @@ Updated: 2026-05-14
 - `g05.008` through `g05.015` completed the post-release ownership and
   maintainability cleanup follow-through identified by the latest codebase
   sweep.
-- `g05.016` through `g05.019` are now queued for schema-shape consolidation
-  across `[manifest]` and task-like definition owners.
+- `g05.016` through `g05.019` completed schema-shape consolidation across
+  `[manifest]` and task-like definition owners.
+- `g05.020` through `g05.027` completed the reusable-core hardening tranche
+  from the 2026-05-14 sweep: provider contract hardening, source
+  materialization, product-neutral active docs, state extraction
+  follow-through, low-risk deduplication, Rhai host-surface ownership, and
+  process-boundary review.
 
 Current ready work: none.
 
 ## Research Roadmaps
 
-Three-phase research program covering comparative tool analysis:
+Three-phase research program covering comparative tool analysis. These are
+research phases, not `g05` roadmap IDs:
 
-- **Phase 1 (020)**: Core Execution — Configuration, caching, watch mode, DAG, TUI
-- **Phase 2 (021)**: Developer Experience — Completions, errors, workspaces, portability, env
-- **Phase 3 (022)**: Scale & Integration — Remote execution, CI/CD, IDE, plugins, telemetry
+- **Phase 1:** Core Execution — Configuration, caching, watch mode, DAG, TUI
+- **Phase 2:** Developer Experience — Completions, errors, workspaces, portability, env
+- **Phase 3:** Scale & Integration — Remote execution, CI/CD, IDE, plugins, telemetry
 
 ## Rollover rule
 
@@ -72,5 +78,4 @@ closeout there first.
 
 ## Next Task
 
-No active roadmap task inside `g05`. Open the next lane only after explicit
-planning.
+No active roadmap slice. Open the next lane only after explicit planning.

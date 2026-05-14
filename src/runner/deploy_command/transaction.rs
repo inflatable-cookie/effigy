@@ -13,7 +13,7 @@ use super::provider_context::{
 };
 use super::provider_package::{
     resolve_provider_package, run_provider_apply, run_provider_preflight, run_provider_status,
-    DeployProviderPackage, ManifestDeployProviderConfig,
+    DeployProviderCheckStatus, DeployProviderPackage, ManifestDeployProviderConfig,
 };
 use super::report::*;
 use super::text::{
@@ -478,7 +478,7 @@ fn provider_preflight_report(
             status: "blocked".to_owned(),
             checks: vec![DeployProviderCheck {
                 name: "provider-package".to_owned(),
-                status: "blocked".to_owned(),
+                status: DeployProviderCheckStatus::Blocked.as_str().to_owned(),
                 target: Some(provider.clone()),
                 message: Some(format!(
                     "deploy provider `{}` must be configured under `[deploy.providers.{}`]",
@@ -494,7 +494,7 @@ fn provider_preflight_report(
 
     let mut checks = vec![DeployProviderCheck {
         name: "provider-package".to_owned(),
-        status: "planned".to_owned(),
+        status: DeployProviderCheckStatus::Planned.as_str().to_owned(),
         target: Some(package.root.display().to_string()),
         message: Some(format!(
             "{} {} resolved from provider package",
@@ -517,14 +517,14 @@ fn provider_preflight_report(
     )? {
         checks.extend(report.checks.into_iter().map(|check| DeployProviderCheck {
             name: check.name,
-            status: check.status,
+            status: check.status.as_str().to_owned(),
             target: check.target,
             message: check.message,
         }));
         if !report.warnings.is_empty() {
             checks.push(DeployProviderCheck {
                 name: "provider-warnings".to_owned(),
-                status: "warning".to_owned(),
+                status: DeployProviderCheckStatus::Warning.as_str().to_owned(),
                 target: Some(provider.clone()),
                 message: Some(report.warnings.join("; ")),
             });
@@ -532,18 +532,18 @@ fn provider_preflight_report(
         if !report.files.is_empty() {
             checks.push(DeployProviderCheck {
                 name: "provider-files".to_owned(),
-                status: "planned".to_owned(),
+                status: DeployProviderCheckStatus::Planned.as_str().to_owned(),
                 target: Some(report.files.join(",")),
                 message: Some("provider package reported generated files".to_owned()),
             });
         }
-        if report.status != "planned" && report.status != "ok" && report.blockers.is_empty() {
+        if !report.status.allows_preflight_progress() && report.blockers.is_empty() {
             return Ok(DeployProviderPreflightReport {
                 status: "blocked".to_owned(),
                 checks,
                 blockers: vec![format!(
                     "deploy provider `{provider}` preflight returned status `{}` without explicit blockers",
-                    report.status
+                    report.status.as_str()
                 )],
             });
         }
@@ -604,6 +604,7 @@ fn deploy_provider_context(
         export_path: None,
         plan: false,
     })
+    .expect("deploy provider context should serialize")
 }
 
 fn deploy_status_provider_report(
@@ -640,10 +641,8 @@ fn provider_apply_report(
 ) -> DeployProviderOperationReport {
     DeployProviderOperationReport {
         status: if provider_phase.blockers.is_empty()
-            && matches!(
-                provider_phase.status.as_str(),
-                "succeeded" | "planned" | "ok"
-            ) {
+            && provider_phase.status.allows_apply_success()
+        {
             "succeeded".to_owned()
         } else {
             "failed".to_owned()

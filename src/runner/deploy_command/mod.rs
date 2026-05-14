@@ -110,7 +110,7 @@ fn run_deploy_export(
         model: &model,
         export_path: Some(path),
         plan,
-    });
+    })?;
 
     let report = run_provider_export(repo_root, provider_name, &package, context)?;
 

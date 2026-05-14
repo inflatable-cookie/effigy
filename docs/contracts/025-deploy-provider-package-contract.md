@@ -141,7 +141,9 @@ Context schema:
     "code_ref": "branch:main",
     "release_policy": "optional",
     "artifact_policy": "digest-preferred"
-  }
+  },
+  "export_path": "/repo/infra/render",
+  "plan": true
 }
 ```
 
@@ -160,6 +162,25 @@ Report schema:
 }
 ```
 
+Allowed report `status` values are phase-bounded:
+
+- `preflight`: `planned`, `ok`, `warning`, `blocked`, `failed`, `skipped`
+- `apply`: `succeeded`, `failed`, `skipped`
+- `status`: `planned`, `ok`, `warning`, `blocked`, `failed`, `skipped`
+- `export`: `planned`, `succeeded`, `warning`, `failed`, `skipped`
+
+Allowed check `status` values:
+
+- `planned`
+- `ok`
+- `warning`
+- `blocked`
+- `succeeded`
+- `failed`
+- `skipped`
+
+Unknown report or check statuses are rejected during provider report parsing.
+
 Provider scripts must not invent Effigy transaction state. They can add
 provider evidence, warnings, blockers, generated files, and operation reports.
 Core Effigy remains responsible for final report persistence and command
@@ -168,7 +189,7 @@ success/failure semantics.
 `deploy plan` runs provider-package `preflight.rhai` when declared. Effigy
 merges reported `checks` into `provider_preflight.checks`, converts
 warnings/files into provider checks, and blocks the plan when the provider
-report returns blockers or an unsupported status.
+report returns blockers or a non-progress status without explicit blockers.
 
 `deploy apply` runs provider-package `apply.rhai` after the plan passes and
 `--yes` is supplied. The provider report determines the provider operation

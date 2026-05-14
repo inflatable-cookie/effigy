@@ -17,7 +17,7 @@ a provider deployment in a predictable, repeatable way. It answers:
 
 It is provider-neutral at the plan level. Core Effigy owns the transaction
 frame. Render, Railway, and other provider-specific behavior lives in
-configured deploy-provider packages.
+configured external deploy-provider packages.
 
 ## When To Use It
 
@@ -121,8 +121,8 @@ effigy deploy export render --path infra/render --plan
 ```
 
 `deploy export <PROVIDER>` requires `[deploy.providers.<provider>]`. The
-Render package currently emits `render.yaml`. The Railway package currently
-emits service-local `railway.toml` files plus `report.json`.
+external Render package currently emits `render.yaml`. The external Railway
+package currently emits service-local `railway.toml` files plus `report.json`.
 
 ### Plan (read-only)
 
@@ -213,15 +213,15 @@ promised.
 - `require_clean_worktree = true` blocks deploys with uncommitted changes.
 - Provider packages should not create projects, services, databases, secrets,
 or domains unless their descriptor policy explicitly allows it. The current
-Render and Railway packages validate existing setup and surface missing setup
-as explicit blockers.
+external Render and Railway packages validate existing setup and surface
+missing setup as explicit blockers.
 
 ## Provider Packages
 
 | Provider | Status | Notes |
 |---|---|---|
-| Railway | package-backed | export proof; transaction phases depend on the configured provider package |
-| Render | package-backed | export proof plus guarded preflight/status/apply for existing services |
+| Railway | external package-backed | export proof; transaction phases depend on the configured provider package |
+| Render | external package-backed | export proof plus guarded preflight/status/apply for existing services |
 
 Deploy-provider packages provide `export.rhai`, `preflight.rhai`, `apply.rhai`,
 and `status.rhai` scripts as declared in `provider.toml`. Core Effigy keeps the

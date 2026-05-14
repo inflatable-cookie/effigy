@@ -87,6 +87,73 @@ impl ManifestTaskRunIn {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+pub enum ManifestTaskLikeDefinition {
+    Run(String),
+    RunSequence(Vec<ManifestManagedRunStep>),
+    Full(Box<ManifestTask>),
+    Compact(Box<ManifestInlineTaskDefinition>),
+    RunStep(Box<ManifestManagedRunStepTable>),
+}
+
+impl ManifestTaskLikeDefinition {
+    pub fn into_manifest_task(self) -> ManifestTask {
+        match self {
+            ManifestTaskLikeDefinition::Run(command) => ManifestTask {
+                run: Some(ManifestManagedRun::Command(command)),
+                ..ManifestTask::default()
+            },
+            ManifestTaskLikeDefinition::RunSequence(sequence) => ManifestTask {
+                run: Some(ManifestManagedRun::Sequence(sequence)),
+                ..ManifestTask::default()
+            },
+            ManifestTaskLikeDefinition::RunStep(step) => ManifestTask {
+                run: Some(ManifestManagedRun::Sequence(vec![
+                    ManifestManagedRunStep::Step(step),
+                ])),
+                ..ManifestTask::default()
+            },
+            ManifestTaskLikeDefinition::Compact(task) => task.into_manifest_task(),
+            ManifestTaskLikeDefinition::Full(task) => *task,
+        }
+    }
+
+    pub fn as_manifest_task(&self) -> ManifestTask {
+        self.clone().into_manifest_task()
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+pub enum ManifestTaskOrReferenceDefinition {
+    Reference(String),
+    TaskLike(ManifestTaskLikeDefinition),
+}
+
+impl ManifestTaskOrReferenceDefinition {
+    pub fn reference(&self) -> Option<&str> {
+        match self {
+            Self::Reference(reference) => Some(reference.as_str()),
+            Self::TaskLike(_) => None,
+        }
+    }
+
+    pub fn report_name(&self) -> String {
+        match self {
+            Self::Reference(reference) => reference.clone(),
+            Self::TaskLike(_) => "<inline>".to_owned(),
+        }
+    }
+
+    pub fn into_manifest_task(self) -> Option<ManifestTask> {
+        match self {
+            Self::Reference(_) => None,
+            Self::TaskLike(definition) => Some(definition.into_manifest_task()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestManagedConcurrentEntry {
     #[serde(default)]

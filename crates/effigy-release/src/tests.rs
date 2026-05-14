@@ -1,7 +1,6 @@
 use super::{
-    compare_release_state_fingerprints, detect_cargo_version_path, detect_version_file_kind,
-    format_release_tag, gate_blockers, load_release_config, load_release_prepared_state,
-    normalized_expected_files, resolve_version_field_path, snapshot_mutation_paths,
+    compare_release_state_fingerprints, format_release_tag, gate_blockers, load_release_config,
+    load_release_prepared_state, normalized_expected_files, snapshot_mutation_paths, test_support,
     write_release_prepared_state, FileMutationApply, FileMutationPlan, GateExecutionReport,
     GateResult, ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints, VersionFileKind,
 };
@@ -22,54 +21,17 @@ fn temp_repo(name: &str) -> PathBuf {
 
 #[test]
 fn version_file_kind_detection_matches_supported_names() {
-    assert_eq!(
-        detect_version_file_kind(std::path::Path::new("Cargo.toml")),
-        Some(VersionFileKind::CargoToml)
-    );
-    assert_eq!(
-        detect_version_file_kind(std::path::Path::new("package.json")),
-        Some(VersionFileKind::PackageJson)
-    );
-    assert_eq!(
-        detect_version_file_kind(std::path::Path::new("pyproject.toml")),
-        Some(VersionFileKind::PyProjectToml)
-    );
-    assert_eq!(
-        detect_version_file_kind(std::path::Path::new("VERSION")),
-        Some(VersionFileKind::PlainText)
-    );
+    test_support::assert_supported_version_file_kinds();
 }
 
 #[test]
 fn version_field_path_defaults_follow_known_formats() {
-    assert_eq!(
-        resolve_version_field_path(VersionFileKind::CargoToml, None).expect("default path"),
-        Some("package.version".to_owned())
-    );
-    assert_eq!(
-        resolve_version_field_path(VersionFileKind::PackageJson, None).expect("default path"),
-        Some("version".to_owned())
-    );
-    assert_eq!(
-        resolve_version_field_path(VersionFileKind::PyProjectToml, None).expect("default path"),
-        None
-    );
+    test_support::assert_default_version_field_paths();
 }
 
 #[test]
 fn detect_cargo_version_path_supports_workspace_inherited_versions() {
-    let direct: toml::Value =
-        toml::from_str("[package]\nversion = \"0.2.4\"\n").expect("direct cargo");
-    assert_eq!(detect_cargo_version_path(&direct), Some("package.version"));
-
-    let inherited: toml::Value = toml::from_str(
-        "[workspace.package]\nversion = \"0.2.4\"\n\n[package]\nversion.workspace = true\n",
-    )
-    .expect("inherited cargo");
-    assert_eq!(
-        detect_cargo_version_path(&inherited),
-        Some("workspace.package.version")
-    );
+    test_support::assert_workspace_inherited_cargo_version_path();
 }
 
 #[test]

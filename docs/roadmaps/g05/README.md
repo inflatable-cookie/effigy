@@ -1,7 +1,7 @@
 # g05 Roadmaps
 
 Status: Active
-Theme: Secret and local configuration management plus post-release ownership cleanup
+Theme: Secret and local configuration management plus reusable-core hardening
 
 ## Purpose
 
@@ -18,9 +18,10 @@ vault is the supported local secret path. `.env.schema` remains
 validation/task-env compatibility. Varlock is deferred as a live backend
 adapter.
 
-`g05` is now reopened for the next post-release cleanup tranche because the new
-work is directly coupled to the just-landed secret/runtime/container/Rhai
-surfaces and does not justify a generation rollover yet.
+`g05` is now reopened for post-release cleanup and reusable-core hardening
+because the new work is directly coupled to the just-landed
+secret/runtime/container/Rhai/deploy-provider surfaces and does not justify a
+generation rollover yet.
 
 ## Roadmap Sequence
 
@@ -43,6 +44,14 @@ surfaces and does not justify a generation rollover yet.
 - [`017-manifest-section-schema-owner-convergence.md`](./017-manifest-section-schema-owner-convergence.md)
 - [`018-task-like-definition-schema-convergence.md`](./018-task-like-definition-schema-convergence.md)
 - [`019-schema-shape-regression-proof-and-closeout.md`](./019-schema-shape-regression-proof-and-closeout.md)
+- [`020-reusable-core-hardening-suite.md`](./020-reusable-core-hardening-suite.md)
+- [`021-deploy-provider-contract-hardening.md`](./021-deploy-provider-contract-hardening.md)
+- [`022-provider-source-materialization-convergence.md`](./022-provider-source-materialization-convergence.md)
+- [`023-active-docs-product-neutrality-cleanup.md`](./023-active-docs-product-neutrality-cleanup.md)
+- [`024-state-domain-extraction-follow-through.md`](./024-state-domain-extraction-follow-through.md)
+- [`025-low-risk-deduplication-follow-through.md`](./025-low-risk-deduplication-follow-through.md)
+- [`026-rhai-host-surface-and-test-ownership.md`](./026-rhai-host-surface-and-test-ownership.md)
+- [`027-process-execution-boundary-review.md`](./027-process-execution-boundary-review.md)
 
 ## Execution Rule
 
@@ -80,10 +89,25 @@ Recommended first cards:
 721-close-g05-secret-management-suite.md
 ```
 
+Recommended reusable-core hardening cards:
+
+```text
+741-open-reusable-core-hardening-lane.md
+742-harden-deploy-provider-context-and-report-contracts.md
+743-converge-provider-source-materialization.md
+744-neutralize-active-product-specific-docs.md
+745-finish-state-domain-thin-shell-follow-through.md
+746-reduce-high-duplicate-blocks.md
+747-split-rhai-host-surface-tests.md
+748-review-process-execution-boundary.md
+749-close-reusable-core-hardening-proof.md
+```
+
 ## Current State
 
-`g05.001` through `g05.015` are complete. `g05.016` through `g05.019` are now
-queued. Strict lanes `076`, `077`, `078`, `079`, `080`, and `081` are closed.
+`g05.001` through `g05.027` are complete. Reusable-core hardening closed
+through `g05.020` with its queued follow-through roadmaps landed. Strict lanes
+`076`, `077`, `078`, `079`, `080`, `081`, `082`, and `083` are closed.
 
 Completed cards:
 
@@ -110,8 +134,5 @@ Completed cards:
 
 ## Next Task
 
-No active `g05` task right now. The reopened cleanup suite is closed,
-`g05.017` is complete, and the next queued tranche is `g05.018` to `g05.019`
-for task-like definition convergence and regression proof.
-
-Current ready work: none.
+No active `g05` execution lane. Open the next lane only after explicit
+planning.

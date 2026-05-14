@@ -3,11 +3,12 @@ use super::{
     resolve_verify_install_repo_url, validate_prepare_version_override, ReleaseBlockedStage,
 };
 use effigy_core::resolver::ResolvedTarget;
-use effigy_release::normalize_verify_install_repo_url;
+#[path = "../../../crates/effigy-release/src/test_support.rs"]
+mod release_test_support;
 use effigy_release::{
     build_diff_preview, detect_cargo_version_path, detect_pyproject_version_path,
     detect_version_file_kind, format_release_tag, json_value_at_path,
-    parse_indexed_review_inspection_request,
+    normalize_verify_install_repo_url, parse_indexed_review_inspection_request,
     render_changelog_preview_line as changelog_preview_line, render_execute_review_menu_lines,
     render_prepare_review_menu_lines, render_prepared_changelog_contents,
     render_updated_version_contents, replace_json_string_at_path_preserving_layout,
@@ -19,54 +20,17 @@ use effigy_tasks::ResolutionMode;
 
 #[test]
 fn version_file_kind_detection_matches_supported_names() {
-    assert_eq!(
-        detect_version_file_kind(std::path::Path::new("Cargo.toml")),
-        Some(VersionFileKind::CargoToml)
-    );
-    assert_eq!(
-        detect_version_file_kind(std::path::Path::new("package.json")),
-        Some(VersionFileKind::PackageJson)
-    );
-    assert_eq!(
-        detect_version_file_kind(std::path::Path::new("pyproject.toml")),
-        Some(VersionFileKind::PyProjectToml)
-    );
-    assert_eq!(
-        detect_version_file_kind(std::path::Path::new("VERSION")),
-        Some(VersionFileKind::PlainText)
-    );
+    release_test_support::assert_supported_version_file_kinds();
 }
 
 #[test]
 fn version_field_path_defaults_follow_known_formats() {
-    assert_eq!(
-        resolve_version_field_path(VersionFileKind::CargoToml, None).expect("default path"),
-        Some("package.version".to_owned())
-    );
-    assert_eq!(
-        resolve_version_field_path(VersionFileKind::PackageJson, None).expect("default path"),
-        Some("version".to_owned())
-    );
-    assert_eq!(
-        resolve_version_field_path(VersionFileKind::PyProjectToml, None).expect("default path"),
-        None
-    );
+    release_test_support::assert_default_version_field_paths();
 }
 
 #[test]
 fn detect_cargo_version_path_supports_workspace_inherited_versions() {
-    let direct: toml::Value =
-        toml::from_str("[package]\nversion = \"0.2.4\"\n").expect("direct cargo");
-    assert_eq!(detect_cargo_version_path(&direct), Some("package.version"));
-
-    let inherited: toml::Value = toml::from_str(
-        "[workspace.package]\nversion = \"0.2.4\"\n\n[package]\nversion.workspace = true\n",
-    )
-    .expect("inherited cargo");
-    assert_eq!(
-        detect_cargo_version_path(&inherited),
-        Some("workspace.package.version")
-    );
+    release_test_support::assert_workspace_inherited_cargo_version_path();
 }
 
 #[test]

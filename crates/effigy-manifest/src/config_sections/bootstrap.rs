@@ -1,4 +1,4 @@
-use crate::{ManifestInlineTaskDefinition, ManifestManagedRun, ManifestTask};
+use crate::{ManifestTask, ManifestTaskLikeDefinition};
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -98,34 +98,16 @@ fn default_bootstrap_child_required() -> bool {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
-#[serde(untagged)]
-pub enum ManifestBootstrapRun {
-    Task(Box<ManifestTask>),
-    Inline(Box<ManifestInlineTaskDefinition>),
-    Run(ManifestManagedRun),
-}
+#[serde(transparent)]
+pub struct ManifestBootstrapRun(ManifestTaskLikeDefinition);
 
 impl ManifestBootstrapRun {
     pub fn into_manifest_task(self) -> ManifestTask {
-        match self {
-            Self::Task(task) => *task,
-            Self::Inline(task) => task.into_manifest_task(),
-            Self::Run(run) => ManifestTask {
-                run: Some(run),
-                ..Default::default()
-            },
-        }
+        self.0.into_manifest_task()
     }
 
     pub fn as_manifest_task(&self) -> ManifestTask {
-        match self {
-            Self::Task(task) => (**task).clone(),
-            Self::Inline(task) => (**task).clone().into_manifest_task(),
-            Self::Run(run) => ManifestTask {
-                run: Some(run.clone()),
-                ..Default::default()
-            },
-        }
+        self.0.as_manifest_task()
     }
 }
 

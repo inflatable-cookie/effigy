@@ -323,15 +323,15 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   `[deploy.model]` section from the effective manifest
 - `deploy export <PROVIDER>` requires a matching
   `[deploy.providers.<provider>]` package with an export capability
-- the Render provider package currently writes `render.yaml`
-- the Railway provider package currently writes service-local `railway.toml`
-  files plus `report.json`
+- the external Render provider package currently writes `render.yaml`
+- the external Railway provider package currently writes service-local
+  `railway.toml` files plus `report.json`
 - v0.6.0 deployment transactions are separate from `deploy export`:
   `deploy plan/apply/status/history/redeploy` compose code refs, provider
   targets, state stacks, OCI artifact policy, release evidence, hooks, health
   checks, and reports; provider-specific planning, apply, and status behavior
-  comes from configured deploy-provider packages rather than built-in
-  Railway/Render transaction stubs
+  comes from configured deploy-provider packages rather than built-in core
+  provider logic
 - `[deploy.providers.<name>]` can resolve path and git deploy-provider packages
   with `provider.toml` descriptors during deploy export and deployment
   transactions; declared `export.rhai`, `preflight.rhai`, `apply.rhai`, and

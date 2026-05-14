@@ -4,7 +4,10 @@ use crate::runner::tests::prelude::{
     write_manifest, write_root_manifest,
 };
 use effigy_cli::{Command, DeployArgs, DeploySubcommand};
+use effigy_core::git_source::{canonical_git_cache_identity, sanitize_cache_segment, sha256_hex};
 use std::fs;
+use std::path::Path;
+use std::process::Command as ProcessCommand;
 
 fn with_deploy_providers(manifest: &str) -> String {
     let repo_root = env!("CARGO_MANIFEST_DIR");
@@ -379,6 +382,35 @@ prints_secret_values = false
     .expect("write status script");
 }
 
+fn write_provider_phase_script(root: &std::path::Path, phase: &str, body: &str) {
+    fs::write(root.join(format!("scripts/{phase}.rhai")), body)
+        .expect("write provider phase script");
+}
+
+fn git(args: &[&str], cwd: &Path) {
+    let status = ProcessCommand::new("git")
+        .current_dir(cwd)
+        .args(args)
+        .status()
+        .expect("run git");
+    assert!(
+        status.success(),
+        "git {:?} failed in {}",
+        args,
+        cwd.display()
+    );
+}
+
+fn write_git_provider_package(root: &Path, name: &str) {
+    write_provider_package(root, name);
+    git(&["init"], root);
+    git(&["config", "user.email", "effigy@example.test"], root);
+    git(&["config", "user.name", "Effigy Tests"], root);
+    git(&["add", "."], root);
+    git(&["commit", "-m", "init"], root);
+    git(&["branch", "-M", "main"], root);
+}
+
 #[test]
 fn run_deploy_plan_json_reports_env_state_provider_and_hooks() {
     let root = setup_deploy_transaction_fixture("deploy-plan-transaction");
@@ -443,6 +475,287 @@ fn run_deploy_plan_json_reports_render_provider_preflight() {
             .iter()
             .any(|check| check["name"].as_str() == Some("provider-script")),
         "render preflight should include provider script checks: {checks:?}"
+    );
+}
+
+#[test]
+fn run_deploy_plan_materializes_git_provider_package_under_shared_cache_identity() {
+    let root = temp_workspace("deploy-plan-git-provider-cache");
+    setup_workspace_app_path_bundle(&root);
+    fs::create_dir_all(root.join("app-front")).expect("mkdir front");
+    fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
+    fs::create_dir_all(root.join("app-api")).expect("mkdir api");
+    fs::write(
+        root.join("app-front/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write front config");
+    fs::write(
+        root.join("app-admin/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write admin config");
+    write_manifest(
+        &root.join("app-front/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-admin/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-api/effigy.toml"),
+        "[tasks.build]\nrun = \"cargo build --release\"\n\n[tasks.api]\nrun = \"cargo run -p acme-api\"\n\n[tasks.\"db:migrate\"]\nrun = \"cargo run -p acme-db --bin migrate_dev_db\"\n",
+    );
+
+    let provider_repo = root.join("provider-repos/render");
+    write_git_provider_package(&provider_repo, "render");
+
+    write_root_manifest(
+        &root,
+        &format!(
+            r#"
+[bundle]
+base = {{ type = "path", dir = "bundles/workspace-app" }}
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "acme"
+databases = ["acme"]
+
+[bundle.dirs]
+front = "app-front"
+admin = "app-admin"
+api = "app-api"
+
+[deploy.providers.render]
+source = {{ type = "git", url = {:?}, ref = "main" }}
+
+[deploy.uat]
+state = "uat"
+code_ref = "branch:main"
+release_policy = "optional"
+provider_project = "acme-uat"
+artifact_policy = "digest-preferred"
+
+[deploy.uat.provider]
+adapter = "render"
+"#,
+            provider_repo.display().to_string()
+        ),
+    );
+
+    run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Plan {
+            env: "uat".to_owned(),
+            write_report: false,
+        },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("run deploy plan");
+
+    let expected_cache_path = root
+        .join(".effigy")
+        .join("cache/providers/git")
+        .join(sha256_hex(
+            canonical_git_cache_identity(&provider_repo.display().to_string()).as_bytes(),
+        ))
+        .join(sanitize_cache_segment("main"));
+
+    assert!(
+        expected_cache_path.join(".git").is_dir(),
+        "expected provider git cache checkout at {}",
+        expected_cache_path.display()
+    );
+    assert!(
+        expected_cache_path.join("provider.toml").is_file(),
+        "expected provider package contents at {}",
+        expected_cache_path.display()
+    );
+}
+
+#[test]
+fn run_deploy_export_context_includes_export_path_and_plan() {
+    let root = temp_workspace("deploy-export-provider-context");
+    fs::create_dir_all(root.join("providers/context/scripts")).expect("mkdir provider scripts");
+    write_root_manifest(
+        &root,
+        r#"
+[bundle]
+base = { type = "path", dir = "bundles/workspace-app" }
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "acme"
+databases = ["acme"]
+
+[bundle.dirs]
+front = "app-front"
+admin = "app-admin"
+api = "app-api"
+
+[deploy.providers.context]
+source = { type = "path", dir = "providers/context" }
+"#,
+    );
+    fs::write(
+        root.join("providers/context/provider.toml"),
+        r#"
+[provider]
+schema = "effigy.deploy-provider.v1"
+name = "context"
+display_name = "Context"
+version = "0.1.0"
+
+[capabilities]
+export = "scripts/export.rhai"
+"#,
+    )
+    .expect("write descriptor");
+    write_provider_phase_script(
+        &root.join("providers/context"),
+        "export",
+        r#"
+let context = deploy::provider_context();
+let export_dir = context["export_path"];
+json::write_file(path::join(export_dir, "context.json"), context);
+deploy::provider_report(#{
+    schema: "effigy.deploy-provider.report.v1",
+    phase: "export",
+    provider: "context",
+    status: "planned",
+    checks: [#{ name: "context", status: "planned" }],
+    warnings: [],
+    blockers: [],
+    files: ["context.json"],
+});
+"#,
+    );
+    setup_workspace_app_path_bundle(&root);
+    fs::create_dir_all(root.join("app-front")).expect("mkdir front");
+    fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
+    fs::create_dir_all(root.join("app-api")).expect("mkdir api");
+    fs::write(
+        root.join("app-front/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+    )
+    .expect("write front svelte config");
+    fs::write(
+        root.join("app-admin/svelte.config.js"),
+        "export default { kit: { adapter: adapter({ fallback: 'index.html' }) } };\n",
+    )
+    .expect("write admin svelte config");
+    write_manifest(
+        &root.join("app-front/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(
+        &root.join("app-admin/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_manifest(&root.join("app-api/effigy.toml"), "[tasks.build]\nrun = \"cargo build --release\"\n[tasks.api]\nrun = \"cargo run -p app-api\"\n");
+
+    let export_root = root.join("infra/context");
+    run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Export {
+            provider: "context".to_owned(),
+            path: export_root.clone(),
+            plan: true,
+        },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("run deploy export");
+
+    let context: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(export_root.join("context.json")).expect("read context snapshot"),
+    )
+    .expect("parse context snapshot");
+    let export_path = export_root.display().to_string();
+    assert_eq!(
+        context["schema"].as_str(),
+        Some("effigy.deploy-provider.context.v1")
+    );
+    assert_eq!(context["phase"].as_str(), Some("export"));
+    assert_eq!(context["plan"].as_bool(), Some(true));
+    assert_eq!(context["export_path"].as_str(), Some(export_path.as_str()));
+    assert_eq!(
+        context["provider_package"]["name"].as_str(),
+        Some("context")
+    );
+    assert_eq!(context["provider"]["adapter"].as_str(), Some("context"));
+}
+
+#[test]
+fn run_deploy_plan_rejects_invalid_provider_report_status() {
+    let root = setup_deploy_transaction_fixture("deploy-plan-invalid-provider-status");
+    write_provider_phase_script(
+        &root.join("providers/render"),
+        "preflight",
+        r#"deploy::provider_report(#{
+    schema: "effigy.deploy-provider.report.v1",
+    phase: "preflight",
+    provider: "render",
+    status: "banana",
+    checks: [#{ name: "provider-script", status: "planned", target: "render" }],
+    warnings: [],
+    blockers: [],
+    files: [],
+})
+"#,
+    );
+
+    let error = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Plan {
+            env: "render".to_owned(),
+            write_report: false,
+        },
+        repo_override: Some(root),
+        output_json: true,
+    }))
+    .expect_err("invalid report status should fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("failed to parse deploy provider `render` preflight report"),
+        "{error}"
+    );
+}
+
+#[test]
+fn run_deploy_plan_rejects_invalid_provider_check_status() {
+    let root = setup_deploy_transaction_fixture("deploy-plan-invalid-check-status");
+    write_provider_phase_script(
+        &root.join("providers/render"),
+        "preflight",
+        r#"deploy::provider_report(#{
+    schema: "effigy.deploy-provider.report.v1",
+    phase: "preflight",
+    provider: "render",
+    status: "planned",
+    checks: [#{ name: "provider-script", status: "banana", target: "render" }],
+    warnings: [],
+    blockers: [],
+    files: [],
+})
+"#,
+    );
+
+    let error = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Plan {
+            env: "render".to_owned(),
+            write_report: false,
+        },
+        repo_override: Some(root),
+        output_json: true,
+    }))
+    .expect_err("invalid check status should fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("failed to parse deploy provider `render` preflight report"),
+        "{error}"
     );
 }
 

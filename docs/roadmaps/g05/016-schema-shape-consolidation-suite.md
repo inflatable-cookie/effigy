@@ -1,6 +1,6 @@
 # g05.016 - Schema Shape Consolidation Suite
 
-Status: Planned
+Status: Complete
 Depends on: `g05.015`
 
 ## Goal
@@ -49,7 +49,14 @@ surface.
 - the supported syntax remains stable unless an explicit later roadmap changes it
 - focused tests prove shared behavior across the previously split paths
 
+## Completed
+
+- `g05.017` completed canonical `[manifest]` section ownership.
+- `g05.018` completed canonical task-like definition ownership for tasks,
+  bootstrap, and state reference-or-inline surfaces.
+- `g05.019` completed focused regression proof and closeout notes.
+
 ## Next Task
 
-Open `g05.017` first. The `[manifest]` section owner split is the clearest
-schema-drift source and already produced a real bug.
+Schema-shape consolidation is complete. Move to the queued reusable-core
+hardening suite when ready.

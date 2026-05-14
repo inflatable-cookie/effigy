@@ -95,8 +95,7 @@ impl UserConfig {
     /// `~` and relative paths expanded against the user's home directory.
     /// Returns an empty vec if the bundle has no entry.
     pub fn library_mounts_for(&self, bundle_name: &str) -> Vec<LibraryMount> {
-        self.bundle
-            .get(bundle_name)
+        self.bundle_config_for(bundle_name)
             .map(|cfg| {
                 cfg.library_mounts
                     .iter()
@@ -107,6 +106,13 @@ impl UserConfig {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn bundle_config_for(&self, bundle_name: &str) -> Option<&UserBundleConfig> {
+        self.bundle
+            .get(bundle_name)
+            .or_else(|| self.bundle.get(&bundle_name.replace('-', "_")))
+            .or_else(|| self.bundle.get(&bundle_name.replace('_', "-")))
     }
 
     pub fn preferred_container_backend(&self) -> Option<UserContainerBackendPreference> {

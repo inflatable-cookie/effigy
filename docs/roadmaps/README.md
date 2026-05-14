@@ -41,8 +41,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g05` remains the current generation. `g05.001` through `g05.007` remain
   complete from the secret and local configuration management suite,
   `g05.008` through `g05.015` completed the post-release ownership and
-  maintainability cleanup follow-through, and `g05.016` through `g05.019` are
-  now queued for schema-shape consolidation.
+  maintainability cleanup follow-through, `g05.016` through `g05.019`
+  completed schema-shape consolidation, and `g05.020` through `g05.027`
+  completed the reusable-core hardening tranche from the 2026-05-14 sweep.
 
 ## Active Strict Lane
 
@@ -51,9 +52,9 @@ No strict lane is active.
 ## Research Program
 
 Three-phase comparative research program:
-- **Phase 1 (020)**: Core Execution — Configuration, caching, watch mode, DAG, TUI
-- **Phase 2 (021)**: Developer Experience — Completions, errors, workspaces, portability
-- **Phase 3 (022)**: Scale & Integration — Remote execution, CI/CD, IDE, plugins, telemetry
+- **Phase 1:** Core Execution — Configuration, caching, watch mode, DAG, TUI
+- **Phase 2:** Developer Experience — Completions, errors, workspaces, portability
+- **Phase 3:** Scale & Integration — Remote execution, CI/CD, IDE, plugins, telemetry
 
 See `docs/research/README.md` for the research operating model.
 

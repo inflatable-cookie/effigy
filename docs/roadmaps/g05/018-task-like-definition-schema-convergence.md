@@ -1,6 +1,6 @@
 # g05.018 - Task-Like Definition Schema Convergence
 
-Status: Planned
+Status: Complete
 Depends on: `g05.016`
 
 ## Goal
@@ -44,6 +44,38 @@ surfaces stop hand-owning parallel unions.
   blocks where their schema intent matches
 - supported task-like TOML forms remain stable under focused tests
 
+## Completed
+
+- Added manifest-owned `ManifestTaskLikeDefinition` for task-like command,
+  sequence, full task, compact inline task, and single-step table shapes.
+- Switched `[tasks]` parsing to the canonical task-like definition owner.
+- Collapsed `ManifestBootstrapRun` into a transparent wrapper around the
+  canonical task-like definition while preserving its public conversion helpers.
+- Added manifest-owned `ManifestTaskOrReferenceDefinition` for state surfaces
+  that accept either selector references or inline task-like definitions.
+- Replaced the runner-private `ManifestStateTaskDefinition` with the
+  manifest-owned reference-or-inline owner.
+- Preserved state hook/capture default behavior: compact/run/step inline state
+  tasks still default to host execution, while full task tables keep their own
+  task-level fields.
+- Fixed user-global bundle config lookup so `php_app` config keys satisfy
+  `php-app` bundle lookups, matching existing tests and historical bundle key
+  normalization expectations.
+
+## Validation
+
+- `cargo test -p effigy-manifest single_task_object_without_array_wrapper`
+- `cargo test -p effigy-manifest bootstrap_run_accepts_compact_inline_task_run_in`
+- `cargo test --lib compact_inline_task_run_in`
+- `cargo test -p effigy-manifest -- --test-threads=1`
+
+## Retained Owners
+
+- `ManifestBootstrapRun` remains as a public wrapper type so downstream callers
+  keep the bootstrap-specific name and conversion helpers.
+- State keeps a tiny runner helper for host-default projection because that is a
+  state execution policy, not a generic manifest parsing rule.
+
 ## Suggested Validation
 
 - `cargo test -p effigy-manifest`
@@ -54,5 +86,5 @@ surfaces stop hand-owning parallel unions.
 
 ## Next Task
 
-Open the implementation lane for canonical task-like definition building blocks
-and bootstrap/state adoption.
+No next task inside this roadmap. The task-like schema convergence slice is
+complete.
