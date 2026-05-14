@@ -10,14 +10,90 @@ use std::path::Path;
 use std::process::Command as ProcessCommand;
 
 fn with_deploy_providers(manifest: &str) -> String {
-    let repo_root = env!("CARGO_MANIFEST_DIR");
     format!(
         "{manifest}\n\
         [deploy.providers.render]\n\
-        source = {{ type = \"path\", dir = \"{repo_root}/external/providers/render\" }}\n\
+        source = {{ type = \"path\", dir = \"providers/render\" }}\n\
         [deploy.providers.railway]\n\
-        source = {{ type = \"path\", dir = \"{repo_root}/external/providers/railway\" }}\n"
+        source = {{ type = \"path\", dir = \"providers/railway\" }}\n"
     )
+}
+
+fn setup_test_deploy_export_providers(root: &Path) {
+    write_test_deploy_export_provider(&root.join("providers/render"), "render");
+    write_test_deploy_export_provider(&root.join("providers/railway"), "railway");
+}
+
+fn write_test_deploy_export_provider(root: &Path, provider: &str) {
+    fs::create_dir_all(root.join("scripts")).expect("mkdir provider scripts");
+    fs::write(
+        root.join("provider.toml"),
+        format!(
+            r#"
+[provider]
+schema = "effigy.deploy-provider.v1"
+name = "{provider}"
+display_name = "{provider}"
+version = "0.1.0"
+
+[capabilities]
+export = "scripts/export.rhai"
+"#
+        ),
+    )
+    .expect("write provider descriptor");
+    let script = match provider {
+        "render" => {
+            r#"
+let context = deploy::provider_context();
+let export_dir = context["export_path"];
+if context["plan"] != true {
+    fs::write_file(path::join(export_dir, "render.yaml"), "name: front\nruntime: static\nrootDir: acme-front\nstaticPublishPath: acme-front/build\ndestination: /200.html\nhealthCheckPath: /v1/health\npreDeployCommand: cargo run -p acme-db --bin migrate_dev_db\nfromDatabase:\n  property: connectionString\n");
+}
+deploy::provider_report(#{
+    schema: "effigy.deploy-provider.report.v1",
+    phase: "export",
+    provider: "render",
+    status: "planned",
+    checks: [#{ name: "render-export", status: "planned" }],
+    warnings: [],
+    blockers: [],
+    files: ["render.yaml"],
+});
+"#
+        }
+        "railway" => {
+            r#"
+let context = deploy::provider_context();
+let export_dir = context["export_path"];
+if context["plan"] != true {
+    fs::write_file(path::join(export_dir, "services/front/railway.toml"), "builder = \"RAILPACK\"\nbuildCommand = \"bun x vite build\"\n");
+    fs::write_file(path::join(export_dir, "services/admin/railway.toml"), "builder = \"RAILPACK\"\nbuildCommand = \"bun x vite build\"\n");
+    fs::write_file(path::join(export_dir, "services/api/railway.toml"), "startCommand = \"cargo run -p acme-api\"\nhealthcheckPath = \"/v1/health\"\n");
+    fs::write_file(path::join(export_dir, "services/jobs/railway.toml"), "startCommand = \"cargo run -p acme-jobs {args}\"\n");
+    fs::write_file(path::join(export_dir, "report.json"), "{\n  \"schema\": \"effigy.deploy.export.railway.report.v1\",\n  \"secrets\": [{\"name\": \"DATABASE_URL\"}],\n  \"actions\": [{\"action\": \"attach_public_domains_in_railway\"}]\n}\n");
+}
+deploy::provider_report(#{
+    schema: "effigy.deploy-provider.report.v1",
+    phase: "export",
+    provider: "railway",
+    status: "planned",
+    checks: [#{ name: "railway-export", status: "planned" }],
+    warnings: [],
+    blockers: [],
+    files: [
+        "services/front/railway.toml",
+        "services/admin/railway.toml",
+        "services/api/railway.toml",
+        "report.json",
+        "services/jobs/railway.toml",
+    ],
+});
+"#
+        }
+        other => panic!("unsupported test deploy provider fixture: {other}"),
+    };
+    fs::write(root.join("scripts/export.rhai"), script).expect("write export script");
 }
 
 #[test]
@@ -1031,6 +1107,7 @@ databases = ["acme"]
 fn run_deploy_export_render_writes_render_yaml() {
     let root = temp_workspace("deploy-export-render");
     setup_workspace_app_path_bundle(&root);
+    setup_test_deploy_export_providers(&root);
     write_root_manifest(
         &root,
         &with_deploy_providers(
@@ -1116,6 +1193,7 @@ run = "cargo run -p acme-jobs {args}"
 fn run_deploy_export_render_plan_does_not_write_files() {
     let root = temp_workspace("deploy-export-render-plan");
     setup_workspace_app_path_bundle(&root);
+    setup_test_deploy_export_providers(&root);
     write_root_manifest(
         &root,
         &with_deploy_providers(
@@ -1175,6 +1253,7 @@ databases = ["acme"]
 fn run_deploy_export_railway_writes_service_files_and_report() {
     let root = temp_workspace("deploy-export-railway");
     setup_workspace_app_path_bundle(&root);
+    setup_test_deploy_export_providers(&root);
     write_root_manifest(
         &root,
         &with_deploy_providers(
@@ -1267,6 +1346,7 @@ run = "cargo run -p acme-jobs {args}"
 fn run_deploy_export_railway_plan_does_not_write_files() {
     let root = temp_workspace("deploy-export-railway-plan");
     setup_workspace_app_path_bundle(&root);
+    setup_test_deploy_export_providers(&root);
     write_root_manifest(
         &root,
         &with_deploy_providers(
@@ -1407,6 +1487,7 @@ run = "pnpm start"
 #[test]
 fn run_deploy_export_render_plan_uses_explicit_manifest_model_without_bundle() {
     let root = temp_workspace("deploy-export-render-explicit-manifest");
+    setup_test_deploy_export_providers(&root);
     fs::create_dir_all(root.join("site")).expect("mkdir site");
     write_root_manifest(
         &root,
@@ -1460,6 +1541,7 @@ run = "pnpm build"
 #[test]
 fn run_deploy_export_railway_plan_uses_explicit_manifest_model_without_bundle() {
     let root = temp_workspace("deploy-export-railway-explicit-manifest");
+    setup_test_deploy_export_providers(&root);
     fs::create_dir_all(root.join("service-web")).expect("mkdir web");
     write_root_manifest(
         &root,

@@ -95,22 +95,20 @@ run = "cargo run -p acme-jobs {args}"
 fn deploy_export_render_json_contract_has_versioned_shape() {
     let root = temp_workspace("deploy-export-render-json-contract");
     setup_workspace_app_path_bundle(&root);
-    let repo_root = env!("CARGO_MANIFEST_DIR");
+    write_test_deploy_export_provider(&root, "render");
     write_manifest(
         &root.join("effigy.toml"),
-        &format!(
-            r#"
+        r#"
 [bundle]
-base = {{ type = "path", dir = "bundles/workspace-app" }}
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
 databases = ["acme"]
 
 [deploy.providers.render]
-source = {{ type = "path", dir = "{repo_root}/external/providers/render" }}
-"#
-        ),
+source = { type = "path", dir = "providers/render" }
+"#,
     );
     std::fs::create_dir_all(root.join("app-front")).expect("mkdir front");
     std::fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
@@ -161,22 +159,20 @@ source = {{ type = "path", dir = "{repo_root}/external/providers/render" }}
 fn deploy_export_railway_json_contract_has_versioned_shape() {
     let root = temp_workspace("deploy-export-railway-json-contract");
     setup_workspace_app_path_bundle(&root);
-    let repo_root = env!("CARGO_MANIFEST_DIR");
+    write_test_deploy_export_provider(&root, "railway");
     write_manifest(
         &root.join("effigy.toml"),
-        &format!(
-            r#"
+        r#"
 [bundle]
-base = {{ type = "path", dir = "bundles/workspace-app" }}
+base = { type = "path", dir = "bundles/workspace-app" }
 host = "acme.test"
 project_name = "acme-dev"
 workspace_subdir = "acme"
 databases = ["acme"]
 
 [deploy.providers.railway]
-source = {{ type = "path", dir = "{repo_root}/external/providers/railway" }}
-"#
-        ),
+source = { type = "path", dir = "providers/railway" }
+"#,
     );
     std::fs::create_dir_all(root.join("app-front")).expect("mkdir front");
     std::fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
