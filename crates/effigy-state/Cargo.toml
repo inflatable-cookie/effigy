@@ -8,6 +8,7 @@ description = "State stack manifest and lineage planning substrate for Effigy"
 
 [dependencies]
 effigy-artifacts = { path = "../effigy-artifacts" }
+effigy-manifest = { path = "../effigy-manifest" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"

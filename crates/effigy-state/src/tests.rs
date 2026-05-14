@@ -100,6 +100,31 @@ fn apply_report_plans_execution_and_dry_run_statuses() {
 }
 
 #[test]
+fn mark_skipped_apply_layers_marks_requested_keys_and_rejects_unknown_ones() {
+    let lineage = StateStackManifest::parse_toml(acowtancy_fixture())
+        .expect("parse")
+        .plan_lineage()
+        .expect("lineage")
+        .report("planned");
+    let mut report = StateStackApplyReport::from_lineage(&lineage, true);
+
+    mark_skipped_apply_layers(
+        &mut report,
+        &["baseline-seed".to_owned(), "legacy-content".to_owned()],
+    )
+    .expect("mark skipped layers");
+    assert_eq!(report.layers[1].status, StateStackApplyLayerStatus::Skipped);
+    assert_eq!(report.layers[2].status, StateStackApplyLayerStatus::Skipped);
+
+    let error = mark_skipped_apply_layers(&mut report, &["missing".to_owned()])
+        .expect_err("unknown layer should fail");
+    assert_eq!(
+        error.to_string(),
+        "state apply skip layer(s) not found: missing"
+    );
+}
+
+#[test]
 fn capture_produced_layer_uses_role_policy_and_lineage_parent() {
     let lineage = StateStackManifest::parse_toml(acowtancy_fixture())
         .expect("parse")
@@ -120,6 +145,194 @@ fn capture_produced_layer_uses_role_policy_and_lineage_parent() {
 
     assert_eq!(layer.key, "uat-content-2026-05-12");
     assert_eq!(layer.role, StateLayerRole::UatCapture);
+}
+
+#[test]
+fn write_state_report_persists_latest_history_and_compatibility_files() {
+    let repo = temp_state_repo("report-write");
+    let paths = state_report_write_paths(
+        &repo,
+        "acowtancy-uat",
+        StateHistoryKind::Apply,
+        Some("lineage-a"),
+        Some("apply.json"),
+    );
+    let report = serde_json::json!({
+        "schema": STATE_STACK_APPLY_SCHEMA,
+        "schema_version": 1,
+        "ok": true
+    });
+
+    write_state_report(&repo, &paths, &report).expect("write state report");
+
+    assert!(paths.latest_path.exists());
+    assert!(paths.history_path.exists());
+    assert!(paths
+        .compatibility_path
+        .as_ref()
+        .expect("compatibility path")
+        .exists());
+}
+
+#[test]
+fn capture_and_apply_env_helpers_expose_expected_keys() {
+    let repo = temp_state_repo("state-env");
+    let lineage = StateStackManifest::parse_toml(acowtancy_fixture())
+        .expect("parse")
+        .plan_lineage()
+        .expect("lineage")
+        .report("planned");
+    let capture_env = state_capture_task_environment(
+        &repo,
+        &lineage,
+        "uat",
+        "uat-content",
+        Some("captures/content.dump"),
+        Some("oci://example.test/acowtancy:uat"),
+        StateLayerRole::UatCapture,
+        StateCaptureMode::UatOverlay,
+        Some(".effigy/state/capture-context/acowtancy-uat/uat-content.json"),
+    );
+    assert_eq!(
+        capture_env
+            .get("EFFIGY_STATE_CAPTURE_MODE")
+            .map(String::as_str),
+        Some("uat-overlay")
+    );
+    let expected_source = repo.join("captures/content.dump").display().to_string();
+    assert_eq!(
+        capture_env
+            .get("EFFIGY_STATE_CAPTURE_SOURCE")
+            .map(String::as_str),
+        Some(expected_source.as_str())
+    );
+
+    let mut apply_report = StateStackApplyReport::from_lineage(&lineage, true);
+    apply_report.layers[0].artifact_report = Some(serde_json::json!({
+        "destination": { "digest": "sha256:abc123" }
+    }));
+    let apply_env = state_apply_hook_environment(
+        "acowtancy-uat",
+        StateEnvironment::Uat,
+        "lineage-a",
+        &apply_report.layers[0],
+        "/tmp/apply-context.json",
+    );
+    assert_eq!(
+        apply_env
+            .get("EFFIGY_STATE_APPLY_LAYER_KEY")
+            .map(String::as_str),
+        Some("structure")
+    );
+    assert_eq!(
+        apply_env
+            .get("EFFIGY_STATE_APPLY_DIGEST")
+            .map(String::as_str),
+        Some("sha256:abc123")
+    );
+}
+
+#[test]
+fn write_state_context_file_returns_repo_relative_path() {
+    let repo = temp_state_repo("state-context");
+    let context = StateContextFile {
+        relative_path: std::path::PathBuf::from(
+            ".effigy/state/capture-context/acowtancy-uat/uat.json",
+        ),
+        context: serde_json::json!({ "schema": STATE_STACK_CAPTURE_CONTEXT_SCHEMA }),
+    };
+
+    let written = write_state_context_file(
+        &repo,
+        &context,
+        "state capture context directory",
+        "state capture context",
+    )
+    .expect("write context file");
+
+    assert_eq!(
+        written,
+        ".effigy/state/capture-context/acowtancy-uat/uat.json"
+    );
+    assert!(repo.join(&written).exists());
+}
+
+#[test]
+fn parse_state_history_kind_rejects_unknown_values() {
+    let error = parse_state_history_kind("weird").expect_err("unknown kind should fail");
+    assert_eq!(
+        error.to_string(),
+        "`state history --kind` must be `plan`, `apply`, or `capture`, got `weird`"
+    );
+}
+
+#[test]
+fn resolve_capture_request_expands_named_profile_defaults() {
+    let request = StateCaptureRequestDefinition {
+        profile: Some("uat-content".to_owned()),
+        role: None,
+        source_env: None,
+        key: None,
+        source: None,
+        destination_ref: None,
+        hook: None,
+        task: None,
+        yes: false,
+        push: false,
+    };
+    let resolved =
+        resolve_capture_request(Some("acowtancy-uat"), None, request, |_stack, _profile| {
+            Ok(StateManifestCaptureProfile {
+                role: "uat-capture".to_owned(),
+                source_env: "uat".to_owned(),
+                key: None,
+                source: Some("captures/{stack}/{profile}/{key}.dump".to_owned()),
+                destination_ref: Some("oci://example.test/{stack}:{key}".to_owned()),
+                hook: Some("capture:hook".to_owned()),
+                task: None,
+                push: true,
+            })
+        })
+        .expect("resolve capture request");
+
+    assert_eq!(resolved.role.as_deref(), Some("uat-capture"));
+    assert_eq!(resolved.source_env.as_deref(), Some("uat"));
+    assert_eq!(resolved.key.as_deref(), Some("uat-content"));
+    assert_eq!(
+        resolved.source.as_deref(),
+        Some("captures/acowtancy-uat/uat-content/uat-content.dump")
+    );
+    assert_eq!(
+        resolved.destination_ref.as_deref(),
+        Some("oci://example.test/acowtancy-uat:uat-content")
+    );
+    assert!(resolved.push);
+}
+
+#[test]
+fn resolve_capture_request_rejects_missing_required_fields_without_profile() {
+    let error = resolve_capture_request(
+        Some("acowtancy-uat"),
+        None,
+        StateCaptureRequestDefinition {
+            profile: None,
+            role: None,
+            source_env: Some("uat".to_owned()),
+            key: Some("capture".to_owned()),
+            source: None,
+            destination_ref: None,
+            hook: None,
+            task: None,
+            yes: false,
+            push: false,
+        },
+        |_stack, _profile| unreachable!("no profile lookup"),
+    )
+    .expect_err("missing role should fail");
+    assert_eq!(
+        error.to_string(),
+        "`state capture` requires `--role <ROLE>` or a named capture profile"
+    );
 }
 
 fn temp_state_repo(label: &str) -> std::path::PathBuf {

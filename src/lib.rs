@@ -59,6 +59,10 @@ pub fn render_cli_header<R: Renderer>(renderer: &mut R, root: &Path) -> UiResult
 mod contract_test_support;
 
 #[cfg(test)]
+#[path = "../tests/shared/deploy_fixture_support.rs"]
+mod deploy_fixture_support;
+
+#[cfg(test)]
 #[path = "tests/lib_tests.rs"]
 mod tests;
 

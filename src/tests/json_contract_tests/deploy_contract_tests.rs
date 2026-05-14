@@ -95,7 +95,7 @@ run = "cargo run -p acme-jobs {args}"
 fn deploy_export_render_json_contract_has_versioned_shape() {
     let root = temp_workspace("deploy-export-render-json-contract");
     setup_workspace_app_path_bundle(&root);
-    write_test_deploy_export_provider(&root, "render");
+    write_test_deploy_export_provider(&root, "render", "app-api", "app-jobs");
     write_manifest(
         &root.join("effigy.toml"),
         r#"
@@ -159,7 +159,7 @@ source = { type = "path", dir = "providers/render" }
 fn deploy_export_railway_json_contract_has_versioned_shape() {
     let root = temp_workspace("deploy-export-railway-json-contract");
     setup_workspace_app_path_bundle(&root);
-    write_test_deploy_export_provider(&root, "railway");
+    write_test_deploy_export_provider(&root, "railway", "app-api", "app-jobs");
     write_manifest(
         &root.join("effigy.toml"),
         r#"

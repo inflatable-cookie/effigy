@@ -381,14 +381,11 @@ fn parse_docs_check_workflow_paths_with_dir_override() {
 }
 
 #[test]
-fn parse_docs_removed_flat_check_spelling_reports_migration_error() {
+fn parse_docs_removed_flat_check_spelling_reports_unknown_argument() {
     let error = parse_command(vec!["docs".to_owned(), "check-links".to_owned()])
         .expect_err("old docs check spelling should fail");
 
-    assert_eq!(
-        error.to_string(),
-        "`docs check-links` has been replaced by `docs check links`"
-    );
+    assert_eq!(error.to_string(), "unknown argument: check-links");
 }
 
 #[test]

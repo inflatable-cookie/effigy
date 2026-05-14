@@ -20,7 +20,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Layout
 
 - `gNN/batch-cards/` optional per-generation execution cards
-- `g05/` current secret and local configuration management generation
+- `g06/` current codebase lean-down and ownership simplification generation
+- `g05/` previous secret and reusable-core hardening generation
 - `g04/` previous runtime architecture simplification generation
 - `g03/` previous production export and runtime hardening generation
 - `g02/` previous release and local-runtime expansion generation
@@ -38,16 +39,18 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   covered runtime architecture simplification, state stacks, deployment
   transactions, provider packages, post-release reference-grade cleanup, and
   artifact/crate-boundary rejustification.
-- `g05` remains the current generation. `g05.001` through `g05.007` remain
-  complete from the secret and local configuration management suite,
-  `g05.008` through `g05.015` completed the post-release ownership and
-  maintainability cleanup follow-through, `g05.016` through `g05.019`
-  completed schema-shape consolidation, and `g05.020` through `g05.027`
-  completed the reusable-core hardening tranche from the 2026-05-14 sweep.
+- `g05` is closed through
+  [`g05.027`](./g05/027-process-execution-boundary-review.md). It covered
+  secret and local configuration management, post-release ownership cleanup,
+  schema-shape consolidation, and reusable-core hardening.
+- `g06` is the current generation. It opened the post-`v0.7.0` codebase
+  lean-down suite: state and release god-file reduction, test fixture
+  convergence, CLI/help deduplication, typed contract-shape reuse,
+  compatibility-branch deletion, and runner-private domain-logic reduction.
 
 ## Active Strict Lane
 
-No strict lane is active.
+[`084-codebase-lean-down-strict-lane.md`](../specs/084-codebase-lean-down-strict-lane.md)
 
 ## Research Program
 
@@ -83,7 +86,7 @@ Before rollover:
 
 ## Next Task
 
-No active roadmap task. Open the next lane only after explicit planning.
+No active roadmap execution card is open. `g06.001` is closed through `809`.
 
 ## Historical language boundary
 

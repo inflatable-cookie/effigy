@@ -322,7 +322,7 @@ api = "acme-api"
 fn cli_json_mode_deploy_export_render_wraps_export_payload() {
     let root = temp_workspace("cli-json-deploy-export-render");
     setup_workspace_app_path_bundle(&root);
-    write_test_deploy_export_provider(&root, "render");
+    write_test_deploy_export_provider(&root, "render", "app-api", "app-jobs");
     fs::write(
         root.join("effigy.toml"),
         format!(
@@ -390,7 +390,7 @@ fn cli_json_mode_deploy_export_render_wraps_export_payload() {
 fn cli_json_mode_deploy_export_railway_wraps_export_payload() {
     let root = temp_workspace("cli-json-deploy-export-railway");
     setup_workspace_app_path_bundle(&root);
-    write_test_deploy_export_provider(&root, "railway");
+    write_test_deploy_export_provider(&root, "railway", "app-api", "app-jobs");
     fs::write(
         root.join("effigy.toml"),
         format!(

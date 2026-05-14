@@ -2,6 +2,8 @@
 mod command_behavior_tests;
 #[path = "cli_output_tests/core_output_tests.rs"]
 mod core_output_tests;
+#[path = "shared/deploy_fixture_support.rs"]
+mod deploy_fixture_support;
 #[path = "cli_output_tests/help_and_flags_tests.rs"]
 mod help_and_flags_tests;
 #[path = "cli_output_tests/json_envelope_tests/mod.rs"]

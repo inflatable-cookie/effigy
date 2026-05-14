@@ -66,6 +66,16 @@ pub(super) enum CommonOption {
     Yes(&'static str),
 }
 
+pub(super) struct StandardTopicHelpSpec {
+    pub topic: &'static str,
+    pub notices: &'static [&'static str],
+    pub usage: &'static [&'static str],
+    pub leading_common_options: &'static [CommonOption],
+    pub options: &'static [(&'static str, &'static str)],
+    pub trailing_common_options: &'static [CommonOption],
+    pub examples: &'static [&'static str],
+}
+
 impl CommonOption {
     fn row<'a>(self) -> (&'a str, &'a str) {
         match self {
@@ -87,6 +97,22 @@ impl CommonOption {
             CommonOption::Yes(description) => ("--yes", description),
         }
     }
+}
+
+pub(super) fn render_standard_topic_help_spec<R: HelpRenderer + ?Sized>(
+    renderer: &mut R,
+    spec: &StandardTopicHelpSpec,
+) -> HelpResult<()> {
+    render_standard_topic_help_with_common_options(
+        renderer,
+        spec.topic,
+        spec.notices,
+        spec.usage,
+        spec.leading_common_options,
+        spec.options,
+        spec.trailing_common_options,
+        spec.examples,
+    )
 }
 
 pub(super) fn render_standard_topic_help_with_common_options<R: HelpRenderer + ?Sized>(

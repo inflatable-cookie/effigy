@@ -225,6 +225,37 @@ impl StateHistoryKind {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateHistoryKindParseError {
+    value: String,
+}
+
+impl StateHistoryKindParseError {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+        }
+    }
+}
+
+impl fmt::Display for StateHistoryKindParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "`state history --kind` must be `plan`, `apply`, or `capture`, got `{}`",
+            self.value
+        )
+    }
+}
+
+impl std::error::Error for StateHistoryKindParseError {}
+
+pub fn parse_state_history_kind(
+    value: &str,
+) -> Result<StateHistoryKind, StateHistoryKindParseError> {
+    StateHistoryKind::parse(value).ok_or_else(|| StateHistoryKindParseError::new(value))
+}
+
 impl fmt::Display for StateHistoryKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {

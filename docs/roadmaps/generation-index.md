@@ -1,6 +1,6 @@
 # Roadmap Generation Index
 
-Current generation: g05
+Current generation: g06
 Updated: 2026-05-14
 
 ## Generation history
@@ -30,20 +30,25 @@ Updated: 2026-05-14
 
 ## Current Planning State
 
-`g05` remains the current generation.
+`g05` is closed.
 
-- `g05.001` through `g05.007` remain complete from the secret and local
-  configuration management generation.
+- `g05.001` through `g05.007` completed the secret and local configuration
+  management generation.
 - `g05.008` through `g05.015` completed the post-release ownership and
-  maintainability cleanup follow-through identified by the latest codebase
+  maintainability cleanup follow-through identified by the earlier codebase
   sweep.
 - `g05.016` through `g05.019` completed schema-shape consolidation across
   `[manifest]` and task-like definition owners.
 - `g05.020` through `g05.027` completed the reusable-core hardening tranche
-  from the 2026-05-14 sweep: provider contract hardening, source
-  materialization, product-neutral active docs, state extraction
-  follow-through, low-risk deduplication, Rhai host-surface ownership, and
-  process-boundary review.
+  from the 2026-05-14 sweep.
+
+`g06` is now the current generation.
+
+- `g06.001` opens the codebase lean-down suite.
+- `g06.002` through `g06.008` cover the first deletion-oriented lanes:
+  state shell trim, release module reduction, fixture convergence, CLI/help
+  deduplication, typed contract-shape reuse, compatibility-branch deletion,
+  and runner-private domain-logic reduction.
 
 Current ready work: none.
 
@@ -78,4 +83,4 @@ closeout there first.
 
 ## Next Task
 
-No active roadmap slice. Open the next lane only after explicit planning.
+`g06.001` is closed through `809`. No active slice is open.

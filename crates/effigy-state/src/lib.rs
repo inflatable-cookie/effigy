@@ -1,5 +1,6 @@
 mod apply;
 mod capture;
+mod config;
 mod history;
 mod lineage;
 mod model;
@@ -9,17 +10,29 @@ mod tests;
 mod validation;
 
 pub use apply::{
-    StateApplyHookContext, StateApplyHookLayerContext, StateStackApplyHookStatus,
+    mark_skipped_apply_layers, state_apply_hook_environment, StateApplyHookContext,
+    StateApplyHookLayerContext, StateApplyPlanningError, StateStackApplyHookStatus,
     StateStackApplyLayerReport, StateStackApplyLayerStatus, StateStackApplyReport,
 };
 pub use capture::{
-    capture_produced_layer, parse_capture_role, StateCaptureArtifactOperation, StateCaptureMode,
-    StateCapturePlanRequest, StateCapturePlanningError, StateCaptureSetEntry,
-    StateCaptureSetReport, StateCaptureTaskContext, StateStackCaptureArtifact,
-    StateStackCaptureProducedLayer, StateStackCaptureReport, StateStackCaptureTask,
-    StateStackCaptureTaskStatus,
+    capture_produced_layer, parse_capture_role, state_capture_task_environment,
+    StateCaptureArtifactOperation, StateCaptureMode, StateCapturePlanRequest,
+    StateCapturePlanningError, StateCaptureSetEntry, StateCaptureSetReport,
+    StateCaptureTaskContext, StateStackCaptureArtifact, StateStackCaptureProducedLayer,
+    StateStackCaptureReport, StateStackCaptureTask, StateStackCaptureTaskStatus,
 };
-pub use history::{StateHistoryKind, StateStackHistoryItem, StateStackHistoryReport};
+pub use config::{
+    capture_profile_from_state_value, load_state_stack_manifest_file,
+    parse_state_manifest_config_value, resolve_capture_request, resolve_explicit_manifest_path,
+    select_state_stack_for_apply, select_state_stack_manifest,
+    state_task_definition_into_manifest_task, ResolvedStateStackForApply,
+    StateCaptureRequestDefinition, StateManifestCaptureProfile, StateManifestConfig,
+    StateManifestConfigError,
+};
+pub use history::{
+    parse_state_history_kind, StateHistoryKind, StateHistoryKindParseError, StateStackHistoryItem,
+    StateStackHistoryReport,
+};
 pub use lineage::{
     StateStackArtifactOperation, StateStackArtifactReportRef, StateStackLineageLayer,
     StateStackLineagePlan, StateStackLineageReport,
@@ -34,7 +47,8 @@ pub use model::{
 };
 pub use paths::{
     build_state_apply_hook_context, build_state_capture_task_context, path_display,
-    safe_path_component, state_capture_set_report_write_paths, state_report_write_paths,
-    StateContextFile, StateReportWritePaths,
+    resolve_repo_relative_path, safe_path_component, state_capture_set_report_write_paths,
+    state_report_write_paths, write_state_context_file, write_state_report, StateContextFile,
+    StateIoError, StateReportWritePaths,
 };
 pub use validation::{validate_state_stack, StateStackParseError, StateStackValidationError};

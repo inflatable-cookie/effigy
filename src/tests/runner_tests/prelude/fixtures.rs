@@ -5,6 +5,7 @@ use super::harness_workspace::{
     create_workspace_dir, write_catalog_tasks, write_manifest, write_root_manifest,
 };
 use super::runtime::{fs, run_doctor, DoctorArgs, Path, PathBuf, RunnerError, TaskInvocation};
+use crate::deploy_fixture_support::setup_workspace_app_path_bundle as setup_workspace_app_path_bundle_shared;
 
 pub(in crate::runner::tests) fn write_root_dev_task_manifest(root: &Path) {
     write_root_manifest(root, "[tasks.dev]\nrun = \"printf root\"\n");
@@ -136,30 +137,8 @@ pub(in crate::runner::tests) fn workspace_with_empty_manifest(name: &str) -> Pat
     root
 }
 
-pub(in crate::runner::tests) fn workspace_app_fixture_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("crates/effigy-manifest/tests/fixtures/workspace-app-bundle")
-}
-
-pub(in crate::runner::tests) fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let path = entry.path();
-        let dest = dst.join(entry.file_name());
-        if path.is_dir() {
-            copy_dir_all(&path, &dest)?;
-        } else {
-            std::fs::copy(&path, &dest)?;
-        }
-    }
-    Ok(())
-}
-
 pub(in crate::runner::tests) fn setup_workspace_app_path_bundle(root: &Path) -> PathBuf {
-    let bundle_dir = root.join("bundles/workspace-app");
-    copy_dir_all(&workspace_app_fixture_dir(), &bundle_dir).expect("copy workspace app fixture");
-    bundle_dir
+    setup_workspace_app_path_bundle_shared(root)
 }
 
 pub(in crate::runner::tests) fn run_config_ok(root: PathBuf, args: &[&str]) -> String {

@@ -17,33 +17,6 @@ where
     match subcmd.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Docs)),
         "check" => parse_docs_check(args),
-        "check-links" => Err(removed_docs_check_spelling_error("check-links", "links")),
-        "check-json-examples" => Err(removed_docs_check_spelling_error(
-            "check-json-examples",
-            "json-examples",
-        )),
-        "check-headings" => Err(removed_docs_check_spelling_error(
-            "check-headings",
-            "headings",
-        )),
-        "check-paths" => Err(removed_docs_check_spelling_error("check-paths", "paths")),
-        "check-contains" => Err(removed_docs_check_spelling_error(
-            "check-contains",
-            "contains",
-        )),
-        "check-forbidden" => Err(removed_docs_check_spelling_error(
-            "check-forbidden",
-            "forbidden",
-        )),
-        "check-index" => Err(removed_docs_check_spelling_error("check-index", "index")),
-        "check-next-action" => Err(removed_docs_check_spelling_error(
-            "check-next-action",
-            "next-action",
-        )),
-        "check-workflow-paths" => Err(removed_docs_check_spelling_error(
-            "check-workflow-paths",
-            "workflow-paths",
-        )),
         "add-log-index" => parse_docs_add_log_index(args),
         other => Err(unknown_argument(other)),
     }
@@ -282,10 +255,4 @@ where
         repo_override,
         output_json,
     }))
-}
-
-fn removed_docs_check_spelling_error(old: &str, kind: &str) -> CliParseError {
-    CliParseError::InvalidArguments(format!(
-        "`docs {old}` has been replaced by `docs check {kind}`"
-    ))
 }

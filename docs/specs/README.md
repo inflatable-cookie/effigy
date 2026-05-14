@@ -28,7 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`083-reusable-core-hardening-strict-lane.md`](./083-reusable-core-hardening-strict-lane.md)
+- none
 
 Queued strict lanes:
 
@@ -38,8 +38,9 @@ Archived strict lanes:
 
 - completed or paused historical strict lanes live in
   [`archive/`](./archive/)
+- completed lane `084` should move to `archive/` in the next planning cleanup
+  batch
 
 ## Next Task
 
-Active strict-lane task: `742` deploy-provider contract hardening under lane
-`083`. Release execution remains human-owned.
+No active strict-lane task is open.

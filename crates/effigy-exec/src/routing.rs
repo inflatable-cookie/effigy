@@ -89,7 +89,6 @@ const HOST_NATIVE_COMMANDS: &[&str] = &[
     "gateway",
     "service",
     "catalog",
-    "catalogue",
     "release",
     "tasks",
     "help",

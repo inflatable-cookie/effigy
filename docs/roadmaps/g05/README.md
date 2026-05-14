@@ -1,6 +1,6 @@
 # g05 Roadmaps
 
-Status: Active
+Status: Closed
 Theme: Secret and local configuration management plus reusable-core hardening
 
 ## Purpose
@@ -134,5 +134,4 @@ Completed cards:
 
 ## Next Task
 
-No active `g05` execution lane. Open the next lane only after explicit
-planning.
+`g05` is closed. Use `g06` for the next active lean-down tranche.

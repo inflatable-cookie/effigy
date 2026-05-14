@@ -76,6 +76,12 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/14-235000-g06-lean-down-suite-closeout.md`](./2026-05/14-235000-g06-lean-down-suite-closeout.md)
+- [`2026-05/14-233500-runner-private-domain-logic-closeout.md`](./2026-05/14-233500-runner-private-domain-logic-closeout.md)
+- [`2026-05/14-231500-runner-state-domain-helper-extraction.md`](./2026-05/14-231500-runner-state-domain-helper-extraction.md)
+- [`2026-05/14-225500-compatibility-branch-audit-closeout.md`](./2026-05/14-225500-compatibility-branch-audit-closeout.md)
+- [`2026-05/14-202500-state-command-config-owner-extraction.md`](./2026-05/14-202500-state-command-config-owner-extraction.md)
+- [`2026-05/14-200500-g06-baseline-size-and-duplication.md`](./2026-05/14-200500-g06-baseline-size-and-duplication.md)
 - [`2026-05/14-174005-reusable-core-hardening-closeout.md`](./2026-05/14-174005-reusable-core-hardening-closeout.md)
 - [`2026-05/14-173811-process-execution-boundary-review.md`](./2026-05/14-173811-process-execution-boundary-review.md)
 - [`2026-05/14-170346-rhai-host-surface-test-ownership.md`](./2026-05/14-170346-rhai-host-surface-test-ownership.md)
@@ -157,6 +163,12 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-05/05-runtime-prep-surface-kind-removed.md`](./2026-05/05-runtime-prep-surface-kind-removed.md)
 - [`2026-05/05-runtime-container-execution-package-map.md`](./2026-05/05-runtime-container-execution-package-map.md)
 - [`2026-05/05-runtime-container-cleanup-closeout-boundary.md`](./2026-05/05-runtime-container-cleanup-closeout-boundary.md)
+- [`2026-05/14-223500-typed-release-json-wire-models.md`](./2026-05/14-223500-typed-release-json-wire-models.md)
+- [`2026-05/14-220500-cli-help-layout-deduplication.md`](./2026-05/14-220500-cli-help-layout-deduplication.md)
+- [`2026-05/14-213500-shared-deploy-test-fixtures.md`](./2026-05/14-213500-shared-deploy-test-fixtures.md)
+- [`2026-05/14-210000-release-model-owner-extraction.md`](./2026-05/14-210000-release-model-owner-extraction.md)
+- [`2026-05/14-202500-state-command-config-owner-extraction.md`](./2026-05/14-202500-state-command-config-owner-extraction.md)
+- [`2026-05/14-200500-g06-baseline-size-and-duplication.md`](./2026-05/14-200500-g06-baseline-size-and-duplication.md)
 - [`2026-05/05-runtime-container-caller-migration-cleanup-closeout.md`](./2026-05/05-runtime-container-caller-migration-cleanup-closeout.md)
 - [`2026-05/05-remaining-backend-branching-boundary.md`](./2026-05/05-remaining-backend-branching-boundary.md)
 - [`2026-05/05-preflight-workspace-provisioning-context-boundary.md`](./2026-05/05-preflight-workspace-provisioning-context-boundary.md)

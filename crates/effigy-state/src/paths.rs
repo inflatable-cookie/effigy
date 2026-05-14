@@ -1,5 +1,8 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::Serialize;
 
 use crate::{
     StateApplyHookContext, StateApplyHookLayerContext, StateCaptureMode, StateCaptureTaskContext,
@@ -80,6 +83,27 @@ pub struct StateContextFile<T> {
     pub context: T,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateIoError {
+    message: String,
+}
+
+impl StateIoError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for StateIoError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for StateIoError {}
+
 pub fn build_state_capture_task_context(
     lineage: &StateStackLineageReport,
     stack_name: &str,
@@ -147,6 +171,76 @@ pub fn build_state_apply_hook_context(
                 sql_report: layer.sql_report.clone(),
             },
         },
+    }
+}
+
+pub fn write_state_report<T: Serialize>(
+    repo_root: &Path,
+    paths: &StateReportWritePaths,
+    report: &T,
+) -> Result<(), StateIoError> {
+    let encoded = serde_json::to_string_pretty(report)
+        .map_err(|error| StateIoError::new(error.to_string()))?;
+    let encoded = format!("{encoded}\n");
+    for path in paths.all_paths() {
+        let Some(parent) = path.parent() else {
+            return Err(StateIoError::new(format!(
+                "failed to resolve parent directory for {}",
+                path.display()
+            )));
+        };
+        fs::create_dir_all(parent).map_err(|error| {
+            StateIoError::new(format!(
+                "failed to create state report directory {}: {error}",
+                parent.display()
+            ))
+        })?;
+        fs::write(path, &encoded).map_err(|error| {
+            StateIoError::new(format!(
+                "failed to write state report {}: {error}",
+                path_display(path, repo_root)
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+pub fn write_state_context_file<T: Serialize>(
+    repo_root: &Path,
+    context_file: &StateContextFile<T>,
+    directory_label: &str,
+    file_label: &str,
+) -> Result<String, StateIoError> {
+    let absolute_path = repo_root.join(&context_file.relative_path);
+    let Some(parent) = absolute_path.parent() else {
+        return Err(StateIoError::new(format!(
+            "failed to resolve parent directory for {}",
+            absolute_path.display()
+        )));
+    };
+    fs::create_dir_all(parent).map_err(|error| {
+        StateIoError::new(format!(
+            "failed to create {directory_label} {}: {error}",
+            parent.display()
+        ))
+    })?;
+    let encoded = serde_json::to_string_pretty(&context_file.context)
+        .map_err(|error| StateIoError::new(error.to_string()))?;
+    fs::write(&absolute_path, format!("{encoded}\n")).map_err(|error| {
+        StateIoError::new(format!(
+            "failed to write {file_label} {}: {error}",
+            path_display(&absolute_path, repo_root)
+        ))
+    })?;
+    Ok(path_display(&absolute_path, repo_root))
+}
+
+pub fn resolve_repo_relative_path(repo_root: &Path, path: &str) -> String {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        path.display().to_string()
+    } else {
+        repo_root.join(path).display().to_string()
     }
 }
 

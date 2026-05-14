@@ -1,11 +1,14 @@
+use std::collections::BTreeMap;
 use std::fmt;
+use std::path::Path;
 
 use effigy_artifacts::ArtifactKind;
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::{
-    StateLayerApplyMode, StateLayerEnvironmentPolicy, StateLayerRole, StateStackLineageReport,
+    plain_state_layer_role, resolve_repo_relative_path, StateLayerApplyMode,
+    StateLayerEnvironmentPolicy, StateLayerRole, StateStackLineageReport,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -257,3 +260,61 @@ impl fmt::Display for StateCapturePlanningError {
 }
 
 impl std::error::Error for StateCapturePlanningError {}
+
+pub fn state_capture_task_environment(
+    repo_root: &Path,
+    lineage: &StateStackLineageReport,
+    source_environment: &str,
+    key: &str,
+    source: Option<&str>,
+    destination_ref: Option<&str>,
+    capture_role: StateLayerRole,
+    capture_mode: StateCaptureMode,
+    context_path: Option<&str>,
+) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    env.insert(
+        "EFFIGY_STATE_CAPTURE_SCHEMA".to_owned(),
+        "effigy.state-stack.capture.v1".to_owned(),
+    );
+    env.insert(
+        "EFFIGY_STATE_CAPTURE_STACK".to_owned(),
+        lineage.stack_name.clone(),
+    );
+    env.insert(
+        "EFFIGY_STATE_CAPTURE_PARENT_LINEAGE_ID".to_owned(),
+        lineage.lineage_id.clone(),
+    );
+    env.insert(
+        "EFFIGY_STATE_CAPTURE_ROLE".to_owned(),
+        plain_state_layer_role(capture_role),
+    );
+    env.insert(
+        "EFFIGY_STATE_CAPTURE_MODE".to_owned(),
+        capture_mode.to_string(),
+    );
+    env.insert(
+        "EFFIGY_STATE_CAPTURE_SOURCE_ENV".to_owned(),
+        source_environment.to_owned(),
+    );
+    env.insert("EFFIGY_STATE_CAPTURE_KEY".to_owned(), key.to_owned());
+    if let Some(source) = source {
+        env.insert(
+            "EFFIGY_STATE_CAPTURE_SOURCE".to_owned(),
+            resolve_repo_relative_path(repo_root, source),
+        );
+    }
+    if let Some(destination) = destination_ref {
+        env.insert(
+            "EFFIGY_STATE_CAPTURE_DESTINATION_REF".to_owned(),
+            destination.to_owned(),
+        );
+    }
+    if let Some(context_path) = context_path {
+        env.insert(
+            "EFFIGY_STATE_CAPTURE_CONTEXT".to_owned(),
+            context_path.to_owned(),
+        );
+    }
+    env
+}
