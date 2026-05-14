@@ -2257,6 +2257,7 @@ fn cli_demo_stop_json_concurrent_runner_attempt_requests_termination() {
 
 #[test]
 fn cli_demo_run_text_single_process_concurrent_runner_forwards_attached_input() {
+    let _guard = lock_cli_process_tests();
     let root = temp_workspace("demo-concurrent-attached-input-text");
     write_demo_concurrent_runner_input_fixture(&root);
 
