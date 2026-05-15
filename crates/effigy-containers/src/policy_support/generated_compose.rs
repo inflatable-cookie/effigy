@@ -166,6 +166,7 @@ impl GeneratedComposeService {
 
 pub(crate) fn resolve_compose_source(
     repo_root: &Path,
+    bundle_root: Option<&Path>,
     container_name: &str,
     config: &ManifestContainerConfig,
     project_name: &str,
@@ -242,7 +243,7 @@ pub(crate) fn resolve_compose_source(
         )));
     }
 
-    let services = build_service_declarations(repo_root, config, &local_services)?;
+    let services = build_service_declarations(repo_root, bundle_root, config, &local_services)?;
     let resolver = CatalogResolver::new(
         project_local_catalog_dir(repo_root),
         user_global_catalog_dir(),
@@ -354,6 +355,7 @@ pub(crate) fn resolve_compose_source(
 
 fn build_service_declarations(
     repo_root: &Path,
+    bundle_root: Option<&Path>,
     container_config: &ManifestContainerConfig,
     services: &std::collections::BTreeMap<String, ManifestContainerServiceConfig>,
 ) -> Result<Vec<ServiceDeclaration>, ContainerPolicyError> {
@@ -396,11 +398,49 @@ fn build_service_declarations(
                 config: service
                     .config
                     .as_deref()
-                    .map(|raw| repo_relative_path(repo_root, raw, "containers.*.services.*.config"))
+                    .map(|raw| {
+                        render_service_config_path(
+                            repo_root,
+                            bundle_root,
+                            raw,
+                            "containers.*.services.*.config",
+                        )
+                    })
                     .transpose()?,
             })
         })
         .collect()
+}
+
+fn render_service_config_path(
+    repo_root: &Path,
+    bundle_root: Option<&Path>,
+    raw: &str,
+    field: &str,
+) -> Result<PathBuf, ContainerPolicyError> {
+    let rendered = match bundle_root {
+        Some(bundle_root) => raw.replace("{{ bundle.root }}", &bundle_root.display().to_string()),
+        None if raw.contains("{{ bundle.root }}") => {
+            return Err(ContainerPolicyError::TaskInvocation(format!(
+                "`{field}` references `{{{{ bundle.root }}}}` but the active manifest has no materialized bundle root"
+            )));
+        }
+        None => raw.to_owned(),
+    };
+
+    let path = Path::new(&rendered);
+    if path.is_absolute() {
+        if let Some(bundle_root) = bundle_root {
+            if path.starts_with(bundle_root) {
+                return Ok(path.to_path_buf());
+            }
+        }
+        return Err(ContainerPolicyError::TaskInvocation(format!(
+            "`{field}` must stay repo-relative in v1 or resolve under `{{{{ bundle.root }}}}`"
+        )));
+    }
+
+    Ok(repo_root.join(path))
 }
 
 fn resolve_shared_service_bindings(
@@ -1214,6 +1254,46 @@ services:
         assert_eq!(
             environment.get("DB_PORT"),
             Some(&YamlValue::String("3306".to_owned()))
+        );
+    }
+
+    #[test]
+    fn service_config_path_supports_bundle_root_template() {
+        let repo_root = Path::new("/tmp/repo");
+        let bundle_root = Path::new("/tmp/bundles/decodelabs");
+
+        let resolved = render_service_config_path(
+            repo_root,
+            Some(bundle_root),
+            "{{ bundle.root }}/configs/nginx-decodelabs.conf",
+            "containers.*.services.*.config",
+        )
+        .expect("resolve config path");
+
+        assert_eq!(
+            resolved,
+            PathBuf::from("/tmp/bundles/decodelabs/configs/nginx-decodelabs.conf")
+        );
+    }
+
+    #[test]
+    fn service_config_path_rejects_absolute_paths_outside_bundle_root() {
+        let repo_root = Path::new("/tmp/repo");
+        let bundle_root = Path::new("/tmp/bundles/decodelabs");
+
+        let error = render_service_config_path(
+            repo_root,
+            Some(bundle_root),
+            "/tmp/outside/nginx.conf",
+            "containers.*.services.*.config",
+        )
+        .expect_err("absolute path outside bundle root should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("must stay repo-relative in v1 or resolve under"),
+            "unexpected error: {error}"
         );
     }
 

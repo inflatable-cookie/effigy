@@ -270,11 +270,12 @@ fn compact_workspace_named_volume_mounts(parsed: &mut serde_yaml::Value, primary
     let Some(root) = parsed.as_mapping_mut() else {
         return;
     };
+    let services_key = serde_yaml::Value::String("services".to_owned());
     let service_key = serde_yaml::Value::String(primary_service.to_owned());
     let mut renamed: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     {
         let Some(service) = root
-            .get_mut(serde_yaml::Value::String("services".to_owned()))
+            .get_mut(&services_key)
             .and_then(serde_yaml::Value::as_mapping_mut)
             .and_then(|services| services.get_mut(&service_key))
             .and_then(serde_yaml::Value::as_mapping_mut)
@@ -310,6 +311,41 @@ fn compact_workspace_named_volume_mounts(parsed: &mut serde_yaml::Value, primary
     }
     if renamed.is_empty() {
         return;
+    }
+    if let Some(services) = root
+        .get_mut(&services_key)
+        .and_then(serde_yaml::Value::as_mapping_mut)
+    {
+        for (name, service) in services.iter_mut() {
+            if name == &service_key {
+                continue;
+            }
+            let Some(service) = service.as_mapping_mut() else {
+                continue;
+            };
+            let Some(volumes) = service
+                .get_mut(serde_yaml::Value::String("volumes".to_owned()))
+                .and_then(serde_yaml::Value::as_sequence_mut)
+            else {
+                continue;
+            };
+            for entry in volumes.iter_mut() {
+                let Some(raw) = entry.as_str() else {
+                    continue;
+                };
+                let Some((source, target, options)) = parse_mount_parts(raw) else {
+                    continue;
+                };
+                let Some(short) = renamed.get(source) else {
+                    continue;
+                };
+                let rendered = match options.filter(|value| !value.is_empty()) {
+                    Some(options) => format!("{short}:{target}:{options}"),
+                    None => format!("{short}:{target}"),
+                };
+                *entry = serde_yaml::Value::String(rendered);
+            }
+        }
     }
     let volumes_key = serde_yaml::Value::String("volumes".to_owned());
     let Some(volumes_root) = root

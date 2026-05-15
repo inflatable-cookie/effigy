@@ -6,6 +6,11 @@ services:
     volumes:
       - {{ repo_root }}:{{ working_dir }}:ro
       - ./{{ service_name }}.conf:/etc/nginx/conf.d/default.conf:ro
+{% if services["php-fpm"] and services["php-fpm"].params["isolated_dirs"] %}
+{% for dir in services["php-fpm"].params["isolated_dirs"] %}
+      - {{ project_name }}-{{ services["php-fpm"].name }}{{ services["php-fpm"].params["working_dir"] | replace("/", "-") | replace("_", "-") }}-{{ dir | replace("/", "-") | replace("_", "-") }}:{{ working_dir }}/{{ dir }}:ro
+{% endfor %}
+{% endif %}
 {% if services["php-fpm"] %}
     depends_on:
       {{ services["php-fpm"].name }}:

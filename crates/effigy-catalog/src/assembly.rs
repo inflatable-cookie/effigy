@@ -135,6 +135,8 @@ impl ComposeAssembler {
         let mut all_dockerfiles: HashMap<String, String> = HashMap::new();
         let mut all_configs: HashMap<String, String> = HashMap::new();
         let mut all_volumes: Vec<VolumeInfo> = Vec::new();
+        let mut seen_volume_names: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
 
         for (name, (decl, fragment)) in &fragments {
             let params = resolved_params
@@ -192,6 +194,9 @@ impl ComposeAssembler {
                 }
                 let vol_name = format!("{project_name}-{name}-{vol_key}");
                 declared_names.insert(vol_name.clone());
+                if !seen_volume_names.insert(vol_name.clone()) {
+                    continue;
+                }
                 all_volumes.push(VolumeInfo {
                     project_name: project_name.to_string(),
                     name: vol_name,
@@ -209,6 +214,9 @@ impl ComposeAssembler {
             // needing a static schema entry per occurrence.
             for discovered in Self::discover_named_volume_references(&service_def, &declared_names)
             {
+                if !seen_volume_names.insert(discovered.name.clone()) {
+                    continue;
+                }
                 all_volumes.push(VolumeInfo {
                     project_name: project_name.to_string(),
                     name: discovered.name,

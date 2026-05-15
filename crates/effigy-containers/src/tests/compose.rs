@@ -1161,3 +1161,65 @@ volumes:
     assert_eq!(policy.workspace_user.as_deref(), Some("dev"));
     assert_eq!(policy.workspace_home.as_deref(), Some("/home/dev"));
 }
+
+#[test]
+fn generated_php_nginx_stack_compacts_mirrored_named_volumes_across_services() {
+    let root = temp_repo("catalog-php-nginx-shared-volume-compact");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+document_root = "."
+isolated_dirs = ["vendor", "node_modules"]
+
+[containers.web.services.web]
+catalog = "nginx"
+document_root = "."
+rewrite_all_to = "/vendor/genesis.php"
+asset_fallback = "/vendor/genesis.php"
+error_page_404 = "/vendor/genesis.php"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/var/www/html"
+"#,
+    )
+    .expect("write manifest");
+
+    let policy = load_container_policy(&root, Some("web")).expect("policy");
+    let rewritten =
+        fs::read_to_string(&policy.compose_files[0]).expect("read rewritten workspace compose");
+
+    assert!(
+        rewritten.contains("efv-"),
+        "rewritten compose should compact named volume names: {rewritten}"
+    );
+    assert!(
+        !rewritten.contains("catalog-php-nginx-shared-volume-compact-web-app-var-www-html-vendor"),
+        "rewritten compose should not leave the long vendor volume name behind: {rewritten}"
+    );
+    assert!(
+        !rewritten
+            .contains("catalog-php-nginx-shared-volume-compact-web-app-var-www-html-node-modules"),
+        "rewritten compose should not leave the long node_modules volume name behind: {rewritten}"
+    );
+    assert!(
+        rewritten.contains(":/var/www/html/vendor:ro"),
+        "rewritten compose should keep the nginx read-only vendor mirror mount: {rewritten}"
+    );
+    assert!(
+        rewritten.contains(":/var/www/html/node_modules:ro"),
+        "rewritten compose should keep the nginx read-only node_modules mirror mount: {rewritten}"
+    );
+}

@@ -278,6 +278,13 @@ fn assembled_yaml_is_structurally_valid_compose() {
                     "document_root".to_string(),
                     toml::Value::String(".".to_string()),
                 );
+                p.insert(
+                    "isolated_dirs".to_string(),
+                    toml::Value::Array(vec![
+                        toml::Value::String("vendor".to_string()),
+                        toml::Value::String("node_modules".to_string()),
+                    ]),
+                );
                 p
             },
             variant: None,
@@ -403,6 +410,17 @@ fn assembled_yaml_is_structurally_valid_compose() {
         web_volume_strings.contains(&".:/var/www/html:ro"),
         "web should mount the repo read-only at the workspace working dir"
     );
+    assert!(
+        web_volume_strings
+            .contains(&"client-project-app-var-www-html-vendor:/var/www/html/vendor:ro"),
+        "web should mirror php-fpm isolated vendor volume read-only so front controllers inside vendor stay visible: {web_volume_strings:?}"
+    );
+    assert!(
+        web_volume_strings.contains(
+            &"client-project-app-var-www-html-node-modules:/var/www/html/node_modules:ro"
+        ),
+        "web should mirror php-fpm isolated node_modules volume read-only: {web_volume_strings:?}"
+    );
 
     let db = validate_service(&doc, "db");
     assert!(db.get("image").is_some(), "db missing 'image'");
@@ -515,7 +533,7 @@ fn assembled_yaml_is_structurally_valid_compose() {
     );
 
     // 5. Validate volume metadata.
-    assert_eq!(result.volumes.len(), 3);
+    assert_eq!(result.volumes.len(), 5);
     assert!(result
         .volumes
         .iter()
@@ -524,6 +542,13 @@ fn assembled_yaml_is_structurally_valid_compose() {
         .volumes
         .iter()
         .any(|volume| volume.name == "client-project-app-pnpm-store" && !volume.persist));
+    assert!(result
+        .volumes
+        .iter()
+        .any(|volume| volume.name == "client-project-app-var-www-html-vendor" && !volume.persist));
+    assert!(result.volumes.iter().any(|volume| volume.name
+        == "client-project-app-var-www-html-node-modules"
+        && !volume.persist));
 }
 
 #[test]

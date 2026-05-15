@@ -154,6 +154,10 @@ fn nginx_supports_genesis_rewrite_params_without_variant() {
         config.contains("try_files $uri /vendor/genesis.php;"),
         "nginx config should route missing assets through vendor/genesis.php, got:\n{config}"
     );
+    assert!(
+        config.contains("fastcgi_param SERVER_PROTOCOL $server_protocol;"),
+        "nginx config should pass SERVER_PROTOCOL through to PHP-FPM, got:\n{config}"
+    );
 }
 
 #[test]

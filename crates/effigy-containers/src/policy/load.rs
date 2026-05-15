@@ -127,6 +127,7 @@ pub fn load_container_policy_with_workspace(
     let library_mounts = resolve_library_mounts(&loaded.manifest, loaded.bundle_root.as_deref())?;
     build_effective_policy(
         repo_root,
+        loaded.bundle_root.as_deref(),
         containers,
         &default_project_name_base,
         &name,
@@ -157,6 +158,7 @@ pub fn load_all_container_policies(
         .map(|(name, config)| {
             build_effective_policy(
                 repo_root,
+                loaded.bundle_root.as_deref(),
                 containers,
                 &default_project_name_base,
                 name,
@@ -219,6 +221,7 @@ pub fn effective_attach_mode(
 
 fn build_effective_policy(
     repo_root: &Path,
+    bundle_root: Option<&Path>,
     containers: &ManifestContainersConfig,
     default_project_name_base: &str,
     name: &str,
@@ -245,7 +248,14 @@ fn build_effective_policy(
         managed_volumes,
         effective_ports,
         shared_services,
-    ) = resolve_compose_source(repo_root, name, config, &project_name, effective_manifest)?;
+    ) = resolve_compose_source(
+        repo_root,
+        bundle_root,
+        name,
+        config,
+        &project_name,
+        effective_manifest,
+    )?;
     let primary_service = config.primary_service.clone().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
             "container `{name}` must declare `primary_service`"

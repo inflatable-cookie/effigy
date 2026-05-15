@@ -467,6 +467,13 @@ fn end_to_end_php_stack_written_to_disk() {
                     "node_version".to_string(),
                     toml::Value::String("20".to_string()),
                 );
+                p.insert(
+                    "isolated_dirs".to_string(),
+                    toml::Value::Array(vec![
+                        toml::Value::String("vendor".to_string()),
+                        toml::Value::String("node_modules".to_string()),
+                    ]),
+                );
                 p
             },
             variant: None,
@@ -552,6 +559,7 @@ version = "8.3"
 extensions = ["pdo_mysql", "gd", "redis", "memcached", "intl", "exif", "zip", "bcmath"]
 document_root = "."
 node_version = "20"
+isolated_dirs = ["vendor", "node_modules"]
 
 [containers.web.services.web]
 catalog = "nginx"
@@ -618,6 +626,16 @@ memory = 128
             .iter()
             .any(|value| value.ends_with(":/var/www/html:ro")),
         "nginx should mount the repo read-only at the workspace working dir"
+    );
+    assert!(
+        web_volume_strings.iter().any(|value| *value
+            == "client-project-app-var-www-html-vendor:/var/www/html/vendor:ro"),
+        "nginx should mirror the php app vendor volume read-only: {web_volume_strings:?}"
+    );
+    assert!(
+        web_volume_strings.iter().any(|value| *value
+            == "client-project-app-var-www-html-node-modules:/var/www/html/node_modules:ro"),
+        "nginx should mirror the php app node_modules volume read-only: {web_volume_strings:?}"
     );
 
     // 4. Verify all 5 services are present.
@@ -723,7 +741,7 @@ memory = 128
         "MariaDB should have a healthcheck"
     );
 
-    assert_eq!(assembly.volumes.len(), 3);
+    assert_eq!(assembly.volumes.len(), 5);
     assert!(assembly
         .volumes
         .iter()
@@ -732,6 +750,13 @@ memory = 128
         .volumes
         .iter()
         .any(|volume| volume.name == "client-project-app-pnpm-store" && !volume.persist));
+    assert!(assembly
+        .volumes
+        .iter()
+        .any(|volume| volume.name == "client-project-app-var-www-html-vendor" && !volume.persist));
+    assert!(assembly.volumes.iter().any(|volume| volume.name
+        == "client-project-app-var-www-html-node-modules"
+        && !volume.persist));
 
     // 8. Verify second write is cached.
     let write2 = output.write(&assembly, manifest_content).unwrap();
