@@ -6,6 +6,18 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-15
+
+### Fixed
+- **External PHP bundle nginx ownership restored:** generated compose now lets
+  container service config paths resolve under `{{ bundle.root }}` for
+  materialized external bundles, nginx mirrors sibling php-fpm isolated dirs
+  like `vendor` and `node_modules` read-only into web services, shared named
+  volume identity stays stable across sibling service rewrite/compaction, and
+  bundled nginx PHP configs now pass `SERVER_PROTOCOL` through to php-fpm so
+  Decodelabs-style external bundles work again without core-owned provider
+  variants.
+
 ## [0.7.0] - 2026-05-14
 
 ### Breaking
