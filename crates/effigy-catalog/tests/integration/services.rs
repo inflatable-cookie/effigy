@@ -273,8 +273,20 @@ fn node_fragment_assembles_with_modules_volume() {
     let doc = validate_compose_structure(&result.compose_yaml);
     let app = validate_service(&doc, "app");
 
-    let image = app.get("image").unwrap().as_str().unwrap();
-    assert!(image.contains("node:"), "image should be node: {image}");
+    let build = app.get("build").expect("build");
+    let dockerfile = build
+        .get("dockerfile")
+        .and_then(|value| value.as_str())
+        .expect("dockerfile path");
+    assert!(
+        dockerfile.ends_with("/app/Dockerfile"),
+        "node service should build from its workspace Dockerfile, got: {dockerfile}"
+    );
+    let args = build.get("args").expect("build args");
+    assert_eq!(
+        args.get("NODE_VERSION").and_then(|value| value.as_str()),
+        Some("22")
+    );
 
     // Should have a node_modules named volume to avoid platform conflicts.
     assert!(
@@ -290,6 +302,10 @@ fn node_fragment_assembles_with_modules_volume() {
     assert!(
         app.get("depends_on").is_some(),
         "node app should depend on postgres"
+    );
+    assert!(
+        result.dockerfiles.contains_key("app"),
+        "node app should expose a Dockerfile artifact"
     );
 }
 

@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- **Workspace shell tool baseline is now explicit across workspace catalogs:**
+  the `node` catalog now builds through a real workspace Dockerfile instead of
+  using a bare Alpine image, and the workspace-flavored catalogs now ship a
+  shared baseline of shell and agent tools including `bash`, `git`, `jq`,
+  `ripgrep`, `fd`, `less`, `curl`, and `wget` so bundles and repos can rely on
+  `rg`-style tooling being present in workspace containers.
+
 ## [0.7.1] - 2026-05-15
 
 ### Fixed

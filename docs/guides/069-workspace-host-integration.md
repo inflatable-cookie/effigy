@@ -388,13 +388,12 @@ won't pick up new flags.
 - Only the three catalogs listed above receive the host git/SSH integration
   by default. Adding a new workspace-flavored catalog requires extending
   `WORKSPACE_GIT_AWARE_CATALOGS` in `effigy-containers/src/workspace.rs`.
-- The `node` catalog uses `node:<version>-alpine` directly with no
-  Dockerfile. The agent-socket mount and env var land correctly, but the
-  image lacks the `effigy-entrypoint` chmod wrapper, so a non-root user in
-  that catalog still has to access the socket through whatever permissions
-  Colima exposes. If you hit `Permission denied` from the agent in a node
-  container specifically, switch the catalog to a Dockerfile build or use
-  the `php-fpm`/`workspace-rust-bun` workspace as the shell target.
+- The workspace-flavored catalogs (`php-fpm`, `workspace-rust-bun`, and
+  `node`) now ship explicit Dockerfiles with a common baseline toolset for
+  interactive shell work and agents, including `bash`, `git`, `jq`,
+  `ripgrep`, `fd`, `less`, `curl`, `wget`, and the SSH bridge wrapper.
+  Bundles and repos should rely on that baseline for everyday shell and
+  inspection work instead of re-installing those tools ad hoc.
 - The integration assumes Colima as the container driver. Other drivers
   (Docker Desktop, plain dockerd) may expose the host SSH agent at a
   different path or not at all; the mount target is hard-coded to

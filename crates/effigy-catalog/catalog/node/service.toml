@@ -61,7 +61,7 @@ description = "Forward the host's SSH agent socket into the workspace container 
 exec_target = true
 shell = "/bin/bash"
 workspace_host_integration = true
-installs_mkcert_ca = false
+installs_mkcert_ca = true
 
 [volumes.node-modules]
 mount = "/app/node_modules"

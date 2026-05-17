@@ -19,7 +19,7 @@ COPY --from=mlocati/php-extension-installer:latest /usr/bin/install-php-extensio
 # are installed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         # Version control and archive tools
-        git unzip curl wget \
+        git unzip curl wget jq less ripgrep fd-find \
         # Lightweight sendmail-compatible SMTP shim for PHP mail()
         msmtp msmtp-mta ca-certificates \
         # SSH client for git push over ssh and remote interactive use
@@ -38,6 +38,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # Process management
         procps \
     && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
 # Create a standard non-root workspace user for interactive shells and
 # workspace-seeded task handoff.

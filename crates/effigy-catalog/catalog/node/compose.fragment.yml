@@ -1,6 +1,13 @@
 services:
   {{ service_name }}:
-    image: node:{{ version }}-alpine
+    build:
+      context: {{ repo_root }}
+      dockerfile: {{ catalog_path }}/Dockerfile
+      args:
+        NODE_VERSION: "{{ version }}"
+        WORKSPACE_UID: "{{ host_uid }}"
+        WORKSPACE_GID: "{{ host_gid }}"
+        WORKING_DIR: "{{ working_dir }}"
     working_dir: {{ working_dir }}
     command: ["sh", "-c", "{{ command }}"]
     volumes:

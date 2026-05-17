@@ -56,6 +56,44 @@ fn resolve_php_fpm_fragment() {
         fragment.schema.capabilities.shell.as_deref(),
         Some("/bin/bash")
     );
+    let dockerfile = fragment.dockerfile.as_deref().expect("dockerfile");
+    assert!(
+        dockerfile.contains("ripgrep"),
+        "php-fpm workspace image should include ripgrep for shell and agent use"
+    );
+    assert!(
+        dockerfile.contains("jq"),
+        "php-fpm workspace image should include jq for shell and agent use"
+    );
+}
+
+#[test]
+fn resolve_node_fragment_uses_workspace_image_with_agent_tools() {
+    let resolver = bundled_resolver();
+    let fragment = resolver.resolve("node").unwrap();
+
+    assert_eq!(fragment.name, "node");
+    assert!(fragment.dockerfile.is_some());
+    assert_eq!(
+        fragment.schema.capabilities.shell.as_deref(),
+        Some("/bin/bash")
+    );
+    assert!(fragment.schema.capabilities.workspace_host_integration);
+    assert!(fragment.schema.capabilities.installs_mkcert_ca);
+
+    let dockerfile = fragment.dockerfile.as_deref().expect("dockerfile");
+    assert!(
+        dockerfile.contains("ripgrep"),
+        "node workspace image should include ripgrep for shell and agent use"
+    );
+    assert!(
+        dockerfile.contains("jq"),
+        "node workspace image should include jq for shell and agent use"
+    );
+    assert!(
+        dockerfile.contains("fd-find"),
+        "node workspace image should include fd for shell and agent use"
+    );
 }
 
 #[test]

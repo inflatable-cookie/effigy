@@ -1,26 +1,22 @@
-ARG RUST_VERSION=1.91
-FROM rust:${RUST_VERSION}-bookworm
+ARG NODE_VERSION=22
+FROM node:${NODE_VERSION}-bookworm
 
 ARG WORKSPACE_UID=1000
 ARG WORKSPACE_GID=1000
-ARG WORKSPACE_MOUNT=/workspace-root
-ARG BUN_VERSION=""
+ARG WORKING_DIR=/app
 
 # ── System tools ──────────────────────────────────────────────────────
-# Tools every Rust/Bun workspace tends to need: build toolchain, TLS,
-# git, and procps for interactive shell work.
+# Tools expected in an interactive workspace shell and by coding agents.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        build-essential \
+        bash \
         ca-certificates \
         curl \
         fd-find \
         git \
         jq \
         less \
-        libssl-dev \
         openssh-client \
-        pkg-config \
         procps \
         ripgrep \
         socat \
@@ -31,10 +27,6 @@ RUN apt-get update \
 RUN ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
 # ── Non-root workspace user ───────────────────────────────────────────
-# Always create (or reuse) a user named `dev`, aligned with the host
-# UID/GID so bind-mounted workspace files round-trip cleanly. The name
-# is fixed so `systems.<name>.user = "dev"` overrides stay stable across
-# hosts with different uid/gid defaults.
 RUN set -eux; \
     group_name=dev; \
     if getent group "${WORKSPACE_GID}" >/dev/null; then \
@@ -47,44 +39,12 @@ RUN set -eux; \
         usermod --gid "${group_name}" dev; \
     fi
 
-# ── Bun ───────────────────────────────────────────────────────────────
-ENV BUN_INSTALL=/usr/local/bun
-RUN if [ -n "${BUN_VERSION}" ]; then \
-        curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}"; \
-    else \
-        curl -fsSL https://bun.sh/install | bash; \
-    fi \
-    && ln -sf /usr/local/bun/bin/bun /usr/local/bin/bun \
-    && ln -sf /usr/local/bun/bin/bunx /usr/local/bin/bunx
-
-# ── Cargo on PATH for non-login shells ────────────────────────────────
-RUN ln -sf /usr/local/cargo/bin/cargo /usr/local/bin/cargo \
-    && ln -sf /usr/local/cargo/bin/rustc /usr/local/bin/rustc \
-    && ln -sf /usr/local/cargo/bin/rustup /usr/local/bin/rustup
-
-# ── Ownership alignment ───────────────────────────────────────────────
-RUN mkdir -p /home/dev/.cargo "${WORKSPACE_MOUNT}" \
-    && chown -R dev:"${WORKSPACE_GID}" /home/dev /usr/local/cargo /usr/local/bun "${WORKSPACE_MOUNT}"
-
 ENV HOME=/home/dev
-ENV CARGO_HOME=/usr/local/cargo
 
 # ── Git safe.directory ────────────────────────────────────────────────
-# Workspace-root and library-mount paths are bind-mounted from the host,
-# owned by the developer's host UID. Tooling that runs as root inside the
-# container (`effigy prep`, package managers, etc.) would otherwise hit
-# git's "dubious ownership" guard. Trust is implicit in a dev container —
-# every mounted tree is the developer's own working copy — so allow any
-# path system-wide.
 RUN git config --system --add safe.directory '*'
 
 # ── SSH agent socket bridge ───────────────────────────────────────────
-# Colima creates the forwarded host SSH agent socket inside its VM owned
-# by root; bind-mounting it preserves those perms, so the non-root `dev`
-# workspace user can't talk to it directly. We bridge it via socat to a
-# dev-owned socket at `/tmp/effigy-ssh-auth.sock`, then point
-# `SSH_AUTH_SOCK` at the bridge. Bridging avoids any Colima-side
-# immutability that would defeat a plain chmod on the forwarded socket.
 RUN set -eux; \
     { \
         echo '#!/bin/bash'; \
@@ -128,6 +88,6 @@ RUN set -eux; \
 
 ENTRYPOINT ["/usr/local/bin/effigy-entrypoint"]
 
-WORKDIR ${WORKSPACE_MOUNT}
+WORKDIR ${WORKING_DIR}
 
 CMD ["sleep", "infinity"]
