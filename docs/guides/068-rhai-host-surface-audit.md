@@ -184,6 +184,59 @@ also returns it:
   an empty map when the file is missing.
 - `str::parse_int(value)` — trim and parse a value into a Rhai integer.
 
+## High-Value Script Shapes
+
+These are the first-party patterns worth preferring now that the typed helpers
+exist.
+
+### Aggregate state capture from a capture hook
+
+```rhai
+let ctx = state::capture_context();
+let result = state::capture_set(#{
+    stack: ctx["stack_name"],
+    profiles: ["new-content", "media"],
+    key: ctx["key"],
+    yes: true,
+    push: true,
+});
+if !result["ok"] { throw("capture-set failed"); }
+```
+
+### Plan-first deploy orchestration
+
+```rhai
+let plan = deploy::plan(#{ env: "uat", write_report: true });
+if !plan["ok"] { throw("deploy plan failed"); }
+
+if env("EFFIGY_DEPLOY_YES") == "1" {
+    let apply = deploy::apply(#{ env: "uat", yes: true });
+    if !apply["ok"] { throw("deploy apply failed"); }
+}
+```
+
+### Distribution preflight plus artifact validation
+
+```rhai
+let preflight = distribution::preflight(#{
+    tag: "v0.7.1",
+    skip_docs: true,
+    output: ".effigy/tmp/release/preflight.env",
+});
+if !preflight["ok"] { throw("distribution preflight failed"); }
+
+let artifacts = distribution::validate_artifacts(#{
+    artifacts_dir: "artifacts/release",
+    expect_homebrew: true,
+});
+if !artifacts["ok"] { throw("artifact validation failed"); }
+```
+
+For fuller task-shape guidance, use
+[`061-rhai-script-steps-guide.md`](./061-rhai-script-steps-guide.md),
+[`073-state-stack-guide.md`](./073-state-stack-guide.md), and
+[`074-deployment-guide.md`](./074-deployment-guide.md).
+
 ## Runtime and Execution Surface
 
 Effigy already exposes a typed runtime context helper and a routed execution

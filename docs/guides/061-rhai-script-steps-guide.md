@@ -451,6 +451,60 @@ let dst = state::capture_destination_ref();
 log(`capturing from ${src} to ${dst}`);
 ```
 
+Aggregate capture profiles from the same hook key:
+
+```rhai
+let ctx = state::capture_context();
+let result = state::capture_set(#{
+    stack: ctx["stack_name"],
+    profiles: ["new-content", "media"],
+    key: ctx["key"],
+    yes: true,
+    push: true,
+});
+if !result["ok"] {
+    throw("capture-set failed");
+}
+```
+
+Plan-first deploy automation with an explicit apply gate:
+
+```rhai
+let plan = deploy::plan(#{ env: "uat", write_report: true });
+if !plan["ok"] {
+    throw("deploy plan failed");
+}
+
+if env("EFFIGY_DEPLOY_YES") == "1" {
+    let apply = deploy::apply(#{ env: "uat", yes: true });
+    if !apply["ok"] {
+        throw("deploy apply failed");
+    }
+}
+```
+
+Distribution preflight plus artifact validation from one Rhai task:
+
+```rhai
+let tag = `v${effigy::active_version()}`;
+let preflight = distribution::preflight(#{
+    tag: tag,
+    skip_docs: true,
+    output: ".effigy/tmp/release/preflight.env",
+});
+if !preflight["ok"] {
+    throw("distribution preflight failed");
+}
+
+let artifacts = distribution::validate_artifacts(#{
+    artifacts_dir: "artifacts/release",
+    expect_homebrew: true,
+});
+if !artifacts["ok"] {
+    throw("artifact validation failed");
+}
+```
+
 Structured process call:
 
 ```toml

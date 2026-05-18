@@ -170,6 +170,8 @@ Sequence: `references/release-protocol.md`.
 |-------|-------|
 | Agent + graph workflow | `docs/guides/076-code-graph-and-agent-workflows.md` |
 | Agent adoption | `docs/guides/047-agent-and-cross-repo-adoption.md` |
+| Rhai script steps | `docs/guides/061-rhai-script-steps-guide.md` |
+| Rhai host surface audit | `docs/guides/068-rhai-host-surface-audit.md` |
 | Task routing | `docs/guides/016-task-routing-precedence.md` |
 | JSON contracts | `docs/guides/017-json-output-contracts.md` |
 | Quick start | `docs/guides/021-quick-start-and-command-cookbook.md` |

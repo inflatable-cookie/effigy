@@ -34,6 +34,12 @@ Tasks can be shell strings, refs to other tasks, or Rhai scripts. Examples:
 # Rhai script
 "link:local" = [{ rhai = "scripts/install-local-bin-links.rhai" }]
 
+# Rhai deploy plan wrapper
+"deploy:uat:plan" = [{ rhai = "scripts/deploy-uat-plan.rhai" }]
+
+# Rhai distribution validation wrapper
+"release:artifacts:check" = [{ rhai = "scripts/check-release-artifacts.rhai" }]
+
 # Mixed chain
 "bootstrap:local" = [
   { task = "install:local" },
@@ -43,6 +49,23 @@ Tasks can be shell strings, refs to other tasks, or Rhai scripts. Examples:
 # Task with explicit run block (for richer config)
 [tasks."smoke:release"]
 run = [{ rhai = "scripts/check-release-smoke.rhai" }]
+```
+
+Typical Rhai wrappers for typed deploy / distribution helpers:
+
+```rhai
+// scripts/deploy-uat-plan.rhai
+let plan = deploy::plan(#{ env: "uat", write_report: true });
+if !plan["ok"] { throw("deploy plan failed"); }
+```
+
+```rhai
+// scripts/check-release-artifacts.rhai
+let artifacts = distribution::validate_artifacts(#{
+    artifacts_dir: "artifacts/release",
+    expect_homebrew: true,
+});
+if !artifacts["ok"] { throw("artifact validation failed"); }
 ```
 
 ## `[systems.<name>]`
