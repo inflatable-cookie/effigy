@@ -6,6 +6,12 @@ Roadmap: `g02.005`
 
 ## Context
 
+Historical note: this archived lane predates the later typed Rhai distribution
+helpers. References here to pausing the "Rhai lane" describe the old planning
+split, not the current product surface. See
+[`068-rhai-host-surface-audit.md`](../../guides/068-rhai-host-surface-audit.md)
+for the live Rhai distribution/deploy helper matrix.
+
 Effigy now has native distribution commands that replace more of the old
 release/distribution script layer. That internal proof is good enough to stop
 treating the question as a Rhai-only dogfooding lane.

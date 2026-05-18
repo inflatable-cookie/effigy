@@ -6,6 +6,12 @@ Related roadmap: `g02.004`
 
 ## Summary
 
+Historical note: this log records the pre-helper boundary decision. The live
+Rhai surface now includes typed distribution helpers; use
+[`068-rhai-host-surface-audit.md`](../guides/068-rhai-host-surface-audit.md)
+and [`061-rhai-script-steps-guide.md`](../guides/061-rhai-script-steps-guide.md)
+for current behavior.
+
 - Retired `scripts/check-distribution-first-publish.sh`.
 - Added native `effigy distribution check-glibc-floor`.
 - Added native `effigy distribution first-publish`.

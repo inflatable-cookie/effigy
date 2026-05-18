@@ -116,6 +116,11 @@ That active question is now settled. The Rhai lane is paused on a clean
 internal posture after native distribution cutover, and the next product
 question has been split into its own optional distribution lane.
 
+Historical note: that pause refers to the old roadmap boundary, not the live
+typed helper surface. Rhai now exposes typed deploy and distribution helpers;
+see [`../../guides/061-rhai-script-steps-guide.md`](../../guides/061-rhai-script-steps-guide.md)
+and [`../../guides/068-rhai-host-surface-audit.md`](../../guides/068-rhai-host-surface-audit.md).
+
 ## Migration Classification
 
 ### Effigy
