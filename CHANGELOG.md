@@ -26,6 +26,17 @@ During v0.x, MINOR bumps may include breaking changes.
   input from args or stdin into a bounded impact packet with affected files,
   likely test files, candidate Effigy test tasks, confidence labels, and
   traversal reasons under the `effigy.graph.affected.v1` JSON contract.
+- **Rhai state capture-set helper:** Rhai scripts can now call
+  `state::capture_set(options_map)` to drive the existing CLI `state capture-set`
+  feature surface with stack, profile set, key, confirmation, and push options.
+- **Typed Rhai deploy and distribution helpers:** Rhai now exposes the deploy
+  transaction surface (`deploy::plan`, `deploy::apply`, `deploy::status`,
+  `deploy::history`, `deploy::redeploy`) and the distribution command family
+  (`distribution::validate_metadata`, `distribution::check_glibc_floor`,
+  `distribution::preflight`, `distribution::first_publish`,
+  `distribution::validate_artifacts`, `distribution::generate_closeout`,
+  `distribution::write_summary`) through the same typed CLI-backed command
+  contracts and confirmation semantics as the main Effigy surface.
 
 ### Changed
 - **Graph context ranking is now role-aware:** implementation-oriented context

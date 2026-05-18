@@ -46,7 +46,7 @@ Policy:
 | Container cleanup | `container::cache_list`, `container::cache_prune`, `container::volume_list`, `container::volume_prune` | Exposed |
 | Container data | `container::data`, `container::data_dump`, `container::data_seed`, `container::data_pull_production` | Exposed |
 | Container reset/eject | `container::reset`, `container::eject` | Exposed |
-| State stack orchestration | `state::plan`, `state::apply`, `state::capture`, `state::history` | Exposed |
+| State stack orchestration | `state::plan`, `state::apply`, `state::capture`, `state::capture_set`, `state::history` | Exposed |
 | State capture context | `state::capture_context`, `state::capture_context_path`, `state::capture_source`, `state::capture_destination_ref` | Exposed |
 | Artifacts | `artifact::inspect`, `artifact::stage`, `artifact::capture` | Exposed |
 | Docs checks | `docs::check_links`, `docs::check_json_examples`, `docs::check_headings`, `docs::check_paths`, `docs::check_contains`, `docs::check_forbidden`, `docs::check_index`, `docs::check_next_action`, `docs::check_workflow_paths`, `docs::add_log_index` | Exposed |
@@ -57,7 +57,8 @@ Policy:
 | Scan | `scan::god_files`, `scan::generated_assets`, `scan::generated_in_src`, `scan::duplicate_blocks`, `scan::comment_ratio`, `scan::attention_markers`, `scan::stale_suppressions` | Exposed |
 | Cache | `cache::inspect`, `cache::invalidate` | Exposed |
 | Contracts | `contracts::check_json`, `contracts::validate_selection` | Exposed |
-| Deploy | `deploy::model`, `deploy::emit`, `deploy::provider_context`, `deploy::provider_context_path`, `deploy::provider_report_path`, `deploy::provider_report` | Exposed |
+| Deploy | `deploy::model`, `deploy::emit`, `deploy::plan`, `deploy::apply`, `deploy::status`, `deploy::history`, `deploy::redeploy`, `deploy::provider_context`, `deploy::provider_context_path`, `deploy::provider_report_path`, `deploy::provider_report` | Exposed |
+| Distribution | `distribution::validate_metadata`, `distribution::check_glibc_floor`, `distribution::preflight`, `distribution::first_publish`, `distribution::validate_artifacts`, `distribution::generate_closeout`, `distribution::write_summary` | Exposed |
 | System | `system::status`, `system::logs` | Exposed |
 | Demo | `demo::list`, `demo::inspect`, `demo::history` | Exposed |
 | Changelog | `changelog::validate`, `changelog::extract` | Exposed |
@@ -68,15 +69,7 @@ Policy:
 
 ## Missing But Planned
 
-| Surface | Status | Notes |
-| --- | --- | --- |
-| `state::capture_set` | missing | CLI has `state capture-set`; Rhai only has `state::capture` |
-| `deploy::plan` | missing | CLI has full deploy transaction surface |
-| `deploy::apply` | missing | CLI has full deploy transaction surface |
-| `deploy::status` | missing | CLI has full deploy transaction surface |
-| `deploy::history` | missing | CLI has full deploy transaction surface |
-| `deploy::redeploy` | missing | CLI has full deploy transaction surface |
-| `distribution` | missing | CLI has `distribution preflight`, `check-glibc-floor`, `validate-artifacts` |
+None currently tracked.
 
 ## Intentionally CLI-First
 

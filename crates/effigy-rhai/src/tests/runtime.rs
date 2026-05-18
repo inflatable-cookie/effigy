@@ -140,6 +140,69 @@ fn execute_rhai_script_exposes_state_capture_context_helpers() {
 }
 
 #[test]
+fn execute_rhai_script_exposes_state_capture_set_in_capture_hook_context() {
+    let root = temp_root("state-capture-set-context");
+    let context_path = root.join(".effigy/state/capture-context/acowtancy-uat/new-content.json");
+    fs::create_dir_all(context_path.parent().expect("context dir")).expect("context dir");
+    fs::write(
+        &context_path,
+        r#"{
+  "schema": "effigy.state-stack.capture-context.v1",
+  "schema_version": 1,
+  "stack_name": "acowtancy-uat",
+  "capture_role": "uat-capture",
+  "source_environment": "uat",
+  "key": "new-content",
+  "source": ".effigy/state/captures/new-content.json",
+  "destination_ref": "oci://ghcr.io/acowtancy/state:new-content"
+}
+"#,
+    )
+    .expect("context");
+    let context = ScriptContext {
+        cwd: root.clone(),
+        repo_root: root,
+        task_name: "state:capture-new-content".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let _env = ScopedTestEnv::set_many(&[
+        (
+            "EFFIGY_STATE_CAPTURE_CONTEXT",
+            ".effigy/state/capture-context/acowtancy-uat/new-content.json".to_owned(),
+        ),
+        (
+            "EFFIGY_STATE_CAPTURE_SOURCE",
+            ".effigy/state/captures/new-content.json".to_owned(),
+        ),
+        (
+            "EFFIGY_STATE_CAPTURE_DESTINATION_REF",
+            "oci://ghcr.io/acowtancy/state:new-content".to_owned(),
+        ),
+    ]);
+    let script = r#"
+        let context = state::capture_context();
+        if context["stack_name"] != "acowtancy-uat" { throw("stack"); }
+        if context["key"] != "new-content" { throw("key"); }
+
+        let capture_set = state::capture_set(#{
+            stack: context["stack_name"],
+            profiles: ["new-content", "media"],
+            key: context["key"],
+            yes: true,
+            push: true,
+        });
+        if capture_set["feature"] != "state.capture_set" { throw("feature"); }
+        if capture_set["options"]["stack"] != "acowtancy-uat" { throw("capture set stack"); }
+        if capture_set["options"]["profiles"][0] != "new-content" { throw("capture set profile"); }
+        if capture_set["options"]["key"] != "new-content" { throw("capture set key"); }
+        if capture_set["options"]["push"] != true { throw("capture set push"); }
+    "#;
+
+    execute_rhai_script_with_runtime_context(&context, None, script, &[], &callbacks())
+        .expect("execute");
+}
+
+#[test]
 fn execute_rhai_script_exposes_state_apply_context_helpers() {
     let root = temp_root("state-apply-context");
     let context_path = root.join(".effigy/state/apply-context/acowtancy-uat/legacy-media.json");

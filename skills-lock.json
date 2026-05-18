@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "effigy": {
+      "source": "/Users/tom/Dev/projects/effigy",
+      "sourceType": "local",
+      "computedHash": "d374ded34674054be6a1fc315cac67214b33a4b08058d2cfe4bfb9987c5ee60e"
+    }
+  }
+}

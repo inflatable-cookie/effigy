@@ -16,10 +16,10 @@ use effigy_cli::{
     ChangelogArgs, ChangelogSubcommand, ContainerArgs, ContainerCacheSubcommand,
     ContainerDataSubcommand, ContainerDbDumpInput, ContainerSubcommand, ContainerVolumeSubcommand,
     ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs,
-    DemoListQuery, DemoSubcommand, DeployArgs, DeploySubcommand, DocsArgs, DocsBlockRequirement,
-    DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, InternalScriptRunArgs, ServiceArgs,
-    ServiceSubcommand, StateArgs, StateSubcommand, SystemArgs, SystemSubcommand, TaskInvocation,
-    TasksArgs,
+    DemoListQuery, DemoSubcommand, DeployArgs, DeploySubcommand, DistributionArgs,
+    DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs,
+    GatewayArgs, GatewaySubcommand, InternalScriptRunArgs, ServiceArgs, ServiceSubcommand,
+    StateArgs, StateSubcommand, SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs,
 };
 use serde_json::Value;
 
@@ -31,6 +31,9 @@ use super::container_runtime_prep::{activate_container_runtime_for_task, Activat
 use super::embedded_runner::parse_embedded_command;
 use super::error::RunnerError;
 use super::runtime_session_context::current_runtime_session_context;
+
+const DEFAULT_DISTRIBUTION_REPO_URL: &str = "https://github.com/inflatable-cookie/effigy.git";
+const DEFAULT_DISTRIBUTION_BREW_FORMULA: &str = "inflatable-cookie/effigy/effigy";
 pub(in crate::runner) fn run_internal_script_run(
     args: InternalScriptRunArgs,
 ) -> Result<String, RunnerError> {
@@ -876,6 +879,163 @@ fn run_rhai_feature(
                 output_json: true,
             }),
         ),
+        FEATURE_DEPLOY_PLAN => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Plan {
+                    env: required_string(&options, "env")?,
+                    write_report: bool_option(&options, "write_report")?.unwrap_or(false),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_DEPLOY_APPLY => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Apply {
+                    env: required_string(&options, "env")?,
+                    yes: bool_option(&options, "yes")?.unwrap_or(false),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_DEPLOY_STATUS => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Status {
+                    env: required_string(&options, "env")?,
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_DEPLOY_HISTORY => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::History {
+                    env: required_string(&options, "env")?,
+                    limit: usize_option(&options, "limit")?,
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_DEPLOY_REDEPLOY => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Deploy(DeployArgs {
+                subcommand: DeploySubcommand::Redeploy {
+                    env: required_string(&options, "env")?,
+                    deployment: required_string(&options, "deployment")?,
+                    yes: bool_option(&options, "yes")?.unwrap_or(false),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_DISTRIBUTION_VALIDATE_METADATA => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Distribution(DistributionArgs {
+                subcommand: DistributionSubcommand::ValidateMetadata {
+                    tag: string_option(&options, "tag")?,
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Distribution(DistributionArgs {
+                subcommand: DistributionSubcommand::CheckGlibcFloor {
+                    binary_path: path_option(&options, "binary")?
+                        .ok_or_else(|| RunnerError::task_invocation("`binary` is required"))?,
+                    max_glibc: required_string(&options, "max_glibc")?,
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_DISTRIBUTION_PREFLIGHT => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Distribution(DistributionArgs {
+                subcommand: DistributionSubcommand::Preflight {
+                    tag: string_option(&options, "tag")?,
+                    skip_docs: bool_option(&options, "skip_docs")?.unwrap_or(false),
+                    skip_smoke: bool_option(&options, "skip_smoke")?.unwrap_or(false),
+                    output_path: path_option(&options, "output")?,
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_DISTRIBUTION_FIRST_PUBLISH => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Distribution(DistributionArgs {
+                subcommand: DistributionSubcommand::FirstPublish {
+                    tag: required_string(&options, "tag")?,
+                    crate_version: string_option(&options, "crate_version")?,
+                    repo_url: string_option(&options, "repo_url")?
+                        .unwrap_or_else(|| DEFAULT_DISTRIBUTION_REPO_URL.to_owned()),
+                    brew_formula: string_option(&options, "brew_formula")?
+                        .unwrap_or_else(|| DEFAULT_DISTRIBUTION_BREW_FORMULA.to_owned()),
+                    skip_homebrew: bool_option(&options, "skip_homebrew")?.unwrap_or(false),
+                    artifacts_dir: path_option(&options, "artifacts_dir")?,
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Distribution(DistributionArgs {
+                subcommand: DistributionSubcommand::ValidateArtifacts {
+                    artifacts_dir: path_option(&options, "artifacts_dir")?.ok_or_else(|| {
+                        RunnerError::task_invocation("`artifacts_dir` is required")
+                    })?,
+                    expect_homebrew: bool_option(&options, "expect_homebrew")?.unwrap_or(false),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Distribution(DistributionArgs {
+                subcommand: DistributionSubcommand::GenerateCloseout {
+                    tag: required_string(&options, "tag")?,
+                    artifacts_dir: path_option(&options, "artifacts_dir")?.ok_or_else(|| {
+                        RunnerError::task_invocation("`artifacts_dir` is required")
+                    })?,
+                    output_path: path_option(&options, "output")?,
+                    owner: string_option(&options, "owner")?
+                        .unwrap_or_else(|| "Platform".to_owned()),
+                    expect_homebrew: bool_option(&options, "expect_homebrew")?.unwrap_or(false),
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
+        FEATURE_DISTRIBUTION_WRITE_SUMMARY => run_typed_command(
+            repo_root,
+            effigy_cli::Command::Distribution(DistributionArgs {
+                subcommand: DistributionSubcommand::WriteSummary {
+                    tag: required_string(&options, "tag")?,
+                    artifacts_dir: path_option(&options, "artifacts_dir")?.ok_or_else(|| {
+                        RunnerError::task_invocation("`artifacts_dir` is required")
+                    })?,
+                    crate_version: string_option(&options, "crate_version")?,
+                    repo_url: string_option(&options, "repo_url")?
+                        .unwrap_or_else(|| DEFAULT_DISTRIBUTION_REPO_URL.to_owned()),
+                    brew_formula: string_option(&options, "brew_formula")?
+                        .unwrap_or_else(|| DEFAULT_DISTRIBUTION_BREW_FORMULA.to_owned()),
+                    homebrew_executed: bool_option(&options, "homebrew_executed")?.unwrap_or(false),
+                    log_files: string_array_any(&options, &["log_files", "log_file"])?,
+                },
+                repo_override: Some(repo_root.to_path_buf()),
+                output_json: true,
+            }),
+        ),
         FEATURE_SYSTEM_STATUS => run_typed_command(
             repo_root,
             effigy_cli::Command::System(SystemArgs {
@@ -1098,6 +1258,18 @@ fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_CONTRACTS_VALIDATE_SELECTION
             | FEATURE_DEPLOY_MODEL
             | FEATURE_DEPLOY_EMIT
+            | FEATURE_DEPLOY_PLAN
+            | FEATURE_DEPLOY_APPLY
+            | FEATURE_DEPLOY_STATUS
+            | FEATURE_DEPLOY_HISTORY
+            | FEATURE_DEPLOY_REDEPLOY
+            | FEATURE_DISTRIBUTION_VALIDATE_METADATA
+            | FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR
+            | FEATURE_DISTRIBUTION_PREFLIGHT
+            | FEATURE_DISTRIBUTION_FIRST_PUBLISH
+            | FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS
+            | FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT
+            | FEATURE_DISTRIBUTION_WRITE_SUMMARY
             | FEATURE_SYSTEM_STATUS
             | FEATURE_SYSTEM_LOGS
             | FEATURE_DEMO_LIST

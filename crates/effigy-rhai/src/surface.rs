@@ -21,6 +21,7 @@ pub const MODULE_CONTAINER: &str = "container";
 pub const MODULE_SCAN: &str = "scan";
 pub const MODULE_DOCS: &str = "docs";
 pub const MODULE_DEPLOY: &str = "deploy";
+pub const MODULE_DISTRIBUTION: &str = "distribution";
 pub const MODULE_SYSTEM: &str = "system";
 pub const MODULE_DEMO: &str = "demo";
 pub const MODULE_CHANGELOG: &str = "changelog";
@@ -60,6 +61,7 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_SCAN,
     MODULE_DOCS,
     MODULE_DEPLOY,
+    MODULE_DISTRIBUTION,
     MODULE_SYSTEM,
     MODULE_DEMO,
     MODULE_CHANGELOG,
@@ -90,6 +92,7 @@ pub const FEATURE_CONFIG_USER_UNSET: &str = "config.user_unset";
 pub const FEATURE_STATE_PLAN: &str = "state.plan";
 pub const FEATURE_STATE_APPLY: &str = "state.apply";
 pub const FEATURE_STATE_CAPTURE: &str = "state.capture";
+pub const FEATURE_STATE_CAPTURE_SET: &str = "state.capture_set";
 pub const FEATURE_STATE_HISTORY: &str = "state.history";
 pub const FEATURE_CONTAINER_STATUS: &str = "container.status";
 pub const FEATURE_CONTAINER_LOGS: &str = "container.logs";
@@ -138,6 +141,18 @@ pub const FEATURE_CONTRACTS_CHECK_JSON: &str = "contracts.check_json";
 pub const FEATURE_CONTRACTS_VALIDATE_SELECTION: &str = "contracts.validate_selection";
 pub const FEATURE_DEPLOY_MODEL: &str = "deploy.model";
 pub const FEATURE_DEPLOY_EMIT: &str = "deploy.emit";
+pub const FEATURE_DEPLOY_PLAN: &str = "deploy.plan";
+pub const FEATURE_DEPLOY_APPLY: &str = "deploy.apply";
+pub const FEATURE_DEPLOY_STATUS: &str = "deploy.status";
+pub const FEATURE_DEPLOY_HISTORY: &str = "deploy.history";
+pub const FEATURE_DEPLOY_REDEPLOY: &str = "deploy.redeploy";
+pub const FEATURE_DISTRIBUTION_VALIDATE_METADATA: &str = "distribution.validate_metadata";
+pub const FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR: &str = "distribution.check_glibc_floor";
+pub const FEATURE_DISTRIBUTION_PREFLIGHT: &str = "distribution.preflight";
+pub const FEATURE_DISTRIBUTION_FIRST_PUBLISH: &str = "distribution.first_publish";
+pub const FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS: &str = "distribution.validate_artifacts";
+pub const FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT: &str = "distribution.generate_closeout";
+pub const FEATURE_DISTRIBUTION_WRITE_SUMMARY: &str = "distribution.write_summary";
 pub const FEATURE_SYSTEM_STATUS: &str = "system.status";
 pub const FEATURE_SYSTEM_LOGS: &str = "system.logs";
 pub const FEATURE_DEMO_LIST: &str = "demo.list";
@@ -163,6 +178,7 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_STATE_PLAN,
     FEATURE_STATE_APPLY,
     FEATURE_STATE_CAPTURE,
+    FEATURE_STATE_CAPTURE_SET,
     FEATURE_STATE_HISTORY,
     FEATURE_CONTAINER_STATUS,
     FEATURE_CONTAINER_LOGS,
@@ -211,6 +227,18 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_CONTRACTS_VALIDATE_SELECTION,
     FEATURE_DEPLOY_MODEL,
     FEATURE_DEPLOY_EMIT,
+    FEATURE_DEPLOY_PLAN,
+    FEATURE_DEPLOY_APPLY,
+    FEATURE_DEPLOY_STATUS,
+    FEATURE_DEPLOY_HISTORY,
+    FEATURE_DEPLOY_REDEPLOY,
+    FEATURE_DISTRIBUTION_VALIDATE_METADATA,
+    FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR,
+    FEATURE_DISTRIBUTION_PREFLIGHT,
+    FEATURE_DISTRIBUTION_FIRST_PUBLISH,
+    FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS,
+    FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT,
+    FEATURE_DISTRIBUTION_WRITE_SUMMARY,
     FEATURE_SYSTEM_STATUS,
     FEATURE_SYSTEM_LOGS,
     FEATURE_DEMO_LIST,

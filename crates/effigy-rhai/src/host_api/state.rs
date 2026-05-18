@@ -107,6 +107,13 @@ fn build_state_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> 
         context.clone(),
         callbacks.clone(),
     );
+    module_feature_options(
+        &mut module,
+        "capture_set",
+        crate::surface::FEATURE_STATE_CAPTURE_SET,
+        context.clone(),
+        callbacks.clone(),
+    );
     let capture_context_reader = context.clone();
     module.set_native_fn(
         "capture_context",

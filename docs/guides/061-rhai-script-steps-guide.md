@@ -154,7 +154,24 @@ Current v1 helpers:
   - `state::plan(options_map)`
   - `state::apply(options_map)`
   - `state::capture(options_map)`
+  - `state::capture_set(options_map)`
   - `state::history(options_map)`
+- deploy helpers:
+  - `deploy::model()`
+  - `deploy::emit(options_map)`
+  - `deploy::plan(options_map)`
+  - `deploy::apply(options_map)`
+  - `deploy::status(options_map)`
+  - `deploy::history(options_map)`
+  - `deploy::redeploy(options_map)`
+- distribution helpers:
+  - `distribution::validate_metadata(options_map)`
+  - `distribution::check_glibc_floor(options_map)`
+  - `distribution::preflight(options_map)`
+  - `distribution::first_publish(options_map)`
+  - `distribution::validate_artifacts(options_map)`
+  - `distribution::generate_closeout(options_map)`
+  - `distribution::write_summary(options_map)`
 - state capture context helpers:
   - `state::capture_context()`
   - `state::capture_context_path()`

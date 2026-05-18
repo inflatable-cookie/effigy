@@ -15,7 +15,7 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
             let effigy = effigy::run(["demo", "list"]);
             if !effigy["success"] || effigy["output"] != "demo list" { throw("effigy"); }
             let active_version = effigy::active_version();
-            if !str::contains(active_version, "0.6.1") { throw("active version"); }
+            if !str::contains(active_version, "__EFFIGY_VERSION__") { throw("active version"); }
             let json = effigy::run_json(["demo", "list"]);
             if json["json"] != true { throw("json"); }
             if container::up("web", true) != "up:web:true" { throw("up"); }
@@ -45,6 +45,20 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
             if bundle["feature"] != "bundle.inspect" { throw("bundle"); }
             let deploy = deploy::emit(#{ provider: "render", path: "tmp/render", plan: true });
             if deploy["feature"] != "deploy.emit" || deploy["options"]["provider"] != "render" { throw("deploy emit"); }
+            let deploy_plan = deploy::plan(#{ env: "uat", write_report: true });
+            if deploy_plan["feature"] != "deploy.plan" || deploy_plan["options"]["write_report"] != true { throw("deploy plan"); }
+            let deploy_apply = deploy::apply(#{ env: "uat", yes: true });
+            if deploy_apply["feature"] != "deploy.apply" || deploy_apply["options"]["yes"] != true { throw("deploy apply"); }
+            let deploy_status = deploy::status(#{ env: "uat" });
+            if deploy_status["feature"] != "deploy.status" || deploy_status["options"]["env"] != "uat" { throw("deploy status"); }
+            let deploy_history = deploy::history(#{ env: "production", limit: 5 });
+            if deploy_history["feature"] != "deploy.history" || deploy_history["options"]["limit"] != 5 { throw("deploy history"); }
+            let deploy_redeploy = deploy::redeploy(#{ env: "production", deployment: "dep-123", yes: true });
+            if deploy_redeploy["feature"] != "deploy.redeploy" || deploy_redeploy["options"]["deployment"] != "dep-123" { throw("deploy redeploy"); }
+            let distribution_preflight = distribution::preflight(#{ tag: "v0.7.1", skip_docs: true, output: "tmp/preflight.env" });
+            if distribution_preflight["feature"] != "distribution.preflight" || distribution_preflight["options"]["skip_docs"] != true { throw("distribution preflight"); }
+            let distribution_glibc = distribution::check_glibc_floor(#{ binary: "./target/release/effigy", max_glibc: "2.35" });
+            if distribution_glibc["feature"] != "distribution.check_glibc_floor" || distribution_glibc["options"]["max_glibc"] != "2.35" { throw("distribution glibc"); }
             let gateway = gateway::status();
             if gateway["feature"] != "gateway.status" { throw("gateway"); }
             let scan = scan::god_files(#{ threshold: 900 });
@@ -60,8 +74,9 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
             let value = config::get("systems.dev.container");
             if value != "stack" { throw("config get"); }
         "#;
+    let script = script.replace("__EFFIGY_VERSION__", env!("CARGO_PKG_VERSION"));
 
-    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+    execute_rhai_script(&context, &script, &[], &callbacks()).expect("execute");
 }
 
 #[test]
@@ -94,6 +109,10 @@ fn execute_rhai_script_exposes_extended_rhai_feature_surface() {
 
             let state_capture = state::capture("uat", "baseline");
             if state_capture["feature"] != "state.capture" || state_capture["options"]["profile"] != "baseline" { throw("state capture"); }
+
+            let state_capture_set = state::capture_set(#{ stack: "uat", profiles: ["baseline", "media"], key: "uat-snapshot", yes: true, push: true });
+            if state_capture_set["feature"] != "state.capture_set" { throw("state capture set"); }
+            if state_capture_set["options"]["profiles"][1] != "media" || state_capture_set["options"]["key"] != "uat-snapshot" || state_capture_set["options"]["push"] != true { throw("state capture set options"); }
 
             let state_history = state::history(#{ stack: "uat", limit: 5 });
             if state_history["feature"] != "state.history" || state_history["options"]["limit"] != 5 { throw("state history"); }
@@ -138,6 +157,32 @@ fn execute_rhai_script_exposes_extended_rhai_feature_surface() {
 
             let pull = container::data_pull_production("web");
             if pull["feature"] != "container.data_pull_production" || pull["options"]["name"] != "web" { throw("data pull production"); }
+
+            let validate_metadata = distribution::validate_metadata(#{ tag: "v0.7.1" });
+            if validate_metadata["feature"] != "distribution.validate_metadata" || validate_metadata["options"]["tag"] != "v0.7.1" { throw("distribution validate metadata"); }
+
+            let first_publish = distribution::first_publish(#{ tag: "v0.7.1", artifacts_dir: "artifacts/release", skip_homebrew: true });
+            if first_publish["feature"] != "distribution.first_publish" || first_publish["options"]["skip_homebrew"] != true { throw("distribution first publish"); }
+
+            let validate_artifacts = distribution::validate_artifacts(#{ artifacts_dir: "artifacts/release", expect_homebrew: true });
+            if validate_artifacts["feature"] != "distribution.validate_artifacts" || validate_artifacts["options"]["expect_homebrew"] != true { throw("distribution validate artifacts"); }
+
+            let generate_closeout = distribution::generate_closeout(#{
+                tag: "v0.7.1",
+                artifacts_dir: "artifacts/release",
+                output: "tmp/closeout.md",
+                owner: "Platform",
+                expect_homebrew: true,
+            });
+            if generate_closeout["feature"] != "distribution.generate_closeout" || generate_closeout["options"]["owner"] != "Platform" { throw("distribution generate closeout"); }
+
+            let write_summary = distribution::write_summary(#{
+                tag: "v0.7.1",
+                artifacts_dir: "artifacts/release",
+                homebrew_executed: true,
+                log_files: ["01.log", "02.log"],
+            });
+            if write_summary["feature"] != "distribution.write_summary" || write_summary["options"]["log_files"][1] != "02.log" { throw("distribution write summary"); }
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
