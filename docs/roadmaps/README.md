@@ -55,7 +55,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   extractors, query commands, and bounded agent context packs.
   It now also carries follow-up lanes for incremental indexing, query speed,
   failed fixture-path reliability, scan-cost reduction, foreground watch mode,
-  and graph navigation ranking quality.
+  graph navigation ranking quality, and a one-call graph exploration surface for
+  agent workflows.
 
 ## Active Strict Lane
 

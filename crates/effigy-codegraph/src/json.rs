@@ -158,6 +158,46 @@ pub struct GraphContextPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphExploreIndexPayload {
+    pub freshness: GraphFreshnessPayload,
+    pub counts: GraphCountsPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphExploreExcerptPayload {
+    pub path: String,
+    pub language_id: Option<String>,
+    pub name: Option<String>,
+    pub range: Option<SourceSpan>,
+    pub role: String,
+    pub score: usize,
+    pub reasons: Vec<String>,
+    pub text: String,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphExploreRelationPayload {
+    pub kind: String,
+    pub path: String,
+    pub name: Option<String>,
+    pub range: Option<SourceSpan>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphExplorePayload {
+    pub query: String,
+    pub index: GraphExploreIndexPayload,
+    pub summary: String,
+    pub primary: Vec<GraphContextItemPayload>,
+    pub excerpts: Vec<GraphExploreExcerptPayload>,
+    pub relations: Vec<GraphExploreRelationPayload>,
+    pub overflow: GraphContextOverflowPayload,
+    pub guidance: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphIndexRunsPayload {
     pub runs: Vec<IndexRunRecord>,
 }

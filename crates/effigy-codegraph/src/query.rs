@@ -4,9 +4,10 @@ use std::path::Path;
 
 use crate::error::CodeGraphError;
 use crate::json::{
-    GraphContextItemPayload, GraphContextOverflowPayload, GraphContextPayload, GraphFilesPayload,
-    GraphFreshnessPayload, GraphImpactPayload, GraphNodePayload, GraphRelatedNodesPayload,
-    GraphSearchMatchPayload, GraphSearchPayload,
+    GraphContextItemPayload, GraphContextOverflowPayload, GraphContextPayload,
+    GraphExploreExcerptPayload, GraphExploreIndexPayload, GraphExplorePayload,
+    GraphExploreRelationPayload, GraphFilesPayload, GraphFreshnessPayload, GraphImpactPayload,
+    GraphNodePayload, GraphRelatedNodesPayload, GraphSearchMatchPayload, GraphSearchPayload,
 };
 use crate::model::{FileRecord, SourceSpan, SymbolRecord};
 use crate::storage::GraphStore;
@@ -570,6 +571,111 @@ pub fn context(
         },
         notes,
     })
+}
+
+pub fn explore(
+    repo_root: &Path,
+    request: &str,
+    max_files: Option<usize>,
+    max_bytes: Option<usize>,
+    languages: &[String],
+    paths: &[String],
+) -> Result<GraphExplorePayload, CodeGraphError> {
+    let max_files = max_files.unwrap_or(6);
+    let max_bytes = max_bytes.unwrap_or(12_288);
+    let context_payload = context(
+        repo_root,
+        request,
+        Some(max_files),
+        Some(max_bytes),
+        languages,
+        paths,
+    )?;
+    let status_payload = crate::index::status(repo_root)?;
+    let primary = context_payload
+        .items
+        .iter()
+        .filter(|item| item.kind == "file" || item.kind == "doc")
+        .take(max_files)
+        .cloned()
+        .collect::<Vec<_>>();
+    let excerpts = context_payload
+        .items
+        .iter()
+        .filter_map(excerpt_from_context_item)
+        .collect::<Vec<_>>();
+    let relations = context_payload
+        .items
+        .iter()
+        .filter(|item| item.kind == "symbol")
+        .take(max_files * 3)
+        .map(|item| GraphExploreRelationPayload {
+            kind: "symbol".to_owned(),
+            path: item.path.clone(),
+            name: item.name.clone(),
+            range: item.range.clone(),
+            reason: item
+                .reasons
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "selected from ranked graph context".to_owned()),
+        })
+        .collect::<Vec<_>>();
+    let mut guidance = context_payload.notes.clone();
+    if status_payload.ready && !context_payload.freshness.stale {
+        guidance.push("index freshness: ready".to_owned());
+    }
+    guidance.push("use returned excerpts for first-pass orientation".to_owned());
+    guidance.push("use `rg` for exact token verification or missing symbols".to_owned());
+    guidance
+        .push("open returned files only when excerpts are insufficient for the edit".to_owned());
+
+    Ok(GraphExplorePayload {
+        query: request.to_owned(),
+        index: GraphExploreIndexPayload {
+            freshness: context_payload.freshness.clone(),
+            counts: status_payload.counts,
+        },
+        summary: explore_summary(request, &primary, &excerpts, &relations),
+        primary,
+        excerpts,
+        relations,
+        overflow: context_payload.overflow,
+        guidance,
+    })
+}
+
+fn excerpt_from_context_item(item: &GraphContextItemPayload) -> Option<GraphExploreExcerptPayload> {
+    let text = item.snippet.clone()?;
+    Some(GraphExploreExcerptPayload {
+        path: item.path.clone(),
+        language_id: item.language_id.clone(),
+        name: item.name.clone(),
+        range: item.range.clone(),
+        role: item.kind.clone(),
+        score: item.score,
+        reasons: item.reasons.clone(),
+        text,
+        truncated: item.snippet_truncated,
+    })
+}
+
+fn explore_summary(
+    request: &str,
+    primary: &[GraphContextItemPayload],
+    excerpts: &[GraphExploreExcerptPayload],
+    relations: &[GraphExploreRelationPayload],
+) -> String {
+    let owner_count = primary.len();
+    let excerpt_count = excerpts.len();
+    let relation_count = relations.len();
+    let top = primary
+        .first()
+        .map(|item| item.path.as_str())
+        .unwrap_or("no primary owner");
+    format!(
+        "Query `{request}` selected {owner_count} primary owners, {excerpt_count} excerpts, and {relation_count} related symbols. Top owner: {top}."
+    )
 }
 
 fn file_snippet(

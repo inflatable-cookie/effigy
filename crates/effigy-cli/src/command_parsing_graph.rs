@@ -26,6 +26,7 @@ where
         "callees" => parse_graph_relation(args, false),
         "impact" => parse_graph_impact(args),
         "context" => parse_graph_context(args),
+        "explore" => parse_graph_explore(args),
         other => Err(unknown_argument(other)),
     }
 }
@@ -251,6 +252,20 @@ fn parse_graph_context<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
+    parse_graph_context_like(args, false)
+}
+
+fn parse_graph_explore<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    parse_graph_context_like(args, true)
+}
+
+fn parse_graph_context_like<I>(args: I, explore: bool) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
     let mut args = args.into_iter();
     let mut repo_override = None;
     let mut output_json = false;
@@ -287,16 +302,28 @@ where
             }
         }
     }
-    Ok(Command::Graph(GraphArgs {
-        subcommand: GraphSubcommand::Context {
-            request: request.ok_or(CliParseError::MissingFlagValue {
-                flag: "<REQUEST>".to_owned(),
-            })?,
+    let request = request.ok_or(CliParseError::MissingFlagValue {
+        flag: "<REQUEST>".to_owned(),
+    })?;
+    let subcommand = if explore {
+        GraphSubcommand::Explore {
+            request,
             max_files,
             max_bytes,
             languages,
             paths,
-        },
+        }
+    } else {
+        GraphSubcommand::Context {
+            request,
+            max_files,
+            max_bytes,
+            languages,
+            paths,
+        }
+    };
+    Ok(Command::Graph(GraphArgs {
+        subcommand,
         repo_override,
         output_json,
     }))

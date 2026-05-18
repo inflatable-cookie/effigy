@@ -18,6 +18,10 @@ During v0.x, MINOR bumps may include breaking changes.
   graph warm with filesystem events, a conservative debounce, and the existing
   incremental index path, including newline-delimited JSON watch events for
   agent consumers that want direct freshness updates without polling.
+- **Graph explore command:** `effigy graph explore "<question>"` now returns a
+  one-call agent navigation packet with primary owners, excerpts, related
+  symbols, index freshness, overflow, and exact-search fallback guidance under
+  the `effigy.graph.explore.v1` JSON contract.
 
 ### Changed
 - **Graph context ranking is now role-aware:** implementation-oriented context

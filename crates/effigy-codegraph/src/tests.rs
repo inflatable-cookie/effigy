@@ -1,6 +1,7 @@
 use crate::json::{
     render_json, GraphCommandPayload, GraphContextItemPayload, GraphContextOverflowPayload,
-    GraphContextPayload, GraphCountsPayload, GraphStatusPayload,
+    GraphContextPayload, GraphCountsPayload, GraphExploreExcerptPayload, GraphExploreIndexPayload,
+    GraphExplorePayload, GraphExploreRelationPayload, GraphStatusPayload,
 };
 use crate::model::{
     Confidence, DiagnosticRecord, DiagnosticSeverity, EdgeRecord, ExtractorCapability,
@@ -8,8 +9,8 @@ use crate::model::{
     SourcePosition, SourceSpan, SymbolRecord, GRAPH_STORAGE_SCHEMA_VERSION,
 };
 use crate::{
-    callers, context, impact, node, query_files, query_search, run_index, status, CodeGraphError,
-    ExtractorId, GraphId, GraphStore, GRAPH_JSON_SCHEMA_VERSION,
+    callers, context, explore, impact, node, query_files, query_search, run_index, status,
+    CodeGraphError, ExtractorId, GraphId, GraphStore, GRAPH_JSON_SCHEMA_VERSION,
 };
 use std::fs;
 
@@ -295,6 +296,84 @@ fn graph_context_payload_round_trips() {
 }
 
 #[test]
+fn graph_explore_payload_round_trips() {
+    let payload = GraphCommandPayload::new(
+        "effigy.graph.explore.v1",
+        "graph explore",
+        "/tmp/repo",
+        GraphExplorePayload {
+            query: "trace graph watch implementation".to_owned(),
+            index: GraphExploreIndexPayload {
+                freshness: crate::json::GraphFreshnessPayload {
+                    stale: false,
+                    stale_paths: vec![],
+                },
+                counts: GraphCountsPayload {
+                    files: 1,
+                    symbols: 1,
+                    edges: 0,
+                    references: 0,
+                    diagnostics: 0,
+                    extractors: 1,
+                    index_runs: 1,
+                },
+            },
+            summary: "Query selected one primary owner.".to_owned(),
+            primary: vec![GraphContextItemPayload {
+                kind: "file".to_owned(),
+                record_id: "file:src/lib.rs".to_owned(),
+                path: "src/lib.rs".to_owned(),
+                language_id: Some("rust".to_owned()),
+                name: Some("src/lib.rs".to_owned()),
+                range: None,
+                rank: 1,
+                score: 10,
+                reasons: vec!["path matches `graph`".to_owned()],
+                provenance: None,
+                snippet: Some("pub fn watch_repo() {}".to_owned()),
+                snippet_truncated: false,
+            }],
+            excerpts: vec![GraphExploreExcerptPayload {
+                path: "src/lib.rs".to_owned(),
+                language_id: Some("rust".to_owned()),
+                name: Some("src/lib.rs".to_owned()),
+                range: None,
+                role: "file".to_owned(),
+                score: 10,
+                reasons: vec!["path matches `graph`".to_owned()],
+                text: "pub fn watch_repo() {}".to_owned(),
+                truncated: false,
+            }],
+            relations: vec![GraphExploreRelationPayload {
+                kind: "symbol".to_owned(),
+                path: "src/lib.rs".to_owned(),
+                name: Some("crate::watch_repo".to_owned()),
+                range: None,
+                reason: "symbol matches `watch`".to_owned(),
+            }],
+            overflow: GraphContextOverflowPayload {
+                omitted_items: 0,
+                omitted_files: 0,
+                omitted_symbols: 0,
+                omitted_docs: 0,
+                byte_budget: 4096,
+                used_bytes: 22,
+            },
+            guidance: vec!["use `rg` for exact token verification".to_owned()],
+        },
+    );
+    let json = serde_json::to_string(&payload).expect("serialize");
+    let decoded: GraphCommandPayload<GraphExplorePayload> =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(decoded.schema, "effigy.graph.explore.v1");
+    assert_eq!(decoded.schema_version, GRAPH_JSON_SCHEMA_VERSION);
+    assert_eq!(
+        decoded.payload.guidance,
+        vec!["use `rg` for exact token verification".to_owned()]
+    );
+}
+
+#[test]
 fn graph_index_and_query_cover_mixed_repo_fixture() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
@@ -394,6 +473,23 @@ fn helper() {}
         .iter()
         .all(|item| !item.reasons.is_empty()));
     assert!(context_payload.overflow.byte_budget >= context_payload.overflow.used_bytes);
+
+    let explore_payload = explore(
+        temp.path(),
+        "trace release helper",
+        Some(3),
+        Some(4096),
+        &[],
+        &[],
+    )
+    .expect("explore");
+    assert!(!explore_payload.index.freshness.stale);
+    assert!(!explore_payload.primary.is_empty());
+    assert!(!explore_payload.excerpts.is_empty());
+    assert!(explore_payload
+        .guidance
+        .iter()
+        .any(|note| note.contains("use `rg`")));
 }
 
 #[test]

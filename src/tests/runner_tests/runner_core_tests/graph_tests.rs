@@ -152,6 +152,38 @@ fn graph_search_and_context_json_return_ranked_results() {
         .expect("notes")
         .iter()
         .any(|value| value.as_str() == Some("language filter: rust,markdown")));
+
+    let explore = run_command(Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Explore {
+            request: "trace release helper".to_owned(),
+            max_files: Some(4),
+            max_bytes: Some(8192),
+            languages: vec!["rust".to_owned(), "markdown".to_owned()],
+            paths: vec![],
+        },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("graph explore should succeed");
+    let explore = parse_json_output_with_schema_version(&explore, "effigy.graph.explore.v1", 1);
+    assert_eq!(explore["command"].as_str(), Some("graph explore"));
+    assert_eq!(
+        explore["payload"]["index"]["freshness"]["stale"].as_bool(),
+        Some(false)
+    );
+    assert!(!explore["payload"]["primary"]
+        .as_array()
+        .expect("primary")
+        .is_empty());
+    assert!(!explore["payload"]["excerpts"]
+        .as_array()
+        .expect("excerpts")
+        .is_empty());
+    assert!(explore["payload"]["guidance"]
+        .as_array()
+        .expect("guidance")
+        .iter()
+        .any(|value| value.as_str().is_some_and(|text| text.contains("rg"))));
 }
 
 #[test]
@@ -193,13 +225,29 @@ fn graph_text_commands_render_useful_summaries() {
             languages: vec![],
             paths: vec![],
         },
-        repo_override: Some(root),
+        repo_override: Some(root.clone()),
         output_json: false,
     }))
     .expect("graph context should succeed");
     assert!(context.contains("graph context `trace release helper`"));
     assert!(context.contains("rank 1"));
     assert!(context.contains("because"));
+
+    let explore = run_command(Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Explore {
+            request: "trace release helper".to_owned(),
+            max_files: Some(4),
+            max_bytes: Some(8192),
+            languages: vec![],
+            paths: vec![],
+        },
+        repo_override: Some(root),
+        output_json: false,
+    }))
+    .expect("graph explore should succeed");
+    assert!(explore.contains("graph explore `trace release helper`"));
+    assert!(explore.contains("primary:"));
+    assert!(explore.contains("guidance"));
 }
 
 #[test]

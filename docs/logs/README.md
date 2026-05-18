@@ -76,6 +76,9 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/18-133020-graph-explore-implementation-closeout.md`](./2026-05/18-133020-graph-explore-implementation-closeout.md)
+- [`2026-05/18-132133-graph-explore-baseline.md`](./2026-05/18-132133-graph-explore-baseline.md)
+- [`2026-05/18-131814-graph-explore-lane-opened.md`](./2026-05/18-131814-graph-explore-lane-opened.md)
 - [`2026-05/18-191500-graph-navigation-quality-closeout.md`](./2026-05/18-191500-graph-navigation-quality-closeout.md)
 - [`2026-05/18-184500-graph-search-and-context-snippet-usefulness.md`](./2026-05/18-184500-graph-search-and-context-snippet-usefulness.md)
 - [`2026-05/18-181500-role-aware-graph-context-ranking.md`](./2026-05/18-181500-role-aware-graph-context-ranking.md)

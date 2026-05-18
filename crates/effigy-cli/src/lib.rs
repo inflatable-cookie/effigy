@@ -285,6 +285,13 @@ pub enum GraphSubcommand {
         languages: Vec<String>,
         paths: Vec<String>,
     },
+    Explore {
+        request: String,
+        max_files: Option<usize>,
+        max_bytes: Option<usize>,
+        languages: Vec<String>,
+        paths: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

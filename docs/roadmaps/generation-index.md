@@ -65,6 +65,8 @@ Updated: 2026-05-18
 - `g07.025` through `g07.029` completed the graph context ranking-quality lane
   after the first practical usefulness assessment showed generic queries
   over-ranked tests/docs and direct `rg` remained better for exact text.
+- `g07.030` through `g07.034` completed a one-call graph exploration surface
+  that targets whole-agent workflow cost rather than raw query latency.
 - The suite explicitly excludes MCP, a graph daemon, external language plugins,
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.

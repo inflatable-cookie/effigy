@@ -61,6 +61,40 @@ fn parse_graph_context_accumulates_language_and_path_filters() {
 }
 
 #[test]
+fn parse_graph_explore_accepts_context_filters() {
+    let command = parse_command(vec![
+        "graph".to_owned(),
+        "explore".to_owned(),
+        "trace graph watch implementation".to_owned(),
+        "--language".to_owned(),
+        "rust".to_owned(),
+        "--path".to_owned(),
+        "crates/effigy-codegraph".to_owned(),
+        "--max-files".to_owned(),
+        "5".to_owned(),
+        "--max-bytes".to_owned(),
+        "12000".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        command,
+        Command::Graph(GraphArgs {
+            subcommand: GraphSubcommand::Explore {
+                request: "trace graph watch implementation".to_owned(),
+                max_files: Some(5),
+                max_bytes: Some(12000),
+                languages: vec!["rust".to_owned()],
+                paths: vec!["crates/effigy-codegraph".to_owned()],
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_graph_search_accepts_flags_after_query() {
     let command = parse_command(vec![
         "graph".to_owned(),

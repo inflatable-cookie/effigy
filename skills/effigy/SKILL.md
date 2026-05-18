@@ -72,7 +72,7 @@ Details: `references/first-five-commands.md`.
 | Scaffold manifest | `effigy init` then `effigy migrate` |
 | Extract changelog section | `effigy changelog extract --version X.Y.Z` |
 | List release gates | `effigy release gates` |
-| Build/query local code graph | `effigy graph index`, `status --json`, `search`, `context` |
+| Build/query local code graph | `effigy graph index`, `status --json`, `explore`, `context`, `search` |
 
 Details: `references/workflow-shortcuts.md`.
 
@@ -84,13 +84,19 @@ first:
 ```bash
 effigy graph index
 effigy graph status --json
-effigy graph search <query> --json
+effigy graph explore "<task or question>" --max-files 6 --max-bytes 12288 --json
 effigy graph context "<task or question>" --max-files 8 --max-bytes 4096 --json
+effigy graph search <query> --json
 ```
 
-Use `graph context` for a bounded starting packet. It returns ranked items,
-selection reasons, overflow counts, and snippet budgets. Treat it as a fast
-map, not compiler-grade truth.
+Use `graph explore` first for task-shaped codebase navigation. It returns
+primary owners, excerpts, related symbols, freshness, overflow, and guidance.
+Trust returned excerpts for first-pass orientation; do not reread those files
+unless the excerpt is insufficient for the edit or review.
+
+Use `graph context` when you want the lower-level ranked item packet. Use `rg`
+for exact token verification, missing symbols, and final checks before editing.
+Treat graph results as a fast map, not compiler-grade truth.
 
 ## Selector routing (60-second version)
 

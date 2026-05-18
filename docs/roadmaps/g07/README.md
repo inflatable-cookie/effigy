@@ -47,6 +47,11 @@ dependency.
 - [`027-role-aware-context-ranker.md`](./027-role-aware-context-ranker.md)
 - [`028-search-and-snippet-usefulness.md`](./028-search-and-snippet-usefulness.md)
 - [`029-graph-navigation-quality-closeout.md`](./029-graph-navigation-quality-closeout.md)
+- [`030-graph-explore-agent-call-suite.md`](./030-graph-explore-agent-call-suite.md)
+- [`031-explore-contract-and-benchmark-baseline.md`](./031-explore-contract-and-benchmark-baseline.md)
+- [`032-explore-context-assembly-command.md`](./032-explore-context-assembly-command.md)
+- [`033-agent-guidance-and-skill-update.md`](./033-agent-guidance-and-skill-update.md)
+- [`034-explore-benchmark-closeout.md`](./034-explore-benchmark-closeout.md)
 
 ## Design Posture
 
@@ -88,6 +93,16 @@ dependency.
 
 `g07.025` is complete.
 
+`g07.030` is complete.
+
+`g07.031` is complete.
+
+`g07.032` is complete.
+
+`g07.033` is complete.
+
+`g07.034` is complete.
+
 `901` through `905` are complete.
 
 `906` through `910` are complete.
@@ -125,6 +140,16 @@ dependency.
 `973` is complete.
 
 `974` is complete.
+
+`980` is complete.
+
+`981` is complete.
+
+`982` is complete.
+
+`983` is complete.
+
+`984` is complete.
 
 No active `g07` batch card remains.
 

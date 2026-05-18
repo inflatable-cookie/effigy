@@ -1,12 +1,12 @@
 use effigy_cli::{GraphArgs, GraphSubcommand};
 use effigy_codegraph::json::{
-    GraphCommandPayload, GraphContextPayload, GraphFilesPayload, GraphFreshnessPayload,
-    GraphImpactPayload, GraphIndexPayload, GraphNodePayload, GraphRelatedNodesPayload,
-    GraphSearchPayload, GraphStatusPayload,
+    GraphCommandPayload, GraphContextPayload, GraphExplorePayload, GraphFilesPayload,
+    GraphFreshnessPayload, GraphImpactPayload, GraphIndexPayload, GraphNodePayload,
+    GraphRelatedNodesPayload, GraphSearchPayload, GraphStatusPayload,
 };
 use effigy_codegraph::{
-    callees, callers, context, impact, node, query_files, query_search, render_json, run_index,
-    status,
+    callees, callers, context, explore, impact, node, query_files, query_search, render_json,
+    run_index, status,
 };
 
 use crate::runner::command_context::resolve_active_repo_root;
@@ -153,6 +153,27 @@ pub(super) fn run_graph(args: GraphArgs) -> Result<String, RunnerError> {
                 args.output_json,
                 "effigy.graph.context.v1",
                 "graph context",
+                repo_root.display().to_string(),
+                payload,
+                text,
+            )
+        }
+        GraphSubcommand::Explore {
+            request,
+            max_files,
+            max_bytes,
+            languages,
+            paths,
+        } => {
+            let payload = explore(
+                &repo_root, &request, max_files, max_bytes, &languages, &paths,
+            )
+            .map_err(map_graph_error)?;
+            let text = render_explore_text(&payload);
+            render_json_or_text(
+                args.output_json,
+                "effigy.graph.explore.v1",
+                "graph explore",
                 repo_root.display().to_string(),
                 payload,
                 text,
@@ -335,6 +356,54 @@ fn render_context_text(payload: &GraphContextPayload) -> String {
     }
     for note in &payload.notes {
         lines.push(format!("- note {note}"));
+    }
+    lines.join("\n")
+}
+
+fn render_explore_text(payload: &GraphExplorePayload) -> String {
+    let mut lines = freshness_lines(&payload.index.freshness);
+    lines.push(format!("graph explore `{}`", payload.query));
+    lines.push(payload.summary.clone());
+    lines.push(format!(
+        "primary: {} excerpts: {} relations: {}",
+        payload.primary.len(),
+        payload.excerpts.len(),
+        payload.relations.len()
+    ));
+    for item in payload.primary.iter().take(10) {
+        let name = item.name.as_deref().unwrap_or(item.path.as_str());
+        let reasons = if item.reasons.is_empty() {
+            "no reason recorded".to_owned()
+        } else {
+            item.reasons.join("; ")
+        };
+        lines.push(format!(
+            "- primary rank {} {} score {} because {}",
+            item.rank, name, item.score, reasons
+        ));
+    }
+    for excerpt in payload.excerpts.iter().take(10) {
+        let name = excerpt.name.as_deref().unwrap_or(excerpt.path.as_str());
+        let suffix = if excerpt.truncated {
+            " (truncated)"
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "- excerpt {} [{}] score {}{}",
+            name, excerpt.role, excerpt.score, suffix
+        ));
+        lines.push(format!("  {}", excerpt.text));
+    }
+    for relation in payload.relations.iter().take(10) {
+        let name = relation.name.as_deref().unwrap_or(relation.path.as_str());
+        lines.push(format!(
+            "- relation {} {} because {}",
+            relation.kind, name, relation.reason
+        ));
+    }
+    for note in &payload.guidance {
+        lines.push(format!("- guidance {note}"));
     }
     lines.join("\n")
 }

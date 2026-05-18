@@ -10,6 +10,8 @@
 //! - [`status`] to inspect freshness and graph counts
 //! - [`query_search`], [`node`], [`callers`], [`callees`], [`impact`], and
 //!   [`context`] to read the graph
+//! - [`explore`] to assemble a one-call agent navigation packet with primary
+//!   owners, excerpts, related symbols, and fallback guidance
 //! - [`watch_repo`] to keep the graph fresh from foreground filesystem events
 
 mod error;
@@ -37,7 +39,7 @@ pub use index::{run_index, status, IndexReport};
 pub use json::{render_json, GraphCommandPayload, GRAPH_JSON_SCHEMA_VERSION};
 /// Query helpers over the stored graph.
 pub use query::{
-    callees, callers, context, files as query_files, impact, node, search as query_search,
+    callees, callers, context, explore, files as query_files, impact, node, search as query_search,
 };
 /// Local SQLite-backed graph store.
 pub use storage::GraphStore;

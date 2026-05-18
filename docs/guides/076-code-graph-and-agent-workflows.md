@@ -14,14 +14,15 @@ Use the graph in this order:
 ```sh
 effigy graph index
 effigy graph status --json
-effigy graph context "trace release orchestrator" --max-files 8 --max-bytes 4096 --json
+effigy graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
 ```
 
 That gives you:
 
 - a local index
 - freshness state
-- a bounded starting packet with ranked items, reasons, snippets, and overflow
+- a bounded starting packet with primary owners, excerpts, related symbols,
+  reasons, guidance, and overflow
 
 If the repo is changing while you work:
 
@@ -114,6 +115,33 @@ Use this when the starting point is a file path or a known symbol.
 
 ### Bounded agent context
 
+Use `graph explore` first when an agent needs to understand a task-shaped
+question with fewer immediate file reads:
+
+```sh
+effigy graph explore "trace deploy provider export" \
+  --max-files 6 \
+  --max-bytes 12288 \
+  --json
+```
+
+`graph explore --json` returns:
+
+- `query`
+- `index` freshness and counts
+- `summary`
+- `primary` owner files/docs
+- `excerpts` with paths, ranges, reasons, and text
+- `relations` such as related symbols
+- `overflow`
+- `guidance`
+
+Use the returned excerpts for first-pass orientation. Open returned files only
+when the excerpt is too small for the edit or review. Use `rg` for exact token
+verification, missing symbols, or confirming behavior before editing.
+
+Use `graph context` when you want the lower-level ranked item packet:
+
 ```sh
 effigy graph context "trace deploy provider export" \
   --max-files 8 \
@@ -135,7 +163,7 @@ effigy graph context "trace release orchestrator" \
 ```
 
 Use `graph context` first when an agent needs a bounded reading packet instead
-of broad `rg` across the repo.
+of broad `rg` across the repo and does not need the assembled `explore` shape.
 
 ## Watch Mode
 
@@ -180,15 +208,17 @@ Recommended agent sequence:
 
 1. `effigy graph status --json`
 2. if stale: `effigy graph index --json`
-3. `effigy graph context "<task>" --max-files 8 --max-bytes 4096 --json`
-4. only then widen to `graph search`, `graph node`, `graph callers/callees`,
-   and direct file reads
+3. `effigy graph explore "<task>" --max-files 6 --max-bytes 12288 --json`
+4. trust returned excerpts for first-pass orientation
+5. only then widen to `graph context`, `graph search`, `graph node`,
+   `graph callers/callees`, direct file reads, and `rg`
 
 Good examples:
 
 ```sh
-effigy graph context "trace release execute path" --json
-effigy graph context "find deploy provider export owner" --language rust --json
+effigy graph explore "trace release execute path" --json
+effigy graph explore "find deploy provider export owner" --language rust --json
+effigy graph context "docs for graph agent workflow" --json
 effigy graph search railway --json
 effigy graph impact src/runner/graph_command.rs --json
 ```
