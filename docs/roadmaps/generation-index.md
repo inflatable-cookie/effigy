@@ -58,6 +58,10 @@ Updated: 2026-05-18
   indexing, query commands, agent context packs, and performance proof.
 - `g07.013` through `g07.016` reopen graph work for incremental indexing,
   query-speed reduction, and failed fixture-path reliability.
+- `g07.017` through `g07.020` completed the bounded file-walk and scan-cost
+  reduction pass after the larger extractor/query wins landed.
+- `g07.021` through `g07.024` completed the foreground watch-mode lane for
+  bounded filesystem-event refresh and explicit reconcile fallback.
 - The suite explicitly excludes MCP, a graph daemon, external language plugins,
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.

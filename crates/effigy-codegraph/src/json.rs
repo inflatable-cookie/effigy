@@ -43,6 +43,17 @@ pub struct GraphStatusPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphWatchEventPayload {
+    pub kind: String,
+    pub debounce_ms: u64,
+    pub changed_paths: Vec<String>,
+    pub dirty: bool,
+    pub refresh_duration_ms: Option<u128>,
+    pub index: Option<GraphIndexPayload>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphIndexPayload {
     pub indexed_files: usize,
     pub extractor_count: usize,

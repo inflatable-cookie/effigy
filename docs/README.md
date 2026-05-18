@@ -55,6 +55,7 @@ installing them directly on your machine.
 
 **For CI and scripts:**
 - [`guides/017-json-output-contracts.md`](./guides/017-json-output-contracts.md) — JSON output for automation
+- [`guides/076-code-graph-and-agent-workflows.md`](./guides/076-code-graph-and-agent-workflows.md) — bounded repo context for agents
 - [`guides/024-ci-and-automation-recipes.md`](./guides/024-ci-and-automation-recipes.md) — copy-paste CI workflows
 - [`guides/050-env-schema-integration.md`](./guides/050-env-schema-integration.md) — `--env-schema` overrides and validation when tasks need typed env
 

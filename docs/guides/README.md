@@ -106,6 +106,7 @@ Use when:
 
 Read:
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
+- [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](./026-json-payload-examples.md)
 - [`047-agent-and-cross-repo-adoption.md`](./047-agent-and-cross-repo-adoption.md)
@@ -114,6 +115,7 @@ Read:
 Use when:
 - another tool is calling Effigy
 - you need stable JSON
+- you want the graph as the first agent-facing repo map
 - you are adopting Effigy across multiple repos
 
 ### Release and distribute Effigy-managed software
@@ -217,6 +219,7 @@ This section is inventory, not a recommended reading order.
 - [`073-state-stack-guide.md`](./073-state-stack-guide.md)
 - [`074-deployment-guide.md`](./074-deployment-guide.md)
 - [`075-secrets-and-vault-guide.md`](./075-secrets-and-vault-guide.md)
+- [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
 - [`068-rhai-host-surface-audit.md`](./068-rhai-host-surface-audit.md)
 - [`069-workspace-host-integration.md`](./069-workspace-host-integration.md)
 - [`070-per-machine-overlays-and-external-mounts.md`](./070-per-machine-overlays-and-external-mounts.md)

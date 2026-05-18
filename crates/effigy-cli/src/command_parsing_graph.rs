@@ -18,6 +18,7 @@ where
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Graph)),
         "index" => parse_graph_index(args),
         "status" => parse_graph_status(args),
+        "watch" => parse_graph_watch(args),
         "search" => parse_graph_search(args),
         "files" => parse_graph_files(args),
         "node" => parse_graph_node(args),
@@ -48,6 +49,33 @@ where
     let (repo_override, output_json) = parse_common_graph_flags(args)?;
     Ok(Command::Graph(GraphArgs {
         subcommand: GraphSubcommand::Status,
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_graph_watch<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override = None;
+    let mut output_json = false;
+    let mut debounce_ms = 1_000u64;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--debounce-ms" => {
+                debounce_ms = parse_positive_u64(&mut args, "--debounce-ms")?;
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Graph)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+    Ok(Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Watch { debounce_ms },
         repo_override,
         output_json,
     }))
@@ -306,6 +334,27 @@ where
     value
         .parse::<usize>()
         .map_err(|_| CliParseError::InvalidFlagValue {
+            flag: flag.to_owned(),
+            value,
+            expected: "a positive integer".to_owned(),
+        })
+}
+
+fn parse_positive_u64<I>(args: &mut I, flag: &str) -> Result<u64, CliParseError>
+where
+    I: Iterator<Item = String>,
+{
+    let value = next_required_value(
+        args,
+        CliParseError::MissingFlagValue {
+            flag: flag.to_owned(),
+        },
+    )?;
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|parsed| *parsed > 0)
+        .ok_or(CliParseError::InvalidFlagValue {
             flag: flag.to_owned(),
             value,
             expected: "a positive integer".to_owned(),

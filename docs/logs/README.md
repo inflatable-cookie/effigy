@@ -76,6 +76,15 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/18-163500-graph-watch-closeout.md`](./2026-05/18-163500-graph-watch-closeout.md)
+- [`2026-05/18-160500-graph-watch-dirty-reconcile.md`](./2026-05/18-160500-graph-watch-dirty-reconcile.md)
+- [`2026-05/18-153500-graph-watch-backend-and-debounce.md`](./2026-05/18-153500-graph-watch-backend-and-debounce.md)
+- [`2026-05/18-141500-graph-watch-lane-opened.md`](./2026-05/18-141500-graph-watch-lane-opened.md)
+- [`2026-05/18-133500-graph-scan-cost-closeout.md`](./2026-05/18-133500-graph-scan-cost-closeout.md)
+- [`2026-05/18-131500-tighten-stale-and-status-scan-cost.md`](./2026-05/18-131500-tighten-stale-and-status-scan-cost.md)
+- [`2026-05/18-123500-reduce-repeated-scan-work.md`](./2026-05/18-123500-reduce-repeated-scan-work.md)
+- [`2026-05/18-120500-file-walk-and-scan-cost-baseline.md`](./2026-05/18-120500-file-walk-and-scan-cost-baseline.md)
+- [`2026-05/18-113500-graph-scan-cost-lane-opened.md`](./2026-05/18-113500-graph-scan-cost-lane-opened.md)
 - [`2026-05/18-111500-graph-follow-up-closeout.md`](./2026-05/18-111500-graph-follow-up-closeout.md)
 - [`2026-05/18-110500-failed-graph-fixture-path-indexing.md`](./2026-05/18-110500-failed-graph-fixture-path-indexing.md)
 - [`2026-05/18-091154-query-speed-and-projection-reduction.md`](./2026-05/18-091154-query-speed-and-projection-reduction.md)

@@ -1,11 +1,11 @@
 use crate::{
     command_kind_and_name, emit_json_envelope_error, emit_json_envelope_success,
     parse_error_json_details, parse_json_or_string, render_cli_header, render_parse_error,
-    run_help_command, CliExecutionContext,
+    run_graph_watch_command, run_help_command, CliExecutionContext,
 };
 use effigy_cli::{
     apply_global_cli_flags, command_requests_json, parse_command, strip_global_cli_flags, Command,
-    GlobalCliOptions,
+    GlobalCliOptions, GraphSubcommand,
 };
 use effigy_context::EffigyRuntimeContext;
 use effigy_core::widgets::MessageBlock;
@@ -123,6 +123,12 @@ pub fn run_cli(raw_args: Vec<String>) {
     match cmd {
         Command::Version => crate::run_version_command(&context),
         Command::Help(topic) => run_help_command(&context, topic),
+        Command::Graph(
+            args @ effigy_cli::GraphArgs {
+                subcommand: GraphSubcommand::Watch { .. },
+                ..
+            },
+        ) => run_graph_watch_command(&context, args),
         command @ (Command::Bundle(_)
         | Command::Changelog(_)
         | Command::Deploy(_)

@@ -253,6 +253,9 @@ pub struct GraphArgs {
 pub enum GraphSubcommand {
     Index,
     Status,
+    Watch {
+        debounce_ms: u64,
+    },
     Search {
         query: String,
         limit: Option<usize>,

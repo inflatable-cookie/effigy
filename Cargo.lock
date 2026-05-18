@@ -816,6 +816,7 @@ version = "0.7.1"
 dependencies = [
  "effigy-manifest",
  "ignore",
+ "notify",
  "pulldown-cmark",
  "rusqlite",
  "serde",

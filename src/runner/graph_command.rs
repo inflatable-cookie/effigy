@@ -61,6 +61,10 @@ pub(super) fn run_graph(args: GraphArgs) -> Result<String, RunnerError> {
                 Ok(render_status_text(&payload))
             }
         }
+        GraphSubcommand::Watch { .. } => Err(RunnerError::task_invocation(
+            "`graph watch` is a streaming command and must run through the CLI entrypoint"
+                .to_owned(),
+        )),
         GraphSubcommand::Search { query, limit } => {
             let payload = query_search(&repo_root, &query, limit).map_err(map_graph_error)?;
             let text = render_search_text(&payload);

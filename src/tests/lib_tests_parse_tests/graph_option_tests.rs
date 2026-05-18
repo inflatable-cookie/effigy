@@ -86,6 +86,29 @@ fn parse_graph_search_accepts_flags_after_query() {
 }
 
 #[test]
+fn parse_graph_watch_accepts_debounce_repo_and_json_flags() {
+    let command = parse_command(vec![
+        "graph".to_owned(),
+        "watch".to_owned(),
+        "--debounce-ms".to_owned(),
+        "1000".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        command,
+        Command::Graph(GraphArgs {
+            subcommand: GraphSubcommand::Watch { debounce_ms: 1000 },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_graph_help_is_scoped() {
     let command =
         parse_command(vec!["graph".to_owned(), "--help".to_owned()]).expect("parse should succeed");

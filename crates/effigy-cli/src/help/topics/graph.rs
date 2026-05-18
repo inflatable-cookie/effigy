@@ -14,6 +14,7 @@ const GRAPH_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     usage: &[
         "effigy graph index [--repo <PATH>] [--json]",
         "effigy graph status [--repo <PATH>] [--json]",
+        "effigy graph watch [--repo <PATH>] [--debounce-ms <MS>] [--json]",
         "effigy graph search [--repo <PATH>] [--limit <N>] <QUERY> [--json]",
         "effigy graph files [--repo <PATH>] [--limit <N>] [--json]",
         "effigy graph node [--repo <PATH>] <ID> [--json]",
@@ -24,6 +25,7 @@ const GRAPH_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     ],
     leading_common_options: &[CommonOption::Repo],
     options: &[
+        ("--debounce-ms <MS>", "Delay incremental refresh until the repo is quiet for the given milliseconds"),
         ("--limit <N>", "Cap bounded query output for search, files, callers, callees, and impact"),
         ("--max-files <N>", "Cap selected files returned by `graph context`"),
         ("--max-bytes <N>", "Cap total snippet bytes returned by `graph context`"),
@@ -41,6 +43,7 @@ const GRAPH_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     examples: &[
         "effigy graph index",
         "effigy graph status --json",
+        "effigy graph watch --debounce-ms 1000 --json",
         "effigy graph search deploy --limit 20 --json",
         "effigy graph node symbol:rust:run_release --json",
         "effigy graph callers symbol:rust:run_release --json",

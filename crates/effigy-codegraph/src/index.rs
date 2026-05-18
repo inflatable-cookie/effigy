@@ -12,6 +12,7 @@ use crate::model::{
 use crate::registry::ExtractorRegistry;
 use crate::storage::{FileScanStateRecord, GraphStore};
 use crate::support::{file_record_from_source, sha256_hex};
+use crate::walk::ScanEntry;
 use crate::GraphId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +26,14 @@ pub struct IndexReport {
     pub skipped_paths: Vec<String>,
     pub failed_paths: Vec<String>,
     pub counts: GraphCountsPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScanDelta {
+    stale_paths: Vec<String>,
+    new_paths: Vec<String>,
+    changed_paths: Vec<String>,
+    deleted_paths: Vec<String>,
 }
 
 pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
@@ -162,7 +171,13 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
         store.delete_file_scan_state(path)?;
         graph_changed = true;
     }
-    let stale_paths = stale_paths_for_repo(repo_root, &store)?;
+    let stale_paths = scan_delta_for_entries(
+        &existing_states,
+        &stored_extractors,
+        &current_extractors,
+        &scan_entries,
+    )?
+    .stale_paths;
 
     let counts = store.counts()?;
     let started_at = unix_epoch_millis_string();
@@ -198,7 +213,16 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
 pub fn status(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
     let store = GraphStore::open(repo_root)?;
     let registry = ExtractorRegistry::builtins();
-    let stale_paths = stale_paths_for_repo(repo_root, &store)?;
+    let file_states = store.file_scan_state_map()?;
+    let current_entries = crate::walk::scan_repo_files(repo_root)?;
+    let current_extractors = extractor_version_map(registry.all());
+    let stored_extractors = store.extractor_version_map()?;
+    let scan_delta = scan_delta_for_entries(
+        &file_states,
+        &stored_extractors,
+        &current_extractors,
+        &current_entries,
+    )?;
     let counts = store.counts()?;
     let extractors = registry
         .all()
@@ -213,18 +237,17 @@ pub fn status(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
             }
         })
         .collect::<Vec<_>>();
-    let file_states = store.file_scan_state_map()?;
     Ok(GraphStatusPayload {
         ready: counts.files > 0,
         index_present: store.paths().db_path.is_file(),
         db_path: store.paths().db_path.display().to_string(),
         storage_schema_version: store.storage_schema_version()?,
         counts,
-        stale_paths,
+        stale_paths: scan_delta.stale_paths,
         extractors,
-        new_paths: current_new_paths(repo_root, &file_states)?,
-        changed_paths: current_changed_paths(repo_root, &file_states)?,
-        deleted_paths: current_deleted_paths(repo_root, &file_states)?,
+        new_paths: scan_delta.new_paths,
+        changed_paths: scan_delta.changed_paths,
+        deleted_paths: scan_delta.deleted_paths,
         skipped_paths: Vec::new(),
         failed_paths: store.failed_diagnostic_paths()?,
     })
@@ -238,13 +261,38 @@ pub(crate) fn stale_paths_for_repo(
     let current_entries = crate::walk::scan_repo_files(repo_root)?;
     let current_extractors = extractor_version_map(ExtractorRegistry::builtins().all());
     let stored_extractors = store.extractor_version_map()?;
+    Ok(scan_delta_for_entries(
+        &file_states,
+        &stored_extractors,
+        &current_extractors,
+        &current_entries,
+    )?
+    .stale_paths)
+}
+
+fn scan_delta_for_entries(
+    file_states: &BTreeMap<String, FileScanStateRecord>,
+    stored_extractors: &BTreeMap<String, String>,
+    current_extractors: &BTreeMap<String, String>,
+    current_entries: &[ScanEntry],
+) -> Result<ScanDelta, CodeGraphError> {
     let mut stale = BTreeSet::new();
-    for entry in &current_entries {
+    let mut new_paths = Vec::new();
+    let mut changed_paths = Vec::new();
+    let mut current_paths = BTreeSet::new();
+    for entry in current_entries {
+        current_paths.insert(entry.relative_path.clone());
         match file_states.get(&entry.relative_path) {
             None => {
                 stale.insert(entry.relative_path.clone());
+                new_paths.push(entry.relative_path.clone());
             }
             Some(state) => {
+                let metadata_changed = state.modified_unix_ms != entry.modified_unix_ms
+                    || state.byte_size != entry.byte_size;
+                if metadata_changed {
+                    changed_paths.push(entry.relative_path.clone());
+                }
                 let extractor_version_changed = current_extractors
                     .get(&entry.language_id)
                     .zip(stored_extractors.get(&entry.language_id))
@@ -255,9 +303,7 @@ pub(crate) fn stale_paths_for_repo(
                     stale.insert(entry.relative_path.clone());
                     continue;
                 }
-                if state.modified_unix_ms == entry.modified_unix_ms
-                    && state.byte_size == entry.byte_size
-                {
+                if !metadata_changed {
                     continue;
                 }
                 let content_hash = sha256_hex(fs::read(&entry.path)?.as_slice());
@@ -267,58 +313,19 @@ pub(crate) fn stale_paths_for_repo(
             }
         }
     }
+    let mut deleted_paths = Vec::new();
     for path in file_states.keys() {
-        if !current_entries
-            .iter()
-            .any(|entry| entry.relative_path == *path)
-        {
+        if !current_paths.contains(path) {
             stale.insert(path.clone());
+            deleted_paths.push(path.clone());
         }
     }
-    Ok(stale.into_iter().collect())
-}
-
-fn current_new_paths(
-    repo_root: &Path,
-    file_states: &BTreeMap<String, FileScanStateRecord>,
-) -> Result<Vec<String>, CodeGraphError> {
-    Ok(crate::walk::scan_repo_files(repo_root)?
-        .into_iter()
-        .filter(|entry| !file_states.contains_key(&entry.relative_path))
-        .map(|entry| entry.relative_path)
-        .collect())
-}
-
-fn current_changed_paths(
-    repo_root: &Path,
-    file_states: &BTreeMap<String, FileScanStateRecord>,
-) -> Result<Vec<String>, CodeGraphError> {
-    let mut changed = Vec::new();
-    for entry in crate::walk::scan_repo_files(repo_root)? {
-        if let Some(state) = file_states.get(&entry.relative_path) {
-            if state.modified_unix_ms != entry.modified_unix_ms
-                || state.byte_size != entry.byte_size
-            {
-                changed.push(entry.relative_path);
-            }
-        }
-    }
-    Ok(changed)
-}
-
-fn current_deleted_paths(
-    repo_root: &Path,
-    file_states: &BTreeMap<String, FileScanStateRecord>,
-) -> Result<Vec<String>, CodeGraphError> {
-    let current_paths = crate::walk::scan_repo_files(repo_root)?
-        .into_iter()
-        .map(|entry| entry.relative_path)
-        .collect::<BTreeSet<_>>();
-    Ok(file_states
-        .keys()
-        .filter(|path| !current_paths.contains(*path))
-        .cloned()
-        .collect())
+    Ok(ScanDelta {
+        stale_paths: stale.into_iter().collect(),
+        new_paths,
+        changed_paths,
+        deleted_paths,
+    })
 }
 
 fn index_source(

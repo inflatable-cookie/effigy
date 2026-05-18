@@ -111,6 +111,29 @@ Deep dive:
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 
+### Agent-first repo context
+
+```sh
+effigy graph index
+effigy graph context "trace deploy provider export" --max-files 8 --max-bytes 4096 --json
+effigy graph search release --limit 10 --json
+```
+
+Use the graph before broad file scanning when you need:
+
+- the first files to read
+- a symbol neighborhood
+- bounded machine-readable context
+
+If the repo is changing while you work:
+
+```sh
+effigy graph watch --json
+```
+
+Deep dive:
+- [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
+
 ## 4) Use One Local-Dev Chain
 
 For web or service-heavy repos, the clean daily path should read as one chain

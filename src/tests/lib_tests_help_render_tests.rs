@@ -187,6 +187,7 @@ fn render_graph_help_shows_index_query_and_context_surface() {
     assert!(rendered.contains("graph Help"));
     assert!(rendered.contains("effigy graph index"));
     assert!(rendered.contains("effigy graph status"));
+    assert!(rendered.contains("effigy graph watch"));
     assert!(rendered.contains("effigy graph search"));
     assert!(rendered.contains("effigy graph node"));
     assert!(rendered.contains("effigy graph callers"));
@@ -195,6 +196,7 @@ fn render_graph_help_shows_index_query_and_context_surface() {
     assert!(rendered.contains("effigy graph context"));
     assert!(rendered.contains("--repo <PATH>"));
     assert!(rendered.contains("--json"));
+    assert!(rendered.contains("--debounce-ms <MS>"));
     assert!(rendered.contains("--language <ID>"));
     assert!(rendered.contains("--path <PREFIX>"));
 }

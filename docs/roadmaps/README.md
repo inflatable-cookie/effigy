@@ -53,8 +53,9 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 - `g07` is the current active generation. It opens the native code graph
   intelligence suite: graph storage/contracts, indexing/freshness, first-party
   extractors, query commands, and bounded agent context packs.
-  It now also carries the first graph follow-up lane for incremental indexing,
-  query speed, and failed fixture-path reliability.
+  It now also carries follow-up lanes for incremental indexing, query speed,
+  failed fixture-path reliability, scan-cost reduction, and foreground watch
+  mode.
 
 ## Active Strict Lane
 

@@ -38,6 +38,8 @@ Start with:
 effigy --json tasks
 effigy --json doctor
 effigy --json test --plan
+effigy --json graph status
+effigy --json graph context "trace release orchestrator"
 ```
 
 ## Top-Level Contract
@@ -115,6 +117,15 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.test.plan.v1`
 - `effigy.test.results.v1`
 - `effigy.watch.v1`
+- `effigy.graph.index.v1`
+- `effigy.graph.status.v1`
+- `effigy.graph.search.v1`
+- `effigy.graph.files.v1`
+- `effigy.graph.node.v1`
+- `effigy.graph.callers.v1`
+- `effigy.graph.callees.v1`
+- `effigy.graph.impact.v1`
+- `effigy.graph.context.v1`
 - `deploy.model.v1`
 - `effigy.deploy.export.v1`
 - `effigy.deploy.plan.v1`
@@ -154,6 +165,10 @@ effigy --json scan stale-suppressions
 effigy --json config path
 effigy --json config get containers.backend
 effigy --json config --schema --target test
+effigy --json graph index
+effigy --json graph status
+effigy --json graph search release --limit 10
+effigy --json graph context "trace deploy provider export" --max-files 8 --max-bytes 4096
 effigy --json deploy model --repo /path/to/workspace
 effigy --json deploy export <PROVIDER> --repo /path/to/workspace --path infra/deploy --plan
 effigy --json deploy plan uat --repo /path/to/workspace
@@ -174,6 +189,32 @@ effigy --json state capture uat --role uat-capture --source-env uat --key uat-ca
 effigy --json state history uat --kind capture --limit 5
 effigy --json build --repo /path/to/workspace
 ```
+
+## Graph Watch Streaming Exception
+
+`effigy graph watch --json` is intentionally different from the normal command
+envelope model.
+
+It is a long-running streaming command, so it emits newline-delimited JSON
+events with schema:
+
+- `effigy.graph.watch.event.v1`
+
+It does **not** wrap each event in `effigy.command.v1`.
+
+Use it like this:
+
+```bash
+effigy graph watch --json
+```
+
+Consume one JSON object per line. Current event kinds:
+
+- `started`
+- `refresh`
+- `dirty`
+- `reconcile`
+- `fatal`
 
 ## Payload Examples
 

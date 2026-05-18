@@ -248,6 +248,23 @@ effigy --json test --plan
 
 Use JSON mode when CI, scripts, or agents are consuming Effigy output.
 
+### Build a bounded repo map before broad scanning
+
+```sh
+effigy graph index
+effigy graph status --json
+effigy graph context "trace release orchestrator" --max-files 8 --max-bytes 4096 --json
+```
+
+Use this when an agent needs the first files to read without spraying `rg`
+across the whole repo.
+
+If the repo is changing while you work:
+
+```sh
+effigy graph watch --json
+```
+
 ## 6) Manage Secrets
 
 If the repo declares secrets under `[secrets.keys]`:

@@ -70,7 +70,7 @@ pub fn scan_repo_files(repo_root: &Path) -> Result<Vec<ScanEntry>, CodeGraphErro
     Ok(entries)
 }
 
-fn should_skip_path(relative_path: &str) -> bool {
+pub(crate) fn should_skip_path(relative_path: &str) -> bool {
     relative_path == ".git"
         || relative_path.starts_with(".git/")
         || relative_path == "target"
@@ -79,6 +79,8 @@ fn should_skip_path(relative_path: &str) -> bool {
         || relative_path.starts_with("node_modules/")
         || relative_path == "vendor"
         || relative_path.starts_with("vendor/")
+        || relative_path == ".effigy/graph"
+        || relative_path.starts_with(".effigy/graph/")
         || relative_path.starts_with(".effigy/runtime/")
         || relative_path == ".effigy/runtime"
 }

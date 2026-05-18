@@ -34,6 +34,14 @@ dependency.
 - [`014-incremental-indexing-and-cache-reuse.md`](./014-incremental-indexing-and-cache-reuse.md)
 - [`015-query-speed-and-projection-reduction.md`](./015-query-speed-and-projection-reduction.md)
 - [`016-failed-graph-fixture-path-reliability.md`](./016-failed-graph-fixture-path-reliability.md)
+- [`017-graph-scan-cost-reduction-suite.md`](./017-graph-scan-cost-reduction-suite.md)
+- [`018-file-walk-and-scan-metadata-baseline.md`](./018-file-walk-and-scan-metadata-baseline.md)
+- [`019-safe-scan-metadata-reuse.md`](./019-safe-scan-metadata-reuse.md)
+- [`020-scan-cost-closeout-proof.md`](./020-scan-cost-closeout-proof.md)
+- [`021-graph-watch-mode-suite.md`](./021-graph-watch-mode-suite.md)
+- [`022-watch-backend-and-debounce-rules.md`](./022-watch-backend-and-debounce-rules.md)
+- [`023-dirty-reconcile-and-overflow-fallback.md`](./023-dirty-reconcile-and-overflow-fallback.md)
+- [`024-graph-watch-closeout-proof.md`](./024-graph-watch-closeout-proof.md)
 
 ## Design Posture
 
@@ -63,6 +71,16 @@ dependency.
 
 `g07.013` is complete.
 
+`g07.017` is complete.
+
+`g07.021` is complete.
+
+`g07.022` is complete.
+
+`g07.023` is complete.
+
+`g07.024` is complete.
+
 `901` through `905` are complete.
 
 `906` through `910` are complete.
@@ -79,9 +97,20 @@ dependency.
 
 `935` is complete.
 
+`950` through `954` are complete.
+
+`960` is complete.
+
+`961` is complete.
+
+`962` is complete.
+
+`963` is complete.
+
+`964` is complete.
+
 No active `g07` batch card remains.
 
 ## Next Task
 
-Open a new `g07` tranche only if the warning-level template-manifest depth or
-remaining file-walk/query tradeoffs are worth another bounded lane.
+Leave `g07` parked unless a later graph tranche justifies more work.

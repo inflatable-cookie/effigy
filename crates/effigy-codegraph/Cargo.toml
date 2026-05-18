@@ -9,6 +9,7 @@ description = "Native graph storage and JSON contracts for Effigy code intellige
 [dependencies]
 effigy-manifest = { path = "../effigy-manifest" }
 ignore = "0.4"
+notify = "8"
 pulldown-cmark = "0.13"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

@@ -39,11 +39,152 @@ Start with the family that matches your job:
   `State Stack Lineage`
 - shell completion or editor integration:
   `Completion`, `Completion Candidates`
+- agent-facing repo context:
+  `Graph Status`, `Graph Context`, `Graph Watch`
 
 Companion references:
 
 - [`017-json-output-contracts.md`](./017-json-output-contracts.md)
+- [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
 - [`024-ci-and-automation-recipes.md`](./024-ci-and-automation-recipes.md)
+
+### 4) Graph Status (`effigy.graph.status.v1`)
+
+```json
+{
+  "schema": "effigy.graph.status.v1",
+  "schema_version": 1,
+  "command": "graph status",
+  "repo_root": "/workspace/app",
+  "payload": {
+    "ready": true,
+    "index_present": true,
+    "db_path": "/workspace/app/.effigy/graph/graph.db",
+    "storage_schema_version": 1,
+    "counts": {
+      "files": 3184,
+      "symbols": 30800,
+      "edges": 138885,
+      "references": 62856,
+      "diagnostics": 6,
+      "extractors": 5,
+      "index_runs": 12
+    },
+    "stale_paths": [],
+    "new_paths": [],
+    "changed_paths": [],
+    "deleted_paths": [],
+    "skipped_paths": [],
+    "failed_paths": [],
+    "extractors": [
+      {
+        "id": "rust",
+        "version": "1.0.0",
+        "languages": ["rust"],
+        "capabilities": ["symbols", "references", "calls", "imports"]
+      }
+    ]
+  }
+}
+```
+
+### 5) Graph Context (`effigy.graph.context.v1`)
+
+```json
+{
+  "schema": "effigy.graph.context.v1",
+  "schema_version": 1,
+  "command": "graph context",
+  "repo_root": "/workspace/app",
+  "payload": {
+    "request": "trace release orchestrator",
+    "freshness": {
+      "stale": false,
+      "stale_paths": []
+    },
+    "items": [
+      {
+        "kind": "symbol",
+        "record_id": "symbol:rust:crate::runner::run_release",
+        "path": "src/runner/release_command.rs",
+        "language_id": "rust",
+        "name": "run_release",
+        "range": {
+          "start": { "line": 14, "column": 0, "byte": 322 },
+          "end": { "line": 81, "column": 1, "byte": 2114 }
+        },
+        "rank": 1,
+        "score": 18,
+        "reasons": [
+          "query term matched symbol name",
+          "release path matched request language and path bias"
+        ],
+        "provenance": {
+          "extractor_id": "rust",
+          "extractor_version": "1.0.0",
+          "source_path": "src/runner/release_command.rs",
+          "confidence": "syntactic",
+          "detail": "tree-sitter pass"
+        },
+        "snippet": "pub fn run_release(...) { ... }",
+        "snippet_truncated": false
+      }
+    ],
+    "overflow": {
+      "omitted_items": 3,
+      "omitted_files": 1,
+      "omitted_symbols": 2,
+      "omitted_docs": 0,
+      "byte_budget": 4096,
+      "used_bytes": 3012
+    },
+    "notes": [
+      "language filter: rust",
+      "path filter: src/runner"
+    ]
+  }
+}
+```
+
+### 6) Graph Watch Event (`effigy.graph.watch.event.v1`)
+
+`graph watch --json` is newline-delimited event output, not a one-shot envelope.
+
+```json
+{
+  "schema": "effigy.graph.watch.event.v1",
+  "schema_version": 1,
+  "command": "graph watch",
+  "repo_root": "/workspace/app",
+  "payload": {
+    "kind": "refresh",
+    "debounce_ms": 1000,
+    "changed_paths": ["src/lib.rs"],
+    "dirty": false,
+    "refresh_duration_ms": 231,
+    "index": {
+      "indexed_files": 3184,
+      "extractor_count": 5,
+      "counts": {
+        "files": 3184,
+        "symbols": 30801,
+        "edges": 138887,
+        "references": 62857,
+        "diagnostics": 6,
+        "extractors": 5,
+        "index_runs": 13
+      },
+      "stale_paths": [],
+      "new_paths": [],
+      "changed_paths": ["src/lib.rs"],
+      "deleted_paths": [],
+      "skipped_paths": [],
+      "failed_paths": []
+    },
+    "notes": []
+  }
+}
+```
 
 ## How To Use This Guide
 

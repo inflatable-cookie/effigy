@@ -14,6 +14,10 @@ During v0.x, MINOR bumps may include breaking changes.
   PHP, and JavaScript/TypeScript, and `graph context` returns ranked items with
   reasons, provenance, snippet budgets, and overflow counts for agent-friendly
   repo navigation.
+- **Foreground graph watch mode:** `effigy graph watch` now keeps the local
+  graph warm with filesystem events, a conservative debounce, and the existing
+  incremental index path, including newline-delimited JSON watch events for
+  agent consumers that want direct freshness updates without polling.
 
 ### Fixed
 - **Workspace shell tool baseline is now explicit across workspace catalogs:**
