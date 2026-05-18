@@ -10,6 +10,7 @@ members = [
     "crates/effigy-process",
     "crates/effigy-ui",
     "crates/effigy-cli",
+    "crates/effigy-codegraph",
     "crates/effigy-contracts",
     "crates/effigy-context",
     "crates/effigy-data",
@@ -54,6 +55,7 @@ effigy-builtin = { path = "crates/effigy-builtin" }
 effigy-catalog = { path = "crates/effigy-catalog" }
 effigy-changelog = { path = "crates/effigy-changelog" }
 effigy-cli = { path = "crates/effigy-cli" }
+effigy-codegraph = { path = "crates/effigy-codegraph" }
 effigy-contracts = { path = "crates/effigy-contracts" }
 effigy-context = { path = "crates/effigy-context" }
 effigy-containers = { path = "crates/effigy-containers" }

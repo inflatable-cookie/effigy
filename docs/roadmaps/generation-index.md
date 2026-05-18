@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
-Current generation: g06
-Updated: 2026-05-14
+Current generation: g07
+Updated: 2026-05-17
 
 ## Generation history
 
@@ -42,13 +42,23 @@ Updated: 2026-05-14
 - `g05.020` through `g05.027` completed the reusable-core hardening tranche
   from the 2026-05-14 sweep.
 
-`g06` is now the current generation.
+`g06` is closed.
 
 - `g06.001` opens the codebase lean-down suite.
 - `g06.002` through `g06.008` cover the first deletion-oriented lanes:
   state shell trim, release module reduction, fixture convergence, CLI/help
   deduplication, typed contract-shape reuse, compatibility-branch deletion,
   and runner-private domain-logic reduction.
+
+`g07` is now the current active generation.
+
+- `g07.001` opens the native code graph intelligence suite.
+- `g07.002` through `g07.012` cover graph storage/contracts,
+  indexing/freshness, first-party language extraction, Effigy manifest/docs
+  indexing, query commands, agent context packs, and performance proof.
+- The suite explicitly excludes MCP, a graph daemon, external language plugins,
+  JavaScript runtime dependencies, and LLM-generated summaries as canonical
+  graph data.
 
 Current ready work: none.
 
@@ -83,4 +93,4 @@ closeout there first.
 
 ## Next Task
 
-`g06.001` is closed through `809`. No active slice is open.
+Review `g07` closeout evidence before opening the next tranche.

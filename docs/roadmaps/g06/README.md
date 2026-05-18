@@ -56,6 +56,8 @@ Recommended first cards:
 ## Current State
 
 `g05` is closed through `g05.027`.
+`g06` is closed through `g06.008`.
+`g07` is the current planned generation.
 
 Accepted starting evidence for `g06`:
 
@@ -71,4 +73,4 @@ Accepted starting evidence for `g06`:
 
 ## Next Task
 
-`g06.001` is closed. No active `g06` execution card remains.
+`g06` is closed. Continue in `g07`.

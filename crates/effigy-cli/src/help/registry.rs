@@ -118,6 +118,14 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_demo,
     },
     HelpTopicDescriptor {
+        topic: HelpTopic::Graph,
+        command_name: Some("graph"),
+        general_help_command: Some("effigy graph"),
+        general_help_description: Some("Build and query the local deterministic code graph for agent navigation"),
+        deferred_builtin: Some("graph"),
+        render: render_graph,
+    },
+    HelpTopicDescriptor {
         topic: HelpTopic::Docs,
         command_name: Some("docs"),
         general_help_command: Some("effigy docs"),
@@ -314,6 +322,10 @@ fn render_service(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> Help
 
 fn render_demo(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_demo_help(renderer)
+}
+
+fn render_graph(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
+    topics::render_graph_help(renderer)
 }
 
 fn render_docs(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

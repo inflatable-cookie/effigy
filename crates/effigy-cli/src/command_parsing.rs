@@ -18,6 +18,8 @@ mod deploy;
 mod distribution;
 #[path = "command_parsing_docs.rs"]
 mod docs;
+#[path = "command_parsing_graph.rs"]
+mod graph;
 #[path = "command_parsing_release.rs"]
 mod release;
 #[path = "command_parsing_runtime.rs"]
@@ -41,6 +43,7 @@ use demo::parse_demo_command;
 use deploy::parse_deploy_command;
 use distribution::parse_distribution_command;
 use docs::parse_docs_command;
+use graph::parse_graph_command;
 use release::parse_release_command;
 use runtime::{
     parse_exec_command, parse_gateway_command, parse_service_command, parse_system_command,
@@ -76,6 +79,7 @@ where
         "gateway" => parse_gateway_command(args),
         "service" => parse_service_command(args),
         "demo" => parse_demo_command(args),
+        "graph" => parse_graph_command(args),
         "docs" => parse_docs_command(args),
         "contracts" => parse_contracts_command(args),
         "distribution" => parse_distribution_command(args),

@@ -4,8 +4,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Generation model
 
-- Use generation folders: `g01`, `g02`, `g03`, `g04`, `g05`, and future `gNN`
-  generations opened by explicit rollover.
+- Use generation folders: `g01` through `g07`, and future `gNN` generations
+  opened by explicit rollover.
 - Use milestone files inside each generation: `NNN-<slug>.md`.
 - Reference milestones as `gNN.NNN`.
 - Trigger generation rollover manually; do not use automatic file-count limits.
@@ -20,7 +20,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Layout
 
 - `gNN/batch-cards/` optional per-generation execution cards
-- `g06/` current codebase lean-down and ownership simplification generation
+- `g07/` current native code graph intelligence generation
+- `g06/` previous codebase lean-down and ownership simplification generation
 - `g05/` previous secret and reusable-core hardening generation
 - `g04/` previous runtime architecture simplification generation
 - `g03/` previous production export and runtime hardening generation
@@ -43,14 +44,19 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   [`g05.027`](./g05/027-process-execution-boundary-review.md). It covered
   secret and local configuration management, post-release ownership cleanup,
   schema-shape consolidation, and reusable-core hardening.
-- `g06` is the current generation. It opened the post-`v0.7.0` codebase
-  lean-down suite: state and release god-file reduction, test fixture
-  convergence, CLI/help deduplication, typed contract-shape reuse,
-  compatibility-branch deletion, and runner-private domain-logic reduction.
+- `g06` is closed through
+  [`g06.008`](./g06/008-runner-private-domain-logic-reduction.md). It covered
+  the post-`v0.7.0` codebase lean-down suite: state and release god-file
+  reduction, test fixture convergence, CLI/help deduplication, typed
+  contract-shape reuse, compatibility-branch deletion, and runner-private
+  domain-logic reduction.
+- `g07` is the current active generation. It opens the native code graph
+  intelligence suite: graph storage/contracts, indexing/freshness, first-party
+  extractors, query commands, and bounded agent context packs.
 
 ## Active Strict Lane
 
-[`084-codebase-lean-down-strict-lane.md`](../specs/084-codebase-lean-down-strict-lane.md)
+None.
 
 ## Research Program
 
@@ -86,7 +92,7 @@ Before rollover:
 
 ## Next Task
 
-No active roadmap execution card is open. `g06.001` is closed through `809`.
+Review `g07` closeout evidence and open the next tranche only if needed.
 
 ## Historical language boundary
 

@@ -72,8 +72,25 @@ Details: `references/first-five-commands.md`.
 | Scaffold manifest | `effigy init` then `effigy migrate` |
 | Extract changelog section | `effigy changelog extract --version X.Y.Z` |
 | List release gates | `effigy release gates` |
+| Build/query local code graph | `effigy graph index`, `status --json`, `search`, `context` |
 
 Details: `references/workflow-shortcuts.md`.
+
+## Graph assist
+
+When an agent needs repo context before broad scanning, prefer the local graph
+first:
+
+```bash
+effigy graph index
+effigy graph status --json
+effigy graph search <query> --json
+effigy graph context "<task or question>" --max-files 8 --max-bytes 4096 --json
+```
+
+Use `graph context` for a bounded starting packet. It returns ranked items,
+selection reasons, overflow counts, and snippet budgets. Treat it as a fast
+map, not compiler-grade truth.
 
 ## Selector routing (60-second version)
 

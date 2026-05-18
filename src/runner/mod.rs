@@ -25,6 +25,7 @@ mod error;
 mod exec_command;
 mod execute;
 mod gateway_command;
+mod graph_command;
 mod host_container_lease;
 mod host_process;
 mod interactive_session;
@@ -63,6 +64,7 @@ pub use entrypoints::{resolve_command_root, run_command, run_command_with_contex
 pub use error::RunnerError;
 pub(in crate::runner) use exec_command::run_exec;
 pub(in crate::runner) use gateway_command::{run_gateway, run_internal_gateway};
+pub(in crate::runner) use graph_command::run_graph;
 pub(in crate::runner) use host_container_lease::run_internal_container_lease_reaper;
 pub(in crate::runner) use host_process::{
     run_internal_host_process_stop, run_internal_host_process_supervise,

@@ -8,6 +8,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy version"));
     assert!(rendered.contains("effigy exec"));
     assert!(rendered.contains("effigy deploy"));
+    assert!(rendered.contains("effigy graph"));
     assert!(rendered.contains("effigy gateway"));
     assert!(rendered.contains("effigy config"));
     assert!(rendered.contains("effigy demo"));
@@ -178,6 +179,24 @@ fn render_deploy_help_shows_provider_package_export_surface() {
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("provider-package"));
     assert!(rendered.contains("provider-neutral"));
+}
+
+#[test]
+fn render_graph_help_shows_index_query_and_context_surface() {
+    let rendered = render_help_text(HelpTopic::Graph);
+    assert!(rendered.contains("graph Help"));
+    assert!(rendered.contains("effigy graph index"));
+    assert!(rendered.contains("effigy graph status"));
+    assert!(rendered.contains("effigy graph search"));
+    assert!(rendered.contains("effigy graph node"));
+    assert!(rendered.contains("effigy graph callers"));
+    assert!(rendered.contains("effigy graph callees"));
+    assert!(rendered.contains("effigy graph impact"));
+    assert!(rendered.contains("effigy graph context"));
+    assert!(rendered.contains("--repo <PATH>"));
+    assert!(rendered.contains("--json"));
+    assert!(rendered.contains("--language <ID>"));
+    assert!(rendered.contains("--path <PREFIX>"));
 }
 
 #[test]

@@ -76,6 +76,15 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/18-094500-code-graph-closeout.md`](./2026-05/18-094500-code-graph-closeout.md)
+- [`2026-05/18-082531-agent-context-packs.md`](./2026-05/18-082531-agent-context-packs.md)
+- [`2026-05/18-031500-javascript-typescript-graph-proof-depth.md`](./2026-05/18-031500-javascript-typescript-graph-proof-depth.md)
+- [`2026-05/18-024500-php-graph-proof-depth.md`](./2026-05/18-024500-php-graph-proof-depth.md)
+- [`2026-05/18-020000-manifest-and-markdown-graph-depth.md`](./2026-05/18-020000-manifest-and-markdown-graph-depth.md)
+- [`2026-05/17-235500-code-graph-core-and-query-batch.md`](./2026-05/17-235500-code-graph-core-and-query-batch.md)
+- [`2026-05/17-233849-graph-storage-and-json-contracts.md`](./2026-05/17-233849-graph-storage-and-json-contracts.md)
+- [`2026-05/17-123500-code-graph-baseline-storage-posture.md`](./2026-05/17-123500-code-graph-baseline-storage-posture.md)
+- [`2026-05/17-120000-code-graph-intelligence-lane-opened.md`](./2026-05/17-120000-code-graph-intelligence-lane-opened.md)
 - [`2026-05/14-235000-g06-lean-down-suite-closeout.md`](./2026-05/14-235000-g06-lean-down-suite-closeout.md)
 - [`2026-05/14-233500-runner-private-domain-logic-closeout.md`](./2026-05/14-233500-runner-private-domain-logic-closeout.md)
 - [`2026-05/14-231500-runner-state-domain-helper-extraction.md`](./2026-05/14-231500-runner-state-domain-helper-extraction.md)

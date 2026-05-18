@@ -3,9 +3,9 @@ use effigy_cli::{
     BootstrapArgs, BootstrapSubcommand, BundleArgs, BundleSubcommand, Command, ContainerArgs,
     ContainerSubcommand, ContractsArgs, ContractsSubcommand, DemoArgs, DemoListQuery,
     DemoSubcommand, DeployArgs, DeploySubcommand, DistributionArgs, DistributionSubcommand,
-    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, HelpTopic, ReleaseArgs,
-    ReleaseSubcommand, SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs,
-    SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
+    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic,
+    ReleaseArgs, ReleaseSubcommand, SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand,
+    SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 
 #[test]
@@ -23,6 +23,7 @@ fn help_topic_label_maps_all_topics() {
     assert_eq!(help_topic_label(HelpTopic::Gateway), "gateway");
     assert_eq!(help_topic_label(HelpTopic::Service), "service");
     assert_eq!(help_topic_label(HelpTopic::Demo), "demo");
+    assert_eq!(help_topic_label(HelpTopic::Graph), "graph");
     assert_eq!(help_topic_label(HelpTopic::Docs), "docs");
     assert_eq!(help_topic_label(HelpTopic::Contracts), "contracts");
     assert_eq!(help_topic_label(HelpTopic::Distribution), "distribution");
@@ -94,6 +95,11 @@ fn command_kind_and_name_maps_command_variants() {
         subcommand: DemoSubcommand::List {
             query: DemoListQuery::default(),
         },
+        repo_override: None,
+        output_json: false,
+    });
+    let graph = Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Status,
         repo_override: None,
         output_json: false,
     });
@@ -187,6 +193,7 @@ fn command_kind_and_name_maps_command_variants() {
         ("service", "service".to_owned())
     );
     assert_eq!(command_kind_and_name(&demo), ("demo", "demo".to_owned()));
+    assert_eq!(command_kind_and_name(&graph), ("graph", "graph".to_owned()));
     assert_eq!(
         command_kind_and_name(&release),
         ("release", "release".to_owned())

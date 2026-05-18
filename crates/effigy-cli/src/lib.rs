@@ -32,6 +32,7 @@ pub enum Command {
     Gateway(GatewayArgs),
     Service(ServiceArgs),
     Demo(DemoArgs),
+    Graph(GraphArgs),
     Docs(DocsArgs),
     Contracts(ContractsArgs),
     Distribution(DistributionArgs),
@@ -111,6 +112,7 @@ pub enum HelpTopic {
     Gateway,
     Service,
     Demo,
+    Graph,
     Docs,
     Contracts,
     Distribution,
@@ -238,6 +240,48 @@ pub struct DocsArgs {
     pub subcommand: DocsSubcommand,
     pub repo_override: Option<PathBuf>,
     pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphArgs {
+    pub subcommand: GraphSubcommand,
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GraphSubcommand {
+    Index,
+    Status,
+    Search {
+        query: String,
+        limit: Option<usize>,
+    },
+    Files {
+        limit: Option<usize>,
+    },
+    Node {
+        id: String,
+    },
+    Callers {
+        id: String,
+        limit: Option<usize>,
+    },
+    Callees {
+        id: String,
+        limit: Option<usize>,
+    },
+    Impact {
+        target: String,
+        limit: Option<usize>,
+    },
+    Context {
+        request: String,
+        max_files: Option<usize>,
+        max_bytes: Option<usize>,
+        languages: Vec<String>,
+        paths: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

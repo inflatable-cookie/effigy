@@ -249,6 +249,13 @@ fn parse_gateway_help_is_scoped() {
 }
 
 #[test]
+fn parse_graph_help_is_scoped() {
+    let cmd =
+        parse_command(vec!["graph".to_owned(), "--help".to_owned()]).expect("parse should succeed");
+    assert_eq!(cmd, Command::Help(HelpTopic::Graph));
+}
+
+#[test]
 fn parse_service_help_alias_is_scoped() {
     let cmd = parse_command(vec!["service".to_owned(), "--help".to_owned()])
         .expect("parse should succeed");
