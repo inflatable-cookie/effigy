@@ -213,7 +213,7 @@ fn flush_watch_batch(
     debounce_ms: u64,
     pending: &mut PendingWatchState,
 ) -> Result<GraphWatchEventPayload, CodeGraphError> {
-    let changed_paths = pending.changed_paths.iter().cloned().collect::<Vec<_>>();
+    let observed_changed_paths = pending.changed_paths.iter().cloned().collect::<Vec<_>>();
     let dirty_notes = pending.dirty_notes.iter().cloned().collect::<Vec<_>>();
     let dirty = !dirty_notes.is_empty();
     pending.changed_paths.clear();
@@ -221,6 +221,7 @@ fn flush_watch_batch(
 
     let started = Instant::now();
     let report = run_index(repo_root)?;
+    let changed_paths = merged_changed_paths(&observed_changed_paths, &report.changed_paths);
     Ok(GraphWatchEventPayload {
         kind: if dirty {
             "reconcile".to_owned()
@@ -244,6 +245,13 @@ fn flush_watch_batch(
         }),
         notes: dirty_notes,
     })
+}
+
+fn merged_changed_paths(observed_paths: &[String], indexed_paths: &[String]) -> Vec<String> {
+    let mut merged = BTreeSet::new();
+    merged.extend(observed_paths.iter().cloned());
+    merged.extend(indexed_paths.iter().cloned());
+    merged.into_iter().collect()
 }
 
 fn should_trigger_refresh(kind: &EventKind) -> bool {
@@ -318,5 +326,22 @@ mod tests {
             .as_ref()
             .is_some_and(|index| index.deleted_paths.iter().any(|path| path == "src/lib.rs")));
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn merged_changed_paths_unions_observed_and_indexed_paths() {
+        let merged = merged_changed_paths(
+            &["src".to_owned(), "src/lib.rs".to_owned()],
+            &["src/lib.rs".to_owned(), "src/other.rs".to_owned()],
+        );
+
+        assert_eq!(
+            merged,
+            vec![
+                "src".to_owned(),
+                "src/lib.rs".to_owned(),
+                "src/other.rs".to_owned()
+            ]
+        );
     }
 }
