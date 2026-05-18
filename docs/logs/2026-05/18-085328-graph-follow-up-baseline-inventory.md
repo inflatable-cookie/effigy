@@ -58,7 +58,7 @@ This is the second target for `934`.
 ## First Profitable Incremental-Index Seam
 
 The current index path in
-[index.rs](/Users/tom/Dev/projects/effigy/crates/effigy-codegraph/src/index.rs)
+[index.rs](../../../crates/effigy-codegraph/src/index.rs)
 still:
 
 - scans the repo every run
@@ -82,7 +82,7 @@ This is the concrete target for `932`.
 ## First Profitable Query Hot Path
 
 The current query layer in
-[query.rs](/Users/tom/Dev/projects/effigy/crates/effigy-codegraph/src/query.rs)
+[query.rs](../../../crates/effigy-codegraph/src/query.rs)
 still pays high projection cost by loading broad record sets into memory for
 common commands:
 

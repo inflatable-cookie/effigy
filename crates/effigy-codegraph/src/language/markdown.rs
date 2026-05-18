@@ -88,7 +88,7 @@ impl LanguageIndexer for MarkdownIndexer {
                         if heading_text.is_empty() {
                             continue;
                         }
-                        let anchor = slugify(&heading_text);
+                        let anchor = slugify(heading_text);
                         if anchor.is_empty() {
                             continue;
                         }
