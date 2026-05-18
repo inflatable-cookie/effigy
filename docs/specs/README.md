@@ -42,7 +42,9 @@ Archived strict lanes:
   batch
 - completed lane `085` should move to `archive/` in the next planning cleanup
   batch
+- completed lane `086` should move to `archive/` in the next planning cleanup
+  batch
 
 ## Next Task
 
-No active strict lane. Open the next lane only after closeout review.
+No active strict lane remains.

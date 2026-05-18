@@ -76,6 +76,12 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/18-111500-graph-follow-up-closeout.md`](./2026-05/18-111500-graph-follow-up-closeout.md)
+- [`2026-05/18-110500-failed-graph-fixture-path-indexing.md`](./2026-05/18-110500-failed-graph-fixture-path-indexing.md)
+- [`2026-05/18-091154-query-speed-and-projection-reduction.md`](./2026-05/18-091154-query-speed-and-projection-reduction.md)
+- [`2026-05/18-090706-incremental-index-short-path.md`](./2026-05/18-090706-incremental-index-short-path.md)
+- [`2026-05/18-085328-graph-follow-up-baseline-inventory.md`](./2026-05/18-085328-graph-follow-up-baseline-inventory.md)
+- [`2026-05/18-101500-graph-follow-up-lane-opened.md`](./2026-05/18-101500-graph-follow-up-lane-opened.md)
 - [`2026-05/18-094500-code-graph-closeout.md`](./2026-05/18-094500-code-graph-closeout.md)
 - [`2026-05/18-082531-agent-context-packs.md`](./2026-05/18-082531-agent-context-packs.md)
 - [`2026-05/18-031500-javascript-typescript-graph-proof-depth.md`](./2026-05/18-031500-javascript-typescript-graph-proof-depth.md)

@@ -426,6 +426,74 @@ fn graph_status_reports_changed_paths_as_stale() {
 }
 
 #[test]
+fn graph_index_reuses_unchanged_content_when_only_mtime_moves() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn run_release() { helper(); }\nfn helper() {}\n",
+    )
+    .expect("write rust");
+
+    let first = run_index(temp.path()).expect("first index");
+    assert_eq!(first.failed_paths.len(), 0);
+
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn run_release() { helper(); }\nfn helper() {}\n",
+    )
+    .expect("rewrite same rust");
+
+    let second = run_index(temp.path()).expect("second index");
+    assert_eq!(second.failed_paths.len(), 0);
+    assert!(second.changed_paths.contains(&"src/lib.rs".to_owned()));
+
+    let status_payload = status(temp.path()).expect("status");
+    assert!(status_payload.stale_paths.is_empty());
+
+    let store = GraphStore::open(temp.path()).expect("open store");
+    assert_eq!(store.list_index_runs().expect("runs").len(), 2);
+    assert_eq!(store.list_files().expect("files").len(), 1);
+    assert_eq!(store.list_symbols().expect("symbols").len(), 2);
+}
+
+#[test]
+fn graph_index_removes_deleted_file_records_on_reindex() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::create_dir_all(temp.path().join("docs")).expect("mkdir docs");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn run_release() { helper(); }\nfn helper() {}\n",
+    )
+    .expect("write rust");
+    fs::write(
+        temp.path().join("docs/README.md"),
+        "# Release Guide\n\nSee src/lib.rs.\n",
+    )
+    .expect("write markdown");
+
+    let first = run_index(temp.path()).expect("first index");
+    assert_eq!(first.failed_paths.len(), 0);
+
+    fs::remove_file(temp.path().join("docs/README.md")).expect("remove markdown");
+
+    let second = run_index(temp.path()).expect("second index");
+    assert_eq!(second.failed_paths.len(), 0);
+    assert!(second.deleted_paths.contains(&"docs/README.md".to_owned()));
+
+    let files_payload = query_files(temp.path(), None).expect("files");
+    assert!(!files_payload
+        .files
+        .iter()
+        .any(|file| file.path == "docs/README.md"));
+
+    let search_payload = query_search(temp.path(), "Guide", Some(10)).expect("search");
+    assert!(search_payload.matches.is_empty());
+}
+
+#[test]
 fn graph_context_enforces_byte_budget_and_reports_overflow() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
@@ -768,6 +836,77 @@ base = { type = "path", dir = "bundles/missing-bundle" }
         diagnostic
             .message
             .contains("failed to compose manifest effigy.toml")
+    }));
+}
+
+#[test]
+fn graph_manifest_indexer_structurally_indexes_template_rich_toml_files() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = fs::read_to_string(format!(
+        "{}/../effigy-manifest/tests/fixtures/workspace-app-bundle/export.toml",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("read export fixture");
+    fs::write(temp.path().join("export.toml"), fixture).expect("write export fixture");
+
+    let report = run_index(temp.path()).expect("index");
+    assert_eq!(report.failed_paths.len(), 0);
+
+    let files = query_files(temp.path(), None).expect("files");
+    assert!(files.files.iter().any(|file| file.path == "export.toml"));
+}
+
+#[test]
+fn graph_manifest_indexer_structurally_indexes_templates_with_embedded_quotes() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let fixture = fs::read_to_string(format!(
+        "{}/../effigy-manifest/tests/fixtures/php-app-bundle/export.toml",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("read export fixture");
+    fs::write(temp.path().join("export.toml"), fixture).expect("write export fixture");
+
+    let report = run_index(temp.path()).expect("index");
+    assert_eq!(report.failed_paths.len(), 0);
+
+    let files = query_files(temp.path(), None).expect("files");
+    assert!(files.files.iter().any(|file| file.path == "export.toml"));
+}
+
+#[test]
+fn graph_manifest_indexer_skips_blank_unresolved_targets() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        temp.path().join("effigy.toml"),
+        r#"
+[manifest]
+root = true
+
+[deploy.production]
+state = "production"
+code_ref = "branch:main"
+release_policy = "optional"
+provider_project = "smoke"
+artifact_policy = "digest-preferred"
+
+[deploy.production.provider]
+adapter = "render"
+project_id = ""
+environment_id = ""
+services = { front = "" }
+"#,
+    )
+    .expect("write manifest");
+
+    let report = run_index(temp.path()).expect("index");
+    assert_eq!(report.failed_paths.len(), 0);
+
+    let store = GraphStore::open(temp.path()).expect("store");
+    let diagnostics = store.list_diagnostics().expect("diagnostics");
+    assert!(diagnostics.iter().all(|diagnostic| {
+        !diagnostic
+            .message
+            .contains("edge unresolved target must not be empty")
     }));
 }
 

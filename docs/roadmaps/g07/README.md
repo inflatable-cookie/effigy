@@ -30,6 +30,10 @@ dependency.
 - [`010-query-commands.md`](./010-query-commands.md)
 - [`011-agent-context-packs.md`](./011-agent-context-packs.md)
 - [`012-performance-cache-and-regression-proof.md`](./012-performance-cache-and-regression-proof.md)
+- [`013-graph-follow-up-performance-and-fixture-reliability.md`](./013-graph-follow-up-performance-and-fixture-reliability.md)
+- [`014-incremental-indexing-and-cache-reuse.md`](./014-incremental-indexing-and-cache-reuse.md)
+- [`015-query-speed-and-projection-reduction.md`](./015-query-speed-and-projection-reduction.md)
+- [`016-failed-graph-fixture-path-reliability.md`](./016-failed-graph-fixture-path-reliability.md)
 
 ## Design Posture
 
@@ -57,6 +61,8 @@ dependency.
 
 `g07.001` is complete.
 
+`g07.013` is complete.
+
 `901` through `905` are complete.
 
 `906` through `910` are complete.
@@ -65,8 +71,17 @@ dependency.
 
 `912` is complete.
 
+`931` is complete.
+
+`932` is complete.
+
+`933` is complete.
+
+`935` is complete.
+
 No active `g07` batch card remains.
 
 ## Next Task
 
-Open a follow-up graph tranche only after reviewing the closeout limits.
+Open a new `g07` tranche only if the warning-level template-manifest depth or
+remaining file-walk/query tradeoffs are worth another bounded lane.

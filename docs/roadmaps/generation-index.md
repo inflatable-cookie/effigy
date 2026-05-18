@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g07
-Updated: 2026-05-17
+Updated: 2026-05-18
 
 ## Generation history
 
@@ -56,6 +56,8 @@ Updated: 2026-05-17
 - `g07.002` through `g07.012` cover graph storage/contracts,
   indexing/freshness, first-party language extraction, Effigy manifest/docs
   indexing, query commands, agent context packs, and performance proof.
+- `g07.013` through `g07.016` reopen graph work for incremental indexing,
+  query-speed reduction, and failed fixture-path reliability.
 - The suite explicitly excludes MCP, a graph daemon, external language plugins,
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
@@ -93,4 +95,4 @@ closeout there first.
 
 ## Next Task
 
-Review `g07` closeout evidence before opening the next tranche.
+No active `g07` execution card remains.
