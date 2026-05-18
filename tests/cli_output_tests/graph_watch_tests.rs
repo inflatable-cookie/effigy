@@ -59,15 +59,24 @@ fn cli_graph_watch_json_streams_started_and_refresh_events() {
     )
     .expect("rewrite rust");
 
-    let refresh = recv_until_kind(&rx, "refresh", Duration::from_secs(5));
+    let refresh = recv_until(
+        &rx,
+        Duration::from_secs(5),
+        |value| {
+            value["payload"]["kind"].as_str() == Some("refresh")
+                && value["payload"]["changed_paths"]
+                    .as_array()
+                    .is_some_and(|paths| {
+                        paths
+                            .iter()
+                            .any(|value| value.as_str() == Some("src/lib.rs"))
+                    })
+        },
+        "refresh event for src/lib.rs",
+    );
     assert_eq!(refresh["schema"], "effigy.graph.watch.event.v1");
     assert_eq!(refresh["payload"]["kind"], "refresh");
     assert_eq!(refresh["payload"]["debounce_ms"], 100);
-    assert!(refresh["payload"]["changed_paths"]
-        .as_array()
-        .is_some_and(|paths| paths
-            .iter()
-            .any(|value| value.as_str() == Some("src/lib.rs"))));
     assert!(
         refresh["payload"]["refresh_duration_ms"]
             .as_u64()
@@ -89,12 +98,15 @@ fn recv_event(rx: &mpsc::Receiver<Value>, timeout: Duration, label: &str) -> Val
         .unwrap_or_else(|_| panic!("timed out waiting for {label} event"))
 }
 
-fn recv_until_kind(rx: &mpsc::Receiver<Value>, expected_kind: &str, timeout: Duration) -> Value {
+fn recv_until<F>(rx: &mpsc::Receiver<Value>, timeout: Duration, predicate: F, label: &str) -> Value
+where
+    F: Fn(&Value) -> bool,
+{
     let started = std::time::Instant::now();
     loop {
         let remaining = timeout.saturating_sub(started.elapsed());
-        let value = recv_event(rx, remaining, expected_kind);
-        if value["payload"]["kind"].as_str() == Some(expected_kind) {
+        let value = recv_event(rx, remaining, label);
+        if predicate(&value) {
             return value;
         }
     }

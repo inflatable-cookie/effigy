@@ -73,14 +73,25 @@ pub fn scan_repo_files(repo_root: &Path) -> Result<Vec<ScanEntry>, CodeGraphErro
 pub(crate) fn should_skip_path(relative_path: &str) -> bool {
     relative_path == ".git"
         || relative_path.starts_with(".git/")
+        || relative_path == ".effigy"
+        || relative_path.starts_with(".effigy/")
         || relative_path == "target"
         || relative_path.starts_with("target/")
         || relative_path == "node_modules"
         || relative_path.starts_with("node_modules/")
         || relative_path == "vendor"
         || relative_path.starts_with("vendor/")
-        || relative_path == ".effigy/graph"
-        || relative_path.starts_with(".effigy/graph/")
-        || relative_path.starts_with(".effigy/runtime/")
-        || relative_path == ".effigy/runtime"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_skip_path;
+
+    #[test]
+    fn should_skip_path_skips_effigy_internal_tree() {
+        assert!(should_skip_path(".effigy"));
+        assert!(should_skip_path(".effigy/graph/graph.db"));
+        assert!(should_skip_path(".effigy/runtime/session.json"));
+        assert!(!should_skip_path("src/lib.rs"));
+    }
 }
