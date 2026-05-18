@@ -10,6 +10,8 @@ const GRAPH_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     notices: &[
         "Build and query a deterministic local code graph for agent-facing navigation.",
         "The graph stays local under `.effigy/graph/`; queries do not rebuild it implicitly.",
+        "Use `graph status` first, refresh with `graph index` when stale, then use `graph context` before broader file scanning.",
+        "`graph watch --json` streams newline-delimited `effigy.graph.watch.event.v1` payloads instead of a single command envelope.",
     ],
     usage: &[
         "effigy graph index [--repo <PATH>] [--json]",
@@ -41,13 +43,13 @@ const GRAPH_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         CommonOption::Help,
     ],
     examples: &[
-        "effigy graph index",
         "effigy graph status --json",
-        "effigy graph watch --debounce-ms 1000 --json",
+        "effigy graph index",
+        "effigy graph context \"trace deploy provider export\" --max-files 8 --json",
         "effigy graph search deploy --limit 20 --json",
+        "effigy graph impact src/runner/release_command/mod.rs --json",
+        "effigy graph watch --debounce-ms 1000 --json",
         "effigy graph node symbol:rust:run_release --json",
         "effigy graph callers symbol:rust:run_release --json",
-        "effigy graph impact src/runner/release_command/mod.rs --json",
-        "effigy graph context \"trace deploy provider export\" --max-files 8 --json",
     ],
 };
