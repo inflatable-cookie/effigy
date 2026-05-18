@@ -278,6 +278,12 @@ pub enum GraphSubcommand {
         target: String,
         limit: Option<usize>,
     },
+    Affected {
+        changed_paths: Vec<String>,
+        read_stdin: bool,
+        depth: usize,
+        limit: Option<usize>,
+    },
     Context {
         request: String,
         max_files: Option<usize>,

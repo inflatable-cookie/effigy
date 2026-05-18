@@ -123,6 +123,34 @@ pub struct GraphImpactPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphAffectedFilePayload {
+    pub path: String,
+    pub language_id: Option<String>,
+    pub confidence: String,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphAffectedTaskPayload {
+    pub name: String,
+    pub kind: String,
+    pub path: String,
+    pub confidence: String,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphAffectedPayload {
+    pub changed_paths: Vec<String>,
+    pub freshness: GraphFreshnessPayload,
+    pub depth: usize,
+    pub affected_files: Vec<GraphAffectedFilePayload>,
+    pub likely_test_files: Vec<GraphAffectedFilePayload>,
+    pub likely_test_tasks: Vec<GraphAffectedTaskPayload>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphContextItemPayload {
     pub kind: String,
     pub record_id: String,
@@ -170,6 +198,8 @@ pub struct GraphExploreExcerptPayload {
     pub name: Option<String>,
     pub range: Option<SourceSpan>,
     pub role: String,
+    pub section_kind: String,
+    pub completeness: String,
     pub score: usize,
     pub reasons: Vec<String>,
     pub text: String,

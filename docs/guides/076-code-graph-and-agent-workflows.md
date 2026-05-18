@@ -79,6 +79,16 @@ Look at:
 If `stale_paths` is not empty, re-run `graph index` before trusting query
 results.
 
+If the graph DB is corrupt or you hit an unsupported future storage schema,
+rebuild it locally:
+
+```sh
+rm -rf .effigy/graph
+effigy graph index --json
+```
+
+The graph is a cache. Rebuild is the supported recovery path.
+
 ### Search
 
 ```sh
@@ -113,6 +123,33 @@ effigy graph impact symbol:rust:crate::runner::run_release --limit 20 --json
 
 Use this when the starting point is a file path or a known symbol.
 
+### Changed-file validation narrowing
+
+```sh
+effigy graph affected src/runner/graph_command.rs --json
+git diff --name-only | effigy graph affected --stdin --depth 2 --json
+```
+
+Use this when the question is "what should I validate after these edits?".
+
+`graph affected --json` returns:
+
+- `changed_paths`
+- `freshness`
+- `depth`
+- `affected_files`
+- `likely_test_files`
+- `likely_test_tasks`
+- `notes`
+
+Interpret confidence like this:
+
+- `exact`: selected through resolved file or symbol graph facts
+- `heuristic`: selected through unresolved target matching or looser evidence
+
+This is a narrowing tool, not an exhaustiveness proof. It should help an agent
+choose a smaller validation target before widening to full-suite checks.
+
 ### Bounded agent context
 
 Use `graph explore` first when an agent needs to understand a task-shaped
@@ -132,13 +169,44 @@ effigy graph explore "trace deploy provider export" \
 - `summary`
 - `primary` owner files/docs
 - `excerpts` with paths, ranges, reasons, and text
-- `relations` such as related symbols
+- `excerpts[*].section_kind` and `excerpts[*].completeness`
+- `relations` such as related symbols, files, or docs with explicit traversal
+  reasons when `explore` follows a bounded one-hop graph edge
 - `overflow`
 - `guidance`
 
 Use the returned excerpts for first-pass orientation. Open returned files only
 when the excerpt is too small for the edit or review. Use `rg` for exact token
 verification, missing symbols, or confirming behavior before editing.
+
+Interpret excerpt completeness like this:
+
+- `complete-section`: the packet contains a full supported local section
+- `truncated-section`: the packet found a section boundary but had to cut it
+  to fit budget
+- `surrounding-context`: useful nearby text, but not a complete trusted section
+
+Today full section extraction is strongest for:
+
+- Python function/class blocks, including decorator-backed route handlers
+- Markdown heading sections
+
+Other languages still fall back to bounded surrounding context.
+
+Traversal is bounded. `graph explore` does not do an unbounded walk or claim a
+relation it cannot support from the indexed graph. Today that means:
+
+- resolved file/symbol links can surface directly
+- unresolved Rust and JS call/import targets can add bounded heuristic
+  neighbors when the symbol/path match is strong enough
+- supported manifest and Python entrypoint facts can surface exact
+  `entrypoint-task` and `route-handler` relations
+- exact token lookup still belongs to `rg`
+
+For implementation-shaped questions, ranking prefers implementation files with
+source-body evidence and distinct request-term coverage. Docs and comments can
+still appear when relevant, but they should not outrank owner code for queries
+such as "where are task routes parsed" or "find graph status stale detection".
 
 Use `graph context` when you want the lower-level ranked item packet:
 
@@ -182,6 +250,8 @@ Current posture:
 - uses the same incremental `graph index` path as manual refresh
 - emits explicit `dirty` and `reconcile` events when the watcher backend is not
   trustworthy
+- local SQLite opens with a WAL-backed posture and a short busy timeout so
+  reads and refresh writes overlap more cleanly on one workstation
 
 ### JSON Watch Contract
 
@@ -221,6 +291,7 @@ effigy graph explore "find deploy provider export owner" --language rust --json
 effigy graph context "docs for graph agent workflow" --json
 effigy graph search railway --json
 effigy graph impact src/runner/graph_command.rs --json
+git diff --name-only | effigy graph affected --stdin --json
 ```
 
 The graph should reduce aimless scanning, not replace source reading.
@@ -233,10 +304,26 @@ Current first-party coverage includes:
 - Effigy manifests and TOML
 - Markdown docs
 - PHP
+- Python
 - JavaScript / TypeScript
 
 The graph stores provenance and ranges for emitted facts, but some edges remain
 heuristic by design.
+
+Supported route and entrypoint facts currently include:
+
+- Effigy bootstrap start selectors linked to in-manifest tasks
+- Python FastAPI and Flask-style decorator routes:
+  - `@app.get("/path")`
+  - `@router.post("/path")`
+  - `@app.route("/path", methods=[...])`
+
+Not yet covered:
+
+- Django URL modules
+- Express/Fastify route surfaces
+- Laravel route files
+- Rust web framework routers
 
 ## Limits
 

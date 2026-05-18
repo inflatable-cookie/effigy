@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Duration;
 
 use rusqlite::{params, Connection, MappedRows, OptionalExtension};
 
@@ -11,6 +12,7 @@ use crate::model::{
 use crate::paths::GraphPaths;
 
 const STORAGE_SCHEMA_KEY: &str = "storage_schema_version";
+const SOURCE_SEARCH_MAX_BYTES: usize = 131_072;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileScanStateRecord {
@@ -26,11 +28,18 @@ pub struct GraphStore {
     connection: Connection,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceSearchMatch {
+    pub file_id: String,
+    pub rank: Option<f64>,
+}
+
 impl GraphStore {
     pub fn open(repo_root: &Path) -> Result<Self, CodeGraphError> {
         let paths = GraphPaths::for_repo(repo_root);
         std::fs::create_dir_all(&paths.graph_dir)?;
         let connection = Connection::open(&paths.db_path)?;
+        connection.busy_timeout(Duration::from_secs(5))?;
         let store = Self { paths, connection };
         store.initialize()?;
         Ok(store)
@@ -504,6 +513,12 @@ impl GraphStore {
                 "INSERT INTO graph_search (record_type, record_id, text) VALUES (?1, ?2, ?3)",
                 params!["file", file.id.as_str(), file.path],
             )?;
+            if let Some(source_text) = source_search_text(&self.paths.repo_root, &file) {
+                self.connection.execute(
+                    "INSERT INTO graph_search (record_type, record_id, text) VALUES (?1, ?2, ?3)",
+                    params!["source", file.id.as_str(), source_text],
+                )?;
+            }
         }
         for symbol in self.list_symbols()? {
             self.connection.execute(
@@ -584,6 +599,7 @@ impl GraphStore {
             "SELECT record_type, record_id, bm25(graph_search)
              FROM graph_search
              WHERE graph_search MATCH ?1
+               AND record_type != 'source'
              ORDER BY bm25(graph_search), record_id
              LIMIT ?2",
         )?;
@@ -593,11 +609,39 @@ impl GraphStore {
         collect_rows(rows)
     }
 
+    pub fn source_search(
+        &self,
+        token: &str,
+        limit: usize,
+    ) -> Result<Vec<SourceSearchMatch>, CodeGraphError> {
+        let mut statement = self.connection.prepare(
+            "SELECT record_id, bm25(graph_search)
+             FROM graph_search
+             WHERE graph_search MATCH ?1
+               AND record_type = 'source'
+             ORDER BY bm25(graph_search), record_id
+             LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![fts_phrase(token), limit as i64], |row| {
+            Ok(SourceSearchMatch {
+                file_id: row.get(0)?,
+                rank: Some(row.get(1)?),
+            })
+        })?;
+        collect_rows(rows)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn journal_mode(&self) -> Result<String, CodeGraphError> {
+        self.connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .map_err(Into::into)
+    }
+
     fn initialize(&self) -> Result<(), CodeGraphError> {
+        self.configure_connection()?;
         self.connection.execute_batch(
             "
-            PRAGMA foreign_keys = ON;
-
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -685,11 +729,8 @@ impl GraphStore {
             );
             ",
         )?;
-        self.connection.execute(
-            "INSERT INTO metadata (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![STORAGE_SCHEMA_KEY, GRAPH_STORAGE_SCHEMA_VERSION.to_string()],
-        )?;
+        self.apply_storage_migrations()?;
+        self.write_storage_schema_version(GRAPH_STORAGE_SCHEMA_VERSION)?;
         Ok(())
     }
 
@@ -698,6 +739,80 @@ impl GraphStore {
         let count = self
             .connection
             .query_row(&statement, [], |row| row.get::<_, i64>(0))?;
+        Ok(count.max(0) as usize)
+    }
+}
+
+impl GraphStore {
+    fn configure_connection(&self) -> Result<(), CodeGraphError> {
+        self.connection.pragma_update(None, "foreign_keys", "ON")?;
+        self.connection
+            .pragma_update(None, "synchronous", "NORMAL")?;
+        self.connection
+            .pragma_update(None, "temp_store", "MEMORY")?;
+        let _ = self
+            .connection
+            .query_row("PRAGMA journal_mode = WAL", [], |row| {
+                row.get::<_, String>(0)
+            });
+        Ok(())
+    }
+
+    fn apply_storage_migrations(&self) -> Result<(), CodeGraphError> {
+        let stored_version = self.read_stored_storage_schema_version()?;
+        if stored_version > GRAPH_STORAGE_SCHEMA_VERSION {
+            return Err(CodeGraphError::validation(format!(
+                "graph storage schema {stored_version} is newer than supported schema {}",
+                GRAPH_STORAGE_SCHEMA_VERSION
+            )));
+        }
+        if stored_version < 2 {
+            self.migrate_to_v2_source_search_backfill()?;
+        }
+        Ok(())
+    }
+
+    fn migrate_to_v2_source_search_backfill(&self) -> Result<(), CodeGraphError> {
+        if self.count_rows("files")? == 0 || self.count_graph_search_records("source")? > 0 {
+            return Ok(());
+        }
+        self.refresh_search_index()
+    }
+
+    fn read_stored_storage_schema_version(&self) -> Result<u32, CodeGraphError> {
+        let value: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT value FROM metadata WHERE key = ?1",
+                [STORAGE_SCHEMA_KEY],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match value {
+            Some(value) => value.parse::<u32>().map_err(|error| {
+                CodeGraphError::validation(format!(
+                    "invalid storage schema version in metadata: {error}"
+                ))
+            }),
+            None => Ok(0),
+        }
+    }
+
+    fn write_storage_schema_version(&self, version: u32) -> Result<(), CodeGraphError> {
+        self.connection.execute(
+            "INSERT INTO metadata (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![STORAGE_SCHEMA_KEY, version.to_string()],
+        )?;
+        Ok(())
+    }
+
+    fn count_graph_search_records(&self, record_type: &str) -> Result<usize, CodeGraphError> {
+        let count = self.connection.query_row(
+            "SELECT COUNT(*) FROM graph_search WHERE record_type = ?1",
+            [record_type],
+            |row| row.get::<_, i64>(0),
+        )?;
         Ok(count.max(0) as usize)
     }
 }
@@ -722,4 +837,43 @@ fn to_sql_conversion_error(error: impl std::fmt::Display) -> rusqlite::Error {
             error.to_string(),
         )),
     )
+}
+
+fn source_search_text(repo_root: &Path, file: &FileRecord) -> Option<String> {
+    if file.byte_size > SOURCE_SEARCH_MAX_BYTES as u64 {
+        return None;
+    }
+    let content = std::fs::read_to_string(repo_root.join(&file.path)).ok()?;
+    let normalized = if strips_comment_only_lines(&file.path, &file.language_id) {
+        content
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                !(trimmed.starts_with("//")
+                    || trimmed.starts_with("/*")
+                    || trimmed.starts_with('*'))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        content
+    };
+    let trimmed = normalized.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn strips_comment_only_lines(path: &str, language_id: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    language_id != "markdown"
+        && language_id != "toml"
+        && !lower.starts_with("docs/")
+        && !lower.ends_with(".md")
+}
+
+fn fts_phrase(token: &str) -> String {
+    format!("\"{}\"", token.replace('"', "\"\""))
 }

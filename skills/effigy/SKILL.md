@@ -72,7 +72,7 @@ Details: `references/first-five-commands.md`.
 | Scaffold manifest | `effigy init` then `effigy migrate` |
 | Extract changelog section | `effigy changelog extract --version X.Y.Z` |
 | List release gates | `effigy release gates` |
-| Build/query local code graph | `effigy graph index`, `status --json`, `explore`, `context`, `search` |
+| Build/query local code graph | `effigy graph index`, `status --json`, `explore`, `affected`, `context`, `search` |
 
 Details: `references/workflow-shortcuts.md`.
 
@@ -85,8 +85,6 @@ first:
 effigy graph index
 effigy graph status --json
 effigy graph explore "<task or question>" --max-files 6 --max-bytes 12288 --json
-effigy graph context "<task or question>" --max-files 8 --max-bytes 4096 --json
-effigy graph search <query> --json
 ```
 
 Use `graph explore` first for task-shaped codebase navigation. It returns
@@ -94,9 +92,36 @@ primary owners, excerpts, related symbols, freshness, overflow, and guidance.
 Trust returned excerpts for first-pass orientation; do not reread those files
 unless the excerpt is insufficient for the edit or review.
 
-Use `graph context` when you want the lower-level ranked item packet. Use `rg`
-for exact token verification, missing symbols, and final checks before editing.
-Treat graph results as a fast map, not compiler-grade truth.
+If `graph status --json` reports `stale_paths`, refresh before trusting query
+results:
+
+```bash
+effigy graph index --json
+```
+
+Use `graph affected` when the question is "what should I validate after these
+edits?":
+
+```bash
+git diff --name-only | effigy graph affected --stdin --json
+```
+
+Use `graph context` when you want the lower-level ranked item packet:
+
+```bash
+effigy graph context "<task or question>" --max-files 8 --max-bytes 4096 --json
+```
+
+Use `rg` for exact token verification, missing symbols, and final checks before
+editing. Treat graph results as a fast map, not compiler-grade truth.
+
+If the graph DB is corrupt or the binary rejects an incompatible future schema,
+rebuild it locally:
+
+```bash
+rm -rf .effigy/graph
+effigy graph index --json
+```
 
 ## Selector routing (60-second version)
 

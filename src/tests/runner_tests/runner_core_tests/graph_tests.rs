@@ -16,6 +16,9 @@ fn setup_graph_fixture(name: &str) -> std::path::PathBuf {
         r#"
 [tasks.release]
 run = "cargo test"
+
+[tasks.test]
+run = "cargo test"
 "#,
     );
     fs::write(
@@ -248,6 +251,66 @@ fn graph_text_commands_render_useful_summaries() {
     assert!(explore.contains("graph explore `trace release helper`"));
     assert!(explore.contains("primary:"));
     assert!(explore.contains("guidance"));
+}
+
+#[test]
+fn graph_affected_json_and_text_report_likely_validation_targets() {
+    let root = setup_graph_fixture("graph-affected");
+    fs::create_dir_all(root.join("tests")).expect("mkdir tests");
+    fs::write(
+        root.join("tests/release_graph_test.rs"),
+        r#"
+use demo::release_graph;
+
+#[test]
+fn release_graph_smoke() {
+    release_graph();
+}
+"#,
+    )
+    .expect("write test file");
+
+    run_command(Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Index,
+        repo_override: Some(root.clone()),
+        output_json: false,
+    }))
+    .expect("graph index should succeed");
+
+    let json = run_command(Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Affected {
+            changed_paths: vec!["src/lib.rs".to_owned()],
+            read_stdin: false,
+            depth: 2,
+            limit: Some(20),
+        },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("graph affected should succeed");
+    let json = parse_json_output_with_schema_version(&json, "effigy.graph.affected.v1", 1);
+    assert_eq!(json["command"].as_str(), Some("graph affected"));
+    assert!(json["payload"]["likely_test_files"]
+        .as_array()
+        .is_some_and(|items| !items.is_empty()));
+    assert!(json["payload"]["likely_test_tasks"]
+        .as_array()
+        .is_some_and(|items| !items.is_empty()));
+
+    let text = run_command(Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Affected {
+            changed_paths: vec!["src/lib.rs".to_owned()],
+            read_stdin: false,
+            depth: 2,
+            limit: Some(20),
+        },
+        repo_override: Some(root),
+        output_json: false,
+    }))
+    .expect("graph affected text should succeed");
+    assert!(text.contains("graph affected:"));
+    assert!(text.contains("test-file"));
+    assert!(text.contains("test-task"));
 }
 
 #[test]

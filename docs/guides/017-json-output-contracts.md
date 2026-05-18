@@ -126,6 +126,8 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.graph.callees.v1`
 - `effigy.graph.impact.v1`
 - `effigy.graph.context.v1`
+- `effigy.graph.explore.v1`
+- `effigy.graph.affected.v1`
 - `deploy.model.v1`
 - `effigy.deploy.export.v1`
 - `effigy.deploy.plan.v1`
@@ -168,7 +170,9 @@ effigy --json config --schema --target test
 effigy --json graph index
 effigy --json graph status
 effigy --json graph search release --limit 10
+effigy --json graph explore "trace deploy provider export" --max-files 6 --max-bytes 12288
 effigy --json graph context "trace deploy provider export" --max-files 8 --max-bytes 4096
+effigy --json graph affected src/runner/graph_command.rs --depth 2
 effigy --json deploy model --repo /path/to/workspace
 effigy --json deploy export <PROVIDER> --repo /path/to/workspace --path infra/deploy --plan
 effigy --json deploy plan uat --repo /path/to/workspace
@@ -215,6 +219,15 @@ Consume one JSON object per line. Current event kinds:
 - `dirty`
 - `reconcile`
 - `fatal`
+
+## Graph Workflow Notes
+
+- `graph status --json` is the freshness gate; if `stale_paths` is non-empty,
+  re-run `graph index --json` before trusting graph queries.
+- `graph affected --json` narrows validation scope but does not claim exhaustive
+  test reachability.
+- `graph explore --json` and `graph context --json` are bounded packets; exact
+  token confirmation still belongs to `rg`.
 
 ## Payload Examples
 

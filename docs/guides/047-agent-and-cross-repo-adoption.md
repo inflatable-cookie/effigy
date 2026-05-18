@@ -26,6 +26,8 @@ Then:
 - use `effigy test ...` for supported test flows
 - use `effigy --json <command>` when the caller needs machine-safe
   parsing
+- use `effigy graph` when the agent needs a bounded repo map before broad file
+  scanning (see Section 2a)
 - fall back to raw tool commands only when Effigy does not yet cover the path
 
 For work inside the Effigy repo itself:
@@ -58,6 +60,32 @@ Agents should not assume:
 - that `cargo run --bin effigy -- ...` is the normal daily interface outside
   bootstrap or explicit source-run fallback
 
+## 2a) Code Graph Assist
+
+When an agent needs codebase context before editing, prefer the local graph over
+spraying `rg` across the whole repo:
+
+```sh
+effigy graph status --json
+effigy graph index --json
+effigy graph explore "<task-shaped question>" --max-files 6 --max-bytes 12288 --json
+git diff --name-only | effigy graph affected --stdin --json
+```
+
+Rules:
+
+- use `graph explore` first for task-shaped navigation
+- trust returned excerpts for first-pass orientation; open files only when the
+  excerpt is insufficient for the edit or review
+- use `graph affected` to narrow validation after edits, not as exhaustive test
+  proof
+- use `rg` for exact token verification and final checks before editing
+- if `stale_paths` is non-empty, refresh with `graph index` before trusting
+  query output
+
+Full workflow and limits:
+[`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
+
 ## 3) Reusable `AGENTS.md` Snippet
 
 Copy and adapt this into a consumer repo `AGENTS.md` when Effigy is intended to
@@ -74,8 +102,9 @@ Default flow:
 3. Run `effigy test --plan`
 4. Prefer `effigy <task>` and `effigy test ...`
 5. Use `effigy --json <command>` for machine-readable output
-6. Use `--repo <PATH>` only when intentionally operating on another repo
-7. Fall back to raw tool commands only when Effigy does not yet cover the path
+6. Use `effigy graph explore` before broad repo scanning when codebase context is needed
+7. Use `--repo <PATH>` only when intentionally operating on another repo
+8. Fall back to raw tool commands only when Effigy does not yet cover the path
 
 Testing policy:
 - treat `effigy test` as the default test entrypoint when available
@@ -329,6 +358,7 @@ instructions short and point them at the native demo surface once it exists.
 - [`056-northstar-effigy-consumer-repo-contract.md`](./056-northstar-effigy-consumer-repo-contract.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
 - [`027-copy-paste-snippets.md`](./027-copy-paste-snippets.md)
+- [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
 
 ## Next Step
 

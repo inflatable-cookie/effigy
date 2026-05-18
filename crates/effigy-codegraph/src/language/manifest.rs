@@ -336,6 +336,7 @@ fn extract_effigy_manifest_relations(
         sink,
         extractor_id,
         extractor_version,
+        &loaded.manifest.tasks,
         loaded.manifest.bootstrap.as_ref(),
     )?;
     index_demos(
@@ -1062,6 +1063,7 @@ fn index_bootstrap(
     sink: &mut GraphSink,
     extractor_id: &ExtractorId,
     extractor_version: &str,
+    tasks: &std::collections::BTreeMap<String, ManifestTask>,
     bootstrap: Option<&effigy_manifest::ManifestBootstrapConfig>,
 ) -> Result<(), CodeGraphError> {
     let Some(bootstrap) = bootstrap else {
@@ -1102,17 +1104,54 @@ fn index_bootstrap(
     }
     if let Some(start) = bootstrap.start.as_ref() {
         for (index, selector) in start.selectors().into_iter().enumerate() {
-            push_unresolved_edge(
+            let selector_id = manifest_nested_symbol_id(file, &["bootstrap", "start", selector])?;
+            push_symbol(
+                sink,
+                selector_id.clone(),
+                "task-selector",
+                selector,
+                &format!("selector::{selector}"),
+                file,
+                file_record,
+                extractor_id,
+                extractor_version,
+                "task-selector",
+            );
+            push_contains_edge(
                 sink,
                 &bootstrap_id,
-                "bootstrap-start-task",
-                selector,
-                &format!("bootstrap-start:{index}"),
+                &selector_id,
+                &format!("bootstrap-start-selector:{index}"),
                 file,
                 extractor_id,
                 extractor_version,
-                Confidence::Exact,
             )?;
+            if tasks.contains_key(selector) {
+                let task_id = manifest_named_symbol_id(file, "task", selector)?;
+                push_resolved_edge(
+                    sink,
+                    &selector_id,
+                    "entrypoint-task",
+                    &task_id,
+                    &format!("bootstrap-start:{index}"),
+                    file,
+                    extractor_id,
+                    extractor_version,
+                    Confidence::Exact,
+                )?;
+            } else {
+                push_unresolved_edge(
+                    sink,
+                    &selector_id,
+                    "entrypoint-task",
+                    selector,
+                    &format!("bootstrap-start:{index}"),
+                    file,
+                    extractor_id,
+                    extractor_version,
+                    Confidence::Exact,
+                )?;
+            }
         }
     }
     for (index, child) in bootstrap.children.iter().enumerate() {

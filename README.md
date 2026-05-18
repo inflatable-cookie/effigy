@@ -413,6 +413,7 @@ include = [
 | Build demos and proofs | [`docs/guides/058-demo-system-guide.md`](./docs/guides/058-demo-system-guide.md) |
 | Cut releases | [`docs/guides/051-release-orchestration.md`](./docs/guides/051-release-orchestration.md) |
 | Wire up CI | [`docs/guides/024-ci-and-automation-recipes.md`](./docs/guides/024-ci-and-automation-recipes.md) |
+| Agent repo map / code graph | [`docs/guides/076-code-graph-and-agent-workflows.md`](./docs/guides/076-code-graph-and-agent-workflows.md) |
 | Full guide map | [`docs/guides/README.md`](./docs/guides/README.md) |
 
 Command reference: [`docs/guides/025-command-reference-matrix.md`](./docs/guides/025-command-reference-matrix.md)
@@ -427,11 +428,14 @@ Effigy was designed so that AI agents can operate a repo without tribal knowledg
 effigy tasks --json              # Every task, catalog, and description
 effigy config --inspect          # The full merged manifest
 effigy doctor --verbose          # Health check with routing evidence
+effigy graph explore "<task>" --json   # Bounded repo map before broad scanning
 effigy --help                    # Every command and flag
 effigy release simulate --json   # Machine-readable dry-runs
 ```
 
-An agent dropped into an Effigy repo can discover the task surface, understand routing decisions, run tests, start dev environments, and cut releases — all through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
+An agent dropped into an Effigy repo can discover the task surface, understand routing decisions, build a bounded code map with `effigy graph`, run tests, start dev environments, and cut releases — all through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
+
+Graph workflow guide: [`docs/guides/076-code-graph-and-agent-workflows.md`](./docs/guides/076-code-graph-and-agent-workflows.md)
 
 For agents that want a head start, we ship a skill that teaches Claude Code, OpenAI Codex, Cursor, and 50+ other agents the exact patterns:
 

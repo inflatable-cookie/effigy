@@ -1,0 +1,163 @@
+schema = "effigy.graph.benchmark.v1"
+suite = "codegraph-parity"
+owner = "Platform"
+created = "2026-05-18"
+repo_root = "."
+graph_command = "target/debug/effigy graph explore <QUERY> --max-files 6 --max-bytes 12288 --json"
+exact_match_command = "rg -n <TOKEN> crates src tests"
+
+[[cases]]
+id = "deploy-provider-export"
+phase = "active"
+category = "ownership"
+surface = "explore"
+query = "trace deploy provider export"
+expected_primary = "src/runner/deploy_command/provider_package.rs"
+acceptable_primary = [
+  "src/runner/deploy_command/provider_context.rs",
+  "src/runner/deploy_command/mod.rs",
+]
+why = "Checks whether provider export ownership resolves to core deploy implementation rather than provider-agnostic docs or CLI glue."
+success_posture = "zero-reread or one targeted reread"
+
+[[cases]]
+id = "graph-watch-implementation"
+phase = "active"
+category = "call-flow"
+surface = "explore"
+query = "trace graph watch implementation"
+expected_primary = "crates/effigy-codegraph/src/watch.rs"
+acceptable_primary = [
+  "src/cli/graph_watch_dispatch.rs",
+  "crates/effigy-cli/src/command_parsing_graph.rs",
+]
+why = "Checks that implementation questions land on the watch owner before broad graph support files."
+success_posture = "zero-reread"
+
+[[cases]]
+id = "release-orchestration"
+phase = "active"
+category = "architecture"
+surface = "explore"
+query = "understand release orchestration"
+expected_primary = "crates/effigy-release/src/lib.rs"
+acceptable_primary = [
+  "crates/effigy-cli/src/command_parsing_release.rs",
+  "crates/effigy-release/src/prepare_helpers.rs",
+  "crates/effigy-release/src/git.rs",
+]
+why = "Checks whether broad release questions surface implementation owners instead of docs, Cargo metadata, or comments."
+success_posture = "one targeted reread"
+
+[[cases]]
+id = "graph-status-stale-detection"
+phase = "active"
+category = "freshness"
+surface = "explore"
+query = "find graph status stale detection"
+expected_primary = "crates/effigy-codegraph/src/index.rs"
+acceptable_primary = [
+  "crates/effigy-codegraph/src/query.rs",
+  "crates/effigy-codegraph/src/json.rs",
+  "src/runner/graph_command.rs",
+]
+why = "Checks stale/freshness ownership and whether ranking stays on graph implementation rather than logs or generic status code."
+success_posture = "zero-reread or one targeted reread"
+
+[[cases]]
+id = "task-route-parsing"
+phase = "active"
+category = "route"
+surface = "explore"
+query = "where are task routes parsed"
+expected_primary = "src/runner/execute/routing.rs"
+acceptable_primary = [
+  "crates/effigy-execution/src/lib.rs",
+  "crates/effigy-managed/src/references/parser.rs",
+  "src/runner/error.rs",
+]
+why = "Acts as the current route and entrypoint proxy until framework route facts exist."
+success_posture = "one targeted reread"
+
+[[cases]]
+id = "bundle-source-git"
+phase = "active"
+category = "manifest"
+surface = "explore"
+query = "what changes when a bundle source is git"
+expected_primary = "crates/effigy-manifest/src/bundles/source.rs"
+acceptable_primary = [
+  "src/runner/bundle_command.rs",
+  "crates/effigy-manifest/src/bundles.rs",
+]
+why = "Checks whether manifest and bundle source behavior resolves to implementation rather than docs/contracts."
+success_posture = "one targeted reread"
+
+[[cases]]
+id = "graph-agent-docs"
+phase = "active"
+category = "docs"
+surface = "explore"
+query = "docs for graph agent workflow"
+expected_primary = "docs/guides/076-code-graph-and-agent-workflows.md"
+acceptable_primary = [
+  "skills/effigy/SKILL.md",
+  "docs/guides/026-json-payload-examples.md",
+]
+why = "Checks that docs-shaped queries keep docs first."
+success_posture = "zero-reread"
+
+[[cases]]
+id = "exact-token-parse-task-selector"
+phase = "active"
+category = "exact-token"
+surface = "rg"
+query = "parse_task_selector"
+expected_primary = "src/runner/tasks_command/status.rs"
+acceptable_primary = [
+  "crates/effigy-execution/src/lib.rs",
+  "crates/effigy-tasks/src/parsing.rs",
+]
+why = "Pins the rule that exact token lookup is still an `rg` benchmark, not a graph benchmark."
+success_posture = "rg-only"
+
+[[cases]]
+id = "affected-test-proxy"
+phase = "active"
+category = "affected-test"
+surface = "fixture"
+query = "graph watch regression tests"
+expected_primary = "tests/graph_watch_tests.rs"
+acceptable_primary = [
+  "src/graph/watch.rs",
+]
+fixture_source = "crates/effigy-codegraph/src/tests.rs::graph_context_ranks_tests_and_docs_when_request_intent_asks_for_them"
+why = "Pins a stable fixture-backed test-intent proxy alongside the dedicated `graph affected` surface."
+success_posture = "zero-reread"
+
+[[cases]]
+id = "cross-language-php-front-controller"
+phase = "active"
+category = "cross-language"
+surface = "fixture"
+query = "trace php front controller boot helper"
+expected_primary = "legacy/index.php"
+acceptable_primary = [
+  "legacy/boot.php",
+  "legacy/App/Controller.php",
+]
+fixture_source = "crates/effigy-codegraph/src/tests.rs::graph_php_indexer_emits_namespace_symbols_and_static_include_edges"
+why = "Pins a real fixture-backed PHP entrypoint query so closeout can measure whether cross-language ownership lands on the front controller or only an acceptable implementation neighbor."
+success_posture = "one targeted reread"
+
+[[measurement_rules]]
+name = "warm-index"
+description = "Run after `target/debug/effigy graph status --json` reports no stale paths."
+
+[[measurement_rules]]
+name = "cold-index"
+description = "Optional later comparison after deleting `.effigy/graph/` and rerunning `graph index`."
+
+[[measurement_rules]]
+name = "exact-token-separation"
+description = "Do not compare `rg` exact-token cases against navigation cases when making parity claims."

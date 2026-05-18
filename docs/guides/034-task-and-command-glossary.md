@@ -88,6 +88,8 @@ Examples:
 - `effigy.tasks.v1`
 - `effigy.doctor.v1`
 - `effigy.test.plan.v1`
+- `effigy.graph.explore.v1`
+- `effigy.graph.affected.v1`
 
 ## Suite
 
@@ -187,6 +189,54 @@ Example:
 ```sh
 effigy test --plan
 ```
+
+## Code Graph
+
+Definition:
+- Effigy's local deterministic repo index under `.effigy/graph/graph.db`, built
+  by first-party extractors and queried through `effigy graph`.
+
+Notes:
+- it is a navigation aid for agents and humans, not compiler-grade semantic truth
+- queries do not rebuild the index; run `effigy graph index` explicitly
+
+Deep dive:
+- [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
+
+## Graph Explore
+
+Definition:
+- One-call agent navigation command that returns primary owners, excerpts,
+  relations, freshness, overflow, and guidance under `effigy.graph.explore.v1`.
+
+Example:
+
+```sh
+effigy graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
+```
+
+## Graph Affected
+
+Definition:
+- Changed-file validation narrowing command that turns edited paths into
+  affected files, likely test files, and candidate Effigy test tasks under
+  `effigy.graph.affected.v1`.
+
+Example:
+
+```sh
+git diff --name-only | effigy graph affected --stdin --json
+```
+
+## Graph Watch Event
+
+Definition:
+- Newline-delimited JSON event emitted by `effigy graph watch --json` with schema
+  `effigy.graph.watch.event.v1`.
+
+Notes:
+- this is a streaming exception and does not use the one-shot `effigy.command.v1`
+  envelope
 
 ## Managed TUI Task
 

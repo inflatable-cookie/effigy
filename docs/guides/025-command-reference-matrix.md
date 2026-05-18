@@ -66,7 +66,8 @@ For narrative workflow guidance instead of lookup, start with:
 - Need the v0.6.0 UAT/production deployment transaction surface: use
   `effigy deploy plan <env>` before `effigy deploy apply <env> --yes`.
 - Need a bounded machine-readable repo map before broad source scanning: use
-  `effigy graph`.
+  `effigy graph` (`explore` first, `affected` after edits, `context`/`search`
+  for follow-up).
 - Need release workflows: use `effigy release`.
 - Need distribution validation, GLIBC checks, artifact validation, or
   first-publish evidence: use `effigy distribution`.
@@ -94,7 +95,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
 | `effigy bundle` | Inspect the active repo bundle source and refresh repo-local git/OCI bundle sources | `inspect`, `sync`, `--repo`, `--json` | `effigy.bundle.inspect.v1`, `effigy.bundle.sync.v1` | `065-external-bundle-adoption.md` |
 | `effigy deploy` | Derive a provider-neutral production deployment model, export bounded provider files through configured provider packages, and run provider-neutral deployment transactions with state, artifact, release, hook, health, and report evidence | `model`, `export <PROVIDER>`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../contracts/019-deployment-transaction-system-contract.md) |
-| `effigy graph` | Build, query, and keep the local code graph fresh for file, symbol, edge, impact, bounded context-pack, one-call exploration, and watcher-driven agent lookup | `index`, `status`, `search`, `files`, `node`, `callers`, `callees`, `impact`, `context`, `explore`, `watch`, `--repo`, `--json`, `--limit`, `--max-files`, `--max-bytes`, `--language`, `--path`, `--debounce-ms` | `effigy.graph.index.v1`, `effigy.graph.status.v1`, `effigy.graph.search.v1`, `effigy.graph.files.v1`, `effigy.graph.node.v1`, `effigy.graph.callers.v1`, `effigy.graph.callees.v1`, `effigy.graph.impact.v1`, `effigy.graph.context.v1`, `effigy.graph.explore.v1`, `effigy.graph.watch.event.v1` | `076-code-graph-and-agent-workflows.md` |
+| `effigy graph` | Build, query, and keep the local code graph fresh for file, symbol, edge, impact, changed-file validation narrowing, bounded context packs, one-call exploration, and watcher-driven agent lookup | `index`, `status`, `search`, `files`, `node`, `callers`, `callees`, `impact`, `affected`, `context`, `explore`, `watch`, `--repo`, `--json`, `--limit`, `--depth`, `--stdin`, `--max-files`, `--max-bytes`, `--language`, `--path`, `--debounce-ms` | `effigy.graph.index.v1`, `effigy.graph.status.v1`, `effigy.graph.search.v1`, `effigy.graph.files.v1`, `effigy.graph.node.v1`, `effigy.graph.callers.v1`, `effigy.graph.callees.v1`, `effigy.graph.impact.v1`, `effigy.graph.affected.v1`, `effigy.graph.context.v1`, `effigy.graph.explore.v1`, `effigy.graph.watch.event.v1` | `076-code-graph-and-agent-workflows.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, optionally stage DB seed dumps and run the standard `bootstrap:db-seed` task, optionally prompt for missing bundle DB dumps on a real TTY, optionally isolate generated-compose runtime state with `--fresh`, optionally pin this bootstrap session to `containerd` or `docker` with `--backend`, run `[bootstrap].start` after setup by default (`--no-start` to skip), and expose `bootstrap deps sync`, `bootstrap children status/sync`, and `bootstrap teardown` for typed dependency hydration, child checkout inspection/refresh, and fresh-session cleanup | `<git-url>`, `teardown`, `deps sync`, `children status`, `children sync`, `--path`, `--branch`, `--backend <containerd|docker>`, `--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>`, `--fresh`, `--no-prompt`, `--reuse-path`, `--no-start`, `--start`, `--plan`, `--yes`, `--js-only`, `--rust-only`, `--fetch-only`, `--checkout`, `--json` | `effigy.bootstrap.v1`, `effigy.bootstrap.deps.v1`, `effigy.bootstrap.children-status.v1`, `effigy.bootstrap.children-sync.v1`, `effigy.bootstrap-teardown.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--threshold/--warn`, `--high`, `--critical`, `--include`, `--exclude`, `--source-root`, marker overrides (`--warning-marker/--high-marker/--critical-marker`), `--show-warnings`, `--no-gitignore`, `--fail-on-findings`, `--markdown`, `--out`, `--json` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
@@ -257,6 +258,7 @@ effigy graph node <ID> [--repo <PATH>] [--json]
 effigy graph callers <ID> [--repo <PATH>] [--limit <N>] [--json]
 effigy graph callees <ID> [--repo <PATH>] [--limit <N>] [--json]
 effigy graph impact <TARGET> [--repo <PATH>] [--limit <N>] [--json]
+effigy graph affected [--repo <PATH>] [--depth <N>] [--limit <N>] [--stdin] <PATH>... [--json]
 effigy graph context <REQUEST> [--repo <PATH>] [--max-files <N>] [--max-bytes <N>] [--language <ID>]... [--path <PREFIX>]... [--json]
 effigy graph explore <REQUEST> [--repo <PATH>] [--max-files <N>] [--max-bytes <N>] [--language <ID>]... [--path <PREFIX>]... [--json]
 effigy graph watch [--repo <PATH>] [--debounce-ms <MS>] [--json]
@@ -430,6 +432,13 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   the normal child capture reports
 - `state history` is read-only; it scans report JSON files and ignores malformed
   files with warnings instead of maintaining an index
+- `graph index` is explicit; queries do not rebuild the graph for you
+- `graph explore` is the preferred one-call agent navigation packet; use
+  `graph context` when you want the lower-level ranked item list instead
+- `graph affected` accepts changed paths as args or via `--stdin`; it narrows
+  likely validation targets but does not prove exhaustive test reachability
+- `graph watch --json` streams newline-delimited `effigy.graph.watch.event.v1`
+  events and does not use the one-shot `effigy.command.v1` envelope
 
 ## Common Recipes
 
@@ -474,6 +483,15 @@ effigy release execute --plan
 effigy --json release status --check-gates
 ```
 
+Agent repo map:
+
+```sh
+effigy graph index
+effigy --json graph status
+effigy --json graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288
+git diff --name-only | effigy graph affected --stdin --json
+```
+
 Lock recovery:
 
 ```sh
@@ -496,6 +514,7 @@ effigy tasks unlock --all --yes
 - [`052-changelog-workflows-and-northstar-profile.md`](./052-changelog-workflows-and-northstar-profile.md)
 - [`034-task-and-command-glossary.md`](./034-task-and-command-glossary.md)
 - [`072-artifact-commands-guide.md`](./072-artifact-commands-guide.md)
+- [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)
 
 ## Expected Outcome
 

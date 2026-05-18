@@ -1,12 +1,12 @@
 use effigy_cli::{GraphArgs, GraphSubcommand};
 use effigy_codegraph::json::{
-    GraphCommandPayload, GraphContextPayload, GraphExplorePayload, GraphFilesPayload,
-    GraphFreshnessPayload, GraphImpactPayload, GraphIndexPayload, GraphNodePayload,
-    GraphRelatedNodesPayload, GraphSearchPayload, GraphStatusPayload,
+    GraphAffectedPayload, GraphCommandPayload, GraphContextPayload, GraphExplorePayload,
+    GraphFilesPayload, GraphFreshnessPayload, GraphImpactPayload, GraphIndexPayload,
+    GraphNodePayload, GraphRelatedNodesPayload, GraphSearchPayload, GraphStatusPayload,
 };
 use effigy_codegraph::{
-    callees, callers, context, explore, impact, node, query_files, query_search, render_json,
-    run_index, status,
+    affected, callees, callers, context, explore, impact, node, query_files, query_search,
+    render_json, run_index, status,
 };
 
 use crate::runner::command_context::resolve_active_repo_root;
@@ -132,6 +132,28 @@ pub(super) fn run_graph(args: GraphArgs) -> Result<String, RunnerError> {
                 args.output_json,
                 "effigy.graph.impact.v1",
                 "graph impact",
+                repo_root.display().to_string(),
+                payload,
+                text,
+            )
+        }
+        GraphSubcommand::Affected {
+            changed_paths,
+            read_stdin,
+            depth,
+            limit,
+        } => {
+            let mut collected = changed_paths;
+            if read_stdin {
+                collected.extend(read_stdin_paths().map_err(RunnerError::task_invocation)?);
+            }
+            let payload =
+                affected(&repo_root, &collected, depth, limit).map_err(map_graph_error)?;
+            let text = render_affected_text(&payload);
+            render_json_or_text(
+                args.output_json,
+                "effigy.graph.affected.v1",
+                "graph affected",
                 repo_root.display().to_string(),
                 payload,
                 text,
@@ -317,6 +339,42 @@ fn render_impact_text(payload: &GraphImpactPayload) -> String {
     lines.join("\n")
 }
 
+fn render_affected_text(payload: &GraphAffectedPayload) -> String {
+    let mut lines = freshness_lines(&payload.freshness);
+    lines.push(format!(
+        "graph affected: {} changed, {} affected files, {} likely test files, {} likely test tasks",
+        payload.changed_paths.len(),
+        payload.affected_files.len(),
+        payload.likely_test_files.len(),
+        payload.likely_test_tasks.len()
+    ));
+    lines.push(format!("depth: {}", payload.depth));
+    for path in &payload.changed_paths {
+        lines.push(format!("- changed {path}"));
+    }
+    for file in payload.likely_test_files.iter().take(10) {
+        lines.push(format!(
+            "- test-file {} [{}] because {}",
+            file.path,
+            file.confidence,
+            file.reasons.join("; ")
+        ));
+    }
+    for task in payload.likely_test_tasks.iter().take(10) {
+        lines.push(format!(
+            "- test-task {} [{}] {} because {}",
+            task.name,
+            task.kind,
+            task.confidence,
+            task.reasons.join("; ")
+        ));
+    }
+    for note in &payload.notes {
+        lines.push(format!("- note {note}"));
+    }
+    lines.join("\n")
+}
+
 fn render_context_text(payload: &GraphContextPayload) -> String {
     let mut lines = freshness_lines(&payload.freshness);
     lines.push(format!(
@@ -417,6 +475,21 @@ fn freshness_lines(freshness: &GraphFreshnessPayload) -> Vec<String> {
     } else {
         Vec::new()
     }
+}
+
+fn read_stdin_paths() -> Result<Vec<String>, String> {
+    use std::io::Read;
+
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|error| format!("failed to read stdin for `graph affected`: {error}"))?;
+    Ok(input
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect())
 }
 
 fn map_graph_error(error: effigy_codegraph::CodeGraphError) -> RunnerError {

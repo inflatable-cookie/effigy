@@ -115,6 +115,9 @@ Deep dive:
 
 ```sh
 effigy graph index
+effigy graph status --json
+effigy graph explore "trace deploy provider export" --max-files 6 --max-bytes 12288 --json
+git diff --name-only | effigy graph affected --stdin --json
 effigy graph context "trace deploy provider export" --max-files 8 --max-bytes 4096 --json
 effigy graph search release --limit 10 --json
 ```
@@ -124,6 +127,10 @@ Use the graph before broad file scanning when you need:
 - the first files to read
 - a symbol neighborhood
 - bounded machine-readable context
+- a narrowed validation target after edits
+
+If `graph status --json` reports `stale_paths`, refresh with `effigy graph index --json`
+before trusting query output.
 
 If the repo is changing while you work:
 

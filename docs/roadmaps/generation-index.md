@@ -67,6 +67,11 @@ Updated: 2026-05-18
   over-ranked tests/docs and direct `rg` remained better for exact text.
 - `g07.030` through `g07.034` completed a one-call graph exploration surface
   that targets whole-agent workflow cost rather than raw query latency.
+- `g07.035` through `g07.045` reopen the graph lane for CodeGraph-parity work:
+  benchmark harness, FTS-backed source evidence, traversal-aware explore
+  assembly, richer language extractors, framework routes, source-section
+  no-reread packets, affected-test workflow, scale hardening, agent adoption,
+  and closeout.
 - The suite explicitly excludes MCP, a graph daemon, external language plugins,
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
@@ -104,4 +109,4 @@ closeout there first.
 
 ## Next Task
 
-No active `g07` execution card remains.
+No active ready card.

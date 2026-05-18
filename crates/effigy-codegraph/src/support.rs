@@ -24,6 +24,8 @@ pub fn language_id_for_path(path: &str) -> Option<&'static str> {
         Some("markdown")
     } else if path.ends_with(".php") || path.ends_with(".phtml") {
         Some("php")
+    } else if path.ends_with(".py") {
+        Some("python")
     } else if path.ends_with(".tsx") {
         Some("tsx")
     } else if path.ends_with(".ts") {

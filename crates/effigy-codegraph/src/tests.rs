@@ -9,10 +9,12 @@ use crate::model::{
     SourcePosition, SourceSpan, SymbolRecord, GRAPH_STORAGE_SCHEMA_VERSION,
 };
 use crate::{
-    callers, context, explore, impact, node, query_files, query_search, run_index, status,
-    CodeGraphError, ExtractorId, GraphId, GraphStore, GRAPH_JSON_SCHEMA_VERSION,
+    affected, callers, context, explore, impact, node, query_files, query_search, run_index,
+    status, CodeGraphError, ExtractorId, GraphId, GraphStore, GRAPH_JSON_SCHEMA_VERSION,
 };
+use rusqlite::Connection;
 use std::fs;
+use std::path::Path;
 
 fn span() -> SourceSpan {
     SourceSpan {
@@ -37,6 +39,79 @@ fn provenance() -> Provenance {
         confidence: Confidence::Syntactic,
         detail: Some("tree-sitter pass".to_owned()),
     }
+}
+
+fn write_graph_watch_fixture(root: &Path) {
+    fs::create_dir_all(root.join("src/graph")).expect("mkdir src");
+    fs::create_dir_all(root.join("tests")).expect("mkdir tests");
+    fs::create_dir_all(root.join("docs")).expect("mkdir docs");
+    fs::write(
+        root.join("src/graph/watch.rs"),
+        "pub fn watch_repo() { refresh_graph_index(); }\nfn refresh_graph_index() {}\n",
+    )
+    .expect("write implementation");
+    fs::write(
+        root.join("tests/graph_watch_tests.rs"),
+        "fn graph_watch_regression_test() {}\nfn graph_watch_coverage_test() {}\n",
+    )
+    .expect("write tests");
+    fs::write(
+        root.join("docs/graph-watch.md"),
+        "# Graph Watch Guide\n\nDocs for graph watch agent workflow.\n",
+    )
+    .expect("write docs");
+}
+
+fn write_php_front_controller_fixture(root: &Path) {
+    fs::create_dir_all(root.join("legacy/App")).expect("mkdir app");
+    fs::write(
+        root.join("legacy/boot.php"),
+        "<?php\nconst BOOTSTRAPPED = true;\n",
+    )
+    .expect("write boot");
+    fs::write(
+        root.join("legacy/index.php"),
+        r#"<?php
+require_once 'boot.php';
+App\Controller\HomeController::handle();
+"#,
+    )
+    .expect("write front controller");
+    fs::write(
+        root.join("legacy/App/Controller.php"),
+        r#"<?php
+namespace App\Controller;
+
+use Legacy\Support\Helper;
+
+trait UsesHelper {
+    public function helperName() {
+        return Helper::name();
+    }
+}
+
+interface Renderable {
+    public function render();
+}
+
+class HomeController implements Renderable {
+    use UsesHelper;
+
+    public const VERSION = '1.0';
+
+    public static function handle() {
+        require_once __DIR__ . '/../boot.php';
+        $instance = new self();
+        $instance->render();
+    }
+
+    public function render() {
+        echo $this->helperName();
+    }
+}
+"#,
+    )
+    .expect("write controller");
 }
 
 #[test]
@@ -68,6 +143,197 @@ fn graph_store_initializes_graph_dir_and_reopens() {
     assert_eq!(
         reopened.storage_schema_version().expect("schema version"),
         GRAPH_STORAGE_SCHEMA_VERSION
+    );
+    let journal_mode = reopened.journal_mode().expect("journal mode");
+    assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+}
+
+#[test]
+fn graph_store_migrates_v1_search_index_to_source_backfill() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn helper() { println!(\"hello scale\"); }\n",
+    )
+    .expect("write source");
+
+    let graph_dir = temp.path().join(".effigy/graph");
+    fs::create_dir_all(&graph_dir).expect("graph dir");
+    let db_path = graph_dir.join("graph.db");
+    let connection = Connection::open(&db_path).expect("open sqlite");
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE extractors (
+                id TEXT PRIMARY KEY,
+                version TEXT NOT NULL,
+                languages_json TEXT NOT NULL,
+                capabilities_json TEXT NOT NULL
+            );
+            CREATE TABLE index_runs (
+                id TEXT PRIMARY KEY,
+                repo_root TEXT NOT NULL,
+                schema_version INTEGER NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                file_count INTEGER NOT NULL,
+                symbol_count INTEGER NOT NULL,
+                edge_count INTEGER NOT NULL
+            );
+            CREATE TABLE files (
+                id TEXT PRIMARY KEY,
+                path TEXT NOT NULL UNIQUE,
+                content_hash TEXT NOT NULL,
+                language_id TEXT NOT NULL,
+                byte_size INTEGER NOT NULL,
+                status TEXT NOT NULL
+            );
+            CREATE TABLE file_scan_state (
+                path TEXT PRIMARY KEY,
+                content_hash TEXT NOT NULL,
+                language_id TEXT NOT NULL,
+                modified_unix_ms TEXT NOT NULL,
+                byte_size INTEGER NOT NULL
+            );
+            CREATE TABLE symbols (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                canonical_name TEXT NOT NULL,
+                file_id TEXT NOT NULL,
+                span_json TEXT NOT NULL,
+                provenance_json TEXT NOT NULL
+            );
+            CREATE TABLE edges (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                from_id TEXT NOT NULL,
+                to_id TEXT,
+                unresolved_target TEXT,
+                provenance_json TEXT NOT NULL
+            );
+            CREATE TABLE graph_references (
+                id TEXT PRIMARY KEY,
+                file_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                target_id TEXT,
+                unresolved_target TEXT,
+                span_json TEXT NOT NULL,
+                provenance_json TEXT NOT NULL
+            );
+            CREATE TABLE diagnostics (
+                id TEXT PRIMARY KEY,
+                severity TEXT NOT NULL,
+                message TEXT NOT NULL,
+                file_id TEXT,
+                span_json TEXT,
+                provenance_json TEXT NOT NULL
+            );
+            CREATE VIRTUAL TABLE graph_search USING fts5(record_type, record_id, text);
+            ",
+        )
+        .expect("create legacy schema");
+    connection
+        .execute(
+            "INSERT INTO metadata (key, value) VALUES (?1, ?2)",
+            ("storage_schema_version", "1"),
+        )
+        .expect("schema metadata");
+    connection
+        .execute(
+            "INSERT INTO files (id, path, content_hash, language_id, byte_size, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (
+                "file:src/lib.rs",
+                "src/lib.rs",
+                "abc123",
+                "rust",
+                42_i64,
+                "\"indexed\"",
+            ),
+        )
+        .expect("file");
+    connection
+        .execute(
+            "INSERT INTO symbols (id, kind, display_name, canonical_name, file_id, span_json, provenance_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                "symbol:rust:crate::helper",
+                "function",
+                "helper",
+                "crate::helper",
+                "file:src/lib.rs",
+                serde_json::to_string(&span()).expect("span json"),
+                serde_json::to_string(&provenance()).expect("prov json"),
+            ),
+        )
+        .expect("symbol");
+    connection
+        .execute(
+            "INSERT INTO graph_search (record_type, record_id, text) VALUES (?1, ?2, ?3)",
+            ("file", "file:src/lib.rs", "src/lib.rs"),
+        )
+        .expect("file search");
+    connection
+        .execute(
+            "INSERT INTO graph_search (record_type, record_id, text) VALUES (?1, ?2, ?3)",
+            (
+                "symbol",
+                "symbol:rust:crate::helper",
+                "helper crate::helper",
+            ),
+        )
+        .expect("symbol search");
+    drop(connection);
+
+    let store = GraphStore::open(temp.path()).expect("open migrated store");
+    assert_eq!(
+        store.storage_schema_version().expect("schema version"),
+        GRAPH_STORAGE_SCHEMA_VERSION
+    );
+    assert_eq!(
+        store
+            .source_search("hello", 10)
+            .expect("source search")
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn graph_store_rejects_newer_storage_schema() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let graph_dir = temp.path().join(".effigy/graph");
+    fs::create_dir_all(&graph_dir).expect("graph dir");
+    let db_path = graph_dir.join("graph.db");
+    let connection = Connection::open(&db_path).expect("open sqlite");
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE VIRTUAL TABLE graph_search USING fts5(record_type, record_id, text);
+            ",
+        )
+        .expect("create schema");
+    connection
+        .execute(
+            "INSERT INTO metadata (key, value) VALUES (?1, ?2)",
+            (
+                "storage_schema_version",
+                (GRAPH_STORAGE_SCHEMA_VERSION + 1).to_string(),
+            ),
+        )
+        .expect("schema metadata");
+    drop(connection);
+
+    let error = GraphStore::open(temp.path())
+        .err()
+        .expect("future schema should fail");
+    assert!(
+        error.to_string().contains("newer than supported schema"),
+        "unexpected error: {error}"
     );
 }
 
@@ -339,6 +605,8 @@ fn graph_explore_payload_round_trips() {
                 name: Some("src/lib.rs".to_owned()),
                 range: None,
                 role: "file".to_owned(),
+                section_kind: "context-window".to_owned(),
+                completeness: "surrounding-context".to_owned(),
                 score: 10,
                 reasons: vec!["path matches `graph`".to_owned()],
                 text: "pub fn watch_repo() {}".to_owned(),
@@ -399,6 +667,15 @@ fn helper() {}
 "#,
     )
     .expect("write rust");
+    fs::write(
+        temp.path().join("src/release_graph_helper_extra.rs"),
+        r#"
+pub fn release_graph_secondary_worker() {
+    release_graph_helper();
+}
+"#,
+    )
+    .expect("write second rust");
     fs::write(
         temp.path().join("docs/README.md"),
         "# Release Guide\n\nSee [root manifest](../effigy.toml).\n",
@@ -605,6 +882,18 @@ pub fn release_graph_helper() {
 pub fn release_graph_worker() {
     release_graph_helper();
 }
+
+pub fn release_graph_worker_two() {
+    release_graph_helper();
+}
+
+pub fn release_graph_worker_three() {
+    release_graph_helper();
+}
+
+pub fn release_graph_worker_four() {
+    release_graph_helper();
+}
 "#,
     )
     .expect("write rust");
@@ -706,26 +995,111 @@ fn graph_watch_keeps_index_fresh() {}
 }
 
 #[test]
+fn graph_context_implementation_requests_do_not_rank_comment_only_matches_first() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::create_dir_all(temp.path().join("crates/effigy-release/src")).expect("mkdir release src");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        r#"
+//! Release orchestration overview.
+//! This comment links readers to release orchestration docs.
+
+pub fn unrelated_root_library_entrypoint() {}
+"#,
+    )
+    .expect("write root lib");
+    fs::write(
+        temp.path().join("crates/effigy-release/src/lib.rs"),
+        r#"
+pub fn release_orchestration_prepare() {
+    release_orchestration_execute();
+}
+
+fn release_orchestration_execute() {}
+"#,
+    )
+    .expect("write release lib");
+
+    run_index(temp.path()).expect("index");
+    let payload = context(
+        temp.path(),
+        "understand release orchestration",
+        Some(3),
+        Some(4096),
+        &[],
+        &[],
+    )
+    .expect("context");
+
+    assert_eq!(
+        payload.items.first().map(|item| item.path.as_str()),
+        Some("crates/effigy-release/src/lib.rs"),
+        "implementation intent should prefer executable source evidence over Rust doc comments: {:?}",
+        payload
+            .items
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn graph_context_maps_task_route_language_to_selector_parsing() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("crates/effigy-tasks/src")).expect("mkdir tasks src");
+    fs::create_dir_all(temp.path().join("crates/noise/src")).expect("mkdir noise src");
+    fs::write(
+        temp.path().join("crates/effigy-tasks/src/parsing.rs"),
+        r#"
+pub fn parse_task_selector(selector: &str) -> TaskSelector {
+    TaskSelector { raw: selector.to_owned() }
+}
+
+pub struct TaskSelector {
+    pub raw: String,
+}
+"#,
+    )
+    .expect("write task parsing");
+    fs::write(
+        temp.path().join("crates/noise/src/parser.rs"),
+        r#"
+pub fn parse_task_log_line(line: &str) -> String {
+    let parsed = line.trim();
+    parsed.to_owned()
+}
+"#,
+    )
+    .expect("write noise parser");
+
+    run_index(temp.path()).expect("index");
+    let payload = context(
+        temp.path(),
+        "where are task routes parsed",
+        Some(4),
+        Some(4096),
+        &[],
+        &[],
+    )
+    .expect("context");
+
+    assert_eq!(
+        payload.items.first().map(|item| item.path.as_str()),
+        Some("crates/effigy-tasks/src/parsing.rs"),
+        "task route language should resolve toward task selector parsing: {:?}",
+        payload
+            .items
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn graph_context_ranks_tests_and_docs_when_request_intent_asks_for_them() {
     let temp = tempfile::tempdir().expect("tempdir");
-    fs::create_dir_all(temp.path().join("src/graph")).expect("mkdir src");
-    fs::create_dir_all(temp.path().join("tests")).expect("mkdir tests");
-    fs::create_dir_all(temp.path().join("docs")).expect("mkdir docs");
-    fs::write(
-        temp.path().join("src/graph/watch.rs"),
-        "pub fn watch_repo() { refresh_graph_index(); }\nfn refresh_graph_index() {}\n",
-    )
-    .expect("write implementation");
-    fs::write(
-        temp.path().join("tests/graph_watch_tests.rs"),
-        "fn graph_watch_regression_test() {}\nfn graph_watch_coverage_test() {}\n",
-    )
-    .expect("write tests");
-    fs::write(
-        temp.path().join("docs/graph-watch.md"),
-        "# Graph Watch Guide\n\nDocs for graph watch agent workflow.\n",
-    )
-    .expect("write docs");
+    write_graph_watch_fixture(temp.path());
 
     run_index(temp.path()).expect("index");
 
@@ -845,6 +1219,188 @@ fn emit_release_report() {}
         .snippet
         .as_deref()
         .is_some_and(|snippet| snippet.contains("release_search_owner")));
+}
+
+#[test]
+fn graph_store_source_search_indexes_file_bodies_without_leaking_into_public_search() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        r#"
+pub fn release_orchestration_prepare() {
+    release_orchestration_execute();
+}
+
+fn release_orchestration_execute() {}
+"#,
+    )
+    .expect("write rust");
+
+    run_index(temp.path()).expect("index");
+    let store = GraphStore::open(temp.path()).expect("open store");
+
+    let source_matches = store
+        .source_search("orchestration", 10)
+        .expect("source search");
+    assert!(
+        source_matches
+            .iter()
+            .any(|item| item.file_id.as_str() == "file:src/lib.rs"),
+        "source search should index file bodies: {source_matches:?}"
+    );
+
+    let public_search = query_search(temp.path(), "orchestration", Some(10)).expect("search");
+    assert!(
+        public_search
+            .matches
+            .iter()
+            .all(|item| item.record_type != "source"),
+        "public graph search should not leak internal source rows: {:?}",
+        public_search
+            .matches
+            .iter()
+            .map(|item| item.record_type.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn graph_explore_traverses_import_neighbors_and_emits_related_file_excerpts() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("web/components")).expect("mkdir components");
+    fs::write(
+        temp.path().join("web/util.ts"),
+        "export function helper() { return 1; }\n",
+    )
+    .expect("write util");
+    fs::write(
+        temp.path().join("web/components/Button.tsx"),
+        r#"import React from "react";
+import { helper } from "../util";
+
+export const Button = () => <button>{helper()}</button>;
+"#,
+    )
+    .expect("write button");
+
+    run_index(temp.path()).expect("index");
+    let payload = explore(
+        temp.path(),
+        "trace button helper flow",
+        Some(1),
+        Some(4096),
+        &["tsx".to_owned(), "typescript".to_owned()],
+        &[],
+    )
+    .expect("explore");
+
+    let related_paths = payload
+        .relations
+        .iter()
+        .map(|item| item.path.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        payload.relations.iter().any(|item| {
+            item.path == "web/util.ts"
+                && (item.reason.contains("import") || item.reason.contains("call"))
+        }),
+        "traversal should add a related util neighbor file from import or call flow: {:?}",
+        payload
+            .relations
+            .iter()
+            .map(|item| format!("{} => {}", item.path, item.reason))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        payload
+            .excerpts
+            .iter()
+            .any(|item| item.path == "web/util.ts" && item.text.contains("helper")),
+        "traversal should add a related file excerpt: {:?}",
+        payload
+            .excerpts
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        related_paths.contains(&"web/util.ts"),
+        "expected util traversal relation: {related_paths:?}"
+    );
+}
+
+#[test]
+fn graph_explore_traverses_unresolved_rust_call_neighbors() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(
+        temp.path().join("src/helper.rs"),
+        r#"
+pub fn release_graph_helper() -> &'static str {
+    "ok"
+}
+"#,
+    )
+    .expect("write helper");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        r#"
+mod helper;
+
+pub fn release_graph_worker() -> &'static str {
+    helper::release_graph_helper()
+}
+"#,
+    )
+    .expect("write lib");
+
+    run_index(temp.path()).expect("index");
+    let payload = explore(
+        temp.path(),
+        "trace release graph worker helper flow",
+        Some(1),
+        Some(4096),
+        &["rust".to_owned()],
+        &[],
+    )
+    .expect("explore");
+
+    assert_eq!(
+        payload.primary.first().map(|item| item.path.as_str()),
+        Some("src/lib.rs"),
+        "worker file should stay primary so traversal has to reach helper: {:?}",
+        payload
+            .primary
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        payload
+            .relations
+            .iter()
+            .any(|item| item.path == "src/helper.rs"),
+        "traversal should resolve unresolved Rust call edges into helper neighbors: {:?}",
+        payload
+            .relations
+            .iter()
+            .map(|item| format!("{} => {}", item.path, item.reason))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        payload
+            .excerpts
+            .iter()
+            .any(|item| item.path == "src/helper.rs" && item.text.contains("release_graph_helper")),
+        "traversal should append helper excerpts for unresolved Rust call edges: {:?}",
+        payload
+            .excerpts
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -1104,6 +1660,41 @@ services = { front = "front-service" }
 }
 
 #[test]
+fn graph_manifest_indexer_emits_bootstrap_task_selector_entrypoints() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        temp.path().join("effigy.toml"),
+        r#"
+[tasks.dev]
+run = "cargo run"
+
+[bootstrap]
+start = "dev"
+"#,
+    )
+    .expect("write manifest");
+
+    let report = run_index(temp.path()).expect("index");
+    assert_eq!(report.failed_paths.len(), 0);
+
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+    assert!(symbols.iter().any(|symbol| {
+        symbol.kind == "task-selector" && symbol.canonical_name == "selector::dev"
+    }));
+
+    let edges = store.list_edges().expect("edges");
+    assert!(edges.iter().any(|edge| {
+        edge.kind == "entrypoint-task"
+            && edge.from_id.as_str().contains("bootstrap:start:dev")
+            && edge
+                .to_id
+                .as_ref()
+                .is_some_and(|id| id.as_str().contains("task:dev"))
+    }));
+}
+
+#[test]
 fn graph_manifest_semantic_failures_fall_back_to_structural_indexing() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::write(
@@ -1262,57 +1853,7 @@ pub fn render_docs() {}
 #[test]
 fn graph_php_indexer_emits_namespace_symbols_and_static_include_edges() {
     let temp = tempfile::tempdir().expect("tempdir");
-    fs::create_dir_all(temp.path().join("legacy/App")).expect("mkdir app");
-    fs::write(
-        temp.path().join("legacy/boot.php"),
-        "<?php\nconst BOOTSTRAPPED = true;\n",
-    )
-    .expect("write boot");
-    fs::write(
-        temp.path().join("legacy/index.php"),
-        r#"<?php
-require_once 'boot.php';
-App\Controller\HomeController::handle();
-"#,
-    )
-    .expect("write front controller");
-    fs::write(
-        temp.path().join("legacy/App/Controller.php"),
-        r#"<?php
-namespace App\Controller;
-
-use Legacy\Support\Helper;
-
-trait UsesHelper {
-    public function helperName() {
-        return Helper::name();
-    }
-}
-
-interface Renderable {
-    public function render();
-}
-
-class HomeController implements Renderable {
-    use UsesHelper;
-
-    public const VERSION = '1.0';
-
-    public static function handle() {
-        helper();
-    }
-
-    public function render() {
-        return $this->helperName();
-    }
-}
-
-function helper() {
-    return true;
-}
-"#,
-    )
-    .expect("write php source");
+    write_php_front_controller_fixture(temp.path());
 
     let report = run_index(temp.path()).expect("index");
     assert_eq!(report.failed_paths.len(), 0);
@@ -1362,6 +1903,67 @@ function helper() {
     assert!(edges.iter().any(|edge| {
         edge.kind == "call" && edge.unresolved_target.as_deref() == Some("$this->helperName")
     }));
+}
+
+#[test]
+fn graph_deferred_parity_fixture_cases_are_runnable() {
+    struct FixtureCase<'a> {
+        id: &'a str,
+        query: &'a str,
+        expected_primary: &'a str,
+        acceptable_primary: &'a [&'a str],
+        setup: fn(&Path),
+    }
+
+    let cases = [
+        FixtureCase {
+            id: "affected-test-proxy",
+            query: "graph watch regression tests",
+            expected_primary: "tests/graph_watch_tests.rs",
+            acceptable_primary: &["src/graph/watch.rs"],
+            setup: write_graph_watch_fixture,
+        },
+        FixtureCase {
+            id: "cross-language-php-front-controller",
+            query: "trace php front controller boot helper",
+            expected_primary: "legacy/index.php",
+            acceptable_primary: &["legacy/boot.php", "legacy/App/Controller.php"],
+            setup: write_php_front_controller_fixture,
+        },
+    ];
+
+    for case in cases {
+        let temp = tempfile::tempdir().expect("tempdir");
+        (case.setup)(temp.path());
+        run_index(temp.path()).expect("index");
+
+        let payload = explore(temp.path(), case.query, Some(6), Some(12288), &[], &[])
+            .expect("fixture explore");
+        let primary_paths = payload
+            .primary
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>();
+        let top_primary = primary_paths
+            .first()
+            .copied()
+            .expect("fixture case should return at least one primary file");
+
+        println!("fixture parity {} -> {}", case.id, top_primary);
+
+        assert!(
+            top_primary == case.expected_primary || case.acceptable_primary.contains(&top_primary),
+            "fixture case {} returned unexpected primary {} from {:?}",
+            case.id,
+            top_primary,
+            primary_paths
+        );
+        assert!(
+            !payload.excerpts.is_empty(),
+            "fixture case {} should emit excerpts for targeted follow-up",
+            case.id
+        );
+    }
 }
 
 #[test]
@@ -1473,4 +2075,287 @@ fn graph_javascript_indexer_emits_parse_diagnostics_without_failing_file() {
     assert!(diagnostics
         .iter()
         .any(|diagnostic| diagnostic.message.contains("js/ts parse error")));
+}
+
+#[test]
+fn graph_python_indexer_emits_import_call_and_class_facts() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("app")).expect("mkdir app");
+    fs::write(
+        temp.path().join("app/helpers.py"),
+        r#"
+def slugify(name):
+    return name.lower()
+"#,
+    )
+    .expect("write helpers");
+    fs::write(
+        temp.path().join("app/service.py"),
+        r#"
+from .helpers import slugify
+
+class UserService:
+    def normalize(self, name):
+        return slugify(name)
+"#,
+    )
+    .expect("write service");
+
+    let report = run_index(temp.path()).expect("index");
+    assert_eq!(report.failed_paths.len(), 0);
+
+    let files = query_files(temp.path(), None).expect("files");
+    assert!(files.files.iter().any(|file| file.path == "app/service.py"));
+
+    let store = GraphStore::open(temp.path()).expect("store");
+    let extractors = store.list_extractors().expect("extractors");
+    assert!(
+        extractors
+            .iter()
+            .any(|extractor| extractor.id.as_str() == "python-syntax"),
+        "python extractor should be registered: {extractors:?}"
+    );
+
+    let symbols = store.list_symbols().expect("symbols");
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol.kind == "class" && symbol.canonical_name == "UserService"));
+    assert!(symbols.iter().any(|symbol| {
+        symbol.kind == "function" && symbol.canonical_name == "UserService::normalize"
+    }));
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol.kind == "function" && symbol.canonical_name == "slugify"));
+
+    let edges = store.list_edges().expect("edges");
+    assert!(edges.iter().any(|edge| {
+        edge.kind == "import-file"
+            && edge
+                .to_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() == "file:app/helpers.py")
+    }));
+    assert!(edges.iter().any(|edge| {
+        edge.kind == "call" && edge.unresolved_target.as_deref() == Some("slugify")
+    }));
+}
+
+#[test]
+fn graph_python_indexer_emits_parse_diagnostics_without_failing_file() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        temp.path().join("broken.py"),
+        "def broken(:\n    return 1\n",
+    )
+    .expect("write broken python");
+
+    let report = run_index(temp.path()).expect("index");
+    assert_eq!(report.failed_paths.len(), 0);
+    assert!(report.counts.diagnostics > 0);
+
+    let files = query_files(temp.path(), None).expect("files");
+    assert!(files.files.iter().any(|file| file.path == "broken.py"));
+
+    let store = GraphStore::open(temp.path()).expect("store");
+    let diagnostics = store.list_diagnostics().expect("diagnostics");
+    assert!(diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("python parse error")));
+}
+
+#[test]
+fn graph_python_indexer_emits_route_handler_edges_and_route_queries_find_owner() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("app")).expect("mkdir app");
+    fs::write(
+        temp.path().join("app/api.py"),
+        r#"
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/users")
+def list_users():
+    return []
+"#,
+    )
+    .expect("write api");
+
+    let report = run_index(temp.path()).expect("index");
+    assert_eq!(report.failed_paths.len(), 0);
+
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+    assert!(symbols
+        .iter()
+        .any(|symbol| { symbol.kind == "http-route" && symbol.canonical_name == "GET /users" }));
+
+    let edges = store.list_edges().expect("edges");
+    assert!(edges.iter().any(|edge| {
+        edge.kind == "route-handler"
+            && edge.from_id.as_str().contains("/users")
+            && edge
+                .to_id
+                .as_ref()
+                .is_some_and(|id| id.as_str().contains("list_users"))
+    }));
+
+    let payload = context(
+        temp.path(),
+        "where is /users handled",
+        Some(3),
+        Some(4096),
+        &["python".to_owned()],
+        &[],
+    )
+    .expect("context");
+
+    assert_eq!(
+        payload.items.first().map(|item| item.path.as_str()),
+        Some("app/api.py"),
+        "route query should find the owning Python file first: {:?}",
+        payload
+            .items
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        payload
+            .items
+            .iter()
+            .any(|item| { item.kind == "symbol" && item.name.as_deref() == Some("GET /users") }),
+        "route query should surface the route symbol: {:?}",
+        payload
+            .items
+            .iter()
+            .map(|item| format!("{}::{:?}", item.kind, item.name))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn graph_explore_labels_python_sections_and_deduplicates_same_path_excerpts() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("app")).expect("mkdir app");
+    fs::write(
+        temp.path().join("app/api.py"),
+        r#"
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/users")
+def list_users():
+    return []
+"#,
+    )
+    .expect("write api");
+
+    run_index(temp.path()).expect("index");
+    let payload = explore(
+        temp.path(),
+        "where is /users handled",
+        Some(3),
+        Some(4096),
+        &["python".to_owned()],
+        &[],
+    )
+    .expect("explore");
+
+    let api_excerpts = payload
+        .excerpts
+        .iter()
+        .filter(|item| item.path == "app/api.py")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        api_excerpts.len(),
+        1,
+        "explore should not repeat the same file excerpt multiple times: {:?}",
+        payload
+            .excerpts
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(api_excerpts[0].section_kind, "python-block");
+    assert_eq!(api_excerpts[0].completeness, "complete-section");
+    assert!(api_excerpts[0].text.contains("@app.get(\"/users\")"));
+    assert!(api_excerpts[0].text.contains("def list_users():"));
+}
+
+#[test]
+fn graph_affected_returns_likely_test_files_and_tasks_for_changed_source() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::create_dir_all(temp.path().join("tests")).expect("mkdir tests");
+    fs::write(
+        temp.path().join("effigy.toml"),
+        r#"
+[tasks.test]
+run = "cargo test"
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        r#"
+pub fn helper() -> i32 {
+    1
+}
+"#,
+    )
+    .expect("write lib");
+    fs::write(
+        temp.path().join("tests/helper_test.rs"),
+        r#"
+use demo::helper;
+
+#[test]
+fn helper_works() {
+    assert_eq!(helper(), 1);
+}
+"#,
+    )
+    .expect("write tests");
+
+    run_index(temp.path()).expect("index");
+    let payload = affected(temp.path(), &["src/lib.rs".to_owned()], 2, Some(20)).expect("affected");
+
+    assert!(
+        payload
+            .affected_files
+            .iter()
+            .any(|item| item.path == "src/lib.rs"),
+        "changed file should be present in affected files: {:?}",
+        payload
+            .affected_files
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        payload
+            .likely_test_files
+            .iter()
+            .any(|item| item.path == "tests/helper_test.rs"),
+        "test file should be discovered from graph adjacency: {:?}",
+        payload
+            .likely_test_files
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        payload
+            .likely_test_tasks
+            .iter()
+            .any(|item| item.name == "test"),
+        "manifest test task should be surfaced as a candidate: {:?}",
+        payload
+            .likely_test_tasks
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>()
+    );
 }

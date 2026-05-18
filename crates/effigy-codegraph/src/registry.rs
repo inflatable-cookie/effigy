@@ -1,7 +1,7 @@
 use crate::extractor::LanguageIndexer;
 use crate::language::{
     javascript::JavaScriptIndexer, manifest::ManifestIndexer, markdown::MarkdownIndexer,
-    php::PhpIndexer, rust::RustIndexer,
+    php::PhpIndexer, python::PythonIndexer, rust::RustIndexer,
 };
 
 pub struct ExtractorRegistry {
@@ -16,6 +16,7 @@ impl ExtractorRegistry {
                 Box::new(ManifestIndexer::new()),
                 Box::new(MarkdownIndexer::new()),
                 Box::new(PhpIndexer::new()),
+                Box::new(PythonIndexer::new()),
                 Box::new(JavaScriptIndexer::new()),
             ],
         }

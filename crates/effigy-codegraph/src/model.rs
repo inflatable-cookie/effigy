@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::CodeGraphError;
 use crate::ids::{validate_token, ExtractorId, GraphId};
 
-pub const GRAPH_STORAGE_SCHEMA_VERSION: u32 = 1;
+pub const GRAPH_STORAGE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

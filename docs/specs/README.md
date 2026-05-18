@@ -52,7 +52,11 @@ Archived strict lanes:
   batch
 - completed lane `090` should move to `archive/` in the next planning cleanup
   batch
+- paused lane `091` should move to `archive/` in the next planning cleanup
+  batch
+- paused lane `092` should move to `archive/` in the next planning cleanup
+  batch
 
 ## Next Task
 
-No active strict lane remains.
+No active ready card.

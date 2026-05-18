@@ -52,6 +52,17 @@ dependency.
 - [`032-explore-context-assembly-command.md`](./032-explore-context-assembly-command.md)
 - [`033-agent-guidance-and-skill-update.md`](./033-agent-guidance-and-skill-update.md)
 - [`034-explore-benchmark-closeout.md`](./034-explore-benchmark-closeout.md)
+- [`035-codegraph-parity-suite.md`](./035-codegraph-parity-suite.md)
+- [`036-parity-benchmark-harness-and-claim-discipline.md`](./036-parity-benchmark-harness-and-claim-discipline.md)
+- [`037-fts-backed-source-evidence-and-ranking.md`](./037-fts-backed-source-evidence-and-ranking.md)
+- [`038-traversal-aware-explore-assembly.md`](./038-traversal-aware-explore-assembly.md)
+- [`039-richer-language-extractor-coverage.md`](./039-richer-language-extractor-coverage.md)
+- [`040-framework-route-and-entrypoint-edges.md`](./040-framework-route-and-entrypoint-edges.md)
+- [`041-source-section-packets-and-no-reread-workflow.md`](./041-source-section-packets-and-no-reread-workflow.md)
+- [`042-affected-test-and-impact-workflow.md`](./042-affected-test-and-impact-workflow.md)
+- [`043-large-repo-scale-and-storage-hardening.md`](./043-large-repo-scale-and-storage-hardening.md)
+- [`044-agent-adoption-and-cli-workflow-polish.md`](./044-agent-adoption-and-cli-workflow-polish.md)
+- [`045-codegraph-parity-closeout.md`](./045-codegraph-parity-closeout.md)
 
 ## Design Posture
 
@@ -103,6 +114,24 @@ dependency.
 
 `g07.034` is complete.
 
+`g07.035` is active.
+
+`g07.036` is complete.
+
+`g07.037` is complete.
+
+`g07.038` is complete.
+
+`g07.039` is complete.
+
+`g07.040` is complete.
+
+`g07.041` is complete.
+
+`g07.042` through `g07.045` are the completed CodeGraph parity suite.
+
+`g07.046` through `g07.049` are the bounded CodeGraph parity follow-up suite.
+
 `901` through `905` are complete.
 
 `906` through `910` are complete.
@@ -151,8 +180,40 @@ dependency.
 
 `984` is complete.
 
-No active `g07` batch card remains.
+`985` is complete.
+
+`986` is complete.
+
+`987` is complete.
+
+`988` is complete.
+
+`989` is complete.
+
+`990` is complete.
+
+`991` is complete.
+
+`992` is complete.
+
+`993` is complete.
+
+`994` is complete.
+
+`995` is complete.
+
+No active ready card remains in the CodeGraph parity lane.
+
+`996` is complete in the follow-up lane.
+
+`997` is complete.
+
+`998` is complete.
+
+`999` is complete.
+
+No active ready card remains in the bounded CodeGraph parity follow-up lane.
 
 ## Next Task
 
-Leave `g07` parked unless a later graph tranche justifies more work.
+No active ready card.

@@ -11,9 +11,9 @@ During v0.x, MINOR bumps may include breaking changes.
   `search`, `files`, `node`, `callers`, `callees`, `impact`, and bounded
   `context` commands backed by a local `.effigy/graph/graph.db` index. The
   first-party extractors cover Rust, Effigy manifests/TOML, Markdown docs,
-  PHP, and JavaScript/TypeScript, and `graph context` returns ranked items with
-  reasons, provenance, snippet budgets, and overflow counts for agent-friendly
-  repo navigation.
+  PHP, Python, and JavaScript/TypeScript, and `graph context` returns ranked
+  items with reasons, provenance, snippet budgets, and overflow counts for
+  agent-friendly repo navigation.
 - **Foreground graph watch mode:** `effigy graph watch` now keeps the local
   graph warm with filesystem events, a conservative debounce, and the existing
   incremental index path, including newline-delimited JSON watch events for
@@ -22,12 +22,44 @@ During v0.x, MINOR bumps may include breaking changes.
   one-call agent navigation packet with primary owners, excerpts, related
   symbols, index freshness, overflow, and exact-search fallback guidance under
   the `effigy.graph.explore.v1` JSON contract.
+- **Graph affected command:** `effigy graph affected` now turns changed-file
+  input from args or stdin into a bounded impact packet with affected files,
+  likely test files, candidate Effigy test tasks, confidence labels, and
+  traversal reasons under the `effigy.graph.affected.v1` JSON contract.
 
 ### Changed
 - **Graph context ranking is now role-aware:** implementation-oriented context
   requests prefer implementation files over tests/docs, test and docs requests
   still promote those surfaces, and repeated same-file symbol matches are capped
   so broad terms do not drown out better owner files.
+- **Graph explore ranking is now closer to agent navigation intent:** ranked
+  owners now use source-body evidence, distinct request-token coverage,
+  stronger stop-word filtering, and Effigy-domain query synonyms so task-shaped
+  questions are less likely to land on docs, comments, or generic parser files
+  before the implementation owner.
+- **Graph ranking now uses indexed source evidence:** file-body token evidence
+  is now stored in the local SQLite FTS graph index and reused during ranking,
+  so `graph context` and `graph explore` no longer need broad candidate-file
+  reads just to decide which owners matter.
+- **Graph explore now walks bounded topology around primary owners:** one-hop
+  traversal can now add call/import/doc neighbors from resolved edges and from
+  bounded unresolved Rust/JS targets, so the explore packet can surface related
+  files with explicit traversal reasons instead of only ranked owners.
+- **Graph now understands first route and entrypoint facts:** the code graph
+  now emits bootstrap task selectors from Effigy manifests, Python HTTP route
+  symbols from FastAPI/Flask-style decorators, exact `entrypoint-task` and
+  `route-handler` edges where resolution is reliable, and route-shaped queries
+  now preserve literal path tokens such as `/users`.
+- **Graph explore packets now label section completeness:** excerpt payloads now
+  include `section_kind` and `completeness`, same-path excerpts are deduplicated,
+  and supported Python/Markdown sections expand to fuller local blocks so
+  agents can trust when a packet is complete versus when a file still needs to
+  be opened.
+- **Graph storage now upgrades more predictably:** the local graph DB now uses
+  storage schema `2`, backfills indexed source-search rows when opening older
+  graph databases that predate file-body FTS evidence, rejects newer unknown
+  storage schemas instead of guessing, and opens SQLite with a steadier local
+  read/write posture for watch-mode and query overlap.
 - **Graph search and context output are more actionable:** graph search now
   includes snippets for file and symbol matches, and file-level context items
   prefer snippets near matched symbol evidence instead of always starting at the

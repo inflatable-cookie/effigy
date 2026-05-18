@@ -143,6 +143,36 @@ fn parse_graph_watch_accepts_debounce_repo_and_json_flags() {
 }
 
 #[test]
+fn parse_graph_affected_accepts_depth_limit_and_stdin() {
+    let command = parse_command(vec![
+        "graph".to_owned(),
+        "affected".to_owned(),
+        "src/lib.rs".to_owned(),
+        "--depth".to_owned(),
+        "3".to_owned(),
+        "--limit".to_owned(),
+        "12".to_owned(),
+        "--stdin".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        command,
+        Command::Graph(GraphArgs {
+            subcommand: GraphSubcommand::Affected {
+                changed_paths: vec!["src/lib.rs".to_owned()],
+                read_stdin: true,
+                depth: 3,
+                limit: Some(12),
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
 fn parse_graph_help_is_scoped() {
     let command =
         parse_command(vec!["graph".to_owned(), "--help".to_owned()]).expect("parse should succeed");

@@ -40,7 +40,7 @@ Start with the family that matches your job:
 - shell completion or editor integration:
   `Completion`, `Completion Candidates`
 - agent-facing repo context:
-  `Graph Status`, `Graph Context`, `Graph Watch`
+  `Graph Status`, `Graph Explore`, `Graph Context`, `Graph Affected`, `Graph Watch`
 
 Companion references:
 
@@ -60,7 +60,7 @@ Companion references:
     "ready": true,
     "index_present": true,
     "db_path": "/workspace/app/.effigy/graph/graph.db",
-    "storage_schema_version": 1,
+    "storage_schema_version": 2,
     "counts": {
       "files": 3184,
       "symbols": 30800,
@@ -88,7 +88,90 @@ Companion references:
 }
 ```
 
-### 5) Graph Context (`effigy.graph.context.v1`)
+### 5) Graph Explore (`effigy.graph.explore.v1`)
+
+```json
+{
+  "schema": "effigy.graph.explore.v1",
+  "schema_version": 1,
+  "command": "graph explore",
+  "repo_root": "/workspace/app",
+  "payload": {
+    "query": "trace release orchestrator",
+    "index": {
+      "freshness": {
+        "stale": false,
+        "stale_paths": []
+      },
+      "counts": {
+        "files": 3184,
+        "symbols": 30800,
+        "edges": 138885,
+        "references": 62856,
+        "diagnostics": 6,
+        "extractors": 5,
+        "index_runs": 12
+      }
+    },
+    "summary": "Release orchestration is owned in src/runner/release_command.rs with supporting docs in docs/guides/051-release-orchestration.md.",
+    "primary": [
+      {
+        "kind": "symbol",
+        "record_id": "symbol:rust:crate::runner::run_release",
+        "path": "src/runner/release_command.rs",
+        "language_id": "rust",
+        "name": "run_release",
+        "rank": 1,
+        "score": 18,
+        "reasons": [
+          "query term matched symbol name",
+          "release path matched request language and path bias"
+        ],
+        "snippet": "pub fn run_release(...) { ... }",
+        "snippet_truncated": false
+      }
+    ],
+    "excerpts": [
+      {
+        "path": "src/runner/release_command.rs",
+        "language_id": "rust",
+        "name": "run_release",
+        "role": "primary-owner",
+        "section_kind": "function",
+        "completeness": "complete-section",
+        "score": 18,
+        "reasons": [
+          "primary owner excerpt"
+        ],
+        "text": "pub fn run_release(...) { ... }",
+        "truncated": false
+      }
+    ],
+    "relations": [
+      {
+        "kind": "file",
+        "path": "docs/guides/051-release-orchestration.md",
+        "name": null,
+        "reason": "bounded doc neighbor for release orchestration query"
+      }
+    ],
+    "overflow": {
+      "omitted_items": 2,
+      "omitted_files": 1,
+      "omitted_symbols": 1,
+      "omitted_docs": 0,
+      "byte_budget": 12288,
+      "used_bytes": 6104
+    },
+    "guidance": [
+      "trust excerpts for first-pass orientation",
+      "use rg for exact token verification before editing"
+    ]
+  }
+}
+```
+
+### 6) Graph Context (`effigy.graph.context.v1`)
 
 ```json
 {
@@ -146,7 +229,61 @@ Companion references:
 }
 ```
 
-### 6) Graph Watch Event (`effigy.graph.watch.event.v1`)
+### 7) Graph Affected (`effigy.graph.affected.v1`)
+
+```json
+{
+  "schema": "effigy.graph.affected.v1",
+  "schema_version": 1,
+  "command": "graph affected",
+  "repo_root": "/workspace/app",
+  "payload": {
+    "changed_paths": ["src/runner/graph_command.rs"],
+    "freshness": {
+      "stale": false,
+      "stale_paths": []
+    },
+    "depth": 2,
+    "affected_files": [
+      {
+        "path": "src/runner/graph_command.rs",
+        "language_id": "rust",
+        "confidence": "exact",
+        "reasons": [
+          "changed input path"
+        ]
+      },
+      {
+        "path": "src/tests/runner_tests/runner_core_tests/graph_tests.rs",
+        "language_id": "rust",
+        "confidence": "exact",
+        "reasons": [
+          "incoming `contains` reaches changed node"
+        ]
+      }
+    ],
+    "likely_test_files": [
+      "src/tests/runner_tests/runner_core_tests/graph_tests.rs"
+    ],
+    "likely_test_tasks": [
+      {
+        "name": "test",
+        "kind": "task",
+        "path": "effigy.toml",
+        "confidence": "heuristic",
+        "reasons": [
+          "manifest task name suggests validation coverage"
+        ]
+      }
+    ],
+    "notes": [
+      "affected output is bounded evidence, not exhaustive proof"
+    ]
+  }
+}
+```
+
+### 8) Graph Watch Event (`effigy.graph.watch.event.v1`)
 
 `graph watch --json` is newline-delimited event output, not a one-shot envelope.
 

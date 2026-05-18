@@ -25,6 +25,7 @@ where
         "callers" => parse_graph_relation(args, true),
         "callees" => parse_graph_relation(args, false),
         "impact" => parse_graph_impact(args),
+        "affected" => parse_graph_affected(args),
         "context" => parse_graph_context(args),
         "explore" => parse_graph_explore(args),
         other => Err(unknown_argument(other)),
@@ -241,6 +242,46 @@ where
             target: target.ok_or(CliParseError::MissingFlagValue {
                 flag: "<TARGET>".to_owned(),
             })?,
+            limit,
+        },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_graph_affected<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override = None;
+    let mut output_json = false;
+    let mut limit = None;
+    let mut depth = 2usize;
+    let mut read_stdin = false;
+    let mut changed_paths = Vec::new();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--limit" => limit = Some(parse_limit(&mut args, "--limit")?),
+            "--depth" => depth = parse_limit(&mut args, "--depth")?,
+            "--stdin" => read_stdin = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Graph)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            _ => changed_paths.push(arg),
+        }
+    }
+    if changed_paths.is_empty() && !read_stdin {
+        return Err(CliParseError::MissingFlagValue {
+            flag: "<PATH>... or --stdin".to_owned(),
+        });
+    }
+    Ok(Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Affected {
+            changed_paths,
+            read_stdin,
+            depth,
             limit,
         },
         repo_override,

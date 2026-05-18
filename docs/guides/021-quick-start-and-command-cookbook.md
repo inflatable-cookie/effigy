@@ -253,11 +253,16 @@ Use JSON mode when CI, scripts, or agents are consuming Effigy output.
 ```sh
 effigy graph index
 effigy graph status --json
+effigy graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
+git diff --name-only | effigy graph affected --stdin --json
 effigy graph context "trace release orchestrator" --max-files 8 --max-bytes 4096 --json
 ```
 
 Use this when an agent needs the first files to read without spraying `rg`
 across the whole repo.
+
+If `graph status --json` reports `stale_paths`, re-run `effigy graph index --json`
+before trusting query results.
 
 If the repo is changing while you work:
 

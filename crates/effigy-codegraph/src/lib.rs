@@ -12,7 +12,14 @@
 //!   [`context`] to read the graph
 //! - [`explore`] to assemble a one-call agent navigation packet with primary
 //!   owners, excerpts, related symbols, and fallback guidance
+//! - [`affected`] to narrow likely validation scope from changed-file input
 //! - [`watch_repo`] to keep the graph fresh from foreground filesystem events
+//!
+//! Recommended agent workflow:
+//! 1. run [`status`] and refresh with [`run_index`] if the graph is stale
+//! 2. start task-shaped navigation with [`explore`]
+//! 3. use [`affected`] when the question is which tests or tasks to run after edits
+//! 4. fall back to [`context`] or exact-search tools for lower-level confirmation
 
 mod error;
 pub mod extractor;
@@ -39,7 +46,8 @@ pub use index::{run_index, status, IndexReport};
 pub use json::{render_json, GraphCommandPayload, GRAPH_JSON_SCHEMA_VERSION};
 /// Query helpers over the stored graph.
 pub use query::{
-    callees, callers, context, explore, files as query_files, impact, node, search as query_search,
+    affected, callees, callers, context, explore, files as query_files, impact, node,
+    search as query_search,
 };
 /// Local SQLite-backed graph store.
 pub use storage::GraphStore;

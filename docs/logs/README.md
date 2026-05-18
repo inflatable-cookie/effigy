@@ -76,6 +76,18 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/18-184912-codegraph-parity-follow-up-closeout.md`](./2026-05/18-184912-codegraph-parity-follow-up-closeout.md)
+- [`2026-05/18-183615-fixture-backed-parity-proof.md`](./2026-05/18-183615-fixture-backed-parity-proof.md)
+- [`2026-05/18-182146-warm-query-latency-and-release-ranking.md`](./2026-05/18-182146-warm-query-latency-and-release-ranking.md)
+- [`2026-05/18-180502-codegraph-parity-follow-up-lane-opened.md`](./2026-05/18-180502-codegraph-parity-follow-up-lane-opened.md)
+- [`2026-05/18-174500-codegraph-parity-closeout.md`](./2026-05/18-174500-codegraph-parity-closeout.md)
+- [`2026-05/18-173200-agent-adoption-and-cli-workflow-polish.md`](./2026-05/18-173200-agent-adoption-and-cli-workflow-polish.md)
+- [`2026-05/18-172629-large-repo-scale-and-storage-hardening.md`](./2026-05/18-172629-large-repo-scale-and-storage-hardening.md)
+- [`2026-05/18-171905-affected-test-impact-workflow.md`](./2026-05/18-171905-affected-test-impact-workflow.md)
+- [`2026-05/18-160609-source-section-packets.md`](./2026-05/18-160609-source-section-packets.md)
+- [`2026-05/18-155956-route-entrypoint-edges.md`](./2026-05/18-155956-route-entrypoint-edges.md)
+- [`2026-05/18-154729-python-extractor-slice.md`](./2026-05/18-154729-python-extractor-slice.md)
+- [`2026-05/18-154154-traversal-aware-explore.md`](./2026-05/18-154154-traversal-aware-explore.md)
 - [`2026-05/18-133020-graph-explore-implementation-closeout.md`](./2026-05/18-133020-graph-explore-implementation-closeout.md)
 - [`2026-05/18-132133-graph-explore-baseline.md`](./2026-05/18-132133-graph-explore-baseline.md)
 - [`2026-05/18-131814-graph-explore-lane-opened.md`](./2026-05/18-131814-graph-explore-lane-opened.md)
@@ -672,6 +684,10 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md`](./2026-03/12-235500-workspace-bundle-proof-and-bootstrap-boundary.md)
 
 - [`2026-04/20-120000-multi-project-gateway-expansion-handoff.md`](./2026-04/20-120000-multi-project-gateway-expansion-handoff.md)
+
+- [`2026-05/18-142849-codegraph-parity-benchmark-baseline.md`](./2026-05/18-142849-codegraph-parity-benchmark-baseline.md)
+
+- [`2026-05/18-144300-fts-backed-source-evidence.md`](./2026-05/18-144300-fts-backed-source-evidence.md)
 
 ## Archived Validation Logs
 
