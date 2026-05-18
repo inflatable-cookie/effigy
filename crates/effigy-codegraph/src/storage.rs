@@ -420,6 +420,36 @@ impl GraphStore {
         Ok(())
     }
 
+    pub fn delete_file_scan_state(&self, path: &str) -> Result<(), CodeGraphError> {
+        self.connection
+            .execute("DELETE FROM file_scan_state WHERE path = ?1", params![path])?;
+        Ok(())
+    }
+
+    pub fn delete_file_graph(&self, file_id: &str) -> Result<(), CodeGraphError> {
+        self.connection.execute(
+            "DELETE FROM graph_references
+             WHERE file_id = ?1
+                OR target_id IN (SELECT id FROM symbols WHERE file_id = ?1)",
+            params![file_id],
+        )?;
+        self.connection.execute(
+            "DELETE FROM edges
+             WHERE from_id IN (SELECT id FROM symbols WHERE file_id = ?1)
+                OR to_id IN (SELECT id FROM symbols WHERE file_id = ?1)",
+            params![file_id],
+        )?;
+        self.connection.execute(
+            "DELETE FROM diagnostics WHERE file_id = ?1",
+            params![file_id],
+        )?;
+        self.connection
+            .execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
+        self.connection
+            .execute("DELETE FROM files WHERE id = ?1", params![file_id])?;
+        Ok(())
+    }
+
     pub fn file_scan_state_map(
         &self,
     ) -> Result<std::collections::BTreeMap<String, FileScanStateRecord>, CodeGraphError> {
@@ -495,17 +525,54 @@ impl GraphStore {
     }
 
     pub fn find_file_by_id(&self, id: &str) -> Result<Option<FileRecord>, CodeGraphError> {
-        Ok(self
-            .list_files()?
-            .into_iter()
-            .find(|record| record.id.as_str() == id))
+        self.connection
+            .query_row(
+                "SELECT id, path, content_hash, language_id, byte_size, status
+                 FROM files
+                 WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(FileRecord {
+                        id: crate::GraphId::new(row.get::<_, String>(0)?)
+                            .map_err(to_sql_conversion_error)?,
+                        path: row.get(1)?,
+                        content_hash: row.get(2)?,
+                        language_id: row.get(3)?,
+                        byte_size: row.get(4)?,
+                        status: serde_json::from_str(&row.get::<_, String>(5)?)
+                            .map_err(to_sql_conversion_error)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
     }
 
     pub fn find_symbol_by_id(&self, id: &str) -> Result<Option<SymbolRecord>, CodeGraphError> {
-        Ok(self
-            .list_symbols()?
-            .into_iter()
-            .find(|record| record.id.as_str() == id))
+        self.connection
+            .query_row(
+                "SELECT id, kind, display_name, canonical_name, file_id, span_json, provenance_json
+                 FROM symbols
+                 WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(SymbolRecord {
+                        id: crate::GraphId::new(row.get::<_, String>(0)?)
+                            .map_err(to_sql_conversion_error)?,
+                        kind: row.get(1)?,
+                        display_name: row.get(2)?,
+                        canonical_name: row.get(3)?,
+                        file_id: crate::GraphId::new(row.get::<_, String>(4)?)
+                            .map_err(to_sql_conversion_error)?,
+                        span: serde_json::from_str(&row.get::<_, String>(5)?)
+                            .map_err(to_sql_conversion_error)?,
+                        provenance: serde_json::from_str(&row.get::<_, String>(6)?)
+                            .map_err(to_sql_conversion_error)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
     }
 
     pub fn search(

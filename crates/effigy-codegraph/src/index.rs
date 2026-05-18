@@ -31,10 +31,10 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
     let registry = ExtractorRegistry::builtins();
     let store = GraphStore::open(repo_root)?;
     let existing_states = store.file_scan_state_map()?;
+    let stored_extractors = store.extractor_version_map()?;
+    let current_extractors = extractor_version_map(registry.all());
     let scan_entries = crate::walk::scan_repo_files(repo_root)?;
     let mut current_states = BTreeMap::new();
-
-    store.clear_graph_data()?;
     for extractor in registry.all() {
         let record = extractor.extractor_record();
         store.save_extractor(&record)?;
@@ -42,8 +42,7 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
 
     let mut indexed_paths = BTreeSet::new();
     let mut skipped_paths = Vec::new();
-    let mut failed_paths = Vec::new();
-    let mut diagnostics = Vec::new();
+    let mut graph_changed = false;
 
     for entry in &scan_entries {
         indexed_paths.insert(entry.relative_path.clone());
@@ -51,6 +50,20 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
             skipped_paths.push(entry.relative_path.clone());
             continue;
         };
+        if let Some(existing_state) = existing_states.get(&entry.relative_path) {
+            let extractor_version_matches = current_extractors
+                .get(&entry.language_id)
+                .zip(stored_extractors.get(&entry.language_id))
+                .is_some_and(|(current, stored)| current == stored);
+            let unchanged_metadata = existing_state.language_id == entry.language_id
+                && existing_state.modified_unix_ms == entry.modified_unix_ms
+                && existing_state.byte_size == entry.byte_size;
+            if extractor_version_matches && unchanged_metadata {
+                current_states.insert(entry.relative_path.clone(), existing_state.clone());
+                continue;
+            }
+        }
+
         let content = fs::read_to_string(&entry.path).map_err(|error| {
             CodeGraphError::validation(format!("failed to read {}: {error}", entry.path.display()))
         })?;
@@ -69,8 +82,23 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
             modified_unix_ms: entry.modified_unix_ms,
             byte_size: file_record.byte_size,
         };
+        let reuse_existing_graph = existing_states
+            .get(&entry.relative_path)
+            .is_some_and(|state| {
+                state.content_hash == file_state.content_hash
+                    && state.language_id == file_state.language_id
+                    && current_extractors
+                        .get(&entry.language_id)
+                        .zip(stored_extractors.get(&entry.language_id))
+                        .is_some_and(|(current, stored)| current == stored)
+            });
         store.save_file_scan_state(&file_state)?;
         current_states.insert(source.relative_path.clone(), file_state);
+        if reuse_existing_graph {
+            continue;
+        }
+        graph_changed = true;
+        store.delete_file_graph(file_record.id.as_str())?;
         match index_source(
             extractor.extractor_record(),
             extractor,
@@ -91,15 +119,12 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
                 for diagnostic in &output.diagnostics {
                     store.save_diagnostic(diagnostic)?;
                 }
-                diagnostics.extend(output.diagnostics);
             }
             Err(error) => {
-                failed_paths.push(source.relative_path.clone());
                 let extractor = extractor.extractor_record();
                 let diagnostic =
                     extractor_failure_diagnostic(&extractor, &source.relative_path, error)?;
                 store.save_diagnostic(&diagnostic)?;
-                diagnostics.push(diagnostic);
             }
         }
     }
@@ -131,6 +156,12 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
         .filter(|path| !indexed_paths.contains(*path))
         .cloned()
         .collect::<Vec<_>>();
+    for path in &deleted_paths {
+        let file_id = crate::extractor::file_graph_id(path)?;
+        store.delete_file_graph(file_id.as_str())?;
+        store.delete_file_scan_state(path)?;
+        graph_changed = true;
+    }
     let stale_paths = stale_paths_for_repo(repo_root, &store)?;
 
     let counts = store.counts()?;
@@ -147,7 +178,9 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
         edge_count: counts.edges as u64,
     };
     store.save_index_run(&run)?;
-    store.refresh_search_index()?;
+    if graph_changed {
+        store.refresh_search_index()?;
+    }
 
     Ok(IndexReport {
         indexed_files: scan_entries.len(),
@@ -157,7 +190,7 @@ pub fn run_index(repo_root: &Path) -> Result<IndexReport, CodeGraphError> {
         changed_paths,
         deleted_paths,
         skipped_paths,
-        failed_paths,
+        failed_paths: store.failed_diagnostic_paths()?,
         counts: store.counts()?,
     })
 }
@@ -212,20 +245,24 @@ pub(crate) fn stale_paths_for_repo(
                 stale.insert(entry.relative_path.clone());
             }
             Some(state) => {
-                let content_hash = sha256_hex(fs::read(&entry.path)?.as_slice());
-                if state.content_hash != content_hash
-                    || state.modified_unix_ms != entry.modified_unix_ms
-                    || state.byte_size != entry.byte_size
-                {
+                let extractor_version_changed = current_extractors
+                    .get(&entry.language_id)
+                    .zip(stored_extractors.get(&entry.language_id))
+                    .is_some_and(|(current_version, stored_version)| {
+                        stored_version != current_version
+                    });
+                if extractor_version_changed {
                     stale.insert(entry.relative_path.clone());
+                    continue;
                 }
-                if let Some(current_version) = current_extractors.get(&entry.language_id) {
-                    if stored_extractors
-                        .get(&entry.language_id)
-                        .is_some_and(|stored_version| stored_version != current_version)
-                    {
-                        stale.insert(entry.relative_path.clone());
-                    }
+                if state.modified_unix_ms == entry.modified_unix_ms
+                    && state.byte_size == entry.byte_size
+                {
+                    continue;
+                }
+                let content_hash = sha256_hex(fs::read(&entry.path)?.as_slice());
+                if state.content_hash != content_hash {
+                    stale.insert(entry.relative_path.clone());
                 }
             }
         }
@@ -259,9 +296,7 @@ fn current_changed_paths(
     let mut changed = Vec::new();
     for entry in crate::walk::scan_repo_files(repo_root)? {
         if let Some(state) = file_states.get(&entry.relative_path) {
-            let content_hash = sha256_hex(fs::read(&entry.path)?.as_slice());
-            if state.content_hash != content_hash
-                || state.modified_unix_ms != entry.modified_unix_ms
+            if state.modified_unix_ms != entry.modified_unix_ms
                 || state.byte_size != entry.byte_size
             {
                 changed.push(entry.relative_path);
