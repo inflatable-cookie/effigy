@@ -62,6 +62,9 @@ Updated: 2026-05-18
   reduction pass after the larger extractor/query wins landed.
 - `g07.021` through `g07.024` completed the foreground watch-mode lane for
   bounded filesystem-event refresh and explicit reconcile fallback.
+- `g07.025` through `g07.029` completed the graph context ranking-quality lane
+  after the first practical usefulness assessment showed generic queries
+  over-ranked tests/docs and direct `rg` remained better for exact text.
 - The suite explicitly excludes MCP, a graph daemon, external language plugins,
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.

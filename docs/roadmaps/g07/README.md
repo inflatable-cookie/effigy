@@ -42,6 +42,11 @@ dependency.
 - [`022-watch-backend-and-debounce-rules.md`](./022-watch-backend-and-debounce-rules.md)
 - [`023-dirty-reconcile-and-overflow-fallback.md`](./023-dirty-reconcile-and-overflow-fallback.md)
 - [`024-graph-watch-closeout-proof.md`](./024-graph-watch-closeout-proof.md)
+- [`025-graph-context-ranking-quality-suite.md`](./025-graph-context-ranking-quality-suite.md)
+- [`026-context-ranking-baseline-and-gold-tasks.md`](./026-context-ranking-baseline-and-gold-tasks.md)
+- [`027-role-aware-context-ranker.md`](./027-role-aware-context-ranker.md)
+- [`028-search-and-snippet-usefulness.md`](./028-search-and-snippet-usefulness.md)
+- [`029-graph-navigation-quality-closeout.md`](./029-graph-navigation-quality-closeout.md)
 
 ## Design Posture
 
@@ -81,6 +86,8 @@ dependency.
 
 `g07.024` is complete.
 
+`g07.025` is complete.
+
 `901` through `905` are complete.
 
 `906` through `910` are complete.
@@ -108,6 +115,16 @@ dependency.
 `963` is complete.
 
 `964` is complete.
+
+`970` is complete.
+
+`971` is complete.
+
+`972` is complete.
+
+`973` is complete.
+
+`974` is complete.
 
 No active `g07` batch card remains.
 

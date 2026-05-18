@@ -76,6 +76,11 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/18-191500-graph-navigation-quality-closeout.md`](./2026-05/18-191500-graph-navigation-quality-closeout.md)
+- [`2026-05/18-184500-graph-search-and-context-snippet-usefulness.md`](./2026-05/18-184500-graph-search-and-context-snippet-usefulness.md)
+- [`2026-05/18-181500-role-aware-graph-context-ranking.md`](./2026-05/18-181500-role-aware-graph-context-ranking.md)
+- [`2026-05/18-173500-graph-context-ranking-baseline.md`](./2026-05/18-173500-graph-context-ranking-baseline.md)
+- [`2026-05/18-171500-graph-navigation-usefulness-assessment.md`](./2026-05/18-171500-graph-navigation-usefulness-assessment.md)
 - [`2026-05/18-163500-graph-watch-closeout.md`](./2026-05/18-163500-graph-watch-closeout.md)
 - [`2026-05/18-160500-graph-watch-dirty-reconcile.md`](./2026-05/18-160500-graph-watch-dirty-reconcile.md)
 - [`2026-05/18-153500-graph-watch-backend-and-debounce.md`](./2026-05/18-153500-graph-watch-backend-and-debounce.md)

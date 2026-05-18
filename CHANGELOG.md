@@ -19,6 +19,16 @@ During v0.x, MINOR bumps may include breaking changes.
   incremental index path, including newline-delimited JSON watch events for
   agent consumers that want direct freshness updates without polling.
 
+### Changed
+- **Graph context ranking is now role-aware:** implementation-oriented context
+  requests prefer implementation files over tests/docs, test and docs requests
+  still promote those surfaces, and repeated same-file symbol matches are capped
+  so broad terms do not drown out better owner files.
+- **Graph search and context output are more actionable:** graph search now
+  includes snippets for file and symbol matches, and file-level context items
+  prefer snippets near matched symbol evidence instead of always starting at the
+  top of the file.
+
 ### Fixed
 - **Workspace shell tool baseline is now explicit across workspace catalogs:**
   the `node` catalog now builds through a real workspace Dockerfile instead of

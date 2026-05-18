@@ -8,7 +8,7 @@ use crate::json::{
     GraphFreshnessPayload, GraphImpactPayload, GraphNodePayload, GraphRelatedNodesPayload,
     GraphSearchMatchPayload, GraphSearchPayload,
 };
-use crate::model::{FileRecord, SymbolRecord};
+use crate::model::{FileRecord, SourceSpan, SymbolRecord};
 use crate::storage::GraphStore;
 
 pub fn files(repo_root: &Path, limit: Option<usize>) -> Result<GraphFilesPayload, CodeGraphError> {
@@ -33,33 +33,8 @@ pub fn search(
     let matches = store
         .search(query, limit)?
         .into_iter()
-        .map(|(record_type, record_id, rank)| GraphSearchMatchPayload {
-            path: match record_type.as_str() {
-                "file" => store
-                    .find_file_by_id(&record_id)
-                    .ok()
-                    .flatten()
-                    .map(|record| record.path),
-                "symbol" => store
-                    .find_symbol_by_id(&record_id)
-                    .ok()
-                    .flatten()
-                    .map(|record| record.provenance.source_path),
-                _ => None,
-            },
-            name: if record_type == "symbol" {
-                store
-                    .find_symbol_by_id(&record_id)
-                    .ok()
-                    .flatten()
-                    .map(|record| record.canonical_name)
-            } else {
-                None
-            },
-            snippet: None,
-            rank,
-            record_type,
-            record_id,
+        .map(|(record_type, record_id, rank)| {
+            search_match_payload(repo_root, &store, record_type, record_id, rank)
         })
         .collect();
     Ok(GraphSearchPayload {
@@ -67,6 +42,61 @@ pub fn search(
         freshness: freshness(repo_root, &store)?,
         matches,
     })
+}
+
+fn search_match_payload(
+    repo_root: &Path,
+    store: &GraphStore,
+    record_type: String,
+    record_id: String,
+    rank: Option<f64>,
+) -> GraphSearchMatchPayload {
+    match record_type.as_str() {
+        "file" => match store.find_file_by_id(&record_id).ok().flatten() {
+            Some(file) => GraphSearchMatchPayload {
+                path: Some(file.path.clone()),
+                name: Some(file.path.clone()),
+                snippet: file_snippet(repo_root, &file, None, 240).map(|(snippet, _)| snippet),
+                rank,
+                record_type,
+                record_id,
+            },
+            None => GraphSearchMatchPayload {
+                path: None,
+                name: None,
+                snippet: None,
+                rank,
+                record_type,
+                record_id,
+            },
+        },
+        "symbol" => match store.find_symbol_by_id(&record_id).ok().flatten() {
+            Some(symbol) => GraphSearchMatchPayload {
+                path: Some(symbol.provenance.source_path.clone()),
+                name: Some(symbol.canonical_name.clone()),
+                snippet: symbol_snippet(repo_root, &symbol, 240).map(|(snippet, _)| snippet),
+                rank,
+                record_type,
+                record_id,
+            },
+            None => GraphSearchMatchPayload {
+                path: None,
+                name: None,
+                snippet: None,
+                rank,
+                record_type,
+                record_id,
+            },
+        },
+        _ => GraphSearchMatchPayload {
+            path: None,
+            name: None,
+            snippet: None,
+            rank,
+            record_type,
+            record_id,
+        },
+    }
 }
 
 pub fn node(repo_root: &Path, id: &str) -> Result<GraphNodePayload, CodeGraphError> {
@@ -230,11 +260,8 @@ pub fn context(
     let edges = store.list_edges()?;
     let max_files = max_files.unwrap_or(8);
     let max_bytes = max_bytes.unwrap_or(4096);
-    let tokens = request
-        .split_whitespace()
-        .map(|token| token.to_ascii_lowercase())
-        .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>();
+    let request_profile = RequestProfile::new(request);
+    let tokens = &request_profile.match_tokens;
 
     let filtered_files = files
         .into_iter()
@@ -278,13 +305,31 @@ pub fn context(
     let mut scored = filtered_files
         .iter()
         .map(|file| {
-            let mut score = 0usize;
+            let mut score = 0i64;
             let mut reasons = Vec::new();
-            for token in &tokens {
+            let role = FileRole::classify(&file.path, &file.language_id);
+            let role_adjustment = request_profile.role_adjustment(role);
+            if role_adjustment != 0 {
+                score += role_adjustment;
+                reasons.push(format!(
+                    "role `{}` adjusted score by {role_adjustment}",
+                    role.label()
+                ));
+            }
+            for token in tokens {
                 if file.path.to_ascii_lowercase().contains(token) {
                     score += 3;
                     reasons.push(format!("path matches `{token}`"));
                 }
+            }
+            if request_profile
+                .normalized_request
+                .split_whitespace()
+                .all(|token| file.path.to_ascii_lowercase().contains(token))
+                && !request_profile.normalized_request.is_empty()
+            {
+                score += 4;
+                reasons.push("path contains all request terms".to_owned());
             }
             let symbol_hits = symbols_by_file
                 .get(&file.id)
@@ -298,7 +343,7 @@ pub fn context(
                 })
                 .map(|symbol| {
                     let mut symbol_reasons = Vec::new();
-                    for token in &tokens {
+                    for token in tokens {
                         if symbol.display_name.to_ascii_lowercase().contains(token)
                             || symbol.canonical_name.to_ascii_lowercase().contains(token)
                         {
@@ -311,19 +356,34 @@ pub fn context(
                     (symbol.clone(), symbol_reasons)
                 })
                 .collect::<Vec<_>>();
-            score += symbol_hits.len();
-            for (_, symbol_reasons) in &symbol_hits {
+            let scored_symbol_hits = symbol_hits.len().min(5);
+            score += scored_symbol_hits as i64;
+            if symbol_hits.len() > scored_symbol_hits {
+                reasons.push(format!(
+                    "symbol match score capped at {scored_symbol_hits} of {} hits",
+                    symbol_hits.len()
+                ));
+            }
+            for (_, symbol_reasons) in symbol_hits.iter().take(8) {
                 reasons.extend(symbol_reasons.clone());
             }
             if let Some(doc_edges) = doc_links_to_path.get(file.id.as_str()) {
-                score += doc_edges.len();
-                for edge in doc_edges {
+                let scored_doc_edges = doc_edges.len().min(3);
+                score += scored_doc_edges as i64;
+                if doc_edges.len() > scored_doc_edges {
+                    reasons.push(format!(
+                        "doc link score capped at {scored_doc_edges} of {} links",
+                        doc_edges.len()
+                    ));
+                }
+                for edge in doc_edges.iter().take(3) {
                     reasons.push(format!("linked from doc `{}`", edge.provenance.source_path));
                 }
             }
             reasons.sort();
             reasons.dedup();
-            (file.clone(), score, reasons)
+            let evidence_span = symbol_hits.first().map(|(symbol, _)| symbol.span.clone());
+            (file.clone(), score, reasons, evidence_span)
         })
         .collect::<Vec<_>>();
     scored.sort_by(|left, right| {
@@ -334,21 +394,23 @@ pub fn context(
     });
     let matched = scored
         .into_iter()
-        .filter(|(_, score, _)| *score > 0)
+        .filter(|(_, score, _, _)| *score > 0)
         .collect::<Vec<_>>();
     let selected_files = matched
         .iter()
         .take(max_files)
-        .map(|(file, score, reasons)| (file.clone(), *score, reasons.clone()))
+        .map(|(file, score, reasons, evidence_span)| {
+            (file.clone(), *score, reasons.clone(), evidence_span.clone())
+        })
         .collect::<Vec<_>>();
     let omitted_files = matched.len().saturating_sub(selected_files.len());
     let selected_file_ids = selected_files
         .iter()
-        .map(|(file, _, _)| file.id.clone())
+        .map(|(file, _, _, _)| file.id.clone())
         .collect::<BTreeSet<_>>();
     let selected_doc_count = selected_files
         .iter()
-        .filter(|(file, _, _)| file.language_id == "markdown")
+        .filter(|(file, _, _, _)| file.language_id == "markdown")
         .count();
 
     let mut symbol_candidates = symbols_by_file
@@ -356,9 +418,20 @@ pub fn context(
         .filter(|(file_id, _)| selected_file_ids.contains(file_id))
         .flat_map(|(_, symbols)| symbols.iter())
         .map(|symbol| {
-            let mut score = 0usize;
+            let mut score = 0i64;
             let mut reasons = Vec::new();
-            for token in &tokens {
+            let role_adjustment = file_by_id
+                .get(&symbol.file_id)
+                .map(|file| {
+                    request_profile
+                        .role_adjustment(FileRole::classify(&file.path, &file.language_id))
+                })
+                .unwrap_or(0);
+            if role_adjustment != 0 {
+                score += role_adjustment;
+                reasons.push(format!("owner role adjusted score by {role_adjustment}"));
+            }
+            for token in tokens {
                 if symbol.display_name.to_ascii_lowercase().contains(token)
                     || symbol.canonical_name.to_ascii_lowercase().contains(token)
                 {
@@ -391,8 +464,13 @@ pub fn context(
     let mut omitted_items = 0usize;
     let mut omitted_symbols = 0usize;
 
-    for (index, (file, score, reasons)) in selected_files.iter().enumerate() {
-        let snippet = file_snippet(repo_root, file, max_bytes.saturating_sub(used_bytes));
+    for (index, (file, score, reasons, evidence_span)) in selected_files.iter().enumerate() {
+        let snippet = file_snippet(
+            repo_root,
+            file,
+            evidence_span.as_ref(),
+            max_bytes.saturating_sub(used_bytes),
+        );
         let snippet_len = snippet
             .as_ref()
             .map(|(snippet, _)| snippet.len())
@@ -412,9 +490,9 @@ pub fn context(
             path: file.path.clone(),
             language_id: Some(file.language_id.clone()),
             name: Some(file.path.clone()),
-            range: None,
+            range: evidence_span.clone(),
             rank: index + 1,
-            score: *score,
+            score: (*score).max(0) as usize,
             reasons: reasons.clone(),
             provenance: None,
             snippet: snippet.as_ref().map(|(value, _)| value.clone()),
@@ -452,7 +530,7 @@ pub fn context(
             name: Some(symbol.canonical_name.clone()),
             range: Some(symbol.span.clone()),
             rank: items.len() + 1,
-            score: *score,
+            score: (*score).max(0) as usize,
             reasons: reasons.clone(),
             provenance: Some(symbol.provenance.clone()),
             snippet: snippet.as_ref().map(|(value, _)| value.clone()),
@@ -497,6 +575,7 @@ pub fn context(
 fn file_snippet(
     repo_root: &Path,
     file: &FileRecord,
+    evidence_span: Option<&SourceSpan>,
     remaining_bytes: usize,
 ) -> Option<(String, bool)> {
     if remaining_bytes == 0 {
@@ -504,6 +583,14 @@ fn file_snippet(
     }
     let content = fs::read_to_string(repo_root.join(&file.path)).ok()?;
     let limit = remaining_bytes.min(240);
+    if let Some(span) = evidence_span {
+        return bounded_snippet(
+            &content,
+            span.start.byte as usize,
+            span.end.byte as usize,
+            limit,
+        );
+    }
     bounded_snippet(&content, 0, content.len(), limit)
 }
 
@@ -615,4 +702,217 @@ fn freshness(
         stale: !stale_paths.is_empty(),
         stale_paths,
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileRole {
+    Implementation,
+    Test,
+    Docs,
+    Planning,
+    Fixture,
+    Generated,
+}
+
+impl FileRole {
+    fn classify(path: &str, language_id: &str) -> Self {
+        let lower = path.to_ascii_lowercase();
+        if lower.contains("/target/")
+            || lower.contains("/node_modules/")
+            || lower.contains("/vendor/")
+            || lower.contains("/.effigy/")
+        {
+            return Self::Generated;
+        }
+        if lower.contains("/fixtures/")
+            || lower.contains("/fixture/")
+            || lower.contains("/examples/")
+            || lower.starts_with("examples/")
+        {
+            return Self::Fixture;
+        }
+        if lower.starts_with("tests/")
+            || lower.contains("/tests/")
+            || lower.ends_with("/tests.rs")
+            || lower.ends_with("_test.rs")
+            || lower.ends_with("_tests.rs")
+            || lower.ends_with(".test.ts")
+            || lower.ends_with(".spec.ts")
+            || lower.ends_with(".test.js")
+            || lower.ends_with(".spec.js")
+        {
+            return Self::Test;
+        }
+        if lower.starts_with("docs/roadmaps/")
+            || lower.starts_with("docs/specs/")
+            || lower.starts_with("docs/logs/")
+        {
+            return Self::Planning;
+        }
+        if language_id == "markdown" || lower.starts_with("docs/") || lower.ends_with(".md") {
+            return Self::Docs;
+        }
+        Self::Implementation
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Implementation => "implementation",
+            Self::Test => "test",
+            Self::Docs => "docs",
+            Self::Planning => "planning",
+            Self::Fixture => "fixture",
+            Self::Generated => "generated",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestIntent {
+    Implementation,
+    Test,
+    Docs,
+    General,
+}
+
+#[derive(Debug, Clone)]
+struct RequestProfile {
+    normalized_request: String,
+    match_tokens: Vec<String>,
+    intent: RequestIntent,
+}
+
+impl RequestProfile {
+    fn new(request: &str) -> Self {
+        let raw_tokens = request
+            .split_whitespace()
+            .flat_map(split_identifier_token)
+            .map(|token| token.to_ascii_lowercase())
+            .filter(|token| !token.is_empty())
+            .collect::<Vec<_>>();
+        let intent = classify_request_intent(&raw_tokens);
+        let match_tokens = raw_tokens
+            .iter()
+            .filter(|token| !is_context_stop_word(token))
+            .cloned()
+            .collect::<Vec<_>>();
+        Self {
+            normalized_request: match_tokens.join(" "),
+            match_tokens,
+            intent,
+        }
+    }
+
+    fn role_adjustment(&self, role: FileRole) -> i64 {
+        match (self.intent, role) {
+            (RequestIntent::Implementation, FileRole::Implementation) => 6,
+            (RequestIntent::Implementation, FileRole::Test) => -5,
+            (RequestIntent::Implementation, FileRole::Docs | FileRole::Planning) => -4,
+            (RequestIntent::Implementation, FileRole::Fixture) => -3,
+            (RequestIntent::Implementation, FileRole::Generated) => -8,
+            (RequestIntent::Test, FileRole::Test) => 6,
+            (RequestIntent::Test, FileRole::Implementation) => 2,
+            (RequestIntent::Test, FileRole::Docs | FileRole::Planning) => -2,
+            (RequestIntent::Docs, FileRole::Docs) => 7,
+            (RequestIntent::Docs, FileRole::Planning) => 4,
+            (RequestIntent::Docs, FileRole::Implementation) => -2,
+            (RequestIntent::Docs, FileRole::Test) => -3,
+            (RequestIntent::General, FileRole::Generated) => -6,
+            (RequestIntent::General, FileRole::Planning) => -1,
+            _ => 0,
+        }
+    }
+}
+
+fn classify_request_intent(tokens: &[String]) -> RequestIntent {
+    if tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "test" | "tests" | "regression" | "fixture" | "fixtures" | "coverage"
+        )
+    }) {
+        return RequestIntent::Test;
+    }
+    if tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "doc"
+                | "docs"
+                | "guide"
+                | "guides"
+                | "contract"
+                | "contracts"
+                | "roadmap"
+                | "roadmaps"
+                | "skill"
+                | "skills"
+        )
+    }) {
+        return RequestIntent::Docs;
+    }
+    if tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "trace"
+                | "implement"
+                | "implementation"
+                | "owner"
+                | "runtime"
+                | "command"
+                | "flow"
+                | "where"
+                | "how"
+                | "understand"
+                | "resolve"
+                | "resolution"
+        )
+    }) {
+        return RequestIntent::Implementation;
+    }
+    RequestIntent::General
+}
+
+fn is_context_stop_word(token: &str) -> bool {
+    matches!(
+        token,
+        "trace"
+            | "find"
+            | "where"
+            | "how"
+            | "understand"
+            | "implementation"
+            | "implement"
+            | "owner"
+            | "flow"
+            | "the"
+            | "a"
+            | "an"
+            | "and"
+            | "or"
+            | "for"
+            | "to"
+            | "of"
+            | "in"
+    )
+}
+
+fn split_identifier_token(token: &str) -> Vec<String> {
+    let cleaned = token
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
+        .replace(['_', '-'], " ");
+    let mut tokens = Vec::new();
+    for part in cleaned.split_whitespace() {
+        let mut current = String::new();
+        for ch in part.chars() {
+            if ch.is_ascii_uppercase() && !current.is_empty() {
+                tokens.push(current.to_ascii_lowercase());
+                current.clear();
+            }
+            current.push(ch);
+        }
+        if !current.is_empty() {
+            tokens.push(current.to_ascii_lowercase());
+        }
+    }
+    tokens
 }
