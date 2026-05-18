@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -53,16 +53,17 @@ fn cli_graph_watch_json_streams_started_and_refresh_events() {
     assert_eq!(started["payload"]["kind"], "started");
     assert_eq!(started["payload"]["debounce_ms"], 100);
 
-    fs::write(
-        root.join("src/lib.rs"),
-        "pub fn alpha() {}\npub fn beta() {}\n",
-    )
-    .expect("rewrite rust");
+    let watched_file = root.join("src/lib.rs");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let refresh = loop {
+        let stamp = Instant::now().elapsed().as_nanos();
+        fs::write(
+            &watched_file,
+            format!("pub fn alpha() {{}}\npub fn beta_{stamp}() {{}}\n"),
+        )
+        .expect("rewrite rust");
 
-    let refresh = recv_until(
-        &rx,
-        Duration::from_secs(5),
-        |value| {
+        if let Some(value) = recv_matching_event(&rx, Duration::from_millis(400), |value| {
             value["payload"]["kind"].as_str() == Some("refresh")
                 && value["payload"]["changed_paths"]
                     .as_array()
@@ -71,9 +72,15 @@ fn cli_graph_watch_json_streams_started_and_refresh_events() {
                             .iter()
                             .any(|value| value.as_str() == Some("src/lib.rs"))
                     })
-        },
-        "refresh event for src/lib.rs",
-    );
+        }) {
+            break value;
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for refresh event for src/lib.rs"
+        );
+    };
     assert_eq!(refresh["schema"], "effigy.graph.watch.event.v1");
     assert_eq!(refresh["payload"]["kind"], "refresh");
     assert_eq!(refresh["payload"]["debounce_ms"], 100);
@@ -98,16 +105,24 @@ fn recv_event(rx: &mpsc::Receiver<Value>, timeout: Duration, label: &str) -> Val
         .unwrap_or_else(|_| panic!("timed out waiting for {label} event"))
 }
 
-fn recv_until<F>(rx: &mpsc::Receiver<Value>, timeout: Duration, predicate: F, label: &str) -> Value
+fn recv_matching_event<F>(
+    rx: &mpsc::Receiver<Value>,
+    timeout: Duration,
+    predicate: F,
+) -> Option<Value>
 where
     F: Fn(&Value) -> bool,
 {
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     loop {
         let remaining = timeout.saturating_sub(started.elapsed());
-        let value = recv_event(rx, remaining, label);
+        let value = match rx.recv_timeout(remaining) {
+            Ok(value) => value,
+            Err(mpsc::RecvTimeoutError::Timeout) => return None,
+            Err(mpsc::RecvTimeoutError::Disconnected) => return None,
+        };
         if predicate(&value) {
-            return value;
+            return Some(value);
         }
     }
 }
