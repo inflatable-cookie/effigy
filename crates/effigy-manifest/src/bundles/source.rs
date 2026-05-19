@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use effigy_artifacts::{
     ArtifactSourceRef, OciArtifactAdapter, OciArtifactPullRequest, OrasCliArtifactAdapter,
 };
+use effigy_core::container_detection::process_is_inside_effigy_workspace_container;
 use effigy_core::git_exec::run_git_output;
 use effigy_core::git_source::{canonical_git_cache_identity, sanitize_cache_segment, sha256_hex};
 
@@ -162,7 +163,11 @@ fn resolve_git_bundle_source(
         write_cached_git_bundle_remote_status(&remote_status_path, version_hint.as_deref())?;
     }
 
-    if cache_exists && !refresh_remote {
+    if should_probe_git_bundle_remote(
+        cache_exists,
+        refresh_remote,
+        process_is_inside_effigy_workspace_container(),
+    ) {
         let cached_remote_commit = read_cached_git_bundle_remote_status(&remote_status_path)?
             .filter(git_bundle_remote_status_is_fresh)
             .map(|status| status.remote_commit);
@@ -370,6 +375,14 @@ fn git_ls_remote(
         });
     }
     Ok(commit)
+}
+
+fn should_probe_git_bundle_remote(
+    cache_exists: bool,
+    refresh_remote: bool,
+    inside_effigy_workspace_container: bool,
+) -> bool {
+    cache_exists && !refresh_remote && !inside_effigy_workspace_container
 }
 
 fn run_git(
@@ -784,6 +797,7 @@ mod tests {
         OciArtifactPullRequest, OciArtifactPushReport, OciArtifactPushRequest,
     };
     use std::cell::Cell;
+    use std::process::Command;
     use std::rc::Rc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1231,6 +1245,14 @@ run = "serve {{ inputs.host }}"
             "expected refreshed git bundle cache to pick up the new commit"
         );
         assert!(!third.stale);
+    }
+
+    #[test]
+    fn git_bundle_remote_probe_is_skipped_inside_effigy_workspace_container() {
+        assert!(super::should_probe_git_bundle_remote(true, false, false));
+        assert!(!super::should_probe_git_bundle_remote(true, false, true));
+        assert!(!super::should_probe_git_bundle_remote(false, false, false));
+        assert!(!super::should_probe_git_bundle_remote(true, true, true));
     }
 
     #[test]

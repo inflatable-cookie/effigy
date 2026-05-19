@@ -103,6 +103,20 @@ During v0.x, MINOR bumps may include breaking changes.
   `test --plan` remain end-of-wizard next-step guidance.
 
 ### Fixed
+- **Container-local deferral avoids host runtime probes:** `effigy defer` now
+  treats Effigy workspace containers as local execution contexts even when
+  containerd/cgroup-v2 does not expose `/.dockerenv`, `/run/.containerenv`, or
+  useful cgroup names, so external bundle deferrals do not stall while trying
+  to launch host runtime tools from inside the container.
+- **Workspace containers trust materialized git bundles on normal loads:**
+  cached git-backed bundles no longer run remote freshness probes during
+  ordinary manifest loading inside Effigy workspace containers, preventing
+  slow repeated SSH timeouts for commands such as `effigy tasks` and
+  `effigy defer`.
+- **Ambient catalog discovery can be scoped per repo:** root manifests can now
+  declare `[catalog.discovery].ignore` to keep task-catalog discovery out of
+  repo-specific generated trees such as media exports or state snapshots
+  without growing Effigy's hard-coded internal skip list.
 - **Workspace shell tool baseline is now explicit across workspace catalogs:**
   the `node` catalog now builds through a real workspace Dockerfile instead of
   using a bare Alpine image, and the workspace-flavored catalogs now ship a

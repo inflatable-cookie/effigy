@@ -1128,6 +1128,15 @@ See [`074-deployment-guide.md`](./074-deployment-guide.md).
 ## Notes
 
 - Discovery scans for `effigy.toml` recursively.
+- Root manifests can trim ambient catalog discovery with `[catalog.discovery]`:
+
+```toml
+[catalog.discovery]
+ignore = ["data", "storage"]
+```
+
+  Use this for repo-local generated trees that should never become ambient
+  task catalogs.
 - Catalog aliases must be unique across discovered manifests.
 - Useful interpolation tokens in run commands:
   - `{project}` catalog root path (shell-quoted alias of `{repo}`)

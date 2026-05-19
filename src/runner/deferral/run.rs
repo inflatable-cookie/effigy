@@ -5,6 +5,7 @@ use std::process::Command as ProcessCommand;
 
 use effigy_cli::TaskInvocation;
 
+use effigy_core::container_detection::process_is_inside_container;
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
 use effigy_manifest::{load_task_manifest, ManifestTask, ManifestTaskRunIn};
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
@@ -232,10 +233,7 @@ fn run_deferred_request_with_binding(
                     ))
                 })?;
             let command = build_deferred_command(task, runtime_args, deferral, &exec_working_dir)?;
-            if let Some(context) = active_runtime_context()
-                .filter(|context| context.container().inside_container_handoff)
-            {
-                let local_working_dir = context.invocation_cwd().to_path_buf();
+            if let Some(local_working_dir) = local_container_deferral_working_dir() {
                 let output = run_deferred_request_locally(
                     task,
                     runtime_args,
@@ -313,6 +311,24 @@ fn run_deferred_request_with_binding(
             })
         }
     }
+}
+
+fn local_container_deferral_working_dir() -> Option<std::path::PathBuf> {
+    let context = active_runtime_context()?;
+    if should_run_container_deferral_locally(
+        context.container().inside_container_handoff,
+        process_is_inside_container(),
+    ) {
+        return Some(context.invocation_cwd().to_path_buf());
+    }
+    None
+}
+
+fn should_run_container_deferral_locally(
+    inside_container_handoff: bool,
+    process_inside_container: bool,
+) -> bool {
+    inside_container_handoff || process_inside_container
 }
 
 fn deferral_runtime_activation_plan(
@@ -398,6 +414,14 @@ mod tests {
 
     use super::deferral_runtime_activation_plan;
     use crate::runner::runtime_session_context::RuntimeSessionContext;
+
+    #[test]
+    fn container_deferral_runs_locally_for_handoff_or_container_process() {
+        assert!(super::should_run_container_deferral_locally(true, false));
+        assert!(super::should_run_container_deferral_locally(false, true));
+        assert!(super::should_run_container_deferral_locally(true, true));
+        assert!(!super::should_run_container_deferral_locally(false, false));
+    }
 
     #[test]
     fn deferral_runtime_activation_plan_keeps_identity_and_lease_policy() {

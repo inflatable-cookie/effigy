@@ -174,6 +174,15 @@ pub struct TaskManifest {
 #[serde(deny_unknown_fields)]
 pub struct ManifestCatalog {
     pub alias: Option<String>,
+    #[serde(default)]
+    pub discovery: Option<ManifestCatalogDiscoveryConfig>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestCatalogDiscoveryConfig {
+    #[serde(default)]
+    pub ignore: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]

@@ -75,6 +75,7 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
         return Ok(Vec::new());
     }
 
+    let root_skip_dirs = root_catalog_discovery_skip_dirs(workspace_root);
     let mut pending = vec![workspace_root.to_path_buf()];
     pending.extend(discover_system_mount_catalog_roots(workspace_root));
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
@@ -97,7 +98,7 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
                 .map_err(|error| task_catalog_read_dir_error(&path, error))?;
 
             if file_type_matches(&file_type, &path, EntryKind::Directory) {
-                if should_skip_dir(&path) {
+                if should_skip_dir(&path, &root_skip_dirs) {
                     continue;
                 }
                 pending.push(path);
@@ -198,11 +199,41 @@ fn mount_source_path(raw: &str) -> Option<PathBuf> {
     Some(PathBuf::from(source))
 }
 
-pub(super) fn should_skip_dir(path: &Path) -> bool {
+pub(super) fn should_skip_dir(path: &Path, root_skip_dirs: &HashSet<String>) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    is_internal_skip_dir(name) || root_skip_dirs.contains(name)
+}
+
+fn is_internal_skip_dir(name: &str) -> bool {
     matches!(
-        path.file_name().and_then(|n| n.to_str()),
-        Some(".git" | ".effigy" | "external" | "node_modules" | "vendor" | "target" | ".next")
+        name,
+        ".git" | ".effigy" | "external" | "node_modules" | "vendor" | "target" | ".next"
     )
+}
+
+fn root_catalog_discovery_skip_dirs(workspace_root: &Path) -> HashSet<String> {
+    load_task_manifest_with_inspection(&workspace_root.join(TASK_MANIFEST_FILE))
+        .ok()
+        .and_then(|loaded| loaded.manifest.catalog)
+        .and_then(|catalog| catalog.discovery)
+        .map(|discovery| {
+            discovery
+                .ignore
+                .into_iter()
+                .filter_map(normalize_skip_dir)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn normalize_skip_dir(value: String) -> Option<String> {
+    let trimmed = value.trim().trim_matches('/');
+    if trimmed.is_empty() || trimmed.contains('/') || trimmed == "." || trimmed == ".." {
+        return None;
+    }
+    Some(trimmed.to_owned())
 }
 
 /// True when a directory containing an `effigy.toml` is actually an
@@ -282,7 +313,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn discover_manifest_paths_skips_external_catalogs() {
+    fn discover_manifest_paths_skips_internal_catalogs() {
         let root = temp_root("effigy-routing-external");
         let external = root.join("external/provider");
         let app = root.join("apps/demo");
@@ -303,6 +334,44 @@ mod tests {
         assert!(
             !manifests.contains(&external.join("effigy.toml")),
             "external manifests should not become ambient catalogs: {manifests:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn discover_manifest_paths_applies_root_configured_skip_dirs() {
+        let root = temp_root("effigy-routing-configured-skip");
+        let data = root.join("data/source-snapshot");
+        let storage = root.join("storage/cache-snapshot");
+        let app = root.join("apps/demo");
+        fs::create_dir_all(&data).expect("data dir");
+        fs::create_dir_all(&storage).expect("storage dir");
+        fs::create_dir_all(&app).expect("app dir");
+        fs::write(
+            root.join("effigy.toml"),
+            "[catalog]\nalias = \"root\"\n\n[catalog.discovery]\nignore = [\"data\", \"storage\", \"nested/path\", \"\"]\n",
+        )
+        .expect("root");
+        fs::write(data.join("effigy.toml"), "[catalog]\nalias = \"data\"\n")
+            .expect("data manifest");
+        fs::write(
+            storage.join("effigy.toml"),
+            "[catalog]\nalias = \"storage\"\n",
+        )
+        .expect("storage manifest");
+        fs::write(app.join("effigy.toml"), "[catalog]\nalias = \"demo\"\n").expect("app manifest");
+
+        let manifests = discover_manifest_paths(&root).expect("discover");
+
+        assert!(manifests.contains(&root.join("effigy.toml")));
+        assert!(manifests.contains(&app.join("effigy.toml")));
+        assert!(
+            !manifests.contains(&data.join("effigy.toml")),
+            "configured data skip should prevent ambient catalog discovery: {manifests:?}"
+        );
+        assert!(
+            !manifests.contains(&storage.join("effigy.toml")),
+            "configured storage skip should prevent ambient catalog discovery: {manifests:?}"
         );
         let _ = fs::remove_dir_all(root);
     }

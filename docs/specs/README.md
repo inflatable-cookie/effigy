@@ -28,7 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- none
+- [`094-codebase-leanness-and-boundary-hardening-strict-lane.md`](./094-codebase-leanness-and-boundary-hardening-strict-lane.md)
 
 Queued strict lanes:
 
@@ -61,4 +61,4 @@ Archived strict lanes:
 
 ## Next Task
 
-No active ready card.
+Start [`1007-deduplicate-codegraph-language-emitters.md`](../roadmaps/g07/batch-cards/1007-deduplicate-codegraph-language-emitters.md).

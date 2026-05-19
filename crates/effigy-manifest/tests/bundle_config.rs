@@ -1,4 +1,4 @@
-use effigy_manifest::{ManifestBundleBase, ManifestBundleConfig};
+use effigy_manifest::{load_task_manifest, ManifestBundleBase, ManifestBundleConfig};
 
 #[test]
 fn bundle_config_accepts_path_block() {
@@ -90,4 +90,26 @@ name = "workspace-app"
             .contains("legacy `[bundle].name` has been removed"),
         "{error}"
     );
+}
+
+#[test]
+fn manifest_catalog_discovery_rejects_legacy_skip_dirs_key() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[catalog]
+alias = "root"
+
+[catalog.discovery]
+skip_dirs = ["data"]
+"#,
+    )
+    .expect("write manifest");
+
+    let error = load_task_manifest(&manifest_path).expect_err("legacy discovery key should fail");
+    let rendered = error.to_string();
+    assert!(rendered.contains("skip_dirs"), "{rendered}");
+    assert!(rendered.contains("unknown field"), "{rendered}");
 }

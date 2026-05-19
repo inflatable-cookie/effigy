@@ -16,6 +16,10 @@ Later `g07` lanes also widen into the adjacent setup front door work needed to
 make that intelligence usable from first contact with a repo, especially
 through `effigy init`.
 
+The final planned `g07` lane turns the reusable codebase sweep audit into
+bounded cleanup work. It keeps graph and init maintainable before the next
+feature generation starts.
+
 The CLI remains the protocol. This generation does not introduce an MCP server,
 a background daemon, external language plugins, or a JavaScript runtime
 dependency.
@@ -77,6 +81,14 @@ dependency.
 - [`053-setup-job-adapters-and-mutation-boundaries.md`](./053-setup-job-adapters-and-mutation-boundaries.md)
 - [`054-noninteractive-init-action-execution-and-migration-paths.md`](./054-noninteractive-init-action-execution-and-migration-paths.md)
 - [`055-init-wizard-proof-docs-and-closeout.md`](./055-init-wizard-proof-docs-and-closeout.md)
+- [`056-codebase-leanness-and-boundary-hardening-suite.md`](./056-codebase-leanness-and-boundary-hardening-suite.md)
+- [`057-codegraph-language-emitter-deduplication.md`](./057-codegraph-language-emitter-deduplication.md)
+- [`058-codegraph-manifest-query-module-decomposition.md`](./058-codegraph-manifest-query-module-decomposition.md)
+- [`059-init-setup-module-boundary-cleanup.md`](./059-init-setup-module-boundary-cleanup.md)
+- [`060-json-help-contract-consistency-cleanup.md`](./060-json-help-contract-consistency-cleanup.md)
+- [`061-runner-domain-boundary-and-test-fixture-cleanup.md`](./061-runner-domain-boundary-and-test-fixture-cleanup.md)
+- [`062-crate-boundary-rejustification-and-planning-hygiene.md`](./062-crate-boundary-rejustification-and-planning-hygiene.md)
+- [`063-codebase-leanness-closeout.md`](./063-codebase-leanness-closeout.md)
 
 ## Design Posture
 
@@ -128,7 +140,7 @@ dependency.
 
 `g07.034` is complete.
 
-`g07.035` is active.
+`g07.035` is complete.
 
 `g07.036` is complete.
 
@@ -228,7 +240,10 @@ No active ready card remains in the CodeGraph parity lane.
 
 No active ready card remains in the bounded CodeGraph parity follow-up lane.
 
-`g07.050` is complete.
+`g07.050` through `g07.055` are the completed init setup-wizard suite.
+
+`g07.056` through `g07.063` are the planned codebase leanness and boundary
+hardening suite.
 
 `1000` is complete.
 
@@ -238,10 +253,18 @@ No active ready card remains in the bounded CodeGraph parity follow-up lane.
 
 `1003` is complete.
 
+`1004` is complete.
+
 `1005` is complete.
 
 No active ready card remains in the init setup-wizard lane.
 
+`1006` is complete.
+
+`1007` is ready.
+
+`1008` through `1013` are planned.
+
 ## Next Task
 
-No active ready card.
+Start [`1007-deduplicate-codegraph-language-emitters.md`](./batch-cards/1007-deduplicate-codegraph-language-emitters.md).

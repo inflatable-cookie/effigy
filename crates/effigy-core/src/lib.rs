@@ -1,5 +1,6 @@
 pub mod build_info;
 pub mod builtin_tasks;
+pub mod container_detection;
 pub mod data_loading;
 pub mod effigy_invocation;
 pub mod executable_override;
