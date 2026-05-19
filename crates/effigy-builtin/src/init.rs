@@ -45,7 +45,7 @@ fn run_init_request(
     match request.mode {
         request::InitMode::Ensure { mode } => {
             if should_prompt_init_wizard(&request, mode) {
-                return wizard::run_init_wizard(target_root, || {
+                return wizard::run_init_wizard(ports, target_root, || {
                     scaffold::load_starter(request::DEFAULT_STARTER)
                 });
             }

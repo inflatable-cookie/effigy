@@ -95,6 +95,11 @@ During v0.x, MINOR bumps may include breaking changes.
   health checks, graph setup, bundle/secrets/runtime follow-up, validation,
   and read-only advanced surfaces, and only recommends commands that actually
   exist while keeping release/deploy/state/distribution mutation out of init.
+- **TTY init now executes runnable setup jobs:** when plain `effigy init` runs
+  on a real TTY, it now continues past satisfied baseline setup and asks yes/no
+  questions for runnable contextual jobs such as `doctor`, `tasks`, `test
+  --plan`, graph status/index, package migration, bundle inspection, and
+  secrets inspection instead of only listing those commands as follow-up text.
 
 ### Fixed
 - **Workspace shell tool baseline is now explicit across workspace catalogs:**

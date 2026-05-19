@@ -147,13 +147,17 @@ pub(super) fn build_setup_inventory(
     jobs
 }
 
-pub(super) fn render_follow_up_jobs(jobs: &[SetupJob]) -> String {
+pub(super) fn render_follow_up_jobs_excluding(
+    jobs: &[SetupJob],
+    excluded_ids: &std::collections::BTreeSet<String>,
+) -> String {
     let mut current_category = None;
     let mut out = String::new();
     let relevant: Vec<_> = jobs
         .iter()
         .filter(|job| {
-            !matches!(job.category, SetupCategory::Baseline)
+            !excluded_ids.contains(&job.id)
+                && !matches!(job.category, SetupCategory::Baseline)
                 && matches!(job.applicability, SetupApplicability::Applicable)
         })
         .collect();
@@ -804,7 +808,9 @@ fn command_for_job(id: &str, target_root: &Path) -> Option<Command> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_setup_inventory, render_follow_up_jobs, SetupApplicability, SetupCategory};
+    use super::{
+        build_setup_inventory, render_follow_up_jobs_excluding, SetupApplicability, SetupCategory,
+    };
     use crate::init::agent::{collect_agent_checks, load_agent_init_assets};
     use crate::init::request::AgentInitMode;
     use crate::init::scaffold;
@@ -867,7 +873,7 @@ mod tests {
         let checks =
             collect_agent_checks(&root, &assets, AgentInitMode::Check, None).expect("checks");
         let jobs = build_setup_inventory(&root, &checks);
-        let rendered = render_follow_up_jobs(&jobs);
+        let rendered = render_follow_up_jobs_excluding(&jobs, &std::collections::BTreeSet::new());
         assert!(rendered.contains("effigy tasks migrate"));
         assert!(rendered.contains("effigy bundle inspect"));
         assert!(rendered.contains("effigy graph status --json"));
