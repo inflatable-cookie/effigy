@@ -25,7 +25,7 @@ That's it. If the repo uses Effigy, you already know how to work in it.
 
 **After:** `effigy test` runs everything. `effigy dev` starts your whole local stack. `effigy demo run login-smoke` proves the login flow still works. `effigy release prepare` cuts a release without you touching version files. One command from any directory.
 
-Effigy is not another task runner. It is a **repo runtime** — the layer between you and the chaos of modern polyglot repos. It is also **agent-native**: the manifest is self-describing, every command speaks JSON, and an AI agent can discover everything the repo can do without reading a single doc.
+Effigy is not another task runner. It is a **repo runtime** — the layer between you and the chaos of modern polyglot repos. It is also **agent-native**: the manifest is self-describing, every command speaks JSON, and an AI agent can discover the repo surface, inspect code, execute work, and validate changes through one structured CLI.
 
 ---
 
@@ -49,9 +49,10 @@ cargo install --git https://github.com/inflatable-cookie/effigy
 Already in a repo with `effigy.toml`?
 
 ```bash
+effigy doctor             # Is the repo healthy and routable?
 effigy tasks              # What can this repo do?
-effigy dev                # Start the local stack
 effigy test --plan        # See what tests would run
+effigy dev                # Start the local stack
 ```
 
 Adopting Effigy for the first time?
@@ -422,18 +423,19 @@ Command reference: [`docs/guides/025-command-reference-matrix.md`](./docs/guides
 
 ## Built for Agents
 
-Effigy was designed so that AI agents can operate a repo without tribal knowledge. The manifest is the contract, the CLI is the API, and everything is inspectable:
+Effigy was designed so that AI agents can operate a repo without tribal knowledge. The manifest is the contract, the CLI is the API, and the core workflow is explicit:
 
 ```bash
+effigy doctor --json             # Repo health and routing diagnostics
 effigy tasks --json              # Every task, catalog, and description
-effigy config --inspect          # The full merged manifest
-effigy doctor --verbose          # Health check with routing evidence
-effigy graph explore "<task>" --json   # Bounded repo map before broad scanning
+effigy test --plan --json        # Resolved test plan without execution
+effigy graph explore "<task>" --json   # Bounded code-understanding packet
+effigy <task>                    # Execute supported repo work
 effigy --help                    # Every command and flag
 effigy release simulate --json   # Machine-readable dry-runs
 ```
 
-An agent dropped into an Effigy repo can discover the task surface, understand routing decisions, build a bounded code map with `effigy graph`, run tests, start dev environments, and cut releases — all through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
+An agent dropped into an Effigy repo can start with `doctor`, `tasks`, and `test --plan`, switch to `effigy graph` when the job is code understanding, then run tests, start dev environments, and cut releases through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
 
 Graph workflow guide: [`docs/guides/076-code-graph-and-agent-workflows.md`](./docs/guides/076-code-graph-and-agent-workflows.md)
 
