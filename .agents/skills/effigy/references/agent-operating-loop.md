@@ -1,7 +1,9 @@
 # Agent Operating Loop
 
 Canonical sequence for agents in any repo with `effigy.toml`. Run phases in
-order; skip a phase only when the user's request already satisfied it.
+order; skip a phase only when the user's request already satisfied it. This is
+the default operating loop, not a claim that `graph` supersedes every other
+Effigy surface.
 
 ## Phase 1 — Discover the surface (always)
 
@@ -38,6 +40,10 @@ effigy graph explore "<question>" --max-files 6 --max-bytes 12288 --json
 ```
 
 Details: `graph-assist.md`.
+
+Do not force this phase onto unrelated tasks. If the job is clearly execution,
+deployment, state orchestration, docs validation, or release inspection, use
+the matching built-in instead of inserting `graph` ritualistically.
 
 ## Phase 3 — Do the work
 

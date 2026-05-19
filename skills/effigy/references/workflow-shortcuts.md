@@ -2,6 +2,9 @@
 
 Common command chains, ordered by frequency.
 
+Pick the chain that matches the current job. `graph` is the right default for
+code-understanding questions, but not for every Effigy interaction.
+
 ## Map code before scanning
 
 ```bash

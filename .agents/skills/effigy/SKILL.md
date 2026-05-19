@@ -2,10 +2,10 @@
 name: effigy
 description: >
   Effigy task-runner skill for agents: discover repo tasks (doctor, tasks,
-  test --plan), map code with graph explore/affected before broad scanning,
-  run work through effigy selectors, parse --json envelopes, and avoid
-  release/CI footguns. Use when the user mentions effigy, effigy.toml, or
-  needs tests, dev, QA, or repo navigation in an Effigy-adopting repo.
+  test --plan), use graph for code-navigation questions, run work through
+  effigy selectors, parse --json envelopes, and avoid release/CI footguns.
+  Use when the user mentions effigy, effigy.toml, or needs tests, dev, QA,
+  repo navigation, deployment, or validation in an Effigy-adopting repo.
 ---
 
 # Effigy Skill
@@ -67,27 +67,31 @@ before trusting explore/affected. Use `rg` for exact tokens and final pre-edit p
 
 Details: `references/agent-operating-loop.md`, `references/graph-assist.md`.
 
-## Priority features (agent pick list)
+## Agent jobs
 
-| Priority | Feature | First command |
-|----------|---------|---------------|
-| 1 | Health + routing | `effigy doctor` |
-| 2 | Task inventory | `effigy tasks` / `effigy --json tasks` |
-| 3 | Code map (pre-scan) | `effigy graph explore "<question>" --json` |
-| 4 | Run work | `effigy <selector>` |
-| 5 | Tests | `effigy test --plan` then `effigy test` |
-| 6 | Post-edit validation scope | `effigy graph affected --stdin` |
-| 7 | Explain routing | `effigy doctor <selector> <args...>` |
-| 8 | Repo scanners | `effigy scan god-files` / `effigy doctor --verbose` |
-| 9 | Local dev stack | `effigy container up` → `effigy dev` |
-| 10 | QA aggregators | `effigy qa:ci:fast` (if repo defines `qa:*`) |
-| 11 | Secrets | `effigy secrets doctor` (when `[secrets]` exists) |
-| 12 | Bootstrap clone | `effigy bootstrap <git-url>` |
-| 13 | State / deploy | `effigy state plan`, `effigy deploy plan` |
-| 14 | Release cut | human-gated only — `references/release-protocol.md` |
+Prioritize by the job you are doing, not by one globally dominant feature.
 
-Built-ins worth knowing beyond the table: `init`, `watch`, `defer`, `docs`,
-`contracts`, `bundle`, `artifact`, `demo`, `changelog`, `distribution`.
+| Job | Use when | First command |
+|-----|----------|---------------|
+| Discover the repo | You just arrived, routing is unclear, or the task surface is unknown | `effigy doctor` |
+| Inventory tasks | You need runnable selectors or QA/release surfaces | `effigy tasks` |
+| Inspect test shape | You need to know what test execution will actually do | `effigy test --plan` |
+| Understand code | The question is code-navigation shaped: ownership, flow, implementation, impact | `effigy graph explore "<question>" --json` |
+| Execute work | A repo task or built-in already covers the requested operation | `effigy <selector>` |
+| Validate changes | You need tests, QA, or narrower post-edit proof | `effigy test` or `git diff --name-only | effigy graph affected --stdin --json` |
+| Parse results | Another agent/tool needs stable machine-readable output | `effigy --json <command>` |
+| Use specialized surfaces | The task is domain-specific: state, deploy, distribution, bundles, secrets, docs, contracts, containers | start with the matching built-in |
+
+Rule of thumb:
+
+- use `doctor` / `tasks` / `test --plan` as the default entry sequence
+- use `graph` first for code-understanding questions, not for every task
+- use selectors and built-ins for real execution work
+- use `--json` whenever another agent step will consume the result
+
+Built-ins worth knowing beyond the default loop: `init`, `watch`, `defer`,
+`docs`, `contracts`, `bundle`, `artifact`, `demo`, `changelog`,
+`distribution`.
 
 ## Common workflows
 
