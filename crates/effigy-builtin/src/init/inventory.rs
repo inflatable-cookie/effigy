@@ -164,20 +164,16 @@ pub(super) fn render_follow_up_jobs_excluding(
     if relevant.is_empty() {
         return out;
     }
-    out.push_str("Additional setup available:\n");
+    out.push_str("Next steps:\n");
     for job in relevant {
         if current_category != Some(job.category) {
             current_category = Some(job.category);
             out.push_str(&format!("{}:\n", job.category.heading()));
         }
-        out.push_str(&format!("- {}. ", job.summary));
         if let Some(command) = &job.recommended_command {
-            out.push_str(&format!("Run `{command}`"));
+            out.push_str(&format!("- `{command}` - {}", job.summary));
         } else {
-            out.push_str(&job.reason);
-        }
-        if !job.reason.is_empty() && job.recommended_command.is_some() {
-            out.push_str(&format!(" ({})", job.reason));
+            out.push_str(&format!("- {}", job.summary));
         }
         out.push('\n');
     }

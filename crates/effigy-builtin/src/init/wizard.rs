@@ -31,13 +31,12 @@ const AGENT_SETUP_JOBS: &[AgentInitJob] = &[
 const WIZARD_PHASES: &[WizardPhase] = &[
     WizardPhase {
         title: "Baseline repo files",
-        summary: "Create missing repo entry files without replacing existing project files.",
+        summary: "Create missing `effigy.toml` and `README.md` files.",
         jobs: BASELINE_JOBS,
     },
     WizardPhase {
         title: "Agent setup",
-        summary:
-            "Add the managed agent contract, local Effigy skill copy, and `.effigy/` ignore policy.",
+        summary: "Add repo-local agent instructions and the Effigy skill.",
         jobs: AGENT_SETUP_JOBS,
     },
 ];
@@ -83,7 +82,7 @@ where
 
     writeln!(
         output,
-        "Effigy init wizard\nApply relevant setup phases for this repo.\n"
+        "Effigy init\nI'll check repo setup and ask before making changes.\n"
     )
     .map_err(render_prompt_error)?;
 
@@ -93,13 +92,13 @@ where
             if pending.is_empty() {
                 continue;
             }
-            writeln!(output, "{}:", phase.title).map_err(render_prompt_error)?;
             writeln!(output, "{}", phase.summary).map_err(render_prompt_error)?;
-            for check in &pending {
-                writeln!(output, "- {} -> {}", check.id(), check.action_description())
-                    .map_err(render_prompt_error)?;
-            }
-            if prompt_yes_no_with_default(input, output, "Apply this phase? [Y/n]: ", true)? {
+            if prompt_yes_no_with_default(
+                input,
+                output,
+                &format!("{}? [Y/n]: ", phase.title),
+                true,
+            )? {
                 let selected_jobs: BTreeSet<_> = pending.iter().map(|check| check.job()).collect();
                 let phase_results = run_selected_agent_jobs(
                     target_root,
@@ -129,21 +128,13 @@ where
     let inventory = build_setup_inventory(target_root, &checks);
     let runnable_jobs = runnable_contextual_jobs(&inventory);
     for job in runnable_jobs {
-        writeln!(output, "{}:", job.category_heading()).map_err(render_prompt_error)?;
-        writeln!(output, "- {}", job.summary).map_err(render_prompt_error)?;
-        if !job.reason.is_empty() {
-            writeln!(output, "  {}", job.reason).map_err(render_prompt_error)?;
-        }
-        if let Some(command) = &job.recommended_command {
-            writeln!(output, "  Command: {command}").map_err(render_prompt_error)?;
-        }
         let default = default_for_setup_job(&job);
         let prompt = if default {
-            "Run this setup job? [Y/n]: "
+            format!("{}? [Y/n]: ", prompt_text_for_job(&job))
         } else {
-            "Run this setup job? [y/N]: "
+            format!("{}? [y/N]: ", prompt_text_for_job(&job))
         };
-        if prompt_yes_no_with_default(input, output, prompt, default)? {
+        if prompt_yes_no_with_default(input, output, &prompt, default)? {
             let report = execute_selected_actions(
                 ports,
                 target_root,
@@ -168,37 +159,32 @@ where
     )))
 }
 
-trait WizardSetupJobExt {
-    fn category_heading(&self) -> &'static str;
-}
-
-impl WizardSetupJobExt for SetupJob {
-    fn category_heading(&self) -> &'static str {
-        match self.category {
-            super::inventory::SetupCategory::Baseline => "Baseline",
-            super::inventory::SetupCategory::Tasks => "Task adoption",
-            super::inventory::SetupCategory::Health => "Repo health",
-            super::inventory::SetupCategory::Graph => "Graph",
-            super::inventory::SetupCategory::Secrets => "Secrets",
-            super::inventory::SetupCategory::Runtime => "Runtime",
-            super::inventory::SetupCategory::Bundles => "Bundles",
-            super::inventory::SetupCategory::Validation => "Validation",
-            super::inventory::SetupCategory::Advanced => "Advanced surfaces",
-        }
-    }
-}
-
 fn runnable_contextual_jobs(inventory: &[SetupJob]) -> Vec<SetupJob> {
     inventory
         .iter()
         .filter(|job| {
             !matches!(job.category, super::inventory::SetupCategory::Baseline)
+                && !matches!(job.category, super::inventory::SetupCategory::Health)
                 && matches!(job.applicability, SetupApplicability::Applicable)
                 && job.can_run_noninteractive
                 && !matches!(job.execution_kind, SetupExecutionKind::Guidance)
         })
         .cloned()
         .collect()
+}
+
+fn prompt_text_for_job(job: &SetupJob) -> &'static str {
+    match job.id.as_str() {
+        "task_surface.scan" => "Review current Effigy tasks",
+        "task_migration.package_json" => "Import package.json scripts",
+        "graph_status.inspect" => "Check graph index status",
+        "graph_index.build" => "Build the code graph index",
+        "secrets_surface.inspect" => "Check declared secrets",
+        "secrets_vault.init" => "Set up the local secrets vault",
+        "bundle_surface.inspect" => "Inspect the bundle source",
+        "bundle_sync.run" => "Sync bundle sources",
+        _ => "Run this setup step",
+    }
 }
 
 fn default_for_setup_job(job: &SetupJob) -> bool {
@@ -499,8 +485,7 @@ mod tests {
 
         let prompt_text = String::from_utf8(output).expect("prompt text");
         assert!(prompt_text.contains("Baseline repo setup is already satisfied."));
-        assert!(prompt_text.contains("Run this setup job?"));
-        assert!(prompt_text.contains("Command: effigy tasks"));
+        assert!(prompt_text.contains("Review current Effigy tasks?"));
         assert!(rendered.contains("Completed setup jobs:"));
         assert!(rendered.contains("task_surface.scan [inspected]"));
     }

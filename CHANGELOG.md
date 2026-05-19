@@ -97,9 +97,10 @@ During v0.x, MINOR bumps may include breaking changes.
   exist while keeping release/deploy/state/distribution mutation out of init.
 - **TTY init now executes runnable setup jobs:** when plain `effigy init` runs
   on a real TTY, it now continues past satisfied baseline setup and asks yes/no
-  questions for runnable contextual jobs such as `doctor`, `tasks`, `test
-  --plan`, graph status/index, package migration, bundle inspection, and
-  secrets inspection instead of only listing those commands as follow-up text.
+  questions for runnable setup jobs such as task migration, graph status/index,
+  bundle inspection, and secrets inspection instead of only listing those
+  commands as follow-up text. Health checks such as `doctor`, `tasks`, and
+  `test --plan` remain end-of-wizard next-step guidance.
 
 ### Fixed
 - **Workspace shell tool baseline is now explicit across workspace catalogs:**
