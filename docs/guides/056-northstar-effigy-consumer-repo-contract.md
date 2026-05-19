@@ -22,8 +22,8 @@ Use this guide when you are preparing a consuming repo to:
 Start with this sequence:
 
 ```sh
-effigy tasks
 effigy doctor
+effigy tasks
 effigy test --plan
 ```
 
@@ -157,13 +157,15 @@ Do not leave this ambiguous in multi-runner repos.
 
 Minimum semantics:
 
-1. start with `effigy tasks`
-2. use `effigy doctor` or `effigy health`
+1. start with `effigy doctor` or `effigy health`
+2. use `effigy tasks`
 3. inspect tests with `effigy test --plan`
-4. prefer `effigy <task>` for supported repo work
-5. use `effigy --json <command>` for machine consumers
-6. use `--repo <PATH>` only when intentionally targeting another repo
-7. fall back to raw tools only when Effigy does not cover the path
+4. use `effigy graph` when the job is code understanding and the repo keeps a
+   fresh local graph
+5. prefer `effigy <task>` for supported repo work
+6. use `effigy --json <command>` for machine consumers
+7. use `--repo <PATH>` only when intentionally targeting another repo
+8. fall back to raw tools only when Effigy does not cover the path
 
 Minimum policy notes:
 

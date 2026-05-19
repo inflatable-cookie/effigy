@@ -111,7 +111,7 @@ Deep dive:
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](./023-troubleshooting-and-failure-recipes.md)
 
-### Agent-first repo context
+### Agent code-understanding context
 
 ```sh
 effigy graph index
@@ -122,12 +122,16 @@ effigy graph context "trace deploy provider export" --max-files 8 --max-bytes 40
 effigy graph search release --limit 10 --json
 ```
 
-Use the graph before broad file scanning when you need:
+Use the graph before broad file scanning when the job is code understanding and you need:
 
 - the first files to read
 - a symbol neighborhood
 - bounded machine-readable context
 - a narrowed validation target after edits
+
+Do not treat this as the front door for every task. For discovery, health, and
+test routing, start with `effigy doctor`, `effigy tasks`, and
+`effigy test --plan`.
 
 If `graph status --json` reports `stale_paths`, refresh with `effigy graph index --json`
 before trusting query output.

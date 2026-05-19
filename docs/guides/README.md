@@ -115,7 +115,7 @@ Read:
 Use when:
 - another tool is calling Effigy
 - you need stable JSON
-- you want the graph as the first agent-facing repo map
+- you want the graph as the code-understanding lane inside a wider agent flow
 - you are adopting Effigy across multiple repos
 
 ### Release and distribute Effigy-managed software
