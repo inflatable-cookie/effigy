@@ -5,9 +5,9 @@ assistants how to use Effigy.
 
 ## What's here
 
-- [`effigy/`](./effigy/) — main skill. Discovery, common workflows, JSON
-  envelopes, config shapes, footguns, release protocol. Light front door
-  ([`SKILL.md`](./effigy/SKILL.md)) routes to topic references in
+- [`effigy/`](./effigy/) — main skill. Discovery, code-understanding with
+  graph, common workflows, JSON envelopes, config shapes, footguns, release
+  protocol. Light front door ([`SKILL.md`](./effigy/SKILL.md)) routes to topic references in
   [`effigy/references/`](./effigy/references/). Task names such as **`dev`** are
   repo-defined unless the doc names a built-in (`test`, `init`, …).
 

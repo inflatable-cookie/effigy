@@ -433,8 +433,9 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - `state history` is read-only; it scans report JSON files and ignores malformed
   files with warnings instead of maintaining an index
 - `graph index` is explicit; queries do not rebuild the graph for you
-- `graph explore` is the preferred one-call agent navigation packet; use
-  `graph context` when you want the lower-level ranked item list instead
+- `graph explore` is the preferred one-call agent navigation packet for
+  code-understanding work; use `graph context` when you want the lower-level
+  ranked item list instead
 - `graph affected` accepts changed paths as args or via `--stdin`; it narrows
   likely validation targets but does not prove exhaustive test reachability
 - `graph watch --json` streams newline-delimited `effigy.graph.watch.event.v1`
