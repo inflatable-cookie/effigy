@@ -3,7 +3,7 @@
 When you arrive in an unfamiliar repo that has `effigy.toml`, run these in
 order. Each one tells you something distinct; together they map the surface.
 
-For the full agent sequence (including graph before broad scanning), see
+For the full agent sequence and the code-understanding lane, see
 `agent-operating-loop.md`.
 
 **Selector reminder:** most names in `effigy tasks` are **manifest tasks**.
@@ -81,10 +81,10 @@ results into another tool.
 effigy --json tasks | jq -r '.result.payload.tasks[].name'
 ```
 
-## 6. Graph (before broad `rg` / file reads)
+## Optional next: Graph (before broad `rg` / file reads)
 
-When you need codebase context, run after the five commands above (or in
-parallel if the user question is code-location shaped):
+When the job is code understanding, run this after the five commands above (or
+in parallel if the user question is already code-location shaped):
 
 ```bash
 effigy graph status --json
@@ -96,6 +96,7 @@ Details: `graph-assist.md`.
 ## What to do with the results
 
 - **All five clean** → proceed with the work the user asked for.
+- **Need code ownership or flow next** → switch to `graph`.
 - **`doctor` reports FAIL** → fix the underlying issue or hand back to user.
   Don't paper over a structural error.
 - **`tasks` is empty + user asked for a workflow** → the repo may use raw

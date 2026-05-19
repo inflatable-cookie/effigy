@@ -2,7 +2,12 @@
 
 Use the local code graph when you need repo context **before** broad `rg` or
 file reads. The graph is a deterministic index under `.effigy/graph/graph.db` —
-a navigation map, not compiler-grade truth.
+a navigation map, not compiler-grade truth. It is the code-understanding lane
+inside the wider Effigy workflow, not the universal front door.
+
+Start with `effigy doctor`, `effigy tasks`, and `effigy test --plan` when the
+repo surface is still unknown. Switch to graph when the question becomes code
+ownership, flow, implementation, or changed-file impact.
 
 ## When to use it
 
