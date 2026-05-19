@@ -7,6 +7,8 @@ use effigy_core::fs_probe::PathPresenceCache;
 use super::command_spec::run_builtin_command;
 use super::render_builtin_help_topic;
 use crate::BuiltinError;
+#[path = "init/agent.rs"]
+mod agent;
 #[path = "init/output.rs"]
 mod output;
 #[path = "init/request.rs"]
@@ -32,6 +34,11 @@ fn run_init_request(
     target_root: &Path,
 ) -> Result<Option<String>, BuiltinError> {
     match request.mode {
+        request::InitMode::Ensure { mode } => {
+            agent::run_agent_init(target_root, request.output_json, mode, || {
+                scaffold::load_starter(request::DEFAULT_STARTER)
+            })
+        }
         request::InitMode::List => run_list(request.output_json),
         request::InitMode::Emit { starter_name } => run_emit(
             starter_name,

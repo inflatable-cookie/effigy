@@ -56,7 +56,16 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
             "--help",
             "-h",
         ],
-        "init" => &["--dry-run", "--force", "--json", "--help", "-h"],
+        "init" => &[
+            "--check",
+            "--apply",
+            "--repair",
+            "--dry-run",
+            "--force",
+            "--json",
+            "--help",
+            "-h",
+        ],
         "migrate" => &["--from", "--script", "--apply", "--json", "--help", "-h"],
         "config" => &[
             "path",

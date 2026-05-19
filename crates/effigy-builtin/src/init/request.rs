@@ -12,10 +12,19 @@ pub(super) const DEFAULT_STARTER: &str = "minimal";
 
 /// What `effigy init` was asked to do.
 pub(super) enum InitMode {
+    /// Check or apply the default idempotent repo initiation surface.
+    Ensure { mode: AgentInitMode },
     /// Emit a named starter into the target repo.
     Emit { starter_name: String },
     /// List registered starters instead of emitting.
     List,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum AgentInitMode {
+    Check,
+    Apply,
+    Repair,
 }
 
 pub(super) struct InitRequest {
@@ -34,6 +43,9 @@ pub(super) fn parse_init_request(
     let mut force = false;
     let mut dry_run = false;
     let mut list = false;
+    let mut check = false;
+    let mut apply = false;
+    let mut repair = false;
 
     // Anything the flag matcher rejects is collected here; we partition it
     // into unknown flags vs. positional names below so the error message
@@ -46,6 +58,9 @@ pub(super) fn parse_init_request(
                 ("--force", &mut force),
                 ("--dry-run", &mut dry_run),
                 ("--list", &mut list),
+                ("--check", &mut check),
+                ("--apply", &mut apply),
+                ("--repair", &mut repair),
             ],
         ) {
             return Ok(ParseLoopAction::Handled);
@@ -85,6 +100,52 @@ pub(super) fn parse_init_request(
         }
         return Ok(InitRequest {
             mode: InitMode::List,
+            output_json,
+            force: false,
+            dry_run: false,
+        });
+    }
+
+    if check || apply || repair {
+        if starter_name.is_some() {
+            return Err(BuiltinError::task_invocation(
+                "`--check`, `--apply`, and `--repair` cannot be combined with a starter name",
+            ));
+        }
+        if force || dry_run {
+            return Err(BuiltinError::task_invocation(
+                "`effigy init --check|--apply|--repair` cannot be combined with `--force` or `--dry-run`",
+            ));
+        }
+        let selected_modes = [check, apply, repair]
+            .into_iter()
+            .filter(|selected| *selected)
+            .count();
+        if selected_modes > 1 {
+            return Err(BuiltinError::task_invocation(
+                "`effigy init` accepts only one of `--check`, `--apply`, or `--repair`",
+            ));
+        }
+        let mode = if apply {
+            AgentInitMode::Apply
+        } else if repair {
+            AgentInitMode::Repair
+        } else {
+            AgentInitMode::Check
+        };
+        return Ok(InitRequest {
+            mode: InitMode::Ensure { mode },
+            output_json,
+            force: false,
+            dry_run: false,
+        });
+    }
+
+    if starter_name.is_none() && !force && !dry_run {
+        return Ok(InitRequest {
+            mode: InitMode::Ensure {
+                mode: AgentInitMode::Apply,
+            },
             output_json,
             force: false,
             dry_run: false,

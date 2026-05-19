@@ -144,6 +144,18 @@ guidance, install the bundled agent skill:
 npx skills add inflatable-cookie/effigy
 ```
 
+For project-local adoption managed by Effigy itself, use:
+
+```bash
+effigy init --check --json
+effigy init
+```
+
+The check mode reports whether `AGENTS.md`, `.agents/skills/effigy`, local
+`.effigy/` ignore policy, a baseline manifest, and the first-read README are
+present. Plain `effigy init` writes only deterministic managed surfaces and
+preserves existing project manifests and READMEs.
+
 The skill follows the open
 [Agent Skills](https://agentskills.io/specification) standard and works in
 Claude Code, OpenAI Codex, Cursor, and any other agent that consumes

@@ -158,43 +158,30 @@ fn builtin_init_json_contract_has_versioned_shape() {
     let parsed = run_invocation_json(temp_workspace("init-json-contract"), "init", &["--json"]);
     assert_schema_v1(&parsed, "effigy.init.v1");
     assert_eq!(parsed["ok"], true);
-    assert_eq!(parsed["written"], true);
-    assert_eq!(parsed["dry_run"], false);
-    assert_eq!(parsed["overwritten"], false);
-    assert_eq!(parsed["starter"], "minimal");
-    let files = parsed["files"]
+    assert_eq!(parsed["mode"], "apply");
+    assert_eq!(parsed["status"], "applied");
+    assert_eq!(parsed["changed"], true);
+    assert_eq!(parsed["needs_changes"], false);
+    let checks = parsed["checks"]
         .as_array()
-        .expect("files array is required in effigy.init.v1 payloads");
-    assert_eq!(
-        files.len(),
-        2,
-        "minimal starter emits effigy.toml + README.md"
-    );
-    let effigy = files
+        .expect("checks array is required in effigy.init.v1 payloads");
+    let effigy = checks
         .iter()
-        .find(|f| f["target"] == "effigy.toml")
+        .find(|f| f["id"] == "manifest.effigy_toml")
         .expect("effigy.toml entry");
     assert!(effigy["path"]
         .as_str()
         .is_some_and(|path| path.ends_with("effigy.toml")));
-    assert!(effigy["contents"]
-        .as_str()
-        .is_some_and(|text| text.contains("[tasks]")));
-    assert_eq!(effigy["written"], true);
-    assert_eq!(effigy["existed"], false);
+    assert_eq!(effigy["status"], "created");
 
-    let readme = files
+    let readme = checks
         .iter()
-        .find(|f| f["target"] == "README.md")
+        .find(|f| f["id"] == "readme.project_intro")
         .expect("README.md entry");
     assert!(readme["path"]
         .as_str()
         .is_some_and(|path| path.ends_with("README.md")));
-    assert!(readme["contents"]
-        .as_str()
-        .is_some_and(|text| text.contains("inflatable-cookie/effigy")));
-    assert_eq!(readme["written"], true);
-    assert_eq!(readme["existed"], false);
+    assert_eq!(readme["status"], "created");
 }
 
 #[test]
@@ -205,22 +192,44 @@ fn builtin_init_json_marks_readme_skipped_when_readme_already_exists() {
     let parsed = run_invocation_json(root, "init", &["--json"]);
     assert_schema_v1(&parsed, "effigy.init.v1");
     assert_eq!(parsed["ok"], true);
-    let files = parsed["files"]
+    let checks = parsed["checks"]
         .as_array()
-        .expect("files array is required in effigy.init.v1 payloads");
-    let readme = files
+        .expect("checks array is required in effigy.init.v1 payloads");
+    let readme = checks
         .iter()
-        .find(|f| f["target"] == "README.md")
+        .find(|f| f["id"] == "readme.project_intro")
         .expect("README.md entry");
-    assert_eq!(readme["written"], false);
-    assert_eq!(readme["existed"], true);
-    assert_eq!(readme["skipped"], true);
-    let effigy = files
+    assert_eq!(readme["status"], "present");
+    assert_eq!(readme["action"], "preserve_existing");
+    let effigy = checks
         .iter()
-        .find(|f| f["target"] == "effigy.toml")
+        .find(|f| f["id"] == "manifest.effigy_toml")
         .expect("effigy.toml entry");
-    assert_eq!(effigy["written"], true);
-    assert_eq!(effigy["existed"], false);
+    assert_eq!(effigy["status"], "created");
+}
+
+#[test]
+fn builtin_init_agent_json_contract_has_versioned_shape() {
+    let parsed = run_invocation_json(
+        temp_workspace("init-agent-json-contract"),
+        "init",
+        &["--check", "--json"],
+    );
+    assert_schema_v1(&parsed, "effigy.init.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["mode"], "check");
+    assert_eq!(parsed["status"], "needs_changes");
+    assert_eq!(parsed["changed"], false);
+    assert_eq!(parsed["needs_changes"], true);
+    let checks = parsed["checks"]
+        .as_array()
+        .expect("checks array is required in effigy.init.v1 payloads");
+    assert!(checks
+        .iter()
+        .any(|check| check["id"] == "agents_md.effigy_contract"));
+    assert!(checks
+        .iter()
+        .any(|check| check["id"] == "skill.codex_project"));
 }
 
 #[test]

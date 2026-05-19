@@ -245,12 +245,17 @@ move that detail into `effigy.toml`.
 
 ```sh
 effigy init
+effigy init --check --json
 effigy tasks migrate --from package.json
 effigy config --schema --minimal
 ```
 
 This is usually where Effigy starts to feel easier: env handling, test
 selection, chains, caches, and task naming become explicit instead of implied.
+Plain `effigy init` now fills in the missing deterministic repo setup surface:
+baseline manifest and README, managed `AGENTS.md`, project-local skill files,
+and local `.effigy/` ignore rules. Use `--check --json` when another tool or
+agent needs a no-write setup report first.
 
 Deep dive:
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)

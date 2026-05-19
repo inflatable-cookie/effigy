@@ -105,6 +105,8 @@ Built-ins worth knowing beyond the default loop: `init`, `watch`, `defer`,
 | Full local QA | `effigy qa` or `effigy qa:ci:local` |
 | Repo health scan | `effigy doctor --verbose` |
 | Scaffold manifest | `effigy init` then `effigy tasks migrate` |
+| Check repo setup | `effigy init --check --json` |
+| Apply repo setup | `effigy init` |
 | Read-only release check | `effigy release gates` |
 
 Details: `references/workflow-shortcuts.md`.

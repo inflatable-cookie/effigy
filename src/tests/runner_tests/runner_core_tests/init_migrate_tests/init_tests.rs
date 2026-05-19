@@ -10,7 +10,16 @@ fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
     let root = temp_workspace("builtin-init-create");
 
     let out = run_builtin_ok(root.to_path_buf(), "init", &[]);
-    assert_output_contains_all(&out, &["Created effigy.toml", "Created README.md"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "Effigy init apply: applied",
+            "manifest.effigy_toml [created]",
+            "readme.project_intro [created]",
+            "agents_md.effigy_contract [created]",
+            "skill.codex_project [created]",
+        ],
+    );
     assert_file_text_contains_all(
         &root.join("effigy.toml"),
         &[
@@ -23,6 +32,10 @@ fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
     assert_file_text_contains_all(
         &root.join("README.md"),
         &["inflatable-cookie/effigy", "Built-ins"],
+    );
+    assert_file_text_contains_all(
+        &root.join("AGENTS.md"),
+        &["BEGIN EFFIGY AGENT CONTRACT", "effigy doctor"],
     );
 
     let listed = run_tasks(TasksArgs {
@@ -43,7 +56,7 @@ fn run_manifest_task_builtin_init_refuses_overwrite_without_force() {
     let root = temp_workspace("builtin-init-refuse-overwrite");
     write_root_manifest(&root, "[tasks]\nold = \"printf old\"\n");
 
-    let err = run_builtin_err(root.to_path_buf(), "init", &[]);
+    let err = run_builtin_err(root.to_path_buf(), "init", &["minimal"]);
     assert_task_invocation_error_contains(err, &["already exists", "`effigy init --force`"]);
     assert_file_text_contains_all(&root.join("effigy.toml"), &["old = \"printf old\""]);
     assert_path_missing(
@@ -97,9 +110,9 @@ fn run_manifest_task_builtin_init_skips_existing_readme_without_force() {
     assert_output_contains_all(
         &out,
         &[
-            "Created effigy.toml",
-            "Skipped README.md",
-            "Pass --force to replace",
+            "manifest.effigy_toml [created]",
+            "readme.project_intro [present]",
+            "existing file left untouched",
         ],
     );
     assert_file_text_contains_all(
@@ -118,19 +131,88 @@ fn run_manifest_task_builtin_init_json_reports_write_status() {
         &out,
         &[
             "\"schema\": \"effigy.init.v1\"",
-            "\"starter\": \"minimal\"",
-            "\"written\": true",
-            "\"dry_run\": false",
-            "\"overwritten\": false",
-            "\"files\":",
-            "\"target\": \"effigy.toml\"",
-            "\"target\": \"README.md\"",
-            "\"contents\":",
-            "\"existed\": false",
+            "\"mode\": \"apply\"",
+            "\"status\": \"applied\"",
+            "\"changed\": true",
+            "\"checks\":",
+            "\"id\": \"manifest.effigy_toml\"",
+            "\"id\": \"readme.project_intro\"",
+            "\"id\": \"agents_md.effigy_contract\"",
         ],
     );
     assert_path_exists(&root.join("effigy.toml"), "init json manifest");
     assert_path_exists(&root.join("README.md"), "init json readme");
+}
+
+#[test]
+fn run_manifest_task_builtin_init_agent_check_reports_missing_without_writing() {
+    let root = temp_workspace("builtin-init-agent-check");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["--check", "--json"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "\"schema\": \"effigy.init.v1\"",
+            "\"mode\": \"check\"",
+            "\"status\": \"needs_changes\"",
+            "\"id\": \"manifest.effigy_toml\"",
+            "\"id\": \"readme.project_intro\"",
+            "\"id\": \"agents_md.effigy_contract\"",
+            "\"id\": \"skill.codex_project\"",
+            "\"id\": \"gitignore.effigy_local_state\"",
+        ],
+    );
+    assert_path_missing(&root.join("effigy.toml"), "agent check manifest");
+    assert_path_missing(&root.join("AGENTS.md"), "agent check instructions");
+    assert_path_missing(
+        &root.join(".agents/skills/effigy/SKILL.md"),
+        "agent check skill",
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_agent_apply_is_idempotent_and_preserves_manifest() {
+    let root = temp_workspace("builtin-init-agent-apply");
+    write_root_manifest(&root, "[tasks]\ncustom = \"printf custom\"\n");
+
+    let applied = run_builtin_ok(root.to_path_buf(), "init", &["--apply", "--json"]);
+    assert_output_contains_all(
+        &applied,
+        &[
+            "\"schema\": \"effigy.init.v1\"",
+            "\"mode\": \"apply\"",
+            "\"status\": \"applied\"",
+            "\"changed\": true",
+        ],
+    );
+    assert_file_text_contains_all(&root.join("effigy.toml"), &["custom = \"printf custom\""]);
+    assert_file_text_contains_all(
+        &root.join("AGENTS.md"),
+        &[
+            "BEGIN EFFIGY AGENT CONTRACT",
+            "effigy doctor",
+            "effigy graph",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join(".agents/skills/effigy/SKILL.md"),
+        &["name: effigy", "Agent jobs"],
+    );
+    assert_file_text_contains_all(
+        &root.join(".gitignore"),
+        &["BEGIN EFFIGY LOCAL STATE", ".effigy/"],
+    );
+
+    let checked = run_builtin_ok(root.to_path_buf(), "init", &["--check", "--json"]);
+    assert_output_contains_all(
+        &checked,
+        &[
+            "\"schema\": \"effigy.init.v1\"",
+            "\"mode\": \"check\"",
+            "\"status\": \"ok\"",
+            "\"needs_changes\": false",
+        ],
+    );
 }
 
 #[test]

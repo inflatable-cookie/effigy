@@ -37,6 +37,12 @@ During v0.x, MINOR bumps may include breaking changes.
   `distribution::validate_artifacts`, `distribution::generate_closeout`,
   `distribution::write_summary`) through the same typed CLI-backed command
   contracts and confirmation semantics as the main Effigy surface.
+- **Idempotent agentic init:** `effigy init` now provides a cohesive
+  human-and-agent setup surface with `--check`, `--apply`, `--repair`, and
+  `--json`. It plans or writes a baseline manifest and README when missing, the
+  managed `AGENTS.md` contract, project-local `.agents/skills/effigy` skill
+  files, and local `.effigy/` ignore policy while preserving existing project
+  manifests and READMEs.
 
 ### Changed
 - **Graph context ranking is now role-aware:** implementation-oriented context

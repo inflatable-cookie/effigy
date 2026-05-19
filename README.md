@@ -59,6 +59,7 @@ Adopting Effigy for the first time?
 
 ```bash
 effigy init               # Creates effigy.toml
+effigy init --check       # Check docs, prompts, and local tool setup
 ```
 
 Then add a few tasks:

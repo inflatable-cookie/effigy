@@ -63,7 +63,8 @@ mirrors branch CI that way.
 ## Manifest scaffolding
 
 ```bash
-effigy init                        # interactive scaffold of effigy.toml
+effigy init                        # idempotent baseline repo setup
+effigy init --check --json         # no-write setup report for agents/tools
 effigy tasks migrate --apply       # import package.json scripts into [tasks]
 ```
 

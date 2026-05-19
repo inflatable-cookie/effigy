@@ -8,8 +8,8 @@ pub(crate) fn render_init_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
     render_info_notices(
         renderer,
         &[
-            "Emit a named starter's file set into the current repo.",
-            "Defaults to the `minimal` starter when no name is supplied.",
+            "Idempotently prepare the current repo for human and agent use.",
+            "With no starter name, creates missing baseline files and managed agent surfaces without replacing existing project files.",
             "Multi-file starters write every declared target; nested parent directories are created automatically.",
             "An existing root `README.md` is never overwritten unless `--force` is set (other targets still use the normal conflict rules).",
         ],
@@ -17,7 +17,8 @@ pub(crate) fn render_init_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
     render_usage_section(
         renderer,
         &[
-            "effigy init [<name>] [--dry-run] [--force] [--json]",
+            "effigy init [--check|--apply|--repair] [--json]",
+            "effigy init <name> [--dry-run] [--force] [--json]",
             "effigy init --list [--json]",
         ],
     )?;
@@ -26,11 +27,23 @@ pub(crate) fn render_init_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
         &[
             (
                 "<name>",
-                "Starter to emit (defaults to `minimal`). Use `--list` to see available starters.",
+                "Explicit starter to emit. Omit for the default idempotent repo initializer.",
             ),
             (
                 "--list",
                 "List registered starters instead of emitting one.",
+            ),
+            (
+                "--check",
+                "Check the repo initiation surface without writing.",
+            ),
+            (
+                "--apply",
+                "Write missing deterministic initiation files and managed blocks (default when no starter name is supplied).",
+            ),
+            (
+                "--repair",
+                "Refresh stale managed initiation files and blocks.",
             ),
             (
                 "--dry-run",
@@ -49,8 +62,11 @@ pub(crate) fn render_init_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
         "Starter Scope",
         "init scope",
         &[
-            "default `minimal` starter emits a baseline `effigy.toml` plus a first-read `README.md` (skipped when a root README already exists)",
+            "plain `effigy init` creates missing baseline `effigy.toml`, README, `AGENTS.md`, `.agents/skills/effigy`, and local Effigy ignore rules",
+            "existing project `effigy.toml` and `README.md` files are preserved by the plain initializer",
             "named starters can emit system, workspace, and managed-dev files as one scaffold",
+            "`effigy init --check --json` reports a machine-readable initiation checklist without mutating the repo",
+            "`effigy init --apply` creates managed initiation surfaces idempotently; existing project manifests are preserved",
             "`--list` reports available starters in human and JSON shapes",
             "safe file existence handling (`--dry-run`/`--force`) checks every target before writing",
             "starters can ship post-emission guidance, printed after `Created ...` lines",
