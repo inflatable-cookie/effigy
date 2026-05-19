@@ -1399,7 +1399,124 @@ Read these fields first:
 }
 ```
 
-### 14) Init (`effigy.init.v1`, `effigy.init.list.v1`)
+### 14) Init (`effigy.init.v1`, `effigy.init.checklist.v1`, `effigy.init.actions.v1`, `effigy.init.list.v1`)
+
+Baseline managed init (`effigy init --check --json` / `--apply --json` / `--repair --json`):
+
+```json
+{
+  "schema": "effigy.init.v1",
+  "schema_version": 1,
+  "ok": true,
+  "mode": "check",
+  "status": "ok",
+  "changed": false,
+  "needs_changes": true,
+  "checks": [
+    {
+      "id": "manifest.effigy_toml",
+      "path": "/workspace/app/effigy.toml",
+      "status": "missing",
+      "action": "create_file",
+      "description": "Create a baseline effigy.toml scaffold at the repo root."
+    },
+    {
+      "id": "agents_md.effigy_contract",
+      "path": "/workspace/app/AGENTS.md",
+      "status": "would_update",
+      "action": "insert_managed_block",
+      "description": "Insert or refresh the managed Effigy agent contract block."
+    }
+  ],
+  "text": "Effigy init check: needs changes\n..."
+}
+```
+
+Checklist inventory (`effigy init --checklist --json`):
+
+```json
+{
+  "schema": "effigy.init.checklist.v1",
+  "schema_version": 1,
+  "ok": true,
+  "mode": "checklist",
+  "repo_root": "/workspace/app",
+  "has_changes": true,
+  "summary": {
+    "total_jobs": 8,
+    "applicable": 5,
+    "already_satisfied": 2,
+    "not_applicable": 1
+  },
+  "jobs": [
+    {
+      "id": "manifest.effigy_toml",
+      "category": "baseline",
+      "execution_kind": "apply",
+      "safety_class": "safe_apply",
+      "applicability": "applicable",
+      "can_run_noninteractive": true,
+      "summary": "Create the root effigy.toml scaffold.",
+      "reason": "effigy.toml is missing",
+      "recommended_command": "effigy init --apply"
+    },
+    {
+      "id": "graph_status.inspect",
+      "category": "graph",
+      "execution_kind": "inspect",
+      "safety_class": "safe_check",
+      "applicability": "applicable",
+      "can_run_noninteractive": true,
+      "summary": "Inspect local graph freshness before code-understanding work.",
+      "reason": "graph surface is always available",
+      "recommended_command": "effigy graph status --json"
+    }
+  ]
+}
+```
+
+Selected action execution (`effigy init --apply-actions <ID>[,<ID>...] --json`):
+
+```json
+{
+  "schema": "effigy.init.actions.v1",
+  "schema_version": 1,
+  "ok": true,
+  "mode": "apply_actions",
+  "selected_action_ids": [
+    "manifest.effigy_toml",
+    "graph_status.inspect"
+  ],
+  "changed": true,
+  "outcomes": [
+    {
+      "id": "manifest.effigy_toml",
+      "status": "applied",
+      "summary": "Create a baseline effigy.toml scaffold at the repo root.",
+      "reason": "file created",
+      "command": "effigy init --apply",
+      "output": null
+    },
+    {
+      "id": "graph_status.inspect",
+      "status": "inspected",
+      "summary": "Inspect local graph freshness before code-understanding work.",
+      "reason": "command executed",
+      "command": "effigy graph status --json",
+      "output": "{\n  \"schema\": \"effigy.graph.status.v1\",\n  ...\n}"
+    }
+  ]
+}
+```
+
+Notes:
+- `effigy.init.v1` now covers the baseline managed setup flow and still also
+  covers explicit starter emission
+- checklist mode is a wider setup inventory than baseline `--check`
+- action execution reports per-action `applied`, `inspected`, `guided`,
+  `blocked`, `skipped`, or `failed` outcomes
+
+Starter list / starter emission still use the starter-oriented init contracts.
 
 `effigy init <name>` / `effigy init --dry-run` / `effigy init --force`:
 
@@ -1424,14 +1541,6 @@ Read these fields first:
   "guidance": null
 }
 ```
-
-Notes:
-- starters may emit more than one file; each file has its own
-  `target`/`path`/`contents`/`existed`/`written` entry
-- `guidance` carries optional post-emission text the starter wants operators
-  to see (for example environment variables to export or a follow-up command)
-- `dry_run: true` keeps `written: false` on every file entry; `--force` is
-  the only way to set `overwritten: true`
 
 `effigy init --list`:
 

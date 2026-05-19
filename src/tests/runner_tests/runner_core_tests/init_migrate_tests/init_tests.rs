@@ -216,6 +216,169 @@ fn run_manifest_task_builtin_init_agent_apply_is_idempotent_and_preserves_manife
 }
 
 #[test]
+fn run_manifest_task_builtin_init_checklist_json_reports_setup_inventory() {
+    let root = temp_workspace("builtin-init-checklist-json");
+    std::fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"build\": \"vite build\" } }\n",
+    )
+    .expect("write package");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["--checklist", "--json"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "\"schema\": \"effigy.init.checklist.v1\"",
+            "\"mode\": \"checklist\"",
+            "\"jobs\":",
+            "\"id\": \"task_migration.package_json\"",
+            "\"id\": \"graph_status.inspect\"",
+            "\"can_run_noninteractive\": true",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_apply_actions_json_reports_applied_and_guided_outcomes() {
+    let root = temp_workspace("builtin-init-apply-actions-json");
+
+    let out = run_builtin_ok(
+        root.to_path_buf(),
+        "init",
+        &[
+            "--apply-actions",
+            "manifest.effigy_toml,validation_command.recommend",
+            "--json",
+        ],
+    );
+    assert_output_contains_all(
+        &out,
+        &[
+            "\"schema\": \"effigy.init.actions.v1\"",
+            "\"mode\": \"apply_actions\"",
+            "\"id\": \"manifest.effigy_toml\"",
+            "\"status\": \"applied\"",
+            "\"id\": \"validation_command.recommend\"",
+            "\"status\": \"guided\"",
+        ],
+    );
+    assert_path_exists(&root.join("effigy.toml"), "apply-actions manifest");
+}
+
+#[test]
+fn run_manifest_task_builtin_init_apply_actions_can_run_nested_graph_status() {
+    let root = temp_workspace("builtin-init-apply-actions-graph-status");
+    let _ = run_builtin_ok(root.to_path_buf(), "init", &["--apply"]);
+
+    let out = run_builtin_ok(
+        root.to_path_buf(),
+        "init",
+        &["--apply-actions", "graph_status.inspect", "--json"],
+    );
+    assert_output_contains_all(
+        &out,
+        &[
+            "\"schema\": \"effigy.init.actions.v1\"",
+            "\"id\": \"graph_status.inspect\"",
+            "\"status\": \"inspected\"",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_checklist_reports_contextual_bundle_and_secrets_jobs() {
+    let root = temp_workspace("builtin-init-checklist-contextual-jobs");
+    std::fs::create_dir_all(root.join("bundle")).expect("bundle dir");
+    std::fs::write(
+        root.join("bundle/bundle.toml"),
+        "[bundle]\nname = \"local-test\"\ndescription = \"Local test bundle.\"\n",
+    )
+    .expect("write bundle descriptor");
+    std::fs::write(root.join("bundle/effigy.toml"), "[tasks]\n").expect("write bundle defaults");
+    write_root_manifest(
+        &root,
+        r#"
+[bundle]
+base = { type = "path", dir = "bundle" }
+
+[secrets]
+backend = "effigy-vault"
+"#,
+    );
+    std::fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"dev\": \"vite\", \"build\": \"vite build\" } }\n",
+    )
+    .expect("write package");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["--checklist", "--json"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "\"id\": \"task_migration.package_json\"",
+            "\"id\": \"bundle_surface.inspect\"",
+            "\"id\": \"secrets_surface.inspect\"",
+            "\"applicability\": \"applicable\"",
+            "\"recommended_command\": \"effigy bundle inspect\"",
+            "\"recommended_command\": \"effigy secrets doctor\"",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_init_apply_actions_can_run_contextual_setup_jobs() {
+    let root = temp_workspace("builtin-init-apply-actions-contextual-jobs");
+    std::fs::create_dir_all(root.join("bundle")).expect("bundle dir");
+    std::fs::write(
+        root.join("bundle/bundle.toml"),
+        "[bundle]\nname = \"local-test\"\ndescription = \"Local test bundle.\"\n",
+    )
+    .expect("write bundle descriptor");
+    std::fs::write(root.join("bundle/effigy.toml"), "[tasks]\n").expect("write bundle defaults");
+    write_root_manifest(
+        &root,
+        r#"
+[bundle]
+base = { type = "path", dir = "bundle" }
+
+[secrets]
+backend = "effigy-vault"
+"#,
+    );
+    std::fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"dev\": \"vite\", \"build\": \"vite build\" } }\n",
+    )
+    .expect("write package");
+
+    let out = run_builtin_ok(
+        root.to_path_buf(),
+        "init",
+        &[
+            "--apply-actions",
+            "task_migration.package_json,graph_status.inspect,secrets_surface.inspect,bundle_surface.inspect",
+            "--json",
+        ],
+    );
+    assert_output_contains_all(
+        &out,
+        &[
+            "\"schema\": \"effigy.init.actions.v1\"",
+            "\"id\": \"task_migration.package_json\"",
+            "\"status\": \"applied\"",
+            "\"id\": \"graph_status.inspect\"",
+            "\"status\": \"inspected\"",
+            "\"id\": \"secrets_surface.inspect\"",
+            "\"id\": \"bundle_surface.inspect\"",
+        ],
+    );
+    assert_file_text_contains_all(
+        &root.join("effigy.toml"),
+        &["[tasks]", "dev = \"vite\"", "build = \"vite build\""],
+    );
+}
+
+#[test]
 fn run_manifest_task_builtin_init_rehomes_existing_effigy_gitignore_entry_without_duplication() {
     let root = temp_workspace("builtin-init-agent-gitignore-dedupe");
     std::fs::write(root.join(".gitignore"), ".DS_Store\n.effigy/\n").expect("write gitignore");

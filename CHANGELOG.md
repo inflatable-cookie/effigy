@@ -43,6 +43,15 @@ During v0.x, MINOR bumps may include breaking changes.
   managed `AGENTS.md` contract, project-local `.agents/skills/effigy` skill
   files, and local `.effigy/` ignore policy while preserving existing project
   manifests and READMEs.
+- **Interactive TTY init wizard:** plain `effigy init` now enters a bounded
+  yes/no setup wizard on a real TTY, starting with baseline repo files and
+  agent setup while preserving the existing deterministic non-interactive
+  behavior for `--apply`, `--check`, JSON mode, and non-TTY invocation.
+- **Checklist-driven init execution:** `effigy init` now exposes
+  `--checklist --json` for a machine-readable setup-job inventory and
+  `--apply-actions <ID>[,<ID>...]` for explicit non-interactive execution with
+  per-action outcomes under the `effigy.init.checklist.v1` and
+  `effigy.init.actions.v1` contracts.
 
 ### Changed
 - **Graph context ranking is now role-aware:** implementation-oriented context
@@ -81,6 +90,11 @@ During v0.x, MINOR bumps may include breaking changes.
   includes snippets for file and symbol matches, and file-level context items
   prefer snippets near matched symbol evidence instead of always starting at the
   top of the file.
+- **Init now routes follow-up setup through a shared adapter inventory:** the
+  TTY init wizard now builds a repo-context inventory for task migration,
+  health checks, graph setup, bundle/secrets/runtime follow-up, validation,
+  and read-only advanced surfaces, and only recommends commands that actually
+  exist while keeping release/deploy/state/distribution mutation out of init.
 
 ### Fixed
 - **Workspace shell tool baseline is now explicit across workspace catalogs:**

@@ -689,6 +689,18 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 - [`2026-05/18-144300-fts-backed-source-evidence.md`](./2026-05/18-144300-fts-backed-source-evidence.md)
 
+- [`2026-05/19-104500-init-setup-wizard-lane-opened.md`](./2026-05/19-104500-init-setup-wizard-lane-opened.md)
+
+- [`2026-05/19-120509-init-checklist-contract.md`](./2026-05/19-120509-init-checklist-contract.md)
+
+- [`2026-05/19-122703-tty-init-wizard-engine.md`](./2026-05/19-122703-tty-init-wizard-engine.md)
+
+- [`2026-05/19-124506-setup-job-adapters-and-safety-bounds.md`](./2026-05/19-124506-setup-job-adapters-and-safety-bounds.md)
+
+- [`2026-05/19-130900-noninteractive-init-actions-and-checklist.md`](./2026-05/19-130900-noninteractive-init-actions-and-checklist.md)
+
+- [`2026-05/19-131713-init-setup-wizard-closeout.md`](./2026-05/19-131713-init-setup-wizard-closeout.md)
+
 ## Archived Validation Logs
 
 - [`2026-02-26-deferral-fallback-phase-2-1-checkpoint.md`](./2026-02/26-090000-deferral-fallback-phase-2-1-checkpoint.md)

@@ -13,7 +13,7 @@ use effigy_builtin::{
     BuiltinError, BuiltinLockGuards, BuiltinRuntimePorts, LockScope as BuiltinLockScope,
     TaskCacheEntry, UnlockResult,
 };
-use effigy_cli::{DoctorArgs, TaskInvocation, TasksArgs};
+use effigy_cli::{Command, DoctorArgs, TaskInvocation, TasksArgs};
 use effigy_execution::ExecutionSurface;
 use effigy_manifest::LoadedCatalog;
 
@@ -81,6 +81,10 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts {
 
     fn run_tasks(&self, args: TasksArgs) -> Result<String, BuiltinError> {
         tasks_command::run_tasks(args).map_err(runner_to_builtin)
+    }
+
+    fn run_command(&self, command: Command) -> Result<String, BuiltinError> {
+        crate::runner::run_command(command).map_err(runner_to_builtin)
     }
 
     fn cache_entries(&self, workspace_root: &Path) -> Result<Vec<TaskCacheEntry>, BuiltinError> {

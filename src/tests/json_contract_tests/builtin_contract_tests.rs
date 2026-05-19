@@ -233,6 +233,49 @@ fn builtin_init_agent_json_contract_has_versioned_shape() {
 }
 
 #[test]
+fn builtin_init_checklist_json_contract_has_versioned_shape() {
+    let root = temp_workspace("init-checklist-json-contract");
+    fs::write(
+        root.join("package.json"),
+        "{ \"scripts\": { \"build\": \"vite build\" } }\n",
+    )
+    .expect("write package");
+
+    let parsed = run_invocation_json(root, "init", &["--checklist", "--json"]);
+    assert_schema_v1(&parsed, "effigy.init.checklist.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["mode"], "checklist");
+    assert!(parsed["jobs"].is_array());
+    assert!(parsed["jobs"]
+        .as_array()
+        .expect("jobs array")
+        .iter()
+        .any(|job| job["id"] == "task_migration.package_json"));
+}
+
+#[test]
+fn builtin_init_actions_json_contract_has_versioned_shape() {
+    let parsed = run_invocation_json(
+        temp_workspace("init-actions-json-contract"),
+        "init",
+        &[
+            "--apply-actions",
+            "manifest.effigy_toml,graph_watch.guidance",
+            "--json",
+        ],
+    );
+    assert_schema_v1(&parsed, "effigy.init.actions.v1");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["mode"], "apply_actions");
+    assert!(parsed["outcomes"].is_array());
+    assert!(parsed["outcomes"]
+        .as_array()
+        .expect("outcomes array")
+        .iter()
+        .any(|outcome| outcome["id"] == "manifest.effigy_toml" && outcome["status"] == "applied"));
+}
+
+#[test]
 fn builtin_migrate_json_contract_has_versioned_shape() {
     let root = temp_workspace("migrate-json-contract");
     fs::write(

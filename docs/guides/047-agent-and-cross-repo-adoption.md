@@ -147,14 +147,15 @@ npx skills add inflatable-cookie/effigy
 For project-local adoption managed by Effigy itself, use:
 
 ```bash
-effigy init --check --json
+effigy init --checklist --json
+effigy init --apply-actions manifest.effigy_toml,agents_md.effigy_contract,skill.codex_project,gitignore.effigy_local_state --json
 effigy init
 ```
 
-The check mode reports whether `AGENTS.md`, `.agents/skills/effigy`, local
-`.effigy/` ignore policy, a baseline manifest, and the first-read README are
-present. Plain `effigy init` writes only deterministic managed surfaces and
-preserves existing project manifests and READMEs.
+The checklist mode reports the wider setup inventory with applicability, safety
+class, and recommended commands. Plain `effigy init` writes only deterministic
+managed surfaces and preserves existing project manifests and READMEs, while
+prompting only when the call is on a real TTY without conflicting flags.
 
 When both a project-local and global Effigy skill are present, treat the
 project-local `.agents/skills/effigy` copy as authoritative for that repo. The

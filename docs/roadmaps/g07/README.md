@@ -1,16 +1,20 @@
 # g07 Roadmaps
 
 Status: Active
-Theme: Native code graph intelligence for agents
+Theme: Agent-facing repo intelligence and setup front doors
 
 ## Purpose
 
-`g07` plans Effigy's native code graph surface.
+`g07` plans Effigy's agent-facing repo intelligence and setup front doors.
 
 The goal is a deterministic, local, queryable interpretation of a repo that
 agents can use before falling back to broad file scans. The graph should make
 Effigy better at answering "where is this behavior owned?", "what calls this?",
 "what files matter for this task?", and "what context should I read first?"
+
+Later `g07` lanes also widen into the adjacent setup front door work needed to
+make that intelligence usable from first contact with a repo, especially
+through `effigy init`.
 
 The CLI remains the protocol. This generation does not introduce an MCP server,
 a background daemon, external language plugins, or a JavaScript runtime
@@ -63,6 +67,16 @@ dependency.
 - [`043-large-repo-scale-and-storage-hardening.md`](./043-large-repo-scale-and-storage-hardening.md)
 - [`044-agent-adoption-and-cli-workflow-polish.md`](./044-agent-adoption-and-cli-workflow-polish.md)
 - [`045-codegraph-parity-closeout.md`](./045-codegraph-parity-closeout.md)
+- [`046-codegraph-parity-follow-up-suite.md`](./046-codegraph-parity-follow-up-suite.md)
+- [`047-warm-query-latency-and-release-ranking.md`](./047-warm-query-latency-and-release-ranking.md)
+- [`048-fixture-backed-parity-proof.md`](./048-fixture-backed-parity-proof.md)
+- [`049-codegraph-parity-follow-up-closeout.md`](./049-codegraph-parity-follow-up-closeout.md)
+- [`050-init-setup-wizard-suite.md`](./050-init-setup-wizard-suite.md)
+- [`051-init-context-inventory-and-checklist-contract.md`](./051-init-context-inventory-and-checklist-contract.md)
+- [`052-tty-init-wizard-engine-and-prompt-flow.md`](./052-tty-init-wizard-engine-and-prompt-flow.md)
+- [`053-setup-job-adapters-and-mutation-boundaries.md`](./053-setup-job-adapters-and-mutation-boundaries.md)
+- [`054-noninteractive-init-action-execution-and-migration-paths.md`](./054-noninteractive-init-action-execution-and-migration-paths.md)
+- [`055-init-wizard-proof-docs-and-closeout.md`](./055-init-wizard-proof-docs-and-closeout.md)
 
 ## Design Posture
 
@@ -213,6 +227,20 @@ No active ready card remains in the CodeGraph parity lane.
 `999` is complete.
 
 No active ready card remains in the bounded CodeGraph parity follow-up lane.
+
+`g07.050` is complete.
+
+`1000` is complete.
+
+`1001` is complete.
+
+`1002` is complete.
+
+`1003` is complete.
+
+`1005` is complete.
+
+No active ready card remains in the init setup-wizard lane.
 
 ## Next Task
 

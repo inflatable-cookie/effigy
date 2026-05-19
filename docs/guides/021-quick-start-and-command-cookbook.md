@@ -21,10 +21,17 @@ The default **`minimal`** `init` also drops a root **`README.md`** when that pat
 is empty; if you already have a project README there, Effigy **skips** it unless
 you pass **`--force`**.
 
-Use `effigy init --check --json` when you want a machine-readable report
-of whether the repo has the Effigy agent contract, project-local skill files,
-local state ignore rules, a baseline manifest, and the first-read README. Plain
-`effigy init` applies the missing deterministic setup idempotently.
+Use `effigy init --check --json` when you want the baseline managed setup
+report. Use `effigy init --checklist --json` when you want the wider setup-job
+inventory for agents or scripts. Plain `effigy init` prompts only on a real
+TTY; otherwise it applies the missing deterministic baseline setup
+idempotently.
+
+When a caller wants explicit non-interactive setup execution:
+
+```sh
+effigy init --apply-actions manifest.effigy_toml,graph_status.inspect --json
+```
 
 `--version` shows the installed version (for example `v0.4.0`). Use it to confirm
 you have a recent binary or when reporting issues.

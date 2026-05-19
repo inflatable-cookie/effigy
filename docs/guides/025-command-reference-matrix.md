@@ -101,7 +101,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--threshold/--warn`, `--high`, `--critical`, `--include`, `--exclude`, `--source-root`, marker overrides (`--warning-marker/--high-marker/--critical-marker`), `--show-warnings`, `--no-gitignore`, `--fail-on-findings`, `--markdown`, `--out`, `--json` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Run built-in or explicit `tasks.test` test orchestration | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy watch` | Policy-first file-triggered reruns for a target task | `--owner`, `--debounce-ms`, `--include`, `--exclude`, `--once`, `--max-runs`, `--json` | `effigy.watch.v1` (bounded JSON runs) | `019-watch-init-migrate-foundation.md` |
-| `effigy init` | Idempotently prepare baseline repo setup: missing `effigy.toml`, `README.md`, managed `AGENTS.md`, project-local skill files, and local Effigy ignore rules; or emit an explicit named starter when requested | `--check`, `--apply`, `--repair`, `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1` | `019-watch-init-migrate-foundation.md` |
+| `effigy init` | Prepare repo setup through one front door: bounded TTY wizard for plain terminal use, baseline managed setup for deterministic apply/check/repair, wider setup inventory via checklist mode, or explicit named starter emission when requested | `--check`, `--apply`, `--repair`, `--checklist`, `--apply-actions`, `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1`, `effigy.init.checklist.v1`, `effigy.init.actions.v1`, `effigy.init.list.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy tasks migrate` | Import `package.json` scripts into `[tasks]` | `--from`, `--script`, `--apply`, `--json` | `effigy.migrate.v1` | `019-watch-init-migrate-foundation.md` |
 | `effigy config` | Render config reference/schema snippets, inspect the effective composed manifest, or manage user-global container defaults | `inspect`, `schema`, `path`, `get`, `set`, `unset`, `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--user-inspect`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md` |
 | `effigy tasks unlock` | Clear lock scopes manually | `--all`, `--yes`, `--json` | `effigy.unlock.v1` | `020-dag-lock-policy-baseline.md` |
@@ -280,6 +280,8 @@ single `effigy.command.v1` envelope.
 effigy test [--plan] [--verbose-results] [--tui] [suite] [runner args]
 effigy watch --owner <effigy|external> [--debounce-ms <MS>] [--include <GLOB>] [--exclude <GLOB>] <task> [task args]
 effigy init [--check|--apply|--repair] [--json]
+effigy init --checklist [--json]
+effigy init --apply-actions <ID>[,<ID>...] [--json]
 effigy init <name> [--dry-run] [--force] [--json]
 effigy init --list [--json]
 effigy tasks migrate [--from <PATH>] [--script <NAME>]... [--apply] [--json]

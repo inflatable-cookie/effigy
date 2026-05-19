@@ -59,31 +59,48 @@ effigy watch --owner external test
 
 ## `effigy init`
 
-Use `init` when the repo needs a clean starting point for Effigy instead of a
-blank manifest created by hand.
+Use `init` when the repo needs a clean starting point for Effigy or when you
+want one bounded setup front door instead of hand-written bootstrap notes.
 
-`init` creates a baseline `effigy.toml` scaffold with:
+Plain `effigy init` now behaves in two modes:
 
-- a minimal valid `[tasks]` section
-- a commented managed-task example (`mode = "tui"`)
-- a commented DAG-style run sequence example
+- on a real TTY, it prompts phase-by-phase through the safe setup work it can
+  actually perform
+- on non-TTY paths, or when flags make the intent explicit, it stays
+  deterministic and non-interactive
+
+The baseline managed setup still covers:
+
+- root `effigy.toml` when missing
+- root `README.md` when missing
+- managed `AGENTS.md` Effigy contract block
+- project-local `.agents/skills/effigy`
+- local `.effigy/` ignore policy
 
 ### Usage
 
 ```sh
 effigy init
-effigy init --dry-run
-effigy init --force
-effigy init --json
+effigy init --check --json
+effigy init --checklist --json
+effigy init --apply-actions manifest.effigy_toml,graph_status.inspect --json
+effigy init minimal --dry-run
+effigy init northstar --force
 ```
 
 ### Safety
 
-- If `effigy.toml` already exists, `init` fails unless `--force` is set.
-- If a root **`README.md`** already exists, starters that ship one **skip** that
-  path by default so your project README is not replaced; pass **`--force`** to
-  overwrite it like any other starter file.
-- `--dry-run` never writes files.
+- plain prompt-driven behavior only happens on a real TTY without conflicting
+  flags
+- `--checklist --json` never writes; it reports the wider setup inventory with
+  applicability, safety class, and recommended commands
+- `--apply-actions` runs only the selected setup jobs and reports per-action
+  outcomes
+- named starters still own `--dry-run` and `--force`
+- if `effigy.toml` already exists, starter emission fails unless `--force` is
+  set
+- if a root **`README.md`** already exists, starter emission **skips** that path
+  by default so your project README is not replaced
 
 ## `effigy tasks migrate`
 
@@ -115,7 +132,9 @@ effigy tasks migrate --from ./frontend/package.json --apply --json
 ## JSON Schemas
 
 - `effigy.watch.v1` for bounded watch runs (`--json` + bounded mode)
-- `effigy.init.v1` for init reports
+- `effigy.init.v1` for baseline init and starter reports
+- `effigy.init.checklist.v1` for wider setup inventory reports
+- `effigy.init.actions.v1` for selected action execution reports
 - `effigy.migrate.v1` for migration previews/applies
 
 ## Contracts Matrix

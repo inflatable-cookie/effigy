@@ -246,6 +246,8 @@ move that detail into `effigy.toml`.
 ```sh
 effigy init
 effigy init --check --json
+effigy init --checklist --json
+effigy init --apply-actions manifest.effigy_toml,graph_status.inspect --json
 effigy tasks migrate --from package.json
 effigy config --schema --minimal
 ```
@@ -254,8 +256,10 @@ This is usually where Effigy starts to feel easier: env handling, test
 selection, chains, caches, and task naming become explicit instead of implied.
 Plain `effigy init` now fills in the missing deterministic repo setup surface:
 baseline manifest and README, managed `AGENTS.md`, project-local skill files,
-and local `.effigy/` ignore rules. Use `--check --json` when another tool or
-agent needs a no-write setup report first.
+and local `.effigy/` ignore rules. Use `--check --json` for the baseline
+managed setup report, `--checklist --json` for the wider setup inventory, and
+`--apply-actions` when a script or agent needs explicit selected-action
+execution instead of prompt-driven TTY flow.
 
 Deep dive:
 - [`022-manifest-cookbook.md`](./022-manifest-cookbook.md)

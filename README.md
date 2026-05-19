@@ -58,8 +58,9 @@ effigy dev                # Start the local stack
 Adopting Effigy for the first time?
 
 ```bash
-effigy init               # Creates effigy.toml
-effigy init --check       # Check docs, prompts, and local tool setup
+effigy init               # TTY wizard on a terminal; idempotent baseline setup otherwise
+effigy init --check --json
+effigy init --checklist --json
 ```
 
 Then add a few tasks:

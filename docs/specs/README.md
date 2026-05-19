@@ -56,6 +56,8 @@ Archived strict lanes:
   batch
 - paused lane `092` should move to `archive/` in the next planning cleanup
   batch
+- completed lane `093` should move to `archive/` in the next planning cleanup
+  batch
 
 ## Next Task
 

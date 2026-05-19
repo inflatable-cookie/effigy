@@ -11,16 +11,21 @@ use crate::BuiltinError;
 pub(super) const DEFAULT_STARTER: &str = "minimal";
 
 /// What `effigy init` was asked to do.
+#[derive(Debug)]
 pub(super) enum InitMode {
     /// Check or apply the default idempotent repo initiation surface.
     Ensure { mode: AgentInitMode },
+    /// Emit the full machine-readable setup inventory without writing.
+    Checklist,
+    /// Execute explicit setup actions without prompting.
+    ApplyActions { action_ids: Vec<String> },
     /// Emit a named starter into the target repo.
     Emit { starter_name: String },
     /// List registered starters instead of emitting.
     List,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub(super) enum AgentInitMode {
     Check,
     Apply,
@@ -32,6 +37,7 @@ pub(super) struct InitRequest {
     pub(super) output_json: bool,
     pub(super) force: bool,
     pub(super) dry_run: bool,
+    pub(super) implicit_default_apply: bool,
 }
 
 pub(super) fn parse_init_request(
@@ -46,6 +52,8 @@ pub(super) fn parse_init_request(
     let mut check = false;
     let mut apply = false;
     let mut repair = false;
+    let mut checklist = false;
+    let mut apply_actions = Vec::<String>::new();
 
     // Anything the flag matcher rejects is collected here; we partition it
     // into unknown flags vs. positional names below so the error message
@@ -61,8 +69,21 @@ pub(super) fn parse_init_request(
                 ("--check", &mut check),
                 ("--apply", &mut apply),
                 ("--repair", &mut repair),
+                ("--checklist", &mut checklist),
             ],
         ) {
+            return Ok(ParseLoopAction::Handled);
+        }
+        if arg == "--apply-actions" {
+            let raw = parser.next_value(
+                "`effigy init --apply-actions` requires a comma-separated action list",
+            )?;
+            apply_actions.extend(
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned),
+            );
             return Ok(ParseLoopAction::Handled);
         }
         Ok(ParseLoopAction::Unknown)
@@ -103,6 +124,59 @@ pub(super) fn parse_init_request(
             output_json,
             force: false,
             dry_run: false,
+            implicit_default_apply: false,
+        });
+    }
+
+    if checklist {
+        if starter_name.is_some() {
+            return Err(BuiltinError::task_invocation(
+                "`effigy init --checklist` cannot be combined with a starter name",
+            ));
+        }
+        if force || dry_run {
+            return Err(BuiltinError::task_invocation(
+                "`effigy init --checklist` cannot be combined with `--force` or `--dry-run`",
+            ));
+        }
+        if check || apply || repair || !apply_actions.is_empty() {
+            return Err(BuiltinError::task_invocation(
+                "`effigy init --checklist` cannot be combined with `--check`, `--apply`, `--repair`, or `--apply-actions`",
+            ));
+        }
+        return Ok(InitRequest {
+            mode: InitMode::Checklist,
+            output_json,
+            force: false,
+            dry_run: false,
+            implicit_default_apply: false,
+        });
+    }
+
+    if !apply_actions.is_empty() {
+        if starter_name.is_some() {
+            return Err(BuiltinError::task_invocation(
+                "`effigy init --apply-actions` cannot be combined with a starter name",
+            ));
+        }
+        if force || dry_run {
+            return Err(BuiltinError::task_invocation(
+                "`effigy init --apply-actions` cannot be combined with `--force` or `--dry-run`",
+            ));
+        }
+        if check || apply || repair {
+            return Err(BuiltinError::task_invocation(
+                "`effigy init --apply-actions` cannot be combined with `--check`, `--apply`, or `--repair`",
+            ));
+        }
+        return Ok(InitRequest {
+            mode: InitMode::ApplyActions {
+                action_ids: apply_actions,
+            },
+            output_json,
+            force: false,
+            dry_run: false,
+            implicit_default_apply: false,
         });
     }
 
@@ -138,6 +212,7 @@ pub(super) fn parse_init_request(
             output_json,
             force: false,
             dry_run: false,
+            implicit_default_apply: false,
         });
     }
 
@@ -149,6 +224,7 @@ pub(super) fn parse_init_request(
             output_json,
             force: false,
             dry_run: false,
+            implicit_default_apply: true,
         });
     }
 
@@ -158,5 +234,71 @@ pub(super) fn parse_init_request(
         output_json,
         force,
         dry_run,
+        implicit_default_apply: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use effigy_cli::TaskInvocation;
+
+    use super::{parse_init_request, AgentInitMode, InitMode};
+
+    fn task() -> TaskInvocation {
+        TaskInvocation {
+            name: "init".to_owned(),
+            args: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn plain_init_marks_implicit_default_apply() {
+        let request = parse_init_request(&task(), &[]).expect("plain init should parse");
+        assert!(matches!(
+            request.mode,
+            InitMode::Ensure {
+                mode: AgentInitMode::Apply
+            }
+        ));
+        assert!(request.implicit_default_apply);
+    }
+
+    #[test]
+    fn explicit_apply_does_not_mark_implicit_default_apply() {
+        let args = vec!["--apply".to_owned()];
+        let request = parse_init_request(&task(), &args).expect("explicit apply should parse");
+        assert!(matches!(
+            request.mode,
+            InitMode::Ensure {
+                mode: AgentInitMode::Apply
+            }
+        ));
+        assert!(!request.implicit_default_apply);
+    }
+
+    #[test]
+    fn checklist_and_apply_actions_parse_as_distinct_modes() {
+        let checklist =
+            parse_init_request(&task(), &["--checklist".to_owned()]).expect("checklist");
+        assert!(matches!(checklist.mode, InitMode::Checklist));
+
+        let actions = parse_init_request(
+            &task(),
+            &[
+                "--apply-actions".to_owned(),
+                "graph_status.inspect,graph_index.build".to_owned(),
+            ],
+        )
+        .expect("apply actions");
+        match actions.mode {
+            InitMode::ApplyActions { action_ids } => assert_eq!(
+                action_ids,
+                vec![
+                    "graph_status.inspect".to_owned(),
+                    "graph_index.build".to_owned()
+                ]
+            ),
+            other => panic!("expected apply-actions mode, got {other:?}"),
+        }
+    }
 }

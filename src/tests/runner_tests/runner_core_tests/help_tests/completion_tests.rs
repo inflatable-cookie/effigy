@@ -13,6 +13,8 @@ fn run_manifest_task_builtin_help_topics_render_expected_content() {
             &[
                 "init Help",
                 "effigy init [--check|--apply|--repair] [--json]",
+                "effigy init --checklist [--json]",
+                "effigy init --apply-actions <ID>[,<ID>...] [--json]",
                 "effigy init <name> [--dry-run] [--force] [--json]",
                 "effigy init --list [--json]",
             ],

@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use effigy_catalog::Starter;
@@ -93,6 +94,32 @@ const SKILL_FILES: &[(&str, &str)] = &[
     ),
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum AgentInitJob {
+    Manifest,
+    Readme,
+    AgentsBlock,
+    SkillTree,
+    Gitignore,
+}
+
+impl AgentInitJob {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Manifest => "manifest.effigy_toml",
+            Self::Readme => "readme.project_intro",
+            Self::AgentsBlock => "agents_md.effigy_contract",
+            Self::SkillTree => "skill.codex_project",
+            Self::Gitignore => "gitignore.effigy_local_state",
+        }
+    }
+}
+
+pub(super) struct AgentInitAssets {
+    manifest_contents: String,
+    readme_contents: String,
+}
+
 pub(super) fn run_agent_init<F>(
     target_root: &Path,
     output_json: bool,
@@ -102,47 +129,67 @@ pub(super) fn run_agent_init<F>(
 where
     F: FnOnce() -> Result<Starter, BuiltinError>,
 {
-    let mut checks = Vec::new();
-    let apply = matches!(mode, AgentInitMode::Apply | AgentInitMode::Repair);
-
-    let starter = load_default_starter()?;
-    let manifest_contents = starter_file_contents(&starter, "effigy.toml")?;
-    let readme_contents = starter_file_contents(&starter, "README.md")?;
-    checks.push(ensure_exact_file(
-        target_root,
-        "manifest.effigy_toml",
-        "effigy.toml",
-        &manifest_contents,
-        apply,
-    )?);
-    checks.push(ensure_exact_file(
-        target_root,
-        "readme.project_intro",
-        "README.md",
-        &readme_contents,
-        apply,
-    )?);
-    checks.push(ensure_managed_block(
-        target_root,
-        "agents_md.effigy_contract",
-        "AGENTS.md",
-        AGENTS_BLOCK_START,
-        AGENTS_BLOCK_END,
-        AGENTS_BLOCK,
-        apply,
-    )?);
-    checks.push(ensure_skill_tree(target_root, apply)?);
-    checks.push(ensure_managed_block(
-        target_root,
-        "gitignore.effigy_local_state",
-        ".gitignore",
-        GITIGNORE_BLOCK_START,
-        GITIGNORE_BLOCK_END,
-        GITIGNORE_BLOCK,
-        apply,
-    )?);
+    let assets = load_agent_init_assets(load_default_starter)?;
+    let checks = collect_agent_checks(target_root, &assets, mode, None)?;
 
     render_agent_init_response(output_json, mode, checks)
+}
+
+pub(super) fn load_agent_init_assets<F>(
+    load_default_starter: F,
+) -> Result<AgentInitAssets, BuiltinError>
+where
+    F: FnOnce() -> Result<Starter, BuiltinError>,
+{
+    let starter = load_default_starter()?;
+    Ok(AgentInitAssets {
+        manifest_contents: starter_file_contents(&starter, "effigy.toml")?,
+        readme_contents: starter_file_contents(&starter, "README.md")?,
+    })
+}
+
+pub(super) fn collect_agent_checks(
+    target_root: &Path,
+    assets: &AgentInitAssets,
+    mode: AgentInitMode,
+    selected_jobs: Option<&BTreeSet<AgentInitJob>>,
+) -> Result<Vec<AgentCheck>, BuiltinError> {
+    let mut checks = Vec::new();
+    for job in [
+        AgentInitJob::Manifest,
+        AgentInitJob::Readme,
+        AgentInitJob::AgentsBlock,
+        AgentInitJob::SkillTree,
+        AgentInitJob::Gitignore,
+    ] {
+        checks.push(run_agent_job(
+            target_root,
+            assets,
+            mode,
+            selected_jobs,
+            job,
+        )?);
+    }
+    Ok(checks)
+}
+
+pub(super) fn run_selected_agent_jobs(
+    target_root: &Path,
+    assets: &AgentInitAssets,
+    mode: AgentInitMode,
+    selected_jobs: &BTreeSet<AgentInitJob>,
+) -> Result<Vec<AgentCheck>, BuiltinError> {
+    let mut checks = Vec::new();
+    for job in selected_jobs {
+        checks.push(run_agent_job(
+            target_root,
+            assets,
+            mode,
+            Some(selected_jobs),
+            *job,
+        )?);
+    }
+    Ok(checks)
 }
 
 fn starter_file_contents(starter: &Starter, target: &str) -> Result<String, BuiltinError> {
@@ -159,7 +206,8 @@ fn starter_file_contents(starter: &Starter, target: &str) -> Result<String, Buil
 }
 
 #[derive(Clone)]
-struct AgentCheck {
+pub(super) struct AgentCheck {
+    job: AgentInitJob,
     id: &'static str,
     path: PathBuf,
     status: AgentCheckStatus,
@@ -168,7 +216,7 @@ struct AgentCheck {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum AgentCheckStatus {
+pub(super) enum AgentCheckStatus {
     Present,
     Missing,
     Stale,
@@ -179,7 +227,7 @@ enum AgentCheckStatus {
 }
 
 impl AgentCheckStatus {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Present => "present",
             Self::Missing => "missing",
@@ -203,9 +251,79 @@ impl AgentCheckStatus {
     }
 }
 
+impl AgentCheck {
+    pub(super) fn id(&self) -> &'static str {
+        self.id
+    }
+
+    pub(super) fn job(&self) -> AgentInitJob {
+        self.job
+    }
+
+    pub(super) fn status(&self) -> AgentCheckStatus {
+        self.status
+    }
+
+    pub(super) fn needs_change(&self) -> bool {
+        self.status.needs_change()
+    }
+
+    pub(super) fn changed(&self) -> bool {
+        self.status.changed()
+    }
+
+    pub(super) fn action_description(&self) -> String {
+        match self.action {
+            "create_file" => format!("create {}", self.path.display()),
+            "upsert_block" => format!("update {}", self.path.display()),
+            "sync_skill_tree" => format!("sync {}", self.path.display()),
+            "preserve_existing" => format!("preserve {}", self.path.display()),
+            other => format!("{other} {}", self.path.display()),
+        }
+    }
+}
+
+fn run_agent_job(
+    root: &Path,
+    assets: &AgentInitAssets,
+    mode: AgentInitMode,
+    selected_jobs: Option<&BTreeSet<AgentInitJob>>,
+    job: AgentInitJob,
+) -> Result<AgentCheck, BuiltinError> {
+    let apply = matches!(mode, AgentInitMode::Apply | AgentInitMode::Repair)
+        && selected_jobs.is_none_or(|jobs| jobs.contains(&job));
+    match job {
+        AgentInitJob::Manifest => {
+            ensure_exact_file(root, job, "effigy.toml", &assets.manifest_contents, apply)
+        }
+        AgentInitJob::Readme => {
+            ensure_exact_file(root, job, "README.md", &assets.readme_contents, apply)
+        }
+        AgentInitJob::AgentsBlock => ensure_managed_block(
+            root,
+            job,
+            "AGENTS.md",
+            AGENTS_BLOCK_START,
+            AGENTS_BLOCK_END,
+            AGENTS_BLOCK,
+            apply,
+        ),
+        AgentInitJob::SkillTree => ensure_skill_tree(root, job, apply),
+        AgentInitJob::Gitignore => ensure_managed_block(
+            root,
+            job,
+            ".gitignore",
+            GITIGNORE_BLOCK_START,
+            GITIGNORE_BLOCK_END,
+            GITIGNORE_BLOCK,
+            apply,
+        ),
+    }
+}
+
 fn ensure_exact_file(
     root: &Path,
-    id: &'static str,
+    job: AgentInitJob,
     relative_path: &str,
     desired: &str,
     apply: bool,
@@ -213,14 +331,14 @@ fn ensure_exact_file(
     let path = root.join(relative_path);
     match std::fs::read_to_string(&path) {
         Ok(existing) if existing == desired => Ok(check(
-            id,
+            job,
             relative_path,
             AgentCheckStatus::Present,
             "none",
             None,
         )),
         Ok(_) => Ok(check(
-            id,
+            job,
             relative_path,
             AgentCheckStatus::Present,
             "preserve_existing",
@@ -229,27 +347,28 @@ fn ensure_exact_file(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && apply => {
             write_file(&path, desired)?;
             Ok(check(
-                id,
+                job,
                 relative_path,
                 AgentCheckStatus::Created,
                 "create_file",
                 None,
             ))
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(check(
-            id,
-            relative_path,
-            AgentCheckStatus::Missing,
-            "create_file",
-            None,
-        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let status = if matches!(job, AgentInitJob::Manifest | AgentInitJob::Readme) {
+                AgentCheckStatus::Missing
+            } else {
+                AgentCheckStatus::WouldCreate
+            };
+            Ok(check(job, relative_path, status, "create_file", None))
+        }
         Err(error) => Err(BuiltinError::task_invocation_failed_read(&path, error)),
     }
 }
 
 fn ensure_managed_block(
     root: &Path,
-    id: &'static str,
+    job: AgentInitJob,
     relative_path: &str,
     start_marker: &str,
     end_marker: &str,
@@ -268,7 +387,7 @@ fn ensure_managed_block(
             };
             let Some(next) = next else {
                 return Ok(check(
-                    id,
+                    job,
                     relative_path,
                     AgentCheckStatus::Stale,
                     "manual_repair",
@@ -279,7 +398,7 @@ fn ensure_managed_block(
             };
             if next == existing {
                 return Ok(check(
-                    id,
+                    job,
                     relative_path,
                     AgentCheckStatus::Present,
                     "none",
@@ -289,7 +408,7 @@ fn ensure_managed_block(
             if apply {
                 write_file(&path, &next)?;
                 return Ok(check(
-                    id,
+                    job,
                     relative_path,
                     AgentCheckStatus::Updated,
                     "upsert_block",
@@ -297,7 +416,7 @@ fn ensure_managed_block(
                 ));
             }
             Ok(check(
-                id,
+                job,
                 relative_path,
                 AgentCheckStatus::WouldUpdate,
                 "upsert_block",
@@ -307,7 +426,7 @@ fn ensure_managed_block(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && apply => {
             write_file(&path, desired_block)?;
             Ok(check(
-                id,
+                job,
                 relative_path,
                 AgentCheckStatus::Created,
                 "create_file",
@@ -315,7 +434,7 @@ fn ensure_managed_block(
             ))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(check(
-            id,
+            job,
             relative_path,
             AgentCheckStatus::WouldCreate,
             "create_file",
@@ -412,7 +531,11 @@ fn normalize_effigy_gitignore_file(
     replace_or_append_block(existing, start_marker, end_marker, desired_block)
 }
 
-fn ensure_skill_tree(root: &Path, apply: bool) -> Result<AgentCheck, BuiltinError> {
+fn ensure_skill_tree(
+    root: &Path,
+    job: AgentInitJob,
+    apply: bool,
+) -> Result<AgentCheck, BuiltinError> {
     let base = ".agents/skills/effigy";
     let mut missing = 0usize;
     let mut stale = 0usize;
@@ -454,24 +577,19 @@ fn ensure_skill_tree(root: &Path, apply: bool) -> Result<AgentCheck, BuiltinErro
     } else {
         AgentCheckStatus::Present
     };
-    Ok(check(
-        "skill.codex_project",
-        base,
-        status,
-        "sync_skill_tree",
-        detail,
-    ))
+    Ok(check(job, base, status, "sync_skill_tree", detail))
 }
 
 fn check(
-    id: &'static str,
+    job: AgentInitJob,
     relative_path: &str,
     status: AgentCheckStatus,
     action: &'static str,
     detail: Option<String>,
 ) -> AgentCheck {
     AgentCheck {
-        id,
+        job,
+        id: job.id(),
         path: PathBuf::from(relative_path),
         status,
         action,

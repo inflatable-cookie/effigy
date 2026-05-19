@@ -445,13 +445,18 @@ fn render_init_help_shows_phase_scope() {
     let rendered = render_help_text(HelpTopic::Init);
     assert!(rendered.contains("init Help"));
     assert!(rendered.contains("effigy init [--check|--apply|--repair] [--json]"));
+    assert!(rendered.contains("effigy init --checklist [--json]"));
+    assert!(rendered.contains("effigy init --apply-actions <ID>[,<ID>...] [--json]"));
     assert!(rendered.contains("effigy init <name> [--dry-run] [--force] [--json]"));
     assert!(rendered.contains("effigy init --list [--json]"));
     assert!(rendered.contains("plain `effigy init` creates missing baseline"));
+    assert!(rendered.contains("real TTYs"));
     assert!(rendered.contains("--list"));
     assert!(rendered.contains("--check"));
     assert!(rendered.contains("--force"));
     assert!(rendered.contains("--apply"));
+    assert!(rendered.contains("--checklist"));
+    assert!(rendered.contains("--apply-actions <ID>[,<ID>...]"));
     assert!(rendered.contains("An existing root `README.md` is never overwritten"));
 }
 

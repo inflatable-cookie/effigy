@@ -72,11 +72,16 @@ Updated: 2026-05-18
   assembly, richer language extractors, framework routes, source-section
   no-reread packets, affected-test workflow, scale hardening, agent adoption,
   and closeout.
+- `g07.046` through `g07.049` completed the bounded CodeGraph parity
+  follow-up lane for warm-query recovery and fixture-backed proof.
+- `g07.050` through `g07.055` open the init setup-wizard lane so `effigy init`
+  can expose one shared setup-job surface through TTY prompts, checklist JSON,
+  and non-interactive action execution.
 - The suite explicitly excludes MCP, a graph daemon, external language plugins,
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
 
-Current ready work: none.
+No active ready card remains.
 
 ## Research Roadmaps
 
@@ -109,4 +114,4 @@ closeout there first.
 
 ## Next Task
 
-No active ready card.
+Stop in planning until a new lane opens.

@@ -119,7 +119,9 @@ impl BuiltinDispatch {
                 help::run_builtin_help(task, &runtime_args.passthrough, &deferred_builtins)
             }
             Self::Watch => watch::run_builtin_watch(ports, task, runtime_args, target_root),
-            Self::Init => init::run_builtin_init(task, &runtime_args.passthrough, target_root),
+            Self::Init => {
+                init::run_builtin_init(ports, task, &runtime_args.passthrough, target_root)
+            }
             Self::Scan => scan::run_builtin_scan(task, runtime_args, target_root, catalogs),
             Self::Test => test::try_run_builtin_test(
                 ports,

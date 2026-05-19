@@ -4,6 +4,10 @@ use effigy_catalog::{Starter, StarterInfo};
 use serde_json::json;
 
 use super::super::response::render_optional_text_with_schema_fields_lazy;
+use super::inventory::{
+    InitActionReport, SetupActionStatus, SetupApplicability, SetupExecutionKind, SetupJob,
+    SetupSafetyClass,
+};
 use crate::BuiltinError;
 
 /// Aggregate outcome of one `effigy init` emission.
@@ -98,6 +102,90 @@ pub(super) fn render_init_list_response(
     )
 }
 
+pub(super) fn render_init_checklist_response(
+    output_json: bool,
+    target_root: &std::path::Path,
+    jobs: &[SetupJob],
+) -> Result<Option<String>, BuiltinError> {
+    render_optional_text_with_schema_fields_lazy(
+        output_json,
+        "effigy.init.checklist.v1",
+        || render_init_checklist_text(jobs),
+        |_| {
+            let applicable = jobs
+                .iter()
+                .filter(|job| matches!(job.applicability, SetupApplicability::Applicable))
+                .count();
+            let already_satisfied = jobs
+                .iter()
+                .filter(|job| matches!(job.applicability, SetupApplicability::AlreadySatisfied))
+                .count();
+            let not_applicable = jobs.len().saturating_sub(applicable + already_satisfied);
+            let entries = jobs
+                .iter()
+                .map(|job| {
+                    json!({
+                        "id": job.id,
+                        "category": format!("{:?}", job.category).to_ascii_lowercase(),
+                        "execution_kind": execution_kind_name(job.execution_kind),
+                        "safety_class": safety_class_name(job.safety_class),
+                        "applicability": applicability_name(job.applicability),
+                        "can_run_noninteractive": job.can_run_noninteractive,
+                        "summary": job.summary,
+                        "reason": job.reason,
+                        "recommended_command": job.recommended_command,
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "mode": "checklist",
+                "repo_root": target_root.display().to_string(),
+                "has_changes": jobs.iter().any(|job| matches!(job.applicability, SetupApplicability::Applicable) && matches!(job.execution_kind, SetupExecutionKind::Apply)),
+                "summary": {
+                    "total_jobs": jobs.len(),
+                    "applicable": applicable,
+                    "already_satisfied": already_satisfied,
+                    "not_applicable": not_applicable,
+                },
+                "jobs": entries,
+            })
+        },
+    )
+}
+
+pub(super) fn render_init_actions_response(
+    output_json: bool,
+    report: &InitActionReport,
+) -> Result<Option<String>, BuiltinError> {
+    render_optional_text_with_schema_fields_lazy(
+        output_json,
+        "effigy.init.actions.v1",
+        || render_init_actions_text(report),
+        |_| {
+            let entries = report
+                .outcomes
+                .iter()
+                .map(|outcome| {
+                    json!({
+                        "id": outcome.id,
+                        "status": outcome.status.as_str(),
+                        "summary": outcome.summary,
+                        "reason": outcome.reason,
+                        "command": outcome.command,
+                        "output": outcome.output,
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "mode": "apply_actions",
+                "selected_action_ids": report.selected_action_ids,
+                "changed": report.outcomes.iter().any(|outcome| matches!(outcome.status, SetupActionStatus::Applied)),
+                "outcomes": entries,
+            })
+        },
+    )
+}
+
 fn render_init_text(starter: &Starter, files: &[EmittedFile], outcome: &InitOutcome) -> String {
     if outcome.dry_run {
         return render_dry_run_text(files);
@@ -163,4 +251,65 @@ fn render_init_list_text(starters: &[StarterInfo]) -> String {
         out.push_str(&format!("- {} — {}\n", info.name, info.description));
     }
     out
+}
+
+fn render_init_checklist_text(jobs: &[SetupJob]) -> String {
+    let mut out = String::from("Effigy init checklist\n");
+    for job in jobs
+        .iter()
+        .filter(|job| !matches!(job.applicability, SetupApplicability::NotApplicable))
+    {
+        out.push_str(&format!(
+            "- {} [{}] {}",
+            job.id,
+            applicability_name(job.applicability),
+            job.summary
+        ));
+        if let Some(command) = &job.recommended_command {
+            out.push_str(&format!(" -> {command}"));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn render_init_actions_text(report: &InitActionReport) -> String {
+    let mut out = String::from("Effigy init actions\n");
+    for outcome in &report.outcomes {
+        out.push_str(&format!(
+            "- {} [{}] {}",
+            outcome.id,
+            outcome.status.as_str(),
+            outcome.summary
+        ));
+        if !outcome.reason.is_empty() {
+            out.push_str(&format!(" ({})", outcome.reason));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn applicability_name(value: SetupApplicability) -> &'static str {
+    match value {
+        SetupApplicability::Applicable => "applicable",
+        SetupApplicability::AlreadySatisfied => "already_satisfied",
+        SetupApplicability::NotApplicable => "not_applicable",
+    }
+}
+
+fn execution_kind_name(value: SetupExecutionKind) -> &'static str {
+    match value {
+        SetupExecutionKind::Apply => "apply",
+        SetupExecutionKind::Inspect => "inspect",
+        SetupExecutionKind::Guidance => "guidance",
+    }
+}
+
+fn safety_class_name(value: SetupSafetyClass) -> &'static str {
+    match value {
+        SetupSafetyClass::SafeCheck => "safe_check",
+        SetupSafetyClass::SafeApply => "safe_apply",
+        SetupSafetyClass::ContextualApply => "contextual_apply",
+    }
 }

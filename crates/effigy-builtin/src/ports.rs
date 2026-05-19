@@ -13,7 +13,7 @@ use std::any::Any;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use effigy_cli::{DoctorArgs, TaskInvocation, TasksArgs};
+use effigy_cli::{Command, DoctorArgs, TaskInvocation, TasksArgs};
 use effigy_manifest::LoadedCatalog;
 use serde::{Deserialize, Serialize};
 
@@ -164,6 +164,7 @@ pub trait BuiltinRuntimePorts {
     fn run_doctor(&self, args: DoctorArgs) -> Result<String, BuiltinError>;
 
     fn run_tasks(&self, args: TasksArgs) -> Result<String, BuiltinError>;
+    fn run_command(&self, command: Command) -> Result<String, BuiltinError>;
 
     // Cache inspection / invalidation.
     fn cache_entries(&self, workspace_root: &Path) -> Result<Vec<TaskCacheEntry>, BuiltinError>;
