@@ -1,13 +1,26 @@
 # 076 - Code Graph And Agent Workflows
 
 Use this guide when you want the fastest safe path to repo context before broad
-file scanning.
+file scanning. This is the code-understanding lane inside Effigy's wider agent
+surface, not the default front door for every task.
 
 Effigy's graph is a local, deterministic repo index under `.effigy/graph/`.
 It is built from first-party extractors and queried through the CLI. It is not
 an MCP server, not a daemon, and not compiler-grade semantic truth.
 
 ## Start Here
+
+Start with the normal repo loop first:
+
+```sh
+effigy doctor
+effigy tasks
+effigy test --plan
+```
+
+Then switch to graph when the question is code-navigation shaped: where a
+behavior lives, how a path flows, what changed impact looks like, or which
+files to read first.
 
 Use the graph in this order:
 
@@ -24,6 +37,10 @@ That gives you:
 - a bounded starting packet with primary owners, excerpts, related symbols,
   reasons, guidance, and overflow
 
+Do not force this path onto unrelated jobs. If you already know the task is
+execution, deployment, state orchestration, docs validation, or release
+inspection, use the matching Effigy surface first.
+
 If the repo is changing while you work:
 
 ```sh
@@ -38,6 +55,12 @@ Use the graph when you need:
 - where a symbol or behavior is owned
 - call or reference neighborhoods
 - bounded machine-readable context for an agent
+
+Use other Effigy surfaces first when you need:
+
+- repo health, task discovery, or test routing
+- direct task execution
+- deploy, distribution, state, docs, contracts, or container workflows
 
 Do not use the graph as the only truth source when you need:
 
@@ -274,13 +297,16 @@ Event kinds:
 
 ## Agent Workflow
 
-Recommended agent sequence:
+Recommended code-understanding sequence:
 
-1. `effigy graph status --json`
-2. if stale: `effigy graph index --json`
-3. `effigy graph explore "<task>" --max-files 6 --max-bytes 12288 --json`
-4. trust returned excerpts for first-pass orientation
-5. only then widen to `graph context`, `graph search`, `graph node`,
+1. `effigy doctor`
+2. `effigy tasks`
+3. `effigy test --plan`
+4. `effigy graph status --json`
+5. if stale: `effigy graph index --json`
+6. `effigy graph explore "<task>" --max-files 6 --max-bytes 12288 --json`
+7. trust returned excerpts for first-pass orientation
+8. only then widen to `graph context`, `graph search`, `graph node`,
    `graph callers/callees`, direct file reads, and `rg`
 
 Good examples:

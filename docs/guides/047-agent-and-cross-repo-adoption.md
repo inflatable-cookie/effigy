@@ -1,7 +1,9 @@
 # 047 - Agent and Cross-Repo Adoption
 
 Use this guide when you want AI agents to treat Effigy as the default project
-surface instead of falling back to raw tool commands.
+surface instead of falling back to raw tool commands. The goal is a job-based
+agent loop: discover the repo, understand code when needed, execute through
+Effigy, then validate through Effigy.
 
 ## Vision Alignment
 
@@ -11,23 +13,22 @@ surface instead of falling back to raw tool commands.
 
 ## 1) Default Agent Contract
 
-For repos that adopt Effigy as the primary local loop, the default agent flow
-should be:
+For repos that adopt Effigy as the primary local loop, the default discovery
+flow should be:
 
 ```sh
-effigy tasks
 effigy doctor
+effigy tasks
 effigy test --plan
 ```
 
 Then:
 
+- use `effigy graph` when the job is code understanding and the agent needs a
+  bounded repo map before broad file scanning (see Section 2a)
 - use `effigy <task>` for supported project work
 - use `effigy test ...` for supported test flows
-- use `effigy --json <command>` when the caller needs machine-safe
-  parsing
-- use `effigy graph` when the agent needs a bounded repo map before broad file
-  scanning (see Section 2a)
+- use `effigy --json <command>` when the caller needs machine-safe parsing
 - fall back to raw tool commands only when Effigy does not yet cover the path
 
 For work inside the Effigy repo itself:
@@ -62,8 +63,8 @@ Agents should not assume:
 
 ## 2a) Code Graph Assist
 
-When an agent needs codebase context before editing, prefer the local graph over
-spraying `rg` across the whole repo:
+When the job is code understanding before editing or review, prefer the local
+graph over spraying `rg` across the whole repo:
 
 ```sh
 effigy graph status --json
@@ -75,6 +76,9 @@ git diff --name-only | effigy graph affected --stdin --json
 Rules:
 
 - use `graph explore` first for task-shaped navigation
+- do not insert `graph` ritualistically for unrelated work; deployment, state,
+  docs, release, and direct task execution should use their matching Effigy
+  surfaces first
 - trust returned excerpts for first-pass orientation; open files only when the
   excerpt is insufficient for the edit or review
 - use `graph affected` to narrow validation after edits, not as exhaustive test
@@ -97,12 +101,12 @@ be the default loop:
 Use Effigy as the default command surface for supported project work.
 
 Default flow:
-1. Run `effigy tasks`
-2. Run `effigy doctor`
+1. Run `effigy doctor`
+2. Run `effigy tasks`
 3. Run `effigy test --plan`
-4. Prefer `effigy <task>` and `effigy test ...`
-5. Use `effigy --json <command>` for machine-readable output
-6. Use `effigy graph explore` before broad repo scanning when codebase context is needed
+4. Use `effigy graph explore` before broad repo scanning when codebase context is needed
+5. Prefer `effigy <task>` and `effigy test ...` for execution and validation
+6. Use `effigy --json <command>` for machine-readable output
 7. Use `--repo <PATH>` only when intentionally operating on another repo
 8. Fall back to raw tool commands only when Effigy does not yet cover the path
 
@@ -147,7 +151,8 @@ Claude Code, OpenAI Codex, Cursor, and any other agent that consumes
 
 The skill front door is intentionally light (~150 lines) and routes to topic
 references for footguns, discovery loop, selector routing, common workflows,
-JSON envelopes, config shapes, and release protocol. Agents read the
+JSON envelopes, graph-first code navigation, config shapes, and release
+protocol. Agents read the
 references on demand without re-fetching the front door.
 
 Manual install for agents `npx skills` doesn't cover:
