@@ -64,6 +64,7 @@ pub(crate) fn render_init_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
         &[
             "plain `effigy init` creates missing baseline `effigy.toml`, README, `AGENTS.md`, `.agents/skills/effigy`, and local Effigy ignore rules",
             "existing project `effigy.toml` and `README.md` files are preserved by the plain initializer",
+            "the vendored `.agents/skills/effigy` tree is the repo-authoritative skill copy; treat global installs as fallback only",
             "named starters can emit system, workspace, and managed-dev files as one scaffold",
             "`effigy init --check --json` reports a machine-readable initiation checklist without mutating the repo",
             "`effigy init --apply` creates managed initiation surfaces idempotently; existing project manifests are preserved",

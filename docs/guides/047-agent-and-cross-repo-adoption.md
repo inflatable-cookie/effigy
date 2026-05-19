@@ -156,6 +156,11 @@ The check mode reports whether `AGENTS.md`, `.agents/skills/effigy`, local
 present. Plain `effigy init` writes only deterministic managed surfaces and
 preserves existing project manifests and READMEs.
 
+When both a project-local and global Effigy skill are present, treat the
+project-local `.agents/skills/effigy` copy as authoritative for that repo. The
+global install is fallback convenience, not the source of truth for a vendored
+project skill.
+
 The skill follows the open
 [Agent Skills](https://agentskills.io/specification) standard and works in
 Claude Code, OpenAI Codex, Cursor, and any other agent that consumes

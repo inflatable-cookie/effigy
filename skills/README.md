@@ -37,6 +37,10 @@ location:
 The CLI ships from [`vercel-labs/skills`](https://github.com/vercel-labs/skills)
 and supports 50+ agents.
 
+When both a project-local and global Effigy skill are installed, treat the
+project-local copy as authoritative for that repo. The global install is the
+fallback for repos that do not vendor Effigy locally.
+
 ### Manual install
 
 If your agent isn't covered by `npx skills`:

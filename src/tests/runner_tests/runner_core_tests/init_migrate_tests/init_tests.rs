@@ -216,6 +216,52 @@ fn run_manifest_task_builtin_init_agent_apply_is_idempotent_and_preserves_manife
 }
 
 #[test]
+fn run_manifest_task_builtin_init_rehomes_existing_effigy_gitignore_entry_without_duplication() {
+    let root = temp_workspace("builtin-init-agent-gitignore-dedupe");
+    std::fs::write(root.join(".gitignore"), ".DS_Store\n.effigy/\n").expect("write gitignore");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["--apply", "--json"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "\"schema\": \"effigy.init.v1\"",
+            "\"id\": \"gitignore.effigy_local_state\"",
+            "\"status\": \"applied\"",
+        ],
+    );
+
+    let gitignore =
+        std::fs::read_to_string(root.join(".gitignore")).expect("read normalized gitignore");
+    assert!(gitignore.contains("BEGIN EFFIGY LOCAL STATE"));
+    assert_eq!(gitignore.matches(".effigy/").count(), 1);
+}
+
+#[test]
+fn run_manifest_task_builtin_init_repair_removes_loose_effigy_gitignore_duplicates() {
+    let root = temp_workspace("builtin-init-agent-gitignore-repair");
+    std::fs::write(
+        root.join(".gitignore"),
+        ".DS_Store\n.effigy/\n\n# BEGIN EFFIGY LOCAL STATE\n.effigy/\n# END EFFIGY LOCAL STATE\n",
+    )
+    .expect("write duplicated gitignore");
+
+    let out = run_builtin_ok(root.to_path_buf(), "init", &["--repair", "--json"]);
+    assert_output_contains_all(
+        &out,
+        &[
+            "\"schema\": \"effigy.init.v1\"",
+            "\"mode\": \"repair\"",
+            "\"status\": \"repaired\"",
+            "\"id\": \"gitignore.effigy_local_state\"",
+        ],
+    );
+
+    let gitignore =
+        std::fs::read_to_string(root.join(".gitignore")).expect("read repaired gitignore");
+    assert_eq!(gitignore.matches(".effigy/").count(), 1);
+}
+
+#[test]
 fn run_manifest_task_builtin_init_positional_minimal_matches_default() {
     let root = temp_workspace("builtin-init-positional-minimal");
 

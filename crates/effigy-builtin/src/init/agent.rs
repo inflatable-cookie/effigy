@@ -28,6 +28,10 @@ Prefer `effigy <task>`, `effigy test`, and the matching built-in surface over
 raw package-manager or shell commands when Effigy covers the path. Use
 `effigy --json <command>` whenever another agent or tool will consume output.
 
+This repo's local `.agents/skills/effigy` copy is authoritative for this
+project. When an agent supports both project-local and global skills, prefer
+the project-local copy over any globally installed Effigy skill.
+
 Do not add `--repo .` while already inside the target repo. Do not edit
 `.github/workflows/` or run release mutations unless the user explicitly asks.
 
@@ -254,17 +258,15 @@ fn ensure_managed_block(
 ) -> Result<AgentCheck, BuiltinError> {
     let path = root.join(relative_path);
     match std::fs::read_to_string(&path) {
-        Ok(existing) if existing.contains(desired_block) => Ok(check(
-            id,
-            relative_path,
-            AgentCheckStatus::Present,
-            "none",
-            None,
-        )),
         Ok(existing) => {
-            let Some(next) =
+            let next = if relative_path == ".gitignore" && desired_block == GITIGNORE_BLOCK {
+                normalize_effigy_gitignore_file(&existing, start_marker, end_marker, desired_block)
+            } else if existing.contains(desired_block) {
+                Some(existing.clone())
+            } else {
                 replace_or_append_block(&existing, start_marker, end_marker, desired_block)
-            else {
+            };
+            let Some(next) = next else {
                 return Ok(check(
                     id,
                     relative_path,
@@ -275,6 +277,15 @@ fn ensure_managed_block(
                     ),
                 ));
             };
+            if next == existing {
+                return Ok(check(
+                    id,
+                    relative_path,
+                    AgentCheckStatus::Present,
+                    "none",
+                    None,
+                ));
+            }
             if apply {
                 write_file(&path, &next)?;
                 return Ok(check(
@@ -346,6 +357,59 @@ fn replace_or_append_block(
     next.push_str(desired_block.trim_end());
     next.push('\n');
     Some(next)
+}
+
+fn normalize_effigy_gitignore_file(
+    existing: &str,
+    start_marker: &str,
+    end_marker: &str,
+    desired_block: &str,
+) -> Option<String> {
+    let mut kept = Vec::new();
+    let mut in_managed_block = false;
+    let mut saw_managed_block = false;
+    let mut removed_loose = 0usize;
+
+    for line in existing.lines() {
+        if line == start_marker {
+            if in_managed_block {
+                return None;
+            }
+            saw_managed_block = true;
+            in_managed_block = true;
+            continue;
+        }
+        if line == end_marker {
+            if !in_managed_block {
+                return None;
+            }
+            in_managed_block = false;
+            continue;
+        }
+        if in_managed_block {
+            continue;
+        }
+        if line.trim() == ".effigy/" {
+            removed_loose += 1;
+            continue;
+        }
+        kept.push(line);
+    }
+    if in_managed_block {
+        return None;
+    }
+
+    let mut next = kept.join("\n").trim_end().to_owned();
+    if !next.is_empty() && (saw_managed_block || removed_loose > 0) {
+        next.push_str("\n\n");
+    }
+    if saw_managed_block || removed_loose > 0 {
+        next.push_str(desired_block.trim_end());
+        next.push('\n');
+        return Some(next);
+    }
+
+    replace_or_append_block(existing, start_marker, end_marker, desired_block)
 }
 
 fn ensure_skill_tree(root: &Path, apply: bool) -> Result<AgentCheck, BuiltinError> {
