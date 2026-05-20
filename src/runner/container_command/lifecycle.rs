@@ -23,8 +23,7 @@ use super::support::{
     annotate_registered_gateway_routes, annotate_shared_service_notes,
     annotate_tcp_alias_host_notes, annotate_warning_lines, ensure_shared_services_running,
     reconcile_primary_service_tcp_alias_hosts, resolve_repo_root_or_invocation_cwd_scope,
-    rewrite_manifest_for_ejected_compose, validate_running_container_runtime_match,
-    wait_for_container_ready, ContainerRepoScope,
+    rewrite_manifest_for_ejected_compose, wait_for_container_ready, ContainerRepoScope,
 };
 use super::{render_container_report, RunnerError};
 use crate::runner::command_context::resolve_active_command_context;
@@ -56,7 +55,7 @@ use effigy_runtime::read::{
     run_container_status_under_path,
 };
 use effigy_runtime::session::run_attached_container_session_with_hook;
-use effigy_runtime::shell::run_container_shell as run_runtime_container_shell;
+use effigy_runtime::shell::run_container_shell_with_resolved_session;
 use effigy_runtime::signals::{
     install_stop_requested_flag, run_compose_plan_inherit_with_stop_flag_and_env, ComposeRunOutcome,
 };
@@ -503,19 +502,19 @@ pub(super) fn run_container_shell(
             "`effigy container shell` does not support `--json` because it is interactive",
         ));
     }
-    let (policy, service, _) = resolve_container_shell_session(repo_root, name, service)?;
+    let (policy, service, working_dir) = resolve_container_shell_session(repo_root, name, service)?;
     let _operation_plan = exec_operation_plan(
         repo_root,
         &policy,
         ContainerExecOperation::shell(Some(service.clone()), command.map(str::to_owned), true),
     );
     maybe_refresh_workspace_effigy_for_shell(repo_root, &policy, &service)?;
-    let shell_output = run_runtime_container_shell(
+    let shell_output = run_container_shell_with_resolved_session(
         repo_root,
-        name,
-        Some(service.as_str()),
+        &policy,
+        service.as_str(),
+        Some(working_dir.as_path()),
         command,
-        validate_runtime_shell_match,
         probe_runtime_shell_capability,
         run_runtime_shell_exec,
     )
@@ -607,13 +606,6 @@ pub(in crate::runner) fn run_container_exec_operation_capture(
     )
     .map_err(RunnerError::from)?;
     run_compose_exec_plan_with_options(&policy, &plan, true, operation.stdin_file.as_deref())
-}
-
-fn validate_runtime_shell_match(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> Result<(), effigy_runtime::EffigyRuntimeError> {
-    validate_running_container_runtime_match(repo_root, policy).map_err(runtime_error_from_runner)
 }
 
 fn probe_runtime_shell_capability(

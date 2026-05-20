@@ -97,28 +97,56 @@ where
 {
     let (policy, service, working_dir) =
         resolve_container_shell_session(repo_root, name, service, &validate_runtime_match)?;
+    run_container_shell_with_resolved_session(
+        repo_root,
+        &policy,
+        &service,
+        working_dir.as_deref(),
+        command,
+        &probe_shell,
+        &run_exec,
+    )
+}
+
+pub fn run_container_shell_with_resolved_session<FProbeShell, FRunExec>(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+    working_dir: Option<&Path>,
+    command: Option<&str>,
+    probe_shell: FProbeShell,
+    run_exec: FRunExec,
+) -> Result<String, EffigyRuntimeError>
+where
+    FProbeShell: Fn(&Path, &EffectiveContainerPolicy, &str) -> Result<String, EffigyRuntimeError>,
+    FRunExec: Fn(
+        &EffectiveContainerPolicy,
+        &ContainerComposeInvocationPlan,
+        bool,
+    ) -> Result<Output, EffigyRuntimeError>,
+{
     let shell = if command.is_none() {
-        probe_shell(repo_root, &policy, &service)?
+        probe_shell(repo_root, policy, service)?
     } else {
         format!("/bin/{DEFAULT_CONTAINER_SHELL}")
     };
     let workspace_identity =
-        resolve_workspace_exec_identity(repo_root, &policy, &service, &run_exec)?;
+        resolve_workspace_exec_identity(repo_root, policy, service, &run_exec)?;
     let args = build_container_shell_args(
-        &service,
+        service,
         command,
-        working_dir.as_deref(),
+        working_dir,
         &shell,
         workspace_identity.as_ref(),
     );
     let plan = crate::container_manager::compose_invocation_plan_from_args(
         repo_root,
-        &policy,
+        policy,
         args,
         ContainerAction::Shell,
         "docker compose exec",
     )?;
-    let status = run_exec(&policy, &plan, false)?.status;
+    let status = run_exec(policy, &plan, false)?.status;
     if should_fail_container_shell_exit(command.is_some(), status.success()) {
         return Err(EffigyRuntimeError::task_invocation(format!(
             "docker compose exec exited with status {status}"
@@ -131,7 +159,7 @@ where
             Theme::default().success,
             "[ok]"
         ),
-        policy.name
+        policy.name,
     ))
 }
 
