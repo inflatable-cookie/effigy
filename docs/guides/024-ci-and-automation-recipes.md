@@ -91,13 +91,13 @@ effigy qa:json:ci
 effigy release gates
 effigy release simulate
 effigy release status --check-gates
-effigy distribution preflight --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
+effigy release preflight --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
 effigy release verify-install --tag v0.__.__
-effigy distribution first-publish --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy release proof --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 # writes ./artifacts/distribution-v0.__.__/distribution-summary.env
-effigy distribution validate-metadata --tag v0.__.__
-effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.__.__
-effigy distribution generate-closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy release validate --tag v0.__.__
+effigy release evidence validate --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy release evidence closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
 cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture
 effigy qa:docs
 ```
@@ -169,7 +169,7 @@ jobs:
 
 Notes:
 - `effigy contracts check-json` is the primary validator; event-aware PR vs mainline behavior should live in workflow YAML rather than a shell wrapper.
-- `effigy distribution preflight`, `check-glibc-floor`, `first-publish`, `validate-metadata`, `validate-artifacts`, and `generate-closeout` are the primary distribution validation/reporting surfaces.
+- `effigy release preflight`, `check-binary`, `proof`, `validate`, `evidence validate`, and `evidence closeout` are the primary distribution validation/reporting surfaces.
 - `set -o pipefail` ensures failures inside pipe chains fail the step.
 
 ## 4) Recipe: Nightly Full Contract Sweep
@@ -359,7 +359,7 @@ What `effigy release gates` enforces:
 - docs + JSON quality gates (`qa:ci`)
 - release binary build
 - release smoke checks (`help`, `tasks`, `catalog_a/tasks`, `test --plan`, `catalog_a/test --plan`)
-- distribution metadata validation (`effigy distribution validate-metadata`)
+- distribution metadata validation (`effigy release validate`)
 - install validation from the pushed tag (`effigy release verify-install`)
 
 ## 12) Recipe: Assert Completion Cache Policy Fields

@@ -16,7 +16,6 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy doctor"));
     assert!(rendered.contains("effigy docs"));
     assert!(rendered.contains("effigy contracts"));
-    assert!(rendered.contains("effigy distribution"));
     assert!(rendered.contains("effigy artifact"));
     assert!(rendered.contains("effigy container"));
     assert!(rendered.contains("effigy bootstrap"));
@@ -134,19 +133,20 @@ fn render_contracts_help_shows_validation_options() {
 }
 
 #[test]
-fn render_distribution_help_shows_validation_options() {
-    let rendered = render_help_text(HelpTopic::Distribution);
-    assert!(rendered.contains("distribution Help"));
-    assert!(rendered.contains("effigy distribution preflight"));
-    assert!(rendered.contains("effigy distribution validate-metadata"));
-    assert!(rendered.contains("effigy distribution check-glibc-floor"));
-    assert!(rendered.contains("effigy distribution first-publish"));
-    assert!(rendered.contains("effigy distribution validate-artifacts"));
-    assert!(rendered.contains("effigy distribution generate-closeout"));
-    assert!(rendered.contains("effigy distribution write-summary"));
+fn render_release_help_shows_distribution_evidence_options() {
+    let rendered = render_help_text(HelpTopic::Release);
+    assert!(rendered.contains("release Help"));
+    assert!(rendered.contains("effigy release preflight"));
+    assert!(rendered.contains("effigy release validate"));
+    assert!(rendered.contains("effigy release check-binary"));
+    assert!(rendered.contains("effigy release proof"));
+    assert!(rendered.contains("effigy release evidence validate"));
+    assert!(rendered.contains("effigy release evidence closeout"));
+    assert!(rendered.contains("effigy release evidence summary"));
     assert!(rendered.contains("--tag <TAG>"));
-    assert!(rendered.contains("--binary <PATH>"));
-    assert!(rendered.contains("--max-glibc <VER>"));
+    assert!(rendered.contains("<BIN> --glibc-floor <VER>"));
+    assert!(!rendered.contains("--binary <PATH>"));
+    assert!(rendered.contains("--glibc-floor <VER>"));
     assert!(rendered.contains("--artifacts-dir <DIR>"));
     assert!(rendered.contains("--skip-homebrew"));
     assert!(rendered.contains("--skip-docs"));

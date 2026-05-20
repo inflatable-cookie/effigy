@@ -1,4 +1,7 @@
-use effigy_cli::{ReleaseArgs, ReleaseSubcommand};
+use std::path::{Path, PathBuf};
+
+use effigy_cli::{ReleaseArgs, ReleaseEvidenceSubcommand, ReleaseSubcommand};
+use effigy_distribution::{effective_brew_formula, effective_repo_url, load_distribution_policy};
 use effigy_release::{
     load_release_config, remediation_hints_for_blockers,
     render_release_execute_plan_json as render_release_execute_plan_json_payload,
@@ -20,6 +23,7 @@ use effigy_release::{
 };
 
 use super::command_context::resolve_active_repo_root;
+use super::distribution_command::ops as distribution_ops;
 use super::RunnerError;
 #[cfg(test)]
 use interactive::parse_prepare_mutation_inspection_request;
@@ -189,6 +193,118 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
                 Err(RunnerError::task_invocation(rendered))
             }
         }
+        ReleaseSubcommand::Validate { tag } => {
+            let distribution_policy = load_distribution_policy(&resolved.resolved_root)?;
+            distribution_ops::run_validate_metadata(
+                &resolved.resolved_root,
+                &distribution_policy,
+                tag.as_deref(),
+                args.output_json,
+            )
+        }
+        ReleaseSubcommand::CheckBinary {
+            binary_path,
+            glibc_floor,
+        } => distribution_ops::run_check_glibc_floor(
+            &resolve_repo_input(&resolved.resolved_root, binary_path),
+            &glibc_floor,
+            args.output_json,
+        ),
+        ReleaseSubcommand::Preflight {
+            tag,
+            skip_docs,
+            skip_smoke,
+            output_path,
+        } => {
+            let distribution_policy = load_distribution_policy(&resolved.resolved_root)?;
+            distribution_ops::run_preflight(
+                &resolved.resolved_root,
+                &distribution_policy,
+                tag.as_deref(),
+                skip_docs,
+                skip_smoke,
+                output_path
+                    .as_ref()
+                    .map(|path| resolve_repo_input(&resolved.resolved_root, path.clone())),
+                args.output_json,
+            )
+        }
+        ReleaseSubcommand::Proof {
+            tag,
+            crate_version,
+            repo_url,
+            brew_formula,
+            skip_homebrew,
+            artifacts_dir,
+        } => {
+            let distribution_policy = load_distribution_policy(&resolved.resolved_root)?;
+            distribution_ops::run_first_publish(
+                &resolved.resolved_root,
+                &distribution_policy,
+                &tag,
+                crate_version.as_deref(),
+                &repo_url,
+                &brew_formula,
+                skip_homebrew,
+                artifacts_dir
+                    .as_ref()
+                    .map(|path| resolve_repo_input(&resolved.resolved_root, path.clone())),
+                args.output_json,
+            )
+        }
+        ReleaseSubcommand::Evidence { subcommand } => {
+            let distribution_policy = load_distribution_policy(&resolved.resolved_root)?;
+            match subcommand {
+                ReleaseEvidenceSubcommand::Validate {
+                    artifacts_dir,
+                    expect_homebrew,
+                } => distribution_ops::run_validate_artifacts(
+                    &resolved.resolved_root,
+                    &distribution_policy,
+                    &resolve_repo_input(&resolved.resolved_root, artifacts_dir),
+                    expect_homebrew,
+                    args.output_json,
+                ),
+                ReleaseEvidenceSubcommand::Closeout {
+                    tag,
+                    artifacts_dir,
+                    output_path,
+                    owner,
+                    expect_homebrew,
+                } => distribution_ops::run_generate_closeout(
+                    &resolved.resolved_root,
+                    &distribution_policy,
+                    &tag,
+                    &resolve_repo_input(&resolved.resolved_root, artifacts_dir),
+                    output_path
+                        .as_ref()
+                        .map(|path| resolve_repo_input(&resolved.resolved_root, path.clone())),
+                    &owner,
+                    expect_homebrew,
+                    args.output_json,
+                ),
+                ReleaseEvidenceSubcommand::Summary {
+                    tag,
+                    artifacts_dir,
+                    crate_version,
+                    repo_url,
+                    brew_formula,
+                    homebrew_executed,
+                    log_files,
+                } => distribution_ops::run_write_summary(
+                    &resolved.resolved_root,
+                    &distribution_policy,
+                    &tag,
+                    &resolve_repo_input(&resolved.resolved_root, artifacts_dir),
+                    crate_version.as_deref(),
+                    &effective_repo_url(&distribution_policy, &repo_url),
+                    &effective_brew_formula(&distribution_policy, &brew_formula),
+                    homebrew_executed,
+                    &log_files,
+                    args.output_json,
+                ),
+            }
+        }
         ReleaseSubcommand::Simulate { version_override } => {
             let requested_version_override = parse_release_version_override(
                 &resolved.resolved_root,
@@ -292,6 +408,14 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
             },
             || run_interactive_release_execute(&resolved, allow_stale),
         ),
+    }
+}
+
+fn resolve_repo_input(repo_root: &Path, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        repo_root.join(path)
     }
 }
 

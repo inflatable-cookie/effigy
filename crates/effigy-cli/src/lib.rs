@@ -35,7 +35,6 @@ pub enum Command {
     Graph(GraphArgs),
     Docs(DocsArgs),
     Contracts(ContractsArgs),
-    Distribution(DistributionArgs),
     Artifact(ArtifactArgs),
     Container(ContainerArgs),
     Bootstrap(BootstrapArgs),
@@ -115,7 +114,6 @@ pub enum HelpTopic {
     Graph,
     Docs,
     Contracts,
-    Distribution,
     Artifact,
     Container,
     Bootstrap,
@@ -611,13 +609,6 @@ pub struct ServiceArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DistributionArgs {
-    pub subcommand: DistributionSubcommand,
-    pub repo_override: Option<PathBuf>,
-    pub output_json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactArgs {
     pub subcommand: ArtifactSubcommand,
     pub repo_override: Option<PathBuf>,
@@ -733,51 +724,6 @@ pub enum BootstrapDepsSyncMode {
     Both,
     JsOnly,
     RustOnly,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DistributionSubcommand {
-    ValidateMetadata {
-        tag: Option<String>,
-    },
-    CheckGlibcFloor {
-        binary_path: PathBuf,
-        max_glibc: String,
-    },
-    Preflight {
-        tag: Option<String>,
-        skip_docs: bool,
-        skip_smoke: bool,
-        output_path: Option<PathBuf>,
-    },
-    FirstPublish {
-        tag: String,
-        crate_version: Option<String>,
-        repo_url: String,
-        brew_formula: String,
-        skip_homebrew: bool,
-        artifacts_dir: Option<PathBuf>,
-    },
-    ValidateArtifacts {
-        artifacts_dir: PathBuf,
-        expect_homebrew: bool,
-    },
-    GenerateCloseout {
-        tag: String,
-        artifacts_dir: PathBuf,
-        output_path: Option<PathBuf>,
-        owner: String,
-        expect_homebrew: bool,
-    },
-    WriteSummary {
-        tag: String,
-        artifacts_dir: PathBuf,
-        crate_version: Option<String>,
-        repo_url: String,
-        brew_formula: String,
-        homebrew_executed: bool,
-        log_files: Vec<String>,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -978,6 +924,30 @@ pub enum ReleaseSubcommand {
         tag: Option<String>,
         repo_url: Option<String>,
     },
+    Validate {
+        tag: Option<String>,
+    },
+    CheckBinary {
+        binary_path: PathBuf,
+        glibc_floor: String,
+    },
+    Preflight {
+        tag: Option<String>,
+        skip_docs: bool,
+        skip_smoke: bool,
+        output_path: Option<PathBuf>,
+    },
+    Proof {
+        tag: String,
+        crate_version: Option<String>,
+        repo_url: String,
+        brew_formula: String,
+        skip_homebrew: bool,
+        artifacts_dir: Option<PathBuf>,
+    },
+    Evidence {
+        subcommand: ReleaseEvidenceSubcommand,
+    },
     Simulate {
         version_override: Option<String>,
     },
@@ -991,6 +961,30 @@ pub enum ReleaseSubcommand {
         plan: bool,
         yes: bool,
         allow_stale: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReleaseEvidenceSubcommand {
+    Validate {
+        artifacts_dir: PathBuf,
+        expect_homebrew: bool,
+    },
+    Closeout {
+        tag: String,
+        artifacts_dir: PathBuf,
+        output_path: Option<PathBuf>,
+        owner: String,
+        expect_homebrew: bool,
+    },
+    Summary {
+        tag: String,
+        artifacts_dir: PathBuf,
+        crate_version: Option<String>,
+        repo_url: String,
+        brew_formula: String,
+        homebrew_executed: bool,
+        log_files: Vec<String>,
     },
 }
 

@@ -79,13 +79,17 @@ Rules:
 - do not insert `graph` ritualistically for unrelated work; deployment, state,
   docs, release, and direct task execution should use their matching Effigy
   surfaces first
+- phrase graph queries as implementation questions such as:
+  - `where are redirect responses handled`
+  - `where are config migrations validated before apply`
+  - `where does shell exit cleanup prompt run`
 - trust returned excerpts for first-pass orientation; open files only when the
   excerpt is insufficient for the edit or review
 - use `graph affected` to narrow validation after edits, not as exhaustive test
   proof
 - use `rg` for exact token verification and final checks before editing
-- if `stale_paths` is non-empty, refresh with `graph index` before trusting
-  query output
+- if `graph status --json` reports `missing-index`, `refresh-recommended`, or
+  `degraded`, refresh with `graph index` before trusting query output
 
 Full workflow and limits:
 [`076-code-graph-and-agent-workflows.md`](./076-code-graph-and-agent-workflows.md)

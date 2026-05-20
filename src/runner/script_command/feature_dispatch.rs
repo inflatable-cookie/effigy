@@ -5,10 +5,10 @@ use effigy_cli::{
     ChangelogArgs, ChangelogSubcommand, ContainerArgs, ContainerCacheSubcommand,
     ContainerDataSubcommand, ContainerDbDumpInput, ContainerSubcommand, ContainerVolumeSubcommand,
     ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs,
-    DemoListQuery, DemoSubcommand, DeployArgs, DeploySubcommand, DistributionArgs,
-    DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs,
-    GatewayArgs, GatewaySubcommand, ServiceArgs, ServiceSubcommand, StateArgs, StateSubcommand,
-    SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs,
+    DemoListQuery, DemoSubcommand, DeployArgs, DeploySubcommand, DocsArgs, DocsBlockRequirement,
+    DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, ReleaseArgs,
+    ReleaseEvidenceSubcommand, ReleaseSubcommand, ServiceArgs, ServiceSubcommand, StateArgs,
+    StateSubcommand, SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs,
 };
 use effigy_execution::ExecutionSurface;
 use effigy_rhai::surface::*;
@@ -674,8 +674,8 @@ pub(super) fn run_rhai_feature(
         ),
         FEATURE_DISTRIBUTION_VALIDATE_METADATA => run_typed_command(
             repo_root,
-            effigy_cli::Command::Distribution(DistributionArgs {
-                subcommand: DistributionSubcommand::ValidateMetadata {
+            effigy_cli::Command::Release(ReleaseArgs {
+                subcommand: ReleaseSubcommand::Validate {
                     tag: string_option(&options, "tag")?,
                 },
                 repo_override: Some(repo_root.to_path_buf()),
@@ -684,11 +684,11 @@ pub(super) fn run_rhai_feature(
         ),
         FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR => run_typed_command(
             repo_root,
-            effigy_cli::Command::Distribution(DistributionArgs {
-                subcommand: DistributionSubcommand::CheckGlibcFloor {
+            effigy_cli::Command::Release(ReleaseArgs {
+                subcommand: ReleaseSubcommand::CheckBinary {
                     binary_path: path_option(&options, "binary")?
                         .ok_or_else(|| RunnerError::task_invocation("`binary` is required"))?,
-                    max_glibc: required_string(&options, "max_glibc")?,
+                    glibc_floor: required_string(&options, "max_glibc")?,
                 },
                 repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
@@ -696,8 +696,8 @@ pub(super) fn run_rhai_feature(
         ),
         FEATURE_DISTRIBUTION_PREFLIGHT => run_typed_command(
             repo_root,
-            effigy_cli::Command::Distribution(DistributionArgs {
-                subcommand: DistributionSubcommand::Preflight {
+            effigy_cli::Command::Release(ReleaseArgs {
+                subcommand: ReleaseSubcommand::Preflight {
                     tag: string_option(&options, "tag")?,
                     skip_docs: bool_option(&options, "skip_docs")?.unwrap_or(false),
                     skip_smoke: bool_option(&options, "skip_smoke")?.unwrap_or(false),
@@ -709,8 +709,8 @@ pub(super) fn run_rhai_feature(
         ),
         FEATURE_DISTRIBUTION_FIRST_PUBLISH => run_typed_command(
             repo_root,
-            effigy_cli::Command::Distribution(DistributionArgs {
-                subcommand: DistributionSubcommand::FirstPublish {
+            effigy_cli::Command::Release(ReleaseArgs {
+                subcommand: ReleaseSubcommand::Proof {
                     tag: required_string(&options, "tag")?,
                     crate_version: string_option(&options, "crate_version")?,
                     repo_url: string_option(&options, "repo_url")?
@@ -726,12 +726,14 @@ pub(super) fn run_rhai_feature(
         ),
         FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS => run_typed_command(
             repo_root,
-            effigy_cli::Command::Distribution(DistributionArgs {
-                subcommand: DistributionSubcommand::ValidateArtifacts {
-                    artifacts_dir: path_option(&options, "artifacts_dir")?.ok_or_else(|| {
-                        RunnerError::task_invocation("`artifacts_dir` is required")
-                    })?,
-                    expect_homebrew: bool_option(&options, "expect_homebrew")?.unwrap_or(false),
+            effigy_cli::Command::Release(ReleaseArgs {
+                subcommand: ReleaseSubcommand::Evidence {
+                    subcommand: ReleaseEvidenceSubcommand::Validate {
+                        artifacts_dir: path_option(&options, "artifacts_dir")?.ok_or_else(
+                            || RunnerError::task_invocation("`artifacts_dir` is required"),
+                        )?,
+                        expect_homebrew: bool_option(&options, "expect_homebrew")?.unwrap_or(false),
+                    },
                 },
                 repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
@@ -739,16 +741,18 @@ pub(super) fn run_rhai_feature(
         ),
         FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT => run_typed_command(
             repo_root,
-            effigy_cli::Command::Distribution(DistributionArgs {
-                subcommand: DistributionSubcommand::GenerateCloseout {
-                    tag: required_string(&options, "tag")?,
-                    artifacts_dir: path_option(&options, "artifacts_dir")?.ok_or_else(|| {
-                        RunnerError::task_invocation("`artifacts_dir` is required")
-                    })?,
-                    output_path: path_option(&options, "output")?,
-                    owner: string_option(&options, "owner")?
-                        .unwrap_or_else(|| "Platform".to_owned()),
-                    expect_homebrew: bool_option(&options, "expect_homebrew")?.unwrap_or(false),
+            effigy_cli::Command::Release(ReleaseArgs {
+                subcommand: ReleaseSubcommand::Evidence {
+                    subcommand: ReleaseEvidenceSubcommand::Closeout {
+                        tag: required_string(&options, "tag")?,
+                        artifacts_dir: path_option(&options, "artifacts_dir")?.ok_or_else(
+                            || RunnerError::task_invocation("`artifacts_dir` is required"),
+                        )?,
+                        output_path: path_option(&options, "output")?,
+                        owner: string_option(&options, "owner")?
+                            .unwrap_or_else(|| "Platform".to_owned()),
+                        expect_homebrew: bool_option(&options, "expect_homebrew")?.unwrap_or(false),
+                    },
                 },
                 repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
@@ -756,19 +760,22 @@ pub(super) fn run_rhai_feature(
         ),
         FEATURE_DISTRIBUTION_WRITE_SUMMARY => run_typed_command(
             repo_root,
-            effigy_cli::Command::Distribution(DistributionArgs {
-                subcommand: DistributionSubcommand::WriteSummary {
-                    tag: required_string(&options, "tag")?,
-                    artifacts_dir: path_option(&options, "artifacts_dir")?.ok_or_else(|| {
-                        RunnerError::task_invocation("`artifacts_dir` is required")
-                    })?,
-                    crate_version: string_option(&options, "crate_version")?,
-                    repo_url: string_option(&options, "repo_url")?
-                        .unwrap_or_else(|| DEFAULT_DISTRIBUTION_REPO_URL.to_owned()),
-                    brew_formula: string_option(&options, "brew_formula")?
-                        .unwrap_or_else(|| DEFAULT_DISTRIBUTION_BREW_FORMULA.to_owned()),
-                    homebrew_executed: bool_option(&options, "homebrew_executed")?.unwrap_or(false),
-                    log_files: string_array_any(&options, &["log_files", "log_file"])?,
+            effigy_cli::Command::Release(ReleaseArgs {
+                subcommand: ReleaseSubcommand::Evidence {
+                    subcommand: ReleaseEvidenceSubcommand::Summary {
+                        tag: required_string(&options, "tag")?,
+                        artifacts_dir: path_option(&options, "artifacts_dir")?.ok_or_else(
+                            || RunnerError::task_invocation("`artifacts_dir` is required"),
+                        )?,
+                        crate_version: string_option(&options, "crate_version")?,
+                        repo_url: string_option(&options, "repo_url")?
+                            .unwrap_or_else(|| DEFAULT_DISTRIBUTION_REPO_URL.to_owned()),
+                        brew_formula: string_option(&options, "brew_formula")?
+                            .unwrap_or_else(|| DEFAULT_DISTRIBUTION_BREW_FORMULA.to_owned()),
+                        homebrew_executed: bool_option(&options, "homebrew_executed")?
+                            .unwrap_or(false),
+                        log_files: string_array_any(&options, &["log_files", "log_file"])?,
+                    },
                 },
                 repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,

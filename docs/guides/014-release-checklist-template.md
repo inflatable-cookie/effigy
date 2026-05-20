@@ -21,7 +21,7 @@ Owner: `name/team`
 ## 2) Quality Gates
 
 - [ ] Distribution preflight passes:
-  - [ ] `effigy distribution preflight --tag v0.__.__`
+  - [ ] `effigy release preflight --tag v0.__.__`
 - [ ] Safe release simulation passes:
   - [ ] `effigy release simulate`
 - [ ] Release readiness check passes:
@@ -75,15 +75,15 @@ Owner: `name/team`
 ### GitHub Releases and Source Install
 - [ ] Package metadata verified.
 - [ ] Distribution metadata validation passes:
-  - [ ] `effigy distribution validate-metadata --tag v0.__.__`
+  - [ ] `effigy release validate --tag v0.__.__`
 - [ ] Tag points to intended commit.
 - [ ] Install validated from git tag:
   - [ ] `effigy release verify-install --tag v0.__.__`
 - [ ] Source-install path validated:
   - [ ] `cargo install --locked --git https://github.com/inflatable-cookie/effigy.git --tag v0.__.__ effigy --force`
 - [ ] First-publish artifact bundle captured:
-  - [ ] `effigy distribution first-publish --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__`
-  - [ ] `effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-v0.__.__`
+  - [ ] `effigy release proof --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__`
+  - [ ] `effigy release evidence validate --artifacts-dir ./artifacts/distribution-v0.__.__`
 
 ### Homebrew
 - [ ] Formula updated to new version.
@@ -104,7 +104,7 @@ Owner: `name/team`
 - [ ] Validate prefixed built-ins still route correctly.
 - [ ] Validate `test` summary output in compact mode.
 - [ ] Open dated checkpoint log in `docs/logs/YYYY-MM/`.
-  - [ ] `effigy distribution generate-closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
+  - [ ] `effigy release evidence closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
 
 ## 8) Sign-off
 

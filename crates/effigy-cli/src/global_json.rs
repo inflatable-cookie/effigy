@@ -146,10 +146,6 @@ pub fn apply_global_cli_options(
                 args.repo_override
                     .get_or_insert_with(|| repo_override.clone());
             }
-            Command::Distribution(args) => {
-                args.repo_override
-                    .get_or_insert_with(|| repo_override.clone());
-            }
             Command::Artifact(args) => {
                 args.repo_override
                     .get_or_insert_with(|| repo_override.clone());
@@ -253,7 +249,6 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Graph(args) => args.output_json = true,
         Command::Docs(args) => args.output_json = true,
         Command::Contracts(args) => args.output_json = true,
-        Command::Distribution(args) => args.output_json = true,
         Command::Artifact(args) => args.output_json = true,
         Command::Container(args) => args.output_json = true,
         Command::Bootstrap(args) => args.output_json = true,
@@ -291,7 +286,6 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Graph(args) => args.output_json,
         Command::Docs(args) => args.output_json,
         Command::Contracts(args) => args.output_json,
-        Command::Distribution(args) => args.output_json,
         Command::Artifact(args) => args.output_json,
         Command::Container(args) => args.output_json,
         Command::Bootstrap(args) => args.output_json,

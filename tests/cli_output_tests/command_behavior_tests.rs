@@ -3191,8 +3191,9 @@ fn cli_distribution_validate_artifacts_json_reports_missing_logs() {
     let output = run_json_cli_command(
         &root,
         &[
-            "distribution",
-            "validate-artifacts",
+            "release",
+            "evidence",
+            "validate",
             "--artifacts-dir",
             artifacts.to_str().expect("utf8 path"),
         ],
@@ -3239,7 +3240,7 @@ fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
     fs::write(root.join("docs/logs/README.md"), "# Logs\n").expect("write docs logs readme");
     fs::write(
         root.join(".github/workflows/release-binaries.yml"),
-        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./effigy-${{ matrix.target }} distribution check-glibc-floor --binary ./effigy-${{ matrix.target }} --max-glibc 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
     )
     .expect("write workflow");
 
@@ -3257,7 +3258,7 @@ fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
     let output = run_json_cli_command(
         &root,
         &[
-            "distribution",
+            "release",
             "preflight",
             "--tag",
             "v0.2.5",
@@ -3277,7 +3278,7 @@ fn cli_distribution_preflight_json_writes_summary_when_smoke_skipped() {
     );
     assert_eq!(
         parsed["result"]["next_command"],
-        "effigy distribution first-publish --tag v0.2.5 --artifacts-dir ./artifacts/distribution-v0.2.5"
+        "effigy release proof --tag v0.2.5 --artifacts-dir ./artifacts/distribution-v0.2.5"
     );
     assert_eq!(parsed["result"]["ok"], true);
     assert_eq!(parsed["result"]["tag"], "v0.2.5");
@@ -3332,11 +3333,11 @@ run = "printf smoke-ok"
     .expect("write manifest");
     fs::write(
         root.join(".github/workflows/release-binaries.yml"),
-        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./effigy-${{ matrix.target }} distribution check-glibc-floor --binary ./effigy-${{ matrix.target }} --max-glibc 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
     )
     .expect("write workflow");
     fs::write(root.join("docs/guides/release.md"), "# Guide\n").expect("write guide");
-    let output = run_json_cli_command(&root, &["distribution", "preflight", "--tag", "v0.2.5"]);
+    let output = run_json_cli_command(&root, &["release", "preflight", "--tag", "v0.2.5"]);
     let parsed = parse_stdout_json(&output);
 
     assert!(output.status.success(), "{output:?}");
@@ -3371,13 +3372,13 @@ required-files = [".github/workflows/release-binaries.yml"]
     .expect("write manifest");
     fs::write(
         root.join(".github/workflows/release-binaries.yml"),
-        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./effigy-${{ matrix.target }} distribution check-glibc-floor --binary ./effigy-${{ matrix.target }} --max-glibc 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
+        "name: Release Binaries\non:\n  push:\n    tags:\n      - \"v*\"\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-22.04\n          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04\n    steps:\n      - run: ./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35\n  release:\n    name: Create GitHub Release\n  homebrew:\n    name: Update Homebrew tap\n",
     )
     .expect("write workflow");
     fs::write(root.join("docs/guides/release.md"), "# Guide\n").expect("write guide");
     let output = run_json_cli_command(
         &root,
-        &["distribution", "validate-metadata", "--tag", "v0.2.5"],
+        &["release", "validate", "--tag", "v0.2.5"],
     );
     let parsed = parse_stdout_json(&output);
 
@@ -3413,7 +3414,7 @@ name = "example-tool"
 
     let output = run_json_cli_command(
         &root,
-        &["distribution", "validate-metadata", "--tag", "v0.2.5"],
+        &["release", "validate", "--tag", "v0.2.5"],
     );
     let parsed = parse_stdout_json(&output);
 
@@ -3458,8 +3459,9 @@ next-step = "Review the captured evidence and publish sign-off notes."
     let output = run_json_cli_command(
         &root,
         &[
-            "distribution",
-            "generate-closeout",
+            "release",
+            "evidence",
+            "closeout",
             "--tag",
             "v0.2.5",
             "--artifacts-dir",
@@ -3519,8 +3521,9 @@ verify-binary-json-tasks = false
     let output = run_json_cli_command(
         &root,
         &[
-            "distribution",
-            "validate-artifacts",
+            "release",
+            "evidence",
+            "validate",
             "--artifacts-dir",
             artifacts.to_str().expect("utf8 path"),
         ],
@@ -3561,8 +3564,9 @@ registry-label = "registry"
     let output = run_json_cli_command(
         &root,
         &[
-            "distribution",
-            "write-summary",
+            "release",
+            "evidence",
+            "summary",
             "--tag",
             "v0.2.5",
             "--artifacts-dir",
@@ -3628,8 +3632,9 @@ fn cli_distribution_artifact_pipeline_smoke_fixture_passes() {
     let validate = run_json_cli_command(
         &root,
         &[
-            "distribution",
-            "validate-artifacts",
+            "release",
+            "evidence",
+            "validate",
             "--artifacts-dir",
             artifacts.to_str().expect("utf8 path"),
             "--expect-homebrew",
@@ -3646,8 +3651,9 @@ fn cli_distribution_artifact_pipeline_smoke_fixture_passes() {
     let generate = run_json_cli_command(
         &root,
         &[
-            "distribution",
-            "generate-closeout",
+            "release",
+            "evidence",
+            "closeout",
             "--tag",
             "v0.1.0",
             "--artifacts-dir",

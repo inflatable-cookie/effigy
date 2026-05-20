@@ -9,7 +9,7 @@ If you only want one page first, use this one. Reach for the deeper release
 policy and orchestration guides only after you know you need them.
 
 Use:
-- this guide for `effigy distribution ...`
+- this guide for `effigy release ...`
 - [`051-release-orchestration.md`](./051-release-orchestration.md) for the
   release cut workflow
 - [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md)
@@ -33,15 +33,15 @@ For Effigy's own repo, the normal sequence is:
 
 1. `effigy release gates`
 2. `effigy release prepare --plan`
-3. `effigy distribution preflight --tag vX.Y.Z`
+3. `effigy release preflight --tag vX.Y.Z`
 4. the remaining distribution evidence commands after the release mutation path
    is ready
 
 ## Start With The Right Level
 
-- Need one focused check or report: use a single `distribution` subcommand.
+- Need one focused check or report: use the matching `release` subcommand.
 - Need evidence capture around an existing release flow: use
-  `validate-artifacts`, `write-summary`, and `generate-closeout`.
+  `evidence validate`, `evidence summary`, and `evidence closeout`.
 - Need the release cut itself: use [`051-release-orchestration.md`](./051-release-orchestration.md).
 - Need channel rules or CI install policy: use
   [`049-ci-binary-distribution-and-release-protocol.md`](./049-ci-binary-distribution-and-release-protocol.md).
@@ -50,44 +50,44 @@ For Effigy's own repo, the normal sequence is:
 
 Effigy already ships these distribution commands:
 
-- `effigy distribution validate-metadata`
-- `effigy distribution check-glibc-floor`
-- `effigy distribution preflight`
-- `effigy distribution first-publish`
-- `effigy distribution validate-artifacts`
-- `effigy distribution generate-closeout`
-- `effigy distribution write-summary`
+- `effigy release validate`
+- `effigy release check-binary`
+- `effigy release preflight`
+- `effigy release proof`
+- `effigy release evidence validate`
+- `effigy release evidence closeout`
+- `effigy release evidence summary`
 
 The reusable core today is validation and evidence. The fuller
-`first-publish` path still carries more Effigy and Cargo assumptions.
+`proof` path still carries more Effigy and Cargo assumptions.
 
 ### Subcommand Matrix
 
 | Subcommand | Purpose | Key Flags | JSON Schema |
 | --- | --- | --- | --- |
 | `preflight` | Run pre-publish checks (docs, smoke, metadata) and write a `.env`-style preflight report for downstream tooling | `--tag`, `--skip-docs`, `--skip-smoke`, `--output`, `--json` | `effigy.distribution.preflight.v1` |
-| `validate-metadata` | Validate declared `[distribution.metadata]` file expectations for the release tag | `--tag`, `--json` | `effigy.distribution.metadata.v1` |
-| `check-glibc-floor` | Check a compiled Linux binary's required GLIBC floor against a policy max | `--binary`, `--max-glibc`, `--json` | (command envelope; no dedicated payload schema) |
-| `first-publish` | Side-effecting primary publish orchestration: verify-install, optional Homebrew tap update, summary write, artifact validation | `--tag`, `--repo-url`, `--brew-formula`, `--skip-homebrew`, `--artifacts-dir`, `--json` | (emits command-envelope JSON with per-step logs) |
-| `validate-artifacts` | Check that the `--artifacts-dir` contains the expected per-channel logs and a distribution summary | `--artifacts-dir`, `--expect-homebrew`, `--json` | `effigy.distribution.artifacts.v1` |
-| `generate-closeout` | Generate the dated release closeout log from captured per-channel logs | `--tag`, `--artifacts-dir`, `--output`, `--owner`, `--expect-homebrew`, `--json` | `effigy.distribution.closeout.v1` |
-| `write-summary` | Write `distribution-summary.env` into `--artifacts-dir` from the given tag/channel evidence | `--tag`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.summary.v1` |
+| `validate` | Validate declared `[distribution.metadata]` file expectations for the release tag | `--tag`, `--json` | `effigy.distribution.metadata.v1` |
+| `check-binary` | Check a compiled Linux binary's required GLIBC floor against a policy max | `<BIN>`, `--glibc-floor`, `--json` | (command envelope; no dedicated payload schema) |
+| `proof` | Side-effecting publish evidence orchestration: verify-install, optional Homebrew tap update, summary write, artifact validation | `--tag`, `--repo-url`, `--brew-formula`, `--skip-homebrew`, `--artifacts-dir`, `--json` | (emits command-envelope JSON with per-step logs) |
+| `evidence validate` | Check that the `--artifacts-dir` contains the expected per-channel logs and a distribution summary | `--artifacts-dir`, `--expect-homebrew`, `--json` | `effigy.distribution.artifacts.v1` |
+| `evidence closeout` | Generate the dated release closeout log from captured per-channel logs | `--tag`, `--artifacts-dir`, `--output`, `--owner`, `--expect-homebrew`, `--json` | `effigy.distribution.closeout.v1` |
+| `evidence summary` | Write `distribution-summary.env` into `--artifacts-dir` from the given tag/channel evidence | `--tag`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.summary.v1` |
 
 Typical full distribution cycle:
 
-1. `effigy distribution preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env`
-2. `effigy distribution first-publish --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
-3. `effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-vX.Y.Z`
-4. `effigy distribution generate-closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+1. `effigy release preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env`
+2. `effigy release proof --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+3. `effigy release evidence validate --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+4. `effigy release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
 
-`first-publish` already runs `effigy release verify-install`, writes
+`proof` already runs `effigy release verify-install`, writes
 `distribution-summary.env`, and validates captured artifacts before succeeding.
 The later validate/closeout steps are for evidence and sign-off.
 
 If you only need a quick readiness proof before a cut, start smaller:
 
 ```sh
-effigy distribution preflight --tag vX.Y.Z
+effigy release preflight --tag vX.Y.Z
 ```
 
 ## Minimal Manifest Contract
@@ -125,7 +125,7 @@ This contract is intentionally small. It gives repos enough control over
 identity, preflight tasks, metadata expectations, and closeout defaults without
 forcing a full Effigy-shaped release model.
 
-When a repo adopts `[distribution]`, `validate-metadata` no longer assumes
+When a repo adopts `[distribution]`, `validate` no longer assumes
 Effigy's default workflow/docs package-quality gate unless the repo explicitly
 opts into that metadata policy.
 
@@ -138,9 +138,9 @@ If you only need one check or one report, use that command directly.
 Examples:
 
 ```sh
-effigy distribution check-glibc-floor --binary ./target/release/my-tool --max-glibc 2.35
-effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution
-effigy distribution generate-closeout --tag v1.2.3 --artifacts-dir ./artifacts/distribution
+effigy release check-binary ./target/release/my-tool --glibc-floor 2.35
+effigy release evidence validate --artifacts-dir ./artifacts/distribution
+effigy release evidence closeout --tag v1.2.3 --artifacts-dir ./artifacts/distribution
 ```
 
 ### 2. Add Validation and Evidence
@@ -148,9 +148,9 @@ effigy distribution generate-closeout --tag v1.2.3 --artifacts-dir ./artifacts/d
 If your repo already has a release process but lacks consistent evidence
 capture, use:
 
-- `validate-artifacts`
-- `write-summary`
-- `generate-closeout`
+- `evidence validate`
+- `evidence summary`
+- `evidence closeout`
 
 This gives you a stable validation and reporting layer without replacing your
 publish flow.
@@ -160,9 +160,9 @@ publish flow.
 Add `[distribution]` when your package identity, preflight tasks, artifact
 expectations, or closeout defaults differ from Effigy's self-hosting defaults.
 
-### 4. Use `first-publish` Only When It Fits
+### 4. Use `proof` Only When It Fits
 
-Use `first-publish` when your repo fits the current built-in publish and
+Use `proof` when your repo fits the current built-in publish and
 verification model. If your release path is materially different, keep that
 part repo-owned and use the validation and evidence commands around it.
 
@@ -170,21 +170,21 @@ part repo-owned and use the validation and evidence commands around it.
 
 ### Strongly Reusable Today
 
-- `distribution check-glibc-floor`
-- `distribution validate-metadata` when package identity and file expectations
+- `release check-binary`
+- `release validate` when package identity and file expectations
   are declared through the manifest instead of inherited from Effigy's
   self-hosting defaults
-- `distribution validate-artifacts`
-- `distribution generate-closeout`
-- `distribution write-summary`
-- bounded `distribution first-publish` when package, publish, and closeout
+- `release evidence validate`
+- `release evidence closeout`
+- `release evidence summary`
+- bounded `release proof` when package, publish, and closeout
   policy fit your repo and any Effigy-specific install probes are either
   supported or disabled through `[distribution.publish]`
 
 ### Still Bounded Or Effigy-Biased Today
 
-- `distribution preflight`
-- `distribution first-publish` for repos that need a non-Cargo install source
+- `release preflight`
+- `release proof` for repos that need a non-Cargo install source
   or a broader publish-orchestration model than the current built-in matrix
 
 Those commands still assume more about docs checks, smoke shape, publish flow,
@@ -206,5 +206,5 @@ outside this surface.
 
 ## Next Step
 
-Start with `validate-artifacts`, `write-summary`, and `generate-closeout`.
+Start with `evidence validate`, `evidence summary`, and `evidence closeout`.
 Add `[distribution]` when identity or closeout policy differs from the default.

@@ -1,7 +1,7 @@
 use crate::tests::prelude::{
     parse_command, Command, ContainerArgs, ContainerSubcommand, ContractsArgs, ContractsCheckMode,
-    ContractsSelectionPrintMode, ContractsSubcommand, DistributionArgs, DistributionSubcommand,
-    DocsArgs, DocsBlockRequirement, DocsSubcommand, PathBuf,
+    ContractsSelectionPrintMode, ContractsSubcommand, DocsArgs, DocsBlockRequirement,
+    DocsSubcommand, PathBuf, ReleaseArgs, ReleaseEvidenceSubcommand, ReleaseSubcommand,
 };
 use effigy_cli::DocsCheckKind;
 use effigy_cli::{ChangelogArgs, ChangelogSubcommand};
@@ -449,10 +449,10 @@ fn parse_contracts_check_json_with_changed_only_and_selection_json() {
 }
 
 #[test]
-fn parse_distribution_validate_metadata_with_tag() {
+fn parse_release_validate_with_tag() {
     let cmd = parse_command(vec![
-        "distribution".to_owned(),
-        "validate-metadata".to_owned(),
+        "release".to_owned(),
+        "validate".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "--tag".to_owned(),
@@ -463,8 +463,8 @@ fn parse_distribution_validate_metadata_with_tag() {
 
     assert_eq!(
         cmd,
-        Command::Distribution(DistributionArgs {
-            subcommand: DistributionSubcommand::ValidateMetadata {
+        Command::Release(ReleaseArgs {
+            subcommand: ReleaseSubcommand::Validate {
                 tag: Some("v0.2.5".to_owned()),
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
@@ -474,9 +474,9 @@ fn parse_distribution_validate_metadata_with_tag() {
 }
 
 #[test]
-fn parse_distribution_preflight_with_summary_output() {
+fn parse_release_preflight_with_summary_output() {
     let cmd = parse_command(vec![
-        "distribution".to_owned(),
+        "release".to_owned(),
         "preflight".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
@@ -491,8 +491,8 @@ fn parse_distribution_preflight_with_summary_output() {
 
     assert_eq!(
         cmd,
-        Command::Distribution(DistributionArgs {
-            subcommand: DistributionSubcommand::Preflight {
+        Command::Release(ReleaseArgs {
+            subcommand: ReleaseSubcommand::Preflight {
                 tag: Some("v0.2.5".to_owned()),
                 skip_docs: false,
                 skip_smoke: true,
@@ -505,15 +505,14 @@ fn parse_distribution_preflight_with_summary_output() {
 }
 
 #[test]
-fn parse_distribution_check_glibc_floor_with_explicit_binary() {
+fn parse_release_check_binary_with_explicit_binary() {
     let cmd = parse_command(vec![
-        "distribution".to_owned(),
-        "check-glibc-floor".to_owned(),
+        "release".to_owned(),
+        "check-binary".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
-        "--binary".to_owned(),
         "dist/effigy-linux".to_owned(),
-        "--max-glibc".to_owned(),
+        "--glibc-floor".to_owned(),
         "2.35".to_owned(),
         "--json".to_owned(),
     ])
@@ -521,10 +520,10 @@ fn parse_distribution_check_glibc_floor_with_explicit_binary() {
 
     assert_eq!(
         cmd,
-        Command::Distribution(DistributionArgs {
-            subcommand: DistributionSubcommand::CheckGlibcFloor {
+        Command::Release(ReleaseArgs {
+            subcommand: ReleaseSubcommand::CheckBinary {
                 binary_path: PathBuf::from("dist/effigy-linux"),
-                max_glibc: "2.35".to_owned(),
+                glibc_floor: "2.35".to_owned(),
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
@@ -533,10 +532,10 @@ fn parse_distribution_check_glibc_floor_with_explicit_binary() {
 }
 
 #[test]
-fn parse_distribution_first_publish_with_overrides() {
+fn parse_release_proof_with_overrides() {
     let cmd = parse_command(vec![
-        "distribution".to_owned(),
-        "first-publish".to_owned(),
+        "release".to_owned(),
+        "proof".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "--tag".to_owned(),
@@ -556,8 +555,8 @@ fn parse_distribution_first_publish_with_overrides() {
 
     assert_eq!(
         cmd,
-        Command::Distribution(DistributionArgs {
-            subcommand: DistributionSubcommand::FirstPublish {
+        Command::Release(ReleaseArgs {
+            subcommand: ReleaseSubcommand::Proof {
                 tag: "v0.2.5".to_owned(),
                 crate_version: Some("0.2.5".to_owned()),
                 repo_url: "https://example.com/repo.git".to_owned(),
@@ -572,10 +571,11 @@ fn parse_distribution_first_publish_with_overrides() {
 }
 
 #[test]
-fn parse_distribution_validate_artifacts_with_homebrew() {
+fn parse_release_evidence_validate_with_homebrew() {
     let cmd = parse_command(vec![
-        "distribution".to_owned(),
-        "validate-artifacts".to_owned(),
+        "release".to_owned(),
+        "evidence".to_owned(),
+        "validate".to_owned(),
         "--artifacts-dir".to_owned(),
         "artifacts/dist".to_owned(),
         "--expect-homebrew".to_owned(),
@@ -585,10 +585,12 @@ fn parse_distribution_validate_artifacts_with_homebrew() {
 
     assert_eq!(
         cmd,
-        Command::Distribution(DistributionArgs {
-            subcommand: DistributionSubcommand::ValidateArtifacts {
-                artifacts_dir: PathBuf::from("artifacts/dist"),
-                expect_homebrew: true,
+        Command::Release(ReleaseArgs {
+            subcommand: ReleaseSubcommand::Evidence {
+                subcommand: ReleaseEvidenceSubcommand::Validate {
+                    artifacts_dir: PathBuf::from("artifacts/dist"),
+                    expect_homebrew: true,
+                },
             },
             repo_override: None,
             output_json: true,
@@ -597,10 +599,11 @@ fn parse_distribution_validate_artifacts_with_homebrew() {
 }
 
 #[test]
-fn parse_distribution_generate_closeout_with_output_and_owner() {
+fn parse_release_evidence_closeout_with_output_and_owner() {
     let cmd = parse_command(vec![
-        "distribution".to_owned(),
-        "generate-closeout".to_owned(),
+        "release".to_owned(),
+        "evidence".to_owned(),
+        "closeout".to_owned(),
         "--tag".to_owned(),
         "v0.2.5".to_owned(),
         "--artifacts-dir".to_owned(),
@@ -616,13 +619,15 @@ fn parse_distribution_generate_closeout_with_output_and_owner() {
 
     assert_eq!(
         cmd,
-        Command::Distribution(DistributionArgs {
-            subcommand: DistributionSubcommand::GenerateCloseout {
-                tag: "v0.2.5".to_owned(),
-                artifacts_dir: PathBuf::from("artifacts/dist"),
-                output_path: Some(PathBuf::from("docs/logs/out.md")),
-                owner: "CI".to_owned(),
-                expect_homebrew: true,
+        Command::Release(ReleaseArgs {
+            subcommand: ReleaseSubcommand::Evidence {
+                subcommand: ReleaseEvidenceSubcommand::Closeout {
+                    tag: "v0.2.5".to_owned(),
+                    artifacts_dir: PathBuf::from("artifacts/dist"),
+                    output_path: Some(PathBuf::from("docs/logs/out.md")),
+                    owner: "CI".to_owned(),
+                    expect_homebrew: true,
+                },
             },
             repo_override: None,
             output_json: true,
@@ -631,10 +636,11 @@ fn parse_distribution_generate_closeout_with_output_and_owner() {
 }
 
 #[test]
-fn parse_distribution_write_summary_with_repeated_logs() {
+fn parse_release_evidence_summary_with_repeated_logs() {
     let cmd = parse_command(vec![
-        "distribution".to_owned(),
-        "write-summary".to_owned(),
+        "release".to_owned(),
+        "evidence".to_owned(),
+        "summary".to_owned(),
         "--tag".to_owned(),
         "v0.2.5".to_owned(),
         "--artifacts-dir".to_owned(),
@@ -650,18 +656,20 @@ fn parse_distribution_write_summary_with_repeated_logs() {
 
     assert_eq!(
         cmd,
-        Command::Distribution(DistributionArgs {
-            subcommand: DistributionSubcommand::WriteSummary {
-                tag: "v0.2.5".to_owned(),
-                artifacts_dir: PathBuf::from("artifacts/dist"),
-                crate_version: None,
-                repo_url: "https://github.com/inflatable-cookie/effigy.git".to_owned(),
-                brew_formula: "inflatable-cookie/effigy/effigy".to_owned(),
-                homebrew_executed: true,
-                log_files: vec![
-                    "01-tag-install-validation.log".to_owned(),
-                    "02-crates-io-install-validation.log".to_owned()
-                ],
+        Command::Release(ReleaseArgs {
+            subcommand: ReleaseSubcommand::Evidence {
+                subcommand: ReleaseEvidenceSubcommand::Summary {
+                    tag: "v0.2.5".to_owned(),
+                    artifacts_dir: PathBuf::from("artifacts/dist"),
+                    crate_version: None,
+                    repo_url: "https://github.com/inflatable-cookie/effigy.git".to_owned(),
+                    brew_formula: "inflatable-cookie/effigy/effigy".to_owned(),
+                    homebrew_executed: true,
+                    log_files: vec![
+                        "01-tag-install-validation.log".to_owned(),
+                        "02-crates-io-install-validation.log".to_owned()
+                    ],
+                },
             },
             repo_override: None,
             output_json: true,

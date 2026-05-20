@@ -14,8 +14,6 @@ mod container_data;
 mod demo;
 #[path = "command_parsing_deploy.rs"]
 mod deploy;
-#[path = "command_parsing_distribution.rs"]
-mod distribution;
 #[path = "command_parsing_docs.rs"]
 mod docs;
 #[path = "command_parsing_graph.rs"]
@@ -41,7 +39,6 @@ use changelog::parse_changelog_command;
 use container::parse_container_command;
 use demo::parse_demo_command;
 use deploy::parse_deploy_command;
-use distribution::parse_distribution_command;
 use docs::parse_docs_command;
 use graph::parse_graph_command;
 use release::parse_release_command;
@@ -82,7 +79,6 @@ where
         "graph" => parse_graph_command(args),
         "docs" => parse_docs_command(args),
         "contracts" => parse_contracts_command(args),
-        "distribution" => parse_distribution_command(args),
         "artifact" | "artefact" => parse_artifact_command(args),
         "container" => parse_container_command(args),
         "bootstrap" => parse_bootstrap_command(args),

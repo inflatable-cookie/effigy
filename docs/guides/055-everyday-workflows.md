@@ -314,13 +314,13 @@ default path should be native:
 ```sh
 effigy release status --check-gates
 effigy release prepare --plan
-effigy distribution preflight --tag vX.Y.Z
-effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-vX.Y.Z
+effigy release preflight --tag vX.Y.Z
+effigy release evidence validate --artifacts-dir ./artifacts/distribution-vX.Y.Z
 ```
 
-Use `release` for release readiness and mutation flow. Use
-`distribution` for artifact validation, GLIBC checks, first-publish evidence,
-and closeout material where that built-in path fits your repo.
+Use `release` for release readiness, mutation flow, artifact validation,
+GLIBC checks, release proof evidence, and closeout material where that built-in
+path fits your repo.
 
 Deep dive:
 - [`051-release-orchestration.md`](./051-release-orchestration.md)

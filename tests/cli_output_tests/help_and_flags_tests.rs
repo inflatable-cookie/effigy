@@ -289,9 +289,9 @@ fn cli_contracts_help_is_command_specific() {
 }
 
 #[test]
-fn cli_distribution_help_is_command_specific() {
+fn cli_release_help_includes_distribution_evidence_commands() {
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("distribution")
+        .arg("release")
         .arg("--help")
         .env("NO_COLOR", "1")
         .output()
@@ -299,12 +299,13 @@ fn cli_distribution_help_is_command_specific() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    assert!(stdout.contains("distribution Help"));
+    assert!(stdout.contains("release Help"));
     assert!(stdout
-        .contains("effigy distribution preflight [--repo <PATH>] [--tag <TAG>] [--skip-docs] [--skip-smoke] [--output <PATH>] [--json]"));
-    assert!(stdout
-        .contains("effigy distribution validate-metadata [--repo <PATH>] [--tag <TAG>] [--json]"));
-    assert!(stdout.contains("effigy distribution write-summary"));
+        .contains("effigy release preflight [--repo <PATH>] [--tag <TAG>] [--skip-docs] [--skip-smoke] [--output <PATH>] [--json]"));
+    assert!(
+        stdout.contains("effigy release validate [--repo <PATH>] [--tag <TAG>] [--json]")
+    );
+    assert!(stdout.contains("effigy release evidence summary"));
     assert!(!stdout.contains("contracts Help"));
 }
 

@@ -393,8 +393,8 @@ Still intentionally not shipped:
   inline/unified diffs before apply
 - automatic workflow migration in `.github/workflows/` without explicit human
   approval
-- a claim that the fuller `distribution first-publish` path is already
-  universally generic across non-Cargo consumer repos
+- a claim that the fuller `release proof` path is already universally generic
+  across non-Cargo consumer repos
 
 ## Expected Outcome
 

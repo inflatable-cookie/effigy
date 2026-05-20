@@ -60,11 +60,11 @@ Release: vX.Y.Z
 - artifacts directory: `./artifacts/distribution-vX.Y.Z`
 - `effigy release verify-install --tag vX.Y.Z`
   - result: ...
-- `effigy distribution first-publish --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+- `effigy release proof --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
   - result: ...
-- `effigy distribution validate-artifacts --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+- `effigy release evidence validate --artifacts-dir ./artifacts/distribution-vX.Y.Z`
   - result: ...
-- `effigy distribution generate-closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
+- `effigy release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
   - result: ...
 
 ## Release Notes

@@ -279,9 +279,9 @@ pub(super) fn advanced_jobs(context: &RepoSetupContext) -> Vec<SetupJob> {
             SetupExecutionKind::Inspect,
             SetupSafetyClass::SafeCheck,
             context.has_distribution,
-            "Inspect distribution preflight surfaces.".to_owned(),
+            "Inspect release preflight surfaces.".to_owned(),
             "`[distribution]` is declared; init does not publish artifacts".to_owned(),
-            Some("effigy distribution preflight".to_owned()),
+            Some("effigy release preflight".to_owned()),
             false,
         ),
         contextual_job(

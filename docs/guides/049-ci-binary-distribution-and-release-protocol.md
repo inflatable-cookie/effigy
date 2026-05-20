@@ -69,7 +69,7 @@ with QEMU for the smoke test.
 Linux GNU compatibility policy:
 - Linux release binaries are built on `ubuntu-22.04` to keep the glibc floor
   stable at `GLIBC_2.35`
-- `effigy distribution check-glibc-floor` runs in the release build job and
+- `effigy release check-binary` runs in the release build job and
   fails the workflow if a Linux artifact starts requiring a newer glibc symbol
   version
 - Effigy now also has one local rehearsal path for this on developer machines:
@@ -216,7 +216,7 @@ Supported-boundary rule for `v0.3` messaging:
 
 - describe Effigy's release/distribution story as strong native self-hosting
   plus reusable validation/evidence primitives
-- do not describe the fuller `distribution first-publish` path as universally
+- do not describe the fuller `release proof` path as universally
   generic while it still carries bounded Cargo-centric assumptions
 
 ### 6b) Tagging Rules

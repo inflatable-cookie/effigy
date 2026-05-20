@@ -407,7 +407,7 @@ pub fn generate_closeout_command(
         .collect::<Vec<_>>()
         .join("\n");
     let rendered = format!(
-        "# Distribution Acceptance Closeout ({tag})\n\nDate: {today}\nOwner: {owner}\n{related_line}\n## Scope\n\n- Capture publish-cycle distribution evidence from artifact logs.\n- Record acceptance-closeout outcomes for tag {tag}.\n\n## Inputs\n\n- release tag: {tag}\n- artifacts directory: {}\n- artifacts summary: {}\n\n## Evidence Logs\n\n{evidence_lines}\n\n## Outcomes\n\n- First-publish artifacts were captured and linked for closeout evidence.\n- Install validation evidence for `{}` is included in this closeout via artifact outputs.\n- Homebrew evidence included: {has_homebrew_logs}.\n\n## Risks / Follow-ups\n\n- If any expected channel log is missing, rerun `effigy distribution first-publish --tag {tag} --artifacts-dir <dir>` before final sign-off.\n- External distribution channel state still determines final release readiness.\n\n## Next Step\n\n- {}\n",
+        "# Distribution Acceptance Closeout ({tag})\n\nDate: {today}\nOwner: {owner}\n{related_line}\n## Scope\n\n- Capture publish-cycle distribution evidence from artifact logs.\n- Record acceptance-closeout outcomes for tag {tag}.\n\n## Inputs\n\n- release tag: {tag}\n- artifacts directory: {}\n- artifacts summary: {}\n\n## Evidence Logs\n\n{evidence_lines}\n\n## Outcomes\n\n- First-publish artifacts were captured and linked for closeout evidence.\n- Install validation evidence for `{}` is included in this closeout via artifact outputs.\n- Homebrew evidence included: {has_homebrew_logs}.\n\n## Risks / Follow-ups\n\n- If any expected channel log is missing, rerun `effigy release proof --tag {tag} --artifacts-dir <dir>` before final sign-off.\n- External distribution channel state still determines final release readiness.\n\n## Next Step\n\n- {}\n",
         artifacts_dir.display(),
         summary_path.display(),
         distribution_policy.package_name,
@@ -618,7 +618,7 @@ pub fn first_publish_command(
     }
 
     Ok(format!(
-        "[ok] distribution first-publish matrix passed\n[ok] artifacts directory: {}\n[ok] artifacts summary: {}",
+        "[ok] release proof matrix passed\n[ok] artifacts directory: {}\n[ok] artifacts summary: {}",
         artifacts_dir.display(),
         summary_path.display()
     ))
@@ -1284,7 +1284,7 @@ pub fn validate_metadata_command(
                 "aarch64 Linux release baseline pinning",
             ),
             (
-                "./effigy-${{ matrix.target }} distribution check-glibc-floor --binary ./effigy-${{ matrix.target }} --max-glibc 2.35",
+                "./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35",
                 "Linux glibc compatibility guard",
             ),
         ] {
@@ -1326,7 +1326,7 @@ pub fn validate_metadata_command(
     Err(DistributionExecutionError::Message(errors.join("\n")))
 }
 
-/// Run the distribution preflight sequence: docs task, metadata check,
+/// Run the release preflight sequence: docs task, metadata check,
 /// smoke task — each configurable and skippable.
 ///
 /// Invokes `effigy_bin <task> --repo <repo_root>` for docs/smoke tasks and
@@ -1378,10 +1378,11 @@ pub fn preflight_command(
 
     let next_command = if let Some(tag) = tag {
         format!(
-            "effigy distribution first-publish --tag {tag} --artifacts-dir ./artifacts/distribution-{tag}"
+            "effigy release proof --tag {tag} --artifacts-dir ./artifacts/distribution-{tag}"
         )
     } else {
-        "effigy distribution first-publish --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z".to_owned()
+        "effigy release proof --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z"
+            .to_owned()
     };
 
     let payload = schema_v1_payload(
@@ -1407,7 +1408,7 @@ pub fn preflight_command(
             output_path.display()
         ));
     }
-    lines.push("[ok] distribution preflight checks passed".to_owned());
+    lines.push("[ok] release preflight checks passed".to_owned());
     lines.push(format!("[next] real publish-cycle command: {next_command}"));
     Ok(lines.join("\n"))
 }

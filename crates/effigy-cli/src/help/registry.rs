@@ -142,14 +142,6 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_contracts,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Distribution,
-        command_name: Some("distribution"),
-        general_help_command: Some("effigy distribution"),
-        general_help_description: Some("Validate distribution metadata/artifact bundles and generate closeout evidence"),
-        deferred_builtin: Some("distribution"),
-        render: render_distribution,
-    },
-    HelpTopicDescriptor {
         topic: HelpTopic::Artifact,
         command_name: None,
         general_help_command: Some("effigy artifact"),
@@ -334,10 +326,6 @@ fn render_docs(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpRes
 
 fn render_contracts(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_contracts_help(renderer)
-}
-
-fn render_distribution(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
-    topics::render_distribution_help(renderer)
 }
 
 fn render_artifact(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

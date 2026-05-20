@@ -6,9 +6,9 @@ use effigy_distribution::{
     validate_metadata_command, write_summary_command, EffectiveDistributionPolicy,
 };
 
-use super::RunnerError;
+use crate::runner::RunnerError;
 
-pub(super) fn run_preflight(
+pub(crate) fn run_preflight(
     repo_root: &Path,
     distribution_policy: &EffectiveDistributionPolicy,
     tag: Option<&str>,
@@ -31,7 +31,7 @@ pub(super) fn run_preflight(
     .map_err(Into::into)
 }
 
-pub(super) fn run_check_glibc_floor(
+pub(crate) fn run_check_glibc_floor(
     binary_path: &Path,
     max_glibc: &str,
     output_json: bool,
@@ -39,7 +39,7 @@ pub(super) fn run_check_glibc_floor(
     check_glibc_floor_command(binary_path, max_glibc, output_json).map_err(Into::into)
 }
 
-pub(super) fn run_first_publish(
+pub(crate) fn run_first_publish(
     repo_root: &Path,
     distribution_policy: &EffectiveDistributionPolicy,
     tag: &str,
@@ -96,7 +96,7 @@ pub(super) fn run_first_publish(
     result
 }
 
-pub(super) fn run_validate_metadata(
+pub(crate) fn run_validate_metadata(
     repo_root: &Path,
     distribution_policy: &EffectiveDistributionPolicy,
     tag: Option<&str>,
@@ -105,7 +105,7 @@ pub(super) fn run_validate_metadata(
     validate_metadata_command(repo_root, distribution_policy, tag, output_json).map_err(Into::into)
 }
 
-pub(super) fn run_validate_artifacts(
+pub(crate) fn run_validate_artifacts(
     repo_root: &Path,
     distribution_policy: &EffectiveDistributionPolicy,
     artifacts_dir: &Path,
@@ -122,7 +122,7 @@ pub(super) fn run_validate_artifacts(
     .map_err(Into::into)
 }
 
-pub(super) fn run_generate_closeout(
+pub(crate) fn run_generate_closeout(
     repo_root: &Path,
     distribution_policy: &EffectiveDistributionPolicy,
     tag: &str,
@@ -164,7 +164,7 @@ pub(super) fn run_generate_closeout(
     }
 }
 
-pub(super) fn run_write_summary(
+pub(crate) fn run_write_summary(
     repo_root: &Path,
     distribution_policy: &EffectiveDistributionPolicy,
     tag: &str,

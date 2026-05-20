@@ -12,7 +12,6 @@ use super::super::run_contracts;
 use super::super::run_defer;
 use super::super::run_demo;
 use super::super::run_deploy;
-use super::super::run_distribution;
 use super::super::run_docs;
 use super::super::run_exec;
 use super::super::run_gateway;
@@ -69,7 +68,6 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Graph(args) => run_graph(args),
         Command::Docs(args) => run_docs(args),
         Command::Contracts(args) => run_contracts(args),
-        Command::Distribution(args) => run_distribution(args),
         Command::Container(args) => run_container(args),
         Command::Bootstrap(args) => {
             super::super::bootstrap_command::run_bootstrap_with_cwd(args, cwd.to_path_buf())

@@ -144,7 +144,6 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Graph(_)
         | Command::Docs(_)
         | Command::Contracts(_)
-        | Command::Distribution(_)
         | Command::Artifact(_)
         | Command::Container(_)
         | Command::Bootstrap(_)

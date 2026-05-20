@@ -58,7 +58,6 @@ pub(in crate::runner) use defer_command::run_defer;
 pub(crate) use deferral::{deferred_builtins_for_root, deferred_builtins_from_catalogs};
 pub(in crate::runner) use demo_command::run_demo;
 pub(in crate::runner) use deploy_command::run_deploy;
-pub(in crate::runner) use distribution_command::run_distribution;
 pub(in crate::runner) use docs_command::run_docs;
 pub use entrypoints::{resolve_command_root, run_command, run_command_with_context};
 pub use error::RunnerError;

@@ -221,13 +221,6 @@ fn parse_contracts_help_is_scoped() {
 }
 
 #[test]
-fn parse_distribution_help_is_scoped() {
-    let cmd = parse_command(vec!["distribution".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Distribution));
-}
-
-#[test]
 fn parse_exec_help_is_scoped() {
     let cmd =
         parse_command(vec!["exec".to_owned(), "--help".to_owned()]).expect("parse should succeed");

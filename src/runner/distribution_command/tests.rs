@@ -167,7 +167,7 @@ fn preflight_recommends_native_first_publish_command() {
     .expect("preflight should render");
 
     assert!(output.contains(&format!(
-        "effigy distribution first-publish --tag {current_tag}"
+        "effigy release proof --tag {current_tag}"
     )));
     assert!(!output.contains("check-distribution-first-publish.sh"));
 }

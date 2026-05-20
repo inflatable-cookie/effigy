@@ -6,9 +6,9 @@ pub(super) use effigy_cli::{
     BootstrapBackendOverride, BootstrapDepsSyncMode, BootstrapSubcommand, Command, ContainerArgs,
     ContainerSubcommand, ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode,
     ContractsSubcommand, DeferArgs, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode,
-    DemoListQuery, DemoListStatus, DemoSubcommand, DeployArgs, DeploySubcommand, DistributionArgs,
-    DistributionSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, ExecArgs,
-    GatewayArgs, GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic, ReleaseArgs,
+    DemoListQuery, DemoListStatus, DemoSubcommand, DeployArgs, DeploySubcommand, DocsArgs,
+    DocsBlockRequirement, DocsSubcommand, DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand,
+    GraphArgs, GraphSubcommand, HelpTopic, ReleaseArgs, ReleaseEvidenceSubcommand,
     ReleaseSubcommand, ServiceArgs, ServiceSubcommand, StateArgs, StateSubcommand, SystemArgs,
     SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
 };
