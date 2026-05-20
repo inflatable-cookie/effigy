@@ -5,9 +5,9 @@ use crate::error::CodeGraphError;
 use crate::json::{
     GraphAffectedFilePayload, GraphAffectedPayload, GraphAffectedTaskPayload,
     GraphContextItemPayload, GraphContextOverflowPayload, GraphContextPayload,
-    GraphExploreIndexPayload, GraphExplorePayload, GraphExploreRelationPayload, GraphFilesPayload,
-    GraphFreshnessPayload, GraphImpactPayload, GraphNodePayload, GraphRelatedNodesPayload,
-    GraphSearchMatchPayload, GraphSearchPayload,
+    GraphExploreEditTargetPayload, GraphExploreIndexPayload, GraphExplorePayload,
+    GraphExploreRelationPayload, GraphFilesPayload, GraphFreshnessPayload, GraphImpactPayload,
+    GraphNodePayload, GraphRelatedNodesPayload, GraphSearchMatchPayload, GraphSearchPayload,
 };
 use crate::model::{EdgeRecord, FileRecord, SymbolRecord};
 use crate::storage::GraphStore;
@@ -273,7 +273,27 @@ pub fn affected(
     let edges = store.list_edges()?;
     let limit = limit.unwrap_or(100);
     let depth = depth.max(1);
+    let freshness = freshness(repo_root, &store)?;
+    affected_from_graph(
+        &files,
+        &symbols,
+        &edges,
+        freshness,
+        changed_paths,
+        depth,
+        limit,
+    )
+}
 
+fn affected_from_graph(
+    files: &[FileRecord],
+    symbols: &[SymbolRecord],
+    edges: &[EdgeRecord],
+    freshness: GraphFreshnessPayload,
+    changed_paths: &[String],
+    depth: usize,
+    limit: usize,
+) -> Result<GraphAffectedPayload, CodeGraphError> {
     let file_by_path = files
         .iter()
         .map(|file| (file.path.as_str().to_owned(), file))
@@ -344,7 +364,7 @@ pub fn affected(
         if current_depth >= depth {
             continue;
         }
-        for edge in &edges {
+        for edge in edges {
             if edge.from_id.as_str() == node_id {
                 if let Some(to_id) = &edge.to_id {
                     let next_id = to_id.as_str().to_owned();
@@ -464,7 +484,7 @@ pub fn affected(
 
     Ok(GraphAffectedPayload {
         changed_paths,
-        freshness: freshness(repo_root, &store)?,
+        freshness,
         depth,
         affected_files,
         likely_test_files,
@@ -507,7 +527,7 @@ fn context_from_graph(
 ) -> Result<GraphContextPayload, CodeGraphError> {
     let max_files = max_files.unwrap_or(8);
     let max_bytes = max_bytes.unwrap_or(4096);
-    let request_profile = RequestProfile::new(request);
+    let request_profile = RequestProfile::new(request, repo_root);
     let tokens = &request_profile.match_tokens;
 
     let filtered_files = files
@@ -981,6 +1001,35 @@ pub fn explore(
                 }),
         )
         .collect::<Vec<_>>();
+    let edit_seed_paths = explore_edit_seed_paths(&primary);
+    let projected_validation = if edit_seed_paths.is_empty() {
+        None
+    } else {
+        Some(affected_from_graph(
+            &files,
+            &symbols,
+            &edges,
+            freshness.clone(),
+            &edit_seed_paths,
+            2,
+            max_files * 3,
+        )?)
+    };
+    let edit_targets = project_explore_edit_targets(
+        &primary,
+        projected_validation
+            .as_ref()
+            .map(|payload| payload.affected_files.as_slice())
+            .unwrap_or(&[]),
+    );
+    let likely_test_files = projected_validation
+        .as_ref()
+        .map(|payload| payload.likely_test_files.clone())
+        .unwrap_or_default();
+    let likely_test_tasks = projected_validation
+        .as_ref()
+        .map(|payload| project_explore_test_tasks(&payload.likely_test_tasks))
+        .unwrap_or_default();
     let mut guidance = context_payload.notes.clone();
     if counts.files > 0 && !context_payload.freshness.stale {
         guidance.push("index freshness: ready".to_owned());
@@ -988,6 +1037,17 @@ pub fn explore(
     if !traversal.is_empty() {
         guidance.push(
             "relations include bounded one-hop graph traversal from primary owners".to_owned(),
+        );
+    }
+    if !edit_targets.is_empty() {
+        guidance.push(
+            "edit targets separate the top owner from adjacent wiring where graph evidence supports it"
+                .to_owned(),
+        );
+    }
+    if !likely_test_files.is_empty() || !likely_test_tasks.is_empty() {
+        guidance.push(
+            "likely tests are bounded graph candidates, not exhaustive validation proof".to_owned(),
         );
     }
     if excerpts
@@ -1011,9 +1071,117 @@ pub fn explore(
         primary,
         excerpts,
         relations,
+        edit_targets,
+        likely_test_files,
+        likely_test_tasks,
         overflow: context_payload.overflow,
         guidance,
     })
+}
+
+fn explore_edit_seed_paths(primary: &[GraphContextItemPayload]) -> Vec<String> {
+    primary
+        .iter()
+        .filter(|item| item.kind == "file")
+        .filter(|item| {
+            matches!(
+                FileRole::classify(
+                    item.path.as_str(),
+                    item.language_id.as_deref().unwrap_or("unknown")
+                ),
+                FileRole::Implementation | FileRole::Config
+            )
+        })
+        .take(1)
+        .map(|item| item.path.clone())
+        .collect()
+}
+
+fn project_explore_edit_targets(
+    primary: &[GraphContextItemPayload],
+    affected_files: &[GraphAffectedFilePayload],
+) -> Vec<GraphExploreEditTargetPayload> {
+    let mut targets = Vec::new();
+    let mut seen_paths = BTreeSet::new();
+
+    if let Some(owner) = primary.iter().find(|item| {
+        item.kind == "file"
+            && matches!(
+                FileRole::classify(
+                    item.path.as_str(),
+                    item.language_id.as_deref().unwrap_or("unknown")
+                ),
+                FileRole::Implementation | FileRole::Config
+            )
+    }) {
+        let role = FileRole::classify(
+            owner.path.as_str(),
+            owner.language_id.as_deref().unwrap_or("unknown"),
+        );
+        seen_paths.insert(owner.path.clone());
+        targets.push(GraphExploreEditTargetPayload {
+            kind: if role == FileRole::Config {
+                "config".to_owned()
+            } else {
+                "implementation".to_owned()
+            },
+            path: owner.path.clone(),
+            language_id: owner.language_id.clone(),
+            range: owner.range.clone(),
+            confidence: "ranked".to_owned(),
+            reasons: owner.reasons.clone(),
+        });
+    }
+
+    if let Some(wiring) = affected_files.iter().find(|item| {
+        !seen_paths.contains(item.path.as_str())
+            && item
+                .reasons
+                .iter()
+                .any(|reason| !reason.contains("`contains`"))
+            && matches!(
+                FileRole::classify(
+                    item.path.as_str(),
+                    item.language_id.as_deref().unwrap_or("unknown")
+                ),
+                FileRole::Implementation | FileRole::Config
+            )
+    }) {
+        let role = FileRole::classify(
+            wiring.path.as_str(),
+            wiring.language_id.as_deref().unwrap_or("unknown"),
+        );
+        targets.push(GraphExploreEditTargetPayload {
+            kind: if role == FileRole::Config {
+                "config".to_owned()
+            } else {
+                "wiring".to_owned()
+            },
+            path: wiring.path.clone(),
+            language_id: wiring.language_id.clone(),
+            range: None,
+            confidence: wiring.confidence.clone(),
+            reasons: wiring.reasons.clone(),
+        });
+    }
+
+    targets
+}
+
+fn project_explore_test_tasks(tasks: &[GraphAffectedTaskPayload]) -> Vec<GraphAffectedTaskPayload> {
+    tasks
+        .iter()
+        .filter(|task| {
+            let lower = task.name.to_ascii_lowercase();
+            lower.contains("test")
+                || lower.contains("nextest")
+                || lower.contains("vitest")
+                || lower.contains("jest")
+                || lower.contains("pytest")
+        })
+        .take(6)
+        .cloned()
+        .collect()
 }
 
 fn record_affected_reason(
@@ -1107,9 +1275,5 @@ fn freshness(
     repo_root: &Path,
     store: &GraphStore,
 ) -> Result<GraphFreshnessPayload, CodeGraphError> {
-    let stale_paths = crate::index::stale_paths_for_repo(repo_root, store)?;
-    Ok(GraphFreshnessPayload {
-        stale: !stale_paths.is_empty(),
-        stale_paths,
-    })
+    crate::index::freshness_payload(repo_root, store)
 }

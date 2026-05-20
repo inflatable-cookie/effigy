@@ -33,6 +33,7 @@ pub struct GraphStatusPayload {
     pub db_path: String,
     pub storage_schema_version: u32,
     pub counts: GraphCountsPayload,
+    pub freshness: GraphFreshnessPayload,
     pub stale_paths: Vec<String>,
     pub new_paths: Vec<String>,
     pub changed_paths: Vec<String>,
@@ -68,7 +69,12 @@ pub struct GraphIndexPayload {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphFreshnessPayload {
+    pub state: String,
+    pub summary: String,
+    pub usable: bool,
     pub stale: bool,
+    pub stale_path_count: usize,
+    pub failed_path_count: usize,
     pub stale_paths: Vec<String>,
 }
 
@@ -216,6 +222,16 @@ pub struct GraphExploreRelationPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphExploreEditTargetPayload {
+    pub kind: String,
+    pub path: String,
+    pub language_id: Option<String>,
+    pub range: Option<SourceSpan>,
+    pub confidence: String,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphExplorePayload {
     pub query: String,
     pub index: GraphExploreIndexPayload,
@@ -223,6 +239,9 @@ pub struct GraphExplorePayload {
     pub primary: Vec<GraphContextItemPayload>,
     pub excerpts: Vec<GraphExploreExcerptPayload>,
     pub relations: Vec<GraphExploreRelationPayload>,
+    pub edit_targets: Vec<GraphExploreEditTargetPayload>,
+    pub likely_test_files: Vec<GraphAffectedFilePayload>,
+    pub likely_test_tasks: Vec<GraphAffectedTaskPayload>,
     pub overflow: GraphContextOverflowPayload,
     pub guidance: Vec<String>,
 }

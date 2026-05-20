@@ -238,8 +238,10 @@ fn render_index_text(payload: &GraphIndexPayload) -> String {
 
 fn render_status_text(payload: &GraphStatusPayload) -> String {
     format!(
-        "graph ready: {}\nfiles: {}\nsymbols: {}\nedges: {}\nstale: {}",
+        "graph ready: {}\ntrust: {}\ntrust summary: {}\nfiles: {}\nsymbols: {}\nedges: {}\nstale: {}",
         payload.ready,
+        payload.freshness.state,
+        payload.freshness.summary,
         payload.counts.files,
         payload.counts.symbols,
         payload.counts.edges,
@@ -423,10 +425,13 @@ fn render_explore_text(payload: &GraphExplorePayload) -> String {
     lines.push(format!("graph explore `{}`", payload.query));
     lines.push(payload.summary.clone());
     lines.push(format!(
-        "primary: {} excerpts: {} relations: {}",
+        "primary: {} excerpts: {} relations: {} edit-targets: {} likely-tests: {} files / {} tasks",
         payload.primary.len(),
         payload.excerpts.len(),
-        payload.relations.len()
+        payload.relations.len(),
+        payload.edit_targets.len(),
+        payload.likely_test_files.len(),
+        payload.likely_test_tasks.len()
     ));
     for item in payload.primary.iter().take(10) {
         let name = item.name.as_deref().unwrap_or(item.path.as_str());
@@ -460,6 +465,39 @@ fn render_explore_text(payload: &GraphExplorePayload) -> String {
             relation.kind, name, relation.reason
         ));
     }
+    for target in payload.edit_targets.iter().take(5) {
+        let reasons = if target.reasons.is_empty() {
+            "no reason recorded".to_owned()
+        } else {
+            target.reasons.join("; ")
+        };
+        lines.push(format!(
+            "- edit target {} {} [{}] because {}",
+            target.kind, target.path, target.confidence, reasons
+        ));
+    }
+    for file in payload.likely_test_files.iter().take(5) {
+        let reasons = if file.reasons.is_empty() {
+            "no reason recorded".to_owned()
+        } else {
+            file.reasons.join("; ")
+        };
+        lines.push(format!(
+            "- likely test file {} [{}] because {}",
+            file.path, file.confidence, reasons
+        ));
+    }
+    for task in payload.likely_test_tasks.iter().take(5) {
+        let reasons = if task.reasons.is_empty() {
+            "no reason recorded".to_owned()
+        } else {
+            task.reasons.join("; ")
+        };
+        lines.push(format!(
+            "- likely test task {} [{}] because {}",
+            task.name, task.confidence, reasons
+        ));
+    }
     for note in &payload.guidance {
         lines.push(format!("- guidance {note}"));
     }
@@ -467,14 +505,21 @@ fn render_explore_text(payload: &GraphExplorePayload) -> String {
 }
 
 fn freshness_lines(freshness: &GraphFreshnessPayload) -> Vec<String> {
+    let mut lines = vec![format!("graph trust: {}", freshness.state)];
+    lines.push(format!("graph trust summary: {}", freshness.summary));
     if freshness.stale {
-        vec![format!(
+        lines.push(format!(
             "graph stale: {} paths require reindex",
-            freshness.stale_paths.len()
-        )]
-    } else {
-        Vec::new()
+            freshness.stale_path_count
+        ));
     }
+    if freshness.failed_path_count > 0 {
+        lines.push(format!(
+            "graph failures: {} paths failed during indexing",
+            freshness.failed_path_count
+        ));
+    }
+    lines
 }
 
 fn read_stdin_paths() -> Result<Vec<String>, String> {

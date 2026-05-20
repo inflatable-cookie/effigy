@@ -231,6 +231,257 @@ pub fn parse_task_log_line(line: &str) -> String {
 }
 
 #[test]
+fn graph_explore_behavior_query_prefers_prompt_owner_with_natural_shell_exit_wording() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(
+        temp.path().join("src/shell_exit_prompt.rs"),
+        r#"
+pub fn prompt_before_container_shutdown_on_shell_exit() {
+    confirm_shell_exit_cleanup();
+}
+
+fn confirm_shell_exit_cleanup() {}
+"#,
+    )
+    .expect("write prompt owner");
+    fs::write(
+        temp.path().join("src/container_session.rs"),
+        r#"
+pub fn container_shell_session() {
+    run_container_shell();
+}
+
+pub fn shutdown_container_runtime() {}
+
+fn run_container_shell() {}
+"#,
+    )
+    .expect("write noisy session owner");
+
+    run_index(temp.path()).expect("index");
+    let payload = explore(
+        temp.path(),
+        "where does the system prompt to shut containers down on shell exit",
+        Some(3),
+        Some(4096),
+        &[],
+        &[],
+    )
+    .expect("explore");
+
+    assert_eq!(
+        payload.primary.first().map(|item| item.path.as_str()),
+        Some("src/shell_exit_prompt.rs"),
+        "behavior-shaped shell-exit wording should rank the prompt owner first: {:?}",
+        payload
+            .primary
+            .iter()
+            .map(|item| format!("{} => {:?}", item.path, item.reasons))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn graph_context_behavior_query_prefers_redirect_owner() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(
+        temp.path().join("src/http_redirect.rs"),
+        r#"
+pub fn build_redirect_response() -> &'static str {
+    "302 redirect"
+}
+"#,
+    )
+    .expect("write redirect owner");
+    fs::write(
+        temp.path().join("src/http_router.rs"),
+        r#"
+pub fn register_http_routes() {}
+pub fn resolve_route_path() {}
+"#,
+    )
+    .expect("write router noise");
+
+    run_index(temp.path()).expect("index");
+    let payload = context(
+        temp.path(),
+        "where are redirect responses handled",
+        Some(3),
+        Some(4096),
+        &[],
+        &[],
+    )
+    .expect("context");
+
+    assert_eq!(
+        payload.items.first().map(|item| item.path.as_str()),
+        Some("src/http_redirect.rs"),
+        "redirect wording should rank redirect handling over generic route files: {:?}",
+        payload
+            .items
+            .iter()
+            .map(|item| format!("{} => {:?}", item.path, item.reasons))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn graph_context_behavior_query_prefers_validation_migration_owner() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(
+        temp.path().join("src/config_migration.rs"),
+        r#"
+pub fn validate_manifest_migration_plan() {
+    check_upgrade_guards();
+}
+
+fn check_upgrade_guards() {}
+"#,
+    )
+    .expect("write migration owner");
+    fs::write(
+        temp.path().join("src/config_loader.rs"),
+        r#"
+pub fn load_manifest_config() {}
+pub fn parse_config_file() {}
+"#,
+    )
+    .expect("write loader noise");
+
+    run_index(temp.path()).expect("index");
+    let payload = context(
+        temp.path(),
+        "where are config migrations validated before apply",
+        Some(3),
+        Some(4096),
+        &[],
+        &[],
+    )
+    .expect("context");
+
+    assert_eq!(
+        payload.items.first().map(|item| item.path.as_str()),
+        Some("src/config_migration.rs"),
+        "migration validation wording should rank migration guards over config loaders: {:?}",
+        payload
+            .items
+            .iter()
+            .map(|item| format!("{} => {:?}", item.path, item.reasons))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn graph_explore_packet_surfaces_edit_targets_and_likely_tests_for_split_ownership() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::create_dir_all(temp.path().join("tests")).expect("mkdir tests");
+    fs::write(
+        temp.path().join("effigy.toml"),
+        r#"
+[tasks.test]
+run = "cargo test"
+"#,
+    )
+    .expect("write manifest");
+    fs::write(
+        temp.path().join("src/closeout.rs"),
+        r#"
+pub fn maybe_confirm_shell_exit_cleanup() {
+    render_shell_exit_prompt();
+}
+
+fn render_shell_exit_prompt() {}
+"#,
+    )
+    .expect("write implementation owner");
+    fs::write(
+        temp.path().join("src/workspace.rs"),
+        r#"
+use crate::closeout::maybe_confirm_shell_exit_cleanup;
+
+pub fn run_workspace_shell_exit() {
+    maybe_confirm_shell_exit_cleanup();
+}
+"#,
+    )
+    .expect("write wiring owner");
+    fs::write(
+        temp.path().join("tests/closeout_test.rs"),
+        r#"
+use demo::closeout::maybe_confirm_shell_exit_cleanup;
+
+#[test]
+fn closeout_prompt_runs() {
+    maybe_confirm_shell_exit_cleanup();
+}
+"#,
+    )
+    .expect("write tests");
+
+    run_index(temp.path()).expect("index");
+    let payload = explore(
+        temp.path(),
+        "where does shell exit cleanup prompt run",
+        Some(4),
+        Some(8192),
+        &[],
+        &[],
+    )
+    .expect("explore");
+
+    assert_eq!(
+        payload.edit_targets.first().map(|item| item.path.as_str()),
+        Some("src/closeout.rs"),
+        "top edit target should stay on the implementation owner: {:?}",
+        payload
+            .edit_targets
+            .iter()
+            .map(|item| format!("{} => {} {:?}", item.path, item.confidence, item.reasons))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        payload
+            .edit_targets
+            .iter()
+            .any(|item| item.kind == "wiring" && item.path == "src/workspace.rs"),
+        "split-ownership packet should surface adjacent wiring when graph evidence supports it: {:?}",
+        payload
+            .edit_targets
+            .iter()
+            .map(|item| format!("{} => {}", item.kind, item.path))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        payload
+            .likely_test_files
+            .iter()
+            .any(|item| item.path == "tests/closeout_test.rs"),
+        "split-ownership packet should surface likely test files: {:?}",
+        payload
+            .likely_test_files
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        payload
+            .likely_test_tasks
+            .iter()
+            .any(|item| item.name == "test"),
+        "split-ownership packet should surface likely test tasks: {:?}",
+        payload
+            .likely_test_tasks
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn graph_context_ranks_tests_and_docs_when_request_intent_asks_for_them() {
     let temp = tempfile::tempdir().expect("tempdir");
     write_graph_watch_fixture(temp.path());

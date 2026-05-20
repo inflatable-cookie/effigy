@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FileRole {
@@ -89,7 +90,7 @@ pub(super) struct RequestProfile {
 }
 
 impl RequestProfile {
-    pub(super) fn new(request: &str) -> Self {
+    pub(super) fn new(request: &str, repo_root: &Path) -> Self {
         let raw_tokens = request
             .split_whitespace()
             .flat_map(split_identifier_token)
@@ -97,9 +98,11 @@ impl RequestProfile {
             .filter(|token| !token.is_empty())
             .collect::<Vec<_>>();
         let intent = classify_request_intent(&raw_tokens);
+        let repo_tokens = repo_identity_tokens(repo_root);
         let match_tokens = raw_tokens
             .iter()
             .filter(|token| !is_context_stop_word(token))
+            .filter(|token| !repo_tokens.contains(*token))
             .flat_map(|token| expanded_match_tokens(token))
             .collect::<BTreeSet<_>>()
             .into_iter()
@@ -236,46 +239,116 @@ fn is_context_stop_word(token: &str) -> bool {
 }
 
 fn expanded_match_tokens(token: &str) -> Vec<String> {
-    let mut tokens = vec![token.to_owned()];
+    let mut tokens = BTreeSet::new();
+    insert_token_family(&mut tokens, token);
     match token {
         "change" | "changes" | "changed" => {
-            tokens.extend(
-                ["change", "changes", "changed"]
-                    .into_iter()
-                    .map(str::to_owned),
-            );
+            for variant in ["change", "changes", "changed"] {
+                insert_token_family(&mut tokens, variant);
+            }
         }
         "detect" | "detection" | "detected" => {
-            tokens.extend(
-                ["detect", "detection", "scan"]
-                    .into_iter()
-                    .map(str::to_owned),
-            );
+            for variant in ["detect", "detection", "scan"] {
+                insert_token_family(&mut tokens, variant);
+            }
         }
         "stale" | "staleness" => {
-            tokens.extend(
-                ["stale", "staleness", "freshness"]
-                    .into_iter()
-                    .map(str::to_owned),
-            );
+            for variant in ["stale", "staleness", "freshness", "refresh"] {
+                insert_token_family(&mut tokens, variant);
+            }
         }
         "route" | "routes" | "routing" | "routed" => {
-            tokens.extend(
-                ["route", "routes", "routing", "selector", "selectors"]
-                    .into_iter()
-                    .map(str::to_owned),
-            );
+            for variant in ["route", "routes", "routing", "selector", "selectors"] {
+                insert_token_family(&mut tokens, variant);
+            }
         }
         "parse" | "parsed" | "parser" | "parsing" => {
-            tokens.extend(
-                ["parse", "parsed", "parsing"]
-                    .into_iter()
-                    .map(str::to_owned),
-            );
+            for variant in ["parse", "parsed", "parsing"] {
+                insert_token_family(&mut tokens, variant);
+            }
+        }
+        "prompt" | "prompts" | "prompted" | "confirm" | "confirms" | "confirmation"
+        | "confirming" | "ask" | "asks" | "interactive" => {
+            for variant in ["prompt", "confirm", "confirmation", "ask", "interactive"] {
+                insert_token_family(&mut tokens, variant);
+            }
+        }
+        "shut" | "shutdown" | "stop" | "stops" | "teardown" | "closeout" | "cleanup" | "close"
+        | "down" => {
+            for variant in [
+                "shutdown", "stop", "teardown", "closeout", "cleanup", "close",
+            ] {
+                insert_token_family(&mut tokens, variant);
+            }
+        }
+        "exit" | "exits" | "exiting" => {
+            for variant in ["exit", "closeout", "cleanup", "teardown"] {
+                insert_token_family(&mut tokens, variant);
+            }
+        }
+        "validate" | "validation" | "verify" | "verified" | "check" | "checks" | "guard" => {
+            for variant in ["validate", "validation", "verify", "check", "guard"] {
+                insert_token_family(&mut tokens, variant);
+            }
+        }
+        "redirect" | "redirects" | "rewrite" | "rewrites" | "forward" | "forwards" => {
+            for variant in ["redirect", "rewrite", "forward"] {
+                insert_token_family(&mut tokens, variant);
+            }
+        }
+        "migrate" | "migrates" | "migration" | "upgrade" | "upgrades" | "convert" | "converts"
+        | "adopt" | "adopts" => {
+            for variant in ["migrate", "migration", "upgrade", "convert", "adopt"] {
+                insert_token_family(&mut tokens, variant);
+            }
+        }
+        "cache" | "caches" | "cached" | "caching" => {
+            for variant in ["cache", "cached", "caching"] {
+                insert_token_family(&mut tokens, variant);
+            }
+        }
+        "index" | "indexes" | "indexed" | "indexing" => {
+            for variant in ["index", "indexed", "indexing", "freshness", "refresh"] {
+                insert_token_family(&mut tokens, variant);
+            }
         }
         _ => {}
     }
-    tokens
+    tokens.into_iter().collect()
+}
+
+fn repo_identity_tokens(repo_root: &Path) -> BTreeSet<String> {
+    repo_root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(split_identifier_token)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|token| token.to_ascii_lowercase())
+        .collect()
+}
+
+fn insert_token_family(tokens: &mut BTreeSet<String>, token: &str) {
+    if token.is_empty() {
+        return;
+    }
+    tokens.insert(token.to_owned());
+    if let Some(singular) = singularize_token(token) {
+        tokens.insert(singular);
+    }
+}
+
+fn singularize_token(token: &str) -> Option<String> {
+    if token.len() <= 3 {
+        return None;
+    }
+    if let Some(stem) = token.strip_suffix("ies") {
+        return (!stem.is_empty()).then(|| format!("{stem}y"));
+    }
+    if token.ends_with('s') && !token.ends_with("ss") {
+        return token.strip_suffix('s').map(str::to_owned);
+    }
+    None
 }
 
 pub(super) fn split_identifier_token(token: &str) -> Vec<String> {

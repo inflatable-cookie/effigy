@@ -381,6 +381,15 @@ fn graph_json_payloads_are_versioned() {
                 extractors: 1,
                 index_runs: 1,
             },
+            freshness: crate::json::GraphFreshnessPayload {
+                state: "ready".to_owned(),
+                summary: "graph index is current".to_owned(),
+                usable: true,
+                stale: false,
+                stale_path_count: 0,
+                failed_path_count: 0,
+                stale_paths: vec![],
+            },
             stale_paths: vec![],
             new_paths: vec![],
             changed_paths: vec![],
@@ -411,7 +420,12 @@ fn graph_context_payload_round_trips() {
         GraphContextPayload {
             request: "trace deploy provider export".to_owned(),
             freshness: crate::json::GraphFreshnessPayload {
+                state: "ready".to_owned(),
+                summary: "graph index is current".to_owned(),
+                usable: true,
                 stale: false,
+                stale_path_count: 0,
+                failed_path_count: 0,
                 stale_paths: vec![],
             },
             items: vec![GraphContextItemPayload {
@@ -457,7 +471,12 @@ fn graph_explore_payload_round_trips() {
             query: "trace graph watch implementation".to_owned(),
             index: GraphExploreIndexPayload {
                 freshness: crate::json::GraphFreshnessPayload {
+                    state: "ready".to_owned(),
+                    summary: "graph index is current".to_owned(),
+                    usable: true,
                     stale: false,
+                    stale_path_count: 0,
+                    failed_path_count: 0,
                     stale_paths: vec![],
                 },
                 counts: GraphCountsPayload {
@@ -504,6 +523,29 @@ fn graph_explore_payload_round_trips() {
                 name: Some("crate::watch_repo".to_owned()),
                 range: None,
                 reason: "symbol matches `watch`".to_owned(),
+            }],
+            edit_targets: vec![crate::json::GraphExploreEditTargetPayload {
+                kind: "implementation".to_owned(),
+                path: "src/lib.rs".to_owned(),
+                language_id: Some("rust".to_owned()),
+                range: None,
+                confidence: "ranked".to_owned(),
+                reasons: vec!["path matches `graph`".to_owned()],
+            }],
+            likely_test_files: vec![crate::json::GraphAffectedFilePayload {
+                path: "tests/watch_repo_test.rs".to_owned(),
+                language_id: Some("rust".to_owned()),
+                confidence: "exact".to_owned(),
+                reasons: vec!["incoming `call` reaches changed node".to_owned()],
+            }],
+            likely_test_tasks: vec![crate::json::GraphAffectedTaskPayload {
+                name: "test".to_owned(),
+                kind: "task".to_owned(),
+                path: "effigy.toml".to_owned(),
+                confidence: "heuristic".to_owned(),
+                reasons: vec![
+                    "manifest test workflow symbol matches affected-test query surface".to_owned(),
+                ],
             }],
             overflow: GraphContextOverflowPayload {
                 omitted_items: 0,

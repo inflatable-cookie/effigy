@@ -9,6 +9,7 @@ fn setup_graph_fixture(name: &str) -> std::path::PathBuf {
     let root = temp_workspace(name);
     fs::create_dir_all(root.join("src")).expect("mkdir src");
     fs::create_dir_all(root.join("docs")).expect("mkdir docs");
+    fs::create_dir_all(root.join("tests")).expect("mkdir tests");
     fs::create_dir_all(root.join("web")).expect("mkdir web");
 
     write_root_manifest(
@@ -37,6 +38,18 @@ fn helper() {}
         "# Release Graph\n\nSee [manifest](../effigy.toml).\n",
     )
     .expect("write docs");
+    fs::write(
+        root.join("tests/release_graph_test.rs"),
+        r#"
+use demo::release_graph;
+
+#[test]
+fn release_graph_runs() {
+    release_graph();
+}
+"#,
+    )
+    .expect("write tests");
     fs::write(
         root.join("web/index.ts"),
         "export function renderRelease() { return helper(); }\nfunction helper() { return 1; }\n",
@@ -77,6 +90,14 @@ fn graph_index_and_status_json_report_repo_state() {
     assert_eq!(status["command"].as_str(), Some("graph status"));
     assert_eq!(status["payload"]["ready"].as_bool(), Some(true));
     assert_eq!(
+        status["payload"]["freshness"]["state"].as_str(),
+        Some("ready")
+    );
+    assert_eq!(
+        status["payload"]["freshness"]["usable"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
         status["payload"]["stale_paths"]
             .as_array()
             .expect("stale paths")
@@ -109,6 +130,10 @@ fn graph_search_and_context_json_return_ranked_results() {
         search["payload"]["freshness"]["stale"].as_bool(),
         Some(false)
     );
+    assert_eq!(
+        search["payload"]["freshness"]["state"].as_str(),
+        Some("ready")
+    );
     assert!(!search["payload"]["matches"]
         .as_array()
         .expect("matches")
@@ -130,6 +155,10 @@ fn graph_search_and_context_json_return_ranked_results() {
     assert_eq!(
         context["payload"]["freshness"]["stale"].as_bool(),
         Some(false)
+    );
+    assert_eq!(
+        context["payload"]["freshness"]["state"].as_str(),
+        Some("ready")
     );
     assert!(!context["payload"]["items"]
         .as_array()
@@ -174,6 +203,10 @@ fn graph_search_and_context_json_return_ranked_results() {
         explore["payload"]["index"]["freshness"]["stale"].as_bool(),
         Some(false)
     );
+    assert_eq!(
+        explore["payload"]["index"]["freshness"]["state"].as_str(),
+        Some("ready")
+    );
     assert!(!explore["payload"]["primary"]
         .as_array()
         .expect("primary")
@@ -182,6 +215,20 @@ fn graph_search_and_context_json_return_ranked_results() {
         .as_array()
         .expect("excerpts")
         .is_empty());
+    assert!(!explore["payload"]["edit_targets"]
+        .as_array()
+        .expect("edit targets")
+        .is_empty());
+    assert!(explore["payload"]["likely_test_files"]
+        .as_array()
+        .expect("likely test files")
+        .iter()
+        .any(|item| item["path"].as_str() == Some("tests/release_graph_test.rs")));
+    assert!(explore["payload"]["likely_test_tasks"]
+        .as_array()
+        .expect("likely test tasks")
+        .iter()
+        .any(|item| item["name"].as_str() == Some("test")));
     assert!(explore["payload"]["guidance"]
         .as_array()
         .expect("guidance")
@@ -250,6 +297,8 @@ fn graph_text_commands_render_useful_summaries() {
     .expect("graph explore should succeed");
     assert!(explore.contains("graph explore `trace release helper`"));
     assert!(explore.contains("primary:"));
+    assert!(explore.contains("edit-targets:"));
+    assert!(explore.contains("likely test file"));
     assert!(explore.contains("guidance"));
 }
 
@@ -337,5 +386,30 @@ fn graph_query_text_reports_stale_state() {
         output_json: false,
     }))
     .expect("graph search should succeed");
+    assert!(search.contains("graph trust: refresh-recommended"));
+    assert!(search
+        .contains("graph trust summary: graph index is stale; run `effigy graph index --json`"));
     assert!(search.contains("graph stale: 1 paths require reindex"));
+}
+
+#[test]
+fn graph_status_json_reports_missing_index_trust_state() {
+    let root = setup_graph_fixture("graph-status-missing-index");
+
+    let status = run_command(Command::Graph(GraphArgs {
+        subcommand: GraphSubcommand::Status,
+        repo_override: Some(root),
+        output_json: true,
+    }))
+    .expect("graph status should succeed");
+    let status = parse_json_output_with_schema_version(&status, "effigy.graph.status.v1", 1);
+    assert_eq!(status["payload"]["ready"].as_bool(), Some(false));
+    assert_eq!(
+        status["payload"]["freshness"]["state"].as_str(),
+        Some("missing-index")
+    );
+    assert_eq!(
+        status["payload"]["freshness"]["usable"].as_bool(),
+        Some(false)
+    );
 }

@@ -4,7 +4,9 @@ use std::path::Path;
 
 use crate::error::CodeGraphError;
 use crate::extractor::{GraphSink, SourceFile};
-use crate::json::{ExtractorSummaryPayload, GraphCountsPayload, GraphStatusPayload};
+use crate::json::{
+    ExtractorSummaryPayload, GraphCountsPayload, GraphFreshnessPayload, GraphStatusPayload,
+};
 use crate::model::{
     Confidence, DiagnosticRecord, DiagnosticSeverity, ExtractorRecord, IndexRunRecord, Provenance,
     GRAPH_STORAGE_SCHEMA_VERSION,
@@ -224,6 +226,7 @@ pub fn status(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
         &current_entries,
     )?;
     let counts = store.counts()?;
+    let ready = counts.files > 0;
     let extractors = registry
         .all()
         .iter()
@@ -238,11 +241,17 @@ pub fn status(repo_root: &Path) -> Result<GraphStatusPayload, CodeGraphError> {
         })
         .collect::<Vec<_>>();
     Ok(GraphStatusPayload {
-        ready: counts.files > 0,
+        ready,
         index_present: store.paths().db_path.is_file(),
         db_path: store.paths().db_path.display().to_string(),
         storage_schema_version: store.storage_schema_version()?,
         counts,
+        freshness: graph_freshness_payload(
+            ready,
+            store.paths().db_path.is_file(),
+            &scan_delta.stale_paths,
+            store.failed_diagnostic_paths()?.len(),
+        ),
         stale_paths: scan_delta.stale_paths,
         extractors,
         new_paths: scan_delta.new_paths,
@@ -268,6 +277,57 @@ pub(crate) fn stale_paths_for_repo(
         &current_entries,
     )?
     .stale_paths)
+}
+
+pub(crate) fn freshness_payload(
+    repo_root: &Path,
+    store: &GraphStore,
+) -> Result<GraphFreshnessPayload, CodeGraphError> {
+    let stale_paths = stale_paths_for_repo(repo_root, store)?;
+    let counts = store.counts()?;
+    Ok(graph_freshness_payload(
+        counts.files > 0,
+        store.paths().db_path.is_file(),
+        &stale_paths,
+        store.failed_diagnostic_paths()?.len(),
+    ))
+}
+
+fn graph_freshness_payload(
+    ready: bool,
+    index_present: bool,
+    stale_paths: &[String],
+    failed_path_count: usize,
+) -> GraphFreshnessPayload {
+    let state = if !index_present || !ready {
+        "missing-index"
+    } else if !stale_paths.is_empty() {
+        "refresh-recommended"
+    } else if failed_path_count > 0 {
+        "degraded"
+    } else {
+        "ready"
+    };
+
+    let summary = match state {
+        "missing-index" => "no usable local graph index; run `effigy graph index --json`",
+        "refresh-recommended" if failed_path_count > 0 => {
+            "graph index is stale and has failed paths; run `effigy graph index --json`"
+        }
+        "refresh-recommended" => "graph index is stale; run `effigy graph index --json`",
+        "degraded" => "graph index is current but has failed paths; results may be incomplete",
+        _ => "graph index is current",
+    };
+
+    GraphFreshnessPayload {
+        state: state.to_owned(),
+        summary: summary.to_owned(),
+        usable: index_present && ready,
+        stale: !stale_paths.is_empty(),
+        stale_path_count: stale_paths.len(),
+        failed_path_count,
+        stale_paths: stale_paths.to_vec(),
+    }
 }
 
 fn scan_delta_for_entries(

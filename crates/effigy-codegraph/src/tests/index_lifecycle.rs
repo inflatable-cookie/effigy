@@ -57,10 +57,13 @@ pub fn release_graph_secondary_worker() {
 
     let status_payload = status(temp.path()).expect("status");
     assert!(status_payload.ready);
+    assert_eq!(status_payload.freshness.state, "ready");
+    assert!(status_payload.freshness.usable);
     assert!(status_payload.stale_paths.is_empty());
 
     let files_payload = query_files(temp.path(), None).expect("files");
     assert!(!files_payload.freshness.stale);
+    assert_eq!(files_payload.freshness.state, "ready");
     assert!(files_payload
         .files
         .iter()
@@ -76,6 +79,7 @@ pub fn release_graph_secondary_worker() {
 
     let search_payload = query_search(temp.path(), "run", Some(10)).expect("search");
     assert!(!search_payload.freshness.stale);
+    assert_eq!(search_payload.freshness.state, "ready");
     assert!(!search_payload.matches.is_empty());
 
     let symbol_match = search_payload
@@ -103,6 +107,7 @@ pub fn release_graph_secondary_worker() {
     )
     .expect("context");
     assert!(!context_payload.freshness.stale);
+    assert_eq!(context_payload.freshness.state, "ready");
     assert!(!context_payload.items.is_empty());
     assert!(context_payload
         .items
@@ -120,6 +125,7 @@ pub fn release_graph_secondary_worker() {
     )
     .expect("explore");
     assert!(!explore_payload.index.freshness.stale);
+    assert_eq!(explore_payload.index.freshness.state, "ready");
     assert!(!explore_payload.primary.is_empty());
     assert!(!explore_payload.excerpts.is_empty());
     assert!(explore_payload
@@ -148,13 +154,40 @@ fn graph_status_reports_changed_paths_as_stale() {
     let payload = status(temp.path()).expect("status");
     assert!(payload.stale_paths.contains(&"src/lib.rs".to_owned()));
     assert!(payload.changed_paths.contains(&"src/lib.rs".to_owned()));
+    assert_eq!(payload.freshness.state, "refresh-recommended");
+    assert!(payload.freshness.usable);
+    assert_eq!(payload.freshness.stale_path_count, 1);
 
     let search_payload = query_search(temp.path(), "release", Some(10)).expect("search");
     assert!(search_payload.freshness.stale);
+    assert_eq!(search_payload.freshness.state, "refresh-recommended");
     assert!(search_payload
         .freshness
         .stale_paths
         .contains(&"src/lib.rs".to_owned()));
+}
+
+#[test]
+fn graph_status_without_index_reports_missing_index_trust_state() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src")).expect("mkdir src");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub fn run_release() { helper(); }\nfn helper() {}\n",
+    )
+    .expect("write rust");
+
+    let payload = status(temp.path()).expect("status");
+    assert!(!payload.ready);
+    assert_eq!(payload.freshness.state, "missing-index");
+    assert!(!payload.freshness.usable);
+    assert!(payload
+        .freshness
+        .summary
+        .contains("effigy graph index --json"));
+    assert!(payload.freshness.stale);
+    assert_eq!(payload.freshness.stale_path_count, 1);
+    assert!(payload.stale_paths.contains(&"src/lib.rs".to_owned()));
 }
 
 #[test]
@@ -183,6 +216,7 @@ fn graph_index_reuses_unchanged_content_when_only_mtime_moves() {
 
     let status_payload = status(temp.path()).expect("status");
     assert!(status_payload.stale_paths.is_empty());
+    assert_eq!(status_payload.freshness.state, "ready");
 
     let store = GraphStore::open(temp.path()).expect("open store");
     assert_eq!(store.list_index_runs().expect("runs").len(), 2);
