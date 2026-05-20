@@ -15,6 +15,11 @@ let bin_path = if !args.is_empty() {
 
 let matrix = [
     #{
+        label: "decodelabs-archetype-library",
+        repo: "/Users/tom/Dev/legacy/libraries/decodelabs/archetype",
+        container: "web",
+    },
+    #{
         label: "decodelabs-brains",
         repo: "/Users/tom/Dev/legacy/sites/brains",
         container: "web",
