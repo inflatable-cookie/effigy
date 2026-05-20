@@ -40,7 +40,7 @@ build_script += "printf '\\n\\n'\n";
 build_script += "\"${CARGO_TARGET_DIR}/release/effigy\" help >/dev/null\n";
 build_script += "smoke_output=$(\"${CARGO_TARGET_DIR}/release/effigy\" smoke:release \"${CARGO_TARGET_DIR}/release/effigy\")\n";
 build_script += "printf '%s\\n\\n' \"$smoke_output\"\n";
-build_script += "glibc_output=$(\"${CARGO_TARGET_DIR}/release/effigy\" distribution check-glibc-floor --binary \"${CARGO_TARGET_DIR}/release/effigy\" --max-glibc 2.35)\n";
+build_script += "glibc_output=$(\"${CARGO_TARGET_DIR}/release/effigy\" release check-binary \"${CARGO_TARGET_DIR}/release/effigy\" --glibc-floor 2.35)\n";
 build_script += "printf '%s\\n' \"$glibc_output\"\n";
 build_script += "cp \"${CARGO_TARGET_DIR}/release/effigy\" \"/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + "\"\n";
 build_script += "cp \"${CARGO_TARGET_DIR}/release/effigy.active-version\" \"/workspace/.effigy/linux-release/artifacts/effigy-" + release_triple + ".active-version\"\n";
