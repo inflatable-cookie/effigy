@@ -62,8 +62,9 @@ git diff --name-only | effigy graph affected --stdin --json
 | **Affected** | Choosing validation scope after local edits |
 | **JSON** | Parsing output programmatically — `effigy --json <command>` |
 
-If `graph status --json` has non-empty `stale_paths`, run `effigy graph index --json`
-before trusting explore/affected. Use `rg` for exact tokens and final pre-edit proof.
+If `graph status --json` reports `refresh-recommended`, `degraded`, or
+`missing-index`, run `effigy graph index --json` before trusting
+explore/affected. Use `rg` for exact tokens and final pre-edit proof.
 
 Details: `references/agent-operating-loop.md`, `references/graph-assist.md`.
 
@@ -86,8 +87,21 @@ Rule of thumb:
 
 - use `doctor` / `tasks` / `test --plan` as the default entry sequence
 - use `graph` first for code-understanding questions, not for every task
+- phrase graph queries as implementation questions, not token hunts
 - use selectors and built-ins for real execution work
 - use `--json` whenever another agent step will consume the result
+
+Good graph-first question shapes:
+
+- `where are redirect responses handled`
+- `where are config migrations validated before apply`
+- `where does shell exit cleanup prompt run`
+
+Stay with `rg` first when the job is:
+
+- exact token lookup
+- missing-symbol proof
+- confirming the final pre-edit call site or string literal
 
 Built-ins worth knowing beyond the default loop: `init`, `watch`, `defer`,
 `docs`, `contracts`, `bundle`, `artifact`, `demo`, `changelog`,

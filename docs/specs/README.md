@@ -43,6 +43,12 @@ Archived strict lanes:
   cleanup sweep archives it
 - `095` is complete and retained in the active tree until the next planning
   cleanup sweep archives it
+- `096` is complete and retained in the active tree until the next planning
+  cleanup sweep archives it
+
+Active lane:
+
+- none
 
 ## Next Task
 

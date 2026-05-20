@@ -97,6 +97,13 @@ dependency.
 - [`069-language-emitter-follow-through.md`](./069-language-emitter-follow-through.md)
 - [`070-runner-private-fixture-and-helper-convergence.md`](./070-runner-private-fixture-and-helper-convergence.md)
 - [`071-residual-maintainability-closeout.md`](./071-residual-maintainability-closeout.md)
+- [`072-graph-agent-adoption-follow-through-suite.md`](./072-graph-agent-adoption-follow-through-suite.md)
+- [`073-graph-freshness-trust-and-cross-repo-readiness.md`](./073-graph-freshness-trust-and-cross-repo-readiness.md)
+- [`074-behavioral-query-ranking-and-vocabulary.md`](./074-behavioral-query-ranking-and-vocabulary.md)
+- [`075-edit-target-and-related-test-packets.md`](./075-edit-target-and-related-test-packets.md)
+- [`076-cross-repo-agent-usage-benchmark.md`](./076-cross-repo-agent-usage-benchmark.md)
+- [`077-agent-skill-and-doc-query-guidance.md`](./077-agent-skill-and-doc-query-guidance.md)
+- [`078-graph-agent-adoption-closeout.md`](./078-graph-agent-adoption-closeout.md)
 
 ## Design Posture
 
@@ -258,7 +265,10 @@ hardening suite.
 `g07.064` through `g07.071` are the completed residual-maintainability
 follow-up suite.
 
-No active ready card remains in `g07`.
+`g07.072` through `g07.078` are the completed graph agent-adoption
+suite. This lane exists because the graph is now useful, but practical agent
+usage still falls back to `rg` too often when freshness, behavior phrasing, or
+edit-target precision is unclear.
 
 `1000` is complete.
 
@@ -292,7 +302,7 @@ No active ready card remains in the init setup-wizard lane.
 
 No active ready card remains in the codebase leanness lane.
 
-`g07` is reopened for the residual-maintainability follow-up tranche.
+`g07` was reopened for the residual-maintainability follow-up tranche.
 
 `1014` is complete.
 
@@ -300,8 +310,34 @@ No active ready card remains in the codebase leanness lane.
 
 `1016` is complete.
 
-`1017` is ready.
+`1017` is complete.
+
+`1018` is complete.
+
+`1019` is complete.
+
+`1020` is complete.
+
+`1021` is complete.
+
+`g07` was reopened for the graph agent-adoption follow-through tranche.
+
+`1022` is complete.
+
+`1023` is complete.
+
+`1024` is complete.
+
+`1025` is complete.
+
+`1026` is complete.
+
+`1027` is complete.
+
+`1028` is complete.
+
+No active ready card remains in the graph agent-adoption lane.
 
 ## Next Task
 
-Start [`1017-reduce-script-command-owner-sprawl.md`](./batch-cards/1017-reduce-script-command-owner-sprawl.md).
+No active ready card.

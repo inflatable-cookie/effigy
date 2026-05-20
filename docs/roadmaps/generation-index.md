@@ -50,7 +50,7 @@ Updated: 2026-05-20
   deduplication, typed contract-shape reuse, compatibility-branch deletion,
   and runner-private domain-logic reduction.
 
-`g07` is the current most recently completed generation.
+`g07` is the current active generation.
 
 - `g07.001` opens the native code graph intelligence suite.
 - `g07.002` through `g07.012` cover graph storage/contracts,
@@ -86,11 +86,15 @@ Updated: 2026-05-20
   stubborn duplicate-block follow-through, graph-test decomposition,
   script-command boundary reduction, runner-private helper convergence, and
   closeout proof.
+- `g07.072` through `g07.078` completed the practical graph agent-adoption
+  tranche:
+  freshness trust, behavior-shaped query ranking, edit-target/test-target
+  packets, cross-repo benchmark proof, and balanced skill/docs guidance.
 - The suite explicitly excludes MCP, a graph daemon, external language plugins,
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
 
-No active ready card remains. No successor generation is open yet.
+Active ready card: none.
 
 ## Research Roadmaps
 
@@ -123,4 +127,4 @@ closeout there first.
 
 ## Next Task
 
-Stop in planning until a new lane opens.
+Start [`1028-close-graph-agent-adoption-lane.md`](./g07/batch-cards/1028-close-graph-agent-adoption-lane.md).

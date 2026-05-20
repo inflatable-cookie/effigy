@@ -76,6 +76,13 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/20-150100-graph-agent-adoption-closeout.md`](./2026-05/20-150100-graph-agent-adoption-closeout.md)
+- [`2026-05/20-145400-graph-agent-guidance-update.md`](./2026-05/20-145400-graph-agent-guidance-update.md)
+- [`2026-05/20-144800-graph-agent-benchmark.md`](./2026-05/20-144800-graph-agent-benchmark.md)
+- [`2026-05/20-142722-edit-target-and-test-packets.md`](./2026-05/20-142722-edit-target-and-test-packets.md)
+- [`2026-05/20-144015-behavioral-query-ranking.md`](./2026-05/20-144015-behavioral-query-ranking.md)
+- [`2026-05/20-141228-graph-freshness-trust-model.md`](./2026-05/20-141228-graph-freshness-trust-model.md)
+- [`2026-05/20-140240-graph-agent-adoption-lane-opened.md`](./2026-05/20-140240-graph-agent-adoption-lane-opened.md)
 - [`2026-05/20-091500-residual-maintainability-closeout.md`](./2026-05/20-091500-residual-maintainability-closeout.md)
 - [`2026-05/20-083900-runner-private-helper-convergence.md`](./2026-05/20-083900-runner-private-helper-convergence.md)
 - [`2026-05/20-083200-language-emitter-duplicate-follow-through.md`](./2026-05/20-083200-language-emitter-duplicate-follow-through.md)

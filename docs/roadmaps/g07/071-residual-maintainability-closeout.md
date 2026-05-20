@@ -1,6 +1,6 @@
 # g07.071 - Residual Maintainability Closeout
 
-Status: Planned
+Status: Complete
 Depends on: `g07.070`
 
 ## Goal
@@ -33,4 +33,5 @@ worth doing.
 
 ## Next Task
 
-No active ready card until the closeout finishes.
+Residual maintainability closeout is complete. The next active card is
+[`1022-open-graph-agent-adoption-lane.md`](./batch-cards/1022-open-graph-agent-adoption-lane.md).

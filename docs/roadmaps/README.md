@@ -51,13 +51,16 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   contract-shape reuse, compatibility-branch deletion, and runner-private
   domain-logic reduction.
 - `g07` is closed through
-  [`g07.071`](./g07/071-residual-maintainability-closeout.md). It covered the
+  [`g07.078`](./g07/078-graph-agent-adoption-closeout.md). It has covered the
   native code graph intelligence suite, follow-up graph performance/parity
   lanes, init setup-wizard work, bounded codebase leanness cleanup, and the
   residual-maintainability follow-through:
   warning-only god-file reduction, stubborn duplicate-block follow-through,
   graph test-harness decomposition, script-command boundary cleanup, bounded
-  runner-private helper convergence, and closeout proof.
+  runner-private helper convergence, closeout proof, and now the graph
+  agent-adoption follow-through focused on cross-repo freshness trust,
+  behavioral query ranking, edit-target packets, benchmark proof, and agent
+  guidance.
 
 ## Active Strict Lane
 
@@ -97,7 +100,7 @@ Before rollover:
 
 ## Next Task
 
-No active roadmap execution card remains.
+No active ready card.
 
 ## Historical language boundary
 

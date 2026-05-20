@@ -195,12 +195,66 @@ effigy graph explore "trace deploy provider export" \
 - `excerpts[*].section_kind` and `excerpts[*].completeness`
 - `relations` such as related symbols, files, or docs with explicit traversal
   reasons when `explore` follows a bounded one-hop graph edge
+- `edit_targets` for the top implementation owner and adjacent wiring/config
+  targets when graph evidence is strong enough
+- `likely_test_files`
+- `likely_test_tasks`
 - `overflow`
 - `guidance`
 
 Use the returned excerpts for first-pass orientation. Open returned files only
 when the excerpt is too small for the edit or review. Use `rg` for exact token
 verification, missing symbols, or confirming behavior before editing.
+
+### Cross-repo benchmark
+
+Use the benchmark task when you want a repeatable adoption check instead of an
+anecdotal one:
+
+```sh
+effigy perf:graph-agent-benchmark
+```
+
+The task always runs fixture-backed cases in this repo. When local live targets
+exist, it also benchmarks:
+
+- Effigy
+- `~/Dev/projects/underlay-reference`
+- `~/Dev/legacy/sites/brains`
+
+It writes:
+
+- `.effigy/perf/graph-agent-benchmark/README.md`
+- `.effigy/perf/graph-agent-benchmark/summary.json`
+
+The JSON summary is the machine-readable proof surface. It records:
+
+- graph command count
+- fallback search count
+- graph and `rg` timings
+- first-hit correctness
+- whether the graph packet was sufficient without broad fallback
+- resolved path and suggested test surfaces
+
+Optional live repos skip cleanly when absent. The benchmark is meant to answer
+"did graph reduce navigation work here?" rather than to make broad percentage
+claims.
+
+Interpret the extra edit/test fields like this:
+
+- `edit_targets`
+  - `implementation`: best ranked owner to edit first
+  - `wiring`: adjacent implementation/config target surfaced from bounded graph
+    adjacency
+  - `config`: direct config owner when the query lands on config behavior
+- `likely_test_files` and `likely_test_tasks`
+  - bounded validation candidates only
+  - not an exhaustiveness claim
+  - `exact` means resolved graph evidence
+  - `heuristic` means looser unresolved-target matching
+- `edit_targets[*].confidence`
+  - `ranked` means selected from explore owner ranking rather than a resolved
+    graph edge
 
 Interpret excerpt completeness like this:
 
