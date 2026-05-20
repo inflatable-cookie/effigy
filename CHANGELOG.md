@@ -6,6 +6,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Breaking
+- **Distribution commands moved under release:** The top-level
+  `effigy distribution` command has been removed for v0.8.0. Use
+  `effigy release validate`, `release check-binary`,
+  `release preflight`, `release proof`, and
+  `release evidence <validate|summary|closeout>` instead.
+
 ### Added
 - **Native code graph surface:** Effigy now ships `graph index`, `status`,
   `search`, `files`, `node`, `callers`, `callees`, `impact`, and bounded
@@ -58,6 +65,37 @@ During v0.x, MINOR bumps may include breaking changes.
   behind `primary_service_exec_ready`.
 
 ### Changed
+- **Graph adoption now has a cross-repo benchmark surface:** Effigy now ships
+  `perf:graph-agent-benchmark`, a fixture-backed and skip-safe benchmark that
+  records graph command count, fallback search count, timing, first-hit
+  correctness, and packet sufficiency across synthetic cases plus optional live
+  repo targets. It writes both markdown and JSON output under
+  `.effigy/perf/graph-agent-benchmark/` so closeout and follow-up work can use
+  repo-owned evidence instead of ad hoc thread notes.
+- **Graph guidance is sharper about when to use graph versus `rg`:** the
+  project-local and distributed Effigy skills, plus the active adoption guide,
+  now steer agents toward implementation-shaped graph questions, explicit
+  trust-state checks, and portable query examples while keeping exact-token
+  lookup and final pre-edit proof on the `rg` path.
+- **Graph freshness now exposes a compact trust signal across repos:** `effigy
+  graph status` and graph query JSON payloads now include a compact
+  freshness/trust state with a summary, usability flag, and stale/failed path
+  counts, so agents can distinguish `missing-index`, `refresh-recommended`,
+  `degraded`, and `ready` without inferring trust from large path lists. The
+  detailed stale/new/changed/deleted diagnostics remain available for operator
+  follow-up.
+- **Graph behavior-shaped queries are less phrasing-sensitive:** request
+  ranking now drops repo-name tokens, adds light singular/plural normalization,
+  and expands generic behavior vocabulary for prompt, shutdown, exit,
+  validation, redirect, migration, cache, and index terms, so natural
+  implementation questions land closer to the owner file without hard-coded
+  repo-specific boosts.
+- **Graph explore packets now surface edit and test targets:** `effigy graph
+  explore --json` now includes bounded `edit_targets`, `likely_test_files`,
+  and `likely_test_tasks` projections so agents can move from navigation into
+  editing and validation with less manual inference. The packet keeps confidence
+  labels explicit and still treats likely tests as bounded candidates rather
+  than exhaustive proof.
 - **Graph context ranking is now role-aware:** implementation-oriented context
   requests prefer implementation files over tests/docs, test and docs requests
   still promote those surfaces, and repeated same-file symbol matches are capped
@@ -343,7 +381,7 @@ During v0.x, MINOR bumps may include breaking changes.
   with in-process file search and regex filtering instead of the old shell
   `rg`/`awk` guard wrapper.
 - **Linux GLIBC floor validation** now runs through the native
-  `distribution check-glibc-floor` command in release workflow/test surfaces,
+  `release check-binary` command in release workflow/test surfaces,
   and the old `scripts/check-linux-glibc-floor.sh` wrapper is gone.
 
 ### Fixed
@@ -1094,7 +1132,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - A native local gateway surface: `effigy gateway up/down/status/setup-tls`, HTTP reverse proxying, DNS routing, TCP aliases, auto port allocation, TLS management, and support for non-`.test` local domains via macOS `/etc/resolver` integration.
 - A shipped service catalog with extract/list tooling plus new built-in fragments such as `workspace-rust-bun`, `php-fpm`, `phpmyadmin`, `dbgate`, `mailpit`, and `minio`.
 - A first-class demo system: manifest-owned `[demos.*]`, `effigy demo list/inspect/run/stop/rerun/history`, receipts and artifact tracking, and the interactive `effigy demo browser`.
-- A native distribution and release-support surface: `effigy distribution preflight`, `validate-metadata`, `check-glibc-floor`, `first-publish`, `validate-artifacts`, `generate-closeout`, and `write-summary`.
+- A native distribution and release-support surface: `effigy release preflight`, `validate`, `check-glibc-floor`, `first-publish`, `validate-artifacts`, `generate-closeout`, and `write-summary`.
 - File-backed Rhai task steps plus a substantially wider host API, allowing repo automation to use typed Effigy helpers instead of shell-script glue.
 - Structured host mounts with `external = true`, `${VAR}` / `~` expansion, target-host DNS routes, host-side companion processes, and `run_in = "host"` concurrent entries for sidecars such as SSH tunnels.
 - `effigy.local.toml` auto-discovery, optional includes, fragment-owned `[manifest].extend`, and `effigy bundle export ...` for local bundle customization without forking shipped bundles.
@@ -1473,7 +1511,7 @@ During v0.x, MINOR bumps may include breaking changes.
 - Add built-in `effigy contracts validate-selection` for JSON selection
   artifact validation, replacing the prior jq-heavy shell implementation behind
   `scripts/validate-json-contract-selection-artifact.sh`
-- Add built-in `effigy distribution validate-metadata`,
+- Add built-in `effigy release validate`,
   `validate-artifacts`, `generate-closeout`, and `write-summary` so
   distribution metadata checks, first-publish summary contracts,
   artifact-bundle validation, and acceptance-closeout log generation no longer
@@ -1485,7 +1523,7 @@ During v0.x, MINOR bumps may include breaking changes.
   to a compatibility wrapper over targeted Rust coverage instead of owning its
   own validator fixture logic in shell
 - Route `dist:metadata` and the release `metadata` gate through `effigy
-  distribution validate-metadata`, and reduce
+  release validate`, and reduce
   `scripts/check-distribution-artifact-pipeline-smoke.sh` to a compatibility
   wrapper over targeted CLI coverage for the built-in distribution flow
 - Route `qa:docs` and release-gate `qa` orchestration through native
@@ -1497,7 +1535,7 @@ During v0.x, MINOR bumps may include breaking changes.
   `distribution-summary.env` contract is written by `effigy distribution
   write-summary`; the wrapper now retains only publish/install side effects,
   step-log capture, and final built-in artifact validation
-- Add built-in `effigy distribution preflight` with summary-file output for
+- Add built-in `effigy release preflight` with summary-file output for
   the non-publish distribution gate path, and reduce
   `scripts/check-distribution-preflight.sh` to a compatibility wrapper over
   the native preflight surface
