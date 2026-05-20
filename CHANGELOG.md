@@ -125,7 +125,9 @@ During v0.x, MINOR bumps may include breaking changes.
   volumes so cold-path rebuilds do not redownload dependencies every time the
   container is recreated. Repeated handoffs now also skip the workspace
   container copy/install step when the target already has the same
-  `effigy.active-version`.
+  `effigy.active-version`, and workspace home permission prep now fixes
+  targeted subtrees instead of recursively chowning the whole home directory on
+  every entry.
 - **Container-local deferral avoids host runtime probes:** `effigy defer` now
   treats Effigy workspace containers as local execution contexts even when
   containerd/cgroup-v2 does not expose `/.dockerenv`, `/run/.containerenv`, or

@@ -61,7 +61,10 @@ fn permission_command_tolerates_read_only_bind_mounts() {
         "permission prep must not fall back to plain `chown -R` — that \
          dies on read-only host bind mounts under /home/dev:\n{cmd}"
     );
-    assert!(cmd.contains("'/home/dev'"));
+    assert!(cmd.contains("prep_path '/home/dev' shallow"));
+    assert!(cmd.contains("prep_path '/home/dev'/.cache recursive"));
+    assert!(cmd.contains("prep_path '/home/dev'/.config recursive"));
+    assert!(cmd.contains("prep_path '/home/dev'/.local recursive"));
     assert!(cmd.contains("'/cache'"));
 }
 

@@ -142,16 +142,35 @@ pub(super) fn run_workspace_permission_prep(
 }
 
 pub(super) fn render_workspace_permission_command(user: &str, targets: &[String]) -> String {
+    let workspace_home = targets
+        .iter()
+        .find(|target| target.starts_with("/home/"))
+        .cloned();
     let quoted_targets = targets
         .iter()
+        .filter(|target| Some((*target).as_str()) != workspace_home.as_deref())
         .map(|target| shell_quote(target))
         .collect::<Vec<_>>()
         .join(" ");
-    format!(
-        "user={user}; if id -u \"$user\" >/dev/null 2>&1; then uid=$(id -u \"$user\"); gid=$(id -g \"$user\"); for path in {targets}; do mkdir -p \"$path\" && {{ chown -fR \"$uid:$gid\" \"$path\" || true; }}; done; fi",
+    let mut command = format!(
+        "user={user}; if id -u \"$user\" >/dev/null 2>&1; then uid=$(id -u \"$user\"); gid=$(id -g \"$user\"); prep_path() {{ path=\"$1\"; mode=\"$2\"; mkdir -p \"$path\" && owner=$(stat -c '%u:%g' \"$path\" 2>/dev/null || printf ''); if [ \"$owner\" != \"$uid:$gid\" ]; then if [ \"$mode\" = recursive ]; then chown -fR \"$uid:$gid\" \"$path\" || true; else chown -f \"$uid:$gid\" \"$path\" || true; fi; fi; }};",
         user = shell_quote(user),
-        targets = quoted_targets,
-    )
+    );
+    if let Some(workspace_home) = workspace_home {
+        let quoted_home = shell_quote(&workspace_home);
+        command.push_str(&format!(
+            " prep_path {home} shallow; prep_path {home}/.cache recursive; prep_path {home}/.config recursive; prep_path {home}/.local recursive;",
+            home = quoted_home,
+        ));
+    }
+    if !quoted_targets.is_empty() {
+        command.push_str(&format!(
+            " for path in {targets}; do prep_path \"$path\" recursive; done;",
+            targets = quoted_targets,
+        ));
+    }
+    command.push_str(" fi");
+    command
 }
 
 pub(super) fn ensure_workspace_effigy_available_for_policy(
