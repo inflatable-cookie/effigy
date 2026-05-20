@@ -2,6 +2,7 @@ use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command as ProcessCommand, Output, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 
 use effigy_containers::{
@@ -13,6 +14,9 @@ use effigy_containers::{
 use crate::runner::error::RunnerError;
 
 use super::{resolve_host_program, ParsedComposeExec};
+
+static SERVICE_CONTAINER_NAME_CACHE: OnceLock<Mutex<std::collections::HashMap<String, String>>> =
+    OnceLock::new();
 
 pub(super) fn run_colima_direct_exec(
     repo_root: &Path,
@@ -158,7 +162,7 @@ pub(super) fn resolve_compose_service_container_id(
     format_args: &dyn Fn(&[OsString]) -> String,
 ) -> Result<OsString, RunnerError> {
     if let Some(container_name) =
-        resolve_running_service_container_name(repo_root, policy, service)?
+        resolve_cached_running_service_container_name(repo_root, policy, service)?
     {
         return Ok(OsString::from(container_name));
     }
@@ -216,6 +220,50 @@ fn resolve_compose_service_container_id_via_ps(
         container_ids.drain(1..);
     }
     Ok(OsString::from(container_id))
+}
+
+fn resolve_cached_running_service_container_name(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+) -> Result<Option<String>, RunnerError> {
+    let cache_key = service_container_name_cache_key(repo_root, policy, service);
+    if let Some(container_name) = service_container_name_cache()
+        .lock()
+        .expect("service container name cache poisoned")
+        .get(&cache_key)
+        .cloned()
+    {
+        return Ok(Some(container_name));
+    }
+
+    let Some(container_name) = resolve_running_service_container_name(repo_root, policy, service)?
+    else {
+        return Ok(None);
+    };
+    service_container_name_cache()
+        .lock()
+        .expect("service container name cache poisoned")
+        .insert(cache_key, container_name.clone());
+    Ok(Some(container_name))
+}
+
+fn service_container_name_cache() -> &'static Mutex<std::collections::HashMap<String, String>> {
+    SERVICE_CONTAINER_NAME_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn service_container_name_cache_key(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    service: &str,
+) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        repo_root.display(),
+        policy.profile,
+        policy.project_name,
+        service
+    )
 }
 
 fn resolve_running_service_container_name(
@@ -363,6 +411,61 @@ mod tests {
             select_running_service_container_name(rows, Path::new("/tmp/repo"), &policy, "app");
 
         assert_eq!(resolved.as_deref(), Some("demo-app-1"));
+    }
+
+    #[test]
+    fn cached_running_service_container_name_reuses_first_lookup() {
+        let repo_root = Path::new("/tmp/repo");
+        let policy = effigy_containers::EffectiveContainerPolicy {
+            name: "web".to_owned(),
+            driver: effigy_manifest::ManifestContainerDriver::Colima,
+            startup: effigy_manifest::ManifestContainerStartup::Detached,
+            profile: "effigy-cache-test".to_owned(),
+            compose_source: effigy_containers::EffectiveComposeSource::Generated,
+            compose_files: vec![std::path::PathBuf::from("/tmp/docker-compose.yml")],
+            compose_file_display: "docker-compose.yml".to_owned(),
+            managed_volumes: vec![],
+            shared_services: vec![],
+            project_name: "demo-cache".to_owned(),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: vec![],
+            service_aliases: vec![],
+            declared_ports: vec![],
+            ports_declared_explicitly: false,
+            declared_mounts: vec![],
+            declared_media_mounts: vec![],
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            workspace_user: None,
+            workspace_home: None,
+            on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
+            shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+            host_processes: Vec::new(),
+        };
+        let key = service_container_name_cache_key(repo_root, &policy, "app");
+        service_container_name_cache()
+            .lock()
+            .expect("service container name cache poisoned")
+            .remove(&key);
+
+        service_container_name_cache()
+            .lock()
+            .expect("service container name cache poisoned")
+            .insert(key.clone(), "demo-app-1".to_owned());
+
+        let resolved = resolve_cached_running_service_container_name(repo_root, &policy, "app")
+            .expect("cached container name");
+        assert_eq!(resolved.as_deref(), Some("demo-app-1"));
+
+        service_container_name_cache()
+            .lock()
+            .expect("service container name cache poisoned")
+            .remove(&key);
     }
 
     #[test]
