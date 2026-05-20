@@ -314,7 +314,7 @@ mod tests {
 
     use super::run_init_wizard_from_io;
     use crate::init::scaffold;
-    use crate::wizard_test_support::WizardTestPorts;
+    use crate::init::wizard_test_support::WizardTestPorts;
 
     fn temp_root(name: &str) -> std::path::PathBuf {
         let path =

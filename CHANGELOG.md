@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- **Removed `context = "dev"` container targeting:** Manifests can no longer
+  mark containers with `context = "dev"`. Default task and `effigy exec`
+  container targeting now resolves through `[systems].default` and the selected
+  workspace's backing `container`; legacy `context` keys are rejected.
 - **Distribution commands moved under release:** The top-level
   `effigy distribution` command has been removed for v0.8.0. Use
   `effigy release validate`, `release check-binary`,
@@ -65,6 +69,11 @@ During v0.x, MINOR bumps may include breaking changes.
   behind `primary_service_exec_ready`.
 
 ### Changed
+- **Vendored repo-local Effigy skills now hide from generic skills-cli
+  discovery:** `effigy init` now writes the project-local
+  `.agents/skills/effigy/SKILL.md` with `metadata.internal: true`, so the
+  repo-authoritative vendored copy stays available to in-repo agents without
+  competing with the public `skills/effigy` distribution surface.
 - **Graph adoption now has a cross-repo benchmark surface:** Effigy now ships
   `perf:graph-agent-benchmark`, a fixture-backed and skip-safe benchmark that
   records graph command count, fallback search count, timing, first-hit
@@ -885,9 +894,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ### Fixed
 - `effigy exec` container-surface resolution now uses typed `RunnerError`
-  families for missing `[containers]`, missing or ambiguous `context = "dev"`
-  selection, missing named containers, not-running container operators, and
-  one container-policy translation seam. Those failures no longer flatten into
+  families for missing `[containers]`, missing default workspace targets,
+  missing named containers, not-running container operators, and one
+  container-policy translation seam. Those failures no longer flatten into
   generic `task_invocation` strings before they reach the runner surface.
 - Public workspace shell handoff and host-container lease translation now use
   typed `RunnerError` families for combined shell-plus-cleanup failure

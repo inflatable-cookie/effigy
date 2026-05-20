@@ -50,6 +50,9 @@ Agents should assume:
 - explicit `tasks.test` in `effigy.toml` overrides built-in test auto-detection
 - shell wrappers and direct scripts are compatibility or external-contract
   surfaces unless the repo explicitly documents otherwise
+- a vendored `.agents/skills/effigy` copy is repo-authoritative when present,
+  and may be marked internal so generic `npx skills` repo scans do not treat it
+  as the public install source
 
 Agents should not assume:
 

@@ -94,6 +94,8 @@ const SKILL_FILES: &[(&str, &str)] = &[
     ),
 ];
 
+const INTERNAL_SKILL_METADATA_BLOCK: &str = "metadata:\n  internal: true\n";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum AgentInitJob {
     Manifest,
@@ -542,16 +544,17 @@ fn ensure_skill_tree(
     let mut changed = 0usize;
 
     for (relative, contents) in SKILL_FILES {
+        let desired = vendored_skill_contents(relative, contents);
         let path = root.join(base).join(relative);
         match std::fs::read_to_string(&path) {
-            Ok(existing) if existing == *contents => {}
+            Ok(existing) if existing == desired => {}
             Ok(_) if apply => {
-                write_file(&path, contents)?;
+                write_file(&path, &desired)?;
                 changed += 1;
             }
             Ok(_) => stale += 1,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound && apply => {
-                write_file(&path, contents)?;
+                write_file(&path, &desired)?;
                 missing += 1;
                 changed += 1;
             }
@@ -578,6 +581,54 @@ fn ensure_skill_tree(
         AgentCheckStatus::Present
     };
     Ok(check(job, base, status, "sync_skill_tree", detail))
+}
+
+fn vendored_skill_contents(relative: &str, contents: &str) -> String {
+    if relative != "SKILL.md" {
+        return contents.to_owned();
+    }
+    inject_internal_skill_metadata(contents)
+}
+
+fn inject_internal_skill_metadata(contents: &str) -> String {
+    if contents.contains("internal: true") {
+        return contents.to_owned();
+    }
+    let Some(rest) = contents.strip_prefix("---\n") else {
+        return contents.to_owned();
+    };
+    let Some(frontmatter_end) = rest.find("\n---\n") else {
+        return contents.to_owned();
+    };
+    let insert_at = 4 + frontmatter_end + 1;
+    let mut next = String::with_capacity(contents.len() + INTERNAL_SKILL_METADATA_BLOCK.len());
+    next.push_str(&contents[..insert_at]);
+    next.push_str(INTERNAL_SKILL_METADATA_BLOCK);
+    next.push_str(&contents[insert_at..]);
+    next
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inject_internal_skill_metadata;
+
+    #[test]
+    fn inject_internal_skill_metadata_adds_internal_flag_inside_frontmatter() {
+        let input = "---\nname: effigy\ndescription: demo\n---\n\n# Skill\n";
+        let output = inject_internal_skill_metadata(input);
+        assert!(output.starts_with("---\nname: effigy\ndescription: demo\n"));
+        assert!(output.contains("\nmetadata:\n  internal: true\n"));
+        assert!(output.contains("\n---\n\n# Skill\n"));
+        assert!(output.ends_with("\n# Skill\n"));
+    }
+
+    #[test]
+    fn inject_internal_skill_metadata_is_idempotent() {
+        let input =
+            "---\nname: effigy\ndescription: demo\nmetadata:\n  internal: true\n---\n\n# Skill\n";
+        let output = inject_internal_skill_metadata(input);
+        assert_eq!(output, input);
+    }
 }
 
 fn check(

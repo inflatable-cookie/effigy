@@ -196,7 +196,7 @@ fn run_manifest_task_builtin_init_agent_apply_is_idempotent_and_preserves_manife
     );
     assert_file_text_contains_all(
         &root.join(".agents/skills/effigy/SKILL.md"),
-        &["name: effigy", "Agent jobs"],
+        &["name: effigy", "metadata:", "internal: true", "Agent jobs"],
     );
     assert_file_text_contains_all(
         &root.join(".gitignore"),
