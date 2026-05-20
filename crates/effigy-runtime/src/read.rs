@@ -377,23 +377,37 @@ fn probe_primary_service_exec_ready(
         "docker compose exec readiness status probe",
     )?;
     let output = run_compose_plan_capture(&policy, &plan)?;
-    if output.status.success() {
-        return Ok((Some(true), None));
+    Ok(primary_service_exec_readiness(
+        policy.primary_service.as_str(),
+        &working_dir,
+        output.status.success(),
+    ))
+}
+
+fn primary_service_exec_readiness(
+    primary_service: &str,
+    working_dir: &Path,
+    exec_ready: bool,
+) -> (Option<bool>, Option<String>) {
+    if exec_ready {
+        return (Some(true), None);
     }
 
-    Ok((
+    (
         Some(false),
         Some(format!(
             "primary service `{}` is not exec-ready in `{}`; runtime state may be drifted",
-            policy.primary_service,
+            primary_service,
             working_dir.display()
         )),
-    ))
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::read_operation_plan;
+    use std::path::Path;
+
+    use super::{primary_service_exec_readiness, read_operation_plan};
     use effigy_containers::EffectiveContainerPolicy;
     use effigy_containers::{
         ContainerOperationKind, ContainerReadOperation, ContainerSideEffectClass,
@@ -437,6 +451,27 @@ mod tests {
             }
             other => panic!("unexpected operation kind: {other:?}"),
         }
+    }
+
+    #[test]
+    fn primary_service_exec_readiness_reports_ready_state_without_warning() {
+        let (exec_ready, warning) =
+            primary_service_exec_readiness("workspace", Path::new("/workspace-root/app"), true);
+
+        assert_eq!(exec_ready, Some(true));
+        assert_eq!(warning, None);
+    }
+
+    #[test]
+    fn primary_service_exec_readiness_reports_drift_warning_with_context() {
+        let (exec_ready, warning) =
+            primary_service_exec_readiness("workspace", Path::new("/workspace-root/app"), false);
+
+        assert_eq!(exec_ready, Some(false));
+        let warning = warning.expect("warning");
+        assert!(warning.contains("primary service `workspace`"));
+        assert!(warning.contains("/workspace-root/app"));
+        assert!(warning.contains("runtime state may be drifted"));
     }
 
     fn stub_policy(name: &str) -> EffectiveContainerPolicy {
