@@ -20,6 +20,7 @@ where
         "list" => parse_secrets_read_command(args, SecretsSubcommand::List),
         "doctor" => parse_secrets_read_command(args, SecretsSubcommand::Doctor),
         "init" => parse_secrets_read_command(args, SecretsSubcommand::Init),
+        "import" => parse_secrets_import_command(args),
         "set" => parse_secrets_named_command(args, |name| SecretsSubcommand::Set { name }),
         "get" => parse_secrets_named_command(args, |name| SecretsSubcommand::Get { name }),
         "unset" => parse_secrets_named_command(args, |name| SecretsSubcommand::Unset { name }),
@@ -29,6 +30,39 @@ where
         "export" => parse_secrets_export_command(args),
         other => Err(unknown_argument(other)),
     }
+}
+
+fn parse_secrets_import_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut input = PathBuf::from(".env");
+    let mut input_seen = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Secrets)),
+            value if value.starts_with('-') => return Err(unknown_argument(value)),
+            value => {
+                if input_seen {
+                    return Err(unknown_argument("too many import paths"));
+                }
+                input = PathBuf::from(value);
+                input_seen = true;
+            }
+        }
+    }
+
+    Ok(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Import { input },
+        repo_override,
+        output_json,
+    }))
 }
 
 fn parse_secrets_export_command<I>(args: I) -> Result<Command, CliParseError>

@@ -1,18 +1,35 @@
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
+use effigy_containers::EffectiveContainerPolicy;
+use effigy_core::shell::shell_quote;
 use effigy_env::secret::SecretString;
-use effigy_manifest::{ManifestSecretTarget, ManifestSecretsBackend};
+use effigy_manifest::{
+    ManifestContainerSecretDelivery, ManifestSecretTarget, ManifestSecretsBackend,
+};
 
 use crate::runner::error::RunnerError;
+use crate::runner::exec_command::{run_compose_exec, run_compose_exec_with_options};
 use crate::runner::manifest::load_task_manifest;
 
-pub(super) fn resolve_container_secret_env(
+#[derive(Debug)]
+pub(in crate::runner) struct ResolvedContainerSecretRuntime {
+    pub delivery: ManifestContainerSecretDelivery,
+    pub env: Vec<(String, SecretString)>,
+}
+
+pub(super) fn resolve_container_secret_runtime(
     repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
     force_required: bool,
-) -> Result<Vec<(String, SecretString)>, RunnerError> {
+) -> Result<ResolvedContainerSecretRuntime, RunnerError> {
     let manifest = load_task_manifest(&repo_root.join("effigy.toml"))?;
+    let delivery = policy.secret_delivery;
     let Some(secrets) = manifest.secrets.as_ref() else {
-        return Ok(Vec::new());
+        return Ok(ResolvedContainerSecretRuntime {
+            delivery,
+            env: Vec::new(),
+        });
     };
     let container_keys = secrets
         .keys
@@ -20,7 +37,10 @@ pub(super) fn resolve_container_secret_env(
         .filter(|(_, key)| key.targets.contains(&ManifestSecretTarget::Containers))
         .collect::<Vec<_>>();
     if container_keys.is_empty() {
-        return Ok(Vec::new());
+        return Ok(ResolvedContainerSecretRuntime {
+            delivery,
+            env: Vec::new(),
+        });
     }
 
     let required_names = container_keys
@@ -30,7 +50,10 @@ pub(super) fn resolve_container_secret_env(
         .collect::<Vec<_>>();
     if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
         if required_names.is_empty() {
-            return Ok(Vec::new());
+            return Ok(ResolvedContainerSecretRuntime {
+                delivery,
+                env: Vec::new(),
+            });
         }
         return Err(RunnerError::task_invocation(
             "required container secrets need `[secrets].backend = \"effigy-vault\"`",
@@ -44,7 +67,10 @@ pub(super) fn resolve_container_secret_env(
     )?;
     if !vault_path.exists() {
         if required_names.is_empty() {
-            return Ok(Vec::new());
+            return Ok(ResolvedContainerSecretRuntime {
+                delivery,
+                env: Vec::new(),
+            });
         }
         return Err(RunnerError::task_invocation(format!(
             "required container secrets are declared but the vault is missing at {}",
@@ -57,7 +83,10 @@ pub(super) fn resolve_container_secret_env(
         "Vault passphrase: ",
         "container secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
     )? else {
-        return Ok(Vec::new());
+        return Ok(ResolvedContainerSecretRuntime {
+            delivery,
+            env: Vec::new(),
+        });
     };
     let payload =
         crate::runner::secret_vault::read_effigy_vault_payload(&vault_path, passphrase.expose())?;
@@ -79,7 +108,162 @@ pub(super) fn resolve_container_secret_env(
             missing_required.join(", ")
         )));
     }
-    Ok(injected)
+    Ok(ResolvedContainerSecretRuntime {
+        delivery,
+        env: injected,
+    })
+}
+
+pub(super) fn materialize_container_secret_runtime(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    runtime: &ResolvedContainerSecretRuntime,
+) -> Result<(), RunnerError> {
+    if runtime.delivery != ManifestContainerSecretDelivery::RuntimeFiles || runtime.env.is_empty() {
+        return Ok(());
+    }
+    let Some(runtime_dir) = policy.secret_runtime_dir.as_deref() else {
+        return Err(RunnerError::task_invocation(format!(
+            "container `{}` uses `secrets.delivery = \"runtime-files\"` but no runtime_dir was configured",
+            policy.name
+        )));
+    };
+    let runtime_env_path = format!("{runtime_dir}/runtime.env");
+    let runtime_json_path = format!("{runtime_dir}/runtime.json");
+
+    run_primary_service_shell_command(
+        repo_root,
+        policy,
+        &format!("mkdir -p {dir}", dir = shell_quote(runtime_dir)),
+        "prepare container secret runtime dir",
+    )?;
+
+    let runtime_env = TempSecretFile::write(
+        "runtime.env",
+        render_runtime_env_file(&runtime.env).as_bytes(),
+    )?;
+    let runtime_json = TempSecretFile::write(
+        "runtime.json",
+        render_runtime_json_file(&runtime.env).as_bytes(),
+    )?;
+
+    write_file_into_primary_service(
+        repo_root,
+        policy,
+        &runtime_env.path,
+        runtime_env_path.as_str(),
+        "write container secret runtime env",
+    )?;
+    write_file_into_primary_service(
+        repo_root,
+        policy,
+        &runtime_json.path,
+        runtime_json_path.as_str(),
+        "write container secret runtime json",
+    )?;
+
+    let workspace_user = policy.workspace_user.as_deref().unwrap_or("dev");
+    run_primary_service_shell_command(
+        repo_root,
+        policy,
+        &format!(
+            "workspace_group=\"$(id -gn {user} 2>/dev/null || echo {user})\"; \
+             chown {user}:\"$workspace_group\" {dir} {runtime_env} {runtime_json}; \
+             chmod 700 {dir}; \
+             chmod 600 {runtime_env} {runtime_json}",
+            user = shell_quote(workspace_user),
+            dir = shell_quote(runtime_dir),
+            runtime_env = shell_quote(runtime_env_path.as_str()),
+            runtime_json = shell_quote(runtime_json_path.as_str()),
+        ),
+        "finalize container secret runtime files",
+    )?;
+
+    Ok(())
+}
+
+pub(in crate::runner) fn container_secret_runtime_env_path(
+    policy: &EffectiveContainerPolicy,
+) -> Option<String> {
+    if policy.secret_delivery != ManifestContainerSecretDelivery::RuntimeFiles
+        || !policy.source_secret_runtime_for_deferrals
+    {
+        return None;
+    }
+    policy
+        .secret_runtime_dir
+        .as_ref()
+        .map(|dir| format!("{dir}/runtime.env"))
+}
+
+fn render_runtime_env_file(entries: &[(String, SecretString)]) -> String {
+    let mut rendered = String::new();
+    for (key, value) in entries {
+        rendered.push_str(key);
+        rendered.push('=');
+        rendered.push_str(&shell_quote(value.expose()));
+        rendered.push('\n');
+    }
+    rendered
+}
+
+fn render_runtime_json_file(entries: &[(String, SecretString)]) -> String {
+    let mut payload = serde_json::Map::new();
+    for (key, value) in entries {
+        payload.insert(
+            key.clone(),
+            serde_json::Value::String(value.expose().to_owned()),
+        );
+    }
+    serde_json::to_string_pretty(&payload).expect("serialize container secret runtime json")
+}
+
+fn run_primary_service_shell_command(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    command: &str,
+    label: &str,
+) -> Result<(), RunnerError> {
+    let mut args = effigy_containers::compose::compose_args(policy, ["exec", "-T"]);
+    args.push(policy.primary_service.clone().into());
+    args.push("sh".into());
+    args.push("-lc".into());
+    args.push(command.into());
+    let output = run_compose_exec(repo_root, policy, &args, true, label)?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(RunnerError::TaskCommandFailure {
+        command: command.to_owned(),
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+fn write_file_into_primary_service(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    host_source: &Path,
+    container_dest: &str,
+    label: &str,
+) -> Result<(), RunnerError> {
+    let mut args = effigy_containers::compose::compose_args(policy, ["exec", "-T"]);
+    args.push(policy.primary_service.clone().into());
+    args.push("sh".into());
+    args.push("-lc".into());
+    args.push(format!("cat > {}", shell_quote(container_dest)).into());
+    let output =
+        run_compose_exec_with_options(repo_root, policy, &args, true, label, Some(host_source))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(RunnerError::TaskCommandFailure {
+        command: label.to_owned(),
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
 }
 
 fn container_secret_env_name(name: &str) -> String {
@@ -94,9 +278,44 @@ fn container_secret_env_name(name: &str) -> String {
         .collect()
 }
 
+struct TempSecretFile {
+    path: PathBuf,
+}
+
+impl TempSecretFile {
+    fn write(label: &str, bytes: &[u8]) -> Result<Self, RunnerError> {
+        let path = std::env::temp_dir().join(format!(
+            "effigy-container-secret-runtime-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+                .as_nanos()
+        ));
+        fs::write(&path, bytes).map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "failed to write temporary container secret file {}: {error}",
+                path.display()
+            ))
+        })?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for TempSecretFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::resolve_container_secret_env;
+    use super::{
+        container_secret_runtime_env_path, render_runtime_env_file, render_runtime_json_file,
+        resolve_container_secret_runtime,
+    };
+    use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
+    use effigy_env::secret::SecretString;
+    use effigy_manifest::ManifestContainerSecretDelivery;
     use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -118,6 +337,15 @@ unlock = "passphrase"
 [secrets.keys.database_url]
 required = true
 targets = ["containers"]
+
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
 "#,
         )
         .expect("write manifest");
@@ -128,11 +356,16 @@ targets = ["containers"]
         );
         let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
 
-        let env = resolve_container_secret_env(&root, false).expect("resolve secrets");
+        let runtime = resolve_container_secret_runtime(&root, &test_runtime_files_policy(), false)
+            .expect("resolve secrets");
 
-        assert_eq!(env.len(), 1);
-        assert_eq!(env[0].0, "DATABASE_URL");
-        assert_eq!(env[0].1.expose(), "postgres://secret-value");
+        assert_eq!(
+            runtime.delivery,
+            ManifestContainerSecretDelivery::RuntimeFiles
+        );
+        assert_eq!(runtime.env.len(), 1);
+        assert_eq!(runtime.env[0].0, "DATABASE_URL");
+        assert_eq!(runtime.env[0].1.expose(), "postgres://secret-value");
     }
 
     #[test]
@@ -152,13 +385,23 @@ unlock = "passphrase"
 [secrets.keys.database_url]
 required = true
 targets = ["containers"]
+
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
 "#,
         )
         .expect("write manifest");
         write_test_vault(&root, "vault-passphrase", &[]);
         let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
 
-        let error = resolve_container_secret_env(&root, false).expect_err("missing should fail");
+        let error = resolve_container_secret_runtime(&root, &test_runtime_files_policy(), false)
+            .expect_err("missing should fail");
 
         assert!(error
             .to_string()
@@ -182,17 +425,27 @@ unlock = "passphrase"
 [secrets.keys.api_token]
 required = false
 targets = ["containers"]
+
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
 "#,
         )
         .expect("write manifest");
         write_test_vault(&root, "vault-passphrase", &[("api_token", "tok_secret")]);
         let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
 
-        let env = resolve_container_secret_env(&root, true).expect("resolve secrets");
+        let runtime = resolve_container_secret_runtime(&root, &test_runtime_files_policy(), true)
+            .expect("resolve secrets");
 
-        assert_eq!(env.len(), 1);
-        assert_eq!(env[0].0, "API_TOKEN");
-        assert_eq!(env[0].1.expose(), "tok_secret");
+        assert_eq!(runtime.env.len(), 1);
+        assert_eq!(runtime.env[0].0, "API_TOKEN");
+        assert_eq!(runtime.env[0].1.expose(), "tok_secret");
     }
 
     #[test]
@@ -212,17 +465,65 @@ unlock = "passphrase"
 [secrets.keys.api_token]
 required = false
 targets = ["containers"]
+
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
 "#,
         )
         .expect("write manifest");
         write_test_vault(&root, "vault-passphrase", &[]);
         let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
 
-        let error = resolve_container_secret_env(&root, true).expect_err("missing should fail");
+        let error = resolve_container_secret_runtime(&root, &test_runtime_files_policy(), true)
+            .expect_err("missing should fail");
 
         assert!(error
             .to_string()
             .contains("required container secret(s) missing from the vault: api_token"));
+    }
+
+    #[test]
+    fn container_secret_runtime_env_path_is_opt_in() {
+        let policy = test_runtime_files_policy();
+
+        assert_eq!(
+            container_secret_runtime_env_path(&policy).as_deref(),
+            Some("/run/effigy/secrets/runtime.env")
+        );
+    }
+
+    #[test]
+    fn container_secret_runtime_env_path_skips_non_runtime_file_delivery() {
+        let mut policy = test_runtime_files_policy();
+        policy.secret_delivery = ManifestContainerSecretDelivery::ComposeEnv;
+
+        assert_eq!(container_secret_runtime_env_path(&policy), None);
+    }
+
+    #[test]
+    fn container_secret_runtime_env_file_uses_shell_quoted_assignments() {
+        let rendered = render_runtime_env_file(&[(
+            "API_TOKEN".to_owned(),
+            SecretString::new("tok'en value".to_owned()),
+        )]);
+
+        assert_eq!(rendered, "API_TOKEN='tok'\"'\"'en value'\n");
+    }
+
+    #[test]
+    fn container_secret_runtime_json_file_serializes_key_value_map() {
+        let rendered = render_runtime_json_file(&[(
+            "API_TOKEN".to_owned(),
+            SecretString::new("tok'en\\value".to_owned()),
+        )]);
+
+        assert!(rendered.contains("\"API_TOKEN\": \"tok'en\\\\value\""));
     }
 
     fn temp_repo(name: &str) -> PathBuf {
@@ -285,5 +586,42 @@ targets = ["containers"]
             envelope.to_json_pretty().expect("serialize test vault"),
         )
         .expect("write test vault");
+    }
+
+    fn test_runtime_files_policy() -> EffectiveContainerPolicy {
+        EffectiveContainerPolicy {
+            name: "web".to_owned(),
+            driver: effigy_manifest::ManifestContainerDriver::Colima,
+            startup: effigy_manifest::ManifestContainerStartup::Detached,
+            profile: "effigy".to_owned(),
+            compose_source: EffectiveComposeSource::Generated,
+            compose_files: Vec::new(),
+            compose_file_display: String::new(),
+            managed_volumes: Vec::new(),
+            shared_services: Vec::new(),
+            project_name: "demo".to_owned(),
+            primary_service: "app".to_owned(),
+            dns_domain: None,
+            dns_tls: false,
+            dns_port: None,
+            dns_routes: Vec::new(),
+            service_aliases: Vec::new(),
+            declared_ports: Vec::new(),
+            ports_declared_explicitly: false,
+            declared_mounts: Vec::new(),
+            declared_media_mounts: Vec::new(),
+            pull_production_hook: None,
+            health_check: None,
+            health_timeout_secs: 60,
+            secret_delivery: ManifestContainerSecretDelivery::RuntimeFiles,
+            secret_runtime_dir: Some("/run/effigy/secrets".to_owned()),
+            source_secret_runtime_for_deferrals: true,
+            workspace_user: Some("dev".to_owned()),
+            workspace_home: Some("/home/dev".to_owned()),
+            on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
+            shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
+            detach_timeout_secs: 10,
+            host_processes: Vec::new(),
+        }
     }
 }

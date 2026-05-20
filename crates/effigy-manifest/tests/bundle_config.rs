@@ -113,3 +113,30 @@ skip_dirs = ["data"]
     assert!(rendered.contains("skip_dirs"), "{rendered}");
     assert!(rendered.contains("unknown field"), "{rendered}");
 }
+
+#[test]
+fn manifest_catalog_discovery_accepts_enabled_flag() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("effigy.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[catalog]
+alias = "root"
+
+[catalog.discovery]
+enabled = false
+ignore = ["data"]
+"#,
+    )
+    .expect("write manifest");
+
+    let manifest = load_task_manifest(&manifest_path).expect("manifest should parse");
+    let discovery = manifest
+        .catalog
+        .as_ref()
+        .and_then(|catalog| catalog.discovery.as_ref())
+        .expect("discovery config");
+    assert_eq!(discovery.enabled, Some(false));
+    assert_eq!(discovery.ignore, vec!["data".to_owned()]);
+}

@@ -184,6 +184,102 @@ targets = ["rhai"]
 }
 
 #[test]
+fn secrets_import_creates_vault_from_dot_env_and_normalizes_keys() {
+    let root = temp_workspace("secrets-import-create");
+    write_root_manifest(
+        &root,
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+identity = "passphrase"
+unlock = "passphrase"
+
+[secrets.keys.openai_api_key]
+required = false
+targets = ["containers"]
+
+[secrets.keys.mailchimp_api_key]
+required = false
+targets = ["containers"]
+"#,
+    );
+    fs::write(
+        root.join(".env"),
+        "OPENAI_API_KEY='openai-secret'\nMAILCHIMP_API_KEY=\"mailchimp-secret\"\nENV_MODE='development'\n",
+    )
+    .expect("write env");
+    let _env = secret_test_env("vault-passphrase", None);
+
+    let out = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Import {
+            input: std::path::PathBuf::from(".env"),
+        },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("import should succeed");
+
+    assert!(!out.contains("openai-secret"));
+    assert!(!out.contains("mailchimp-secret"));
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
+    assert_eq!(parsed["action"].as_str(), Some("import"));
+    assert_eq!(parsed["format"].as_str(), Some("env"));
+    assert_eq!(parsed["created_vault"].as_bool(), Some(true));
+    assert_eq!(parsed["changed"].as_bool(), Some(true));
+    assert_eq!(parsed["imported"].as_array().expect("imported").len(), 2);
+    assert_eq!(parsed["skipped_undeclared"][0].as_str(), Some("ENV_MODE"));
+    let envelope = read_test_vault(&root.join(".effigy/secrets/local.vault"));
+    let decrypted = envelope
+        .decrypt_with_passphrase("vault-passphrase")
+        .expect("decrypt");
+    assert_eq!(
+        decrypted
+            .records
+            .get("openai_api_key")
+            .expect("openai_api_key")
+            .value
+            .expose(),
+        "openai-secret"
+    );
+    assert_eq!(
+        decrypted
+            .records
+            .get("mailchimp_api_key")
+            .expect("mailchimp_api_key")
+            .value
+            .expose(),
+        "mailchimp-secret"
+    );
+}
+
+#[test]
+fn secrets_import_does_not_create_vault_when_no_declared_keys_match() {
+    let root = temp_workspace("secrets-import-no-match");
+    write_root_manifest(&root, declared_secrets_manifest());
+    fs::write(root.join(".env"), "ENV_MODE='development'\n").expect("write env");
+    let _env = secret_test_env("vault-passphrase", None);
+
+    let out = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Import {
+            input: std::path::PathBuf::from(".env"),
+        },
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("import should succeed");
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
+    assert_eq!(parsed["action"].as_str(), Some("import"));
+    assert_eq!(parsed["changed"].as_bool(), Some(false));
+    assert_eq!(parsed["created_vault"].as_bool(), Some(false));
+    assert_eq!(parsed["imported"].as_array().expect("imported").len(), 0);
+    assert!(!root.join(".effigy/secrets/local.vault").exists());
+}
+
+#[test]
 fn secrets_set_stores_declared_secret_without_printing_value() {
     let root = temp_workspace("secrets-set");
     write_root_manifest(&root, declared_secrets_manifest());

@@ -18,6 +18,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `release evidence <validate|summary|closeout>` instead.
 
 ### Added
+- **Secrets import command:** `effigy secrets import [<PATH>]` now imports
+  declared secret keys from a `.env`-style file into the local Effigy vault,
+  lowercasing env names to match manifest keys, defaulting to `./.env`, and
+  skipping undeclared values without printing secrets.
 - **Native code graph surface:** Effigy now ships `graph index`, `status`,
   `search`, `files`, `node`, `callers`, `callees`, `impact`, and bounded
   `context` commands backed by a local `.effigy/graph/graph.db` index. The
@@ -69,6 +73,19 @@ During v0.x, MINOR bumps may include breaking changes.
   behind `primary_service_exec_ready`.
 
 ### Changed
+- **Catalog discovery can now be disabled at the root:** repos can now set
+  `[catalog.discovery] enabled = false` to keep ambient catalog discovery
+  root-only. In that mode, Effigy skips child catalog walking and mounted
+  catalog expansion entirely, which keeps task routing predictable for
+  single-app repos that do not need nested catalogs.
+- **Container secret runtime files are now an explicit generic opt-in:**
+  containers can now declare `[containers.<name>.secrets] delivery =
+  "runtime-files"` with a `runtime_dir` and optional deferral sourcing. In
+  that mode, Effigy writes `runtime.env` and `runtime.json` inside the running
+  primary service instead of using compose env injection. Bundles can then wire
+  those files into their own runtime shape without hard-coded Rust knowledge of
+  the app stack. Repo `.env` files remain available for non-secret local
+  overrides.
 - **Vendored repo-local Effigy skills now hide from generic skills-cli
   discovery:** `effigy init` now writes the project-local
   `.agents/skills/effigy/SKILL.md` with `metadata.internal: true`, so the
@@ -167,6 +184,10 @@ During v0.x, MINOR bumps may include breaking changes.
   library archetype, a decodelabs site, and the underlay workspace reference
 
 ### Fixed
+- **Runtime-files container secret delivery now writes through exec:** the
+  generic `secrets.delivery = "runtime-files"` path now streams `runtime.env`
+  and `runtime.json` into the running primary service over `exec` instead of
+  relying on backend `cp` behavior against runtime-mounted paths like tmpfs.
 - **Ambient task discovery now respects nested Effigy roots:** `effigy tasks`
   and other catalog discovery surfaces no longer walk into nested child
   projects whose local `effigy.toml` declares `[manifest].root = true`, so

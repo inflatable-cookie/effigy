@@ -36,6 +36,12 @@ pub(super) fn run_secrets(args: SecretsArgs) -> Result<String, RunnerError> {
         SecretsSubcommand::Init => {
             run_secrets_init(&repo_root, manifest.secrets.as_ref(), args.output_json)
         }
+        SecretsSubcommand::Import { input } => run_secrets_import(
+            &repo_root,
+            manifest.secrets.as_ref(),
+            &input,
+            args.output_json,
+        ),
         SecretsSubcommand::Set { name } => run_secrets_set(
             &repo_root,
             manifest.secrets.as_ref(),
@@ -270,6 +276,101 @@ fn run_secrets_set(
     )
 }
 
+fn run_secrets_import(
+    repo_root: &Path,
+    secrets: Option<&ManifestSecretsConfig>,
+    input: &Path,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let secrets = require_secrets(secrets)?;
+    let format = detect_import_format(input)?;
+    let import_path = resolve_import_input_path(repo_root, input);
+    let raw = fs::read_to_string(&import_path).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to read secrets import file {}: {error}",
+            import_path.display()
+        ))
+    })?;
+    let imported_entries = match format {
+        SecretsImportFormat::Env => parse_dotenv_import_entries(&raw)?,
+    };
+
+    let mut imported = Vec::new();
+    let mut skipped_undeclared = Vec::new();
+    let mut matched_records = Vec::new();
+    for (raw_key, value) in imported_entries {
+        let normalized = normalize_imported_secret_name(&raw_key);
+        if normalized.is_empty() {
+            skipped_undeclared.push(raw_key);
+            continue;
+        }
+        if secrets.keys.contains_key(&normalized) {
+            matched_records.push((normalized.clone(), value));
+            if !imported.contains(&normalized) {
+                imported.push(normalized);
+            }
+        } else {
+            skipped_undeclared.push(raw_key);
+        }
+    }
+    imported.sort();
+    skipped_undeclared.sort();
+
+    let vault_path = resolve_vault_path(repo_root, Some(secrets))?;
+    let vault_exists = vault_path.exists();
+    if matched_records.is_empty() && !vault_exists {
+        return render_import_result(
+            repo_root,
+            secrets,
+            &vault_path,
+            &import_path,
+            format,
+            imported,
+            skipped_undeclared,
+            false,
+            false,
+            output_json,
+            "no declared secrets matched; vault not created",
+        );
+    }
+
+    let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
+    let mut payload = if vault_exists {
+        read_vault_payload(&vault_path, passphrase.expose())?
+    } else {
+        VaultPlaintextPayload::empty()
+    };
+    let changed = !matched_records.is_empty();
+    for (name, value) in matched_records {
+        payload
+            .records
+            .insert(name, VaultSecretRecord::new(SecretValue::new(value)));
+    }
+    let envelope = payload
+        .encrypt_with_passphrase(passphrase.expose())
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    write_vault_file(&vault_path, &envelope)?;
+
+    let summary = if vault_exists {
+        "imported declared secrets into existing vault"
+    } else {
+        "created vault and imported declared secrets"
+    };
+    render_import_result(
+        repo_root,
+        secrets,
+        &vault_path,
+        &import_path,
+        format,
+        imported,
+        skipped_undeclared,
+        changed,
+        !vault_exists,
+        output_json,
+        summary,
+    )
+}
+
 fn run_secrets_get(
     repo_root: &Path,
     secrets: Option<&ManifestSecretsConfig>,
@@ -418,6 +519,125 @@ fn write_env_export_file(path: &Path, entries: &[(String, String)]) -> Result<()
     write_env_export_file_inner(path, rendered.as_bytes())
 }
 
+#[derive(Debug, Clone, Copy)]
+enum SecretsImportFormat {
+    Env,
+}
+
+impl SecretsImportFormat {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Env => "env",
+        }
+    }
+}
+
+fn detect_import_format(path: &Path) -> Result<SecretsImportFormat, RunnerError> {
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    if file_name == ".env"
+        || file_name.starts_with(".env.")
+        || extension.eq_ignore_ascii_case("env")
+    {
+        return Ok(SecretsImportFormat::Env);
+    }
+    Err(RunnerError::task_invocation(format!(
+        "unsupported secrets import file {}; supported formats currently require a .env-style path",
+        path.display()
+    )))
+}
+
+fn resolve_import_input_path(repo_root: &Path, input: &Path) -> PathBuf {
+    if input.is_absolute() {
+        input.to_path_buf()
+    } else {
+        repo_root.join(input)
+    }
+}
+
+fn parse_dotenv_import_entries(raw: &str) -> Result<Vec<(String, String)>, RunnerError> {
+    let mut entries = Vec::new();
+    for (index, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let candidate = trimmed.strip_prefix("export ").unwrap_or(trimmed).trim();
+        let Some((key, value)) = candidate.split_once('=') else {
+            return Err(RunnerError::task_invocation(format!(
+                "failed to parse dotenv import line {}: expected KEY=VALUE",
+                index + 1
+            )));
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(RunnerError::task_invocation(format!(
+                "failed to parse dotenv import line {}: empty key",
+                index + 1
+            )));
+        }
+        entries.push((key.to_owned(), parse_dotenv_import_value(value.trim())));
+    }
+    Ok(entries)
+}
+
+fn parse_dotenv_import_value(raw: &str) -> String {
+    if raw.len() >= 2 && raw.starts_with('\'') && raw.ends_with('\'') {
+        return raw[1..raw.len() - 1].to_owned();
+    }
+    if raw.len() >= 2 && raw.starts_with('"') && raw.ends_with('"') {
+        let mut parsed = String::new();
+        let mut escaped = false;
+        for character in raw[1..raw.len() - 1].chars() {
+            if escaped {
+                parsed.push(match character {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    '\\' => '\\',
+                    '"' => '"',
+                    other => other,
+                });
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else {
+                parsed.push(character);
+            }
+        }
+        if escaped {
+            parsed.push('\\');
+        }
+        return parsed;
+    }
+    raw.to_owned()
+}
+
+fn normalize_imported_secret_name(raw_key: &str) -> String {
+    let mut normalized = String::new();
+    let mut last_was_underscore = false;
+    for character in raw_key.chars() {
+        let mapped = if character.is_ascii_alphanumeric() {
+            last_was_underscore = false;
+            character.to_ascii_lowercase()
+        } else {
+            if last_was_underscore {
+                continue;
+            }
+            last_was_underscore = true;
+            '_'
+        };
+        normalized.push(mapped);
+    }
+    normalized.trim_matches('_').to_owned()
+}
+
 #[cfg(unix)]
 fn write_env_export_file_inner(path: &Path, bytes: &[u8]) -> Result<(), RunnerError> {
     use std::fs::OpenOptions;
@@ -513,6 +733,51 @@ fn render_export_result(
         "[secrets] export\nrepo: {}\noutput: {}\nformat: env\nstatus: wrote plaintext compatibility file\nwarning: do not commit this file",
         repo_root.display(),
         output_path.display()
+    );
+    render_command_result(output_json, true, payload, text)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_import_result(
+    repo_root: &Path,
+    secrets: &ManifestSecretsConfig,
+    vault_path: &Path,
+    input_path: &Path,
+    format: SecretsImportFormat,
+    imported: Vec<String>,
+    skipped_undeclared: Vec<String>,
+    changed: bool,
+    created_vault: bool,
+    output_json: bool,
+    summary: &str,
+) -> Result<String, RunnerError> {
+    let mut payload = secrets_payload(repo_root, Some(secrets), Vec::new(), Vec::new());
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("action".to_owned(), json!("import"));
+        object.insert("format".to_owned(), json!(format.label()));
+        object.insert("input".to_owned(), json!(input_path.display().to_string()));
+        object.insert(
+            "vault_path".to_owned(),
+            json!(vault_path.display().to_string()),
+        );
+        object.insert("imported".to_owned(), json!(imported));
+        object.insert("skipped_undeclared".to_owned(), json!(skipped_undeclared));
+        object.insert("created_vault".to_owned(), json!(created_vault));
+        object.insert("changed".to_owned(), json!(changed));
+        object.insert("summary".to_owned(), json!(summary));
+    }
+    let text = format!(
+        "[secrets] import\nrepo: {}\ninput: {}\nformat: {}\nvault: {}\nstatus: {}\nimported: {}\nskipped undeclared: {}",
+        repo_root.display(),
+        input_path.display(),
+        format.label(),
+        vault_path.display(),
+        summary,
+        payload["imported"].as_array().map(|items| items.len()).unwrap_or(0),
+        payload["skipped_undeclared"]
+            .as_array()
+            .map(|items| items.len())
+            .unwrap_or(0)
     );
     render_command_result(output_json, true, payload, text)
 }

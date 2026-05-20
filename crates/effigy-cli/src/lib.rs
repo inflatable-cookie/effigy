@@ -211,6 +211,9 @@ pub enum SecretsSubcommand {
     List,
     Doctor,
     Init,
+    Import {
+        input: PathBuf,
+    },
     Set {
         name: String,
     },

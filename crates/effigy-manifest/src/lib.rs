@@ -37,6 +37,7 @@ pub use config_sections::{
     ManifestContainerExecAliasTableConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
     ManifestContainerHostMountTable, ManifestContainerHostProcess,
     ManifestContainerHostProcessRestart, ManifestContainerOnTaskExit,
+    ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
     ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig, ManifestDemoConfig,
     ManifestDemoMode, ManifestDemoStatus, ManifestDistributionConfig,
@@ -181,6 +182,8 @@ pub struct ManifestCatalog {
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestCatalogDiscoveryConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
     #[serde(default)]
     pub ignore: Vec<String>,
 }

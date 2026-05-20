@@ -75,7 +75,12 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
         return Ok(Vec::new());
     }
 
-    let root_skip_dirs = root_catalog_discovery_skip_dirs(workspace_root);
+    let discovery = root_catalog_discovery_config(workspace_root);
+    if !discovery.enabled {
+        return Ok(vec![workspace_root.join(TASK_MANIFEST_FILE)]);
+    }
+
+    let root_skip_dirs = discovery.ignore;
     let mut pending = vec![workspace_root.to_path_buf()];
     pending.extend(discover_system_mount_catalog_roots(workspace_root));
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
@@ -216,19 +221,28 @@ fn is_internal_skip_dir(name: &str) -> bool {
     )
 }
 
-fn root_catalog_discovery_skip_dirs(workspace_root: &Path) -> HashSet<String> {
+struct RootCatalogDiscoveryConfig {
+    enabled: bool,
+    ignore: HashSet<String>,
+}
+
+fn root_catalog_discovery_config(workspace_root: &Path) -> RootCatalogDiscoveryConfig {
     load_task_manifest_with_inspection(&workspace_root.join(TASK_MANIFEST_FILE))
         .ok()
         .and_then(|loaded| loaded.manifest.catalog)
         .and_then(|catalog| catalog.discovery)
-        .map(|discovery| {
-            discovery
+        .map(|discovery| RootCatalogDiscoveryConfig {
+            enabled: discovery.enabled.unwrap_or(true),
+            ignore: discovery
                 .ignore
                 .into_iter()
                 .filter_map(normalize_skip_dir)
-                .collect()
+                .collect(),
         })
-        .unwrap_or_default()
+        .unwrap_or_else(|| RootCatalogDiscoveryConfig {
+            enabled: true,
+            ignore: HashSet::new(),
+        })
 }
 
 fn normalize_skip_dir(value: String) -> Option<String> {
@@ -409,6 +423,34 @@ mod tests {
             !manifests.contains(&storage.join("effigy.toml")),
             "configured storage skip should prevent ambient catalog discovery: {manifests:?}"
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn discover_manifest_paths_can_disable_ambient_child_discovery() {
+        let root = temp_root("effigy-routing-discovery-disabled");
+        let app = root.join("apps/demo");
+        let mounted = root.join("mounted/catalog");
+        fs::create_dir_all(&app).expect("app dir");
+        fs::create_dir_all(&mounted).expect("mounted dir");
+        fs::write(
+            root.join("effigy.toml"),
+            format!(
+                "[catalog]\nalias = \"root\"\n\n[catalog.discovery]\nenabled = false\n\n[systems]\ndefault = \"dev\"\n\n[systems.dev]\nmounts = [\"{}:/workspace-mounted\"]\n",
+                mounted.display()
+            ),
+        )
+        .expect("root");
+        fs::write(app.join("effigy.toml"), "[catalog]\nalias = \"demo\"\n").expect("app manifest");
+        fs::write(
+            mounted.join("effigy.toml"),
+            "[catalog]\nalias = \"mounted\"\n",
+        )
+        .expect("mounted manifest");
+
+        let manifests = discover_manifest_paths(&root).expect("discover");
+
+        assert_eq!(manifests, vec![root.join("effigy.toml")]);
         let _ = fs::remove_dir_all(root);
     }
 
