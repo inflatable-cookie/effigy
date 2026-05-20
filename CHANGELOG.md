@@ -52,6 +52,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `--apply-actions <ID>[,<ID>...]` for explicit non-interactive execution with
   per-action outcomes under the `effigy.init.checklist.v1` and
   `effigy.init.actions.v1` contracts.
+- **Container exec-readiness architecture proof task:** Effigy now ships
+  `qa:architecture:container-exec-readiness`, a focused regression task that
+  pins the status report, runtime drift warning, and runner recovery surfaces
+  behind `primary_service_exec_ready`.
 
 ### Changed
 - **Graph context ranking is now role-aware:** implementation-oriented context
@@ -111,6 +115,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `container status` output and calls out `primary_service_exec_ready` beside
   the shell timing report, so decodelabs, underlay, and other workspace-style
   stacks can be compared on both latency and actual exec readiness.
+- **Container shell perf matrix now covers decodelabs library and app fixtures
+  plus underlay:** the maintained live matrix now exercises a decodelabs
+  library archetype, a decodelabs site, and the underlay workspace reference
+  so shell-path changes are checked across more than one container shape.
 
 ### Fixed
 - **PHP workspace catalogs now pin pnpm 11 to the dedicated store volume:**

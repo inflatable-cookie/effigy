@@ -134,6 +134,58 @@ Useful flags:
 - `--keep-data` remains accepted as a compatibility alias for reset's default
 - `--json` returns machine-readable payloads for non-interactive paths
 
+## QA Recipe
+
+When container shell behavior changes, rerun the two repo-owned checks below
+before trusting the result.
+
+### 1. Prove exec readiness handling
+
+This task pins the drift path end to end:
+
+- status reporting exposes `primary_service_exec_ready`
+- runtime status warning text stays stable
+- runner recovery for a non-exec-ready primary service still works
+
+```sh
+effigy qa:architecture:container-exec-readiness
+```
+
+Use this when the change touches:
+
+- `container status`
+- workspace or container handoff
+- primary-service exec probes
+- runtime drift or recovery behavior
+
+### 2. Re-profile the live shell path
+
+This task runs the real `container shell --command 'true'` path against the
+maintained local fixture matrix and writes reports under:
+
+- `.effigy/perf/container-shell-matrix/README.md`
+- `.effigy/perf/container-shell-matrix/*.md`
+
+```sh
+effigy perf:container-shell-matrix
+```
+
+Each report now includes:
+
+- full `container status` output
+- `primary_service_exec_ready`
+- traced backend invocations
+- steady-state timings
+
+Current matrix intent:
+
+- a decodelabs library fixture
+- a decodelabs app fixture
+- an underlay workspace fixture
+
+If a timing result looks good but `primary_service_exec_ready` is `no`, treat
+that runtime as unhealthy and fix the drift before trusting the number.
+
 ## When To Use `container`
 
 Use `container` when you want to:
