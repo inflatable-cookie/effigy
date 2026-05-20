@@ -16,10 +16,12 @@
 //! - [`watch_repo`] to keep the graph fresh from foreground filesystem events
 //!
 //! Recommended agent workflow:
-//! 1. run [`status`] and refresh with [`run_index`] if the graph is stale
-//! 2. start task-shaped navigation with [`explore`]
-//! 3. use [`affected`] when the question is which tests or tasks to run after edits
-//! 4. fall back to [`context`] or exact-search tools for lower-level confirmation
+//! 1. run [`status`] and read `freshness.state` / `freshness.usable` on the JSON payload
+//! 2. refresh with [`run_index`] when state is `missing-index`, `refresh-recommended`,
+//!    or `degraded`, or when `usable` is false
+//! 3. start task-shaped navigation with [`explore`]
+//! 4. use [`affected`] when the question is which tests or tasks to run after edits
+//! 5. fall back to [`context`] or exact-search tools for lower-level confirmation
 
 mod error;
 pub mod extractor;

@@ -228,6 +228,19 @@ Example:
 git diff --name-only | effigy graph affected --stdin --json
 ```
 
+## Graph Freshness State
+
+Definition:
+- Compact trust label on graph query payloads under `freshness.state`, paired with
+  `freshness.usable` and `freshness.summary`.
+
+Values:
+
+- `ready` — safe to trust navigation queries
+- `refresh-recommended` — reindex before trusting queries
+- `degraded` — partial problems; treat output as bounded guidance
+- `missing-index` — run `graph index` first
+
 ## Graph Watch Event
 
 Definition:

@@ -86,6 +86,15 @@ effigy changelog extract CHANGELOG.md --version X.Y.Z  # explicit file
 effigy changelog --json extract --version X.Y.Z  # JSON envelope
 ```
 
+## Secrets import
+
+When `[secrets]` is declared and values live in a dotenv file:
+
+```bash
+effigy secrets import
+effigy secrets import infra/local.env --json
+```
+
 ## Release inspection (read-only)
 
 ```bash
@@ -99,6 +108,10 @@ effigy release gates                   # list gates and current pass/fail
 These are safe to run unprompted. Anything with `--yes` or that pushes a tag
 is **not** safe to run unprompted — see `release-protocol.md` and
 `footguns.md`.
+
+Distribution evidence (`preflight`, `proof`, `evidence validate`, …) also
+lives under `effigy release`, not a separate `effigy distribution` command.
+See `built-in-surfaces.md` and `docs/guides/062-distribution-system-guide.md`.
 
 ## Doctor + explain
 

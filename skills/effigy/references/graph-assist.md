@@ -25,7 +25,8 @@ ownership, flow, implementation, or changed-file impact.
 
 ```bash
 effigy graph status --json
-# if stale_paths is non-empty:
+# when freshness.state is missing-index, refresh-recommended, or degraded,
+# or freshness.usable is false:
 effigy graph index --json
 
 effigy graph explore "<task-shaped question>" \

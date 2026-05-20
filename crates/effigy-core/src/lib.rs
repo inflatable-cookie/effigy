@@ -1,3 +1,10 @@
+//! Shared Effigy primitives used across CLI crates.
+//!
+//! Holds repo path helpers, task selector parsing, built-in task metadata,
+//! container detection, git/shell probes, and widget/output helpers. Most
+//! agents interact with Effigy through the CLI; this crate is the internal
+//! contract layer those commands build on.
+
 pub mod build_info;
 pub mod builtin_tasks;
 pub mod container_detection;

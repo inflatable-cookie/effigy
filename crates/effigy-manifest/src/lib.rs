@@ -1,3 +1,9 @@
+//! Effigy manifest loading, composition, and bundle source resolution.
+//!
+//! This crate turns `effigy.toml` (and included fragments) into [`LoadedCatalog`]
+//! values the runner uses for task routing, container wiring, and deploy/state
+//! surfaces. User-facing manifest patterns live in `docs/guides/022-manifest-cookbook.md`.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 

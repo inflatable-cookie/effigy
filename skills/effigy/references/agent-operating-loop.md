@@ -35,7 +35,7 @@ unfamiliar tree — **before** spraying `rg` or opening many files.
 
 ```bash
 effigy graph status --json
-effigy graph index --json          # only when stale_paths is non-empty
+effigy graph index --json          # when freshness.state is not ready or usable is false
 effigy graph explore "<question>" --max-files 6 --max-bytes 12288 --json
 ```
 

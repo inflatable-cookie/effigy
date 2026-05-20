@@ -139,6 +139,21 @@ effigy secrets unset render_api_key
 Removes the value from the vault. The declaration stays in the manifest until
 you edit it.
 
+### Import from a dotenv file
+
+```sh
+effigy secrets import
+effigy secrets import infra/local.env
+effigy secrets import --json
+```
+
+Imports declared keys from a `.env`-style file into the vault:
+
+- defaults to `./.env` when no path is given
+- lowercases env var names to match manifest keys
+- skips keys not declared in `[secrets.keys]`
+- never prints secret values in stdout or JSON
+
 ### Change the vault passphrase
 
 ```sh

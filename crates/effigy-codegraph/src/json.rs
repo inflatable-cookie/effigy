@@ -26,6 +26,7 @@ pub struct ExtractorSummaryPayload {
     pub capabilities: Vec<ExtractorCapability>,
 }
 
+/// `effigy graph status --json` payload (`effigy.graph.status.v1`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphStatusPayload {
     pub ready: bool,
@@ -67,11 +68,20 @@ pub struct GraphIndexPayload {
     pub failed_paths: Vec<String>,
 }
 
+/// Compact trust summary for graph query freshness.
+///
+/// Agents should gate on [`Self::state`] and [`Self::usable`] before trusting
+/// explore, context, or affected output. Typical states: `ready`,
+/// `refresh-recommended`, `degraded`, `missing-index`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphFreshnessPayload {
+    /// Trust label (`ready`, `refresh-recommended`, `degraded`, `missing-index`).
     pub state: String,
+    /// One-line guidance for operators and agents.
     pub summary: String,
+    /// Whether graph navigation queries are safe to trust right now.
     pub usable: bool,
+    /// Whether any stale paths were detected (detail; prefer [`Self::state`]).
     pub stale: bool,
     pub stale_path_count: usize,
     pub failed_path_count: usize,

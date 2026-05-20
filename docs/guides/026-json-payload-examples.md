@@ -70,6 +70,15 @@ Companion references:
       "extractors": 5,
       "index_runs": 12
     },
+    "freshness": {
+      "state": "ready",
+      "summary": "graph index is current",
+      "usable": true,
+      "stale": false,
+      "stale_path_count": 0,
+      "failed_path_count": 0,
+      "stale_paths": []
+    },
     "stale_paths": [],
     "new_paths": [],
     "changed_paths": [],
@@ -100,7 +109,12 @@ Companion references:
     "query": "trace release orchestrator",
     "index": {
       "freshness": {
+        "state": "ready",
+        "summary": "graph index is current",
+        "usable": true,
         "stale": false,
+        "stale_path_count": 0,
+        "failed_path_count": 0,
         "stale_paths": []
       },
       "counts": {
@@ -182,7 +196,12 @@ Companion references:
   "payload": {
     "request": "trace release orchestrator",
     "freshness": {
+      "state": "ready",
+      "summary": "graph index is current",
+      "usable": true,
       "stale": false,
+      "stale_path_count": 0,
+      "failed_path_count": 0,
       "stale_paths": []
     },
     "items": [
@@ -240,7 +259,12 @@ Companion references:
   "payload": {
     "changed_paths": ["src/runner/graph_command.rs"],
     "freshness": {
+      "state": "ready",
+      "summary": "graph index is current",
+      "usable": true,
       "stale": false,
+      "stale_path_count": 0,
+      "failed_path_count": 0,
       "stale_paths": []
     },
     "depth": 2,

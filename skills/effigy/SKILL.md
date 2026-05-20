@@ -103,9 +103,7 @@ Stay with `rg` first when the job is:
 - missing-symbol proof
 - confirming the final pre-edit call site or string literal
 
-Built-ins worth knowing beyond the default loop: `init`, `watch`, `defer`,
-`docs`, `contracts`, `bundle`, `artifact`, `demo`, `changelog`,
-`release`.
+Full built-in lookup: `references/built-in-surfaces.md`.
 
 ## Common workflows
 
@@ -119,8 +117,8 @@ Built-ins worth knowing beyond the default loop: `init`, `watch`, `defer`,
 | Full local QA | `effigy qa` or `effigy qa:ci:local` |
 | Repo health scan | `effigy doctor --verbose` |
 | Scaffold manifest | `effigy init` then `effigy tasks migrate` |
-| Check repo setup | `effigy init --check --json` |
-| Apply repo setup | `effigy init` |
+| Check repo setup | `effigy init --check --json` or `effigy init --checklist --json` |
+| Apply repo setup | `effigy init` or `effigy init --apply --json` |
 | Read-only release check | `effigy release gates` |
 
 Details: `references/workflow-shortcuts.md`.
@@ -165,8 +163,8 @@ Details: `references/json-envelope.md`.
 
 Read these only when the repo or task needs them.
 
-**Secrets** — `effigy secrets init`, `set`, `list`, `doctor` when `[secrets]`
-is declared. Guide: `docs/guides/075-secrets-and-vault-guide.md`.
+**Secrets** — `effigy secrets init`, `set`, `import`, `list`, `doctor` when
+`[secrets]` is declared. Guide: `docs/guides/075-secrets-and-vault-guide.md`.
 
 **Bundles** — `[bundle].base` with `path` / `git` / `oci`; `effigy bundle inspect`,
 `effigy bundle sync`. Guide: `docs/guides/065-external-bundle-adoption.md`.
@@ -196,5 +194,7 @@ Sequence: `references/release-protocol.md`.
 | JSON contracts | `docs/guides/017-json-output-contracts.md` |
 | Quick start | `docs/guides/021-quick-start-and-command-cookbook.md` |
 | Command reference | `docs/guides/025-command-reference-matrix.md` |
+| Distribution evidence | `docs/guides/062-distribution-system-guide.md` |
 | Containers / dev | `docs/guides/063-container-system-guide.md` |
 | Release | `docs/guides/051-release-orchestration.md` |
+| Built-in lookup | `references/built-in-surfaces.md` |

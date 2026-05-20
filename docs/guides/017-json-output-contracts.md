@@ -136,6 +136,8 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.deploy.history.v1`
 - `effigy.init.v1`
 - `effigy.init.list.v1`
+- `effigy.init.checklist.v1`
+- `effigy.init.actions.v1`
 - `effigy.migrate.v1`
 - `effigy.unlock.v1`
 - `effigy.completion.v2`
@@ -222,8 +224,10 @@ Consume one JSON object per line. Current event kinds:
 
 ## Graph Workflow Notes
 
-- `graph status --json` is the freshness gate; if `stale_paths` is non-empty,
-  re-run `graph index --json` before trusting graph queries.
+- `graph status --json` is the freshness gate; read `payload.freshness.state`
+  and `payload.freshness.usable` before trusting queries. Reindex when state is
+  `missing-index`, `refresh-recommended`, or `degraded`, or when `usable` is
+  false. Path lists (`stale_paths`, `failed_paths`) are supporting detail.
 - `graph affected --json` narrows validation scope but does not claim exhaustive
   test reachability.
 - `graph explore --json` and `graph context --json` are bounded packets; exact

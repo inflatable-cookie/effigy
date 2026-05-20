@@ -5,11 +5,11 @@ assistants how to use Effigy.
 
 ## What's here
 
-- [`effigy/`](./effigy/) — main skill. Discovery, code-understanding with
-  graph, common workflows, JSON envelopes, config shapes, footguns, release
-  protocol. Light front door ([`SKILL.md`](./effigy/SKILL.md)) routes to topic references in
-  [`effigy/references/`](./effigy/references/). Task names such as **`dev`** are
-  repo-defined unless the doc names a built-in (`test`, `init`, …).
+- [`effigy/`](./effigy/) — main skill. Agent operating loop, graph assist,
+  built-in surface lookup, JSON envelopes, config shapes, footguns, release
+  protocol. Light front door ([`SKILL.md`](./effigy/SKILL.md)) routes to topic
+  references in [`effigy/references/`](./effigy/references/). Task names such as
+  **`dev`** are repo-defined unless the doc names a built-in (`test`, `init`, …).
 
 ## Install
 
@@ -20,10 +20,10 @@ agent that consumes `SKILL.md`.
 ### Recommended: `npx skills`
 
 ```bash
-# Project-local install
-npx skills add inflatable-cookie/effigy
+# Project-local install (from a checkout)
+npx skills add /path/to/effigy/skills/effigy
 
-# Global install (available in every repo)
+# Published source (global)
 npx skills add inflatable-cookie/effigy -g
 ```
 
@@ -36,10 +36,6 @@ location:
 
 The CLI ships from [`vercel-labs/skills`](https://github.com/vercel-labs/skills)
 and supports 50+ agents.
-
-When both a project-local and global Effigy skill are installed, treat the
-project-local copy as authoritative for that repo. The global install is the
-fallback for repos that do not vendor Effigy locally.
 
 ### Manual install
 
@@ -72,10 +68,13 @@ that support slash-prefix skills).
 ```
 skills/
 └── effigy/
-    ├── SKILL.md                    # front door (~150 lines)
+    ├── SKILL.md                         # front door
     └── references/
+        ├── agent-operating-loop.md      # default agent sequence
+        ├── built-in-surfaces.md         # built-in command lookup
+        ├── graph-assist.md              # code graph workflow
         ├── footguns.md
-        ├── first-five-commands.md
+        ├── first-five-commands.md       # discovery loop detail
         ├── selector-routing.md
         ├── workflow-shortcuts.md
         ├── json-envelope.md
@@ -83,13 +82,15 @@ skills/
         └── release-protocol.md
 ```
 
-The front door is intentionally short. Topic references hold depth and are
-read on demand by the agent.
+The front door stays short. Topic references hold depth and are read on demand.
 
 ## Maintenance
 
-The skill version-locks to the Effigy release that ships it. When command
-names or flags change, the skill content updates in the same PR.
+Update the skill in the same PR as command or JSON contract changes. Validate
+with `effigy qa:docs` (links, JSON examples, agent-defaults checks).
 
-The skill is part of `effigy qa:docs` — docs QA flags stale references and
-broken links.
+Reinstall after local edits:
+
+```bash
+npx skills add /path/to/effigy/skills/effigy -g
+```

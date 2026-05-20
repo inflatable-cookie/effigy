@@ -92,15 +92,24 @@ effigy graph status --json
 
 Look at:
 
-- `ready`
-- `stale_paths`
-- `new_paths`
-- `changed_paths`
-- `deleted_paths`
-- `failed_paths`
+- `freshness.state` — compact trust label
+- `freshness.usable` — whether graph queries are safe to trust
+- `freshness.summary` — one-line operator guidance
+- `stale_paths`, `new_paths`, `changed_paths`, `deleted_paths`, `failed_paths`
 
-If `stale_paths` is not empty, re-run `graph index` before trusting query
-results.
+Trust states:
+
+| `freshness.state` | Meaning |
+| --- | --- |
+| `ready` | Index is current enough for navigation |
+| `refresh-recommended` | Stale paths exist; reindex before trusting queries |
+| `degraded` | Partial index problems; treat output as bounded guidance |
+| `missing-index` | No graph DB yet; run `graph index` first |
+
+If `freshness.usable` is false or `freshness.state` is not `ready`, re-run
+`graph index` before trusting explore, affected, or context results. Path
+lists are still useful detail, but agents should gate on `freshness.state`
+first.
 
 If the graph DB is corrupt or you hit an unsupported future storage schema,
 rebuild it locally:
