@@ -101,6 +101,8 @@ pub struct ManifestContainerConfig {
     #[serde(default)]
     pub health: Option<ManifestContainerHealthConfig>,
     #[serde(default)]
+    pub secrets: Option<ManifestContainerSecretsConfig>,
+    #[serde(default)]
     pub host: Option<ManifestContainerHostConfig>,
     #[serde(default)]
     pub data: Option<ManifestContainerDataConfig>,
@@ -113,6 +115,24 @@ pub struct ManifestContainerConfig {
     /// streams to `.effigy/runtime/host-processes/<container>/<name>.log`.
     #[serde(default)]
     pub host_processes: Vec<ManifestContainerHostProcess>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestContainerSecretsConfig {
+    #[serde(default)]
+    pub delivery: Option<ManifestContainerSecretDelivery>,
+    #[serde(default)]
+    pub runtime_dir: Option<String>,
+    #[serde(default)]
+    pub source_for_deferrals: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ManifestContainerSecretDelivery {
+    ComposeEnv,
+    RuntimeFiles,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]

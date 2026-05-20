@@ -65,6 +65,16 @@ fn resolve_php_fpm_fragment() {
         dockerfile.contains("jq"),
         "php-fpm workspace image should include jq for shell and agent use"
     );
+    assert!(
+        dockerfile
+            .contains("php_admin_value[auto_prepend_file] = /run/effigy/secrets/bootstrap.php"),
+        "php-fpm workspace image should wire the secret bootstrap into php-fpm"
+    );
+    assert!(
+        fragment.compose_template.contains("tmpfs:")
+            && fragment.compose_template.contains("- /run/effigy/secrets"),
+        "php-fpm compose fragment should mount a tmpfs secret runtime"
+    );
 }
 
 #[test]
@@ -220,6 +230,12 @@ fn assemble_php_mariadb_redis_stack() {
             .compose_yaml
             .contains("COMPOSER_CACHE_DIR: /home/dev/.cache/composer"),
         "missing composer cache environment:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result.compose_yaml.contains("tmpfs:")
+            && result.compose_yaml.contains("- /run/effigy/secrets"),
+        "missing php secret tmpfs mount:\n{}",
         result.compose_yaml
     );
 

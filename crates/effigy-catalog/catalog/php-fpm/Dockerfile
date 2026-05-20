@@ -138,7 +138,22 @@ RUN { \
         echo 'request_terminate_timeout = 300'; \
         echo 'catch_workers_output = yes'; \
         echo 'decorate_workers_output = no'; \
+        echo 'php_admin_value[auto_prepend_file] = /run/effigy/secrets/bootstrap.php'; \
     } > /usr/local/etc/php-fpm.d/effigy-dev.conf
+
+RUN mkdir -p /usr/local/share/effigy && { \
+        echo '<?php'; \
+        echo '$runtimeJson = "/run/effigy/secrets/runtime.json";'; \
+        echo 'if (!is_file($runtimeJson)) { return; }'; \
+        echo '$payload = json_decode((string) file_get_contents($runtimeJson), true);'; \
+        echo 'if (!is_array($payload)) { return; }'; \
+        echo 'foreach ($payload as $key => $value) {'; \
+        echo '    if (!is_string($key) || !is_scalar($value)) { continue; }'; \
+        echo '    $stringValue = (string) $value;'; \
+        echo '    putenv($key . "=" . $stringValue);'; \
+        echo '    $_ENV[$key] = $stringValue;'; \
+        echo '}'; \
+    } > /usr/local/share/effigy/container-secrets-bootstrap.php
 
 # ── Git safe.directory ────────────────────────────────────────────────
 # Workspace-root and library-mount paths are bind-mounted from the host,
@@ -210,6 +225,10 @@ RUN set -eux; \
         echo 'smtp_host=${EFFIGY_SMTP_HOST:-mail}'; \
         echo 'smtp_port=${EFFIGY_SMTP_PORT:-1025}'; \
         echo 'smtp_from=${EFFIGY_SMTP_FROM:-effigy@localhost}'; \
+        echo 'mkdir -p /run/effigy/secrets'; \
+        echo 'cp /usr/local/share/effigy/container-secrets-bootstrap.php /run/effigy/secrets/bootstrap.php'; \
+        echo ': > /run/effigy/secrets/runtime.env'; \
+        echo 'printf '"'"'{}'"'"' > /run/effigy/secrets/runtime.json'; \
         echo ': > "$log" || true'; \
         echo 'echo "[effigy-entrypoint] $(date -u +%FT%TZ) start" >> "$log" 2>&1 || true'; \
         echo 'cat > /etc/msmtprc <<EOF'; \
@@ -227,6 +246,9 @@ RUN set -eux; \
         echo 'dev_uid=$(id -u dev 2>/dev/null || echo 1000)'; \
         echo 'dev_gid=$(id -g dev 2>/dev/null || echo 1000)'; \
         echo 'echo "[effigy-entrypoint] dev uid=$dev_uid gid=$dev_gid" >> "$log"'; \
+        echo 'chown dev:"$(id -gn dev 2>/dev/null || echo dev)" /run/effigy/secrets /run/effigy/secrets/bootstrap.php /run/effigy/secrets/runtime.env /run/effigy/secrets/runtime.json'; \
+        echo 'chmod 0700 /run/effigy/secrets'; \
+        echo 'chmod 0600 /run/effigy/secrets/bootstrap.php /run/effigy/secrets/runtime.env /run/effigy/secrets/runtime.json'; \
         echo 'if [ -f "$mkcert_ca" ]; then'; \
         echo '    if update-ca-certificates >>"$log" 2>&1; then'; \
         echo '        echo "[effigy-entrypoint] mkcert root CA installed into system trust store" >> "$log"'; \

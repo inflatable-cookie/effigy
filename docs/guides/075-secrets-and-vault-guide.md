@@ -79,7 +79,7 @@ description = "Render API key for deployment checks and apply"
 | Target | Injected into |
 |---|---|
 | `tasks` | task process environments |
-| `containers` | container service environments at startup |
+| `containers` | container runtime delivery (`compose` env by default, or runtime files when the container config opts into that mode) |
 | `rhai` | Rhai scripts via `secrets::get(name)` |
 | `deploy` | deploy provider package Rhai scripts |
 | `state` | state apply hook task environments |
@@ -212,8 +212,34 @@ general deploy/state/artifact generation hook.
 ## Use In Containers
 
 Secrets with `targets = ["containers"]` are resolved before `effigy container
-up` and passed through the compose process environment. No repo-root `.env`
-file is written.
+up`. No repo-root `.env` file is written.
+
+By default, Effigy passes those values through the compose process environment.
+
+Bundles and repos that need a tighter runtime contract can opt a container into
+runtime-file delivery:
+
+```toml
+[containers.web.secrets]
+delivery = "runtime-files"
+runtime_dir = "/run/effigy/secrets"
+source_for_deferrals = true
+```
+
+In that mode, Effigy writes:
+
+- `runtime.env`
+- `runtime.json`
+
+under the configured `runtime_dir` inside the running primary service. Core
+Effigy treats those as generic runtime files. The bundle/catalog can then wire
+them into the app runtime however it needs. A legacy PHP bundle, for example,
+can mount `runtime_dir` as tmpfs, auto-prepend a PHP bootstrap that reads
+`runtime.json`, and let container deferral source `runtime.env` only for the
+deferred process.
+
+Repo `.env` files can still carry non-secret local overrides. Runtime-file
+delivery is for the sensitive values declared under `[secrets]`.
 
 ## Use In Rhai Scripts
 

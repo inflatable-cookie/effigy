@@ -28,10 +28,11 @@ pub use container::{
     ManifestContainerHealthConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
     ManifestContainerHostMountTable, ManifestContainerHostProcess,
     ManifestContainerHostProcessRestart, ManifestContainerLifecycleConfig,
-    ManifestContainerOnTaskExit, ManifestContainerServiceConfig, ManifestContainerShutdownMode,
-    ManifestContainerStartup, ManifestContainersConfig, ManifestDataConfig,
-    ManifestDataTargetConfig, ManifestInlineWorkspaceContainerConfig, ManifestSystemConfig,
-    ManifestSystemsConfig, ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    ManifestContainerOnTaskExit, ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
+    ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
+    ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig,
+    ManifestInlineWorkspaceContainerConfig, ManifestSystemConfig, ManifestSystemsConfig,
+    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
 pub use demo::{
     ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus, ManifestDocsPolicyConfig,
@@ -169,6 +170,41 @@ version = "10.11"
         let web_service = web.services.get("web").expect("web service");
         assert_eq!(web_service.catalog, "nginx");
         assert_eq!(web_service.variant.as_deref(), Some("laravel"));
+    }
+
+    #[test]
+    fn containers_config_accepts_secret_runtime_file_delivery() {
+        let parsed: ContainerWrapper = toml::from_str(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.secrets]
+delivery = "runtime-files"
+runtime_dir = "/run/effigy/secrets"
+source_for_deferrals = true
+
+[containers.web.services.app]
+catalog = "php-fpm"
+"#,
+        )
+        .expect("parse containers");
+
+        let web = parsed
+            .containers
+            .environments
+            .get("web")
+            .expect("web container");
+        let secrets = web.secrets.as_ref().expect("secret config");
+        assert_eq!(
+            secrets.delivery,
+            Some(super::ManifestContainerSecretDelivery::RuntimeFiles)
+        );
+        assert_eq!(secrets.runtime_dir.as_deref(), Some("/run/effigy/secrets"));
+        assert_eq!(secrets.source_for_deferrals, Some(true));
     }
 
     #[test]

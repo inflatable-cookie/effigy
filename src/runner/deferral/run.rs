@@ -13,6 +13,7 @@ use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 use super::policy::DEFER_DEPTH_ENV;
 use super::trace::render_deferral_trace;
 use crate::runner::command_context::active_runtime_context;
+use crate::runner::container_command::container_secret_runtime_env_path;
 use crate::runner::container_command::support::validate_running_container_runtime_match;
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
@@ -232,19 +233,6 @@ fn run_deferred_request_with_binding(
                         deferral.source
                     ))
                 })?;
-            let command = build_deferred_command(task, runtime_args, deferral, &exec_working_dir)?;
-            if let Some(local_working_dir) = local_container_deferral_working_dir() {
-                let output = run_deferred_request_locally(
-                    task,
-                    runtime_args,
-                    deferral,
-                    cause,
-                    current_depth,
-                    &command,
-                    &local_working_dir,
-                )?;
-                return Ok(DeferredExecutionPlan::Completed(output));
-            }
             let policy = binding_resolution
                 .effective_policy(&deferral.working_dir)?
                 .ok_or_else(|| {
@@ -253,6 +241,23 @@ fn run_deferred_request_with_binding(
                         deferral.source
                     ))
                 })?;
+            let command = build_deferred_command(task, runtime_args, deferral, &exec_working_dir)?;
+            let rendered_command = render_deferred_runtime_command(
+                &command,
+                container_secret_runtime_env_path(&policy),
+            );
+            if let Some(local_working_dir) = local_container_deferral_working_dir() {
+                let output = run_deferred_request_locally(
+                    task,
+                    runtime_args,
+                    deferral,
+                    cause,
+                    current_depth,
+                    &rendered_command,
+                    &local_working_dir,
+                )?;
+                return Ok(DeferredExecutionPlan::Completed(output));
+            }
             validate_running_container_runtime_match(&deferral.working_dir, &policy)?;
             let session_context = current_runtime_session_context();
             let plan = deferral_runtime_activation_plan(
@@ -280,7 +285,7 @@ fn run_deferred_request_with_binding(
             let tty = std::io::stdout().is_terminal() || std::io::stderr().is_terminal();
             let args = build_deferred_container_command_args(
                 &policy,
-                &command,
+                &rendered_command,
                 &exec_working_dir,
                 current_depth,
                 tty,
@@ -378,13 +383,21 @@ fn build_deferred_container_command_args(
     args.push(OsString::from(policy.primary_service.as_str()));
     args.push(OsString::from("sh"));
     args.push(OsString::from("-lc"));
-    args.push(OsString::from(render_container_deferral_command(command)));
+    args.push(OsString::from(command));
     args
 }
 
-fn render_container_deferral_command(command: &str) -> String {
+fn render_deferred_runtime_command(command: &str, runtime_env_path: Option<String>) -> String {
+    let runtime_env = if let Some(path) = runtime_env_path {
+        format!(
+            "if [ -f {path} ]; then set -a; . {path}; set +a; fi; ",
+            path = shell_quote(&path)
+        )
+    } else {
+        String::new()
+    };
     format!(
-        "unset NO_COLOR; export EFFIGY_COLOR=always CLICOLOR_FORCE=1 FORCE_COLOR=3 PATH={}:$PATH; {command}",
+        "unset NO_COLOR; export EFFIGY_COLOR=always CLICOLOR_FORCE=1 FORCE_COLOR=3 PATH={}:$PATH; {runtime_env}{command}",
         shell_quote("/usr/local/bin")
     )
 }
@@ -412,7 +425,7 @@ mod tests {
 
     use effigy_runtime_plan::{RuntimeActivationRoute, RuntimeLeasePolicy};
 
-    use super::deferral_runtime_activation_plan;
+    use super::{deferral_runtime_activation_plan, render_deferred_runtime_command};
     use crate::runner::runtime_session_context::RuntimeSessionContext;
 
     #[test]
@@ -442,5 +455,24 @@ mod tests {
             plan.request.lease_policy,
             RuntimeLeasePolicy::RefreshOnActivation
         );
+    }
+
+    #[test]
+    fn deferred_runtime_command_sources_container_runtime_env_when_requested() {
+        let rendered = render_deferred_runtime_command(
+            "vendor/bin/effigy version",
+            Some("/run/effigy/secrets/runtime.env".to_owned()),
+        );
+
+        assert!(rendered.contains("/run/effigy/secrets/runtime.env"));
+        assert!(rendered.contains("set -a; . '/run/effigy/secrets/runtime.env'; set +a;"));
+    }
+
+    #[test]
+    fn deferred_runtime_command_skips_container_runtime_env_when_not_requested() {
+        let rendered = render_deferred_runtime_command("vendor/bin/effigy version", None);
+
+        assert!(!rendered.contains("/run/effigy/secrets/runtime.env"));
+        assert!(rendered.contains("vendor/bin/effigy version"));
     }
 }

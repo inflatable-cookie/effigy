@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use effigy_catalog::{volumes::ManagedVolume, CatalogError};
 use effigy_manifest::{
-    ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-    ManifestContainerStartup, ManifestError,
+    ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerSecretDelivery,
+    ManifestContainerShutdownMode, ManifestContainerStartup, ManifestError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +43,9 @@ pub struct EffectiveContainerPolicy {
     pub pull_production_hook: Option<String>,
     pub health_check: Option<String>,
     pub health_timeout_secs: u64,
+    pub secret_delivery: ManifestContainerSecretDelivery,
+    pub secret_runtime_dir: Option<String>,
+    pub source_secret_runtime_for_deferrals: bool,
     pub workspace_user: Option<String>,
     pub workspace_home: Option<String>,
     pub on_task_exit: ManifestContainerOnTaskExit,

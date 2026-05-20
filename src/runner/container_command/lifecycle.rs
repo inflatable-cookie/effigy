@@ -13,7 +13,7 @@ use super::gateway_registration::{
     deregister_gateway_routes_for_container, register_gateway_routes_for_container,
 };
 use super::runtime_error_from_runner;
-use super::secret_env::resolve_container_secret_env;
+use super::secret_env::{materialize_container_secret_runtime, resolve_container_secret_runtime};
 use super::shell_prep::{
     append_container_exec_env, maybe_refresh_workspace_effigy_for_shell,
     resolve_container_exec_working_dir_for_operation, resolve_container_shell_session,
@@ -88,11 +88,15 @@ pub(super) fn run_container_up(
     );
     validate_container_policy(repo_root, &policy)?;
     validate_compose_backend_runtime(repo_root, &policy)?;
-    let secret_env = resolve_container_secret_env(repo_root, secrets_required())?;
-    let compose_secret_env = secret_env
-        .iter()
-        .map(|(key, value)| (key.clone(), OsString::from(value.expose())))
-        .collect::<Vec<_>>();
+    let secret_runtime = resolve_container_secret_runtime(repo_root, &policy, secrets_required())?;
+    let compose_secret_env = match secret_runtime.delivery {
+        effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv => secret_runtime
+            .env
+            .iter()
+            .map(|(key, value)| (key.clone(), OsString::from(value.expose())))
+            .collect::<Vec<_>>(),
+        effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles => Vec::new(),
+    };
     let warnings = colima_profile_warnings(&policy, repo_root);
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
@@ -184,6 +188,10 @@ pub(super) fn run_container_up(
     if let Err(error) =
         ensure_primary_service_exec_ready_for_runtime(repo_root, &policy, &working_dir)
     {
+        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &policy);
+        return Err(finish_container_up_failure(error, cleanup_result));
+    }
+    if let Err(error) = materialize_container_secret_runtime(repo_root, &policy, &secret_runtime) {
         let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
@@ -682,6 +690,9 @@ mod tests {
             pull_production_hook: None,
             health_check: None,
             health_timeout_secs: 60,
+            secret_delivery: effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv,
+            secret_runtime_dir: None,
+            source_secret_runtime_for_deferrals: false,
             workspace_user: None,
             workspace_home: None,
             on_task_exit: ManifestContainerOnTaskExit::Stop,

@@ -26,6 +26,8 @@ services:
 {% for dir in isolated_dirs %}
       - {{ project_name }}-{{ service_name }}{{ working_dir | replace("/", "-") | replace("_", "-") }}-{{ dir | replace("/", "-") | replace("_", "-") }}:{{ working_dir }}/{{ dir }}
 {% endfor %}
+    tmpfs:
+      - /run/effigy/secrets
 {% if host_ports %}
     ports:
 {% for port in host_ports %}

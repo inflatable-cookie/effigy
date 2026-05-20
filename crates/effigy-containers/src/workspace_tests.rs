@@ -132,6 +132,7 @@ mod host_git_mount_tests {
             dns: None,
             lifecycle: None,
             health: None,
+            secrets: None,
             host: None,
             data: None,
             host_processes: Vec::new(),

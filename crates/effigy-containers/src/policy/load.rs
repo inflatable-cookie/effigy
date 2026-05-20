@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use effigy_manifest::{
     load_task_manifest_with_inspection, resolve_task_execution_binding_from_parts,
     ManifestContainerConfig, ManifestContainerDriver, ManifestContainerOnTaskExit,
-    ManifestContainerShutdownMode, ManifestContainerStartup, ManifestContainersConfig,
-    ManifestTask, ManifestWorkspaceConfig, ResolvedTaskExecutionBinding,
+    ManifestContainerSecretDelivery, ManifestContainerShutdownMode, ManifestContainerStartup,
+    ManifestContainersConfig, ManifestTask, ManifestWorkspaceConfig, ResolvedTaskExecutionBinding,
     ResolvedWorkspaceContainer, TASK_MANIFEST_FILE,
 };
 
@@ -310,6 +310,7 @@ fn build_effective_policy(
     let data = config.data.as_ref().cloned().unwrap_or_default();
     let health = config.health.as_ref().cloned().unwrap_or_default();
     let lifecycle = config.lifecycle.as_ref();
+    let secrets = config.secrets.as_ref().cloned().unwrap_or_default();
     let default_workspace_identity =
         default_workspace_identity_for_primary_service(config, &primary_service);
     let _ = containers;
@@ -342,6 +343,14 @@ fn build_effective_policy(
         pull_production_hook: data.pull_production,
         health_check: health.check,
         health_timeout_secs: health.timeout_secs.unwrap_or(DEFAULT_HEALTH_TIMEOUT_SECS),
+        secret_delivery: secrets
+            .delivery
+            .unwrap_or(ManifestContainerSecretDelivery::ComposeEnv),
+        secret_runtime_dir: secrets
+            .runtime_dir
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty()),
+        source_secret_runtime_for_deferrals: secrets.source_for_deferrals.unwrap_or(false),
         workspace_user: workspace
             .and_then(|value| value.user.as_deref())
             .map(str::trim)

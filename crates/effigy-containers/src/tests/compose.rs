@@ -83,6 +83,10 @@ variant = "default"
         assert!(compose.contains("services:"));
         assert!(compose.contains("app:"));
         assert!(compose.contains("web:"));
+        assert_eq!(
+            policy.secret_delivery,
+            effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv
+        );
         assert!(!policy.ports_declared_explicitly);
         let http_port = policy
             .declared_ports
@@ -92,6 +96,45 @@ variant = "default"
             .map(|(host, _)| host.to_owned())
             .expect("generated compose should expose a host port for container port 80");
         assert!(compose.contains(&format!("{http_port}:80")));
+    });
+}
+
+#[test]
+fn load_container_policy_preserves_secret_runtime_file_delivery() {
+    with_temp_effigy_home("catalog-secret-runtime-files", |_| {
+        let root = temp_repo("catalog-secret-runtime-files");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.secrets]
+delivery = "runtime-files"
+runtime_dir = "/run/effigy/secrets"
+source_for_deferrals = true
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, None).expect("policy");
+
+        assert_eq!(
+            policy.secret_delivery,
+            effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles
+        );
+        assert_eq!(
+            policy.secret_runtime_dir.as_deref(),
+            Some("/run/effigy/secrets")
+        );
+        assert!(policy.source_secret_runtime_for_deferrals);
     });
 }
 
