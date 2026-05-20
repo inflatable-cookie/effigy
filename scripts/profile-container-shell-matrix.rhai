@@ -72,6 +72,29 @@ fn render_shell_command(bin_path, target, stdout_path, stderr_path) {
         + "\n"
 }
 
+fn render_status_command(bin_path, target, stdout_path, stderr_path) {
+    let container_name = target["container"].to_string();
+    let repo_path = target["repo"].to_string();
+    let process_args = [
+        "container",
+        container_name,
+        "status",
+        "--repo",
+        repo_path,
+    ];
+    let result = process::run(bin_path, process_args);
+    fs::write_file(stdout_path, result["stdout"].to_string());
+    fs::write_file(stderr_path, result["stderr"].to_string());
+    if result["success"] {
+        return;
+    }
+
+    let status = result["status"].to_string();
+    throw "[error] status " + target["label"] + " failed with status " + status
+        + "\nstdout:\n" + result["stdout"].to_string()
+        + "\nstderr:\n" + result["stderr"].to_string();
+}
+
 fn read_if_exists(file_path) {
     if fs::exists(file_path) {
         return fs::read_file(file_path);
@@ -81,6 +104,28 @@ fn read_if_exists(file_path) {
 
 fn trim_text(value) {
     str::trim(value.to_string())
+}
+
+fn primary_service_exec_ready_summary(status_stdout) {
+    for line in str::split_lines(status_stdout) {
+        let trimmed = trim_text(line);
+        if str::starts_with(trimmed, "primary_service_exec_ready:") {
+            return trimmed;
+        }
+    }
+    "primary_service_exec_ready: unavailable"
+}
+
+fn run_status(bin_path, target) {
+    let status_dir = fs::make_temp_dir("effigy-shell-status");
+    let stdout_path = path::join(status_dir, "stdout.txt");
+    let stderr_path = path::join(status_dir, "stderr.txt");
+    render_status_command(bin_path, target, stdout_path, stderr_path);
+    #{
+        stdout: read_if_exists(stdout_path),
+        stderr: read_if_exists(stderr_path),
+        summary: primary_service_exec_ready_summary(read_if_exists(stdout_path)),
+    }
 }
 
 fn run_trace(bin_path, target) {
@@ -134,12 +179,22 @@ fn run_timing(bin_path, target) {
     results
 }
 
-fn render_entry_report(target, trace_result, timing_results) {
+fn render_entry_report(target, status_result, trace_result, timing_results) {
     let lines = [
         "# " + target["label"].to_string(),
         "",
         "repo: " + target["repo"].to_string(),
         "container: " + target["container"].to_string(),
+        "",
+        "## status summary",
+        "```text",
+        trim_text(status_result["summary"]),
+        "```",
+        "",
+        "## status output",
+        "```text",
+        trim_text(status_result["stdout"]),
+        "```",
         "",
         "## traced invocation",
         "```text",
@@ -172,18 +227,26 @@ let index_lines = [
 
 for target in matrix {
     log("[info] profiling " + target["label"]);
+    let status_result = run_status(bin_path, target);
     let trace_result = run_trace(bin_path, target);
     let timing_results = run_timing(bin_path, target);
     let report_path = path::join(report_dir, target["label"].to_string() + ".md");
-    fs::write_lines(report_path, render_entry_report(target, trace_result, timing_results));
+    fs::write_lines(
+        report_path,
+        render_entry_report(target, status_result, trace_result, timing_results),
+    );
     log("[ok] " + target["label"] + " -> " + report_path);
+    log(status_result["summary"].to_string());
     for timing in timing_results {
         let summary = trim_text(timing["stderr"]);
         if summary != "" {
             log(summary);
         }
     }
-    index_lines.push("- " + target["label"].to_string() + ": " + report_path);
+    index_lines.push(
+        "- " + target["label"].to_string() + ": " + report_path
+            + " (" + status_result["summary"].to_string() + ")",
+    );
 }
 
 let index_path = path::join(report_dir, "README.md");

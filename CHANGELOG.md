@@ -106,6 +106,11 @@ During v0.x, MINOR bumps may include breaking changes.
   shell` sessions now prompts whether to bring the runtime down, with Enter
   accepting the default `yes`, instead of tying shell-exit cleanup to whether
   the runtime was session-owned or adopted.
+- **Container shell perf matrix now records runtime readiness too:** the
+  `perf:container-shell-matrix` task now captures each target repo's
+  `container status` output and calls out `primary_service_exec_ready` beside
+  the shell timing report, so decodelabs, underlay, and other workspace-style
+  stacks can be compared on both latency and actual exec readiness.
 
 ### Fixed
 - **PHP workspace catalogs now pin pnpm 11 to the dedicated store volume:**
