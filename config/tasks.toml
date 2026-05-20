@@ -17,6 +17,7 @@ container = "linux-release"
 "release:linux:env" = { system = "release", workspace = "linux" }
 "release:linux:rehearse" = [{ rhai = "scripts/rehearse-linux-release-container.rhai" }]
 "workspace:linux:artifact" = [{ rhai = "scripts/build-linux-workspace-artifact.rhai" }]
+"perf:container-shell-matrix" = [{ rhai = "scripts/profile-container-shell-matrix.rhai" }]
 "qa:docs:links" = "cargo run --bin effigy -- docs check links"
 "qa:docs:examples" = "cargo run --bin effigy -- docs check json-examples"
 "qa:docs:index" = "cargo run --bin effigy -- docs check index"
