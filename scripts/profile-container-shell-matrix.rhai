@@ -111,6 +111,16 @@ fn trim_text(value) {
     str::trim(value.to_string())
 }
 
+fn maybe_extract_real_seconds(stderr_text) {
+    for line in str::split_lines(stderr_text) {
+        let trimmed = trim_text(line);
+        if str::starts_with(trimmed, "real ") {
+            return trim_text(str::replace(trimmed, "real ", ""));
+        }
+    }
+    ()
+}
+
 fn primary_service_exec_ready_summary(status_stdout) {
     for line in str::split_lines(status_stdout) {
         let trimmed = trim_text(line);
@@ -222,6 +232,27 @@ fn render_entry_report(target, status_result, trace_result, timing_results) {
     lines
 }
 
+fn build_json_summary(target, status_result, trace_result, timing_results, report_path) {
+    let steady_state_seconds = [];
+    for timing in timing_results {
+        let seconds = maybe_extract_real_seconds(timing["stderr"]);
+        if seconds != () {
+            steady_state_seconds.push(seconds);
+        }
+    }
+
+    #{
+        label: target["label"].to_string(),
+        repo: target["repo"].to_string(),
+        container: target["container"].to_string(),
+        primary_service_exec_ready: status_result["summary"].to_string() == "primary_service_exec_ready: yes",
+        primary_service_exec_ready_summary: status_result["summary"].to_string(),
+        trace_real_seconds: maybe_extract_real_seconds(trace_result["stderr"]),
+        steady_state_real_seconds: steady_state_seconds,
+        report_path: report_path,
+    }
+}
+
 let index_lines = [
     "# Container shell command matrix",
     "",
@@ -229,6 +260,7 @@ let index_lines = [
     "generated_at: " + time::now_utc(),
     "",
 ];
+let json_summary = [];
 
 for target in matrix {
     log("[info] profiling " + target["label"]);
@@ -239,6 +271,9 @@ for target in matrix {
     fs::write_lines(
         report_path,
         render_entry_report(target, status_result, trace_result, timing_results),
+    );
+    json_summary.push(
+        build_json_summary(target, status_result, trace_result, timing_results, report_path),
     );
     log("[ok] " + target["label"] + " -> " + report_path);
     log(status_result["summary"].to_string());
@@ -256,4 +291,7 @@ for target in matrix {
 
 let index_path = path::join(report_dir, "README.md");
 fs::write_lines(index_path, index_lines);
+let json_path = path::join(report_dir, "summary.json");
+fs::write_file(json_path, json::stringify(#{ binary: bin_path, generated_at: time::now_utc(), targets: json_summary }));
 log("[ok] wrote matrix index " + index_path);
+log("[ok] wrote matrix summary " + json_path);

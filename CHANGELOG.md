@@ -119,6 +119,10 @@ During v0.x, MINOR bumps may include breaking changes.
   plus underlay:** the maintained live matrix now exercises a decodelabs
   library archetype, a decodelabs site, and the underlay workspace reference
   so shell-path changes are checked across more than one container shape.
+- **Container shell perf matrix now emits a compact JSON summary:** alongside
+  the markdown reports, `perf:container-shell-matrix` now writes
+  `.effigy/perf/container-shell-matrix/summary.json` with per-target readiness
+  and timing fields so regressions can be compared without scraping text.
 
 ### Fixed
 - **PHP workspace catalogs now pin pnpm 11 to the dedicated store volume:**

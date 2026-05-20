@@ -164,6 +164,7 @@ This task runs the real `container shell --command 'true'` path against the
 maintained local fixture matrix and writes reports under:
 
 - `.effigy/perf/container-shell-matrix/README.md`
+- `.effigy/perf/container-shell-matrix/summary.json`
 - `.effigy/perf/container-shell-matrix/*.md`
 
 ```sh
@@ -176,6 +177,14 @@ Each report now includes:
 - `primary_service_exec_ready`
 - traced backend invocations
 - steady-state timings
+
+The JSON summary is the compact machine-readable view:
+
+- one entry per target repo
+- `primary_service_exec_ready` as a boolean
+- traced `real` time as the exact `/usr/bin/time -p` value
+- steady-state `real` timings as exact `/usr/bin/time -p` values
+- the matching markdown report path
 
 Current matrix intent:
 
