@@ -12,11 +12,12 @@ use crate::runner::system_command::workspace_provisioning::{
     configured_effigy_repo_root, configured_linux_workspace_artifact_source,
     discover_effigy_repo_root, ensure_linux_workspace_effigy_artifact,
     linux_workspace_effigy_artifact_needs_refresh, linux_workspace_effigy_cache_path,
-    linux_workspace_effigy_release_url, render_workspace_effigy_install_command,
-    render_workspace_effigy_staging_path, resolve_local_effigy_repo_root_from_paths,
-    resolve_local_workspace_effigy_freshness_anchor, run_linux_workspace_effigy_artifact_build,
-    sibling_effigy_repo_root, workspace_effigy_active_version_file, LinuxWorkspaceArtifactSource,
-    LinuxWorkspaceTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+    linux_workspace_effigy_release_url, read_trimmed_workspace_effigy_active_version,
+    render_workspace_effigy_install_command, render_workspace_effigy_staging_path,
+    resolve_local_effigy_repo_root_from_paths, resolve_local_workspace_effigy_freshness_anchor,
+    run_linux_workspace_effigy_artifact_build, sibling_effigy_repo_root,
+    workspace_effigy_active_version_file, workspace_effigy_install_is_current,
+    LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
 use crate::runner::system_command::workspace_session::classify_workspace_session_ownership;
 use crate::runner::test_support::effective_container_policy;
@@ -1091,4 +1092,38 @@ fn workspace_effigy_staging_path_is_unique() {
     assert_ne!(first, second);
     assert!(first.starts_with("/tmp/effigy-host-"));
     assert!(second.starts_with("/tmp/effigy-host-"));
+}
+
+#[test]
+fn workspace_effigy_install_is_current_only_for_matching_trimmed_versions() {
+    assert!(workspace_effigy_install_is_current(
+        Some("0.7.1\n"),
+        "0.7.1"
+    ));
+    assert!(!workspace_effigy_install_is_current(Some("0.7.0"), "0.7.1"));
+    assert!(!workspace_effigy_install_is_current(None, "0.7.1"));
+}
+
+#[test]
+fn workspace_effigy_active_version_reader_trims_and_ignores_missing_files() {
+    let root = std::env::temp_dir().join(format!(
+        "effigy-workspace-active-version-reader-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("mkdir root");
+    let missing = root.join("missing.active-version");
+    assert_eq!(
+        read_trimmed_workspace_effigy_active_version(&missing).expect("missing version"),
+        None
+    );
+
+    let present = root.join("effigy.active-version");
+    std::fs::write(&present, "0.7.1\n").expect("write active version");
+    assert_eq!(
+        read_trimmed_workspace_effigy_active_version(&present).expect("present version"),
+        Some("0.7.1".to_owned())
+    );
 }

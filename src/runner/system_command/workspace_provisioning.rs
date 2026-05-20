@@ -164,8 +164,16 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
     }
     let target = probe_workspace_linux_target(workspace_repo_root, policy)?;
     let artifact = ensure_linux_workspace_effigy_artifact(workspace_repo_root, target)?;
-    let staging_path = render_workspace_effigy_staging_path();
     let active_version_source = workspace_effigy_active_version_file(&artifact);
+    let active_version = read_trimmed_workspace_effigy_active_version(&active_version_source)?;
+    if let Some(expected_version) = active_version.as_deref() {
+        let installed_version =
+            probe_installed_workspace_effigy_active_version(workspace_repo_root, policy)?;
+        if workspace_effigy_install_is_current(installed_version.as_deref(), expected_version) {
+            return Ok(());
+        }
+    }
+    let staging_path = render_workspace_effigy_staging_path();
     let active_version_staging_path = format!("{staging_path}.active-version");
     let mut progress = workspace::WorkspaceTransientProgressReporter::new(
         repo_override.is_some(),
@@ -180,7 +188,7 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
         &staging_path,
     )
     .inspect_err(|_| progress.finish(false))?;
-    if active_version_source.is_file() {
+    if active_version.is_some() {
         copy_file_into_service(
             workspace_repo_root,
             policy,
@@ -194,14 +202,71 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
         workspace_repo_root,
         policy,
         &staging_path,
-        active_version_source
-            .is_file()
-            .then_some(active_version_staging_path.as_str()),
+        active_version
+            .as_ref()
+            .map(|_| active_version_staging_path.as_str()),
         repo_override.as_deref(),
     )
     .inspect_err(|_| progress.finish(false))?;
     progress.finish(true);
     Ok(())
+}
+
+pub(super) fn read_trimmed_workspace_effigy_active_version(
+    path: &Path,
+) -> Result<Option<String>, RunnerError> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(path).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to read workspace effigy active version file `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(trimmed.to_owned()))
+}
+
+pub(super) fn probe_installed_workspace_effigy_active_version(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Option<String>, RunnerError> {
+    let mut args = effigy_containers::compose::compose_args(
+        policy,
+        ["exec", "-T", policy.primary_service.as_str(), "sh", "-lc"],
+    );
+    args.push(OsString::from(format!(
+        "cat {} 2>/dev/null || true",
+        shell_quote(CONTAINER_WORKSPACE_EFFIGY_ACTIVE_VERSION_PATH)
+    )));
+    let output = crate::runner::exec_command::run_compose_exec(
+        repo_root,
+        policy,
+        &args,
+        true,
+        "docker compose exec workspace effigy version probe",
+    )?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let trimmed = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(trimmed))
+}
+
+pub(super) fn workspace_effigy_install_is_current(
+    installed_version: Option<&str>,
+    expected_version: &str,
+) -> bool {
+    installed_version
+        .map(str::trim)
+        .is_some_and(|installed| installed == expected_version.trim())
 }
 
 pub(super) fn run_workspace_effigy_install(

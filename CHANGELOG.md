@@ -123,7 +123,9 @@ During v0.x, MINOR bumps may include breaking changes.
   avoids release smoke checks and GLIBC validation noise. The shared
   `linux-release` builder now also keeps Cargo registry and git caches on named
   volumes so cold-path rebuilds do not redownload dependencies every time the
-  container is recreated.
+  container is recreated. Repeated handoffs now also skip the workspace
+  container copy/install step when the target already has the same
+  `effigy.active-version`.
 - **Container-local deferral avoids host runtime probes:** `effigy defer` now
   treats Effigy workspace containers as local execution contexts even when
   containerd/cgroup-v2 does not expose `/.dockerenv`, `/run/.containerenv`, or
