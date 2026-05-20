@@ -123,6 +123,10 @@ During v0.x, MINOR bumps may include breaking changes.
   the markdown reports, `perf:container-shell-matrix` now writes
   `.effigy/perf/container-shell-matrix/summary.json` with per-target readiness
   and timing fields so regressions can be compared without scraping text.
+- **Container shell perf matrix now has a baseline compare task:** Effigy now
+  ships `perf:container-shell-compare` to compare a saved baseline summary with
+  the current or supplied candidate summary, failing on exec-readiness flips or
+  worst steady-state regressions above a chosen threshold.
 
 ### Fixed
 - **PHP workspace catalogs now pin pnpm 11 to the dedicated store volume:**

@@ -186,6 +186,25 @@ The JSON summary is the compact machine-readable view:
 - steady-state `real` timings as exact `/usr/bin/time -p` values
 - the matching markdown report path
 
+### 3. Compare against a baseline snapshot
+
+Use the compare task when you already have an earlier `summary.json` and want a
+cheap regression decision without reading the markdown reports.
+
+```sh
+effigy perf:container-shell-compare <baseline-summary.json>
+effigy perf:container-shell-compare <baseline-summary.json> <candidate-summary.json> 0.40
+```
+
+Contract:
+
+- baseline summary path is required
+- candidate defaults to `.effigy/perf/container-shell-matrix/summary.json`
+- threshold defaults to `0.25` seconds
+- the task fails on:
+  - any `primary_service_exec_ready` flip
+  - any worst steady-state regression above the threshold
+
 Current matrix intent:
 
 - a decodelabs library fixture
