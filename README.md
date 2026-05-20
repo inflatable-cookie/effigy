@@ -207,7 +207,7 @@ Stop writing shell wrappers for file transforms, HTTP calls, or structured subpr
 
 ```toml
 [tasks.seed]
-run = [{ rhai = "scripts/seed-db.rhai" }]
+run = { rhai = "scripts/seed-db.rhai" }
 ```
 
 ```rust

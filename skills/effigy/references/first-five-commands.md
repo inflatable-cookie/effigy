@@ -39,8 +39,8 @@ test
 fmt:check
 build:release
 qa:ci:fast
-  ↳ qa:ci:test
-  ↳ qa:ci:doc
+  ↳ bash -lc 'if cargo nextest --version ...'
+  ↳ cargo test --doc
   ↳ qa:released-surface
   ↳ qa:ci:json
 ```

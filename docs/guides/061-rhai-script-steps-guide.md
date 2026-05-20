@@ -48,8 +48,8 @@ container path so container-local script semantics stay intact.
 File-backed example:
 
 ```toml
-[tasks.link:local]
-run = [{ rhai = "scripts/install-local-bin-links.rhai" }]
+[tasks.report:stamp]
+run = { rhai = "scripts/report-stamp.rhai" }
 ```
 
 Use `rhai = "..."` as a repo-relative Rhai script path when:
@@ -327,7 +327,7 @@ Structured file copy without loading the whole template through script memory:
 
 ```toml
 [tasks.report:write]
-run = [{ rhai = "scripts/copy-template.rhai" }]
+run = { rhai = "scripts/copy-template.rhai" }
 ```
 
 ```rhai
@@ -509,7 +509,7 @@ Structured process call:
 
 ```toml
 [tasks.test:smoke]
-run = [{ rhai = "scripts/test-smoke.rhai" }]
+run = { rhai = "scripts/test-smoke.rhai" }
 ```
 
 Ephemeral workspace and timestamp:
@@ -532,7 +532,7 @@ Nested task call:
 
 ```toml
 [tasks.docs:proof]
-run = [{ rhai = "scripts/docs-proof.rhai" }]
+run = { rhai = "scripts/docs-proof.rhai" }
 ```
 
 ## 5) Good Boundary

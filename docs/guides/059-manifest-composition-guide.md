@@ -219,8 +219,8 @@ include = ["scripts/effigy.scripting.toml"]
 Then in `scripts/effigy.scripting.toml`:
 
 ```toml
-[tasks.link:local]
-run = [{ rhai = "scripts/install-local-bin-links.rhai" }]
+[tasks.report:stamp]
+run = { rhai = "scripts/report-stamp.rhai" }
 ```
 
 This keeps Rhai-backed automation visible without bloating the root manifest or

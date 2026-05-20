@@ -359,8 +359,8 @@ overrides happen inline on the array entry itself.
 #### Rhai Script Step For Rust-First Glue
 
 ```toml
-[tasks.link:local]
-run = [{ rhai = "scripts/install-local-bin-links.rhai" }]
+[tasks.report:stamp]
+run = { rhai = "scripts/report-stamp.rhai" }
 ```
 
 File-backed Rhai:
@@ -385,7 +385,7 @@ Another file-backed example:
 
 ```toml
 [tasks.report:stamp]
-run = [{ rhai = "scripts/report-stamp.rhai" }]
+run = { rhai = "scripts/report-stamp.rhai" }
 ```
 
 Use this when:

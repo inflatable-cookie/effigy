@@ -123,6 +123,11 @@ During v0.x, MINOR bumps may include breaking changes.
   the markdown reports, `perf:container-shell-matrix` now writes
   `.effigy/perf/container-shell-matrix/summary.json` with per-target readiness
   and timing fields so regressions can be compared without scraping text.
+- **Effigy's own task catalog is leaner:** the repo-local
+  `config/tasks.toml` now groups related tasks, removes stale one-off aliases,
+  and inlines private implementation steps so `effigy tasks` is easier to scan
+  without changing the main QA, release, bootstrap, or container proof
+  workflows.
 
 ### Fixed
 - **PHP workspace catalogs now pin pnpm 11 to the dedicated store volume:**

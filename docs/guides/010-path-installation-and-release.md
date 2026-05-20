@@ -27,10 +27,10 @@ cd /abs/path/to/effigy
 cargo install --path . --root ./.local-install --force
 ```
 
-Link the installed binary into `~/.local/bin`:
+Build the local binary and link it into `~/.local/bin`:
 
 ```bash
-effigy link:local
+cargo run --bin effigy -- bootstrap:local
 ```
 
 Then run directly:
