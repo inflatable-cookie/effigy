@@ -126,7 +126,10 @@ fn run_secrets_init(
             vault_path.display()
         )));
     }
-    let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
+    let passphrase = read_secret_input(
+        "Create vault passphrase: ",
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+    )?;
     let payload = VaultPlaintextPayload::empty();
     let envelope = payload
         .encrypt_with_passphrase(passphrase.expose())
@@ -334,7 +337,14 @@ fn run_secrets_import(
         );
     }
 
-    let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
+    let passphrase = read_secret_input(
+        if vault_exists {
+            "Vault passphrase: "
+        } else {
+            "Create vault passphrase: "
+        },
+        "EFFIGY_TEST_SECRETS_PASSPHRASE",
+    )?;
     let mut payload = if vault_exists {
         read_vault_payload(&vault_path, passphrase.expose())?
     } else {
