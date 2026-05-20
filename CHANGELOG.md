@@ -120,7 +120,10 @@ During v0.x, MINOR bumps may include breaking changes.
   when Effigy needs a Linux binary for `workspace`, `dev`, or `container shell`
   handoff into a workspace container, it now runs a dedicated artifact-build
   path instead of invoking `release:linux:rehearse`, so normal container access
-  avoids release smoke checks and GLIBC validation noise.
+  avoids release smoke checks and GLIBC validation noise. The shared
+  `linux-release` builder now also keeps Cargo registry and git caches on named
+  volumes so cold-path rebuilds do not redownload dependencies every time the
+  container is recreated.
 - **Container-local deferral avoids host runtime probes:** `effigy defer` now
   treats Effigy workspace containers as local execution contexts even when
   containerd/cgroup-v2 does not expose `/.dockerenv`, `/run/.containerenv`, or
