@@ -74,13 +74,12 @@ pub struct ManifestInlineWorkspaceContainerConfig {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManifestContainerConfig {
     #[serde(default)]
     pub driver: Option<ManifestContainerDriver>,
     #[serde(default)]
     pub startup: Option<ManifestContainerStartup>,
-    #[serde(default)]
-    pub context: Option<String>,
     #[serde(default)]
     pub profile: Option<String>,
     #[serde(default)]

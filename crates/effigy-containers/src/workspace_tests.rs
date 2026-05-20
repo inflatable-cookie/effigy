@@ -122,7 +122,6 @@ mod host_git_mount_tests {
         ManifestContainerConfig {
             driver: None,
             startup: None,
-            context: None,
             profile: None,
             compose_file: None,
             project_name: None,

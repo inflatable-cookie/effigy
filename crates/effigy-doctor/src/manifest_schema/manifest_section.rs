@@ -7,7 +7,22 @@ pub(super) fn validate_manifest_section(context: &mut SchemaContext<'_, '_>, val
     let Some(table) = require_table(context, "manifest", value, "expected table") else {
         return;
     };
-    validate_allowed_keys(context, "manifest", table, &["include"]);
+    validate_allowed_keys(
+        context,
+        "manifest",
+        table,
+        &["include", "minimum_effigy_version"],
+    );
+
+    if let Some(minimum) = table.get("minimum_effigy_version") {
+        if !minimum.is_str() {
+            context.unsupported_value(
+                "manifest.minimum_effigy_version",
+                SchemaContext::value_type(minimum),
+                "expected string",
+            );
+        }
+    }
 
     let Some(include) = table.get("include") else {
         return;

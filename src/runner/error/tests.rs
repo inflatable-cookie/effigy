@@ -121,15 +121,8 @@ fn container_surface_selection_variants_render_stably() {
         "manifest does not define a `[containers]` registry"
     );
     assert_eq!(
-        RunnerError::ContainerSurfaceDevContextMissing.to_string(),
-        "no container declares `context = \"dev\"`; `effigy exec` requires one dev-context container"
-    );
-    assert_eq!(
-        RunnerError::ContainerSurfaceDevContextAmbiguous {
-            containers: vec!["web".to_owned(), "admin".to_owned()],
-        }
-        .to_string(),
-        "multiple containers claim context = \"dev\": `web`, `admin`"
+        RunnerError::ContainerSurfaceDefaultTargetMissing.to_string(),
+        "`effigy exec` requires `[systems].default` to resolve to a workspace with a backing container"
     );
     assert_eq!(
         RunnerError::container_surface_not_defined("cache").to_string(),

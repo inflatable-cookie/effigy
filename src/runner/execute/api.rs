@@ -295,7 +295,6 @@ run_in = "container"
 default = "workspace"
 
 [containers.workspace]
-context = "dev"
 primary_service = "workspace"
 "#,
             ),
@@ -351,7 +350,6 @@ run_in = "host"
 default = "stack"
 
 [containers.stack]
-context = "dev"
 primary_service = "workspace"
 "#,
             ),
@@ -369,7 +367,6 @@ run_in = "container"
 default = "farmyard"
 
 [containers.farmyard]
-context = "dev"
 primary_service = "api"
 
 [tasks.build]
@@ -416,7 +413,6 @@ run_in = "container"
 default = "stack"
 
 [containers.stack]
-context = "dev"
 primary_service = "workspace"
 "#,
             ),

@@ -25,11 +25,4 @@ pub enum ExecError {
          `effigy container up` or `effigy dev`"
     )]
     ContainerNotRunning { container: String },
-
-    /// Multiple containers claim the dev context.
-    #[error(
-        "multiple containers claim context = \"dev\": {containers:?} \
-         — only one container per project may be the dev context"
-    )]
-    AmbiguousContext { containers: Vec<String> },
 }

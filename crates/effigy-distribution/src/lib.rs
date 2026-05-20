@@ -1377,9 +1377,7 @@ pub fn preflight_command(
     }
 
     let next_command = if let Some(tag) = tag {
-        format!(
-            "effigy release proof --tag {tag} --artifacts-dir ./artifacts/distribution-{tag}"
-        )
+        format!("effigy release proof --tag {tag} --artifacts-dir ./artifacts/distribution-{tag}")
     } else {
         "effigy release proof --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z"
             .to_owned()

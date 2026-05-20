@@ -6,7 +6,7 @@
 //!
 //! ## Routing rules
 //!
-//! 1. If no dev-context container is declared → host (current behavior).
+//! 1. If no default execution container is resolved → host.
 //! 2. If the command is a host-native built-in → host.
 //! 3. If the task explicitly declares `run_in = "host"` → host.
 //! 4. If the task explicitly declares `run_in = "container"` or binds to a
@@ -16,34 +16,34 @@
 /// Describes the project's execution context configuration.
 #[derive(Debug, Clone)]
 pub struct ExecContext {
-    /// Name of the container with `context = "dev"`, if any.
-    pub dev_container: Option<String>,
+    /// Name of the resolved default execution container, if any.
+    pub default_container: Option<String>,
 
-    /// The primary service in the dev container (for exec targeting).
+    /// The primary service in the default execution container.
     pub primary_service: Option<String>,
 
-    /// Whether the dev container is currently running.
+    /// Whether the default execution container is currently running.
     pub container_running: bool,
 }
 
 impl ExecContext {
-    /// Create a context with no dev container (all commands run on host).
+    /// Create a context with no default execution container.
     pub fn none() -> Self {
         Self {
-            dev_container: None,
+            default_container: None,
             primary_service: None,
             container_running: false,
         }
     }
 
-    /// Create a context with a dev container.
+    /// Create a context with a default execution container.
     pub fn with_container(
         name: impl Into<String>,
         primary_service: impl Into<String>,
         running: bool,
     ) -> Self {
         Self {
-            dev_container: Some(name.into()),
+            default_container: Some(name.into()),
             primary_service: Some(primary_service.into()),
             container_running: running,
         }
@@ -96,7 +96,6 @@ const HOST_NATIVE_COMMANDS: &[&str] = &[
     "init",
     "migrate",
     "bootstrap",
-    "distribution",
 ];
 
 /// Determine where a command should execute.
@@ -108,10 +107,10 @@ pub fn route(
     context: &ExecContext,
     task_overrides: &TaskOverrides,
 ) -> RoutingDecision {
-    // 1. No dev context → always host.
-    let (container, service) = match (&context.dev_container, &context.primary_service) {
+    // 1. No default execution container → always host.
+    let (container, service) = match (&context.default_container, &context.primary_service) {
         (Some(c), Some(s)) => (c.clone(), s.clone()),
-        _ => return RoutingDecision::host("no dev-context container declared"),
+        _ => return RoutingDecision::host("no default execution container resolved"),
     };
 
     // 2. Host-native commands always run on host.
@@ -140,12 +139,15 @@ pub fn route(
         };
     }
 
-    // 6. Default → dev-context container.
+    // 6. Default → default execution container.
     if !context.container_running {
-        return RoutingDecision::not_running(container, "dev-context container is not running");
+        return RoutingDecision::not_running(
+            container,
+            "default execution container is not running",
+        );
     }
 
-    RoutingDecision::container(container, service, "routed to dev-context container")
+    RoutingDecision::container(container, service, "routed to default execution container")
 }
 
 /// The full routing decision with explanation.

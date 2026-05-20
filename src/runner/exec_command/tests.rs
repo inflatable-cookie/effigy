@@ -10,7 +10,7 @@ use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::container_runtime_prep::ContainerTaskActivation;
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::surface::{
-    build_alias_table, build_raw_exec_args, resolve_dev_exec_surface, resolve_exec_working_dir,
+    build_alias_table, build_raw_exec_args, resolve_default_exec_surface, resolve_exec_working_dir,
     resolve_named_exec_surface,
 };
 use crate::runner::exec_command::transport::{
@@ -66,15 +66,30 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 
 fn write_container_manifest(root: &std::path::Path, working_dir: &str) {
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("write compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: busybox\n",
+    )
+    .expect("write compose");
     fs::write(
         root.join("effigy.toml"),
         format!(
-            r#"[containers.web]
-context = "dev"
+            r#"[containers]
+default = "web"
+
+[containers.web]
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 working_dir = "{working_dir}"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#
         ),
     )
@@ -90,7 +105,6 @@ fn resolve_exec_working_dir_prefers_exec_config() {
     let config = ManifestContainerConfig {
         driver: None,
         startup: None,
-        context: Some("dev".to_owned()),
         profile: None,
         compose_file: Some("infra/dev/docker-compose.yml".to_owned()),
         project_name: None,
@@ -116,7 +130,6 @@ fn build_alias_table_resolves_multi_word_aliases() {
     let aliases = build_alias_table(&ManifestContainerConfig {
         driver: None,
         startup: None,
-        context: Some("dev".to_owned()),
         profile: None,
         compose_file: Some("infra/dev/docker-compose.yml".to_owned()),
         project_name: None,
@@ -157,7 +170,6 @@ fn build_alias_table_defaults_command_to_alias_name_for_string_entries() {
     let aliases = build_alias_table(&ManifestContainerConfig {
         driver: None,
         startup: None,
-        context: Some("dev".to_owned()),
         profile: None,
         compose_file: Some("infra/dev/docker-compose.yml".to_owned()),
         project_name: None,
@@ -196,7 +208,6 @@ fn build_raw_exec_args_uses_mapped_cwd() {
     let config = ManifestContainerConfig {
         driver: None,
         startup: None,
-        context: Some("dev".to_owned()),
         profile: None,
         compose_file: Some("infra/dev/docker-compose.yml".to_owned()),
         project_name: None,
@@ -463,7 +474,6 @@ fn build_alias_table_renders_service_param_templates() {
     let aliases = build_alias_table(&ManifestContainerConfig {
         driver: None,
         startup: None,
-        context: Some("dev".to_owned()),
         profile: None,
         compose_file: Some("infra/dev/docker-compose.yml".to_owned()),
         project_name: None,
@@ -528,11 +538,11 @@ fn build_alias_table_renders_service_param_templates() {
 }
 
 #[test]
-fn resolve_dev_exec_surface_reports_missing_container_registry_with_typed_error() {
+fn resolve_default_exec_surface_reports_missing_container_registry_with_typed_error() {
     let root = temp_repo("missing-container-registry");
     fs::write(root.join("effigy.toml"), "").expect("write manifest");
 
-    let error = resolve_dev_exec_surface(&root).expect_err("missing registry should fail");
+    let error = resolve_default_exec_surface(&root).expect_err("missing registry should fail");
     assert!(matches!(
         error,
         RunnerError::ContainerSurfaceRegistryMissing
@@ -540,10 +550,14 @@ fn resolve_dev_exec_surface_reports_missing_container_registry_with_typed_error(
 }
 
 #[test]
-fn resolve_dev_exec_surface_reports_missing_dev_context_with_typed_error() {
-    let root = temp_repo("missing-dev-context");
+fn resolve_default_exec_surface_reports_missing_default_target_with_typed_error() {
+    let root = temp_repo("missing-default-target");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("write compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: busybox\n",
+    )
+    .expect("write compose");
     fs::write(
         root.join("effigy.toml"),
         r#"[containers.web]
@@ -554,43 +568,52 @@ working_dir = "/var/www/html"
     )
     .expect("write manifest");
 
-    let error = resolve_dev_exec_surface(&root).expect_err("missing dev context should fail");
+    let error =
+        resolve_default_exec_surface(&root).expect_err("missing default target should fail");
     assert!(matches!(
         error,
-        RunnerError::ContainerSurfaceDevContextMissing
+        RunnerError::ContainerSurfaceDefaultTargetMissing
     ));
 }
 
 #[test]
-fn resolve_dev_exec_surface_reports_ambiguous_dev_context_with_typed_error() {
-    let root = temp_repo("ambiguous-dev-context");
+fn resolve_default_exec_surface_ignores_unbound_extra_containers() {
+    let root = temp_repo("extra-default-containers");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
-    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("write compose");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: busybox\n",
+    )
+    .expect("write compose");
     fs::write(
         root.join("effigy.toml"),
-        r#"[containers.web]
-context = "dev"
+        r#"[containers]
+default = "web"
+
+[containers.web]
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 working_dir = "/var/www/html"
 
 [containers.admin]
-context = "dev"
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 working_dir = "/var/www/admin"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
     )
     .expect("write manifest");
 
-    let error = resolve_dev_exec_surface(&root).expect_err("ambiguous dev context should fail");
-    match error {
-        RunnerError::ContainerSurfaceDevContextAmbiguous { mut containers } => {
-            containers.sort();
-            assert_eq!(containers, vec!["admin".to_owned(), "web".to_owned()]);
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
+    let surface = resolve_default_exec_surface(&root).expect("surface");
+    assert_eq!(surface.container_name, "web");
 }
 
 #[test]
@@ -613,7 +636,6 @@ fn resolve_named_exec_surface_reports_policy_translation_with_typed_error() {
     fs::write(
         root.join("effigy.toml"),
         r#"[containers.web]
-context = "dev"
 compose_file = "infra/dev/missing.yml"
 primary_service = "app"
 working_dir = "/var/www/html"
@@ -645,7 +667,7 @@ fn activate_exec_surface_uses_repo_root_as_repo_override() {
     let repo_root = PathBuf::from("/tmp/repo");
     let root = temp_repo("activate-surface");
     write_container_manifest(&root, "/workspace");
-    let surface = resolve_dev_exec_surface(&root).expect("surface");
+    let surface = resolve_default_exec_surface(&root).expect("surface");
     let captured = Arc::new(Mutex::new(None));
     let captured_clone = Arc::clone(&captured);
 
@@ -689,7 +711,7 @@ fn activate_exec_surface_preserves_skip_lease_policy_for_handoff_sessions() {
     let repo_root = PathBuf::from("/tmp/repo");
     let root = temp_repo("activate-surface-skip-lease");
     write_container_manifest(&root, "/workspace");
-    let surface = resolve_dev_exec_surface(&root).expect("surface");
+    let surface = resolve_default_exec_surface(&root).expect("surface");
     let captured = Arc::new(Mutex::new(None));
     let captured_clone = Arc::clone(&captured);
 

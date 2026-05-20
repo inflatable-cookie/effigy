@@ -6,7 +6,7 @@ pub(crate) fn render_exec_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
         renderer,
         "exec",
         &[
-            "Run one ad-hoc command inside the manifest's `context = \"dev\"` container.",
+            "Run one ad-hoc command inside the manifest's default system workspace container.",
             "If `--service` is omitted, Effigy targets the container's `primary_service`.",
             "Bare alias commands still route through the same exec path when declared in `[containers.<name>.aliases]`.",
         ],

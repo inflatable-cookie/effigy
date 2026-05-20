@@ -481,26 +481,12 @@ fn resolve_container_name(
     requested_name
         .map(str::to_owned)
         .or_else(|| containers.default.clone())
-        .or_else(|| sole_dev_context_container_name(containers))
         .ok_or_else(|| {
             ContainerPolicyError::TaskInvocation(
-                "container name omitted but `[containers].default` is not defined and no sole `context = \"dev\"` container is available for implicit targeting"
+                "container name omitted but `[containers].default` is not defined for implicit targeting"
                     .to_owned(),
             )
         })
-}
-
-fn sole_dev_context_container_name(containers: &ManifestContainersConfig) -> Option<String> {
-    let mut matches = containers
-        .environments
-        .iter()
-        .filter(|(_, config)| config.context.as_deref() == Some("dev"))
-        .map(|(name, _)| name.clone());
-    let first = matches.next()?;
-    if matches.next().is_some() {
-        return None;
-    }
-    Some(first)
 }
 
 fn resolve_container_exec_working_dir(

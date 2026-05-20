@@ -36,18 +36,9 @@ pub(super) fn fmt_runner_error(
         RunnerError::ContainerSurfaceRegistryMissing => {
             write!(f, "manifest does not define a `[containers]` registry")
         }
-        RunnerError::ContainerSurfaceDevContextMissing => write!(
+        RunnerError::ContainerSurfaceDefaultTargetMissing => write!(
             f,
-            "no container declares `context = \"dev\"`; `effigy exec` requires one dev-context container"
-        ),
-        RunnerError::ContainerSurfaceDevContextAmbiguous { containers } => write!(
-            f,
-            "multiple containers claim context = \"dev\": {}",
-            containers
-                .iter()
-                .map(|name| format!("`{name}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
+            "`effigy exec` requires `[systems].default` to resolve to a workspace with a backing container"
         ),
         RunnerError::ContainerSurfaceNotDefined { container } => write!(
             f,

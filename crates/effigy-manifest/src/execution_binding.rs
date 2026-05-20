@@ -205,7 +205,6 @@ fn default_workspace_container(
     containers
         .default
         .clone()
-        .or_else(|| sole_dev_context_container_name(containers))
         .map(ManifestWorkspaceContainerRef::Named)
 }
 
@@ -310,22 +309,7 @@ fn sole_entry_name<T>(entries: &BTreeMap<String, T>) -> Option<&String> {
 }
 
 fn has_implicit_default_target(containers: Option<&ManifestContainersConfig>) -> bool {
-    containers.is_some_and(|containers| {
-        containers.default.is_some() || sole_dev_context_container_name(containers).is_some()
-    })
-}
-
-fn sole_dev_context_container_name(containers: &ManifestContainersConfig) -> Option<String> {
-    let mut matches = containers
-        .environments
-        .iter()
-        .filter(|(_, config)| config.context.as_deref() == Some("dev"))
-        .map(|(name, _)| name.clone());
-    let first = matches.next()?;
-    if matches.next().is_some() {
-        return None;
-    }
-    Some(first)
+    containers.is_some_and(|containers| containers.default.is_some())
 }
 
 #[cfg(test)]
@@ -403,11 +387,10 @@ run = "npm run dev"
     }
 
     #[test]
-    fn resolves_workspace_binding_from_sole_system_and_workspace_without_defaults() {
+    fn does_not_infer_sole_system_workspace_without_default_system() {
         let manifest = parse_manifest(
             r#"
 [containers.app]
-context = "dev"
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "workspace"
 
@@ -422,33 +405,17 @@ run = "npm run dev"
         let task = manifest.tasks.get("dev").expect("task");
         let resolved = resolve_task_execution_binding(&manifest, "dev", task).expect("resolve");
 
-        assert_eq!(
-            resolved,
-            Some(ResolvedTaskExecutionBinding::Workspace(Box::new(
-                ResolvedWorkspaceBinding {
-                    system: "dev".to_owned(),
-                    workspace: "app".to_owned(),
-                    working_dir: Some("/workspace".to_owned()),
-                    workspace_config: ManifestWorkspaceConfig {
-                        container: Some(ManifestWorkspaceContainerRef::Named("app".to_owned())),
-                        working_dir: Some("/workspace".to_owned()),
-                        mounts: vec![],
-                        user: None,
-                        home: None,
-                        isolation: vec![],
-                    },
-                    container: Some(ResolvedWorkspaceContainer::Named("app".to_owned())),
-                }
-            )))
-        );
+        assert_eq!(resolved, None);
     }
 
     #[test]
-    fn resolves_workspace_binding_from_sole_container_when_workspace_container_is_omitted() {
+    fn resolves_workspace_binding_from_default_container_when_workspace_container_is_omitted() {
         let manifest = parse_manifest(
             r#"
+[containers]
+default = "app"
+
 [containers.app]
-context = "dev"
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "workspace"
 
@@ -487,8 +454,10 @@ run = "npm run dev"
     fn resolves_workspace_binding_from_implied_default_workspace() {
         let manifest = parse_manifest(
             r#"
+[containers]
+default = "app"
+
 [containers.app]
-context = "dev"
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "workspace"
 

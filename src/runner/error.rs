@@ -26,10 +26,7 @@ pub enum RunnerError {
     Ui(String),
     TaskInvocation(String),
     ContainerSurfaceRegistryMissing,
-    ContainerSurfaceDevContextMissing,
-    ContainerSurfaceDevContextAmbiguous {
-        containers: Vec<String>,
-    },
+    ContainerSurfaceDefaultTargetMissing,
     ContainerSurfaceNotDefined {
         container: String,
     },

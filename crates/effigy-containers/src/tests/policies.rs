@@ -55,7 +55,7 @@ primary_service = "app"
 }
 
 #[test]
-fn load_container_policy_uses_sole_container_without_default() {
+fn load_container_policy_requires_default_when_name_omitted() {
     let root = temp_repo("sole-container");
     fs::write(
         root.join("effigy.toml"),
@@ -63,7 +63,6 @@ fn load_container_policy_uses_sole_container_without_default() {
 [containers]
 
 [containers.web]
-context = "dev"
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 "#,
@@ -72,15 +71,11 @@ primary_service = "app"
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
 
-    let policy = load_container_policy(&root, None).expect("policy");
+    let error = load_container_policy(&root, None).expect_err("should fail");
 
-    assert_eq!(policy.name, "web");
-    let expected = root
-        .file_name()
-        .and_then(|value| value.to_str())
-        .expect("repo dir name")
-        .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
-    assert_eq!(policy.project_name, format!("{expected}-dev"));
+    assert!(error
+        .to_string()
+        .contains("container name omitted but `[containers].default` is not defined"));
 }
 
 #[test]
@@ -117,7 +112,7 @@ run_in = "host"
 }
 
 #[test]
-fn load_container_policy_rejects_sole_non_dev_container_without_default() {
+fn load_container_policy_accepts_named_container_without_default() {
     let root = temp_repo("sole-non-dev-container");
     fs::write(
         root.join("effigy.toml"),
@@ -133,11 +128,9 @@ primary_service = "app"
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
 
-    let error = load_container_policy(&root, None).expect_err("should fail");
+    let policy = load_container_policy(&root, Some("web")).expect("policy");
 
-    assert!(error
-        .to_string()
-        .contains("no sole `context = \"dev\"` container is available"));
+    assert_eq!(policy.name, "web");
 }
 
 #[test]

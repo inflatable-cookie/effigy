@@ -65,7 +65,8 @@ Four new concepts layer on top of the v1 container surface:
 |  |   services.app = { catalog = "php-fpm", ... }  |  |
 |  |   services.web = { catalog = "nginx", ... }    |  |
 |  |   dns.domain = "project.test"                  |  |
-|  |   context = "dev"                              |  |
+|  | [systems.dev.workspaces.app]                   |  |
+|  |   container = "web"                            |  |
 |  +-----------------------------------------------+  |
 +-----------------------------------------------------+
 |  effigy runtime                                      |
@@ -255,7 +256,7 @@ asset_fallback = "/vendor/genesis.php"
 error_page_404 = "/vendor/genesis.php"
 ```
 
-## 2. Container Context and Transparent Execution
+## 2. Default Workspace Execution
 
 ### Problem
 
@@ -265,18 +266,24 @@ most work happens inside the container, this is friction.
 
 ### Solution
 
-A container can be marked as the project's **execution context**. When set,
-effigy implicitly routes task execution through it.
+A default system workspace can point at a backing container. When set, Effigy
+implicitly routes task execution through that workspace container.
 
 ```toml
-[containers.web]
-context = "dev"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 ```
 
 ### Routing logic
 
 ```
-Is there a dev-context container declared?
+Does the default system workspace resolve to a backing container?
   Yes -> Is this a host-native command?
            (doctor, container, release, gateway, tasks, catalog)
            Yes -> run on host
@@ -641,8 +648,8 @@ Extensions to existing crates (after modularization completes):
 
 | Crate | Extension | Milestone |
 |-------|-----------|-----------|
-| `effigy-containers` | Context routing, exec proxy, DDEV-pattern lifecycle | M2 |
-| `effigy-manifest` | Service declarations, DNS config, data config, context field | M1-M5 |
+| `effigy-containers` | Workspace routing, exec proxy, DDEV-pattern lifecycle | M2 |
+| `effigy-manifest` | Service declarations, DNS config, data config, system/workspace binding | M1-M5 |
 | `effigy-cli` | `exec`, `gateway`, `catalog` command surface | M1-M4 |
 
 ## Milestone Sequence
@@ -664,9 +671,17 @@ A real PHP client project using all features:
 ```toml
 [containers.web]
 driver = "colima"
-context = "dev"
 primary_service = "app"
 startup = "attached"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 
 [containers.web.services.app]
 catalog = "php-fpm"

@@ -550,7 +550,6 @@ fn end_to_end_php_stack_written_to_disk() {
     let manifest_content = r#"
 [containers.web]
 driver = "colima"
-context = "dev"
 primary_service = "app"
 
 [containers.web.services.app]

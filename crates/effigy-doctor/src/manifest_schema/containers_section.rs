@@ -33,7 +33,6 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
             &[
                 "driver",
                 "startup",
-                "context",
                 "profile",
                 "compose_file",
                 "services",
@@ -51,7 +50,6 @@ pub(super) fn validate_containers_section(context: &mut SchemaContext<'_, '_>, c
         );
         validate_string_field(context, &path, table.get("driver"), "driver");
         validate_string_field(context, &path, table.get("startup"), "startup");
-        validate_string_field(context, &path, table.get("context"), "context");
         validate_string_field(context, &path, table.get("profile"), "profile");
         validate_string_field(context, &path, table.get("compose_file"), "compose_file");
         validate_string_field(context, &path, table.get("project_name"), "project_name");

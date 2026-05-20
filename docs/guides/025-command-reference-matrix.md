@@ -83,7 +83,7 @@ For narrative workflow guidance instead of lookup, start with:
 | `effigy tasks` | List discovered catalogs/tasks, probe routing, or inspect repo-scoped task status | `status <SELECTOR>`, `status --all`, `--repo`, `--task`, `--resolve`, `--json`, `--pretty true\|false` | `effigy.tasks.v1`, `effigy.tasks.filtered.v1`, `effigy.tasks-status.v1`, `effigy.tasks-status-all.v1` | `016-task-routing-precedence.md` |
 | `effigy defer` | Run the configured `[defer]` fallback explicitly (same routing container semantics as selector-miss deferral) | `--repo`, `--json` | command envelope; payload follows the deferred execution path | `015-deferral-fallback-migration.md` |
 | `effigy service` | Inspect the layered service catalog and extract bundled fragments into repo-owned overrides | `list`, `extract`, `--repo`, `--dir`, `--json` | service commands render command-envelope JSON with catalog payloads | `063-container-system-guide.md` |
-| `effigy exec` | Run one ad-hoc command inside the manifest's dev-context container | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
+| `effigy exec` | Run one ad-hoc command inside the manifest's default system workspace container | `--repo`, `--service`, `--json` | exec commands render command-envelope JSON with exec payloads | `063-container-system-guide.md` |
 | `effigy secrets` | Inspect declared secret metadata, store and retrieve vault values, and manage the local encrypted vault without printing values | `list`, `doctor`, `init`, `set`, `get`, `unset`, `change-passphrase`, `unlock`, `lock`, `export`, `--repo`, `--json` | `effigy.secrets.v1` | `075-secrets-and-vault-guide.md`, [`../contracts/032-secret-and-local-config-management-contract.md`](../contracts/032-secret-and-local-config-management-contract.md) |
 | `effigy gateway` | Operate the host-native local DNS and reverse-proxy gateway for container-owned routes | `up`, `down`, `status`, `setup-tls`, `--json` | gateway commands render command-envelope JSON with gateway payloads | `063-container-system-guide.md` |
 | `effigy doctor` | Run health checks and optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md` |
@@ -322,8 +322,8 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - `tasks --pretty false` is valid only with `--json`
 - `watch --owner` is required
 - `watch --json` requires bounded mode such as `--once` or `--max-runs`
-- `exec` runs inside the manifest dev-context container and defaults to that
-  environment's `primary_service` unless `--service` is supplied
+- `exec` runs inside the manifest default system workspace container and
+  defaults to that container's `primary_service` unless `--service` is supplied
 - `gateway up`, `gateway down`, and `gateway setup-tls` may request host admin
   approval
 - routes with `tls = true` redirect plain HTTP to HTTPS once the gateway TLS

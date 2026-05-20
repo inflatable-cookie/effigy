@@ -21,7 +21,7 @@ use super::runtime_session_context::{current_runtime_session_context, RuntimeSes
 use super::system_command::ensure_workspace_effigy_available_for_policy;
 use surface::{
     build_alias_table, build_raw_exec_args, ensure_container_running, exec_alias_surface_absent,
-    resolve_dev_exec_surface, resolve_exec_working_dir, resolve_running_named_exec_surface,
+    resolve_default_exec_surface, resolve_exec_working_dir, resolve_running_named_exec_surface,
     ResolvedExecSurface,
 };
 use transport::build_routed_task_exec_args;
@@ -52,7 +52,7 @@ pub(in crate::runner) fn try_run_exec_alias(
     extra_args: &[String],
     output_json: bool,
 ) -> Result<Option<String>, RunnerError> {
-    let surface = match resolve_dev_exec_surface(repo_root) {
+    let surface = match resolve_default_exec_surface(repo_root) {
         Ok(surface) => surface,
         Err(error) if exec_alias_surface_absent(&error) => return Ok(None),
         Err(error) => return Err(error),
@@ -199,7 +199,7 @@ fn run_explicit_exec(
     command: &[String],
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let surface = resolve_dev_exec_surface(repo_root)?;
+    let surface = resolve_default_exec_surface(repo_root)?;
     let activation = activate_exec_surface(repo_root, &surface)?;
     let service = service_override.unwrap_or(surface.policy.primary_service.as_str());
     let output = run_raw_exec(

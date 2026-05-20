@@ -210,7 +210,6 @@ catalog = "php-fpm"
             root.join("effigy.toml"),
             r#"
 [containers.web]
-context = "dev"
 compose_file = "docker-compose.yml"
 primary_service = "app"
 working_dir = "/var/www/contact-patch"
@@ -246,7 +245,6 @@ working_dir = "/var/www/contact-patch"
             root.join("effigy.toml"),
             r#"
 [containers.web]
-context = "dev"
 compose_file = "docker-compose.yml"
 primary_service = "app"
 working_dir = "/var/www/contact-patch"
@@ -281,7 +279,6 @@ working_dir = "/var/www/contact-patch"
             root.join("effigy.toml"),
             r#"
 [containers.web]
-context = "dev"
 compose_file = "docker-compose.yml"
 primary_service = "app"
 working_dir = "/var/www/contact-patch"

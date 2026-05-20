@@ -57,7 +57,7 @@ pub(in crate::runner) fn route_standard_task_execution(
         None
     };
 
-    let (dev_container, target_container, target_primary_service) =
+    let (target_container, target_primary_service) =
         resolve_routing_containers(containers, explicit_container.as_deref())?;
     if task_run_in == ManifestTaskRunIn::Container && target_container.is_none() {
         return Err(RunnerError::task_invocation(format!(
@@ -77,9 +77,9 @@ pub(in crate::runner) fn route_standard_task_execution(
         None => false,
     };
 
-    let context = match (dev_container, target_primary_service) {
-        (Some(dev_container), Some(primary_service)) => ExecContext {
-            dev_container: Some(dev_container),
+    let context = match (target_container, target_primary_service) {
+        (Some(container), Some(primary_service)) => ExecContext {
+            default_container: Some(container),
             primary_service: Some(primary_service),
             container_running,
         },
@@ -94,38 +94,18 @@ pub(in crate::runner) fn route_standard_task_execution(
 fn resolve_routing_containers(
     containers: Option<&ManifestContainersConfig>,
     explicit_container: Option<&str>,
-) -> Result<(Option<String>, Option<String>, Option<String>), RunnerError> {
+) -> Result<(Option<String>, Option<String>), RunnerError> {
     let Some(containers) = containers else {
-        return Ok((None, None, None));
+        return Ok((None, None));
     };
 
-    let dev_containers = containers
-        .environments
-        .iter()
-        .filter(|(_, config)| config.context.as_deref() == Some("dev"))
-        .map(|(name, _)| name.clone())
-        .collect::<Vec<_>>();
-    if dev_containers.len() > 1 {
-        return Err(RunnerError::task_invocation(format!(
-            "multiple containers claim context = \"dev\": {}",
-            dev_containers
-                .iter()
-                .map(|name| format!("`{name}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )));
-    }
-
-    let dev_container = dev_containers.into_iter().next();
-    let target_container = explicit_container
-        .map(str::to_owned)
-        .or_else(|| dev_container.clone());
+    let target_container = explicit_container.map(str::to_owned);
     let target_primary_service = target_container
         .as_deref()
         .map(|name| primary_service_for(containers, name))
         .transpose()?;
 
-    Ok((dev_container, target_container, target_primary_service))
+    Ok((target_container, target_primary_service))
 }
 
 fn primary_service_for(
@@ -211,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn routes_host_when_no_dev_context_declared() {
+    fn routes_host_when_no_default_system_target_resolves() {
         let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
@@ -228,14 +208,14 @@ primary_service = "app"
             &manifest_task(),
             None,
             Some(&containers),
-            |_| panic!("running check should not be used without dev context"),
+            |_| panic!("running check should not be used without a default target"),
         )
         .expect("route");
         assert!(matches!(routed.decision.target, ExecTarget::Host));
     }
 
     #[test]
-    fn sole_non_dev_container_and_system_do_not_capture_plain_tasks() {
+    fn unrelated_non_default_system_container_does_not_capture_plain_tasks() {
         let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
@@ -255,14 +235,14 @@ container = "release"
             &manifest_task(),
             Some(&systems),
             Some(&containers),
-            |_| panic!("running check should not be used without dev context"),
+            |_| panic!("running check should not be used without a default target"),
         )
         .expect("route");
         assert!(matches!(routed.decision.target, ExecTarget::Host));
     }
 
     #[test]
-    fn routes_to_dev_context_container_when_running() {
+    fn routes_to_default_system_workspace_container_without_context_marker() {
         let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
@@ -270,15 +250,26 @@ container = "release"
 default = "web"
 
 [containers.web]
-context = "dev"
 primary_service = "app"
+"#,
+        );
+        let systems = systems_toml(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
 "#,
         );
         let routed = route_standard_task_execution(
             "build",
             None,
             &manifest_task(),
-            None,
+            Some(&systems),
             Some(&containers),
             |name| {
                 assert_eq!(name, "web");
@@ -293,7 +284,7 @@ primary_service = "app"
     }
 
     #[test]
-    fn host_override_beats_dev_context() {
+    fn routes_to_default_container_when_running() {
         let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
@@ -301,18 +292,67 @@ primary_service = "app"
 default = "web"
 
 [containers.web]
-context = "dev"
+primary_service = "app"
+"#,
+        );
+        let systems = systems_toml(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+"#,
+        );
+        let routed = route_standard_task_execution(
+            "build",
+            None,
+            &manifest_task(),
+            Some(&systems),
+            Some(&containers),
+            |name| {
+                assert_eq!(name, "web");
+                Ok(true)
+            },
+        )
+        .expect("route");
+        assert_eq!(
+            routed_container_target(&routed.decision),
+            Some(("web", "app"))
+        );
+    }
+
+    #[test]
+    fn host_override_beats_default_execution_container() {
+        let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
+        let containers = containers_toml(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
 primary_service = "app"
 "#,
         );
         let mut task = manifest_task();
         task.run_in = Some(ManifestTaskRunIn::Host);
+        let systems = systems_toml(
+            r#"
+[systems]
+default = "dev"
 
-        let routed =
-            route_standard_task_execution("build", None, &task, None, Some(&containers), |_| {
-                Ok(true)
-            })
-            .expect("route");
+[systems.dev]
+"#,
+        );
+
+        let routed = route_standard_task_execution(
+            "build",
+            None,
+            &task,
+            Some(&systems),
+            Some(&containers),
+            |_| Ok(true),
+        )
+        .expect("route");
         assert!(matches!(routed.decision.target, ExecTarget::Host));
     }
 
@@ -338,18 +378,25 @@ primary_service = "app"
 default = "web"
 
 [containers.web]
-context = "dev"
 primary_service = "app"
 "#,
         );
         let mut task = manifest_task();
         task.container_lifecycle = Some(true);
+        let systems = systems_toml(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+"#,
+        );
 
         let routed = route_standard_task_execution(
             "dev",
             Some(ManifestTaskRunIn::Host),
             &task,
-            None,
+            Some(&systems),
             Some(&containers),
             |_| Ok(true),
         )
@@ -369,19 +416,26 @@ primary_service = "app"
 default = "web"
 
 [containers.web]
-context = "dev"
 primary_service = "app"
 "#,
         );
         let mut task = manifest_task();
         task.container_lifecycle = Some(true);
         task.run_in = Some(ManifestTaskRunIn::Host);
+        let systems = systems_toml(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+"#,
+        );
 
         let routed = route_standard_task_execution(
             "dev",
             Some(ManifestTaskRunIn::Either),
             &task,
-            None,
+            Some(&systems),
             Some(&containers),
             |_| Ok(true),
         )
@@ -390,7 +444,7 @@ primary_service = "app"
     }
 
     #[test]
-    fn errors_when_multiple_dev_contexts_exist() {
+    fn multiple_containers_without_default_system_do_not_capture_plain_tasks() {
         let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
@@ -398,16 +452,14 @@ primary_service = "app"
 default = "web"
 
 [containers.web]
-context = "dev"
 primary_service = "app"
 
 [containers.jobs]
-context = "dev"
 primary_service = "worker"
 "#,
         );
 
-        let error = route_standard_task_execution(
+        let routed = route_standard_task_execution(
             "build",
             None,
             &manifest_task(),
@@ -415,10 +467,8 @@ primary_service = "worker"
             Some(&containers),
             |_| Ok(true),
         )
-        .expect_err("multiple dev contexts should fail");
-        assert!(error
-            .to_string()
-            .contains("multiple containers claim context = \"dev\""));
+        .expect("route");
+        assert!(matches!(routed.decision.target, ExecTarget::Host));
     }
 
     #[test]
@@ -430,7 +480,6 @@ primary_service = "worker"
 default = "web"
 
 [containers.web]
-context = "dev"
 primary_service = "app"
 
 [containers.jobs]
@@ -471,7 +520,7 @@ container = "jobs"
     }
 
     #[test]
-    fn manifest_default_run_in_host_beats_dev_context() {
+    fn manifest_default_run_in_host_beats_default_execution_container() {
         let _env = EnvGuard::set_many(&[("EFFIGY_INTERNAL_CONTAINER_HANDOFF", None)]);
         let containers = containers_toml(
             r#"
@@ -479,8 +528,15 @@ container = "jobs"
 default = "web"
 
 [containers.web]
-context = "dev"
 primary_service = "app"
+"#,
+        );
+        let systems = systems_toml(
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
 "#,
         );
 
@@ -488,7 +544,7 @@ primary_service = "app"
             "build",
             Some(ManifestTaskRunIn::Host),
             &manifest_task(),
-            None,
+            Some(&systems),
             Some(&containers),
             |_| Ok(true),
         )
@@ -544,7 +600,6 @@ container = "jobs"
 default = "web"
 
 [containers.web]
-context = "dev"
 primary_service = "app"
 
 [containers.jobs]
@@ -585,8 +640,10 @@ default = "dev"
         );
         let containers = containers_toml(
             r#"
+[containers]
+default = "app"
+
 [containers.app]
-context = "dev"
 primary_service = "workspace"
 "#,
         );

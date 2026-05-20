@@ -126,7 +126,6 @@ mod tests {
 default = "web"
 
 [containers.web]
-context = "dev"
 primary_service = "app"
 
 [containers.web.services.app]
@@ -150,7 +149,6 @@ version = "10.11"
             .environments
             .get("web")
             .expect("web container");
-        assert_eq!(web.context.as_deref(), Some("dev"));
         assert!(web.compose_file.is_none());
         assert_eq!(web.primary_service.as_deref(), Some("app"));
 
@@ -171,6 +169,19 @@ version = "10.11"
         let web_service = web.services.get("web").expect("web service");
         assert_eq!(web_service.catalog, "nginx");
         assert_eq!(web_service.variant.as_deref(), Some("laravel"));
+    }
+
+    #[test]
+    fn containers_config_rejects_legacy_context_field() {
+        let result: Result<ContainerWrapper, _> = toml::from_str(
+            r#"
+[containers.web]
+context = "dev"
+primary_service = "app"
+"#,
+        );
+
+        assert!(result.is_err(), "expected legacy context field rejection");
     }
 
     #[test]
@@ -199,14 +210,13 @@ enabled = true
     }
 
     #[test]
-    fn container_config_accepts_context_with_direct_compose_file() {
+    fn container_config_accepts_direct_compose_file() {
         let parsed: ContainerWrapper = toml::from_str(
             r#"
 [containers]
 default = "dev"
 
 [containers.dev]
-context = "dev"
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 "#,
@@ -218,7 +228,6 @@ primary_service = "app"
             .environments
             .get("dev")
             .expect("dev container");
-        assert_eq!(dev.context.as_deref(), Some("dev"));
         assert_eq!(
             dev.compose_file.as_deref(),
             Some("infra/dev/docker-compose.yml")
@@ -233,7 +242,6 @@ primary_service = "app"
 default = "web"
 
 [containers.web]
-context = "dev"
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
 working_dir = "/var/www/html"

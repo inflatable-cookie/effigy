@@ -104,7 +104,7 @@ fn explicit_container_targets_specific_container() {
 // ── Default routing ──────────────────────────────────────────────
 
 #[test]
-fn task_routes_to_dev_container() {
+fn task_routes_to_default_container() {
     let d = route("test", &running_context(), &no_overrides());
     assert!(d.is_container());
     if let ExecTarget::Container {
@@ -117,13 +117,13 @@ fn task_routes_to_dev_container() {
 }
 
 #[test]
-fn custom_task_routes_to_dev_container() {
+fn custom_task_routes_to_default_container() {
     let d = route("seed:fresh", &running_context(), &no_overrides());
     assert!(d.is_container());
 }
 
 #[test]
-fn exec_routes_to_dev_container() {
+fn exec_routes_to_default_container() {
     let d = route("exec", &running_context(), &no_overrides());
     assert!(d.is_container());
 }

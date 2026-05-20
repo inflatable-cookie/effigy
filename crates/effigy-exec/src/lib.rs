@@ -11,8 +11,8 @@
 //!
 //! ## Core concepts
 //!
-//! - **Execution context**: A container marked as `context = "dev"` becomes
-//!   the implicit execution environment for the project.
+//! - **Execution context**: The default system workspace's backing container
+//!   becomes the implicit execution environment for the project.
 //! - **Routing decision**: Given a command and context, determine whether
 //!   it should run on the host or in the container.
 //! - **CWD mapping**: Translate a host working directory to the

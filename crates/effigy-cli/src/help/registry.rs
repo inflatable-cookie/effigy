@@ -65,7 +65,7 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         topic: HelpTopic::Exec,
         command_name: Some("exec"),
         general_help_command: Some("effigy exec"),
-        general_help_description: Some("Run one ad-hoc command inside the manifest's dev-context container"),
+        general_help_description: Some("Run one ad-hoc command inside the manifest's default system workspace container"),
         deferred_builtin: None,
         render: render_exec,
     },

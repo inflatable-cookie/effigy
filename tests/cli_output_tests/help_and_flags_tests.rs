@@ -302,9 +302,7 @@ fn cli_release_help_includes_distribution_evidence_commands() {
     assert!(stdout.contains("release Help"));
     assert!(stdout
         .contains("effigy release preflight [--repo <PATH>] [--tag <TAG>] [--skip-docs] [--skip-smoke] [--output <PATH>] [--json]"));
-    assert!(
-        stdout.contains("effigy release validate [--repo <PATH>] [--tag <TAG>] [--json]")
-    );
+    assert!(stdout.contains("effigy release validate [--repo <PATH>] [--tag <TAG>] [--json]"));
     assert!(stdout.contains("effigy release evidence summary"));
     assert!(!stdout.contains("contracts Help"));
 }

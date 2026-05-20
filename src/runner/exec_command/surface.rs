@@ -7,8 +7,9 @@ use effigy_containers::{
 };
 use effigy_exec::{CwdMapper, ExecAlias, ExecAliasTable};
 use effigy_manifest::{
-    ManifestContainerConfig, ManifestContainerServiceConfig, ManifestContainersConfig,
-    TASK_MANIFEST_FILE,
+    resolve_task_execution_binding_from_parts, ManifestContainerConfig,
+    ManifestContainerServiceConfig, ManifestTask, ResolvedTaskExecutionBinding,
+    ResolvedWorkspaceContainer, TASK_MANIFEST_FILE,
 };
 use minijinja::{Environment, Value};
 use serde::Serialize;
@@ -26,19 +27,16 @@ pub(super) fn exec_alias_surface_absent(error: &RunnerError) -> bool {
     ) || matches!(
         error,
         RunnerError::ContainerSurfaceRegistryMissing
-            | RunnerError::ContainerSurfaceDevContextMissing
+            | RunnerError::ContainerSurfaceDefaultTargetMissing
     )
 }
 
-pub(super) fn resolve_dev_exec_surface(
+pub(super) fn resolve_default_exec_surface(
     repo_root: &Path,
 ) -> Result<ResolvedExecSurface, RunnerError> {
     let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let manifest = load_task_manifest(&manifest_path)?;
-    let containers = manifest
-        .containers
-        .ok_or(RunnerError::ContainerSurfaceRegistryMissing)?;
-    let container_name = resolve_dev_container_name(&containers)?;
+    let container_name = resolve_default_exec_container_name(&manifest)?;
     resolve_named_exec_surface(repo_root, &container_name)
 }
 
@@ -164,22 +162,32 @@ pub(in crate::runner) struct ResolvedExecSurface {
     pub(in crate::runner) policy: EffectiveContainerPolicy,
 }
 
-fn resolve_dev_container_name(
-    containers: &ManifestContainersConfig,
+fn resolve_default_exec_container_name(
+    manifest: &effigy_manifest::TaskManifest,
 ) -> Result<String, RunnerError> {
-    let mut matches = containers
-        .environments
-        .iter()
-        .filter(|(_, config)| config.context.as_deref() == Some("dev"))
-        .map(|(name, _)| name.clone())
-        .collect::<Vec<_>>();
-
-    match matches.len() {
-        0 => Err(RunnerError::ContainerSurfaceDevContextMissing),
-        1 => Ok(matches.remove(0)),
-        _ => Err(RunnerError::ContainerSurfaceDevContextAmbiguous {
-            containers: matches,
-        }),
+    if manifest.containers.is_none() {
+        return Err(RunnerError::ContainerSurfaceRegistryMissing);
+    }
+    let binding = resolve_task_execution_binding_from_parts(
+        manifest
+            .task_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.run_in),
+        manifest.systems.as_ref(),
+        manifest.containers.as_ref(),
+        "exec",
+        &ManifestTask::default(),
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let Some(ResolvedTaskExecutionBinding::Workspace(binding)) = binding else {
+        return Err(RunnerError::ContainerSurfaceDefaultTargetMissing);
+    };
+    match binding.container {
+        Some(ResolvedWorkspaceContainer::Named(name)) => Ok(name),
+        Some(ResolvedWorkspaceContainer::Inline(_)) => Err(RunnerError::task_invocation(
+            "`effigy exec` does not support inline workspace containers yet",
+        )),
+        None => Err(RunnerError::ContainerSurfaceDefaultTargetMissing),
     }
 }
 

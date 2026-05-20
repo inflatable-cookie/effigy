@@ -3376,10 +3376,7 @@ required-files = [".github/workflows/release-binaries.yml"]
     )
     .expect("write workflow");
     fs::write(root.join("docs/guides/release.md"), "# Guide\n").expect("write guide");
-    let output = run_json_cli_command(
-        &root,
-        &["release", "validate", "--tag", "v0.2.5"],
-    );
+    let output = run_json_cli_command(&root, &["release", "validate", "--tag", "v0.2.5"]);
     let parsed = parse_stdout_json(&output);
 
     assert!(output.status.success(), "{output:?}");
@@ -3412,10 +3409,7 @@ name = "example-tool"
     )
     .expect("write manifest");
 
-    let output = run_json_cli_command(
-        &root,
-        &["release", "validate", "--tag", "v0.2.5"],
-    );
+    let output = run_json_cli_command(&root, &["release", "validate", "--tag", "v0.2.5"]);
     let parsed = parse_stdout_json(&output);
 
     assert!(output.status.success(), "{output:?}");

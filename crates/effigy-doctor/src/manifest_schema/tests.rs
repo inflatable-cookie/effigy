@@ -65,7 +65,6 @@ default = "web"
 [containers.web]
 driver = "colima"
 startup = "attached"
-context = "dev"
 profile = "effigy"
 compose_file = "infra/dev/docker-compose.yml"
 project_name = "effigy-web-dev"
@@ -187,6 +186,32 @@ shared = true
     assert!(
         sink.findings.is_empty(),
         "expected no schema findings, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_legacy_container_context_field() {
+    let manifest: Value = toml::from_str(
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+context = "dev"
+primary_service = "app"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings
+            .iter()
+            .any(|finding| finding.evidence.contains("containers.web.context")),
+        "expected legacy context field finding, got: {:?}",
         sink.findings
     );
 }
