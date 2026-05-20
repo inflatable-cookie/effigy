@@ -101,6 +101,9 @@ pub fn discover_manifest_paths(workspace_root: &Path) -> Result<Vec<PathBuf>, Ro
                 if should_skip_dir(&path, &root_skip_dirs) {
                     continue;
                 }
+                if declares_nested_root_boundary(&path, workspace_root) {
+                    continue;
+                }
                 pending.push(path);
                 continue;
             }
@@ -305,6 +308,39 @@ fn has_root_manifest(workspace_root: &Path) -> bool {
     workspace_root.join(TASK_MANIFEST_FILE).is_file()
 }
 
+fn declares_nested_root_boundary(path: &Path, workspace_root: &Path) -> bool {
+    if path == workspace_root {
+        return false;
+    }
+
+    let manifest_path = path.join(TASK_MANIFEST_FILE);
+    if !manifest_path.is_file() {
+        return false;
+    }
+
+    manifest_declares_root(&manifest_path)
+}
+
+fn manifest_declares_root(manifest_path: &Path) -> bool {
+    let Ok(raw) = fs::read_to_string(manifest_path) else {
+        return false;
+    };
+    let Ok(value) = toml::from_str::<toml::Value>(&raw) else {
+        return false;
+    };
+    let Some(table) = value.as_table() else {
+        return false;
+    };
+    let Some(manifest) = table.get("manifest").and_then(toml::Value::as_table) else {
+        return false;
+    };
+
+    manifest
+        .get("root")
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::discover_manifest_paths;
@@ -372,6 +408,42 @@ mod tests {
         assert!(
             !manifests.contains(&storage.join("effigy.toml")),
             "configured storage skip should prevent ambient catalog discovery: {manifests:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn discover_manifest_paths_prunes_nested_effigy_roots() {
+        let root = temp_root("effigy-routing-nested-root-boundary");
+        let nested_root = root.join("examples/render-provider-smoke");
+        let nested_child = nested_root.join("acme-front");
+        let app = root.join("apps/demo");
+        fs::create_dir_all(&nested_child).expect("nested child dir");
+        fs::create_dir_all(&app).expect("app dir");
+        fs::write(root.join("effigy.toml"), "[catalog]\nalias = \"root\"\n").expect("root");
+        fs::write(
+            nested_root.join("effigy.toml"),
+            "[catalog]\nalias = \"nested\"\n\n[manifest]\nroot = true\n",
+        )
+        .expect("nested root manifest");
+        fs::write(
+            nested_child.join("effigy.toml"),
+            "[catalog]\nalias = \"nested-child\"\n",
+        )
+        .expect("nested child manifest");
+        fs::write(app.join("effigy.toml"), "[catalog]\nalias = \"demo\"\n").expect("app manifest");
+
+        let manifests = discover_manifest_paths(&root).expect("discover");
+
+        assert!(manifests.contains(&root.join("effigy.toml")));
+        assert!(manifests.contains(&app.join("effigy.toml")));
+        assert!(
+            !manifests.contains(&nested_root.join("effigy.toml")),
+            "nested root manifests should not become ambient catalogs: {manifests:?}"
+        );
+        assert!(
+            !manifests.contains(&nested_child.join("effigy.toml")),
+            "nested root boundaries should prune nested child catalogs: {manifests:?}"
         );
         let _ = fs::remove_dir_all(root);
     }

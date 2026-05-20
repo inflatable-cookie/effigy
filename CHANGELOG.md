@@ -118,6 +118,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - **Container shell perf matrix now covers decodelabs library and app fixtures
   plus underlay:** the maintained live matrix now exercises a decodelabs
   library archetype, a decodelabs site, and the underlay workspace reference
+
+### Fixed
+- **Ambient task discovery now respects nested Effigy roots:** `effigy tasks`
+  and other catalog discovery surfaces no longer walk into nested child
+  projects whose local `effigy.toml` declares `[manifest].root = true`, so
+  repo-root task listings do not leak example or fixture catalogs from
+  self-contained subprojects.
   so shell-path changes are checked across more than one container shape.
 - **Container shell perf matrix now emits a compact JSON summary:** alongside
   the markdown reports, `perf:container-shell-matrix` now writes
