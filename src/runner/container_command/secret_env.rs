@@ -1,6 +1,8 @@
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use effigy_containers::ContainerAction;
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_core::shell::shell_quote;
 use effigy_env::secret::SecretString;
@@ -9,7 +11,7 @@ use effigy_manifest::{
 };
 
 use crate::runner::error::RunnerError;
-use crate::runner::exec_command::{run_compose_exec, run_compose_exec_with_options};
+use crate::runner::exec_command::run_compose_exec_plan_with_options;
 use crate::runner::manifest::load_task_manifest;
 
 #[derive(Debug)]
@@ -224,12 +226,22 @@ fn run_primary_service_shell_command(
     command: &str,
     label: &str,
 ) -> Result<(), RunnerError> {
-    let mut args = effigy_containers::compose::compose_args(policy, ["exec", "-T"]);
-    args.push(policy.primary_service.clone().into());
-    args.push("sh".into());
-    args.push("-lc".into());
-    args.push(command.into());
-    let output = run_compose_exec(repo_root, policy, &args, true, label)?;
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+        repo_root,
+        policy,
+        vec![
+            OsString::from("exec"),
+            OsString::from("-T"),
+            OsString::from(policy.primary_service.as_str()),
+            OsString::from("sh"),
+            OsString::from("-lc"),
+            OsString::from(command),
+        ],
+        ContainerAction::Exec,
+        label,
+    )
+    .map_err(RunnerError::from)?;
+    let output = run_compose_exec_plan_with_options(policy, &plan, true, None)?;
     if output.status.success() {
         return Ok(());
     }
@@ -248,13 +260,22 @@ fn write_file_into_primary_service(
     container_dest: &str,
     label: &str,
 ) -> Result<(), RunnerError> {
-    let mut args = effigy_containers::compose::compose_args(policy, ["exec", "-T"]);
-    args.push(policy.primary_service.clone().into());
-    args.push("sh".into());
-    args.push("-lc".into());
-    args.push(format!("cat > {}", shell_quote(container_dest)).into());
-    let output =
-        run_compose_exec_with_options(repo_root, policy, &args, true, label, Some(host_source))?;
+    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
+        repo_root,
+        policy,
+        vec![
+            OsString::from("exec"),
+            OsString::from("-T"),
+            OsString::from(policy.primary_service.as_str()),
+            OsString::from("sh"),
+            OsString::from("-lc"),
+            OsString::from(format!("cat > {}", shell_quote(container_dest))),
+        ],
+        ContainerAction::Exec,
+        label,
+    )
+    .map_err(RunnerError::from)?;
+    let output = run_compose_exec_plan_with_options(policy, &plan, true, Some(host_source))?;
     if output.status.success() {
         return Ok(());
     }
