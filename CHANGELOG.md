@@ -6,6 +6,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-20
+
+### Fixed
+- **Release glibc guard command:** The GitHub release-binary workflow and Linux
+  release rehearsal now use `effigy release check-binary --glibc-floor ...`
+  instead of the removed top-level `distribution check-glibc-floor` command.
+
 ## [0.8.0] - 2026-05-20
 
 ### Breaking
