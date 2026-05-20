@@ -108,6 +108,14 @@ During v0.x, MINOR bumps may include breaking changes.
   the runtime was session-owned or adopted.
 
 ### Fixed
+- **PHP workspace catalogs now pin pnpm 11 to the dedicated store volume:**
+  the `php-fpm` generated-compose surface now exports
+  `pnpm_config_store_dir` as well as the older npm-compatible store env, so
+  modern pnpm releases stop creating repo-local `.pnpm-store` directories in
+  bind-mounted project roots. The shipped PHP workspace image also now keeps
+  Corepack's cache tree writable for the `dev` user, so `pnpm` can actually
+  run inside those containers instead of failing on a root-owned
+  `/home/dev/.cache`.
 - **Container-local deferral avoids host runtime probes:** `effigy defer` now
   treats Effigy workspace containers as local execution contexts even when
   containerd/cgroup-v2 does not expose `/.dockerenv`, `/run/.containerenv`, or

@@ -156,13 +156,14 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 ENV COMPOSER_ALLOW_SUPERUSER=1
 ENV COMPOSER_HOME=${COMPOSER_HOME}
 ENV COMPOSER_CACHE_DIR=/home/dev/.cache/composer
+ENV COREPACK_HOME=/home/dev/.cache/node/corepack
 ENV PNPM_HOME=/home/dev/.local/share/pnpm
 ENV PATH=${COMPOSER_HOME}/vendor/bin:${PNPM_HOME}:${PATH}
 
 RUN set -eux; \
     workspace_group="$(id -gn dev)"; \
-    mkdir -p "${COMPOSER_HOME}" "${COMPOSER_CACHE_DIR}"; \
-    chown -R dev:"${workspace_group}" "${COMPOSER_HOME}" "${COMPOSER_CACHE_DIR}"
+    mkdir -p "${COMPOSER_HOME}" "${COMPOSER_CACHE_DIR}" "${COREPACK_HOME}"; \
+    chown -R dev:"${workspace_group}" "${COMPOSER_HOME}" /home/dev/.cache
 
 RUN set -eux; \
     packages="$(printf '%s\n' "${COMPOSER_GLOBAL_PACKAGES}" | xargs)"; \
@@ -185,6 +186,8 @@ RUN if [ -n "$NODE_VERSION" ]; then \
         && corepack enable \
         && corepack prepare pnpm@latest --activate \
         && if [ -n "$NODE_GLOBAL_PACKAGES" ]; then npm install -g $NODE_GLOBAL_PACKAGES; fi; \
+        workspace_group="$(id -gn dev)"; \
+        chown -R dev:"${workspace_group}" /home/dev/.cache; \
     fi
 
 # ── SSH agent socket bridge ───────────────────────────────────────────

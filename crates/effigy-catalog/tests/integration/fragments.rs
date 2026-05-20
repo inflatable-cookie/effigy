@@ -419,6 +419,13 @@ fn php_fpm_supports_node_globals_and_pnpm_tooling() {
     assert!(
         result
             .compose_yaml
+            .contains("pnpm_config_store_dir: /home/dev/.local/share/pnpm/store"),
+        "php-fpm compose should pin pnpm's effective store dir to the dedicated container cache volume:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result
+            .compose_yaml
             .contains("npm_config_store_dir: /home/dev/.local/share/pnpm/store"),
         "php-fpm compose should pin the pnpm store to the dedicated container cache volume:\n{}",
         result.compose_yaml
@@ -431,8 +438,22 @@ fn php_fpm_supports_node_globals_and_pnpm_tooling() {
         result.compose_yaml
     );
     assert!(
+        result.dockerfiles["app"].contains("ENV COREPACK_HOME=/home/dev/.cache/node/corepack"),
+        "php-fpm Dockerfile should pin a writable corepack cache path for the dev user"
+    );
+    assert!(
+        result.dockerfiles["app"].contains(
+            "mkdir -p \"${COMPOSER_HOME}\" \"${COMPOSER_CACHE_DIR}\" \"${COREPACK_HOME}\""
+        ),
+        "php-fpm Dockerfile should create the corepack cache path before runtime"
+    );
+    assert!(
         result.dockerfiles["app"].contains("corepack enable"),
         "php-fpm Dockerfile should enable corepack so pnpm is available"
+    );
+    assert!(
+        result.dockerfiles["app"].contains("chown -R dev:\"${workspace_group}\" /home/dev/.cache;"),
+        "php-fpm Dockerfile should restore dev ownership after the node tooling layer"
     );
     assert!(
         result.dockerfiles["app"].contains("corepack prepare pnpm@latest --activate"),
@@ -541,6 +562,13 @@ fn php_fpm_supports_explicit_php_app_style_service_params() {
         result.compose_yaml.contains("DOCUMENT_ROOT: '.'")
             || result.compose_yaml.contains("DOCUMENT_ROOT: ."),
         "php-fpm explicit params should apply the repo-root document root:\n{}",
+        result.compose_yaml
+    );
+    assert!(
+        result
+            .compose_yaml
+            .contains("pnpm_config_store_dir: /home/dev/.local/share/pnpm/store"),
+        "php-fpm explicit params should route pnpm through the dedicated store volume:\n{}",
         result.compose_yaml
     );
     assert!(

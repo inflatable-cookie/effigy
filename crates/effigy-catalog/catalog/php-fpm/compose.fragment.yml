@@ -38,6 +38,7 @@ services:
       COMPOSER_HOME: "/home/dev/.config/composer"
       COMPOSER_CACHE_DIR: "/home/dev/.cache/composer"
       PNPM_HOME: "/home/dev/.local/share/pnpm"
+      pnpm_config_store_dir: "/home/dev/.local/share/pnpm/store"
       npm_config_store_dir: "/home/dev/.local/share/pnpm/store"
       EFFIGY_SMTP_HOST: "{% if services.mail %}{{ services.mail.name }}{% elif services.mailpit %}{{ services.mailpit.name }}{% else %}mail{% endif %}"
       EFFIGY_SMTP_PORT: "{% if services.mail %}1025{% elif services.mailpit %}1025{% else %}1025{% endif %}"
