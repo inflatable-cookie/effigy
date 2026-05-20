@@ -7,9 +7,9 @@ use crate::error::CodeGraphError;
 use crate::extractor::{
     capability_set, extractor_id, file_graph_id, GraphSink, LanguageIndexer, SourceFile,
 };
+use crate::language::emit;
 use crate::model::{
-    Confidence, DiagnosticRecord, DiagnosticSeverity, EdgeRecord, ExtractorCapability,
-    ExtractorRecord, FileRecord, ReferenceRecord, SymbolRecord,
+    Confidence, EdgeRecord, ExtractorCapability, ExtractorRecord, FileRecord, SymbolRecord,
 };
 use crate::support::{id_fragment, provenance_for_file, span_from_bytes};
 use crate::{ExtractorId, GraphId};
@@ -181,7 +181,7 @@ fn walk_python(
                                     Some("http-route"),
                                 ),
                             });
-                            contains_edge(
+                            emit::push_contains_edge(
                                 &owner_id,
                                 &route_id,
                                 definition,
@@ -223,78 +223,66 @@ fn walk_python(
         "function_definition" => {
             if let Some(name) = field_text(node, "name", &file.content) {
                 let canonical = scoped_name(&state.scope, &name);
-                let symbol = symbol_record(
+                emit::walk_scoped_owned_symbol!(
+                    "py",
                     &canonical,
                     "function",
                     &name,
-                    node,
-                    file,
-                    file_record,
-                    extractor_id,
-                    extractor_version,
-                )?;
-                let symbol_id = symbol.id.clone();
-                contains_edge(
                     &owner_id,
-                    &symbol_id,
-                    node,
-                    file,
-                    sink,
-                    extractor_id,
-                    extractor_version,
-                )?;
-                sink.push_symbol(symbol);
-                state.scope.push(name);
-                walk_children(
                     node,
                     file,
                     file_record,
                     sink,
                     extractor_id,
                     extractor_version,
-                    state,
-                    symbol_id,
+                    &mut state.scope,
+                    name,
+                    |symbol_id| {
+                        walk_children(
+                            node,
+                            file,
+                            file_record,
+                            sink,
+                            extractor_id,
+                            extractor_version,
+                            state,
+                            symbol_id,
+                        )
+                    }
                 )?;
-                state.scope.pop();
                 return Ok(());
             }
         }
         "class_definition" => {
             if let Some(name) = field_text(node, "name", &file.content) {
                 let canonical = scoped_name(&state.scope, &name);
-                let symbol = symbol_record(
+                emit::walk_scoped_owned_symbol!(
+                    "py",
                     &canonical,
                     "class",
                     &name,
-                    node,
-                    file,
-                    file_record,
-                    extractor_id,
-                    extractor_version,
-                )?;
-                let symbol_id = symbol.id.clone();
-                contains_edge(
                     &owner_id,
-                    &symbol_id,
-                    node,
-                    file,
-                    sink,
-                    extractor_id,
-                    extractor_version,
-                )?;
-                sink.push_symbol(symbol);
-                state.scope.push(name);
-                walk_children(
                     node,
                     file,
                     file_record,
                     sink,
                     extractor_id,
                     extractor_version,
-                    state,
-                    symbol_id,
+                    &mut state.scope,
+                    name,
+                    |symbol_id| {
+                        walk_children(
+                            node,
+                            file,
+                            file_record,
+                            sink,
+                            extractor_id,
+                            extractor_version,
+                            state,
+                            symbol_id,
+                        )
+                    }
                 )?;
-                state.scope.pop();
                 return Ok(());
             }
         }
@@ -663,90 +651,18 @@ fn push_parse_diagnostic(
     extractor_version: &str,
     state: &mut PythonWalkState,
 ) -> Result<(), CodeGraphError> {
-    if !state.diagnostics.insert(node.start_byte()) {
-        return Ok(());
-    }
-    sink.push_diagnostic(DiagnosticRecord {
-        id: GraphId::new(format!(
-            "diag:py-parse:{}:{}",
-            file.relative_path,
-            node.start_byte()
-        ))?,
-        severity: DiagnosticSeverity::Warning,
-        message: format!("python parse error near `{}`", text(node, &file.content)),
-        file_id: Some(file_record.id.clone()),
-        span: Some(span_from_bytes(
-            &file.content,
-            node.start_byte(),
-            node.end_byte(),
-        )),
-        provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
-            Confidence::Exact,
-            Some("parse-error"),
-        ),
-    });
-    Ok(())
-}
-
-fn symbol_record(
-    canonical: &str,
-    kind: &str,
-    display_name: &str,
-    node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
-) -> Result<SymbolRecord, CodeGraphError> {
-    Ok(SymbolRecord {
-        id: GraphId::new(format!("symbol:py:{}", id_fragment(canonical)))?,
-        kind: kind.to_owned(),
-        display_name: display_name.to_owned(),
-        canonical_name: canonical.to_owned(),
-        file_id: file_record.id.clone(),
-        span: span_from_bytes(&file.content, node.start_byte(), node.end_byte()),
-        provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
-            Confidence::Exact,
-            Some(kind),
-        ),
-    })
-}
-
-fn contains_edge(
-    owner_id: &GraphId,
-    child_id: &GraphId,
-    node: Node<'_>,
-    file: &SourceFile,
-    sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
-) -> Result<(), CodeGraphError> {
-    sink.push_edge(EdgeRecord {
-        id: GraphId::new(format!(
-            "edge:contains:{}:{}:{}",
-            owner_id,
-            child_id,
-            node.start_byte()
-        ))?,
-        kind: "contains".to_owned(),
-        from_id: owner_id.clone(),
-        to_id: Some(child_id.clone()),
-        unresolved_target: None,
-        provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
-            Confidence::Exact,
-            Some("containment"),
-        ),
-    });
-    Ok(())
+    emit::push_parse_diagnostic_once(
+        &mut state.diagnostics,
+        "py",
+        "python",
+        text(node, &file.content),
+        node,
+        file,
+        file_record,
+        sink,
+        extractor_id,
+        extractor_version,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -761,22 +677,18 @@ fn reference_record(
     extractor_id: &ExtractorId,
     extractor_version: &str,
 ) -> Result<(), CodeGraphError> {
-    sink.push_reference(ReferenceRecord {
-        id: GraphId::new(format!("ref:py:{kind}:{owner_id}:{}", node.start_byte()))?,
-        file_id: file_record.id.clone(),
-        kind: kind.to_owned(),
-        target_id: None,
-        unresolved_target: Some(target.to_owned()),
-        span: span_from_bytes(&file.content, node.start_byte(), node.end_byte()),
-        provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
-            Confidence::Heuristic,
-            Some(kind),
-        ),
-    });
-    Ok(())
+    emit::push_reference_record(
+        format!("ref:py:{kind}:{owner_id}:{}", node.start_byte()),
+        kind,
+        target,
+        node,
+        file,
+        file_record,
+        sink,
+        extractor_id,
+        extractor_version,
+        Confidence::Heuristic,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -791,19 +703,15 @@ fn unresolved_edge(
     extractor_version: &str,
     confidence: Confidence,
 ) -> Result<(), CodeGraphError> {
-    sink.push_edge(EdgeRecord {
-        id: GraphId::new(format!("edge:py:{kind}:{owner_id}:{}", node.start_byte()))?,
-        kind: kind.to_owned(),
-        from_id: owner_id.clone(),
-        to_id: None,
-        unresolved_target: Some(target.into()),
-        provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
-            confidence,
-            Some(kind),
-        ),
-    });
-    Ok(())
+    emit::push_unresolved_edge(
+        format!("edge:py:{kind}:{owner_id}:{}", node.start_byte()),
+        owner_id,
+        kind,
+        target,
+        file,
+        sink,
+        extractor_id,
+        extractor_version,
+        confidence,
+    )
 }

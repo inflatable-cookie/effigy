@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g07
-Updated: 2026-05-18
+Updated: 2026-05-20
 
 ## Generation history
 
@@ -50,7 +50,7 @@ Updated: 2026-05-18
   deduplication, typed contract-shape reuse, compatibility-branch deletion,
   and runner-private domain-logic reduction.
 
-`g07` is now the current active generation.
+`g07` is the current most recently completed generation.
 
 - `g07.001` opens the native code graph intelligence suite.
 - `g07.002` through `g07.012` cover graph storage/contracts,
@@ -77,11 +77,20 @@ Updated: 2026-05-18
 - `g07.050` through `g07.055` open the init setup-wizard lane so `effigy init`
   can expose one shared setup-job surface through TTY prompts, checklist JSON,
   and non-interactive action execution.
+- `g07.056` through `g07.063` completed the bounded residual cleanup pass:
+  codegraph emitter deduplication, query/manifest decomposition, init-module
+  boundary cleanup, JSON/help convention cleanup, runner/test fixture cleanup,
+  crate-boundary rejustification, and closeout proof.
+- `g07.064` through `g07.071` completed the bounded
+  residual-maintainability follow-up tranche: warning-only god-file reduction,
+  stubborn duplicate-block follow-through, graph-test decomposition,
+  script-command boundary reduction, runner-private helper convergence, and
+  closeout proof.
 - The suite explicitly excludes MCP, a graph daemon, external language plugins,
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
 
-No active ready card remains.
+No active ready card remains. No successor generation is open yet.
 
 ## Research Roadmaps
 

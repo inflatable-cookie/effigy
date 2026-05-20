@@ -1,6 +1,6 @@
 # g07.062 - Crate Boundary Rejustification And Planning Hygiene
 
-Status: Planned
+Status: Complete
 Depends on: `g07.061`
 
 ## Goal
@@ -51,4 +51,4 @@ archived in the next cleanup batch.
 
 ## Next Task
 
-After this lands, proceed to [`063-codebase-leanness-closeout.md`](./063-codebase-leanness-closeout.md).
+No active ready card.

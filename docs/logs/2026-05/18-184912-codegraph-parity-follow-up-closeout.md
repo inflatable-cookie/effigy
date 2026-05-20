@@ -35,7 +35,7 @@ Fresh warm-index status after reindex:
 | deploy provider export | `src/runner/deploy_command/provider_package.rs` | `src/runner/deploy_command/provider_package.rs` | `3.96s` | exact owner |
 | graph watch implementation | `crates/effigy-codegraph/src/watch.rs` | `crates/effigy-codegraph/src/watch.rs` | `3.37s` | exact owner |
 | release orchestration | `crates/effigy-release/src/lib.rs` | `crates/effigy-release/src/lib.rs` | `3.62s` | exact owner |
-| graph status stale detection | `crates/effigy-codegraph/src/index.rs` | `crates/effigy-codegraph/src/query.rs` | `6.43s` | acceptable alternate |
+| graph status stale detection | `crates/effigy-codegraph/src/index.rs` | `crates/effigy-codegraph/src/query/mod.rs` | `6.43s` | acceptable alternate |
 | task route parsing | `src/runner/execute/routing.rs` | `src/runner/execute/routing.rs` | `6.71s` | exact owner |
 | bundle source git | `crates/effigy-manifest/src/bundles/source.rs` | `crates/effigy-manifest/src/bundles/source.rs` | `7.25s` | exact owner |
 | graph agent docs | `docs/guides/076-code-graph-and-agent-workflows.md` | `docs/guides/076-code-graph-and-agent-workflows.md` | `4.17s` | exact owner |

@@ -1,6 +1,6 @@
 # g07.056 - Codebase Leanness And Boundary Hardening Suite
 
-Status: Planned
+Status: Complete
 Depends on: `g07.055`
 
 ## Goal
@@ -90,4 +90,4 @@ This suite turns those findings into sequential, reviewable work.
 
 ## Next Task
 
-Start [`1007-deduplicate-codegraph-language-emitters.md`](./batch-cards/1007-deduplicate-codegraph-language-emitters.md).
+No active ready card.

@@ -639,6 +639,7 @@ mod tests {
     use crate::runner::container_command::support::{
         annotate_left_running_shared_services, annotate_shared_service_notes,
     };
+    use crate::runner::container_command::test_support::temp_repo;
     use effigy_containers::{
         down_report, up_detached_report, EffectiveComposeSource, EffectiveContainerPolicy,
         SharedServiceBinding,
@@ -655,18 +656,6 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
-
-    fn temp_repo(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "effigy-container-eject-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&root).expect("mkdir");
-        root
-    }
 
     fn test_policy(shared_services: Vec<SharedServiceBinding>) -> EffectiveContainerPolicy {
         EffectiveContainerPolicy {
@@ -826,7 +815,7 @@ mod tests {
 
     #[test]
     fn run_container_eject_promotes_generated_compose() {
-        let root = temp_repo("generated");
+        let root = temp_repo("container-eject", "generated");
         fs::write(
             root.join("effigy.toml"),
             r#"
@@ -947,7 +936,7 @@ services:
 
     #[test]
     fn run_container_reset_rejects_keep_data_with_wipe_data() {
-        let root = temp_repo("reset-conflicting-data-flags");
+        let root = temp_repo("container-eject", "reset-conflicting-data-flags");
         fs::write(
             root.join("effigy.toml"),
             r#"

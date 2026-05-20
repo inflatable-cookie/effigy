@@ -28,7 +28,7 @@ Historical command-reference rule:
 
 Active strict lane:
 
-- [`094-codebase-leanness-and-boundary-hardening-strict-lane.md`](./094-codebase-leanness-and-boundary-hardening-strict-lane.md)
+- none
 
 Queued strict lanes:
 
@@ -38,27 +38,12 @@ Archived strict lanes:
 
 - completed or paused historical strict lanes live in
   [`archive/`](./archive/)
-- completed lane `084` should move to `archive/` in the next planning cleanup
-  batch
-- completed lane `085` should move to `archive/` in the next planning cleanup
-  batch
-- completed lane `086` should move to `archive/` in the next planning cleanup
-  batch
-- completed lane `087` should move to `archive/` in the next planning cleanup
-  batch
-- completed lane `088` should move to `archive/` in the next planning cleanup
-  batch
-- completed lane `089` should move to `archive/` in the next planning cleanup
-  batch
-- completed lane `090` should move to `archive/` in the next planning cleanup
-  batch
-- paused lane `091` should move to `archive/` in the next planning cleanup
-  batch
-- paused lane `092` should move to `archive/` in the next planning cleanup
-  batch
-- completed lane `093` should move to `archive/` in the next planning cleanup
-  batch
+- `084` through `093` are now archived
+- `094` is complete and retained in the active tree until the next planning
+  cleanup sweep archives it
+- `095` is complete and retained in the active tree until the next planning
+  cleanup sweep archives it
 
 ## Next Task
 
-Start [`1007-deduplicate-codegraph-language-emitters.md`](../roadmaps/g07/batch-cards/1007-deduplicate-codegraph-language-emitters.md).
+No active ready card.

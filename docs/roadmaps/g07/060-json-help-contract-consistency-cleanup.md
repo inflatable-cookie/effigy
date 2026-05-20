@@ -1,6 +1,6 @@
 # g07.060 - JSON Help Contract Consistency Cleanup
 
-Status: Planned
+Status: Complete
 Depends on: `g07.059`
 
 ## Goal
@@ -51,4 +51,4 @@ The audit found mixed conventions:
 
 ## Next Task
 
-After this lands, proceed to [`061-runner-domain-boundary-and-test-fixture-cleanup.md`](./061-runner-domain-boundary-and-test-fixture-cleanup.md).
+No active ready card.

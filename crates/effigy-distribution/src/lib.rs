@@ -14,7 +14,7 @@ use effigy_manifest::{
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
 use regex::Regex;
-use serde_json::json;
+use serde_json::{json, Value};
 
 pub const DEFAULT_PACKAGE_NAME: &str = "effigy";
 pub const DEFAULT_REPO_URL: &str = "https://github.com/inflatable-cookie/effigy.git";
@@ -219,6 +219,17 @@ pub fn homebrew_artifact_patterns(
     patterns
 }
 
+fn schema_v1_payload(schema: &str, payload: Value) -> Value {
+    match payload {
+        Value::Object(mut map) => {
+            map.insert("schema".to_owned(), Value::String(schema.to_owned()));
+            map.insert("schema_version".to_owned(), Value::from(1));
+            Value::Object(map)
+        }
+        _ => panic!("distribution schema payloads must be JSON objects"),
+    }
+}
+
 pub fn validate_artifacts_command(
     distribution_policy: &EffectiveDistributionPolicy,
     artifacts_dir: &Path,
@@ -254,15 +265,16 @@ pub fn validate_artifacts_command(
         }
     }
 
-    let payload = json!({
-        "schema": "effigy.distribution.artifacts.v1",
-        "schema_version": 1,
-        "ok": missing.is_empty(),
-        "artifacts_dir": artifacts_dir.display().to_string(),
-        "expect_homebrew": expect_homebrew,
-        "found": found,
-        "missing": missing,
-    });
+    let payload = schema_v1_payload(
+        "effigy.distribution.artifacts.v1",
+        json!({
+            "ok": missing.is_empty(),
+            "artifacts_dir": artifacts_dir.display().to_string(),
+            "expect_homebrew": expect_homebrew,
+            "found": found,
+            "missing": missing,
+        }),
+    );
 
     if output_json {
         return if payload["ok"] == true {
@@ -406,18 +418,19 @@ pub fn generate_closeout_command(
         error,
     })?;
 
-    let payload = json!({
-        "schema": "effigy.distribution.closeout.v1",
-        "schema_version": 1,
-        "ok": true,
-        "tag": tag,
-        "artifacts_dir": artifacts_dir.display().to_string(),
-        "output": output_path.display().to_string(),
-        "owner": owner,
-        "related": distribution_policy.closeout_related,
-        "has_homebrew_logs": has_homebrew_logs,
-        "log_count": log_files.len(),
-    });
+    let payload = schema_v1_payload(
+        "effigy.distribution.closeout.v1",
+        json!({
+            "ok": true,
+            "tag": tag,
+            "artifacts_dir": artifacts_dir.display().to_string(),
+            "output": output_path.display().to_string(),
+            "owner": owner,
+            "related": distribution_policy.closeout_related,
+            "has_homebrew_logs": has_homebrew_logs,
+            "log_count": log_files.len(),
+        }),
+    );
     if output_json {
         return Ok(payload.to_string());
     }
@@ -461,22 +474,23 @@ pub fn write_summary_command(
         error,
     })?;
 
-    let payload = json!({
-        "schema": "effigy.distribution.summary.v1",
-        "schema_version": 1,
-        "ok": true,
-        "tag": tag,
-        "package_name": distribution_policy.package_name,
-        "binary_name": distribution_policy.binary_name,
-        "registry_label": distribution_policy.registry_label,
-        "crate_version": crate_version,
-        "artifacts_dir": artifacts_dir.display().to_string(),
-        "summary": summary_path.display().to_string(),
-        "repo_url": repo_url,
-        "brew_formula": brew_formula,
-        "homebrew_executed": homebrew_executed,
-        "log_files": log_files,
-    });
+    let payload = schema_v1_payload(
+        "effigy.distribution.summary.v1",
+        json!({
+            "ok": true,
+            "tag": tag,
+            "package_name": distribution_policy.package_name,
+            "binary_name": distribution_policy.binary_name,
+            "registry_label": distribution_policy.registry_label,
+            "crate_version": crate_version,
+            "artifacts_dir": artifacts_dir.display().to_string(),
+            "summary": summary_path.display().to_string(),
+            "repo_url": repo_url,
+            "brew_formula": brew_formula,
+            "homebrew_executed": homebrew_executed,
+            "log_files": log_files,
+        }),
+    );
     if output_json {
         return Ok(payload.to_string());
     }
@@ -496,62 +510,43 @@ pub fn first_publish_command(
     effigy_bin: &Path,
     output_json: bool,
 ) -> Result<String, DistributionExecutionError> {
+    let brew_available = command_exists("brew");
+    let plan = build_first_publish_plan(
+        repo_root,
+        distribution_policy,
+        tag,
+        crate_version,
+        repo_url,
+        brew_formula,
+        skip_homebrew,
+        work_dir,
+        effigy_bin,
+        brew_available,
+    );
+
     let mut step_index = 0usize;
     let mut log_files = Vec::new();
-    let mut homebrew_executed = false;
-    let homebrew_status: String;
-
-    if distribution_policy.verify_tag_install {
+    for step in plan.pre_install_steps {
+        let label = step.label.clone();
         run_logged_step(
             artifacts_dir,
             &mut step_index,
             &mut log_files,
-            "tag install validation",
-            {
-                let mut command = Command::new(effigy_bin);
-                command.args([
-                    "release",
-                    "verify-install",
-                    "--repo",
-                    &repo_root.display().to_string(),
-                    "--tag",
-                    tag,
-                    "--repo-url",
-                    repo_url,
-                ]);
-                command
-            },
+            &label,
+            step.into_command(),
         )?;
     }
 
-    let crate_install_root = work_dir.join("crates-install-root");
+    let install_label = plan.install_step.label.clone();
     run_logged_step(
         artifacts_dir,
         &mut step_index,
         &mut log_files,
-        &format!(
-            "{} install validation ({crate_version})",
-            distribution_policy.registry_label
-        ),
-        {
-            let mut command = Command::new("cargo");
-            command.args([
-                "install",
-                &distribution_policy.package_name,
-                "--version",
-                crate_version,
-                "--locked",
-                "--root",
-                &crate_install_root.display().to_string(),
-                "--force",
-            ]);
-            command
-        },
+        &install_label,
+        plan.install_step.into_command(),
     )?;
 
-    let crate_bin = crate_install_root
-        .join("bin")
-        .join(&distribution_policy.binary_name);
+    let crate_bin = plan.crate_bin.clone();
     if !crate_bin.is_file() {
         return Err(DistributionExecutionError::Message(format!(
             "expected installed binary at {}",
@@ -559,83 +554,25 @@ pub fn first_publish_command(
         )));
     }
 
-    run_logged_step(
-        artifacts_dir,
-        &mut step_index,
-        &mut log_files,
-        &format!("{} binary help", distribution_policy.registry_label),
-        {
-            let mut command = Command::new(&crate_bin);
-            command.arg("--help");
-            command
-        },
-    )?;
-    if distribution_policy.verify_binary_json_tasks {
+    for step in plan.post_install_steps {
+        let label = step.label.clone();
         run_logged_step(
             artifacts_dir,
             &mut step_index,
             &mut log_files,
-            &format!("{} binary json tasks", distribution_policy.registry_label),
-            {
-                let mut command = Command::new(&crate_bin);
-                command.args(["--json", "tasks"]);
-                command
-            },
+            &label,
+            step.into_command(),
         )?;
     }
 
-    if skip_homebrew {
-        homebrew_status = "skipped (--skip-homebrew)".to_owned();
-    } else if !command_exists("brew") {
-        homebrew_status = "skipped (brew not available)".to_owned();
-    } else {
-        homebrew_executed = true;
-        homebrew_status = "executed".to_owned();
+    for step in plan.homebrew_steps {
+        let label = step.label.clone();
         run_logged_step(
             artifacts_dir,
             &mut step_index,
             &mut log_files,
-            "homebrew install",
-            {
-                let mut command = Command::new("brew");
-                command.args(["install", brew_formula]);
-                command
-            },
-        )?;
-        run_logged_step(
-            artifacts_dir,
-            &mut step_index,
-            &mut log_files,
-            "homebrew binary help",
-            {
-                let mut command = Command::new(&distribution_policy.binary_name);
-                command.arg("--help");
-                command
-            },
-        )?;
-        if distribution_policy.verify_binary_json_tasks {
-            run_logged_step(
-                artifacts_dir,
-                &mut step_index,
-                &mut log_files,
-                "homebrew binary json tasks",
-                {
-                    let mut command = Command::new(&distribution_policy.binary_name);
-                    command.args(["--json", "tasks"]);
-                    command
-                },
-            )?;
-        }
-        run_logged_step(
-            artifacts_dir,
-            &mut step_index,
-            &mut log_files,
-            "homebrew upgrade",
-            {
-                let mut command = Command::new("brew");
-                command.args(["upgrade", "effigy"]);
-                command
-            },
+            &label,
+            step.into_command(),
         )?;
     }
 
@@ -646,31 +583,36 @@ pub fn first_publish_command(
         Some(crate_version),
         repo_url,
         brew_formula,
-        homebrew_executed,
+        plan.homebrew_executed,
         &log_files,
         false,
     )?;
-    let _ =
-        validate_artifacts_command(distribution_policy, artifacts_dir, homebrew_executed, false)?;
+    let _ = validate_artifacts_command(
+        distribution_policy,
+        artifacts_dir,
+        plan.homebrew_executed,
+        false,
+    )?;
     let summary_path = artifacts_dir.join("distribution-summary.env");
 
-    let payload = json!({
-        "schema": "effigy.distribution.first-publish.v1",
-        "schema_version": 1,
-        "ok": true,
-        "tag": tag,
-        "package_name": distribution_policy.package_name,
-        "binary_name": distribution_policy.binary_name,
-        "registry_label": distribution_policy.registry_label,
-        "crate_version": crate_version,
-        "repo_url": repo_url,
-        "brew_formula": brew_formula,
-        "homebrew_executed": homebrew_executed,
-        "homebrew_status": homebrew_status,
-        "artifacts_dir": artifacts_dir.display().to_string(),
-        "summary_path": summary_path.display().to_string(),
-        "log_files": log_files,
-    });
+    let payload = schema_v1_payload(
+        "effigy.distribution.first-publish.v1",
+        json!({
+            "ok": true,
+            "tag": tag,
+            "package_name": distribution_policy.package_name,
+            "binary_name": distribution_policy.binary_name,
+            "registry_label": distribution_policy.registry_label,
+            "crate_version": crate_version,
+            "repo_url": repo_url,
+            "brew_formula": brew_formula,
+            "homebrew_executed": plan.homebrew_executed,
+            "homebrew_status": plan.homebrew_status,
+            "artifacts_dir": artifacts_dir.display().to_string(),
+            "summary_path": summary_path.display().to_string(),
+            "log_files": log_files,
+        }),
+    );
     if output_json {
         return Ok(payload.to_string());
     }
@@ -680,6 +622,146 @@ pub fn first_publish_command(
         artifacts_dir.display(),
         summary_path.display()
     ))
+}
+
+struct PlannedCommand {
+    label: String,
+    program: String,
+    args: Vec<String>,
+}
+
+impl PlannedCommand {
+    fn new(label: impl Into<String>, program: impl Into<String>, args: Vec<String>) -> Self {
+        Self {
+            label: label.into(),
+            program: program.into(),
+            args,
+        }
+    }
+
+    fn into_command(self) -> Command {
+        let mut command = Command::new(self.program);
+        command.args(self.args);
+        command
+    }
+}
+
+struct FirstPublishPlan {
+    crate_bin: PathBuf,
+    homebrew_executed: bool,
+    homebrew_status: String,
+    pre_install_steps: Vec<PlannedCommand>,
+    install_step: PlannedCommand,
+    post_install_steps: Vec<PlannedCommand>,
+    homebrew_steps: Vec<PlannedCommand>,
+}
+
+fn build_first_publish_plan(
+    repo_root: &Path,
+    distribution_policy: &EffectiveDistributionPolicy,
+    tag: &str,
+    crate_version: &str,
+    repo_url: &str,
+    brew_formula: &str,
+    skip_homebrew: bool,
+    work_dir: &Path,
+    effigy_bin: &Path,
+    brew_available: bool,
+) -> FirstPublishPlan {
+    let mut pre_install_steps = Vec::new();
+    if distribution_policy.verify_tag_install {
+        pre_install_steps.push(PlannedCommand::new(
+            "tag install validation",
+            effigy_bin.display().to_string(),
+            vec![
+                "release".to_owned(),
+                "verify-install".to_owned(),
+                "--repo".to_owned(),
+                repo_root.display().to_string(),
+                "--tag".to_owned(),
+                tag.to_owned(),
+                "--repo-url".to_owned(),
+                repo_url.to_owned(),
+            ],
+        ));
+    }
+
+    let crate_install_root = work_dir.join("crates-install-root");
+    let install_step = PlannedCommand::new(
+        format!(
+            "{} install validation ({crate_version})",
+            distribution_policy.registry_label
+        ),
+        "cargo",
+        vec![
+            "install".to_owned(),
+            distribution_policy.package_name.clone(),
+            "--version".to_owned(),
+            crate_version.to_owned(),
+            "--locked".to_owned(),
+            "--root".to_owned(),
+            crate_install_root.display().to_string(),
+            "--force".to_owned(),
+        ],
+    );
+
+    let crate_bin = crate_install_root
+        .join("bin")
+        .join(&distribution_policy.binary_name);
+    let mut post_install_steps = vec![PlannedCommand::new(
+        format!("{} binary help", distribution_policy.registry_label),
+        crate_bin.display().to_string(),
+        vec!["--help".to_owned()],
+    )];
+    if distribution_policy.verify_binary_json_tasks {
+        post_install_steps.push(PlannedCommand::new(
+            format!("{} binary json tasks", distribution_policy.registry_label),
+            crate_bin.display().to_string(),
+            vec!["--json".to_owned(), "tasks".to_owned()],
+        ));
+    }
+
+    let (homebrew_executed, homebrew_status, homebrew_steps) = if skip_homebrew {
+        (false, "skipped (--skip-homebrew)".to_owned(), Vec::new())
+    } else if !brew_available {
+        (false, "skipped (brew not available)".to_owned(), Vec::new())
+    } else {
+        let mut homebrew_steps = vec![
+            PlannedCommand::new(
+                "homebrew install",
+                "brew",
+                vec!["install".to_owned(), brew_formula.to_owned()],
+            ),
+            PlannedCommand::new(
+                "homebrew binary help",
+                distribution_policy.binary_name.clone(),
+                vec!["--help".to_owned()],
+            ),
+        ];
+        if distribution_policy.verify_binary_json_tasks {
+            homebrew_steps.push(PlannedCommand::new(
+                "homebrew binary json tasks",
+                distribution_policy.binary_name.clone(),
+                vec!["--json".to_owned(), "tasks".to_owned()],
+            ));
+        }
+        homebrew_steps.push(PlannedCommand::new(
+            "homebrew upgrade",
+            "brew",
+            vec!["upgrade".to_owned(), "effigy".to_owned()],
+        ));
+        (true, "executed".to_owned(), homebrew_steps)
+    };
+
+    FirstPublishPlan {
+        crate_bin,
+        homebrew_executed,
+        homebrew_status,
+        pre_install_steps,
+        install_step,
+        post_install_steps,
+        homebrew_steps,
+    }
 }
 
 pub fn allocate_distribution_temp_dir(prefix: &str) -> Result<PathBuf, DistributionExecutionError> {
@@ -1030,15 +1112,16 @@ pub fn check_glibc_floor_command(
         (true, None)
     };
 
-    let payload = json!({
-        "schema": "effigy.distribution.glibc-floor.v1",
-        "schema_version": 1,
-        "ok": ok,
-        "binary": binary_path.display().to_string(),
-        "required_glibc": required_glibc,
-        "max_glibc": max_glibc,
-        "dynamic_symbols_found": required_glibc.is_some(),
-    });
+    let payload = schema_v1_payload(
+        "effigy.distribution.glibc-floor.v1",
+        json!({
+            "ok": ok,
+            "binary": binary_path.display().to_string(),
+            "required_glibc": required_glibc,
+            "max_glibc": max_glibc,
+            "dynamic_symbols_found": required_glibc.is_some(),
+        }),
+    );
     if output_json {
         return if ok {
             Ok(payload.to_string())
@@ -1213,21 +1296,22 @@ pub fn validate_metadata_command(
         }
     }
 
-    let payload = json!({
-        "schema": "effigy.distribution.metadata.v1",
-        "schema_version": 1,
-        "ok": errors.is_empty(),
-        "package": {
-            "name": name,
-            "version": version,
-            "license": license,
-            "description": description,
-        },
-        "tag": tag,
-        "required_docs": required_docs,
-        "required_files": required_files,
-        "errors": errors,
-    });
+    let payload = schema_v1_payload(
+        "effigy.distribution.metadata.v1",
+        json!({
+            "ok": errors.is_empty(),
+            "package": {
+                "name": name,
+                "version": version,
+                "license": license,
+                "description": description,
+            },
+            "tag": tag,
+            "required_docs": required_docs,
+            "required_files": required_files,
+            "errors": errors,
+        }),
+    );
 
     if output_json {
         return if payload["ok"] == true {
@@ -1300,17 +1384,18 @@ pub fn preflight_command(
         "effigy distribution first-publish --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z".to_owned()
     };
 
-    let payload = json!({
-        "schema": "effigy.distribution.preflight.v1",
-        "schema_version": 1,
-        "ok": true,
-        "tag": tag,
-        "docs_status": docs_status,
-        "metadata_status": metadata_status,
-        "smoke_status": smoke_status,
-        "output": output_path.map(|path| path.display().to_string()),
-        "next_command": next_command,
-    });
+    let payload = schema_v1_payload(
+        "effigy.distribution.preflight.v1",
+        json!({
+            "ok": true,
+            "tag": tag,
+            "docs_status": docs_status,
+            "metadata_status": metadata_status,
+            "smoke_status": smoke_status,
+            "output": output_path.map(|path| path.display().to_string()),
+            "next_command": next_command,
+        }),
+    );
     if output_json {
         return Ok(payload.to_string());
     }

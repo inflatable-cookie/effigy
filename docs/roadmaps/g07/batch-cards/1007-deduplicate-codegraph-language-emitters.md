@@ -3,7 +3,7 @@
 Roadmap: [`../057-codegraph-language-emitter-deduplication.md`](../057-codegraph-language-emitter-deduplication.md)
 Strict lane: [`../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md`](../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md)
 
-Status: Ready
+Status: Complete
 Owner: Platform
 Created: 2026-05-19
 

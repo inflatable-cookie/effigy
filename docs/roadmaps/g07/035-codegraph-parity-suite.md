@@ -1,6 +1,6 @@
 # g07.035 - CodeGraph Parity Suite
 
-Status: Active
+Status: Complete
 Depends on: `g07.001` through `g07.034`
 
 ## Goal
@@ -92,4 +92,4 @@ to broad `rg`, file reads, or manual graph stitching.
 
 ## Next Task
 
-Execute `985`.
+No active ready card.

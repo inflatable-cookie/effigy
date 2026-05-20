@@ -1,6 +1,6 @@
 # g07 Roadmaps
 
-Status: Active
+Status: Complete
 Theme: Agent-facing repo intelligence and setup front doors
 
 ## Purpose
@@ -89,6 +89,14 @@ dependency.
 - [`061-runner-domain-boundary-and-test-fixture-cleanup.md`](./061-runner-domain-boundary-and-test-fixture-cleanup.md)
 - [`062-crate-boundary-rejustification-and-planning-hygiene.md`](./062-crate-boundary-rejustification-and-planning-hygiene.md)
 - [`063-codebase-leanness-closeout.md`](./063-codebase-leanness-closeout.md)
+- [`064-residual-maintainability-hardening-suite.md`](./064-residual-maintainability-hardening-suite.md)
+- [`065-manifest-semantic-owner-split.md`](./065-manifest-semantic-owner-split.md)
+- [`066-codegraph-test-harness-decomposition.md`](./066-codegraph-test-harness-decomposition.md)
+- [`067-script-command-boundary-reduction.md`](./067-script-command-boundary-reduction.md)
+- [`068-high-duplicate-help-fragment-reduction.md`](./068-high-duplicate-help-fragment-reduction.md)
+- [`069-language-emitter-follow-through.md`](./069-language-emitter-follow-through.md)
+- [`070-runner-private-fixture-and-helper-convergence.md`](./070-runner-private-fixture-and-helper-convergence.md)
+- [`071-residual-maintainability-closeout.md`](./071-residual-maintainability-closeout.md)
 
 ## Design Posture
 
@@ -210,6 +218,8 @@ dependency.
 
 `986` is complete.
 
+`1014` through `1021` are complete.
+
 `987` is complete.
 
 `988` is complete.
@@ -242,8 +252,13 @@ No active ready card remains in the bounded CodeGraph parity follow-up lane.
 
 `g07.050` through `g07.055` are the completed init setup-wizard suite.
 
-`g07.056` through `g07.063` are the planned codebase leanness and boundary
+`g07.056` through `g07.063` are the completed codebase leanness and boundary
 hardening suite.
+
+`g07.064` through `g07.071` are the completed residual-maintainability
+follow-up suite.
+
+No active ready card remains in `g07`.
 
 `1000` is complete.
 
@@ -261,10 +276,32 @@ No active ready card remains in the init setup-wizard lane.
 
 `1006` is complete.
 
-`1007` is ready.
+`1007` is complete.
 
-`1008` through `1013` are planned.
+`1008` is complete.
+
+`1009` is complete.
+
+`1010` is complete.
+
+`1011` is complete.
+
+`1012` is complete.
+
+`1013` is complete.
+
+No active ready card remains in the codebase leanness lane.
+
+`g07` is reopened for the residual-maintainability follow-up tranche.
+
+`1014` is complete.
+
+`1015` is complete.
+
+`1016` is complete.
+
+`1017` is ready.
 
 ## Next Task
 
-Start [`1007-deduplicate-codegraph-language-emitters.md`](./batch-cards/1007-deduplicate-codegraph-language-emitters.md).
+Start [`1017-reduce-script-command-owner-sprawl.md`](./batch-cards/1017-reduce-script-command-owner-sprawl.md).

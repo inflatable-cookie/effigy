@@ -1,6 +1,6 @@
 # g07.058 - Codegraph Manifest Query Module Decomposition
 
-Status: Planned
+Status: Complete
 Depends on: `g07.057`
 
 ## Goal
@@ -12,11 +12,11 @@ readable as query quality and language coverage grow.
 
 The audit reported god-file findings for:
 
-- `crates/effigy-codegraph/src/language/manifest.rs`
-- `crates/effigy-codegraph/src/query.rs`
+- `crates/effigy-codegraph/src/language/manifest/mod.rs`
+- `crates/effigy-codegraph/src/query/mod.rs`
 - `crates/effigy-codegraph/src/tests.rs`
 
-`manifest.rs` and `query.rs` are the primary production risks.
+`manifest/mod.rs` and `query/mod.rs` are the primary production risks.
 
 ## Scope
 
@@ -50,7 +50,7 @@ The audit reported god-file findings for:
 
 ## Acceptance Criteria
 
-- `manifest.rs` and `query.rs` are no longer god-file scan findings, or any
+- `manifest/mod.rs` and `query/mod.rs` are no longer god-file scan findings, or any
   remaining finding is explicitly justified
 - all graph query and extractor tests pass
 - no graph CLI JSON contract changes are introduced accidentally
@@ -58,4 +58,4 @@ The audit reported god-file findings for:
 
 ## Next Task
 
-After this lands, proceed to [`059-init-setup-module-boundary-cleanup.md`](./059-init-setup-module-boundary-cleanup.md).
+No active ready card.

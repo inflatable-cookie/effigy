@@ -22,6 +22,9 @@ mod request;
 mod scaffold;
 #[path = "init/wizard.rs"]
 mod wizard;
+#[cfg(test)]
+#[path = "init/wizard_test_support.rs"]
+mod wizard_test_support;
 
 pub(super) fn run_builtin_init(
     ports: &dyn BuiltinRuntimePorts,

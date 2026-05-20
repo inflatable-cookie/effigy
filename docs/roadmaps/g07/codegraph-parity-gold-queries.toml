@@ -57,7 +57,7 @@ surface = "explore"
 query = "find graph status stale detection"
 expected_primary = "crates/effigy-codegraph/src/index.rs"
 acceptable_primary = [
-  "crates/effigy-codegraph/src/query.rs",
+  "crates/effigy-codegraph/src/query/mod.rs",
   "crates/effigy-codegraph/src/json.rs",
   "src/runner/graph_command.rs",
 ]

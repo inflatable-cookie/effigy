@@ -3,7 +3,7 @@
 Roadmap: [`../058-codegraph-manifest-query-module-decomposition.md`](../058-codegraph-manifest-query-module-decomposition.md)
 Strict lane: [`../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md`](../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md)
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-05-19
 

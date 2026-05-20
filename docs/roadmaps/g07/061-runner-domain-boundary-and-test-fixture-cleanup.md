@@ -1,6 +1,6 @@
 # g07.061 - Runner Domain Boundary And Test Fixture Cleanup
 
-Status: Planned
+Status: Complete
 Depends on: `g07.060`
 
 ## Goal
@@ -53,4 +53,4 @@ release tests.
 
 ## Next Task
 
-After this lands, proceed to [`062-crate-boundary-rejustification-and-planning-hygiene.md`](./062-crate-boundary-rejustification-and-planning-hygiene.md).
+No active ready card.

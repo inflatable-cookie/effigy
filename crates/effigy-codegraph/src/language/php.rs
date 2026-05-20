@@ -7,9 +7,9 @@ use crate::error::CodeGraphError;
 use crate::extractor::{
     capability_set, extractor_id, file_graph_id, GraphSink, LanguageIndexer, SourceFile,
 };
+use crate::language::emit;
 use crate::model::{
-    Confidence, DiagnosticRecord, DiagnosticSeverity, EdgeRecord, ExtractorCapability,
-    ExtractorRecord, FileRecord, ReferenceRecord, SymbolRecord,
+    Confidence, EdgeRecord, ExtractorCapability, ExtractorRecord, FileRecord, SymbolRecord,
 };
 use crate::support::{id_fragment, normalize_rel_path, provenance_for_file, span_from_bytes};
 use crate::{ExtractorId, GraphId};
@@ -146,7 +146,7 @@ fn walk_php(
                         Some("namespace"),
                     ),
                 });
-                contains_edge(
+                emit::push_contains_edge(
                     &owner_id,
                     &namespace_id,
                     node,
@@ -190,27 +190,19 @@ fn walk_php(
                     _ => "trait",
                 };
                 let canonical = scoped_name(state.namespace.as_deref(), &name);
-                let symbol = symbol_record(
+                let symbol_id = emit::declare_owned_symbol(
+                    "php",
                     &canonical,
                     kind,
                     &name,
+                    &effective_owner_id(state, &owner_id),
                     node,
                     file,
                     file_record,
-                    extractor_id,
-                    extractor_version,
-                )?;
-                let symbol_id = symbol.id.clone();
-                contains_edge(
-                    &effective_owner_id(state, &owner_id),
-                    &symbol_id,
-                    node,
-                    file,
                     sink,
                     extractor_id,
                     extractor_version,
                 )?;
-                sink.push_symbol(symbol);
                 state.scope.push(name);
                 walk_children(
                     node,
@@ -238,27 +230,19 @@ fn walk_php(
                 } else {
                     scoped_name(state.namespace.as_deref(), &name)
                 };
-                let symbol = symbol_record(
+                let symbol_id = emit::declare_owned_symbol(
+                    "php",
                     &canonical,
                     kind,
                     &name,
+                    &effective_owner_id(state, &owner_id),
                     node,
                     file,
                     file_record,
-                    extractor_id,
-                    extractor_version,
-                )?;
-                let symbol_id = symbol.id.clone();
-                contains_edge(
-                    &effective_owner_id(state, &owner_id),
-                    &symbol_id,
-                    node,
-                    file,
                     sink,
                     extractor_id,
                     extractor_version,
                 )?;
-                sink.push_symbol(symbol);
                 walk_children(
                     node,
                     file,
@@ -395,27 +379,19 @@ fn index_constants(
             continue;
         };
         let canonical = scoped_member_name(state.namespace.as_deref(), &state.scope, &name);
-        let symbol = symbol_record(
+        emit::declare_owned_symbol(
+            "php",
             &canonical,
             "constant",
             &name,
+            owner_id,
             child,
             file,
             file_record,
-            extractor_id,
-            extractor_version,
-        )?;
-        let symbol_id = symbol.id.clone();
-        contains_edge(
-            owner_id,
-            &symbol_id,
-            child,
-            file,
             sink,
             extractor_id,
             extractor_version,
         )?;
-        sink.push_symbol(symbol);
     }
     Ok(())
 }
@@ -538,25 +514,18 @@ fn index_call_reference(
     if !state.call_refs.insert(key) {
         return Ok(());
     }
-    sink.push_reference(ReferenceRecord {
-        id: GraphId::new(format!(
-            "ref:php:{}:{}",
-            file.relative_path,
-            node.start_byte()
-        ))?,
-        file_id: file_record.id.clone(),
-        kind: "call-site".to_owned(),
-        target_id: None,
-        unresolved_target: Some(target.clone()),
-        span: span_from_bytes(&file.content, node.start_byte(), node.end_byte()),
-        provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
-            Confidence::Heuristic,
-            Some("call-site"),
-        ),
-    });
+    emit::push_reference_record(
+        format!("ref:php:{}:{}", file.relative_path, node.start_byte()),
+        "call-site",
+        &target,
+        node,
+        file,
+        file_record,
+        sink,
+        extractor_id,
+        extractor_version,
+        Confidence::Heuristic,
+    )?;
     unresolved_edge(
         owner_id,
         "call",
@@ -579,90 +548,18 @@ fn push_parse_diagnostic(
     extractor_version: &str,
     state: &mut PhpWalkState,
 ) -> Result<(), CodeGraphError> {
-    if !state.diagnostics.insert(node.start_byte()) {
-        return Ok(());
-    }
-    sink.push_diagnostic(DiagnosticRecord {
-        id: GraphId::new(format!(
-            "diag:php-parse:{}:{}",
-            file.relative_path,
-            node.start_byte()
-        ))?,
-        severity: DiagnosticSeverity::Warning,
-        message: format!("php parse error near `{}`", text(node, &file.content)),
-        file_id: Some(file_record.id.clone()),
-        span: Some(span_from_bytes(
-            &file.content,
-            node.start_byte(),
-            node.end_byte(),
-        )),
-        provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
-            Confidence::Exact,
-            Some("parse-error"),
-        ),
-    });
-    Ok(())
-}
-
-fn symbol_record(
-    canonical: &str,
-    kind: &str,
-    display_name: &str,
-    node: Node<'_>,
-    file: &SourceFile,
-    file_record: &FileRecord,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
-) -> Result<SymbolRecord, CodeGraphError> {
-    Ok(SymbolRecord {
-        id: GraphId::new(format!("symbol:php:{}", id_fragment(canonical)))?,
-        kind: kind.to_owned(),
-        display_name: display_name.to_owned(),
-        canonical_name: canonical.to_owned(),
-        file_id: file_record.id.clone(),
-        span: span_from_bytes(&file.content, node.start_byte(), node.end_byte()),
-        provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
-            Confidence::Exact,
-            Some(kind),
-        ),
-    })
-}
-
-fn contains_edge(
-    owner_id: &GraphId,
-    child_id: &GraphId,
-    node: Node<'_>,
-    file: &SourceFile,
-    sink: &mut GraphSink,
-    extractor_id: &ExtractorId,
-    extractor_version: &str,
-) -> Result<(), CodeGraphError> {
-    sink.push_edge(EdgeRecord {
-        id: GraphId::new(format!(
-            "edge:contains:{}:{}:{}",
-            owner_id,
-            child_id,
-            node.start_byte()
-        ))?,
-        kind: "contains".to_owned(),
-        from_id: owner_id.clone(),
-        to_id: Some(child_id.clone()),
-        unresolved_target: None,
-        provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
-            Confidence::Exact,
-            Some("containment"),
-        ),
-    });
-    Ok(())
+    emit::push_parse_diagnostic_once(
+        &mut state.diagnostics,
+        "php",
+        "php",
+        text(node, &file.content),
+        node,
+        file,
+        file_record,
+        sink,
+        extractor_id,
+        extractor_version,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -677,22 +574,17 @@ fn unresolved_edge(
     extractor_version: &str,
     confidence: Confidence,
 ) -> Result<(), CodeGraphError> {
-    let target = target.into();
-    sink.push_edge(EdgeRecord {
-        id: GraphId::new(format!("edge:{kind}:{owner_id}:{}", node.start_byte()))?,
-        kind: kind.to_owned(),
-        from_id: owner_id.clone(),
-        to_id: None,
-        unresolved_target: Some(target),
-        provenance: provenance_for_file(
-            extractor_id,
-            extractor_version,
-            file,
-            confidence,
-            Some(kind),
-        ),
-    });
-    Ok(())
+    emit::push_unresolved_edge(
+        format!("edge:{kind}:{owner_id}:{}", node.start_byte()),
+        owner_id,
+        kind,
+        target,
+        file,
+        sink,
+        extractor_id,
+        extractor_version,
+        confidence,
+    )
 }
 
 fn php_file_kind(file: &SourceFile) -> &'static str {

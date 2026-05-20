@@ -76,6 +76,15 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/20-091500-residual-maintainability-closeout.md`](./2026-05/20-091500-residual-maintainability-closeout.md)
+- [`2026-05/20-083900-runner-private-helper-convergence.md`](./2026-05/20-083900-runner-private-helper-convergence.md)
+- [`2026-05/20-083200-language-emitter-duplicate-follow-through.md`](./2026-05/20-083200-language-emitter-duplicate-follow-through.md)
+- [`2026-05/20-081614-help-topic-duplicate-reduction.md`](./2026-05/20-081614-help-topic-duplicate-reduction.md)
+- [`2026-05/20-081054-script-command-owner-sprawl.md`](./2026-05/20-081054-script-command-owner-sprawl.md)
+- [`2026-05/19-235722-codegraph-test-harness-decomposition.md`](./2026-05/19-235722-codegraph-test-harness-decomposition.md)
+- [`2026-05/19-230843-manifest-semantic-owner-split.md`](./2026-05/19-230843-manifest-semantic-owner-split.md)
+- [`2026-05/19-225904-residual-maintainability-lane-opened.md`](./2026-05/19-225904-residual-maintainability-lane-opened.md)
+- [`2026-05/19-195111-codebase-leanness-closeout.md`](./2026-05/19-195111-codebase-leanness-closeout.md)
 - [`2026-05/18-184912-codegraph-parity-follow-up-closeout.md`](./2026-05/18-184912-codegraph-parity-follow-up-closeout.md)
 - [`2026-05/18-183615-fixture-backed-parity-proof.md`](./2026-05/18-183615-fixture-backed-parity-proof.md)
 - [`2026-05/18-182146-warm-query-latency-and-release-ranking.md`](./2026-05/18-182146-warm-query-latency-and-release-ranking.md)

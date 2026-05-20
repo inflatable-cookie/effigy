@@ -1,6 +1,6 @@
 # g07.063 - Codebase Leanness Closeout
 
-Status: Planned
+Status: Complete
 Depends on: `g07.062`
 
 ## Goal
@@ -34,4 +34,4 @@ debt list.
 
 ## Next Task
 
-No active ready card until the closeout card finishes.
+No active ready card.

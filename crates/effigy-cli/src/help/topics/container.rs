@@ -1,5 +1,7 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::{render_standard_topic_help_spec, CommonOption, StandardTopicHelpSpec};
+use super::shared::{
+    option_rows, render_standard_topic_help_spec, text_lines, CommonOption, StandardTopicHelpSpec,
+};
 
 pub(crate) fn render_container_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> HelpResult<()> {
     render_standard_topic_help_spec(renderer, &CONTAINER_HELP)
@@ -7,7 +9,7 @@ pub(crate) fn render_container_help<R: HelpRenderer + ?Sized>(renderer: &mut R) 
 
 const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "container",
-    notices: &[
+    notices: text_lines![
         "Operate one manifest-defined local container environment by name or through the manifest default alias.",
         "V1 stays explicit: host-facing ports and repo-relative mounts are declared in `[containers.*.host]`, and attached sessions shut the environment down on owner exit by default.",
         "Generated compose also supports bounded `shared = true` backing services for standalone shared databases and caches on the product-owned path.",
@@ -16,7 +18,7 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`container cache list` inventories purge-safe isolated build caches like Rust `target` and package-manager `node_modules` volumes without touching persistent app data, and `cache prune` removes only those disposable volumes.",
         "`container volume list` now follows normal repo scope by default; add `--global` for cross-runtime inventory, use `--dormant` for repo-scoped superseded volumes, and use `--orphans` only with `--global` for true ownerless volumes.",
     ],
-    usage: &[
+    usage: text_lines![
         "effigy container up [--repo <PATH>] [--attach|--detach] [--json]",
         "effigy container <NAME> up [--repo <PATH>] [--attach|--detach] [--json]",
         "effigy container down [--repo <PATH>] [--json]",
@@ -51,77 +53,29 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy --json container up [--repo <PATH>]",
     ],
     leading_common_options: &[CommonOption::Repo],
-    options: &[
-            (
-                "--attach",
-                "Force attached owner-session behavior for `up` even if the manifest defaults to detached startup",
-            ),
-            (
-                "--detach",
-                "Force non-attached bring-up for `up` and exit once the environment reaches ready state",
-            ),
-            (
-                "--service <NAME>",
-                "Select one explicit service for `logs` or `shell` instead of the manifest `primary_service`",
-            ),
-            (
-                "--global",
-                "For `down`, `status`, or `stats`, discover running Effigy-managed environments across repos. For `cache list`, inspect the Effigy Colima profile's named-volume inventory, including stopped projects. For `volume list`, inspect Effigy-managed named volumes across available runtimes.",
-            ),
-            (
-                "--orphans",
-                "For `volume list --global`, show only ownerless volumes whose repo is gone or no longer declares them.",
-            ),
-            (
-                "--dormant",
-                "For repo-scoped `volume list`, show only superseded volumes the current repo no longer declares or mounts.",
-            ),
-            (
-                "--yes",
-                "Confirm destructive data, cache, or volume cleanup operations without an interactive prompt",
-            ),
-            (
-                "--project <NAME>",
-                "Restrict global cache inventory or cleanup to one inferred project name such as `acowtancy-dev`; implies profile-wide mode even without `--global`",
-            ),
-            (
-                "--kind <KIND>",
-                "Restrict global cache inventory or cleanup to one cache kind such as `rust-target`, `node-modules`, `pnpm-store`, `cargo-registry`, or `cargo-git`; implies profile-wide mode even without `--global`",
-            ),
-            (
-                "--command <CMD>",
-                "Run one shell command string inside the selected service via `sh -lc`",
-            ),
-            (
-                "--follow",
-                "Keep streaming container logs instead of returning one bounded snapshot",
-            ),
-            (
-                "--keep-data",
-                "For `reset`, preserve generated-compose persistent named volumes and remove only ephemeral ones",
-            ),
-            (
-                "--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>",
-                "Compatibility alias for positional `data dump` specs. A bare target writes `./<target>.sql`. Explicit `oci://` destinations stage a local dump and report artifact metadata.",
-            ),
-            (
-                "--push",
-                "For explicit `oci://` dump destinations, publish the captured artifact after the local dump is staged. Local-only dumps reject `--push`.",
-            ),
-            (
-                "--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>",
-                "Stage one SQL dump or explicit `oci://` artifact for `data seed`; single-database bundles can omit the target, multi-database bundles must name one, and a bare target reads `./<target>.sql`. `data seed` currently targets the repo default container only.",
-            ),
-            (
-                "--no-prompt",
-                "Suppress interactive DB-seed collection for `data seed` and bootstrap flows that would otherwise prompt on a real TTY",
-            ),
+    options: option_rows![
+        "--attach" => "Force attached owner-session behavior for `up` even if the manifest defaults to detached startup",
+        "--detach" => "Force non-attached bring-up for `up` and exit once the environment reaches ready state",
+        "--service <NAME>" => "Select one explicit service for `logs` or `shell` instead of the manifest `primary_service`",
+        "--global" => "For `down`, `status`, or `stats`, discover running Effigy-managed environments across repos. For `cache list`, inspect the Effigy Colima profile's named-volume inventory, including stopped projects. For `volume list`, inspect Effigy-managed named volumes across available runtimes.",
+        "--orphans" => "For `volume list --global`, show only ownerless volumes whose repo is gone or no longer declares them.",
+        "--dormant" => "For repo-scoped `volume list`, show only superseded volumes the current repo no longer declares or mounts.",
+        "--yes" => "Confirm destructive data, cache, or volume cleanup operations without an interactive prompt",
+        "--project <NAME>" => "Restrict global cache inventory or cleanup to one inferred project name such as `acowtancy-dev`; implies profile-wide mode even without `--global`",
+        "--kind <KIND>" => "Restrict global cache inventory or cleanup to one cache kind such as `rust-target`, `node-modules`, `pnpm-store`, `cargo-registry`, or `cargo-git`; implies profile-wide mode even without `--global`",
+        "--command <CMD>" => "Run one shell command string inside the selected service via `sh -lc`",
+        "--follow" => "Keep streaming container logs instead of returning one bounded snapshot",
+        "--keep-data" => "For `reset`, preserve generated-compose persistent named volumes and remove only ephemeral ones",
+        "--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>" => "Compatibility alias for positional `data dump` specs. A bare target writes `./<target>.sql`. Explicit `oci://` destinations stage a local dump and report artifact metadata.",
+        "--push" => "For explicit `oci://` dump destinations, publish the captured artifact after the local dump is staged. Local-only dumps reject `--push`.",
+        "--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>" => "Stage one SQL dump or explicit `oci://` artifact for `data seed`; single-database bundles can omit the target, multi-database bundles must name one, and a bare target reads `./<target>.sql`. `data seed` currently targets the repo default container only.",
+        "--no-prompt" => "Suppress interactive DB-seed collection for `data seed` and bootstrap flows that would otherwise prompt on a real TTY",
     ],
     trailing_common_options: &[
         CommonOption::Json("Render machine-readable container payloads"),
         CommonOption::Help,
     ],
-    examples: &[
+    examples: text_lines![
         "effigy container up",
         "effigy container web up --detach",
         "effigy container web status",

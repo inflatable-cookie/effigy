@@ -3,7 +3,7 @@
 Roadmap: [`../061-runner-domain-boundary-and-test-fixture-cleanup.md`](../061-runner-domain-boundary-and-test-fixture-cleanup.md)
 Strict lane: [`../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md`](../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md)
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-05-19
 

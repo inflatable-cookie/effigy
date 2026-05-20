@@ -3,7 +3,7 @@
 Roadmap: [`../059-init-setup-module-boundary-cleanup.md`](../059-init-setup-module-boundary-cleanup.md)
 Strict lane: [`../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md`](../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md)
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-05-19
 

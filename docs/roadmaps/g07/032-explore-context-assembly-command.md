@@ -22,7 +22,7 @@ surface.
 
 ## Implementation Notes
 
-- start in `crates/effigy-codegraph/src/query.rs` for query-level assembly
+- start in `crates/effigy-codegraph/src/query/mod.rs` for query-level assembly
 - keep CLI parsing in `crates/effigy-cli/src/command_parsing_graph.rs`
 - route command execution through the existing graph command owner under `src/`
 - keep JSON helpers near existing graph JSON projection code

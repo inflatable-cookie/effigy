@@ -3,7 +3,7 @@
 Roadmap: [`../063-codebase-leanness-closeout.md`](../063-codebase-leanness-closeout.md)
 Strict lane: [`../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md`](../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md)
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-05-19
 
@@ -31,6 +31,10 @@ Close the cleanup lane with proof, remaining debt, and no stale active card.
 - closeout evidence is recorded
 - remaining debt is explicit
 - no active ready card remains
+
+## Evidence
+
+- [`../../../logs/2026-05/19-195111-codebase-leanness-closeout.md`](../../../logs/2026-05/19-195111-codebase-leanness-closeout.md)
 
 ## Next Task
 

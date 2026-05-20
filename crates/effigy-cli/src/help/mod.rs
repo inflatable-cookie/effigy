@@ -63,3 +63,121 @@ pub(crate) fn general_help_command_rows(
 ) -> impl Iterator<Item = (&'static str, &'static str, Option<&'static str>)> {
     registry::general_help_command_rows()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{render_help, HelpRenderer, HelpResult, KeyValue, NoticeLevel, TableSpec};
+    use crate::HelpTopic;
+
+    #[derive(Default)]
+    struct RecordingRenderer {
+        sections: Vec<String>,
+        tables: Vec<TableSpec>,
+    }
+
+    impl HelpRenderer for RecordingRenderer {
+        fn text(&mut self, _body: &str) -> HelpResult<()> {
+            Ok(())
+        }
+
+        fn section(&mut self, title: &str) -> HelpResult<()> {
+            self.sections.push(title.to_owned());
+            Ok(())
+        }
+
+        fn notice(&mut self, _level: NoticeLevel, _body: &str) -> HelpResult<()> {
+            Ok(())
+        }
+
+        fn bullet_list(&mut self, _title: &str, _items: &[String]) -> HelpResult<()> {
+            Ok(())
+        }
+
+        fn table(&mut self, spec: &TableSpec) -> HelpResult<()> {
+            self.tables.push(spec.clone());
+            Ok(())
+        }
+
+        fn key_values(&mut self, _items: &[KeyValue]) -> HelpResult<()> {
+            Ok(())
+        }
+    }
+
+    fn option_rows(topic: HelpTopic) -> Vec<Vec<String>> {
+        let mut renderer = RecordingRenderer::default();
+        render_help(&mut renderer, topic).expect("render help");
+        renderer
+            .tables
+            .into_iter()
+            .next()
+            .expect("options table")
+            .rows
+    }
+
+    #[test]
+    fn bundle_help_keeps_common_option_rows() {
+        let rows = option_rows(HelpTopic::Bundle);
+        assert!(rows.iter().any(|row| row
+            == &[
+                "--repo <PATH>".to_owned(),
+                "Override target repository path".to_owned()
+            ]));
+        assert!(rows.iter().any(|row| row
+            == &[
+                "--json".to_owned(),
+                "Render machine-readable bundle payloads".to_owned()
+            ]));
+        assert!(rows
+            .iter()
+            .any(|row| row == &["-h, --help".to_owned(), "Print command help".to_owned()]));
+    }
+
+    #[test]
+    fn tasks_help_keeps_status_and_common_option_rows() {
+        let rows = option_rows(HelpTopic::Tasks);
+        assert!(rows.iter().any(|row| row
+            == &[
+                "status --all".to_owned(),
+                "Show repo-plus-descendant task status inventory, including unknown and stale rows"
+                    .to_owned()
+            ]));
+        assert!(rows.iter().any(|row| row
+            == &[
+                "--json".to_owned(),
+                "Render machine-readable task catalog payload".to_owned()
+            ]));
+        assert!(rows
+            .iter()
+            .any(|row| row == &["-h, --help".to_owned(), "Print command help".to_owned()]));
+    }
+
+    #[test]
+    fn demo_help_keeps_repo_and_json_rows() {
+        let rows = option_rows(HelpTopic::Demo);
+        assert!(rows.iter().any(|row| row
+            == &[
+                "--repo <PATH>".to_owned(),
+                "Override target repository path".to_owned()
+            ]));
+        assert!(rows.iter().any(|row| row
+            == &[
+                "--json".to_owned(),
+                "Render machine-readable demo discovery, inspection, or run payloads".to_owned()
+            ]));
+    }
+
+    #[test]
+    fn release_help_keeps_plan_and_gate_rows() {
+        let rows = option_rows(HelpTopic::Release);
+        assert!(rows.iter().any(|row| row
+            == &[
+                "--plan".to_owned(),
+                "Preview release preparation or execution checks without prompting or irreversible actions".to_owned()
+            ]));
+        assert!(rows.iter().any(|row| row
+            == &[
+                "--check-gates".to_owned(),
+                "Run configured release gate commands before reporting readiness (interactive prepare auto-checks configured gates by default)".to_owned()
+            ]));
+    }
+}

@@ -1,6 +1,6 @@
 # g07.002 - Graph Storage And JSON Contracts
 
-Status: Planned
+Status: Complete
 Depends on: `g07.001`
 
 ## Goal
@@ -90,4 +90,4 @@ Every graph fact should include:
 
 ## Next Task
 
-Plan and implement `g07.003`.
+No active ready card.

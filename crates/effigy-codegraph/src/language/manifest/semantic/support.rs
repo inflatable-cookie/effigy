@@ -1,0 +1,399 @@
+use effigy_manifest::{ManifestManagedRun, ManifestManagedRunStep, ManifestManagedRunStepTable};
+use toml::Value;
+
+use crate::error::CodeGraphError;
+use crate::extractor::{GraphSink, SourceFile};
+use crate::model::{Confidence, EdgeRecord, FileRecord, SymbolRecord};
+use crate::support::{full_span, id_fragment, provenance_for_file};
+use crate::{ExtractorId, GraphId};
+
+pub(super) fn push_symbol(
+    sink: &mut GraphSink,
+    id: GraphId,
+    kind: &str,
+    display_name: &str,
+    canonical_name: &str,
+    file: &SourceFile,
+    file_record: &FileRecord,
+    extractor_id: &ExtractorId,
+    extractor_version: &str,
+    detail: &str,
+) {
+    sink.push_symbol(SymbolRecord {
+        id,
+        kind: kind.to_owned(),
+        display_name: display_name.to_owned(),
+        canonical_name: canonical_name.to_owned(),
+        file_id: file_record.id.clone(),
+        span: full_span(&file.content),
+        provenance: provenance_for_file(
+            extractor_id,
+            extractor_version,
+            file,
+            Confidence::Exact,
+            Some(detail),
+        ),
+    });
+}
+
+pub(super) fn push_contains_edge(
+    sink: &mut GraphSink,
+    from_id: &GraphId,
+    to_id: &GraphId,
+    label: &str,
+    file: &SourceFile,
+    extractor_id: &ExtractorId,
+    extractor_version: &str,
+) -> Result<(), CodeGraphError> {
+    push_resolved_edge(
+        sink,
+        from_id,
+        "contains",
+        to_id,
+        label,
+        file,
+        extractor_id,
+        extractor_version,
+        Confidence::Exact,
+    )
+}
+
+pub(super) fn push_resolved_edge(
+    sink: &mut GraphSink,
+    from_id: &GraphId,
+    kind: &str,
+    to_id: &GraphId,
+    label: &str,
+    file: &SourceFile,
+    extractor_id: &ExtractorId,
+    extractor_version: &str,
+    confidence: Confidence,
+) -> Result<(), CodeGraphError> {
+    sink.push_edge(EdgeRecord {
+        id: GraphId::new(format!("edge:{kind}:{}:{}", from_id, id_fragment(label)))?,
+        kind: kind.to_owned(),
+        from_id: from_id.clone(),
+        to_id: Some(to_id.clone()),
+        unresolved_target: None,
+        provenance: provenance_for_file(
+            extractor_id,
+            extractor_version,
+            file,
+            confidence,
+            Some(kind),
+        ),
+    });
+    Ok(())
+}
+
+pub(super) fn push_unresolved_edge(
+    sink: &mut GraphSink,
+    from_id: &GraphId,
+    kind: &str,
+    unresolved_target: &str,
+    label: &str,
+    file: &SourceFile,
+    extractor_id: &ExtractorId,
+    extractor_version: &str,
+    confidence: Confidence,
+) -> Result<(), CodeGraphError> {
+    if unresolved_target.trim().is_empty() {
+        return Ok(());
+    }
+    sink.push_edge(EdgeRecord {
+        id: GraphId::new(format!("edge:{kind}:{}:{}", from_id, id_fragment(label)))?,
+        kind: kind.to_owned(),
+        from_id: from_id.clone(),
+        to_id: None,
+        unresolved_target: Some(unresolved_target.to_owned()),
+        provenance: provenance_for_file(
+            extractor_id,
+            extractor_version,
+            file,
+            confidence,
+            Some(kind),
+        ),
+    });
+    Ok(())
+}
+
+pub(super) fn manifest_section_id(
+    file: &SourceFile,
+    section: &str,
+) -> Result<GraphId, CodeGraphError> {
+    GraphId::new(format!("symbol:manifest:{}:{section}", file.relative_path))
+}
+
+pub(super) fn manifest_named_symbol_id(
+    file: &SourceFile,
+    kind: &str,
+    name: &str,
+) -> Result<GraphId, CodeGraphError> {
+    GraphId::new(format!(
+        "symbol:manifest:{}:{kind}:{}",
+        file.relative_path,
+        id_fragment(name)
+    ))
+}
+
+pub(super) fn manifest_nested_symbol_id(
+    file: &SourceFile,
+    parts: &[&str],
+) -> Result<GraphId, CodeGraphError> {
+    let suffix = parts
+        .iter()
+        .map(|part| id_fragment(part))
+        .collect::<Vec<_>>()
+        .join(":");
+    GraphId::new(format!("symbol:manifest:{}:{suffix}", file.relative_path))
+}
+
+pub(super) fn index_run_binding(
+    file: &SourceFile,
+    owner_id: &GraphId,
+    sink: &mut GraphSink,
+    extractor_id: &ExtractorId,
+    extractor_version: &str,
+    label: &str,
+    run: &ManifestManagedRun,
+) -> Result<(), CodeGraphError> {
+    match run {
+        ManifestManagedRun::Command(command) => push_unresolved_edge(
+            sink,
+            owner_id,
+            "task-command",
+            command,
+            &format!("{label}:command"),
+            file,
+            extractor_id,
+            extractor_version,
+            Confidence::Exact,
+        ),
+        ManifestManagedRun::Sequence(steps) => {
+            for (index, step) in steps.iter().enumerate() {
+                index_run_step(
+                    file,
+                    owner_id,
+                    sink,
+                    extractor_id,
+                    extractor_version,
+                    &format!("{label}:{index}"),
+                    step,
+                )?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn index_run_step(
+    file: &SourceFile,
+    owner_id: &GraphId,
+    sink: &mut GraphSink,
+    extractor_id: &ExtractorId,
+    extractor_version: &str,
+    label: &str,
+    step: &ManifestManagedRunStep,
+) -> Result<(), CodeGraphError> {
+    match step {
+        ManifestManagedRunStep::Command(command) => push_unresolved_edge(
+            sink,
+            owner_id,
+            "task-command",
+            command,
+            label,
+            file,
+            extractor_id,
+            extractor_version,
+            Confidence::Exact,
+        ),
+        ManifestManagedRunStep::Step(step) => index_step_table(
+            file,
+            owner_id,
+            sink,
+            extractor_id,
+            extractor_version,
+            label,
+            step,
+        ),
+    }
+}
+
+fn index_step_table(
+    file: &SourceFile,
+    owner_id: &GraphId,
+    sink: &mut GraphSink,
+    extractor_id: &ExtractorId,
+    extractor_version: &str,
+    label: &str,
+    step: &ManifestManagedRunStepTable,
+) -> Result<(), CodeGraphError> {
+    if let Some(command) = step.run.as_deref() {
+        push_unresolved_edge(
+            sink,
+            owner_id,
+            "task-command",
+            command,
+            &format!("{label}:run"),
+            file,
+            extractor_id,
+            extractor_version,
+            Confidence::Exact,
+        )?;
+    }
+    if let Some(task) = step.task.as_deref() {
+        push_unresolved_edge(
+            sink,
+            owner_id,
+            "task-step-task",
+            task,
+            &format!("{label}:task"),
+            file,
+            extractor_id,
+            extractor_version,
+            Confidence::Exact,
+        )?;
+    }
+    if let Some(rhai) = step.rhai.as_deref() {
+        push_unresolved_edge(
+            sink,
+            owner_id,
+            "task-step-rhai",
+            rhai,
+            &format!("{label}:rhai"),
+            file,
+            extractor_id,
+            extractor_version,
+            Confidence::Exact,
+        )?;
+    }
+    Ok(())
+}
+
+pub(super) fn index_run_like_raw(
+    file: &SourceFile,
+    owner_id: &GraphId,
+    sink: &mut GraphSink,
+    extractor_id: &ExtractorId,
+    extractor_version: &str,
+    label: &str,
+    value: &Value,
+) -> Result<(), CodeGraphError> {
+    match value {
+        Value::String(command) => push_unresolved_edge(
+            sink,
+            owner_id,
+            "task-command",
+            command,
+            label,
+            file,
+            extractor_id,
+            extractor_version,
+            Confidence::Exact,
+        ),
+        Value::Array(steps) => {
+            for (index, step) in steps.iter().enumerate() {
+                index_run_step_raw(
+                    file,
+                    owner_id,
+                    sink,
+                    extractor_id,
+                    extractor_version,
+                    &format!("{label}:{index}"),
+                    step,
+                )?;
+            }
+            Ok(())
+        }
+        Value::Table(_) => index_run_step_raw(
+            file,
+            owner_id,
+            sink,
+            extractor_id,
+            extractor_version,
+            label,
+            value,
+        ),
+        _ => Ok(()),
+    }
+}
+
+pub(super) fn index_run_step_raw(
+    file: &SourceFile,
+    owner_id: &GraphId,
+    sink: &mut GraphSink,
+    extractor_id: &ExtractorId,
+    extractor_version: &str,
+    label: &str,
+    value: &Value,
+) -> Result<(), CodeGraphError> {
+    match value {
+        Value::String(command) => push_unresolved_edge(
+            sink,
+            owner_id,
+            "task-command",
+            command,
+            label,
+            file,
+            extractor_id,
+            extractor_version,
+            Confidence::Exact,
+        ),
+        Value::Table(table) => {
+            if let Some(command) = table.get("run").and_then(Value::as_str) {
+                push_unresolved_edge(
+                    sink,
+                    owner_id,
+                    "task-command",
+                    command,
+                    &format!("{label}:run"),
+                    file,
+                    extractor_id,
+                    extractor_version,
+                    Confidence::Exact,
+                )?;
+            }
+            if let Some(task) = table.get("task").and_then(Value::as_str) {
+                push_unresolved_edge(
+                    sink,
+                    owner_id,
+                    "task-step-task",
+                    task,
+                    &format!("{label}:task"),
+                    file,
+                    extractor_id,
+                    extractor_version,
+                    Confidence::Exact,
+                )?;
+            }
+            if let Some(rhai) = table.get("rhai").and_then(Value::as_str) {
+                push_unresolved_edge(
+                    sink,
+                    owner_id,
+                    "task-step-rhai",
+                    rhai,
+                    &format!("{label}:rhai"),
+                    file,
+                    extractor_id,
+                    extractor_version,
+                    Confidence::Exact,
+                )?;
+            }
+            if let Some(run_in) = table.get("run_in").and_then(Value::as_str) {
+                push_unresolved_edge(
+                    sink,
+                    owner_id,
+                    "task-run-in",
+                    run_in,
+                    &format!("{label}:run-in"),
+                    file,
+                    extractor_id,
+                    extractor_version,
+                    Confidence::Exact,
+                )?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}

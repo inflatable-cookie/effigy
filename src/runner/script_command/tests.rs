@@ -1,7 +1,5 @@
-use super::{
-    container_exec_operation_from_options, is_runner_dispatch_feature, parse_rhai_embedded_command,
-    run_rhai_feature,
-};
+use super::feature_dispatch::{is_runner_dispatch_feature, run_rhai_feature};
+use super::{container_exec_operation_from_options, parse_rhai_embedded_command};
 use effigy_cli::{Command, DocsArgs, DocsCheckKind, DocsSubcommand};
 use effigy_rhai::surface::{
     FEATURE_DEPLOY_APPLY, FEATURE_DEPLOY_MODEL, FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS,

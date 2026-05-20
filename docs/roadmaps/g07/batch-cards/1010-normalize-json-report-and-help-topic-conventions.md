@@ -3,7 +3,7 @@
 Roadmap: [`../060-json-help-contract-consistency-cleanup.md`](../060-json-help-contract-consistency-cleanup.md)
 Strict lane: [`../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md`](../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md)
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-05-19
 

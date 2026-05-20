@@ -10,7 +10,7 @@ Related planning:
 - [`g07.062`](../roadmaps/g07/062-crate-boundary-rejustification-and-planning-hygiene.md)
 - [`g07.063`](../roadmaps/g07/063-codebase-leanness-closeout.md)
 
-Status: Active
+Status: Complete
 Owner: Platform
 Created: 2026-05-19
 
@@ -21,7 +21,7 @@ turning cleanup into a broad rewrite.
 
 ## Lane Posture
 
-Posture: `active-ready-card`
+Posture: `closed-no-ready-card`
 
 This lane exists because recent graph and init work made Effigy more capable,
 but also created new maintenance pressure. The work is cleanup with product
@@ -52,7 +52,13 @@ behavior is wrong.
 ## Ready Chain
 
 - `1006` is complete
-- `1007` is ready
+- `1007` is complete
+- `1008` is complete
+- `1009` is complete
+- `1010` is complete
+- `1011` is complete
+- `1012` is complete
+- `1013` is complete
 - later cards must not start until the prior card is complete or explicitly
   paused with a clear handoff
 
@@ -81,6 +87,9 @@ This lane is complete when:
 - remaining debt is explicitly deferred or rejected
 - no active ready card remains
 
+This lane is now closed. Keep it as a historical execution surface until a
+later planning cleanup archives it.
+
 ## Next Task
 
-Start [`1007-deduplicate-codegraph-language-emitters.md`](../roadmaps/g07/batch-cards/1007-deduplicate-codegraph-language-emitters.md).
+No active ready card.

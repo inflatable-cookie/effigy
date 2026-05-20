@@ -1,5 +1,20 @@
 use super::super::{HelpRenderer, HelpResult, NoticeLevel, TableSpec};
 
+macro_rules! text_lines {
+    ($($line:expr),+ $(,)?) => {
+        &[$($line),+]
+    };
+}
+
+macro_rules! option_rows {
+    ($($option:expr => $description:expr),+ $(,)?) => {
+        &[ $(($option, $description)),+ ]
+    };
+}
+
+pub(super) use option_rows;
+pub(super) use text_lines;
+
 fn owned_strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|item| (*item).to_owned()).collect()
 }

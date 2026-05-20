@@ -32,6 +32,8 @@ mod lifecycle;
 mod secret_env;
 mod shell_prep;
 pub(in crate::runner) mod support;
+#[cfg(test)]
+pub(super) mod test_support;
 mod volume;
 
 pub(super) fn render_container_report(report: ContainerCommandReport, output_json: bool) -> String {

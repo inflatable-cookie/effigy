@@ -82,7 +82,7 @@ This is the concrete target for `932`.
 ## First Profitable Query Hot Path
 
 The current query layer in
-[query.rs](../../../crates/effigy-codegraph/src/query.rs)
+[query/mod.rs](../../../crates/effigy-codegraph/src/query/mod.rs)
 still pays high projection cost by loading broad record sets into memory for
 common commands:
 

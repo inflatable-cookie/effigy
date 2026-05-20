@@ -131,6 +131,7 @@ mod tests {
         append_container_exec_env, resolve_container_exec_working_dir_for_operation,
         service_requires_workspace_effigy_refresh,
     };
+    use crate::runner::container_command::test_support::temp_repo;
     use effigy_containers::{
         load_container_policy, EffectiveComposeSource, EffectiveContainerPolicy,
         SharedServiceBinding,
@@ -146,7 +147,7 @@ mod tests {
 
     #[test]
     fn non_primary_service_exec_does_not_force_primary_working_dir() {
-        let root = temp_repo("non-primary-service-exec-no-cwd");
+        let root = temp_repo("container-shell-prep", "non-primary-service-exec-no-cwd");
         fs::write(
             root.join("effigy.toml"),
             r#"
@@ -176,7 +177,7 @@ catalog = "mariadb"
 
     #[test]
     fn primary_service_exec_keeps_primary_working_dir() {
-        let root = temp_repo("primary-service-exec-cwd");
+        let root = temp_repo("container-shell-prep", "primary-service-exec-cwd");
         fs::write(
             root.join("effigy.toml"),
             r#"
@@ -203,7 +204,7 @@ catalog = "php-fpm"
 
     #[test]
     fn explicit_exec_working_dir_overrides_service_default() {
-        let root = temp_repo("explicit-exec-working-dir");
+        let root = temp_repo("container-shell-prep", "explicit-exec-working-dir");
         fs::write(root.join("docker-compose.yml"), "services: {}\n").expect("write compose");
         fs::write(
             root.join("effigy.toml"),
@@ -236,7 +237,10 @@ working_dir = "/var/www/contact-patch"
 
     #[test]
     fn explicit_exec_working_dir_maps_nonexistent_repo_relative_subpaths() {
-        let root = temp_repo("explicit-exec-working-dir-nonexistent");
+        let root = temp_repo(
+            "container-shell-prep",
+            "explicit-exec-working-dir-nonexistent",
+        );
         fs::write(root.join("docker-compose.yml"), "services: {}\n").expect("write compose");
         fs::write(
             root.join("effigy.toml"),
@@ -268,7 +272,10 @@ working_dir = "/var/www/contact-patch"
 
     #[test]
     fn explicit_exec_working_dir_preserves_container_native_paths() {
-        let root = temp_repo("explicit-exec-working-dir-container-native");
+        let root = temp_repo(
+            "container-shell-prep",
+            "explicit-exec-working-dir-container-native",
+        );
         fs::write(root.join("docker-compose.yml"), "services: {}\n").expect("write compose");
         fs::write(
             root.join("effigy.toml"),
@@ -329,18 +336,6 @@ working_dir = "/var/www/contact-patch"
             &policy,
             "workspace"
         ));
-    }
-
-    fn temp_repo(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "effigy-container-shell-prep-{name}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&root).expect("mkdir");
-        root
     }
 
     fn test_policy(shared_services: Vec<SharedServiceBinding>) -> EffectiveContainerPolicy {

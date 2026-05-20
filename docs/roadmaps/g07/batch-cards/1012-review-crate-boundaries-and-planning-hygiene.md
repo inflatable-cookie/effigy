@@ -3,7 +3,7 @@
 Roadmap: [`../062-crate-boundary-rejustification-and-planning-hygiene.md`](../062-crate-boundary-rejustification-and-planning-hygiene.md)
 Strict lane: [`../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md`](../../../specs/094-codebase-leanness-and-boundary-hardening-strict-lane.md)
 
-Status: Planned
+Status: Complete
 Owner: Platform
 Created: 2026-05-19
 

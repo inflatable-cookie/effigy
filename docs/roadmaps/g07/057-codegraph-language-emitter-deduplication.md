@@ -1,6 +1,6 @@
 # g07.057 - Codegraph Language Emitter Deduplication
 
-Status: Planned
+Status: Complete
 Depends on: `g07.056`
 
 ## Goal
@@ -63,4 +63,4 @@ unresolved edges, and reference records.
 
 ## Next Task
 
-After this lands, proceed to [`058-codegraph-manifest-query-module-decomposition.md`](./058-codegraph-manifest-query-module-decomposition.md).
+No active ready card.

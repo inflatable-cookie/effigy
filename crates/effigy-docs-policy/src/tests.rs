@@ -10,7 +10,44 @@ use effigy_manifest::config_sections::{
     ManifestDocsPolicyIndexConfig, ManifestDocsPolicyNextActionConfig,
 };
 use effigy_manifest::ManifestDocsPolicyConfig;
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+struct DocsFixture {
+    root: PathBuf,
+}
+
+impl DocsFixture {
+    fn new(name: &str) -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "effigy-docs-policy-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("mkdir");
+        Self { root }
+    }
+
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
+    fn mkdir(&self, relative: impl AsRef<Path>) {
+        fs::create_dir_all(self.root.join(relative.as_ref())).expect("mkdir");
+    }
+
+    fn write(&self, relative: impl AsRef<Path>, contents: &str) {
+        let path = self.root.join(relative.as_ref());
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("mkdir parent");
+        }
+        fs::write(path, contents).expect("write fixture file");
+    }
+}
 
 #[test]
 fn extract_h2_section_returns_requested_section_only() {
@@ -46,46 +83,31 @@ fn extract_fenced_json_blocks_returns_json_blocks_only() {
 
 #[test]
 fn scan_markdown_links_ignores_fenced_code_blocks() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-doc-links-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).expect("mkdir");
-    let markdown = root.join("README.md");
-    fs::write(
-        &markdown,
+    let fixture = DocsFixture::new("links");
+    fixture.write(
+        "README.md",
         "[ok](./existing.md)\n```md\n[skip](./missing.md)\n```\n",
-    )
-    .expect("write markdown");
-    fs::write(root.join("existing.md"), "exists\n").expect("write existing");
+    );
+    fixture.write("existing.md", "exists\n");
 
-    let failures = scan_markdown_links(&markdown).expect("scan");
+    let failures = scan_markdown_links(&fixture.root().join("README.md")).expect("scan");
     assert!(failures.is_empty());
 }
 
 #[test]
 fn collect_link_check_files_defaults_to_full_docs_tree() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-doc-link-defaults-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(root.join("docs/logs/2026-03")).expect("mkdir logs");
-    fs::create_dir_all(root.join("docs/research")).expect("mkdir research");
-    fs::write(root.join("README.md"), "# Root\n").expect("write root");
-    fs::write(root.join("docs/README.md"), "# Docs\n").expect("write docs readme");
-    fs::write(root.join("docs/logs/2026-03/example.md"), "# Log\n").expect("write log");
-    fs::write(root.join("docs/research/example.md"), "# Research\n").expect("write research");
+    let fixture = DocsFixture::new("link-defaults");
+    fixture.mkdir("docs/logs/2026-03");
+    fixture.mkdir("docs/research");
+    fixture.write("README.md", "# Root\n");
+    fixture.write("docs/README.md", "# Docs\n");
+    fixture.write("docs/logs/2026-03/example.md", "# Log\n");
+    fixture.write("docs/research/example.md", "# Research\n");
 
-    let files = collect_link_check_files(&root, &[]);
+    let files = collect_link_check_files(fixture.root(), &[]);
     let rendered = files
         .iter()
-        .filter_map(|path| path.strip_prefix(&root).ok())
+        .filter_map(|path| path.strip_prefix(fixture.root()).ok())
         .map(|path| path.to_string_lossy().replace('\\', "/"))
         .collect::<Vec<_>>();
 
@@ -117,22 +139,20 @@ fn insert_log_index_entry_places_new_entry_before_archive_marker() {
 
 #[test]
 fn collect_workflow_check_files_excludes_logs_for_default_docs_scope() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-doc-workflow-paths-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(root.join("docs/logs/2026-03")).expect("mkdir logs");
-    fs::create_dir_all(root.join("docs/guides")).expect("mkdir guides");
-    fs::write(root.join("docs/guides/example.md"), "# Guide\n").expect("write guide");
-    fs::write(root.join("docs/logs/2026-03/example.md"), "# Log\n").expect("write log");
+    let fixture = DocsFixture::new("workflow-paths");
+    fixture.mkdir("docs/logs/2026-03");
+    fixture.mkdir("docs/guides");
+    fixture.write("docs/guides/example.md", "# Guide\n");
+    fixture.write("docs/logs/2026-03/example.md", "# Log\n");
 
-    let files = collect_workflow_check_files(&root.join("docs"), &root.join("docs/logs"), true);
+    let files = collect_workflow_check_files(
+        &fixture.root().join("docs"),
+        &fixture.root().join("docs/logs"),
+        true,
+    );
     let rendered = files
         .iter()
-        .filter_map(|path| path.strip_prefix(&root).ok())
+        .filter_map(|path| path.strip_prefix(fixture.root()).ok())
         .map(|path| path.to_string_lossy().replace('\\', "/"))
         .collect::<Vec<_>>();
 
@@ -142,59 +162,39 @@ fn collect_workflow_check_files_excludes_logs_for_default_docs_scope() {
 
 #[test]
 fn collect_markdown_children_respects_excludes() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-doc-index-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(root.join("history")).expect("mkdir history");
-    fs::write(root.join("README.md"), "# Root\n").expect("write readme");
-    fs::write(root.join("active.md"), "# Active\n").expect("write active");
-    fs::write(root.join("history/old.md"), "# Old\n").expect("write old");
+    let fixture = DocsFixture::new("index");
+    fixture.mkdir("history");
+    fixture.write("README.md", "# Root\n");
+    fixture.write("active.md", "# Active\n");
+    fixture.write("history/old.md", "# Old\n");
 
-    let files = collect_markdown_children(&root, &[String::from("history/**")]);
+    let files = collect_markdown_children(fixture.root(), &[String::from("history/**")]);
     assert!(files.contains("active.md"));
     assert!(!files.contains("history/old.md"));
 }
 
 #[test]
 fn collect_index_markdown_links_can_scope_to_section() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-doc-index-section-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).expect("mkdir");
-    let index = root.join("README.md");
-    fs::write(
-        &index,
+    let fixture = DocsFixture::new("index-section");
+    fixture.write(
+        "README.md",
         "# Root\n\n## Vision Artifacts\n- [One](./one.md)\n\n## Other\n- [Two](./two.md)\n",
-    )
-    .expect("write index");
+    );
 
-    let links = collect_index_markdown_links(&index, Some("Vision Artifacts")).expect("links");
+    let links =
+        collect_index_markdown_links(&fixture.root().join("README.md"), Some("Vision Artifacts"))
+            .expect("links");
     assert!(links.contains("one.md"));
     assert!(!links.contains("two.md"));
 }
 
 #[test]
 fn check_headings_reports_missing_heading() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-doc-headings-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).expect("mkdir");
-    fs::write(root.join("README.md"), "# Root\n").expect("write readme");
+    let fixture = DocsFixture::new("headings");
+    fixture.write("README.md", "# Root\n");
 
     let (_, findings) = check_headings(
-        &root,
+        fixture.root(),
         &[Path::new("README.md").to_path_buf()],
         &[String::from("## Vision Alignment")],
     )
@@ -205,52 +205,39 @@ fn check_headings_reports_missing_heading() {
 
 #[test]
 fn check_contains_and_paths_report_missing_items() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-doc-contains-paths-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).expect("mkdir");
-    fs::write(root.join("README.md"), "# Root\n").expect("write readme");
+    let fixture = DocsFixture::new("contains-paths");
+    fixture.write("README.md", "# Root\n");
 
     let (_, contains_findings) = check_contains(
-        &root,
+        fixture.root(),
         &[Path::new("README.md").to_path_buf()],
         &[String::from("Vision")],
     )
     .expect("contains");
     assert_eq!(contains_findings.len(), 1);
 
-    let (_, path_findings) = check_paths(&root, &[Path::new("missing.md").to_path_buf()]);
+    let (_, path_findings) = check_paths(fixture.root(), &[Path::new("missing.md").to_path_buf()]);
     assert_eq!(path_findings.len(), 1);
 }
 
 #[test]
 fn check_workflow_paths_reports_stale_reference() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-doc-workflow-stale-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(root.join(".github-bak/workflows")).expect("mkdir workflow");
-    fs::create_dir_all(root.join("docs/guides")).expect("mkdir guides");
-    fs::write(
-        root.join(".github-bak/workflows/example.yml"),
-        "name: Example\n",
-    )
-    .expect("write workflow");
-    fs::write(
-        root.join("docs/guides/example.md"),
+    let fixture = DocsFixture::new("workflow-stale");
+    fixture.mkdir(".github-bak/workflows");
+    fixture.mkdir("docs/guides");
+    fixture.write(".github-bak/workflows/example.yml", "name: Example\n");
+    fixture.write(
+        "docs/guides/example.md",
         "See `.github/workflows/example.yml`.\n",
-    )
-    .expect("write guide");
+    );
 
-    let findings = check_workflow_paths(&root, &root.join("docs"), &root.join("docs/logs"), true)
-        .expect("workflow check");
+    let findings = check_workflow_paths(
+        fixture.root(),
+        &fixture.root().join("docs"),
+        &fixture.root().join("docs/logs"),
+        true,
+    )
+    .expect("workflow check");
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].reason, "stale workflow path");
 }
@@ -263,14 +250,7 @@ fn path_matches_exclude_supports_recursive_suffix() {
 
 #[test]
 fn resolve_docs_index_spec_loads_named_policy_index() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-doc-policy-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).expect("mkdir");
+    let fixture = DocsFixture::new("policy");
 
     let mut policy = ManifestDocsPolicyConfig::default();
     policy.indexes.insert(
@@ -283,10 +263,11 @@ fn resolve_docs_index_spec_loads_named_policy_index() {
         },
     );
 
-    let spec = resolve_docs_index_spec(&root, &policy, Some("vision"), None, None).expect("spec");
+    let spec =
+        resolve_docs_index_spec(fixture.root(), &policy, Some("vision"), None, None).expect("spec");
     assert_eq!(spec.policy_name.as_deref(), Some("vision"));
-    assert_eq!(spec.index, root.join("docs/vision/README.md"));
-    assert_eq!(spec.dir, root.join("docs/vision"));
+    assert_eq!(spec.index, fixture.root().join("docs/vision/README.md"));
+    assert_eq!(spec.dir, fixture.root().join("docs/vision"));
     assert_eq!(spec.section.as_deref(), Some("Vision Artifacts"));
     assert_eq!(spec.exclude, vec!["history/**"]);
 }
@@ -306,14 +287,8 @@ fn extract_lead_verb_handles_bullets_and_numbering() {
 
 #[test]
 fn resolve_docs_next_action_spec_loads_named_policy() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-doc-next-action-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    fs::create_dir_all(root.join("docs/scripts/fixtures")).expect("mkdir");
+    let fixture = DocsFixture::new("next-action");
+    fixture.mkdir("docs/scripts/fixtures");
 
     let mut policy = ManifestDocsPolicyConfig::default();
     policy.indexes.insert(
@@ -334,13 +309,14 @@ fn resolve_docs_next_action_spec_loads_named_policy() {
         },
     );
 
-    let spec = resolve_docs_next_action_spec(&root, &policy, Some("vision")).expect("spec");
+    let spec =
+        resolve_docs_next_action_spec(fixture.root(), &policy, Some("vision")).expect("spec");
     assert_eq!(spec.policy_name.as_deref(), Some("vision"));
     assert_eq!(spec.heading, "## Next Task");
     assert_eq!(spec.heading_without_hashes, "Next Task");
     assert_eq!(
         spec.allowlist_file,
-        root.join("docs/scripts/fixtures/verbs.txt")
+        fixture.root().join("docs/scripts/fixtures/verbs.txt")
     );
     assert_eq!(spec.index.policy_name.as_deref(), Some("vision"));
 }

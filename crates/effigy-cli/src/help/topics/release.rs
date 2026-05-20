@@ -1,5 +1,7 @@
 use super::super::{HelpRenderer, HelpResult};
-use super::shared::{render_standard_topic_help_spec, CommonOption, StandardTopicHelpSpec};
+use super::shared::{
+    option_rows, render_standard_topic_help_spec, text_lines, CommonOption, StandardTopicHelpSpec,
+};
 
 pub(crate) fn render_release_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> HelpResult<()> {
     render_standard_topic_help_spec(renderer, &RELEASE_HELP)
@@ -7,11 +9,11 @@ pub(crate) fn render_release_help<R: HelpRenderer + ?Sized>(renderer: &mut R) ->
 
 const RELEASE_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "release",
-    notices: &[
+    notices: text_lines![
         "Inspect release readiness from changelog state, version files, and configured gates.",
         "Text-mode release preparation and execution now use compact review menus by default; interactive prepare can jump between version review, mutation inspection, gate results, and final approval, while interactive execute can jump between stale warnings, prepared-state review, working-tree inspection, and final approval. Those menus now keep a compact command legend plus the current selected version or stale-acknowledgement state visible while you review, mark which sections were already reviewed, and blocked prepare/execute output now adds suggested remediation actions instead of only raw blocker lines. `effigy release resume` is the dedicated prepared-state recovery entrypoint: it summarizes `.release-prepared.json`, highlights drift since prepare time, and can hand off directly into execute review. Prepared release state now records source fingerprints, so `resume` and `execute` can detect branch drift, HEAD movement, and prepared-file content drift instead of relying only on raw working-tree presence checks. Those recovery menus now also expose direct `gates`, `reprepare`, and `discard` shortcuts so operators can inspect gates, regenerate prepared state, or clear stale state without leaving the interactive flow. `--plan` stays non-destructive, `--dry-run` aliases that preview mode, and `--yes` stays the explicit non-interactive path.",
     ],
-    usage: &[
+    usage: text_lines![
         "effigy release status [--repo <PATH>] [--check-gates] [--json]",
         "effigy release gates [--repo <PATH>] [--json]",
         "effigy release resume [--repo <PATH>] [--allow-stale] [--json]",
@@ -34,29 +36,17 @@ const RELEASE_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         ),
         CommonOption::CheckGates,
     ],
-    options: &[
-        (
-            "--version <SEMVER>",
-            "Override the changelog-derived selected version for `release simulate`, `release prepare --plan`, or `release prepare --yes`",
-        ),
-        (
-            "--allow-stale",
-            "Acknowledge a stale `.release-prepared.json` state and allow `release execute` to continue",
-        ),
-        (
-            "--tag <TAG>",
-            "Release tag used for install verification (falls back to `GITHUB_REF_NAME` when omitted)",
-        ),
-        (
-            "--repo-url <URL>",
-            "Git repository URL used for tag install verification",
-        ),
+    options: option_rows![
+        "--version <SEMVER>" => "Override the changelog-derived selected version for `release simulate`, `release prepare --plan`, or `release prepare --yes`",
+        "--allow-stale" => "Acknowledge a stale `.release-prepared.json` state and allow `release execute` to continue",
+        "--tag <TAG>" => "Release tag used for install verification (falls back to `GITHUB_REF_NAME` when omitted)",
+        "--repo-url <URL>" => "Git repository URL used for tag install verification",
     ],
     trailing_common_options: &[
         CommonOption::Json("Render machine-readable release status payload"),
         CommonOption::Help,
     ],
-    examples: &[
+    examples: text_lines![
         "effigy release status",
         "effigy release status --repo /path/to/workspace",
         "effigy release status --check-gates",

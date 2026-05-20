@@ -50,13 +50,14 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   reduction, test fixture convergence, CLI/help deduplication, typed
   contract-shape reuse, compatibility-branch deletion, and runner-private
   domain-logic reduction.
-- `g07` is the current active generation. It opens the native code graph
-  intelligence suite: graph storage/contracts, indexing/freshness, first-party
-  extractors, query commands, and bounded agent context packs.
-  It now also carries follow-up lanes for incremental indexing, query speed,
-  failed fixture-path reliability, scan-cost reduction, foreground watch mode,
-  graph navigation ranking quality, and a one-call graph exploration surface for
-  agent workflows.
+- `g07` is closed through
+  [`g07.071`](./g07/071-residual-maintainability-closeout.md). It covered the
+  native code graph intelligence suite, follow-up graph performance/parity
+  lanes, init setup-wizard work, bounded codebase leanness cleanup, and the
+  residual-maintainability follow-through:
+  warning-only god-file reduction, stubborn duplicate-block follow-through,
+  graph test-harness decomposition, script-command boundary cleanup, bounded
+  runner-private helper convergence, and closeout proof.
 
 ## Active Strict Lane
 

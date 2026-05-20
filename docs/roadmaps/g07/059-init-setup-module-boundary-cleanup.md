@@ -1,6 +1,6 @@
 # g07.059 - Init Setup Module Boundary Cleanup
 
-Status: Planned
+Status: Complete
 Depends on: `g07.058`
 
 ## Goal
@@ -64,4 +64,4 @@ tree.
 
 ## Next Task
 
-After this lands, proceed to [`060-json-help-contract-consistency-cleanup.md`](./060-json-help-contract-consistency-cleanup.md).
+No active ready card.

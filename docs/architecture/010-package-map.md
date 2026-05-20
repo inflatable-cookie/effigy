@@ -227,19 +227,30 @@ protect dependency direction.
 
 Current retained small-crate rationale:
 
-- `effigy-core`: low-level build info, shell helpers, and runtime-dir helpers;
-  intentionally small because it is the bottom utility layer.
-- `effigy-runtime-plan`: pure activation request/plan/report model; small by
-  design because side effects stay in runner/runtime adapters.
-- `effigy-process`: host process primitives used across runner surfaces without
-  importing container/runtime crates.
-- `effigy-routing`: selector routing and catalog task lookup order; retained to
-  keep routing independent from CLI and runner orchestration.
-- `effigy-gateway`: local gateway and route registry primitives; retained
-  because runtime/container code consumes it without owning gateway command
-  shell behavior.
-- `effigy-ui`: renderer abstraction and output primitives; retained to keep
-  command/domain crates from depending on top-level CLI rendering.
+| Crate | Keep / defer note |
+| --- | --- |
+| `effigy-core` | Keep. Bottom utility layer for build info, shell helpers, resolver helpers, and runtime-dir helpers. |
+| `effigy-catalog` | Keep. Owns service-catalog fragment/schema/template assembly without pulling in runner, manifest, or CLI policy. |
+| `effigy-changelog` | Keep. Owns changelog AST, parse, format, validate, and extract logic behind one reusable seam. |
+| `effigy-exec` | Keep. Owns pure container-exec routing, cwd mapping, and alias logic without runtime side effects. |
+| `effigy-routing` | Keep. Selector routing and catalog lookup order stay independent from CLI and runner orchestration. |
+| `effigy-runtime-plan` | Keep. Pure activation request/plan/report model; small by design because side effects stay in runtime adapters. |
+| `effigy-process` | Keep. Host process primitives are reused across runner surfaces without importing container/runtime crates. |
+| `effigy-gateway` | Keep. Local gateway registry and route primitives are consumed by runtime/container code without dragging command-shell behavior down. |
+| `effigy-ui` | Keep. Renderer abstraction and output primitives keep domain crates out of top-level CLI rendering details. |
+| `effigy-tui` | Keep. Thin TUI-only composition boundary; intentionally tiny because browser/demo terminal modules stay behind one crate-local seam. |
+
+Current defer notes after the `g07.056` cleanup pass:
+
+- `effigy-runtime` stays separate. It is a runtime-facing facade across read,
+  write, session, shell, data, task-status, and signal flows, not a dead shim.
+- `effigy-context` stays separate. It is still the typed captured-context owner
+  used by several runner-facing paths.
+- `effigy-doctor` stays separate. It is no longer a tiny library; it owns the
+  doctor workflow and report model.
+- `effigy-bootstrap`, `effigy-distribution`, and `effigy-release` remain
+  cleanup targets for future internal decomposition, not crate-merge
+  candidates.
 
 No small crate is currently a merge candidate on ownership grounds. Future
 merge proposals must prove the boundary has no useful API, not just that the
