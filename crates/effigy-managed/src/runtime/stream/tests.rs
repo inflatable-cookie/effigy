@@ -174,3 +174,18 @@ fn stream_state_marks_shutdown_when_flagged_process_exits() {
         ]
     );
 }
+
+#[test]
+fn stream_state_drains_briefly_after_shutdown_trigger() {
+    let mut state = StreamState::new(&["window".to_owned()]);
+
+    assert!(!state.is_complete(2));
+
+    state.shutdown_triggered = true;
+    state.record_idle_tick(2);
+    state.record_idle_tick(2);
+    assert!(!state.is_complete(2));
+
+    state.record_idle_tick(2);
+    assert!(state.is_complete(2));
+}

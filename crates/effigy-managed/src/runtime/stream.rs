@@ -17,12 +17,9 @@ pub fn collect_stream_non_zero_exits(
     renderer: &mut impl Renderer,
 ) -> Result<Vec<(String, String)>, ManagedError> {
     let mut state = StreamState::new(shutdown_on_exit_processes);
-    while state.exit_count < expected || state.drained_after_exit < STREAM_DRAIN_POLLS_AFTER_EXIT {
+    while !state.is_complete(expected) {
         if let Some(event) = supervisor.next_event_timeout(STREAM_EVENT_POLL_INTERVAL) {
             state.record_event(event, renderer)?;
-            if state.shutdown_triggered {
-                break;
-            }
         } else {
             state.record_idle_tick(expected);
         }
@@ -102,9 +99,18 @@ impl StreamState {
     }
 
     fn record_idle_tick(&mut self, expected: usize) {
-        if self.exit_count >= expected {
+        if self.shutdown_triggered || self.exit_count >= expected {
             self.drained_after_exit += 1;
         }
+    }
+
+    fn is_complete(&self, expected: usize) -> bool {
+        let all_processes_exited = self.exit_count >= expected;
+        let shutdown_drained =
+            self.shutdown_triggered && self.drained_after_exit >= STREAM_DRAIN_POLLS_AFTER_EXIT;
+        let normal_drained =
+            all_processes_exited && self.drained_after_exit >= STREAM_DRAIN_POLLS_AFTER_EXIT;
+        shutdown_drained || normal_drained
     }
 
     fn finish(self) -> Vec<(String, String)> {
