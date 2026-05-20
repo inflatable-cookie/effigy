@@ -469,7 +469,7 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
             "building linux effigy artifact for workspace container access",
             false,
         );
-        run_linux_workspace_effigy_rehearsal(host_binary, effigy_repo_root, target)?;
+        run_linux_workspace_effigy_artifact_build(host_binary, effigy_repo_root, target)?;
     }
 
     if !artifact_path.is_file() {
@@ -677,20 +677,20 @@ pub(super) fn linux_workspace_effigy_rehearsal_receipt_matches_target(
         .any(|line| line.trim() == format!("release_triple={}", target.release_triple()))
 }
 
-pub(super) fn run_linux_workspace_effigy_rehearsal(
+pub(super) fn run_linux_workspace_effigy_artifact_build(
     host_binary: &Path,
     effigy_repo_root: &Path,
     target: LinuxWorkspaceTarget,
 ) -> Result<(), RunnerError> {
     let mut command = std::process::Command::new(host_binary);
     command
-        .arg("release:linux:rehearse")
+        .arg("workspace:linux:artifact")
         .env("EFFIGY_LINUX_RELEASE_TRIPLE", target.release_triple())
         .current_dir(effigy_repo_root);
     crate::runner::secret_session::apply_secret_passphrase_to_child(&mut command);
     let status = command.status().map_err(|error| {
         RunnerError::task_invocation(format!(
-            "failed to launch linux workspace rehearsal in `{}`: {error}",
+            "failed to launch linux workspace artifact build in `{}`: {error}",
             effigy_repo_root.display()
         ))
     })?;
@@ -698,7 +698,7 @@ pub(super) fn run_linux_workspace_effigy_rehearsal(
         return Ok(());
     }
     Err(RunnerError::task_invocation(format!(
-        "linux workspace rehearsal failed in `{}` with status {}",
+        "linux workspace artifact build failed in `{}` with status {}",
         effigy_repo_root.display(),
         status
     )))

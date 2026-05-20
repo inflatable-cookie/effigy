@@ -14,7 +14,7 @@ use crate::runner::system_command::workspace_provisioning::{
     linux_workspace_effigy_artifact_needs_refresh, linux_workspace_effigy_cache_path,
     linux_workspace_effigy_release_url, render_workspace_effigy_install_command,
     render_workspace_effigy_staging_path, resolve_local_effigy_repo_root_from_paths,
-    resolve_local_workspace_effigy_freshness_anchor, run_linux_workspace_effigy_rehearsal,
+    resolve_local_workspace_effigy_freshness_anchor, run_linux_workspace_effigy_artifact_build,
     sibling_effigy_repo_root, workspace_effigy_active_version_file, LinuxWorkspaceArtifactSource,
     LinuxWorkspaceTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
@@ -259,7 +259,7 @@ fn linux_workspace_release_url_matches_published_artifact_shape() {
 }
 
 #[test]
-fn linux_workspace_rehearsal_runs_built_in_task_with_target_env() {
+fn linux_workspace_artifact_build_runs_built_in_task_with_target_env() {
     let root = std::env::temp_dir().join(format!(
         "effigy-linux-rehearsal-dispatch-{}",
         std::time::SystemTime::now()
@@ -289,13 +289,13 @@ fn linux_workspace_rehearsal_runs_built_in_task_with_target_env() {
         std::fs::set_permissions(&host, perms).expect("chmod host");
     }
 
-    run_linux_workspace_effigy_rehearsal(&host, &root, LinuxWorkspaceTarget::X86_64Gnu)
-        .expect("run rehearsal");
+    run_linux_workspace_effigy_artifact_build(&host, &root, LinuxWorkspaceTarget::X86_64Gnu)
+        .expect("run artifact build");
 
     let args = std::fs::read_to_string(args_path).expect("read args");
     let env = std::fs::read_to_string(env_path).expect("read env");
 
-    assert_eq!(args.trim(), "release:linux:rehearse");
+    assert_eq!(args.trim(), "workspace:linux:artifact");
     assert_eq!(env.trim(), "x86_64-unknown-linux-gnu");
 }
 

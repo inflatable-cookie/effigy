@@ -116,6 +116,11 @@ During v0.x, MINOR bumps may include breaking changes.
   Corepack's cache tree writable for the `dev` user, so `pnpm` can actually
   run inside those containers instead of failing on a root-owned
   `/home/dev/.cache`.
+- **Workspace container handoff no longer runs full Linux release rehearsal:**
+  when Effigy needs a Linux binary for `workspace`, `dev`, or `container shell`
+  handoff into a workspace container, it now runs a dedicated artifact-build
+  path instead of invoking `release:linux:rehearse`, so normal container access
+  avoids release smoke checks and GLIBC validation noise.
 - **Container-local deferral avoids host runtime probes:** `effigy defer` now
   treats Effigy workspace containers as local execution contexts even when
   containerd/cgroup-v2 does not expose `/.dockerenv`, `/run/.containerenv`, or
