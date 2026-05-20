@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-20
+
 ### Breaking
 - **Removed `context = "dev"` container targeting:** Manifests can no longer
   mark containers with `context = "dev"`. Default task and `effigy exec`
