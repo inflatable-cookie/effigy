@@ -20,6 +20,7 @@ Built-in Tasks
 - deploy : Inspect, plan, apply, and export deployment flows
 - help : Show general help (same as --help)
 - doctor : Built-in remedial health checks for environment, manifests, and task references
+- distribution : Validate distribution metadata, glibc floors, and release packaging surfaces
 - docs : Run documentation checks and related QA surfaces
 - exec : Run typed shell and container execution surfaces
 - gateway : Run internal gateway service surfaces

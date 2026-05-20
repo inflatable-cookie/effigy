@@ -1,10 +1,10 @@
 use super::{
     base_artifact_patterns, build_first_publish_plan, effective_brew_formula,
     effective_closeout_owner, effective_repo_url, load_distribution_policy, schema_v1_payload,
-    validate_artifacts_command, EffectiveDistributionPolicy, DEFAULT_BINARY_NAME,
-    DEFAULT_BREW_FORMULA, DEFAULT_CLOSEOUT_NEXT_STEP, DEFAULT_CLOSEOUT_OWNER, DEFAULT_DOCS_TASK,
-    DEFAULT_PACKAGE_NAME, DEFAULT_REGISTRY_LABEL, DEFAULT_REPO_URL, DEFAULT_REQUIRED_DOCS,
-    DEFAULT_REQUIRED_FILES, DEFAULT_SMOKE_TASK,
+    validate_artifacts_command, validate_metadata_command, EffectiveDistributionPolicy,
+    DEFAULT_BINARY_NAME, DEFAULT_BREW_FORMULA, DEFAULT_CLOSEOUT_NEXT_STEP, DEFAULT_CLOSEOUT_OWNER,
+    DEFAULT_DOCS_TASK, DEFAULT_PACKAGE_NAME, DEFAULT_REGISTRY_LABEL, DEFAULT_REPO_URL,
+    DEFAULT_REQUIRED_DOCS, DEFAULT_REQUIRED_FILES, DEFAULT_SMOKE_TASK,
 };
 use serde_json::json;
 use std::fs;
@@ -123,6 +123,48 @@ fn validate_artifacts_json_keeps_schema_fields() {
 }
 
 #[test]
+fn validate_metadata_accepts_release_check_binary_guard() {
+    let root = temp_repo("metadata-release-check-binary");
+    fs::create_dir_all(root.join(".github/workflows")).expect("mkdir workflows");
+    fs::write(
+        root.join(".github/workflows/release-binaries.yml"),
+        workflow_fixture(
+            "./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35",
+        ),
+    )
+    .expect("write workflow");
+    fs::write(root.join("Cargo.toml"), cargo_fixture()).expect("write cargo");
+    write_required_docs(&root);
+
+    let payload =
+        validate_metadata_command(&root, &default_distribution_policy(), Some("v0.7.1"), true)
+            .expect("validate metadata");
+    let payload: serde_json::Value = serde_json::from_str(&payload).expect("parse payload");
+    assert_eq!(payload["ok"], true, "payload should be ok: {payload}");
+}
+
+#[test]
+fn validate_metadata_accepts_distribution_check_glibc_floor_guard() {
+    let root = temp_repo("metadata-distribution-glibc-floor");
+    fs::create_dir_all(root.join(".github/workflows")).expect("mkdir workflows");
+    fs::write(
+        root.join(".github/workflows/release-binaries.yml"),
+        workflow_fixture(
+            "./effigy-${{ matrix.target }} distribution check-glibc-floor --binary ./effigy-${{ matrix.target }} --max-glibc 2.35",
+        ),
+    )
+    .expect("write workflow");
+    fs::write(root.join("Cargo.toml"), cargo_fixture()).expect("write cargo");
+    write_required_docs(&root);
+
+    let payload =
+        validate_metadata_command(&root, &default_distribution_policy(), Some("v0.7.1"), true)
+            .expect("validate metadata");
+    let payload: serde_json::Value = serde_json::from_str(&payload).expect("parse payload");
+    assert_eq!(payload["ok"], true, "payload should be ok: {payload}");
+}
+
+#[test]
 fn first_publish_plan_skips_homebrew_when_disabled() {
     let repo_root = PathBuf::from("/tmp/repo");
     let work_dir = PathBuf::from("/tmp/work");
@@ -214,5 +256,50 @@ fn default_distribution_policy() -> EffectiveDistributionPolicy {
         closeout_owner: DEFAULT_CLOSEOUT_OWNER.to_owned(),
         closeout_related: None,
         closeout_next_step: DEFAULT_CLOSEOUT_NEXT_STEP.to_owned(),
+    }
+}
+
+fn cargo_fixture() -> &'static str {
+    r#"[package]
+name = "effigy"
+version = "0.7.1"
+license = "MIT"
+description = "test"
+"#
+}
+
+fn workflow_fixture(glibc_guard: &str) -> String {
+    format!(
+        r#"name: Release Binaries
+on:
+  push:
+    tags:
+      - "v*"
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04
+  release:
+    name: Create GitHub Release
+  homebrew:
+    name: Update Homebrew tap
+steps:
+  - run: {glibc_guard}
+"#
+    )
+}
+
+fn write_required_docs(root: &std::path::Path) {
+    for path in DEFAULT_REQUIRED_DOCS {
+        let full_path = root.join(path);
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent).expect("mkdir docs");
+        }
+        fs::write(full_path, "doc").expect("write doc");
     }
 }

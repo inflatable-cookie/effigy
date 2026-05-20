@@ -42,7 +42,8 @@ macro_rules! walk_scoped_owned_symbol {
             $extractor_version,
         )?;
         $scope.push($scope_name);
-        let walk_result = (|| $walk)();
+        let walk = || $walk;
+        let walk_result = walk();
         $scope.pop();
         walk_result
     }};

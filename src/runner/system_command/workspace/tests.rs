@@ -105,6 +105,9 @@ fn resolve_public_workspace_container_uses_implied_default_workspace() {
 [catalog]
 alias = "probe"
 
+[containers]
+default = "app"
+
 [containers.app]
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "workspace"

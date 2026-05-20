@@ -376,7 +376,7 @@ fn probe_primary_service_exec_ready(
         ContainerAction::Status,
         "docker compose exec readiness status probe",
     )?;
-    let output = run_compose_plan_capture(&policy, &plan)?;
+    let output = run_compose_plan_capture(policy, &plan)?;
     Ok(primary_service_exec_readiness(
         policy.primary_service.as_str(),
         &working_dir,

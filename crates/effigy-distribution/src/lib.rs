@@ -1283,16 +1283,25 @@ pub fn validate_metadata_command(
                 "          - target: aarch64-unknown-linux-gnu\n            os: ubuntu-22.04",
                 "aarch64 Linux release baseline pinning",
             ),
-            (
-                "./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35",
-                "Linux glibc compatibility guard",
-            ),
         ] {
             if !workflow.contains(needle) {
                 errors.push(format!(
                     "expected {description} in .github/workflows/release-binaries.yml"
                 ));
             }
+        }
+        let linux_glibc_guards = [
+            "./effigy-${{ matrix.target }} release check-binary ./effigy-${{ matrix.target }} --glibc-floor 2.35",
+            "./effigy-${{ matrix.target }} distribution check-glibc-floor --binary ./effigy-${{ matrix.target }} --max-glibc 2.35",
+        ];
+        if !linux_glibc_guards
+            .iter()
+            .any(|needle| workflow.contains(needle))
+        {
+            errors.push(
+                "expected Linux glibc compatibility guard in .github/workflows/release-binaries.yml"
+                    .to_owned(),
+            );
         }
     }
 
