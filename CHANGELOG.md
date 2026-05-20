@@ -124,12 +124,13 @@ During v0.x, MINOR bumps may include breaking changes.
   `linux-release` builder now also keeps Cargo registry and git caches on named
   volumes so cold-path rebuilds do not redownload dependencies every time the
   container is recreated. Repeated handoffs now also skip the workspace
-  container copy/install step when the target already has the same
-  `effigy.active-version`, and workspace home permission prep now fixes
-  targeted subtrees instead of recursively chowning the whole home directory on
-  every entry. Direct `container shell --command` handoff now also reuses the
-  runner's already-resolved container session instead of resolving and
-  validating the same shell session twice.
+  container copy/install step when the target already has the same install
+  identity, so unchanged local builds now bypass both the architecture probe
+  and the copy/install path on steady-state entry. Workspace home permission
+  prep now fixes targeted subtrees instead of recursively chowning the whole
+  home directory on every entry. Direct `container shell --command` handoff now
+  also reuses the runner's already-resolved container session instead of
+  resolving and validating the same shell session twice.
 - **Container-local deferral avoids host runtime probes:** `effigy defer` now
   treats Effigy workspace containers as local execution contexts even when
   containerd/cgroup-v2 does not expose `/.dockerenv`, `/run/.containerenv`, or

@@ -11,13 +11,15 @@ use crate::runner::system_command::workspace_provisioning::render_workspace_perm
 use crate::runner::system_command::workspace_provisioning::{
     configured_effigy_repo_root, configured_linux_workspace_artifact_source,
     discover_effigy_repo_root, ensure_linux_workspace_effigy_artifact,
-    linux_workspace_effigy_artifact_needs_refresh, linux_workspace_effigy_cache_path,
-    linux_workspace_effigy_release_url, read_trimmed_workspace_effigy_active_version,
-    render_workspace_effigy_install_command, render_workspace_effigy_staging_path,
-    resolve_local_effigy_repo_root_from_paths, resolve_local_workspace_effigy_freshness_anchor,
-    run_linux_workspace_effigy_artifact_build, sibling_effigy_repo_root,
-    workspace_effigy_active_version_file, workspace_effigy_install_is_current,
-    LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+    expected_workspace_effigy_install_identity, linux_workspace_effigy_artifact_needs_refresh,
+    linux_workspace_effigy_cache_path, linux_workspace_effigy_release_url,
+    read_trimmed_workspace_effigy_active_version, render_workspace_effigy_install_command,
+    render_workspace_effigy_staging_path, resolve_local_effigy_repo_root_from_paths,
+    resolve_local_workspace_effigy_freshness_anchor, run_linux_workspace_effigy_artifact_build,
+    sibling_effigy_repo_root, workspace_effigy_active_version_file,
+    workspace_effigy_install_is_current, workspace_effigy_local_install_identity,
+    workspace_effigy_release_install_identity, LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
+    EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
 use crate::runner::system_command::workspace_session::classify_workspace_session_ownership;
 use crate::runner::test_support::effective_container_policy;
@@ -414,7 +416,7 @@ fn workspace_artifact_source_download_bypasses_discoverable_local_repo() {
     let active_version = workspace_effigy_active_version_file(&artifact);
     assert!(active_version.is_file());
     let contents = std::fs::read_to_string(active_version).expect("read active version");
-    assert!(!contents.trim().is_empty());
+    assert_eq!(contents.trim(), workspace_effigy_release_install_identity());
 }
 
 #[test]
@@ -1128,5 +1130,56 @@ fn workspace_effigy_active_version_reader_trims_and_ignores_missing_files() {
     assert_eq!(
         read_trimmed_workspace_effigy_active_version(&present).expect("present version"),
         Some("0.7.1".to_owned())
+    );
+}
+
+#[test]
+fn workspace_effigy_local_install_identity_tracks_anchor_metadata() {
+    let root = std::env::temp_dir().join(format!(
+        "effigy-workspace-install-identity-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("mkdir root");
+    let anchor = root.join("effigy");
+    std::fs::write(&anchor, "v1").expect("write anchor");
+
+    let first = workspace_effigy_local_install_identity(&anchor).expect("first identity");
+    assert!(first.starts_with(&format!(
+        "local:v{}:",
+        effigy_core::build_info::active_version()
+    )));
+
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    std::fs::write(&anchor, "v2-with-different-size").expect("rewrite anchor");
+    let second = workspace_effigy_local_install_identity(&anchor).expect("second identity");
+
+    assert_ne!(first, second);
+}
+
+#[test]
+fn expected_workspace_install_identity_uses_release_identity_in_download_mode() {
+    let temp_home = std::env::temp_dir().join(format!(
+        "effigy-workspace-expected-identity-home-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_home).expect("mkdir temp home");
+    let _home = EnvGuard::set_many(&[("HOME", Some(temp_home.display().to_string()))]);
+    let _env = EnvGuard::set_many(&[(
+        EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+        Some("download".to_owned()),
+    )]);
+
+    let workspace = temp_home.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("mkdir workspace");
+
+    assert_eq!(
+        expected_workspace_effigy_install_identity(&workspace).expect("expected identity"),
+        Some(workspace_effigy_release_install_identity())
     );
 }

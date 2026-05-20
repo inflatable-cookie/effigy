@@ -181,17 +181,19 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
     if std::env::var_os("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF").is_some() {
         return Ok(());
     }
+    let expected_install_identity =
+        expected_workspace_effigy_install_identity(workspace_repo_root)?;
+    if let Some(expected_identity) = expected_install_identity.as_deref() {
+        let installed_identity =
+            probe_installed_workspace_effigy_active_version(workspace_repo_root, policy)?;
+        if workspace_effigy_install_is_current(installed_identity.as_deref(), expected_identity) {
+            return Ok(());
+        }
+    }
     let target = probe_workspace_linux_target(workspace_repo_root, policy)?;
     let artifact = ensure_linux_workspace_effigy_artifact(workspace_repo_root, target)?;
     let active_version_source = workspace_effigy_active_version_file(&artifact);
     let active_version = read_trimmed_workspace_effigy_active_version(&active_version_source)?;
-    if let Some(expected_version) = active_version.as_deref() {
-        let installed_version =
-            probe_installed_workspace_effigy_active_version(workspace_repo_root, policy)?;
-        if workspace_effigy_install_is_current(installed_version.as_deref(), expected_version) {
-            return Ok(());
-        }
-    }
     let staging_path = render_workspace_effigy_staging_path();
     let active_version_staging_path = format!("{staging_path}.active-version");
     let mut progress = workspace::WorkspaceTransientProgressReporter::new(
@@ -545,6 +547,7 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
     let artifact_path = effigy_repo_root.join(target.artifact_relative_path());
     let freshness_anchor =
         resolve_local_workspace_effigy_freshness_anchor(host_binary, effigy_repo_root);
+    let install_identity = workspace_effigy_local_install_identity(&freshness_anchor)?;
     let needs_refresh =
         linux_workspace_effigy_artifact_needs_refresh(&freshness_anchor, &artifact_path, target);
 
@@ -562,7 +565,7 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
             artifact_path.display()
         )));
     }
-    ensure_workspace_effigy_active_version_file(&artifact_path)?;
+    ensure_workspace_effigy_active_version_file(&artifact_path, &install_identity)?;
     Ok(artifact_path)
 }
 
@@ -596,8 +599,9 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
     target: LinuxWorkspaceTarget,
 ) -> Result<PathBuf, RunnerError> {
     let cache_path = linux_workspace_effigy_cache_path(target)?;
+    let install_identity = workspace_effigy_release_install_identity();
     if cache_path.is_file() {
-        ensure_workspace_effigy_active_version_file(&cache_path)?;
+        ensure_workspace_effigy_active_version_file(&cache_path, &install_identity)?;
         return Ok(cache_path);
     }
 
@@ -620,7 +624,7 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
         false,
     );
     download_linux_workspace_effigy_release(&url, &cache_path)?;
-    ensure_workspace_effigy_active_version_file(&cache_path)?;
+    ensure_workspace_effigy_active_version_file(&cache_path, &install_identity)?;
     Ok(cache_path)
 }
 
@@ -628,15 +632,74 @@ pub(super) fn workspace_effigy_active_version_file(binary: &Path) -> PathBuf {
     binary.with_extension("active-version")
 }
 
-fn ensure_workspace_effigy_active_version_file(binary: &Path) -> Result<(), RunnerError> {
-    let version = effigy_core::build_info::active_version();
+fn ensure_workspace_effigy_active_version_file(
+    binary: &Path,
+    install_identity: &str,
+) -> Result<(), RunnerError> {
     let version_file = workspace_effigy_active_version_file(binary);
-    std::fs::write(&version_file, format!("{version}\n")).map_err(|error| {
+    std::fs::write(&version_file, format!("{install_identity}\n")).map_err(|error| {
         RunnerError::task_invocation(format!(
             "failed to write workspace effigy active version file `{}`: {error}",
             version_file.display()
         ))
     })
+}
+
+pub(super) fn expected_workspace_effigy_install_identity(
+    workspace_repo_root: &Path,
+) -> Result<Option<String>, RunnerError> {
+    let host_binary = std::env::current_exe().map_err(RunnerError::Cwd)?;
+    match configured_linux_workspace_artifact_source()? {
+        LinuxWorkspaceArtifactSource::Download => {
+            return Ok(Some(workspace_effigy_release_install_identity()));
+        }
+        LinuxWorkspaceArtifactSource::Local | LinuxWorkspaceArtifactSource::Auto => {}
+    }
+    let Some(effigy_repo_root) = resolve_local_effigy_repo_root(workspace_repo_root)? else {
+        return Ok(Some(workspace_effigy_release_install_identity()));
+    };
+    persist_effigy_source_repo_root(&effigy_repo_root)?;
+    let freshness_anchor =
+        resolve_local_workspace_effigy_freshness_anchor(&host_binary, &effigy_repo_root);
+    Ok(Some(workspace_effigy_local_install_identity(
+        &freshness_anchor,
+    )?))
+}
+
+pub(super) fn workspace_effigy_release_install_identity() -> String {
+    format!("release:v{}", effigy_core::build_info::active_version())
+}
+
+pub(super) fn workspace_effigy_local_install_identity(
+    freshness_anchor: &Path,
+) -> Result<String, RunnerError> {
+    let metadata = std::fs::metadata(freshness_anchor).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to stat workspace effigy freshness anchor `{}`: {error}",
+            freshness_anchor.display()
+        ))
+    })?;
+    let modified = metadata.modified().map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to read workspace effigy freshness anchor mtime `{}`: {error}",
+            freshness_anchor.display()
+        ))
+    })?;
+    let modified_nanos = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "workspace effigy freshness anchor mtime predates unix epoch `{}`: {error}",
+                freshness_anchor.display()
+            ))
+        })?
+        .as_nanos();
+    Ok(format!(
+        "local:v{}:{}:{}",
+        effigy_core::build_info::active_version(),
+        metadata.len(),
+        modified_nanos
+    ))
 }
 
 pub(super) fn linux_workspace_effigy_cache_path(
