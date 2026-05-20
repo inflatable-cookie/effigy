@@ -105,7 +105,7 @@ Stay with `rg` first when the job is:
 
 Built-ins worth knowing beyond the default loop: `init`, `watch`, `defer`,
 `docs`, `contracts`, `bundle`, `artifact`, `demo`, `changelog`,
-`distribution`.
+`release`.
 
 ## Common workflows
 
