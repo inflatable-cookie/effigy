@@ -137,6 +137,11 @@ During v0.x, MINOR bumps may include breaking changes.
   configured workspace user on the real exec path first and only falls back to
   root if the runtime reports that the user is missing, so the steady-state
   path no longer pays a separate `id -u <workspace_user>` probe exec.
+- **Container status now reports primary-service exec readiness:** `effigy
+  container status` now distinguishes “runtime backend is up” from “the
+  primary service can actually exec in its working dir” through a
+  `primary_service_exec_ready` field and warning output, so drifted workspace
+  stacks stop looking healthy when the service runtime is unusable.
 - **Container-local deferral avoids host runtime probes:** `effigy defer` now
   treats Effigy workspace containers as local execution contexts even when
   containerd/cgroup-v2 does not expose `/.dockerenv`, `/run/.containerenv`, or

@@ -269,7 +269,7 @@ primary_service = "app"
         port_env_vars: vec!["DB_PORT".to_owned(), "MYSQL_PORT".to_owned()],
     }];
 
-    let report = status_report(&policy, "containerd", true, None, None, None);
+    let report = status_report(&policy, "containerd", true, None, Some(true), None, None);
 
     assert!(report.success_text.contains("shared_services: 1"));
     assert!(report
@@ -856,7 +856,7 @@ primary_service = "app"
     let mut policy = load_container_policy(&root, None).expect("policy");
     policy.declared_media_mounts = vec!["storage/uploads:/var/www/html/storage/uploads".to_owned()];
 
-    let report = status_report(&policy, "containerd", true, None, None, None);
+    let report = status_report(&policy, "containerd", true, None, None, None, None);
 
     assert_eq!(
         report.json["media_mounts"][0],
@@ -898,6 +898,7 @@ primary_service = "app"
         "containerd",
         true,
         None,
+        Some(true),
         Some(services.as_slice()),
         Some("NAME STATUS\napp running\n"),
     );
@@ -908,4 +909,31 @@ primary_service = "app"
         .contains("- app: Up 2 minutes [0.0.0.0:8080->80/tcp]"));
     assert!(!report.success_text.contains("compose status:"));
     assert_eq!(report.json["services"][0]["name"], "app");
+}
+
+#[test]
+fn status_report_includes_primary_service_exec_ready_state() {
+    let root = temp_repo("status-exec-ready");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(root.join("infra/dev/docker-compose.yml"), "services: {}\n").expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let report = status_report(&policy, "containerd", true, None, Some(false), None, None);
+
+    assert_eq!(report.json["primary_service_exec_ready"], false);
+    assert!(report
+        .success_text
+        .contains("primary_service_exec_ready: no"));
 }

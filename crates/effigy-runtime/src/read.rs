@@ -11,8 +11,8 @@ use effigy_containers::{
         selected_backend_label,
     },
     health::probe_health_status,
-    load_container_policy, logs_report, status_report, validate_compose_backend_runtime,
-    validate_container_policy,
+    load_container_exec_working_dir, load_container_policy, logs_report, status_report,
+    validate_compose_backend_runtime, validate_container_policy,
 };
 use effigy_containers::{
     stats_global_report, status_global_report, ContainerStatsAllEntry, ContainerStatsService,
@@ -83,15 +83,24 @@ pub fn run_container_status(
     } else {
         None
     };
+    let (primary_service_exec_ready, primary_service_exec_warning) = if runtime_running {
+        probe_primary_service_exec_ready(repo_root, &policy, name)?
+    } else {
+        (None, None)
+    };
     let mut report = status_report(
         &policy,
         selected_backend_label(&policy, repo_root),
         runtime_running,
         health,
+        primary_service_exec_ready,
         runtime_running.then_some(services.as_slice()),
         compose_ps.as_deref(),
     );
     annotate_warning_lines(&mut report, &colima_profile_warnings(&policy, repo_root));
+    if let Some(warning) = primary_service_exec_warning {
+        annotate_warning_lines(&mut report, &[warning]);
+    }
     Ok(render_container_report(report, output_json))
 }
 
@@ -343,6 +352,43 @@ fn discover_running_services_for_policy(
             })
             .collect(),
     )
+}
+
+fn probe_primary_service_exec_ready(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    requested_name: Option<&str>,
+) -> Result<(Option<bool>, Option<String>), EffigyRuntimeError> {
+    let working_dir = load_container_exec_working_dir(repo_root, requested_name)
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    let working_dir_str = working_dir.to_string_lossy().into_owned();
+    let plan = compose_invocation_plan(
+        repo_root,
+        policy,
+        [
+            "exec",
+            "-T",
+            "-w",
+            working_dir_str.as_str(),
+            policy.primary_service.as_str(),
+            "true",
+        ],
+        ContainerAction::Status,
+        "docker compose exec readiness status probe",
+    )?;
+    let output = run_compose_plan_capture(&policy, &plan)?;
+    if output.status.success() {
+        return Ok((Some(true), None));
+    }
+
+    Ok((
+        Some(false),
+        Some(format!(
+            "primary service `{}` is not exec-ready in `{}`; runtime state may be drifted",
+            policy.primary_service,
+            working_dir.display()
+        )),
+    ))
 }
 
 #[cfg(test)]

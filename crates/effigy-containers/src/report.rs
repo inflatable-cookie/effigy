@@ -354,6 +354,7 @@ pub fn status_report(
     backend: &str,
     runtime_running: bool,
     health: Option<&'static str>,
+    primary_service_exec_ready: Option<bool>,
     services: Option<&[ContainerStatusService]>,
     compose_ps: Option<&str>,
 ) -> ContainerCommandReport {
@@ -372,6 +373,7 @@ pub fn status_report(
         "shared_services": shared_services_json(policy),
         "runtime_running": runtime_running,
         "health": health,
+        "primary_service_exec_ready": primary_service_exec_ready,
         "ports": policy.declared_ports,
         "mounts": policy.declared_mounts,
         "detach_timeout_secs": policy.detach_timeout_secs,
@@ -390,6 +392,12 @@ pub fn status_report(
         format!("primary_service: {}", policy.primary_service),
         format!("runtime_running: {}", yes_no(runtime_running)),
     ];
+    if let Some(primary_service_exec_ready) = primary_service_exec_ready {
+        lines.push(format!(
+            "primary_service_exec_ready: {}",
+            yes_no(primary_service_exec_ready)
+        ));
+    }
     if !policy.declared_ports.is_empty() {
         lines.push(format!("ports: {}", policy.declared_ports.join(", ")));
     }
