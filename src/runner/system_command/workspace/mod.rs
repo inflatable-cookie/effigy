@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 
 use crate::runner::command_context::resolve_active_repo_root;
 use crate::runner::container_command::{
-    gateway_routes_registered_for_container, run_container, runtime_error_from_runner,
+    gateway_routes_registered_for_container, maybe_confirm_container_shell_exit_cleanup,
+    run_container, runtime_error_from_runner,
 };
 use crate::runner::container_runtime_prep::container_policy_uses_gateway_surface;
 use crate::runner::execute::api::{
@@ -273,10 +274,15 @@ pub(super) fn run_workspace_handoff_shell(
 pub(super) fn cleanup_workspace_session(
     ownership: InteractiveSessionOwnership,
     session_succeeded: bool,
+    container_label: &str,
     container_name: Option<String>,
     repo_override: Option<PathBuf>,
 ) -> Result<(), RunnerError> {
-    if !should_cleanup_interactive_session(ownership, session_succeeded) {
+    if !resolve_workspace_shell_exit_cleanup(
+        ownership,
+        session_succeeded,
+        maybe_confirm_container_shell_exit_cleanup(container_label)?,
+    ) {
         return Ok(());
     }
 
@@ -328,6 +334,19 @@ fn should_shutdown_started_system(
     ownership: InteractiveSessionOwnership,
     session_succeeded: bool,
 ) -> bool {
+    should_cleanup_interactive_session(ownership, session_succeeded)
+}
+
+fn resolve_workspace_shell_exit_cleanup(
+    ownership: InteractiveSessionOwnership,
+    session_succeeded: bool,
+    prompt_decision: Option<bool>,
+) -> bool {
+    if session_succeeded {
+        if let Some(prompt_decision) = prompt_decision {
+            return prompt_decision;
+        }
+    }
     should_cleanup_interactive_session(ownership, session_succeeded)
 }
 

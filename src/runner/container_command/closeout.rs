@@ -1,4 +1,7 @@
-use std::path::Path;
+use std::{
+    io::{self, BufRead, IsTerminal, Write},
+    path::Path,
+};
 
 use effigy_containers::{load_container_policy, EffectiveAttachMode, EffectiveContainerPolicy};
 
@@ -31,6 +34,18 @@ pub(super) fn stop_host_processes_best_effort(repo_root: &Path, name: Option<&st
     if let Ok(policy) = load_container_policy(repo_root, name) {
         let _ = crate::runner::host_process::stop_host_processes_for_container(repo_root, &policy);
     }
+}
+
+pub(in crate::runner) fn maybe_confirm_container_shell_exit_cleanup(
+    container_name: &str,
+) -> Result<Option<bool>, RunnerError> {
+    if !shell_exit_cleanup_prompt_supported(io::stdin().is_terminal(), io::stdout().is_terminal()) {
+        return Ok(None);
+    }
+
+    let mut stdin = io::stdin().lock();
+    let mut stdout = io::stdout().lock();
+    confirm_container_shell_exit_cleanup_from_io(container_name, &mut stdin, &mut stdout).map(Some)
 }
 
 pub(super) fn cleanup_failed_container_up(
@@ -108,9 +123,49 @@ pub(super) fn render_interrupted_up_closeout_text(
     lines.join("\n")
 }
 
+fn shell_exit_cleanup_prompt_supported(stdin_is_tty: bool, stdout_is_tty: bool) -> bool {
+    stdin_is_tty && stdout_is_tty
+}
+
+fn confirm_container_shell_exit_cleanup_from_io<R: BufRead, W: Write>(
+    container_name: &str,
+    input: &mut R,
+    output: &mut W,
+) -> Result<bool, RunnerError> {
+    writeln!(
+        output,
+        "Shell session for container `{container_name}` finished.\nPress Enter to bring it down now, or type `n` to leave it running.\n"
+    )
+    .and_then(|_| output.write_all(b"Bring container down? [Y/n]: "))
+    .and_then(|_| output.flush())
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to render interactive container shutdown prompt: {error}"
+        ))
+    })?;
+
+    let mut line = String::new();
+    input.read_line(&mut line).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to read interactive container shutdown input: {error}"
+        ))
+    })?;
+    let normalized = line.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "" | "y" | "yes" => Ok(true),
+        "n" | "no" => Ok(false),
+        _ => Err(RunnerError::task_invocation(
+            "invalid container shutdown response; press Enter to stop the container or type `n` to leave it running",
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{finish_container_up_failure, render_interrupted_up_closeout_text};
+    use super::{
+        confirm_container_shell_exit_cleanup_from_io, finish_container_up_failure,
+        render_interrupted_up_closeout_text, shell_exit_cleanup_prompt_supported,
+    };
     use crate::runner::RunnerError;
     use effigy_containers::{
         EffectiveAttachMode, EffectiveComposeSource, EffectiveContainerPolicy,
@@ -119,6 +174,7 @@ mod tests {
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
         ManifestContainerStartup,
     };
+    use std::io::Cursor;
     use std::path::PathBuf;
 
     #[test]
@@ -166,6 +222,56 @@ mod tests {
             rendered.to_string(),
             "gateway registration failed\ncontainer up cleanup also failed: docker compose down failed"
         );
+    }
+
+    #[test]
+    fn shell_exit_cleanup_prompt_requires_tty_io() {
+        assert!(shell_exit_cleanup_prompt_supported(true, true));
+        assert!(!shell_exit_cleanup_prompt_supported(true, false));
+        assert!(!shell_exit_cleanup_prompt_supported(false, true));
+    }
+
+    #[test]
+    fn shell_exit_cleanup_prompt_defaults_to_yes() {
+        let mut output = Vec::new();
+        let confirmed = confirm_container_shell_exit_cleanup_from_io(
+            "web",
+            &mut Cursor::new(b"\n"),
+            &mut output,
+        )
+        .expect("blank input should accept default yes");
+
+        assert!(confirmed);
+        let rendered = String::from_utf8(output).expect("utf8 prompt");
+        assert!(rendered.contains("Shell session for container `web` finished."));
+        assert!(rendered.contains("Bring container down? [Y/n]: "));
+    }
+
+    #[test]
+    fn shell_exit_cleanup_prompt_accepts_explicit_no() {
+        let mut output = Vec::new();
+        let confirmed = confirm_container_shell_exit_cleanup_from_io(
+            "web",
+            &mut Cursor::new(b"n\n"),
+            &mut output,
+        )
+        .expect("explicit no should parse");
+
+        assert!(!confirmed);
+    }
+
+    #[test]
+    fn shell_exit_cleanup_prompt_rejects_invalid_answer() {
+        let error = confirm_container_shell_exit_cleanup_from_io(
+            "web",
+            &mut Cursor::new(b"maybe\n"),
+            &mut Vec::new(),
+        )
+        .expect_err("invalid answer should error");
+
+        assert!(error
+            .to_string()
+            .contains("invalid container shutdown response"));
     }
 
     fn test_policy() -> EffectiveContainerPolicy {

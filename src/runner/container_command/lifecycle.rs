@@ -5,7 +5,8 @@ use std::process::Output;
 
 use super::closeout::{
     finish_container_up_failure, maybe_confirm_container_reset_wipe_data,
-    render_interrupted_up_closeout, stop_host_processes_best_effort,
+    maybe_confirm_container_shell_exit_cleanup, render_interrupted_up_closeout,
+    stop_host_processes_best_effort,
 };
 use super::deregister_runtime_gateway_routes;
 use super::gateway_registration::{
@@ -509,7 +510,7 @@ pub(super) fn run_container_shell(
         ContainerExecOperation::shell(Some(service.clone()), command.map(str::to_owned), true),
     );
     maybe_refresh_workspace_effigy_for_shell(repo_root, &policy, &service)?;
-    run_runtime_container_shell(
+    let shell_output = run_runtime_container_shell(
         repo_root,
         name,
         Some(service.as_str()),
@@ -518,7 +519,14 @@ pub(super) fn run_container_shell(
         probe_runtime_shell_capability,
         run_runtime_shell_exec,
     )
-    .map_err(Into::into)
+    .map_err(RunnerError::from)?;
+    if command.is_none()
+        && maybe_confirm_container_shell_exit_cleanup(&policy.name)?.unwrap_or(false)
+    {
+        let down_output = run_container_down_adapter(repo_root, Some(policy.name.as_str()), false)?;
+        return Ok(format!("{shell_output}\n{down_output}"));
+    }
+    Ok(shell_output)
 }
 
 pub(in crate::runner) fn run_container_exec_capture(

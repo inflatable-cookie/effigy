@@ -280,7 +280,9 @@ fn render_container_help_shows_runtime_options() {
     assert!(rendered
         .contains("effigy container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat"));
     assert!(rendered.contains("effigy container web reset --keep-data"));
-    assert!(rendered.contains("attached sessions shut the environment down on owner exit"));
+    assert!(rendered.contains(
+        "interactive workspace/shell exits now ask whether to bring the environment down"
+    ));
 }
 
 #[test]

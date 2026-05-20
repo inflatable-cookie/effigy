@@ -57,6 +57,7 @@ pub(super) fn run_workspace_container_session(
     let cleanup_result = workspace::cleanup_workspace_session(
         ownership,
         shell_result.is_ok(),
+        &policy.name,
         container_name,
         repo_override,
     );

@@ -322,7 +322,7 @@ Behavior:
 - ensure system exists
 - open workspace shell
 - do package or maintenance work inside Linux
-- auto-stop only if this invocation started the system
+- on shell exit, prompt to bring the system down and default the answer to yes
 
 ### Manual substrate control
 
@@ -335,8 +335,9 @@ effigy system down
 
 Behavior:
 
-- user explicitly owns infra lifecycle
-- later `workspace` and `dev` leave the running system alone
+- user explicitly owns infra lifecycle before the shell opens
+- on later `workspace` and `dev` exits, Effigy still asks whether to bring the
+  system down and defaults to yes
 
 ## Maintainer Notes
 

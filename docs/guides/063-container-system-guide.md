@@ -320,8 +320,10 @@ These are session-owned lifecycles:
 
 - Effigy prepares the runtime for an interactive shell or handoff
 - public gateway routes are reconciled before the shell opens
-- the session decides shutdown behavior on exit
-- `on_task_exit` and shell ownership matter here
+- the session asks whether to bring the container down on exit and defaults to
+  yes
+- `on_task_exit` still governs attached container-session shutdown, but public
+  shell exits now use the explicit exit prompt instead of ownership heuristics
 
 This is the right model when the user is being dropped into a live workspace.
 

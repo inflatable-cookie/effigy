@@ -817,6 +817,52 @@ fn explicit_seeded_cleanup_override_forces_stop_on_exit_without_thread_local_con
 }
 
 #[test]
+fn workspace_shell_exit_prompt_can_preserve_a_runtime_even_when_ownership_would_stop_it() {
+    let ownership = classify_workspace_session_ownership(
+        InteractiveSessionIntent::PublicWorkspace,
+        false,
+        true,
+        None,
+    );
+
+    assert!(!super::resolve_workspace_shell_exit_cleanup(
+        ownership,
+        true,
+        Some(false),
+    ));
+}
+
+#[test]
+fn workspace_shell_exit_prompt_can_stop_a_runtime_even_when_ownership_would_preserve_it() {
+    let ownership = classify_workspace_session_ownership(
+        InteractiveSessionIntent::PublicWorkspace,
+        true,
+        true,
+        None,
+    );
+
+    assert!(super::resolve_workspace_shell_exit_cleanup(
+        ownership,
+        true,
+        Some(true),
+    ));
+}
+
+#[test]
+fn workspace_shell_exit_cleanup_falls_back_to_ownership_when_no_prompt_is_available() {
+    let ownership = classify_workspace_session_ownership(
+        InteractiveSessionIntent::PublicWorkspace,
+        true,
+        true,
+        None,
+    );
+
+    assert!(!super::resolve_workspace_shell_exit_cleanup(
+        ownership, true, None,
+    ));
+}
+
+#[test]
 fn effective_workspace_repo_override_falls_back_to_repo_root() {
     let repo_root = Path::new("/tmp/demo-repo");
     assert_eq!(

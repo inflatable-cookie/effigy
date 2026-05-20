@@ -101,6 +101,11 @@ During v0.x, MINOR bumps may include breaking changes.
   bundle inspection, and secrets inspection instead of only listing those
   commands as follow-up text. Health checks such as `doctor`, `tasks`, and
   `test --plan` remain end-of-wizard next-step guidance.
+- **Interactive workspace and container shell exits now ask before shutdown:**
+  leaving `effigy workspace`, `effigy dev`, and direct `effigy container <NAME>
+  shell` sessions now prompts whether to bring the runtime down, with Enter
+  accepting the default `yes`, instead of tying shell-exit cleanup to whether
+  the runtime was session-owned or adopted.
 
 ### Fixed
 - **Container-local deferral avoids host runtime probes:** `effigy defer` now

@@ -11,7 +11,7 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "container",
     notices: text_lines![
         "Operate one manifest-defined local container environment by name or through the manifest default alias.",
-        "V1 stays explicit: host-facing ports and repo-relative mounts are declared in `[containers.*.host]`, and attached sessions shut the environment down on owner exit by default.",
+        "V1 stays explicit: host-facing ports and repo-relative mounts are declared in `[containers.*.host]`, and interactive workspace/shell exits now ask whether to bring the environment down, defaulting to yes.",
         "Generated compose also supports bounded `shared = true` backing services for standalone shared databases and caches on the product-owned path.",
         "Mounted sibling repos listed in `systems.<name>.mounts` auto-adopt producer `[isolation].paths` into workspace containers, and the Colima/containerd path now preflights oversized mount payloads before compose-up.",
         "`container data seed` currently targets the repo default container only and stays on the generated-compose path, while `container data dump` exports logical SQL dumps from generated-compose database services.",
