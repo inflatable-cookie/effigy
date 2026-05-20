@@ -1,14 +1,22 @@
 let report_dir = path::join(repo_root, ".effigy/perf/container-shell-matrix");
 let default_summary_path = path::join(report_dir, "summary.json");
 
+fn resolve_repo_path(path_value) {
+    let rendered = path_value.to_string();
+    if str::starts_with(rendered, "/") {
+        return rendered;
+    }
+    path::join(repo_root, rendered)
+}
+
 if args.is_empty() {
     throw "[error] usage: effigy perf:container-shell-compare <baseline-summary.json> [candidate-summary.json] [threshold-seconds]\n"
         + "example: effigy perf:container-shell-compare .effigy/perf/container-shell-matrix/baseline.json";
 }
 
-let baseline_path = args[0].to_string();
+let baseline_path = resolve_repo_path(args[0].to_string());
 let candidate_path = if args.len() >= 2 {
-    args[1].to_string()
+    resolve_repo_path(args[1].to_string())
 } else {
     default_summary_path
 };

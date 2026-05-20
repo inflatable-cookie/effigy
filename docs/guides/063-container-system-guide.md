@@ -188,6 +188,20 @@ The JSON summary is the compact machine-readable view:
 
 ### 3. Compare against a baseline snapshot
 
+Create a baseline snapshot with:
+
+```sh
+effigy perf:container-shell-snapshot
+effigy perf:container-shell-snapshot .effigy/perf/container-shell-matrix/my-baseline.json
+```
+
+Contract:
+
+- source is always `.effigy/perf/container-shell-matrix/summary.json`
+- default output is a timestamped file under
+  `.effigy/perf/container-shell-matrix/baselines/`
+- optional argument overrides the snapshot path
+
 Use the compare task when you already have an earlier `summary.json` and want a
 cheap regression decision without reading the markdown reports.
 
