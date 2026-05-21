@@ -6,6 +6,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- **Workspace-local version strings no longer leak install cache keys:** Linux
+  workspace handoff now keeps the human-facing `effigy.active-version` file as
+  a plain build version and stores the handoff freshness/install identity in a
+  separate sidecar, so local workspace containers stop reporting long internal
+  strings like `vlocal:...` from `effigy version`.
+
 ## [0.8.2] - 2026-05-21
 
 ### Fixed

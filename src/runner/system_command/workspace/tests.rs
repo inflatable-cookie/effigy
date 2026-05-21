@@ -17,9 +17,9 @@ use crate::runner::system_command::workspace_provisioning::{
     render_workspace_effigy_staging_path, resolve_local_effigy_repo_root_from_paths,
     resolve_local_workspace_effigy_freshness_anchor, run_linux_workspace_effigy_artifact_build,
     sibling_effigy_repo_root, workspace_effigy_active_version_file,
-    workspace_effigy_install_is_current, workspace_effigy_local_install_identity,
-    workspace_effigy_release_install_identity, LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget,
-    EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
+    workspace_effigy_install_identity_file, workspace_effigy_install_is_current,
+    workspace_effigy_local_install_identity, workspace_effigy_release_install_identity,
+    LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
 use crate::runner::system_command::workspace_session::classify_workspace_session_ownership;
 use crate::runner::test_support::effective_container_policy;
@@ -418,7 +418,15 @@ fn workspace_artifact_source_download_bypasses_discoverable_local_repo() {
     let active_version = workspace_effigy_active_version_file(&artifact);
     assert!(active_version.is_file());
     let contents = std::fs::read_to_string(active_version).expect("read active version");
-    assert_eq!(contents.trim(), workspace_effigy_release_install_identity());
+    assert_eq!(contents.trim(), effigy_core::build_info::active_version());
+    let install_identity = workspace_effigy_install_identity_file(&artifact);
+    assert!(install_identity.is_file());
+    let identity_contents =
+        std::fs::read_to_string(install_identity).expect("read install identity");
+    assert_eq!(
+        identity_contents.trim(),
+        workspace_effigy_release_install_identity()
+    );
 }
 
 #[test]
@@ -1084,10 +1092,12 @@ fn workspace_effigy_install_command_targets_usr_local_bin() {
     let rendered = render_workspace_effigy_install_command(
         "/tmp/effigy-host-1",
         Some("/tmp/effigy-host-1.active-version"),
+        Some("/tmp/effigy-host-1.install-identity"),
     );
     assert!(rendered.contains("/tmp/effigy-host"));
     assert!(rendered.contains("/usr/local/bin/effigy"));
     assert!(rendered.contains("/usr/local/bin/effigy.active-version"));
+    assert!(rendered.contains("/usr/local/bin/effigy.install-identity"));
     assert!(rendered.contains("install -m 0755"));
     assert!(rendered.contains("install -m 0644"));
 }

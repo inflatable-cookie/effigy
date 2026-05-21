@@ -12,6 +12,8 @@ use super::{workspace, RunnerError};
 const CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH_PREFIX: &str = "/tmp/effigy-host";
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
 const CONTAINER_WORKSPACE_EFFIGY_ACTIVE_VERSION_PATH: &str = "/usr/local/bin/effigy.active-version";
+const CONTAINER_WORKSPACE_EFFIGY_INSTALL_IDENTITY_PATH: &str =
+    "/usr/local/bin/effigy.install-identity";
 const EFFIGY_RELEASE_REPO_BASE_URL: &str = "https://github.com/inflatable-cookie/effigy";
 pub(super) const EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV: &str =
     "EFFIGY_WORKSPACE_EFFIGY_ARTIFACT_SOURCE";
@@ -194,8 +196,11 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
     let artifact = ensure_linux_workspace_effigy_artifact(workspace_repo_root, target)?;
     let active_version_source = workspace_effigy_active_version_file(&artifact);
     let active_version = read_trimmed_workspace_effigy_active_version(&active_version_source)?;
+    let install_identity_source = workspace_effigy_install_identity_file(&artifact);
+    let install_identity = read_trimmed_workspace_effigy_active_version(&install_identity_source)?;
     let staging_path = render_workspace_effigy_staging_path();
     let active_version_staging_path = format!("{staging_path}.active-version");
+    let install_identity_staging_path = format!("{staging_path}.install-identity");
     let mut progress = workspace::WorkspaceTransientProgressReporter::new(
         repo_override.is_some(),
         "installing linux effigy into workspace container",
@@ -219,6 +224,16 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
         )
         .inspect_err(|_| progress.finish(false))?;
     }
+    if install_identity.is_some() {
+        copy_file_into_service(
+            workspace_repo_root,
+            policy,
+            policy.primary_service.as_str(),
+            &install_identity_source,
+            &install_identity_staging_path,
+        )
+        .inspect_err(|_| progress.finish(false))?;
+    }
     run_workspace_effigy_install(
         workspace_repo_root,
         policy,
@@ -226,6 +241,9 @@ pub(super) fn ensure_workspace_effigy_available_for_policy(
         active_version
             .as_ref()
             .map(|_| active_version_staging_path.as_str()),
+        install_identity
+            .as_ref()
+            .map(|_| install_identity_staging_path.as_str()),
         repo_override.as_deref(),
     )
     .inspect_err(|_| progress.finish(false))?;
@@ -261,7 +279,8 @@ pub(super) fn probe_installed_workspace_effigy_active_version(
         ["exec", "-T", policy.primary_service.as_str(), "sh", "-lc"],
     );
     args.push(OsString::from(format!(
-        "cat {} 2>/dev/null || true",
+        "cat {} 2>/dev/null || cat {} 2>/dev/null || true",
+        shell_quote(CONTAINER_WORKSPACE_EFFIGY_INSTALL_IDENTITY_PATH),
         shell_quote(CONTAINER_WORKSPACE_EFFIGY_ACTIVE_VERSION_PATH)
     )));
     let output = crate::runner::exec_command::run_compose_exec(
@@ -295,6 +314,7 @@ pub(super) fn run_workspace_effigy_install(
     policy: &EffectiveContainerPolicy,
     staging_path: &str,
     active_version_staging_path: Option<&str>,
+    install_identity_staging_path: Option<&str>,
     repo_override: Option<&Path>,
 ) -> Result<String, RunnerError> {
     let service = policy.primary_service.as_str();
@@ -305,6 +325,7 @@ pub(super) fn run_workspace_effigy_install(
     args.push(OsString::from(render_workspace_effigy_install_command(
         staging_path,
         active_version_staging_path,
+        install_identity_staging_path,
     )));
     let output = crate::runner::exec_command::run_compose_exec(
         repo_root,
@@ -330,6 +351,7 @@ pub(super) fn run_workspace_effigy_install(
 pub(super) fn render_workspace_effigy_install_command(
     staging_path: &str,
     active_version_staging_path: Option<&str>,
+    install_identity_staging_path: Option<&str>,
 ) -> String {
     let mut command = format!(
         "install -m 0755 {src} {dest}",
@@ -343,9 +365,19 @@ pub(super) fn render_workspace_effigy_install_command(
             dest = CONTAINER_WORKSPACE_EFFIGY_ACTIVE_VERSION_PATH,
         ));
     }
+    if let Some(install_identity_staging_path) = install_identity_staging_path {
+        command.push_str(&format!(
+            " && install -m 0644 {src} {dest}",
+            src = shell_quote(install_identity_staging_path),
+            dest = CONTAINER_WORKSPACE_EFFIGY_INSTALL_IDENTITY_PATH,
+        ));
+    }
     command.push_str(&format!(" && rm -f {}", shell_quote(staging_path)));
     if let Some(active_version_staging_path) = active_version_staging_path {
         command.push_str(&format!(" {}", shell_quote(active_version_staging_path)));
+    }
+    if let Some(install_identity_staging_path) = install_identity_staging_path {
+        command.push_str(&format!(" {}", shell_quote(install_identity_staging_path)));
     }
     command
 }
@@ -565,7 +597,11 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
             artifact_path.display()
         )));
     }
-    ensure_workspace_effigy_active_version_file(&artifact_path, &install_identity)?;
+    ensure_workspace_effigy_active_version_file(
+        &artifact_path,
+        &effigy_core::build_info::active_version(),
+    )?;
+    ensure_workspace_effigy_install_identity_file(&artifact_path, &install_identity)?;
     Ok(artifact_path)
 }
 
@@ -601,7 +637,11 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
     let cache_path = linux_workspace_effigy_cache_path(target)?;
     let install_identity = workspace_effigy_release_install_identity();
     if cache_path.is_file() {
-        ensure_workspace_effigy_active_version_file(&cache_path, &install_identity)?;
+        ensure_workspace_effigy_active_version_file(
+            &cache_path,
+            &effigy_core::build_info::active_version(),
+        )?;
+        ensure_workspace_effigy_install_identity_file(&cache_path, &install_identity)?;
         return Ok(cache_path);
     }
 
@@ -624,7 +664,11 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
         false,
     );
     download_linux_workspace_effigy_release(&url, &cache_path)?;
-    ensure_workspace_effigy_active_version_file(&cache_path, &install_identity)?;
+    ensure_workspace_effigy_active_version_file(
+        &cache_path,
+        &effigy_core::build_info::active_version(),
+    )?;
+    ensure_workspace_effigy_install_identity_file(&cache_path, &install_identity)?;
     Ok(cache_path)
 }
 
@@ -632,15 +676,32 @@ pub(super) fn workspace_effigy_active_version_file(binary: &Path) -> PathBuf {
     binary.with_extension("active-version")
 }
 
+pub(super) fn workspace_effigy_install_identity_file(binary: &Path) -> PathBuf {
+    binary.with_extension("install-identity")
+}
+
 fn ensure_workspace_effigy_active_version_file(
     binary: &Path,
-    install_identity: &str,
+    active_version: &str,
 ) -> Result<(), RunnerError> {
     let version_file = workspace_effigy_active_version_file(binary);
-    std::fs::write(&version_file, format!("{install_identity}\n")).map_err(|error| {
+    std::fs::write(&version_file, format!("{active_version}\n")).map_err(|error| {
         RunnerError::task_invocation(format!(
             "failed to write workspace effigy active version file `{}`: {error}",
             version_file.display()
+        ))
+    })
+}
+
+fn ensure_workspace_effigy_install_identity_file(
+    binary: &Path,
+    install_identity: &str,
+) -> Result<(), RunnerError> {
+    let identity_file = workspace_effigy_install_identity_file(binary);
+    std::fs::write(&identity_file, format!("{install_identity}\n")).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "failed to write workspace effigy install identity file `{}`: {error}",
+            identity_file.display()
         ))
     })
 }
