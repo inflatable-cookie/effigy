@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-05-21
+
+### Fixed
+- **Workspace handoff no longer fails early when Colima is stopped:** the
+  gateway route readiness probe now treats “runtime not running yet” as
+  `not ready` instead of aborting workspace/dev handoff before activation can
+  start the container runtime.
+
 ## [0.8.1] - 2026-05-20
 
 ### Fixed
