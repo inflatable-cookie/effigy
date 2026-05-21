@@ -1,4 +1,5 @@
 use super::*;
+use effigy_containers::exec::ContainerExecError;
 use effigy_containers::{EffectiveComposeSource, EffectiveServiceAlias, SharedServiceBinding};
 use effigy_gateway::routes::RouteTable;
 use effigy_manifest::{
@@ -913,4 +914,25 @@ fn keeps_active_project_identity_when_runtime_rows_do_not_report_working_dir() {
     assert!(changed);
     assert!(registry.get("active-project").is_some());
     assert!(registry.get("stale-project").is_none());
+}
+
+#[test]
+fn runtime_not_running_errors_degrade_gateway_probe_to_not_ready() {
+    let colima_stopped = ContainerExecError::Failure {
+        command: "colima nerdctl ps".to_owned(),
+        code: Some(1),
+        stdout: String::new(),
+        stderr: "time=\"2026-05-21T07:27:30+01:00\" level=fatal msg=\"colima [profile=effigy] is not running\""
+            .to_owned(),
+    };
+    let docker_stopped = ContainerExecError::Failure {
+        command: "docker ps".to_owned(),
+        code: Some(1),
+        stdout: String::new(),
+        stderr: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"
+            .to_owned(),
+    };
+
+    assert!(exec_error_means_runtime_not_running(&colima_stopped));
+    assert!(exec_error_means_runtime_not_running(&docker_stopped));
 }

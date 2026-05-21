@@ -3,7 +3,7 @@ use std::process::Command;
 
 use effigy_containers::exec::{
     list_running_compose_containers, list_running_compose_containers_for_policy,
-    RunningComposeContainer,
+    ContainerExecError, RunningComposeContainer,
 };
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute, SharedServiceBinding};
 use effigy_gateway::loopback::LoopbackRegistry;
@@ -80,8 +80,11 @@ pub(in crate::runner) fn gateway_routes_registered_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<bool, RunnerError> {
-    let rows = list_running_compose_containers_for_policy(repo_root, policy)
-        .map_err(|error| gateway_runtime_rows_error(error.to_string()))?;
+    let rows = match list_running_compose_containers_for_policy(repo_root, policy) {
+        Ok(rows) => rows,
+        Err(error) if exec_error_means_runtime_not_running(&error) => return Ok(false),
+        Err(error) => return Err(gateway_runtime_rows_error(error.to_string())),
+    };
     let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?;
     let project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, false, Some(&rows))?;
@@ -106,6 +109,19 @@ pub(in crate::runner) fn gateway_routes_registered_for_container(
         repo_root,
         &routes,
     )
+}
+
+fn exec_error_means_runtime_not_running(error: &ContainerExecError) -> bool {
+    match error {
+        ContainerExecError::Failure { stderr, .. } => {
+            stderr.contains("level=fatal msg=\"colima is not running\"")
+                || (stderr.contains("level=fatal msg=\"colima [profile=")
+                    && stderr.contains("] is not running\""))
+                || stderr.contains("Cannot connect to the Docker daemon")
+                || stderr.contains("daemon is not running")
+        }
+        ContainerExecError::Launch { .. } => false,
+    }
 }
 
 pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
