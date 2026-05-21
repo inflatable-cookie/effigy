@@ -5,9 +5,11 @@ file reads. The graph is a deterministic index under `.effigy/graph/graph.db` â€
 a navigation map, not compiler-grade truth. It is the code-understanding lane
 inside the wider Effigy workflow, not the universal front door.
 
-Start with `effigy doctor`, `effigy tasks`, and `effigy test --plan` when the
-repo surface is still unknown. Switch to graph when the question becomes code
-ownership, flow, implementation, or changed-file impact.
+If the repo surface is still unknown, use the matching discovery surface for
+that job: `effigy tasks` for selectors, `effigy doctor` for routing or health,
+`effigy test --plan` for test shape. Do not front-load all three by reflex.
+Switch to graph when the question becomes code ownership, flow,
+implementation, or changed-file impact.
 
 ## When to use it
 

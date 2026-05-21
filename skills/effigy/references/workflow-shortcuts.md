@@ -78,6 +78,9 @@ effigy scan god-files --json
 effigy scan attention-markers --json
 ```
 
+Use this lane only when health, drift, or scanner output is the actual job.
+Do not insert `doctor` into ordinary code-understanding or task-execution work.
+
 ## Changelog
 
 ```bash
@@ -120,6 +123,8 @@ effigy doctor                       # health + routing diagnostic
 effigy doctor <selector> --           # why does this selector resolve here
 effigy doctor --json                # machine-readable envelope
 ```
+
+This is the right surface for ambiguity and repo health, not a default greeting.
 
 ## JSON for everything
 

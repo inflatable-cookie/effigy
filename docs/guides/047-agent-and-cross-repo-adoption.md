@@ -2,8 +2,8 @@
 
 Use this guide when you want AI agents to treat Effigy as the default project
 surface instead of falling back to raw tool commands. The goal is a job-based
-agent loop: discover the repo, understand code when needed, execute through
-Effigy, then validate through Effigy.
+agent loop: route to the right Effigy surface first, understand code when
+needed, execute through Effigy, then validate through Effigy.
 
 ## Vision Alignment
 
@@ -13,19 +13,14 @@ Effigy, then validate through Effigy.
 
 ## 1) Default Agent Contract
 
-For repos that adopt Effigy as the primary local loop, the default discovery
-flow should be:
-
-```sh
-effigy doctor
-effigy tasks
-effigy test --plan
-```
-
-Then:
+For repos that adopt Effigy as the primary local loop, the default contract
+should be job-based, not ritual-based:
 
 - use `effigy graph` when the job is code understanding and the agent needs a
   bounded repo map before broad file scanning (see Section 2a)
+- use `effigy tasks` when the agent needs runnable selectors or QA surfaces
+- use `effigy doctor` when routing is unclear or repo health is itself the task
+- use `effigy test --plan` when test execution shape matters
 - use `effigy <task>` for supported project work
 - use `effigy test ...` for supported test flows
 - use `effigy --json <command>` when the caller needs machine-safe parsing
@@ -40,9 +35,10 @@ For work inside the Effigy repo itself:
 
 Agents should assume:
 
-- `effigy tasks` is the first discovery surface for supported repo work
-- `effigy doctor` is the first health and routing diagnostic surface
-- `effigy test --plan` is the first test-routing inspection step
+- Effigy routing is job-based, not a mandatory `doctor` -> `tasks` -> `test --plan` greeting
+- `effigy tasks` is the first task-inventory surface when selector discovery is needed
+- `effigy doctor` is the routing or repo-health diagnostic surface when ambiguity or drift is present
+- `effigy test --plan` is the test-routing inspection step when test shape matters
 - `--repo` is only needed when intentionally targeting a different repo outside
   the current working tree
 - built-in `test` prefers `cargo-nextest` when available and falls back to
@@ -108,14 +104,15 @@ be the default loop:
 Use Effigy as the default command surface for supported project work.
 
 Default flow:
-1. Run `effigy doctor`
-2. Run `effigy tasks`
-3. Run `effigy test --plan`
-4. Use `effigy graph explore` before broad repo scanning when codebase context is needed
-5. Prefer `effigy <task>` and `effigy test ...` for execution and validation
-6. Use `effigy --json <command>` for machine-readable output
-7. Use `--repo <PATH>` only when intentionally operating on another repo
-8. Fall back to raw tool commands only when Effigy does not yet cover the path
+1. Route by job, not by startup ritual
+2. Use `effigy graph explore` before broad repo scanning when codebase context is needed
+3. Use `effigy tasks` when you need selector inventory
+4. Use `effigy doctor` when routing is unclear or repo health is the task
+5. Use `effigy test --plan` when test execution shape matters
+6. Prefer `effigy <task>` and `effigy test ...` for execution and validation
+7. Use `effigy --json <command>` for machine-readable output
+8. Use `--repo <PATH>` only when intentionally operating on another repo
+9. Fall back to raw tool commands only when Effigy does not yet cover the path
 
 Testing policy:
 - treat `effigy test` as the default test entrypoint when available

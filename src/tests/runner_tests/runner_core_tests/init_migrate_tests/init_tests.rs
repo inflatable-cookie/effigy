@@ -35,7 +35,11 @@ fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
     );
     assert_file_text_contains_all(
         &root.join("AGENTS.md"),
-        &["BEGIN EFFIGY AGENT CONTRACT", "effigy doctor"],
+        &[
+            "BEGIN EFFIGY AGENT CONTRACT",
+            "Route by job",
+            "effigy graph",
+        ],
     );
 
     let listed = run_tasks(TasksArgs {
@@ -190,13 +194,18 @@ fn run_manifest_task_builtin_init_agent_apply_is_idempotent_and_preserves_manife
         &root.join("AGENTS.md"),
         &[
             "BEGIN EFFIGY AGENT CONTRACT",
-            "effigy doctor",
+            "Route by job",
             "effigy graph",
         ],
     );
     assert_file_text_contains_all(
         &root.join(".agents/skills/effigy/SKILL.md"),
-        &["name: effigy", "metadata:", "internal: true", "Agent jobs"],
+        &[
+            "name: effigy",
+            "metadata:",
+            "internal: true",
+            "Agent routing",
+        ],
     );
     assert_file_text_contains_all(
         &root.join(".gitignore"),

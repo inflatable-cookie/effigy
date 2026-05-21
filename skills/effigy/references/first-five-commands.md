@@ -1,7 +1,7 @@
-# Discovery Loop (First Commands)
+# First Commands By Job
 
-When you arrive in an unfamiliar repo that has `effigy.toml`, run these in
-order. Each one tells you something distinct; together they map the surface.
+Do not treat these as a mandatory startup ritual. Pick the first command that
+matches the job in front of you.
 
 For the full agent sequence and the code-understanding lane, see
 `agent-operating-loop.md`.
@@ -27,6 +27,9 @@ Useful flags:
 - `effigy doctor <selector> <args...>` — show why a selector resolves where it
   does.
 
+Use this when routing is unclear, the repo may be drifted, or selector
+resolution itself is the task.
+
 ## 2. `effigy tasks`
 
 List all tasks the repo defines or composes. Aggregator tasks
@@ -49,6 +52,8 @@ If the list is empty, the repo doesn't define tasks — it may rely entirely on
 built-ins (`test`, `init`, `doctor`, …) or only nested-catalog tasks you have
 not opened yet.
 
+Use this when you need runnable selectors, QA entrypoints, or task inventory.
+
 ## 3. `effigy test --plan`
 
 Show the resolved test plan **without running it**. Tells you which test
@@ -59,6 +64,9 @@ the built-in plan; otherwise built-in test detection runs (cargo-nextest with
 fallback to cargo test, vitest, etc.).
 
 For machine parsing: `effigy test --plan --json`.
+
+Use this when you need to know what `effigy test` would actually do before you
+run it.
 
 ## 4. `effigy config`
 
@@ -71,6 +79,8 @@ the merged view shows whether an override is in place.
 
 For machine parsing: `effigy --json config`.
 
+Use this when merged config is the thing you need to inspect.
+
 ## 5. `effigy --json tasks`
 
 Same as `effigy tasks` but as the canonical `effigy.command.v1` envelope.
@@ -81,10 +91,13 @@ results into another tool.
 effigy --json tasks | jq -r '.result.payload.tasks[].name'
 ```
 
+Use this when another tool or agent step needs task inventory in a stable JSON
+envelope.
+
 ## Optional next: Graph (before broad `rg` / file reads)
 
-When the job is code understanding, run this after the five commands above (or
-in parallel if the user question is already code-location shaped):
+When the job is code understanding, use this directly. Do not require the
+other commands first if the question is already code-location shaped:
 
 ```bash
 effigy graph status --json
@@ -95,7 +108,7 @@ Details: `graph-assist.md`.
 
 ## What to do with the results
 
-- **All five clean** → proceed with the work the user asked for.
+- **The first command answered the job** → proceed with the work the user asked for.
 - **Need code ownership or flow next** → switch to `graph`.
 - **`doctor` reports FAIL** → fix the underlying issue or hand back to user.
   Don't paper over a structural error.

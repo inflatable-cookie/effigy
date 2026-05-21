@@ -10,17 +10,10 @@ an MCP server, not a daemon, and not compiler-grade semantic truth.
 
 ## Start Here
 
-Start with the normal repo loop first:
-
-```sh
-effigy doctor
-effigy tasks
-effigy test --plan
-```
-
-Then switch to graph when the question is code-navigation shaped: where a
-behavior lives, how a path flows, what changed impact looks like, or which
-files to read first.
+Do not front-load `doctor`, `tasks`, and `test --plan` when the job is already
+clearly code understanding. Go straight to graph when the question is
+code-navigation shaped: where a behavior lives, how a path flows, what changed
+impact looks like, or which files to read first.
 
 Use the graph in this order:
 
@@ -37,9 +30,9 @@ That gives you:
 - a bounded starting packet with primary owners, excerpts, related symbols,
   reasons, guidance, and overflow
 
-Do not force this path onto unrelated jobs. If you already know the task is
-execution, deployment, state orchestration, docs validation, or release
-inspection, use the matching Effigy surface first.
+Do not force this path onto unrelated jobs. If the work is execution,
+deployment, state orchestration, docs validation, release inspection, or repo
+health, use the matching Effigy surface first.
 
 If the repo is changing while you work:
 

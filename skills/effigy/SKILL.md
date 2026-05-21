@@ -1,11 +1,13 @@
 ---
 name: effigy
 description: >
-  Effigy task-runner skill for agents: discover repo tasks (doctor, tasks,
-  test --plan), use graph for code-navigation questions, run work through
-  effigy selectors, parse --json envelopes, and avoid release/CI footguns.
-  Use when the user mentions effigy, effigy.toml, or needs tests, dev, QA,
-  repo navigation, deployment, or validation in an Effigy-adopting repo.
+  Effigy task-runner skill for agents: route by job instead of ritual —
+  use graph for code-navigation questions, tasks for selector inventory,
+  doctor for routing or health ambiguity, test --plan when test shape matters,
+  run work through effigy selectors, parse --json envelopes, and avoid
+  release/CI footguns. Use when the user mentions effigy, effigy.toml, or
+  needs tests, dev, QA, repo navigation, deployment, or validation in an
+  Effigy-adopting repo.
 ---
 
 # Effigy Skill
@@ -32,35 +34,20 @@ overrides it. Prefer `effigy <selector>` over raw `cargo` / `npm` /
 
 Full rationale: `references/footguns.md`.
 
-## Agent operating loop
+## Agent routing
 
-**Default sequence in any repo with `effigy.toml`:**
+Do not run `doctor`, `tasks`, and `test --plan` as an automatic entry ritual.
+Pick the first Effigy command that matches the job.
 
-```bash
-# 1. Discover surface
-effigy doctor
-effigy tasks
-effigy test --plan
-
-# 2. Map code (before broad rg / file reads)
-effigy graph status --json
-effigy graph explore "<task-shaped question>" --max-files 6 --max-bytes 12288 --json
-
-# 3. Do work
-effigy <selector>
-effigy test
-
-# 4. After edits — narrow what to validate
-git diff --name-only | effigy graph affected --stdin --json
-```
-
-| Phase | Use when |
-|-------|----------|
-| **Discover** | Always on entry — health, task list, test plan |
-| **Graph** | You need owners, flow, or context before editing |
-| **Execute** | Running repo work — tasks, tests, `qa:*` aggregators |
-| **Affected** | Choosing validation scope after local edits |
-| **JSON** | Parsing output programmatically — `effigy --json <command>` |
+| Job | Use when | First command |
+|-----|----------|---------------|
+| Understand code | Ownership, behavior, implementation, impact | `effigy graph explore "<question>" --json` |
+| Find runnable selectors | You need repo tasks or QA surfaces | `effigy tasks` |
+| Inspect test shape | You need to know what `effigy test` will actually do | `effigy test --plan` |
+| Diagnose routing or repo health | Selector resolution is unclear, or health/drift is the task | `effigy doctor` |
+| Execute work | A task or built-in already covers the operation | `effigy <selector>` |
+| Narrow validation | You changed code and want likely tests/files first | `git diff --name-only | effigy graph affected --stdin --json` |
+| Parse results | Another tool/agent will consume the output | `effigy --json <command>` |
 
 If `graph status --json` reports `refresh-recommended`, `degraded`, or
 `missing-index`, run `effigy graph index --json` before trusting
@@ -68,26 +55,12 @@ explore/affected. Use `rg` for exact tokens and final pre-edit proof.
 
 Details: `references/agent-operating-loop.md`, `references/graph-assist.md`.
 
-## Agent jobs
+## Routing rules
 
-Prioritize by the job you are doing, not by one globally dominant feature.
-
-| Job | Use when | First command |
-|-----|----------|---------------|
-| Discover the repo | You just arrived, routing is unclear, or the task surface is unknown | `effigy doctor` |
-| Inventory tasks | You need runnable selectors or QA/release surfaces | `effigy tasks` |
-| Inspect test shape | You need to know what test execution will actually do | `effigy test --plan` |
-| Understand code | The question is code-navigation shaped: ownership, flow, implementation, impact | `effigy graph explore "<question>" --json` |
-| Execute work | A repo task or built-in already covers the requested operation | `effigy <selector>` |
-| Validate changes | You need tests, QA, or narrower post-edit proof | `effigy test` or `git diff --name-only | effigy graph affected --stdin --json` |
-| Parse results | Another agent/tool needs stable machine-readable output | `effigy --json <command>` |
-| Use specialized surfaces | The task is domain-specific: state, deploy, distribution, bundles, secrets, docs, contracts, containers | start with the matching built-in |
-
-Rule of thumb:
-
-- use `doctor` / `tasks` / `test --plan` as the default entry sequence
 - use `graph` first for code-understanding questions, not for every task
-- phrase graph queries as implementation questions, not token hunts
+- use `tasks` when you need selector inventory, not when you already know the task
+- use `doctor` when routing is unclear or repo health is itself the task
+- use `test --plan` when test execution shape matters, not as a greeting
 - use selectors and built-ins for real execution work
 - use `--json` whenever another agent step will consume the result
 
@@ -154,7 +127,7 @@ Details: `references/json-envelope.md`.
 ## When to stop and ask
 
 - Selector still ambiguous after `effigy doctor <selector> <args...>`
-- `effigy doctor` structural FAIL
+- `effigy doctor` structural FAIL on a task where repo health or routing matters
 - User did not explicitly request release prepare/execute
 - Change needs `.github/workflows/` edits
 - Someone suggests skipping a release gate

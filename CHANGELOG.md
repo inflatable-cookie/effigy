@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+- **Effigy agent routing guidance is now job-based:** the bundled skill, repo
+  contract, and adoption docs no longer teach `doctor -> tasks -> test --plan`
+  as an automatic entry ritual. Agents are now directed to start with the
+  surface that matches the work: graph for code understanding, tasks for
+  selector inventory, doctor for routing or health ambiguity, and `test --plan`
+  only when test execution shape matters.
+
 ### Fixed
 - **Workspace-local version strings no longer leak install cache keys:** Linux
   workspace handoff now keeps the human-facing `effigy.active-version` file as
