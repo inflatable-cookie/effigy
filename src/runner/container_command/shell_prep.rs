@@ -17,7 +17,7 @@ pub(super) fn resolve_container_shell_session(
     repo_root: &Path,
     name: Option<&str>,
     service: Option<&str>,
-) -> Result<(EffectiveContainerPolicy, String, PathBuf), RunnerError> {
+) -> Result<(EffectiveContainerPolicy, String, Option<PathBuf>), RunnerError> {
     let policy = load_container_policy(repo_root, name)?;
     validate_container_policy(repo_root, &policy)?;
     validate_compose_backend_runtime(repo_root, &policy)?;
@@ -32,8 +32,8 @@ pub(super) fn resolve_container_shell_session(
     let service = service
         .unwrap_or(policy.primary_service.as_str())
         .to_owned();
-    let working_dir = load_container_exec_working_dir(repo_root, name)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let working_dir =
+        resolve_container_exec_working_dir_for_service(repo_root, name, &policy, &service)?;
     Ok((policy, service, working_dir))
 }
 
@@ -200,6 +200,37 @@ catalog = "php-fpm"
         )
         .expect("resolve working dir");
         assert_eq!(working_dir, Some(PathBuf::from("/var/www/contact-patch")));
+    }
+
+    #[test]
+    fn non_primary_shell_session_omits_working_dir() {
+        let root = temp_repo("container-shell-prep", "non-primary-shell-session-no-cwd");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers.web]
+primary_service = "app"
+working_dir = "/workspace-root/acowtancy"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+
+[containers.web.services.postgres]
+catalog = "postgres"
+"#,
+        )
+        .expect("write manifest");
+
+        let policy = load_container_policy(&root, Some("web")).expect("load policy");
+        let working_dir = super::resolve_container_exec_working_dir_for_service(
+            &root,
+            Some("web"),
+            &policy,
+            "postgres",
+        )
+        .expect("resolve working dir");
+
+        assert_eq!(working_dir, None);
     }
 
     #[test]

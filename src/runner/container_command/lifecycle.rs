@@ -521,7 +521,7 @@ pub(super) fn run_container_shell(
         repo_root,
         &policy,
         service.as_str(),
-        Some(working_dir.as_path()),
+        working_dir.as_deref(),
         command,
         probe_runtime_shell_capability,
         run_runtime_shell_exec,
