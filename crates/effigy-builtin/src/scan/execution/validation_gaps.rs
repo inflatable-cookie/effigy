@@ -190,7 +190,7 @@ pub(super) fn run_validation_gap_scan(
         {
             let affected = affected(
                 target_root,
-                &[candidate.path.clone()],
+                std::slice::from_ref(&candidate.path),
                 options.affected_depth,
                 Some(25),
             )
