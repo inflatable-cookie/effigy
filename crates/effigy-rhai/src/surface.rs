@@ -38,6 +38,7 @@ pub const MODULE_EFFIGY: &str = "effigy";
 pub const MODULE_SECRETS: &str = "secrets";
 pub const MODULE_GIT: &str = "git";
 pub const MODULE_FORGE: &str = "forge";
+pub const MODULE_PROMPT: &str = "prompt";
 
 pub const MODULE_NAMES: &[&str] = &[
     MODULE_TIME,
@@ -80,6 +81,7 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_SECRETS,
     MODULE_GIT,
     MODULE_FORGE,
+    MODULE_PROMPT,
 ];
 
 pub const FEATURE_TASKS_LIST: &str = "tasks.list";
@@ -1228,5 +1230,19 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
         signature: "forge::pr_checkout(number[, options])",
         description: "Check out a pull request through the active forge adapter.",
         safety: "local-mutation",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_PROMPT,
+        name: "confirm",
+        signature: "prompt::confirm(message, default)",
+        description: "Ask an interactive yes/no question and return the answer.",
+        safety: "interactive",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_PROMPT,
+        name: "input",
+        signature: "prompt::input(message)",
+        description: "Ask an interactive free-text question and return the answer.",
+        safety: "interactive",
     },
 ];

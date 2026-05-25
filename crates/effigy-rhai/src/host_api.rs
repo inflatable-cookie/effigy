@@ -33,6 +33,8 @@ mod git;
 mod http;
 #[path = "host_api/process.rs"]
 mod process;
+#[path = "host_api/prompt.rs"]
+mod prompt;
 #[path = "host_api/search.rs"]
 mod search;
 #[path = "host_api/state.rs"]
@@ -66,6 +68,7 @@ pub(super) fn register_host_api(
     git::register_git_module(engine, context.clone());
     forge::register_forge_module(engine, context.clone());
     process::register_process_module(engine, context.clone());
+    prompt::register_prompt_module(engine);
     exec::register_exec_module(engine, context.clone(), callbacks.clone());
     http::register_http_module(engine, context.clone());
     search::register_search_module(engine, context.clone());

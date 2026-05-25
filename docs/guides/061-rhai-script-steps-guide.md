@@ -178,6 +178,9 @@ Current v1 helpers:
   - `forge::pr_list(options)`
   - `forge::pr_create(options)`
   - `forge::pr_checkout(number[, options])`
+- prompt helpers:
+  - `prompt::confirm(message, default)`
+  - `prompt::input(message)`
 - state stack helpers:
   - `state::plan(options_map)`
   - `state::apply(options_map)`
@@ -594,6 +597,7 @@ Rhai v1 intentionally does not provide:
 - arbitrary shell emulation
 - shell pipelines and shell quoting semantics
 - broad socket-level or streaming network APIs
+- non-interactive prompt fallback; `prompt::*` requires TTY stdin and stdout
 - a frontend/build-tool replacement layer
 - a promise that every historical shell or Python script should disappear in
   one pass

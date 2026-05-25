@@ -19,6 +19,7 @@ use std::thread;
 mod forge;
 mod git;
 mod host_surface;
+mod prompt;
 mod runtime;
 mod script_policy;
 mod secrets;

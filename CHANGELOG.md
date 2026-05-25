@@ -19,6 +19,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - Rhai `git::*` now includes safety and ref-inspection helpers for clean-tree
   assertions, commit existence, merge-base checks, remote URLs, and upstream
   branch lookup.
+- Rhai scripts now have `prompt::*` helpers for TTY-only confirmation and
+  free-text input in interactive automation.
 
 ## [0.8.3] - 2026-05-25
 

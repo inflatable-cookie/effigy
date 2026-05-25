@@ -38,6 +38,7 @@ Policy:
 | Structured data | `json::parse`, `json::stringify`, `json::stringify_compact`, `json::read_file`, `json::write_file`, `toml::parse`, `toml::stringify`, `toml::read_file`, `toml::write_file`, `yaml::parse`, `yaml::stringify`, `yaml::read_file`, `yaml::write_file` | Exposed |
 | Host subprocess execution | `process::run`, `process::stream`, `process::tee` | Exposed |
 | Basic HTTP | `http::get`, `http::post`, `http::request`, `http::download`, `http::capture` | Exposed |
+| Interactive prompts | `prompt::confirm`, `prompt::input` | Exposed; requires TTY stdin and stdout |
 | Git repository operations | `git::status`, `git::working_tree_clean`, `git::assert_clean`, `git::current_branch`, `git::rev_parse`, `git::changed_files`, `git::diff_name_only`, `git::branch_exists`, `git::commit_exists`, `git::merge_base`, `git::is_ancestor`, `git::remote_url`, `git::upstream_branch`, `git::switch`, `git::create_branch`, `git::checkout`, `git::fetch`, `git::pull`, `git::push`, `git::add`, `git::commit` | Exposed |
 | Source forge operations | `forge::provider`, `forge::status`, `forge::pr_view`, `forge::pr_list`, `forge::pr_create`, `forge::pr_checkout` | Exposed for GitHub via `gh`; adapter-shaped for future providers |
 
