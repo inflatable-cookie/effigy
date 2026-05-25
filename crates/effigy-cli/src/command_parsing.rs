@@ -31,7 +31,8 @@ use crate::{
     BundleArgs, BundleSubcommand, Command, ContractsArgs, ContractsCheckMode,
     ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DoctorArgs, HelpTopic,
     InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalHostProcessStopArgs,
-    InternalHostProcessSuperviseArgs, InternalScriptRunArgs, TaskInvocation, TasksArgs,
+    InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs, RhaiSubcommand,
+    TaskInvocation, TasksArgs,
 };
 use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
@@ -77,6 +78,7 @@ where
         "service" => parse_service_command(args),
         "demo" => parse_demo_command(args),
         "graph" => parse_graph_command(args),
+        "rhai" => parse_rhai_command(args),
         "docs" => parse_docs_command(args),
         "contracts" => parse_contracts_command(args),
         "artifact" | "artefact" => parse_artifact_command(args),
@@ -93,6 +95,41 @@ where
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
+}
+
+fn parse_rhai_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let Some(subcmd) = args.next() else {
+        return Ok(Command::Help(HelpTopic::Rhai));
+    };
+
+    match subcmd.as_str() {
+        "--help" | "-h" => Ok(Command::Help(HelpTopic::Rhai)),
+        "surface" => parse_rhai_surface_command(args),
+        other => Err(unknown_argument(other)),
+    }
+}
+
+fn parse_rhai_surface_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let args = args.into_iter();
+    let mut output_json = false;
+    for arg in args {
+        match arg.as_str() {
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Rhai)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+    Ok(Command::Rhai(RhaiArgs {
+        subcommand: RhaiSubcommand::Surface,
+        output_json,
+    }))
 }
 
 fn parse_defer_command<I>(args: I) -> Result<Command, CliParseError>

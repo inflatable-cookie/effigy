@@ -358,6 +358,7 @@ mod process_support;
 mod rhai_secrets;
 pub mod surface;
 use host_api::register_host_api;
+pub use surface::{rhai_surface_functions, rhai_surface_json};
 
 fn generate_jwt_env_keys_dynamic() -> Result<Dynamic, Box<EvalAltResult>> {
     let rng = SystemRandom::new();

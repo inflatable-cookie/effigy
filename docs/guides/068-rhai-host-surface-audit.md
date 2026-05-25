@@ -3,6 +3,10 @@
 This audit tracks Effigy features that are available to `.rhai` scripts without
 recursively launching `effigy`.
 
+For machine-readable discovery, use `effigy rhai surface --json`. This audit
+explains policy and intent; the runtime command reports the registered module
+and function surface available to scripts.
+
 Policy:
 
 - Prefer typed helpers such as `container::exec(...)` and `bundle::inspect()`.
@@ -34,6 +38,7 @@ Policy:
 | Structured data | `json::parse`, `json::stringify`, `json::stringify_compact`, `json::read_file`, `json::write_file`, `toml::parse`, `toml::stringify`, `toml::read_file`, `toml::write_file`, `yaml::parse`, `yaml::stringify`, `yaml::read_file`, `yaml::write_file` | Exposed |
 | Host subprocess execution | `process::run`, `process::stream`, `process::tee` | Exposed |
 | Basic HTTP | `http::get`, `http::post`, `http::request`, `http::download`, `http::capture` | Exposed |
+| Git repository operations | `git::status`, `git::current_branch`, `git::rev_parse`, `git::changed_files`, `git::diff_name_only`, `git::branch_exists`, `git::switch`, `git::create_branch`, `git::checkout`, `git::fetch`, `git::pull`, `git::push`, `git::add`, `git::commit` | Exposed |
 
 | Surface | Rhai helpers | Status |
 | --- | --- | --- |

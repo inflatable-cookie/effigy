@@ -34,6 +34,7 @@ mod managed_shell;
 mod manifest;
 mod release_command;
 mod render;
+mod rhai_command;
 mod runtime_session_context;
 mod script_command;
 mod secret_session;
@@ -69,6 +70,7 @@ pub(in crate::runner) use host_process::{
     run_internal_host_process_stop, run_internal_host_process_supervise,
 };
 pub(in crate::runner) use release_command::run_release;
+pub(in crate::runner) use rhai_command::run_rhai;
 pub(in crate::runner) use script_command::run_internal_script_run;
 pub(in crate::runner) use secrets_command::run_secrets;
 pub(in crate::runner) use service_command::run_service;

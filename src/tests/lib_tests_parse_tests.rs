@@ -18,6 +18,8 @@ mod graph_option_tests;
 mod help_and_flag_tests;
 #[path = "lib_tests_parse_tests/release_option_tests.rs"]
 mod release_option_tests;
+#[path = "lib_tests_parse_tests/rhai_option_tests.rs"]
+mod rhai_option_tests;
 #[path = "lib_tests_parse_tests/routing_and_passthrough_tests.rs"]
 mod routing_and_passthrough_tests;
 #[path = "lib_tests_parse_tests/secrets_option_tests.rs"]

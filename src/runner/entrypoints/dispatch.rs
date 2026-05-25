@@ -22,6 +22,7 @@ use super::super::run_internal_host_process_stop;
 use super::super::run_internal_host_process_supervise;
 use super::super::run_internal_script_run;
 use super::super::run_release;
+use super::super::run_rhai;
 use super::super::run_secrets;
 use super::super::run_service;
 use super::super::run_state;
@@ -66,6 +67,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Service(args) => run_service(args),
         Command::Demo(args) => run_demo(args),
         Command::Graph(args) => run_graph(args),
+        Command::Rhai(args) => run_rhai(args),
         Command::Docs(args) => run_docs(args),
         Command::Contracts(args) => run_contracts(args),
         Command::Container(args) => run_container(args),

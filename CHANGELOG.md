@@ -6,6 +6,14 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- `effigy rhai surface` now prints the registered Rhai host API surface, with
+  `--json` support for agents that need module/function discovery without
+  leaving the runtime.
+- Rhai scripts now have a first-class `git::*` host module for common local git
+  operations such as status, branch inspection, changed-file lookup, switching,
+  staging, committing, pulling, and pushing.
+
 ## [0.8.3] - 2026-05-25
 
 ### Added

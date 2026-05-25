@@ -293,6 +293,10 @@ instead of `process::run("effigy", ["exec", ...])` or `effigy::run(["exec", ...]
 `process::run("effigy", ...)`, `process::stream("effigy", ...)`, and
 `process::tee("effigy", ...)` are rejected at runtime; hitting that seam
 means Effigy needs a new typed Rhai host helper.
+Use `effigy rhai surface --json` to inspect the registered host API from the
+runtime itself before writing or updating scripts. That command is the
+machine-readable discovery surface; the audit guide is the human-maintained
+explanation of intent and policy.
 Use `config::effective()` or `config::get("systems.dev.container")` instead of
 re-reading `effigy.toml` when a script needs Effigy's composed/bundle-expanded
 manifest view.
@@ -307,6 +311,8 @@ Similarly, use `http::request(...)` or `http::post(...)` instead of
 Use `search::files(root, pattern, #{ glob: "*.rs" })` plus `regex::*` helpers
 instead of `process::run("rg", [...])` for portable file audits and
 allowlist-style path filtering.
+Use `git::*` helpers for repo-local branch, status, changed-file, commit, and
+push workflows instead of shelling out to `git` through `process::run(...)`.
 
 `effigy::active_version()` returns the current running binary's active version,
 including local build metadata like `+local.<hash>`.

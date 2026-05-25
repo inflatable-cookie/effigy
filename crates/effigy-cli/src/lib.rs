@@ -33,6 +33,7 @@ pub enum Command {
     Service(ServiceArgs),
     Demo(DemoArgs),
     Graph(GraphArgs),
+    Rhai(RhaiArgs),
     Docs(DocsArgs),
     Contracts(ContractsArgs),
     Artifact(ArtifactArgs),
@@ -112,6 +113,7 @@ pub enum HelpTopic {
     Service,
     Demo,
     Graph,
+    Rhai,
     Docs,
     Contracts,
     Artifact,
@@ -248,6 +250,17 @@ pub struct GraphArgs {
     pub subcommand: GraphSubcommand,
     pub repo_override: Option<PathBuf>,
     pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhaiArgs {
+    pub subcommand: RhaiSubcommand,
+    pub output_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RhaiSubcommand {
+    Surface,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

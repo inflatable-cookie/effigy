@@ -126,6 +126,14 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_graph,
     },
     HelpTopicDescriptor {
+        topic: HelpTopic::Rhai,
+        command_name: Some("rhai"),
+        general_help_command: Some("effigy rhai surface"),
+        general_help_description: Some("Inspect the registered Rhai host API available to scripts"),
+        deferred_builtin: None,
+        render: render_rhai,
+    },
+    HelpTopicDescriptor {
         topic: HelpTopic::Docs,
         command_name: Some("docs"),
         general_help_command: Some("effigy docs"),
@@ -318,6 +326,10 @@ fn render_demo(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpRes
 
 fn render_graph(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_graph_help(renderer)
+}
+
+fn render_rhai(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
+    topics::render_rhai_help(renderer)
 }
 
 fn render_docs(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

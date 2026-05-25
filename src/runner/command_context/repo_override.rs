@@ -18,6 +18,7 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
         Command::Service(args) => args.repo_override.clone(),
         Command::Demo(args) => args.repo_override.clone(),
         Command::Graph(args) => args.repo_override.clone(),
+        Command::Rhai(_) => None,
         Command::Docs(args) => args.repo_override.clone(),
         Command::Contracts(args) => args.repo_override.clone(),
         Command::Artifact(args) => args.repo_override.clone(),
@@ -59,6 +60,7 @@ pub(in crate::runner) fn apply_repo_target_to_embedded_command(
         Command::Service(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Demo(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Graph(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
+        Command::Rhai(_) => {}
         Command::Docs(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Contracts(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Artifact(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),

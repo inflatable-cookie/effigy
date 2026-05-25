@@ -25,6 +25,8 @@ mod feature_core;
 mod feature_misc;
 #[path = "host_api/fs.rs"]
 mod fs;
+#[path = "host_api/git.rs"]
+mod git;
 #[path = "host_api/http.rs"]
 mod http;
 #[path = "host_api/process.rs"]
@@ -59,6 +61,7 @@ pub(super) fn register_host_api(
         std::rc::Rc::new(build_runtime_module(context.clone())),
     );
     fs::register_fs_module(engine, context.clone());
+    git::register_git_module(engine, context.clone());
     process::register_process_module(engine, context.clone());
     exec::register_exec_module(engine, context.clone(), callbacks.clone());
     http::register_http_module(engine, context.clone());
