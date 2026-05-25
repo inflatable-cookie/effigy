@@ -33,7 +33,7 @@ pub fn render_boundary_violation_text(
         },
         &result.findings,
         render_options,
-        |finding| finding.severity.clone(),
+        |finding| finding.severity,
         BoundaryViolationSeverity::Warning,
         BoundaryViolationSeverity::High,
         BoundaryViolationSeverity::Critical,
