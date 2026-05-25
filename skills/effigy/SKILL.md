@@ -30,7 +30,8 @@ overrides it. Prefer `effigy <selector>` over raw `cargo` / `npm` /
 - **Never re-tag a failed release.** Fix lands in next PATCH.
 - **Never run release mutations** (`release prepare/execute`) without explicit human ask.
 - **Don't add `package.json` scripts** that re-export Effigy tasks.
-- **Don't add `--repo .`** when already inside the target repo.
+- **Don't add a current-directory repo override** when already inside the
+  target repo.
 
 Full rationale: `references/footguns.md`.
 
