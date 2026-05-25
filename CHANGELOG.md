@@ -6,8 +6,9 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
-### Added
+## [0.8.3] - 2026-05-25
 
+### Added
 - `effigy scan` now accepts `--graph-context` and exposes graph-readiness
   metadata in JSON and text output when graph context is requested, without
   changing the underlying scan findings yet.
