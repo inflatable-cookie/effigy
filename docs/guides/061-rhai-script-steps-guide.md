@@ -150,6 +150,27 @@ Current v1 helpers:
   - `secrets::has(name)` — returns true if the named secret is declared and available
   - `secrets::set(name, value)` — stores one declared Rhai-target secret
   - `secrets::set_many(map)` — stores multiple declared Rhai-target secrets in one write
+- git and forge helpers:
+  - `git::status()`
+  - `git::current_branch()`
+  - `git::rev_parse(rev)`
+  - `git::changed_files()`
+  - `git::diff_name_only([base])`
+  - `git::branch_exists(name)`
+  - `git::switch(branch)`
+  - `git::create_branch(branch)`
+  - `git::checkout(ref)`
+  - `git::fetch()`
+  - `git::pull()`
+  - `git::push([remote, branch])`
+  - `git::add(paths)`
+  - `git::commit(message)`
+  - `forge::provider([options])`
+  - `forge::status([options])`
+  - `forge::pr_view(options)`
+  - `forge::pr_list(options)`
+  - `forge::pr_create(options)`
+  - `forge::pr_checkout(number[, options])`
 - state stack helpers:
   - `state::plan(options_map)`
   - `state::apply(options_map)`
@@ -313,6 +334,9 @@ instead of `process::run("rg", [...])` for portable file audits and
 allowlist-style path filtering.
 Use `git::*` helpers for repo-local branch, status, changed-file, commit, and
 push workflows instead of shelling out to `git` through `process::run(...)`.
+Use `forge::*` helpers for source forge workflows. The first adapter is GitHub
+via the `gh` CLI; provider detection comes from explicit options or the
+`origin` remote URL.
 
 `effigy::active_version()` returns the current running binary's active version,
 including local build metadata like `+local.<hash>`.

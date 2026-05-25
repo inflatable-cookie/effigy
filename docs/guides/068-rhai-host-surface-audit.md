@@ -39,6 +39,7 @@ Policy:
 | Host subprocess execution | `process::run`, `process::stream`, `process::tee` | Exposed |
 | Basic HTTP | `http::get`, `http::post`, `http::request`, `http::download`, `http::capture` | Exposed |
 | Git repository operations | `git::status`, `git::current_branch`, `git::rev_parse`, `git::changed_files`, `git::diff_name_only`, `git::branch_exists`, `git::switch`, `git::create_branch`, `git::checkout`, `git::fetch`, `git::pull`, `git::push`, `git::add`, `git::commit` | Exposed |
+| Source forge operations | `forge::provider`, `forge::status`, `forge::pr_view`, `forge::pr_list`, `forge::pr_create`, `forge::pr_checkout` | Exposed for GitHub via `gh`; adapter-shaped for future providers |
 
 | Surface | Rhai helpers | Status |
 | --- | --- | --- |

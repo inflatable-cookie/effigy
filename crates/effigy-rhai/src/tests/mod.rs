@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+mod forge;
 mod git;
 mod host_surface;
 mod runtime;

@@ -13,6 +13,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Rhai scripts now have a first-class `git::*` host module for common local git
   operations such as status, branch inspection, changed-file lookup, switching,
   staging, committing, pulling, and pushing.
+- Rhai scripts now have an adapter-shaped `forge::*` host module, with GitHub
+  support through the `gh` CLI for provider/status checks and pull request
+  view, list, create, and checkout workflows.
 
 ## [0.8.3] - 2026-05-25
 

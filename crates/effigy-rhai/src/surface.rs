@@ -37,6 +37,7 @@ pub const MODULE_TEST: &str = "test";
 pub const MODULE_EFFIGY: &str = "effigy";
 pub const MODULE_SECRETS: &str = "secrets";
 pub const MODULE_GIT: &str = "git";
+pub const MODULE_FORGE: &str = "forge";
 
 pub const MODULE_NAMES: &[&str] = &[
     MODULE_TIME,
@@ -78,6 +79,7 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_EFFIGY,
     MODULE_SECRETS,
     MODULE_GIT,
+    MODULE_FORGE,
 ];
 
 pub const FEATURE_TASKS_LIST: &str = "tasks.list";
@@ -1134,6 +1136,48 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
         name: "commit",
         signature: "git::commit(message)",
         description: "Create a commit with the provided message.",
+        safety: "local-mutation",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_FORGE,
+        name: "provider",
+        signature: "forge::provider([options])",
+        description: "Return the detected or explicitly requested source forge provider.",
+        safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_FORGE,
+        name: "status",
+        signature: "forge::status([options])",
+        description: "Return provider, remote, adapter, availability, and auth status.",
+        safety: "remote-read",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_FORGE,
+        name: "pr_view",
+        signature: "forge::pr_view(options)",
+        description: "View one pull request through the active forge adapter.",
+        safety: "remote-read",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_FORGE,
+        name: "pr_list",
+        signature: "forge::pr_list(options)",
+        description: "List pull requests through the active forge adapter.",
+        safety: "remote-read",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_FORGE,
+        name: "pr_create",
+        signature: "forge::pr_create(options)",
+        description: "Create a pull request through the active forge adapter.",
+        safety: "remote-mutation",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_FORGE,
+        name: "pr_checkout",
+        signature: "forge::pr_checkout(number[, options])",
+        description: "Check out a pull request through the active forge adapter.",
         safety: "local-mutation",
     },
 ];

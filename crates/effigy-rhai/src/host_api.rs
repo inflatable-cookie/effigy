@@ -23,6 +23,8 @@ mod exec;
 mod feature_core;
 #[path = "host_api/feature_misc.rs"]
 mod feature_misc;
+#[path = "host_api/forge.rs"]
+mod forge;
 #[path = "host_api/fs.rs"]
 mod fs;
 #[path = "host_api/git.rs"]
@@ -62,6 +64,7 @@ pub(super) fn register_host_api(
     );
     fs::register_fs_module(engine, context.clone());
     git::register_git_module(engine, context.clone());
+    forge::register_forge_module(engine, context.clone());
     process::register_process_module(engine, context.clone());
     exec::register_exec_module(engine, context.clone(), callbacks.clone());
     http::register_http_module(engine, context.clone());
