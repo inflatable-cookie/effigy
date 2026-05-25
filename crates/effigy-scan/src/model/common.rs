@@ -1,4 +1,5 @@
 use effigy_manifest::config_sections::ManifestScanOutputFormat;
+use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanRenderFormat {
@@ -45,4 +46,14 @@ pub fn format_bytes(bytes: usize) -> String {
 
 pub fn format_ratio(ratio: f64) -> String {
     format!("{ratio:.2}")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ScanGraphFileContext {
+    pub language_id: String,
+    pub symbol_count: usize,
+    pub inbound_edges: usize,
+    pub outbound_edges: usize,
+    pub reference_count: usize,
+    pub connectivity: String,
 }

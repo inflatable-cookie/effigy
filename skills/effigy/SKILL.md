@@ -42,6 +42,7 @@ Pick the first Effigy command that matches the job.
 | Job | Use when | First command |
 |-----|----------|---------------|
 | Understand code | Ownership, behavior, implementation, impact | `effigy graph explore "<question>" --json` |
+| Review graph-backed risk | Boundaries, likely isolation, or validation risk | `effigy scan <graph-aware-subcommand> --json` |
 | Find runnable selectors | You need repo tasks or QA surfaces | `effigy tasks` |
 | Inspect test shape | You need to know what `effigy test` will actually do | `effigy test --plan` |
 | Diagnose routing or repo health | Selector resolution is unclear, or health/drift is the task | `effigy doctor` |
@@ -77,6 +78,15 @@ Stay with `rg` first when the job is:
 - confirming the final pre-edit call site or string literal
 
 Full built-in lookup: `references/built-in-surfaces.md`.
+
+Use graph-aware scans when the question is risk, not navigation:
+
+- `effigy scan boundary-violations --json`
+- `effigy scan dead-code --json`
+- `git diff --name-only | effigy scan validation-gaps --stdin --json`
+
+Do not run these as a greeting. They are for bounded review questions, not
+for generic repo orientation.
 
 ## Common workflows
 

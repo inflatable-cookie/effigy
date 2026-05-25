@@ -1,8 +1,13 @@
 mod common;
+mod graph;
 mod markers;
 #[path = "reports/mod.rs"]
 mod reports;
 
+pub use graph::{
+    render_boundary_violation_markdown, render_boundary_violation_text, render_dead_code_markdown,
+    render_dead_code_text, render_validation_gap_markdown, render_validation_gap_text,
+};
 pub use markers::{
     render_attention_marker_markdown, render_attention_marker_text,
     render_stale_suppression_markdown, render_stale_suppression_text,

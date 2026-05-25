@@ -1,7 +1,7 @@
 use super::super::super::common::{
     render_markdown_report, render_text_report, MarkdownReportSpec, TextReportSpec,
 };
-use crate::model::{GodFileScanResult, GodFileSeverity, TextRenderOptions};
+use crate::model::{GodFileScanResult, GodFileSeverity, ScanGraphFileContext, TextRenderOptions};
 
 pub fn render_god_file_text(
     result: &GodFileScanResult,
@@ -33,18 +33,26 @@ pub fn render_god_file_text(
         GodFileSeverity::High,
         GodFileSeverity::Critical,
         |finding| {
-            format!(
+            let base = format!(
                 "{}  {} code lines ({} total)  {}",
                 finding.severity.as_str(),
                 finding.code_lines,
                 finding.total_lines,
                 finding.path
-            )
+            );
+            match &finding.graph {
+                Some(graph) => format!("{base}\n    graph: {}", format_graph_context(graph)),
+                None => base,
+            }
         },
     )
 }
 
 pub fn render_god_file_markdown(result: &GodFileScanResult) -> String {
+    let include_graph = result
+        .findings
+        .iter()
+        .any(|finding| finding.graph.is_some());
     render_markdown_report(
         MarkdownReportSpec {
             title: "God Files",
@@ -59,18 +67,46 @@ pub fn render_god_file_markdown(result: &GodFileScanResult) -> String {
                 format!("- Findings: `{}`", result.findings.len()),
             ],
             empty_message: "No oversized code files found.",
-            table_header: "| Severity | Code Lines | Total Lines | Path |",
-            table_divider: "| --- | ---: | ---: | --- |",
+            table_header: if include_graph {
+                "| Severity | Code Lines | Total Lines | Path | Graph |"
+            } else {
+                "| Severity | Code Lines | Total Lines | Path |"
+            },
+            table_divider: if include_graph {
+                "| --- | ---: | ---: | --- | --- |"
+            } else {
+                "| --- | ---: | ---: | --- |"
+            },
         },
         &result.findings,
-        |finding| {
-            format!(
+        |finding| match &finding.graph {
+            Some(graph) => format!(
+                "| {} | {} | {} | `{}` | {} |",
+                finding.severity.as_str(),
+                finding.code_lines,
+                finding.total_lines,
+                finding.path,
+                format_graph_context(graph).replace('|', "/")
+            ),
+            None => format!(
                 "| {} | {} | {} | `{}` |",
                 finding.severity.as_str(),
                 finding.code_lines,
                 finding.total_lines,
                 finding.path
-            )
+            ),
         },
+    )
+}
+
+fn format_graph_context(graph: &ScanGraphFileContext) -> String {
+    format!(
+        "{}  symbols={}  in={}  out={}  refs={}  {}",
+        graph.language_id,
+        graph.symbol_count,
+        graph.inbound_edges,
+        graph.outbound_edges,
+        graph.reference_count,
+        graph.connectivity
     )
 }

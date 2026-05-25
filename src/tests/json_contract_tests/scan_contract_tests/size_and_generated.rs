@@ -57,6 +57,67 @@ fn builtin_scan_god_files_json_contract_top_level_keys_are_stable() {
 }
 
 #[test]
+fn builtin_scan_god_files_graph_context_json_contract_is_additive() {
+    let root = temp_workspace("scan-json-contract-graph-context");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_large_code_file(&root.join("src/app.ts"), 12);
+
+    let parsed = run_invocation_json(
+        root,
+        "scan",
+        &[
+            "god-files",
+            "--threshold",
+            "10",
+            "--graph-context",
+            "--json",
+        ],
+    );
+    assert_base_scan_payload(
+        &parsed,
+        "effigy.scan.god-files.v1",
+        "god-files",
+        "God Files",
+    );
+    assert!(parsed["graph"].is_object());
+    assert_eq!(parsed["graph"]["requested"], true);
+    assert_eq!(parsed["graph"]["applied"], false);
+    assert_eq!(parsed["graph"]["state"], "missing-index");
+    assert_eq!(parsed["graph"]["usable"], false);
+    assert!(parsed["graph"]["reason"]
+        .as_str()
+        .is_some_and(|value| value.contains("not implemented for `god-files` yet")));
+}
+
+#[test]
+fn builtin_scan_god_files_graph_context_json_contract_enriches_findings() {
+    let root = temp_workspace("scan-json-contract-graph-context-enriched");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_large_code_file(&root.join("src/app.ts"), 12);
+    effigy_codegraph::run_index(&root).expect("graph index");
+
+    let parsed = run_invocation_json(
+        root,
+        "scan",
+        &[
+            "god-files",
+            "--threshold",
+            "10",
+            "--graph-context",
+            "--json",
+        ],
+    );
+    assert_schema_v1(&parsed, "effigy.scan.god-files.v1");
+    assert_eq!(parsed["graph"]["requested"], true);
+    assert_eq!(parsed["graph"]["applied"], true);
+    assert_eq!(parsed["findings"][0]["path"], "src/app.ts");
+    assert_eq!(parsed["findings"][0]["graph"]["language_id"], "typescript");
+    assert!(parsed["findings"][0]["graph"]["symbol_count"].is_number());
+}
+
+#[test]
 fn builtin_scan_god_files_non_zero_json_rendering_remains_valid() {
     let root = temp_workspace("scan-json-contract-non-zero");
     fs::create_dir_all(root.join("src")).expect("mkdir src");

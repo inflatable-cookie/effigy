@@ -214,6 +214,28 @@ fn run_graph_explore(bin_path, repo_path, query) {
     }
 }
 
+fn run_scan_json(bin_path, repo_path, scan_args) {
+    let temp_dir = fs::make_temp_dir("effigy-scan-benchmark");
+    let stdout_path = path::join(temp_dir, "stdout.json");
+    let stderr_path = path::join(temp_dir, "stderr.txt");
+    let command = shell_quote(bin_path) + " --json scan";
+    for arg in scan_args {
+        command += " " + shell_quote(arg.to_string());
+    }
+    command += " --repo " + shell_quote(repo_path);
+    run_check(
+        "scan " + repo_path,
+        "/bin/sh",
+        ["-lc", render_timed_shell(command, stdout_path, stderr_path)],
+    );
+    let envelope = json::parse(fs::read_file(stdout_path));
+    #{
+        payload: envelope["result"],
+        elapsed_seconds: maybe_extract_real_seconds(fs::read_file(stderr_path)),
+        stderr: fs::read_file(stderr_path),
+    }
+}
+
 fn run_rg(repo_path, pattern) {
     let temp_dir = fs::make_temp_dir("effigy-rg-benchmark");
     let stdout_path = path::join(temp_dir, "stdout.txt");
@@ -378,6 +400,49 @@ fn render_case_line(case_result) {
     line
 }
 
+fn evaluate_scan_case(target, benchmark_case, bin_path) {
+    let repo_path = target["repo"].to_string();
+    let scan = run_scan_json(bin_path, repo_path, benchmark_case["args"]);
+    let payload = scan["payload"];
+    let findings = payload["findings"];
+    let likely_test_files = payload["likely_test_files"];
+    let likely_test_tasks = payload["likely_test_tasks"];
+    let graph = payload["graph"];
+
+    let likely_file_ok = if "expected_test_file" in benchmark_case {
+        contains_field(likely_test_files, "path", benchmark_case["expected_test_file"])
+    } else {
+        true
+    };
+    let likely_task_ok = if "expected_test_task" in benchmark_case {
+        contains_field(likely_test_tasks, "name", benchmark_case["expected_test_task"])
+    } else {
+        true
+    };
+    let graph_state = if graph != () { graph["state"].to_string() } else { "" };
+    let graph_applied = if graph != () { graph["applied"] == true } else { false };
+
+    #{
+        id: benchmark_case["id"].to_string(),
+        scan: benchmark_case["scan"].to_string(),
+        elapsed_seconds: scan["elapsed_seconds"],
+        graph_state: graph_state,
+        graph_applied: graph_applied,
+        finding_count: item_count(findings),
+        likely_test_file_count: item_count(likely_test_files),
+        likely_test_task_count: item_count(likely_test_tasks),
+        checks_ok: likely_file_ok && likely_task_ok,
+    }
+}
+
+fn render_scan_case_line(case_result) {
+    "- " + case_result["id"].to_string()
+        + " :: scan=" + case_result["scan"].to_string()
+        + ", checks_ok=" + case_result["checks_ok"].to_string()
+        + ", graph_state=" + case_result["graph_state"].to_string()
+        + ", graph_applied=" + case_result["graph_applied"].to_string()
+}
+
 let index_lines = [
     "# Graph agent benchmark",
     "",
@@ -387,6 +452,22 @@ let index_lines = [
 ];
 
 let summary_targets = [];
+let scan_targets = [
+    #{
+        label: "fixture-split-owner-scan",
+        optional: false,
+        repo: path::join(fixture_root, "split-owner"),
+        cases: [
+            #{
+                id: "validation-gap-likely-test",
+                scan: "validation-gaps",
+                args: ["validation-gaps", "--path", "src/closeout.rs", "--graph-context"],
+                expected_test_file: "tests/closeout_test.rs",
+                expected_test_task: "test",
+            },
+        ],
+    },
+];
 
 for target in targets {
     if !repo_available(target) {
@@ -431,6 +512,53 @@ for target in targets {
         optional: target["optional"],
         skipped: false,
         cases: case_results,
+        report_path: report_path,
+    });
+}
+
+for target in scan_targets {
+    if !repo_available(target) {
+        let line = "- " + target["label"].to_string() + ": skipped (repo unavailable)";
+        index_lines.push(line);
+        summary_targets.push(#{
+            label: target["label"].to_string(),
+            repo: target["repo"].to_string(),
+            optional: target["optional"],
+            skipped: true,
+            skip_reason: "repo unavailable",
+            scan_cases: [],
+        });
+        continue;
+    }
+
+    run_graph_index(bin_path, target["repo"].to_string());
+
+    let case_results = [];
+    for benchmark_case in target["cases"] {
+        log("[info] scan benchmark " + target["label"].to_string() + " :: " + benchmark_case["id"].to_string());
+        case_results.push(evaluate_scan_case(target, benchmark_case, bin_path));
+    }
+
+    let report_path = path::join(report_dir, target["label"].to_string() + ".md");
+    let lines = [
+        "# " + target["label"].to_string(),
+        "",
+        "repo: " + target["repo"].to_string(),
+        "",
+        "## scan cases",
+    ];
+    for case_result in case_results {
+        lines.push(render_scan_case_line(case_result));
+    }
+    fs::write_lines(report_path, lines);
+
+    index_lines.push("- " + target["label"].to_string() + ": " + report_path);
+    summary_targets.push(#{
+        label: target["label"].to_string(),
+        repo: target["repo"].to_string(),
+        optional: target["optional"],
+        skipped: false,
+        scan_cases: case_results,
         report_path: report_path,
     });
 }

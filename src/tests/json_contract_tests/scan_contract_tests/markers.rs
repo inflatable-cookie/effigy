@@ -22,6 +22,30 @@ fn builtin_scan_attention_markers_json_contract_has_versioned_shape() {
 }
 
 #[test]
+fn builtin_scan_attention_markers_graph_context_json_contract_enriches_findings() {
+    let root = temp_workspace("scan-attention-markers-graph-context-json-contract");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_manifest(&root.join("effigy.toml"), "");
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &["// TODO: tidy before refactor", "const live = 1;"],
+    );
+    effigy_codegraph::run_index(&root).expect("graph index");
+
+    let parsed = run_invocation_json(
+        root,
+        "scan",
+        &["attention-markers", "--graph-context", "--json"],
+    );
+    assert_schema_v1(&parsed, "effigy.scan.attention-markers.v1");
+    assert_eq!(parsed["graph"]["requested"], true);
+    assert_eq!(parsed["graph"]["applied"], true);
+    assert_eq!(parsed["findings"][0]["path"], "src/app.ts");
+    assert_eq!(parsed["findings"][0]["graph"]["language_id"], "typescript");
+    assert!(parsed["findings"][0]["graph"]["reference_count"].is_number());
+}
+
+#[test]
 fn builtin_scan_attention_markers_non_zero_json_rendering_remains_valid() {
     let root = temp_workspace("scan-attention-markers-json-contract-non-zero");
     fs::create_dir_all(root.join("src")).expect("mkdir src");

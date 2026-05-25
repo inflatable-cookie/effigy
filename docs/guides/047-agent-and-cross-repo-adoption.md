@@ -86,6 +86,11 @@ Rules:
   excerpt is insufficient for the edit or review
 - use `graph affected` to narrow validation after edits, not as exhaustive test
   proof
+- use graph-aware scans when the question is review risk rather than
+  navigation, for example:
+  - `effigy scan boundary-violations --json`
+  - `effigy scan dead-code --json`
+  - `git diff --name-only | effigy scan validation-gaps --stdin --json`
 - use `rg` for exact token verification and final checks before editing
 - if `graph status --json` reports `missing-index`, `refresh-recommended`, or
   `degraded`, refresh with `graph index` before trusting query output

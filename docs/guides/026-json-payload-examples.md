@@ -1233,7 +1233,152 @@ Read these fields first:
 }
 ```
 
-### 10) Scan Duplicate Blocks (`effigy.scan.duplicate-blocks.v1`)
+Graph-context example (same schema, additive `graph` block):
+
+```json
+{
+  "schema": "effigy.scan.god-files.v1",
+  "schema_version": 1,
+  "scan": "god-files",
+  "format": "text",
+  "root": "/workspace/app",
+  "finding_count": 1,
+  "graph": {
+    "requested": true,
+    "applied": true,
+    "state": "ready",
+    "usable": true,
+    "summary": "graph index is current",
+    "reason": "applied graph file context to 1 `god-files` finding(s)"
+  },
+  "findings": [
+    {
+      "path": "src/server/router.ts",
+      "code_lines": 512,
+      "total_lines": 588,
+      "severity": "high",
+      "graph": {
+        "language_id": "typescript",
+        "symbol_count": 18,
+        "inbound_edges": 9,
+        "outbound_edges": 7,
+        "reference_count": 13,
+        "connectivity": 29
+      }
+    }
+  ]
+}
+```
+
+### 10) Scan Boundary Violations (`effigy.scan.boundary-violations.v1`)
+
+```json
+{
+  "schema": "effigy.scan.boundary-violations.v1",
+  "schema_version": 1,
+  "scan": "boundary-violations",
+  "format": "text",
+  "root": "/workspace/app",
+  "configured_layers": 3,
+  "checked_edges": 6,
+  "finding_count": 1,
+  "fail_on_findings": false,
+  "respect_gitignore": true,
+  "output_path": null,
+  "findings": [
+    {
+      "source_layer": "app",
+      "target_layer": "infra",
+      "edge_kind": "imports",
+      "source_path": "src/app/checkout.rs",
+      "source_line": 12,
+      "source_symbol": "checkout",
+      "target_path": "src/infra/sql.rs",
+      "target_line": 4,
+      "target_symbol": "SqlGateway",
+      "confidence": "syntactic",
+      "severity": "high"
+    }
+  ]
+}
+```
+
+### 11) Scan Dead Code (`effigy.scan.dead-code.v1`)
+
+```json
+{
+  "schema": "effigy.scan.dead-code.v1",
+  "schema_version": 1,
+  "scan": "dead-code",
+  "format": "text",
+  "root": "/workspace/app",
+  "checked_files": 9,
+  "checked_symbols": 21,
+  "skipped_allowlisted_paths": 1,
+  "skipped_allowlisted_symbols": 0,
+  "skipped_non_implementation_files": 5,
+  "skipped_unsupported_language_files": 0,
+  "finding_count": 1,
+  "findings": [
+    {
+      "kind": "unreferenced-symbol",
+      "path": "src/orphan/mod.rs",
+      "line": 1,
+      "symbol": "lonely",
+      "symbol_kind": "function",
+      "language_id": "rust",
+      "confidence": "medium",
+      "severity": "warning",
+      "reason": "symbol has no inbound edges or references and no outward graph activity",
+      "inbound_edges": 0,
+      "outbound_edges": 0,
+      "inbound_references": 0,
+      "outbound_references": 0
+    }
+  ]
+}
+```
+
+### 12) Scan Validation Gaps (`effigy.scan.validation-gaps.v1`)
+
+```json
+{
+  "schema": "effigy.scan.validation-gaps.v1",
+  "schema_version": 1,
+  "scan": "validation-gaps",
+  "format": "text",
+  "root": "/workspace/app",
+  "mode": "changed-paths",
+  "hotspot_threshold": 4,
+  "affected_depth": 2,
+  "changed_paths": ["src/orphan/mod.rs"],
+  "checked_files": 12,
+  "skipped_allowlisted_paths": 0,
+  "skipped_non_implementation_files": 5,
+  "skipped_unsupported_language_files": 0,
+  "likely_test_files": [],
+  "likely_test_tasks": [],
+  "finding_count": 1,
+  "findings": [
+    {
+      "kind": "changed-owner-without-test-target",
+      "path": "src/orphan/mod.rs",
+      "line": 1,
+      "language_id": "rust",
+      "confidence": "high",
+      "severity": "high",
+      "reason": "changed owner has no nearby test files or tasks in the current graph slice",
+      "connectivity": 3,
+      "inbound_edges": 1,
+      "outbound_edges": 1,
+      "inbound_references": 1,
+      "outbound_references": 0
+    }
+  ]
+}
+```
+
+### 13) Scan Duplicate Blocks (`effigy.scan.duplicate-blocks.v1`)
 
 ```json
 {
@@ -1298,7 +1443,7 @@ Read these fields first:
 }
 ```
 
-### 11) Scan Comment Ratio (`effigy.scan.comment-ratio.v1`)
+### 14) Scan Comment Ratio (`effigy.scan.comment-ratio.v1`)
 
 ```json
 {
@@ -1339,7 +1484,7 @@ Read these fields first:
 }
 ```
 
-### 12) Scan Generated Assets (`effigy.scan.generated-assets.v1`)
+### 15) Scan Generated Assets (`effigy.scan.generated-assets.v1`)
 
 ```json
 {
@@ -1376,7 +1521,7 @@ Read these fields first:
 }
 ```
 
-### 13) Scan Generated In Src (`effigy.scan.generated-in-src.v1`)
+### 16) Scan Generated In Src (`effigy.scan.generated-in-src.v1`)
 
 ```json
 {

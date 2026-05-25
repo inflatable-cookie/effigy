@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
-Current generation: g07
-Updated: 2026-05-20
+Current generation: g08
+Updated: 2026-05-25
 
 ## Generation history
 
@@ -50,7 +50,7 @@ Updated: 2026-05-20
   deduplication, typed contract-shape reuse, compatibility-branch deletion,
   and runner-private domain-logic reduction.
 
-`g07` is the current active generation.
+`g07` is closed.
 
 - `g07.001` opens the native code graph intelligence suite.
 - `g07.002` through `g07.012` cover graph storage/contracts,
@@ -94,7 +94,16 @@ Updated: 2026-05-20
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
 
-Active ready card: none.
+`g08` is closed.
+
+- `g08.001` through `g08.008` completed the graph-aware scan intelligence
+  generation:
+  scan/graph readiness, additive enrichment for existing scans, graph-native
+  scans for boundaries, likely dead code, and validation risk, plus agent
+  guidance, JSON examples, benchmark proof, and closeout.
+
+Active ready card:
+none.
 
 ## Research Roadmaps
 
@@ -127,4 +136,4 @@ closeout there first.
 
 ## Next Task
 
-Start [`1028-close-graph-agent-adoption-lane.md`](./g07/batch-cards/1028-close-graph-agent-adoption-lane.md).
+Planning only.

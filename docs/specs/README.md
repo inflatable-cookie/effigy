@@ -38,13 +38,8 @@ Archived strict lanes:
 
 - completed or paused historical strict lanes live in
   [`archive/`](./archive/)
-- `084` through `093` are now archived
-- `094` is complete and retained in the active tree until the next planning
-  cleanup sweep archives it
-- `095` is complete and retained in the active tree until the next planning
-  cleanup sweep archives it
-- `096` is complete and retained in the active tree until the next planning
-  cleanup sweep archives it
+- `076` through `096` are archived
+- `097` is complete and awaiting archive on the next planning sweep
 
 Active lane:
 
@@ -52,4 +47,4 @@ Active lane:
 
 ## Next Task
 
-No active ready card.
+Planning only.

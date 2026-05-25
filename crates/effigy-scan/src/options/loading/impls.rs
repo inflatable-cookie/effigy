@@ -1,14 +1,16 @@
 use crate::error::ScanError;
 use effigy_manifest::config_sections::{
-    ManifestAttentionMarkersConfig, ManifestCommentRatioConfig, ManifestDuplicateBlocksConfig,
-    ManifestGeneratedAssetsConfig, ManifestGeneratedInSrcConfig, ManifestGodFilesConfig,
-    ManifestStaleSuppressionsConfig,
+    ManifestAttentionMarkersConfig, ManifestBoundaryViolationsConfig, ManifestCommentRatioConfig,
+    ManifestDeadCodeConfig, ManifestDuplicateBlocksConfig, ManifestGeneratedAssetsConfig,
+    ManifestGeneratedInSrcConfig, ManifestGodFilesConfig, ManifestStaleSuppressionsConfig,
+    ManifestValidationGapsConfig,
 };
 
 use super::super::super::model::{
-    AttentionMarkerScanOptions, CommentRatioScanOptions, DuplicateBlockScanOptions,
+    AttentionMarkerScanOptions, BoundaryLayerRule, BoundaryViolationScanOptions,
+    CommentRatioScanOptions, DeadCodeScanOptions, DuplicateBlockScanOptions,
     GeneratedAssetScanOptions, GeneratedInSrcScanOptions, GodFileScanOptions,
-    StaleSuppressionScanOptions,
+    StaleSuppressionScanOptions, ValidationGapScanOptions,
 };
 use super::traits::{CommonManifestOptions, ManifestBackedScanOptions};
 
@@ -43,6 +45,106 @@ impl ManifestBackedScanOptions for GodFileScanOptions {
         if let Some(value) = config.critical {
             self.thresholds.critical = value;
         }
+    }
+
+    fn validate_manifest_options(&self) -> Result<(), ScanError> {
+        self.validate()
+    }
+}
+
+impl ManifestBackedScanOptions for BoundaryViolationScanOptions {
+    type ManifestConfig = ManifestBoundaryViolationsConfig;
+
+    fn common_manifest_options(config: &Self::ManifestConfig) -> CommonManifestOptions<'_> {
+        CommonManifestOptions {
+            fail_on_findings: config.fail_on_findings,
+            respect_gitignore: None,
+            doctor_enabled: config.doctor,
+            format: config.format,
+            include: &[],
+            exclude: &[],
+            out: config.out.as_ref(),
+        }
+    }
+
+    fn apply_manifest_specific(&mut self, config: &Self::ManifestConfig) {
+        if let Some(value) = config.include_heuristic {
+            self.include_heuristic = value;
+        }
+        self.layers = config
+            .layers
+            .iter()
+            .map(|(name, layer)| {
+                (
+                    name.clone(),
+                    BoundaryLayerRule {
+                        paths: layer.paths.clone(),
+                        may_depend_on: layer.may_depend_on.clone(),
+                    },
+                )
+            })
+            .collect();
+    }
+
+    fn validate_manifest_options(&self) -> Result<(), ScanError> {
+        self.validate()
+    }
+}
+
+impl ManifestBackedScanOptions for DeadCodeScanOptions {
+    type ManifestConfig = ManifestDeadCodeConfig;
+
+    fn common_manifest_options(config: &Self::ManifestConfig) -> CommonManifestOptions<'_> {
+        CommonManifestOptions {
+            fail_on_findings: config.fail_on_findings,
+            respect_gitignore: config.respect_gitignore,
+            doctor_enabled: config.doctor,
+            format: config.format,
+            include: &config.include,
+            exclude: &config.exclude,
+            out: config.out.as_ref(),
+        }
+    }
+
+    fn apply_manifest_specific(&mut self, config: &Self::ManifestConfig) {
+        if let Some(value) = config.include_heuristic {
+            self.include_heuristic = value;
+        }
+        self.allow_paths = config.allow_paths.clone();
+        self.allow_symbols = config.allow_symbols.clone();
+    }
+
+    fn validate_manifest_options(&self) -> Result<(), ScanError> {
+        self.validate()
+    }
+}
+
+impl ManifestBackedScanOptions for ValidationGapScanOptions {
+    type ManifestConfig = ManifestValidationGapsConfig;
+
+    fn common_manifest_options(config: &Self::ManifestConfig) -> CommonManifestOptions<'_> {
+        CommonManifestOptions {
+            fail_on_findings: config.fail_on_findings,
+            respect_gitignore: config.respect_gitignore,
+            doctor_enabled: config.doctor,
+            format: config.format,
+            include: &config.include,
+            exclude: &config.exclude,
+            out: config.out.as_ref(),
+        }
+    }
+
+    fn apply_manifest_specific(&mut self, config: &Self::ManifestConfig) {
+        if let Some(value) = config.include_heuristic {
+            self.include_heuristic = value;
+        }
+        if let Some(value) = config.hotspot_threshold {
+            self.hotspot_threshold = value;
+        }
+        if let Some(value) = config.affected_depth {
+            self.affected_depth = value;
+        }
+        self.allow_paths = config.allow_paths.clone();
     }
 
     fn validate_manifest_options(&self) -> Result<(), ScanError> {

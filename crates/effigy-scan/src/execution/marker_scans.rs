@@ -118,6 +118,7 @@ fn run_attention_marker_scan_single(
                         severity: *severity,
                         marker: marker.clone(),
                         snippet: trim_snippet(line, 120),
+                        graph: None,
                     });
                 }
                 if line_has_match {

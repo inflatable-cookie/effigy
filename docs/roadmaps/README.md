@@ -4,7 +4,7 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 
 ## Generation model
 
-- Use generation folders: `g01` through `g07`, and future `gNN` generations
+- Use generation folders: `g01` through `g08`, and future `gNN` generations
   opened by explicit rollover.
 - Use milestone files inside each generation: `NNN-<slug>.md`.
 - Reference milestones as `gNN.NNN`.
@@ -20,7 +20,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Layout
 
 - `gNN/batch-cards/` optional per-generation execution cards
-- `g07/` current native code graph intelligence generation
+- `g08/` current graph-aware scan intelligence generation
+- `g07/` previous native code graph intelligence generation
 - `g06/` previous codebase lean-down and ownership simplification generation
 - `g05/` previous secret and reusable-core hardening generation
 - `g04/` previous runtime architecture simplification generation
@@ -61,6 +62,12 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   agent-adoption follow-through focused on cross-repo freshness trust,
   behavioral query ranking, edit-target packets, benchmark proof, and agent
   guidance.
+- `g08` is closed through
+  [`g08.008`](./g08/008-graph-aware-scan-closeout.md). It covered
+  graph-aware scan intelligence: preserving deterministic filesystem scans,
+  adding optional graph enrichment, and introducing graph-native scans for
+  boundaries, isolated code, hotspots, and validation gaps, plus the agent
+  guidance, JSON examples, benchmark proof, and closeout.
 
 ## Active Strict Lane
 
@@ -100,7 +107,7 @@ Before rollover:
 
 ## Next Task
 
-No active ready card.
+Planning only.
 
 ## Historical language boundary
 

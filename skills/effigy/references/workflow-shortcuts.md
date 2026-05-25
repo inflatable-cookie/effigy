@@ -76,6 +76,9 @@ Preview without writing: `effigy tasks migrate` (omit `--apply`).
 effigy doctor --verbose              # health + enabled scan checks
 effigy scan god-files --json
 effigy scan attention-markers --json
+effigy scan boundary-violations --json
+effigy scan dead-code --json
+git diff --name-only | effigy scan validation-gaps --stdin --json
 ```
 
 Use this lane only when health, drift, or scanner output is the actual job.

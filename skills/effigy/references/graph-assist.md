@@ -22,6 +22,7 @@ implementation, or changed-file impact.
 | Known term, unknown symbol id | `graph search` |
 | Symbol id already known | `graph node`, `graph callers`, `graph callees` |
 | Exact token / missing symbol proof | `rg` (not graph) |
+| Boundaries, isolation, or validation risk | `scan boundary-violations`, `scan dead-code`, `scan validation-gaps` |
 
 ## Standard sequence
 
@@ -47,6 +48,14 @@ After edits:
 git diff --name-only | effigy graph affected --stdin --json
 ```
 
+When the question is risk rather than ownership, switch to graph-aware scans:
+
+```bash
+effigy scan boundary-violations --json
+effigy scan dead-code --json
+git diff --name-only | effigy scan validation-gaps --stdin --json
+```
+
 ## Rules
 
 - **`graph explore` first** for task-shaped questions. Trust excerpts for
@@ -59,6 +68,8 @@ git diff --name-only | effigy graph affected --stdin --json
   navigation proof.
 - **`graph affected` narrows validation** — it does not prove exhaustive test
   reachability.
+- **Graph-aware scans are review aids.** They do not prove semantic dead code,
+  coverage, or architecture correctness in the compiler sense.
 - **`rg` stays mandatory** for exact tokens, missing symbols, and pre-edit proof.
 - **Do not hide the rest of Effigy.** Graph is for code understanding; deploy,
   docs, state, containers, release, and direct task execution still start with

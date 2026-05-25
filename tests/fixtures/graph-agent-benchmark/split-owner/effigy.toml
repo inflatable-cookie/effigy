@@ -1,2 +1,7 @@
 [tasks.test]
 run = "cargo test"
+
+[scan.validation_gaps]
+doctor = false
+hotspot_threshold = 1
+affected_depth = 2

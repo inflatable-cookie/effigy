@@ -237,6 +237,7 @@ The JSON summary is the machine-readable proof surface. It records:
 - first-hit correctness
 - whether the graph packet was sufficient without broad fallback
 - resolved path and suggested test surfaces
+- graph-aware scan proof cases under `scan_cases` when fixture scan checks run
 
 Optional live repos skip cleanly when absent. The benchmark is meant to answer
 "did graph reduce navigation work here?" rather than to make broad percentage
@@ -257,6 +258,43 @@ Interpret the extra edit/test fields like this:
 - `edit_targets[*].confidence`
   - `ranked` means selected from explore owner ranking rather than a resolved
     graph edge
+
+## Graph-Native Scan Example
+
+When a repo wants graph-backed architecture checks, use a scan rule instead of
+hard-coded repo logic.
+
+Path-layer rules are the first supported shape:
+
+```toml
+[scan.boundary_violations]
+doctor = false
+
+[scan.boundary_violations.layers.app]
+paths = ["src/app/**"]
+may_depend_on = ["domain", "shared"]
+
+[scan.boundary_violations.layers.domain]
+paths = ["src/domain/**"]
+may_depend_on = ["shared"]
+
+[scan.boundary_violations.layers.shared]
+paths = ["src/shared/**"]
+```
+
+Then run:
+
+```sh
+effigy graph index
+effigy scan boundary-violations --json
+```
+
+Current behavior:
+
+- rules are optional
+- repos with no layers return a clean no-rules result
+- resolved edges are checked directly
+- heuristic edges stay excluded unless the scan config opts into them
 
 Interpret excerpt completeness like this:
 
@@ -355,15 +393,16 @@ Event kinds:
 
 Recommended code-understanding sequence:
 
-1. `effigy doctor`
-2. `effigy tasks`
-3. `effigy test --plan`
-4. `effigy graph status --json`
-5. if stale: `effigy graph index --json`
-6. `effigy graph explore "<task>" --max-files 6 --max-bytes 12288 --json`
-7. trust returned excerpts for first-pass orientation
-8. only then widen to `graph context`, `graph search`, `graph node`,
+1. `effigy graph status --json`
+2. if not `ready`: `effigy graph index --json`
+3. `effigy graph explore "<task>" --max-files 6 --max-bytes 12288 --json`
+4. trust returned excerpts for first-pass orientation
+5. only then widen to `graph context`, `graph search`, `graph node`,
    `graph callers/callees`, direct file reads, and `rg`
+
+Do not front-load `doctor`, `tasks`, or `test --plan` when the job is already
+plain code understanding. Use those surfaces when the job is routing
+ambiguity, selector inventory, or test-shape discovery.
 
 Good examples:
 
@@ -406,6 +445,68 @@ Not yet covered:
 - Express/Fastify route surfaces
 - Laravel route files
 - Rust web framework routers
+
+## Graph-Native Scans
+
+Use graph-native scans when the relationship data is the point.
+
+Dead-code review is advisory:
+
+```toml
+[scan.dead_code]
+doctor = false
+allow_paths = ["src/bin/**", "scripts/**"]
+allow_symbols = ["crate::bootstrap::*", "main"]
+```
+
+Run it like this:
+
+```sh
+effigy scan dead-code
+effigy scan dead-code --json
+```
+
+Current dead-code finding types:
+
+- `isolated-file`
+- `unreferenced-symbol`
+
+Safe review posture:
+
+- treat findings as candidates, not proof
+- allowlist intentional bootstrap or entrypoint code before retrying
+- confirm behavior in source before deleting code
+- do not use the scan as a substitute for compiler dead-code analysis
+
+Validation-gap review is also advisory:
+
+```toml
+[scan.validation_gaps]
+doctor = false
+hotspot_threshold = 4
+affected_depth = 2
+allow_paths = ["src/bin/**", "scripts/**"]
+```
+
+Run it like this:
+
+```sh
+effigy scan validation-gaps
+effigy scan validation-gaps --path src/lib.rs
+git diff --name-only | effigy scan validation-gaps --stdin --json
+```
+
+Current validation-gap finding types:
+
+- `hotspot-without-nearby-tests`
+- `changed-owner-without-test-target`
+
+Safe review posture:
+
+- treat likely tests as bounded graph hints, not coverage proof
+- use changed-path mode when the review question is "what should I validate now?"
+- use hotspot mode when the review question is "which central owners lack nearby tests?"
+- keep release or merge gates on explicit task/test surfaces, not on this scan alone
 
 ## Limits
 

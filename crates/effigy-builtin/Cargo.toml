@@ -9,6 +9,7 @@ description = "Built-in command layer for Effigy (registry, dispatch, ports, all
 [dependencies]
 effigy-catalog = { path = "../effigy-catalog" }
 effigy-cli = { path = "../effigy-cli" }
+effigy-codegraph = { path = "../effigy-codegraph" }
 effigy-core = { path = "../effigy-core" }
 effigy-env = { path = "../effigy-env" }
 effigy-managed = { path = "../effigy-managed" }

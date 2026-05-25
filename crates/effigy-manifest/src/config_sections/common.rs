@@ -47,6 +47,12 @@ pub struct ManifestScanConfig {
     #[serde(default)]
     pub god_files: Option<ManifestGodFilesConfig>,
     #[serde(default)]
+    pub boundary_violations: Option<ManifestBoundaryViolationsConfig>,
+    #[serde(default)]
+    pub dead_code: Option<ManifestDeadCodeConfig>,
+    #[serde(default)]
+    pub validation_gaps: Option<ManifestValidationGapsConfig>,
+    #[serde(default)]
     pub duplicate_blocks: Option<ManifestDuplicateBlocksConfig>,
     #[serde(default)]
     pub comment_ratio: Option<ManifestCommentRatioConfig>,
@@ -58,6 +64,84 @@ pub struct ManifestScanConfig {
     pub attention_markers: Option<ManifestAttentionMarkersConfig>,
     #[serde(default)]
     pub stale_suppressions: Option<ManifestStaleSuppressionsConfig>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestBoundaryViolationsConfig {
+    #[serde(default)]
+    pub include_heuristic: Option<bool>,
+    #[serde(default)]
+    pub fail_on_findings: Option<bool>,
+    #[serde(default)]
+    pub doctor: Option<bool>,
+    #[serde(default)]
+    pub format: Option<ManifestScanOutputFormat>,
+    #[serde(default)]
+    pub out: Option<String>,
+    #[serde(default)]
+    pub layers: std::collections::BTreeMap<String, ManifestBoundaryLayerConfig>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestBoundaryLayerConfig {
+    #[serde(default)]
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub may_depend_on: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestDeadCodeConfig {
+    #[serde(default)]
+    pub include_heuristic: Option<bool>,
+    #[serde(default)]
+    pub fail_on_findings: Option<bool>,
+    #[serde(default)]
+    pub doctor: Option<bool>,
+    #[serde(default)]
+    pub respect_gitignore: Option<bool>,
+    #[serde(default)]
+    pub allow_paths: Vec<String>,
+    #[serde(default)]
+    pub allow_symbols: Vec<String>,
+    #[serde(default)]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    #[serde(default)]
+    pub format: Option<ManifestScanOutputFormat>,
+    #[serde(default)]
+    pub out: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestValidationGapsConfig {
+    #[serde(default)]
+    pub include_heuristic: Option<bool>,
+    #[serde(default)]
+    pub fail_on_findings: Option<bool>,
+    #[serde(default)]
+    pub doctor: Option<bool>,
+    #[serde(default)]
+    pub respect_gitignore: Option<bool>,
+    #[serde(default)]
+    pub hotspot_threshold: Option<usize>,
+    #[serde(default)]
+    pub affected_depth: Option<usize>,
+    #[serde(default)]
+    pub allow_paths: Vec<String>,
+    #[serde(default)]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    #[serde(default)]
+    pub format: Option<ManifestScanOutputFormat>,
+    #[serde(default)]
+    pub out: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, Default)]

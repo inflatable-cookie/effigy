@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use super::common::ScanRenderFormat;
+use super::common::{ScanGraphFileContext, ScanRenderFormat};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -26,6 +26,8 @@ pub struct GodFileFinding {
     pub code_lines: usize,
     pub total_lines: usize,
     pub severity: GodFileSeverity,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph: Option<ScanGraphFileContext>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

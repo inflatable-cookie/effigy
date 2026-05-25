@@ -5,6 +5,9 @@ use effigy_scan::ScanRenderFormat;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::scan) enum ScanCommand {
     GodFiles,
+    BoundaryViolations,
+    DeadCode,
+    ValidationGaps,
     DuplicateBlocks,
     CommentRatio,
     GeneratedAssets,
@@ -17,6 +20,9 @@ pub(in crate::scan) enum ScanCommand {
 pub(in crate::scan) struct ScanRequest {
     pub(in crate::scan) command: ScanCommand,
     pub(in crate::scan) output_json: bool,
+    pub(in crate::scan) graph_context: bool,
+    pub(in crate::scan) read_stdin: bool,
+    pub(in crate::scan) changed_paths: Vec<String>,
     pub(in crate::scan) format: Option<ScanRenderFormat>,
     pub(in crate::scan) out: Option<PathBuf>,
     pub(in crate::scan) warn: Option<usize>,

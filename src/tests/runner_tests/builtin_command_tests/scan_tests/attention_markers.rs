@@ -91,6 +91,36 @@ fn run_manifest_task_builtin_scan_attention_markers_json_emits_machine_payload()
 }
 
 #[test]
+fn run_manifest_task_builtin_scan_attention_markers_graph_context_enriches_findings() {
+    let root = temp_workspace("builtin-scan-attention-markers-graph-context-enrich");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_attention_file(
+        &root.join("src/app.ts"),
+        &["// TODO: tidy before refactor", "const live = 1;"],
+    );
+    seed_graph_index(&root);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &["attention-markers", "--graph-context", "--show-warnings"],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "Attention Markers",
+            "src/app.ts:1",
+            "graph: typescript",
+            "symbols=",
+            "refs=",
+            "Graph context: applied",
+        ],
+    );
+}
+
+#[test]
 fn run_manifest_task_builtin_scan_attention_markers_markdown_out_writes_report() {
     let (out, report_path) = run_marker_markdown_out_case(
         "builtin-scan-attention-markers-markdown-out",

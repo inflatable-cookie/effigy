@@ -14,9 +14,10 @@ mod request;
 
 use execution::run_scan_request;
 use help::{
-    render_attention_markers_help, render_comment_ratio_help, render_duplicate_blocks_help,
-    render_generated_assets_help, render_generated_in_src_help, render_god_files_help,
-    render_scan_help, render_stale_suppressions_help,
+    render_attention_markers_help, render_boundary_violations_help, render_comment_ratio_help,
+    render_dead_code_help, render_duplicate_blocks_help, render_generated_assets_help,
+    render_generated_in_src_help, render_god_files_help, render_scan_help,
+    render_stale_suppressions_help, render_validation_gaps_help,
 };
 use request::{parse_scan_request, scan_candidate_mode, ScanCommand};
 
@@ -38,6 +39,9 @@ pub(super) fn run_builtin_scan(
         |output_json| {
             let help = match scan_candidate_mode(&runtime_args.passthrough) {
                 Some(ScanCommand::GodFiles) => render_god_files_help(),
+                Some(ScanCommand::BoundaryViolations) => render_boundary_violations_help(),
+                Some(ScanCommand::DeadCode) => render_dead_code_help(),
+                Some(ScanCommand::ValidationGaps) => render_validation_gaps_help(),
                 Some(ScanCommand::DuplicateBlocks) => render_duplicate_blocks_help(),
                 Some(ScanCommand::CommentRatio) => render_comment_ratio_help(),
                 Some(ScanCommand::GeneratedAssets) => render_generated_assets_help(),

@@ -9,6 +9,7 @@ even when the work is clearly code understanding or direct execution.
 | Job | First command |
 |-----|---------------|
 | Code understanding | `effigy graph explore "<question>" --json` |
+| Graph-backed risk review | `effigy scan <graph-aware-subcommand> --json` |
 | Selector inventory | `effigy tasks` |
 | Test-routing inspection | `effigy test --plan` |
 | Routing ambiguity or repo health | `effigy doctor` |
@@ -66,6 +67,17 @@ effigy test                        # or a repo-specific qa:* task
 ```
 
 Use `graph affected` to pick a smaller target; it is not exhaustive proof.
+
+## Risk-review lane
+
+```bash
+effigy scan boundary-violations --json
+effigy scan dead-code --json
+git diff --name-only | effigy scan validation-gaps --stdin --json
+```
+
+Use this lane when the question is boundary drift, likely isolation, or
+validation risk. Do not substitute it for code navigation or exact proof.
 
 ## Health lane (when drift matters)
 

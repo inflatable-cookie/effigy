@@ -72,6 +72,9 @@ fn assert_non_zero_scan_payload(parsed: &serde_json::Value, schema: &str) {
     assert_eq!(parsed["fail_on_findings"], true);
 }
 
+mod dead_code;
 mod duplicate_and_comment;
+mod graph;
 mod markers;
 mod size_and_generated;
+mod validation_gaps;

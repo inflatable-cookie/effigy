@@ -24,6 +24,18 @@ pub(super) fn render_god_files_help() -> String {
     thresholds::render_god_files_help()
 }
 
+pub(super) fn render_boundary_violations_help() -> String {
+    overview::render_boundary_violations_help()
+}
+
+pub(super) fn render_dead_code_help() -> String {
+    overview::render_dead_code_help()
+}
+
+pub(super) fn render_validation_gaps_help() -> String {
+    overview::render_validation_gaps_help()
+}
+
 pub(super) fn render_generated_assets_help() -> String {
     thresholds::render_generated_assets_help()
 }

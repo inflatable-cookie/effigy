@@ -88,6 +88,70 @@ fn run_manifest_task_builtin_scan_god_files_json_emits_machine_payload() {
 }
 
 #[test]
+fn run_manifest_task_builtin_scan_god_files_graph_context_text_reports_readiness() {
+    let root = temp_workspace("builtin-scan-god-files-graph-context");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_large_code_file(&root.join("src/app.ts"), 12);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "god-files",
+            "--threshold",
+            "10",
+            "--graph-context",
+            "--show-warnings",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "God Files",
+            "src/app.ts",
+            "warning  12 code lines",
+            "Graph context: requested, not applied",
+            "state: missing-index",
+        ],
+    );
+}
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_graph_context_enriches_findings() {
+    let root = temp_workspace("builtin-scan-god-files-graph-context-enrich");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    write_large_code_file(&root.join("src/app.ts"), 12);
+    seed_graph_index(&root);
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &[
+            "god-files",
+            "--threshold",
+            "10",
+            "--graph-context",
+            "--show-warnings",
+        ],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &[
+            "God Files",
+            "src/app.ts",
+            "graph: typescript",
+            "symbols=",
+            "refs=",
+            "Graph context: applied",
+        ],
+    );
+}
+
+#[test]
 fn run_manifest_task_builtin_scan_god_files_markdown_out_writes_report() {
     let root = temp_workspace("builtin-scan-god-files-markdown-out");
     write_root_manifest(&root, "");

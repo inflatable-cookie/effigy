@@ -16,6 +16,9 @@ pub(super) fn parse_scan_request(
     let mut parser = BuiltinArgParser::new(args);
     let mut command: Option<ScanCommand> = None;
     let mut output_json = false;
+    let mut graph_context = false;
+    let mut read_stdin = false;
+    let mut changed_paths = Vec::<String>::new();
     let mut format: Option<ScanRenderFormat> = None;
     let mut out: Option<PathBuf> = None;
     let mut warn_raw: Option<String> = None;
@@ -35,6 +38,19 @@ pub(super) fn parse_scan_request(
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| match arg {
         "--json" => {
             output_json = true;
+            Ok(ParseLoopAction::Handled)
+        }
+        "--graph-context" => {
+            graph_context = true;
+            Ok(ParseLoopAction::Handled)
+        }
+        "--stdin" => {
+            read_stdin = true;
+            Ok(ParseLoopAction::Handled)
+        }
+        "--path" => {
+            let value = parser.next_value("`--path` requires a path")?;
+            changed_paths.push(value.to_owned());
             Ok(ParseLoopAction::Handled)
         }
         "--markdown" => {
@@ -132,7 +148,7 @@ pub(super) fn parse_scan_request(
     }
     let command = command.ok_or_else(|| {
         BuiltinError::task_invocation(
-            "scan requires a subcommand (currently supported: `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`)",
+            "scan requires a subcommand (currently supported: `god-files`, `boundary-violations`, `dead-code`, `validation-gaps`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`)",
         )
     })?;
 
@@ -158,6 +174,9 @@ pub(super) fn parse_scan_request(
     Ok(ScanRequest {
         command,
         output_json,
+        graph_context,
+        read_stdin,
+        changed_paths,
         format,
         out,
         warn,

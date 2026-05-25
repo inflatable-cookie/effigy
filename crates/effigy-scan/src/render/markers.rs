@@ -3,8 +3,8 @@ use super::common::{
     TextReportSpec,
 };
 use crate::model::{
-    AttentionMarkerScanResult, AttentionMarkerSeverity, StaleSuppressionScanResult,
-    StaleSuppressionSeverity, TextRenderOptions,
+    AttentionMarkerScanResult, AttentionMarkerSeverity, ScanGraphFileContext,
+    StaleSuppressionScanResult, StaleSuppressionSeverity, TextRenderOptions,
 };
 
 pub fn render_attention_marker_text(
@@ -39,7 +39,7 @@ pub fn render_attention_marker_text(
         AttentionMarkerSeverity::High,
         AttentionMarkerSeverity::Critical,
         |finding| {
-            format!(
+            let base = format!(
                 "{}  {}:{}  {}  [{}]  {}",
                 finding.severity.as_str(),
                 finding.path,
@@ -47,12 +47,20 @@ pub fn render_attention_marker_text(
                 finding.category.as_str(),
                 finding.marker,
                 finding.snippet
-            )
+            );
+            match &finding.graph {
+                Some(graph) => format!("{base}\n    graph: {}", format_graph_context(graph)),
+                None => base,
+            }
         },
     )
 }
 
 pub fn render_attention_marker_markdown(result: &AttentionMarkerScanResult) -> String {
+    let include_graph = result
+        .findings
+        .iter()
+        .any(|finding| finding.graph.is_some());
     render_markdown_report(
         MarkdownReportSpec {
             title: "Attention Markers",
@@ -69,12 +77,30 @@ pub fn render_attention_marker_markdown(result: &AttentionMarkerScanResult) -> S
                 format!("- Findings: `{}`", result.findings.len()),
             ],
             empty_message: "No attention markers found.",
-            table_header: "| Severity | Category | Marker | Path | Line | Snippet |",
-            table_divider: "| --- | --- | --- | --- | ---: | --- |",
+            table_header: if include_graph {
+                "| Severity | Category | Marker | Path | Line | Snippet | Graph |"
+            } else {
+                "| Severity | Category | Marker | Path | Line | Snippet |"
+            },
+            table_divider: if include_graph {
+                "| --- | --- | --- | --- | ---: | --- | --- |"
+            } else {
+                "| --- | --- | --- | --- | ---: | --- |"
+            },
         },
         &result.findings,
-        |finding| {
-            format!(
+        |finding| match &finding.graph {
+            Some(graph) => format!(
+                "| {} | {} | `{}` | `{}` | {} | `{}` | {} |",
+                finding.severity.as_str(),
+                finding.category.as_str(),
+                finding.marker,
+                finding.path,
+                finding.line,
+                finding.snippet.replace('`', "'"),
+                format_graph_context(graph).replace('|', "/")
+            ),
+            None => format!(
                 "| {} | {} | `{}` | `{}` | {} | `{}` |",
                 finding.severity.as_str(),
                 finding.category.as_str(),
@@ -82,7 +108,7 @@ pub fn render_attention_marker_markdown(result: &AttentionMarkerScanResult) -> S
                 finding.path,
                 finding.line,
                 finding.snippet.replace('`', "'"),
-            )
+            ),
         },
     )
 }
@@ -133,6 +159,18 @@ pub fn render_stale_suppression_text(
             );
             format!("{header}\n{snippet}")
         },
+    )
+}
+
+fn format_graph_context(graph: &ScanGraphFileContext) -> String {
+    format!(
+        "{}  symbols={}  in={}  out={}  refs={}  {}",
+        graph.language_id,
+        graph.symbol_count,
+        graph.inbound_edges,
+        graph.outbound_edges,
+        graph.reference_count,
+        graph.connectivity
     )
 }
 

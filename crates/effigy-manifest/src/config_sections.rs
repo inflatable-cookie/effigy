@@ -14,12 +14,13 @@ pub use bootstrap::{
 };
 pub use bundle::{ManifestBundleBase, ManifestBundleConfig};
 pub use common::{
-    ManifestAttentionMarkersConfig, ManifestCommentRatioConfig, ManifestDuplicateBlocksConfig,
+    ManifestAttentionMarkersConfig, ManifestBoundaryLayerConfig, ManifestBoundaryViolationsConfig,
+    ManifestCommentRatioConfig, ManifestDeadCodeConfig, ManifestDuplicateBlocksConfig,
     ManifestEnvSchemaConfig, ManifestGeneratedAssetsConfig, ManifestGeneratedInSrcConfig,
     ManifestGodFilesConfig, ManifestIsolationAdoption, ManifestIsolationConfig,
     ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestScanConfig,
     ManifestScanOutputFormat, ManifestShellConfig, ManifestStaleSuppressionsConfig,
-    ManifestTaskDefaultsConfig,
+    ManifestTaskDefaultsConfig, ManifestValidationGapsConfig,
 };
 pub use container::{
     ManifestContainerConfig, ManifestContainerDataConfig, ManifestContainerDnsConfig,
@@ -205,6 +206,114 @@ catalog = "php-fpm"
         );
         assert_eq!(secrets.runtime_dir.as_deref(), Some("/run/effigy/secrets"));
         assert_eq!(secrets.source_for_deferrals, Some(true));
+    }
+
+    #[test]
+    fn scan_config_accepts_boundary_violation_layers() {
+        #[derive(Debug, serde::Deserialize)]
+        struct ScanWrapper {
+            scan: super::ManifestScanConfig,
+        }
+
+        let parsed: ScanWrapper = toml::from_str(
+            r#"
+[scan.boundary_violations]
+doctor = false
+
+[scan.boundary_violations.layers.app]
+paths = ["src/app/**"]
+may_depend_on = ["domain", "shared"]
+
+[scan.boundary_violations.layers.domain]
+paths = ["src/domain/**"]
+may_depend_on = ["shared"]
+"#,
+        )
+        .expect("parse boundary scan config");
+
+        let config = parsed
+            .scan
+            .boundary_violations
+            .as_ref()
+            .expect("boundary violation config");
+        assert_eq!(config.doctor, Some(false));
+        assert_eq!(config.layers.len(), 2);
+        assert_eq!(
+            config.layers.get("app").expect("app layer").paths,
+            vec!["src/app/**".to_owned()]
+        );
+        assert_eq!(
+            config
+                .layers
+                .get("domain")
+                .expect("domain layer")
+                .may_depend_on,
+            vec!["shared".to_owned()]
+        );
+    }
+
+    #[test]
+    fn scan_config_accepts_dead_code_allowlists() {
+        #[derive(Debug, serde::Deserialize)]
+        struct ScanWrapper {
+            scan: super::ManifestScanConfig,
+        }
+
+        let parsed: ScanWrapper = toml::from_str(
+            r#"
+[scan.dead_code]
+doctor = false
+fail_on_findings = true
+include_heuristic = true
+respect_gitignore = false
+allow_paths = ["src/bin/**", "scripts/**"]
+allow_symbols = ["crate::bootstrap::*", "main"]
+"#,
+        )
+        .expect("parse dead code scan config");
+
+        let config = parsed.scan.dead_code.as_ref().expect("dead code config");
+        assert_eq!(config.doctor, Some(false));
+        assert_eq!(config.fail_on_findings, Some(true));
+        assert_eq!(config.include_heuristic, Some(true));
+        assert_eq!(config.respect_gitignore, Some(false));
+        assert_eq!(config.allow_paths.len(), 2);
+        assert_eq!(config.allow_symbols.len(), 2);
+    }
+
+    #[test]
+    fn scan_config_accepts_validation_gap_settings() {
+        #[derive(Debug, serde::Deserialize)]
+        struct ScanWrapper {
+            scan: super::ManifestScanConfig,
+        }
+
+        let parsed: ScanWrapper = toml::from_str(
+            r#"
+[scan.validation_gaps]
+doctor = false
+fail_on_findings = true
+include_heuristic = true
+respect_gitignore = false
+hotspot_threshold = 7
+affected_depth = 3
+allow_paths = ["src/bin/**", "scripts/**"]
+"#,
+        )
+        .expect("parse validation gap scan config");
+
+        let config = parsed
+            .scan
+            .validation_gaps
+            .as_ref()
+            .expect("validation gap config");
+        assert_eq!(config.doctor, Some(false));
+        assert_eq!(config.fail_on_findings, Some(true));
+        assert_eq!(config.include_heuristic, Some(true));
+        assert_eq!(config.respect_gitignore, Some(false));
+        assert_eq!(config.hotspot_threshold, Some(7));
+        assert_eq!(config.affected_depth, Some(3));
+        assert_eq!(config.allow_paths.len(), 2);
     }
 
     #[test]

@@ -5,9 +5,10 @@ use effigy_manifest::LoadedCatalog;
 
 use self::common::{doctor_manifest_options, load_root_manifest_options};
 use super::super::model::{
-    AttentionMarkerScanOptions, CommentRatioScanOptions, DuplicateBlockScanOptions,
-    GeneratedAssetScanOptions, GeneratedInSrcScanOptions, GodFileScanOptions,
-    StaleSuppressionScanOptions,
+    AttentionMarkerScanOptions, BoundaryViolationScanOptions, CommentRatioScanOptions,
+    DeadCodeScanOptions, DuplicateBlockScanOptions, GeneratedAssetScanOptions,
+    GeneratedInSrcScanOptions, GodFileScanOptions, StaleSuppressionScanOptions,
+    ValidationGapScanOptions,
 };
 
 mod common;
@@ -20,6 +21,37 @@ pub fn load_root_god_file_options(target_root: &Path) -> Result<GodFileScanOptio
             .scan
             .as_ref()
             .and_then(|scan| scan.god_files.as_ref())
+    })
+}
+
+pub fn load_root_boundary_violation_options(
+    target_root: &Path,
+) -> Result<BoundaryViolationScanOptions, ScanError> {
+    load_root_manifest_options(target_root, |manifest| {
+        manifest
+            .scan
+            .as_ref()
+            .and_then(|scan| scan.boundary_violations.as_ref())
+    })
+}
+
+pub fn load_root_dead_code_options(target_root: &Path) -> Result<DeadCodeScanOptions, ScanError> {
+    load_root_manifest_options(target_root, |manifest| {
+        manifest
+            .scan
+            .as_ref()
+            .and_then(|scan| scan.dead_code.as_ref())
+    })
+}
+
+pub fn load_root_validation_gap_options(
+    target_root: &Path,
+) -> Result<ValidationGapScanOptions, ScanError> {
+    load_root_manifest_options(target_root, |manifest| {
+        manifest
+            .scan
+            .as_ref()
+            .and_then(|scan| scan.validation_gaps.as_ref())
     })
 }
 
@@ -158,6 +190,30 @@ pub fn doctor_comment_ratio_options(
             .scan
             .as_ref()
             .and_then(|scan| scan.comment_ratio.as_ref())
+    })
+}
+
+pub fn doctor_dead_code_options(
+    resolved_root: &Path,
+    catalogs: &[LoadedCatalog],
+) -> Result<DeadCodeScanOptions, ScanError> {
+    doctor_manifest_options(resolved_root, catalogs, |manifest| {
+        manifest
+            .scan
+            .as_ref()
+            .and_then(|scan| scan.dead_code.as_ref())
+    })
+}
+
+pub fn doctor_validation_gap_options(
+    resolved_root: &Path,
+    catalogs: &[LoadedCatalog],
+) -> Result<ValidationGapScanOptions, ScanError> {
+    doctor_manifest_options(resolved_root, catalogs, |manifest| {
+        manifest
+            .scan
+            .as_ref()
+            .and_then(|scan| scan.validation_gaps.as_ref())
     })
 }
 

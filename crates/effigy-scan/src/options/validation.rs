@@ -1,9 +1,10 @@
 use crate::error::ScanError;
 
 use super::super::model::{
-    AttentionMarkerScanOptions, CommentRatioScanOptions, DuplicateBlockScanOptions,
-    GeneratedAssetScanOptions, GeneratedInSrcScanOptions, GodFileScanOptions,
-    StaleSuppressionScanOptions,
+    AttentionMarkerScanOptions, BoundaryViolationScanOptions, CommentRatioScanOptions,
+    DeadCodeScanOptions, DuplicateBlockScanOptions, GeneratedAssetScanOptions,
+    GeneratedInSrcScanOptions, GodFileScanOptions, StaleSuppressionScanOptions,
+    ValidationGapScanOptions,
 };
 
 impl GodFileScanOptions {
@@ -14,6 +15,72 @@ impl GodFileScanOptions {
             self.thresholds.high,
             self.thresholds.critical,
         )
+    }
+}
+
+impl BoundaryViolationScanOptions {
+    pub fn validate(&self) -> Result<(), ScanError> {
+        for (layer_name, layer) in &self.layers {
+            if layer.paths.is_empty() {
+                return Err(ScanError::invocation(format!(
+                    "`scan.boundary_violations.layers.{layer_name}` requires at least one configured path glob"
+                )));
+            }
+            if layer.paths.iter().any(|value| value.trim().is_empty()) {
+                return Err(ScanError::invocation(format!(
+                    "`scan.boundary_violations.layers.{layer_name}.paths` must contain non-empty glob strings"
+                )));
+            }
+            for dependency in &layer.may_depend_on {
+                if !self.layers.contains_key(dependency) {
+                    return Err(ScanError::invocation(format!(
+                        "`scan.boundary_violations.layers.{layer_name}.may_depend_on` references unknown layer `{dependency}`"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl DeadCodeScanOptions {
+    pub fn validate(&self) -> Result<(), ScanError> {
+        if self.allow_paths.iter().any(|value| value.trim().is_empty()) {
+            return Err(ScanError::invocation(
+                "`scan.dead_code.allow_paths` must contain non-empty glob strings",
+            ));
+        }
+        if self
+            .allow_symbols
+            .iter()
+            .any(|value| value.trim().is_empty())
+        {
+            return Err(ScanError::invocation(
+                "`scan.dead_code.allow_symbols` must contain non-empty glob strings",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl ValidationGapScanOptions {
+    pub fn validate(&self) -> Result<(), ScanError> {
+        if self.allow_paths.iter().any(|value| value.trim().is_empty()) {
+            return Err(ScanError::invocation(
+                "`scan.validation_gaps.allow_paths` must contain non-empty glob strings",
+            ));
+        }
+        if self.hotspot_threshold == 0 {
+            return Err(ScanError::invocation(
+                "`scan.validation_gaps.hotspot_threshold` must be greater than zero",
+            ));
+        }
+        if self.affected_depth == 0 {
+            return Err(ScanError::invocation(
+                "`scan.validation_gaps.affected_depth` must be greater than zero",
+            ));
+        }
+        Ok(())
     }
 }
 

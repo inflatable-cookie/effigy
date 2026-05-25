@@ -76,6 +76,14 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 ## Current Evidence Window
 
+- [`2026-05/25-160400-graph-aware-scan-closeout.md`](./2026-05/25-160400-graph-aware-scan-closeout.md)
+- [`2026-05/25-022500-agent-docs-json-and-benchmark-proof.md`](./2026-05/25-022500-agent-docs-json-and-benchmark-proof.md)
+- [`2026-05/25-020500-validation-gap-and-hotspot-scans.md`](./2026-05/25-020500-validation-gap-and-hotspot-scans.md)
+- [`2026-05/25-013500-dead-and-isolated-code-scans.md`](./2026-05/25-013500-dead-and-isolated-code-scans.md)
+- [`2026-05/25-010500-boundary-and-layer-violation-scans.md`](./2026-05/25-010500-boundary-and-layer-violation-scans.md)
+- [`2026-05/25-003500-existing-scan-graph-enrichment.md`](./2026-05/25-003500-existing-scan-graph-enrichment.md)
+- [`2026-05/25-001500-scan-graph-readiness-contract.md`](./2026-05/25-001500-scan-graph-readiness-contract.md)
+- [`2026-05/25-000000-graph-aware-scan-lane-opened.md`](./2026-05/25-000000-graph-aware-scan-lane-opened.md)
 - [`2026-05/20-150100-graph-agent-adoption-closeout.md`](./2026-05/20-150100-graph-agent-adoption-closeout.md)
 - [`2026-05/20-145400-graph-agent-guidance-update.md`](./2026-05/20-145400-graph-agent-guidance-update.md)
 - [`2026-05/20-144800-graph-agent-benchmark.md`](./2026-05/20-144800-graph-agent-benchmark.md)

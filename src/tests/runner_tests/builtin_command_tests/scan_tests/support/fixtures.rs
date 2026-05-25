@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use effigy_codegraph::run_index;
+
 use crate::runner::tests::prelude::{
     fs, temp_workspace, write_manifest, write_root_manifest, Path,
 };
@@ -99,4 +101,8 @@ pub(in crate::runner::tests::builtin_command_tests::scan_tests) fn setup_fanout_
         &format!("[catalog]\nalias = \"{child_catalog}\"\n"),
     );
     (root, child)
+}
+
+pub(in crate::runner::tests::builtin_command_tests::scan_tests) fn seed_graph_index(root: &Path) {
+    run_index(root).expect("graph index");
 }

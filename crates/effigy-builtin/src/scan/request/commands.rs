@@ -3,6 +3,9 @@ use super::model::ScanCommand;
 pub(super) fn parse_scan_command(arg: &str) -> Option<ScanCommand> {
     match arg {
         "god-files" => Some(ScanCommand::GodFiles),
+        "boundary-violations" => Some(ScanCommand::BoundaryViolations),
+        "dead-code" => Some(ScanCommand::DeadCode),
+        "validation-gaps" => Some(ScanCommand::ValidationGaps),
         "duplicate-blocks" => Some(ScanCommand::DuplicateBlocks),
         "comment-ratio" => Some(ScanCommand::CommentRatio),
         "generated-assets" => Some(ScanCommand::GeneratedAssets),

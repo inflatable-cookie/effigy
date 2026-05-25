@@ -760,6 +760,7 @@ dependencies = [
  "anstyle",
  "effigy-catalog",
  "effigy-cli",
+ "effigy-codegraph",
  "effigy-core",
  "effigy-env",
  "effigy-managed",

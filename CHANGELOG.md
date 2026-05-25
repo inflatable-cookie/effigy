@@ -6,6 +6,24 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- `effigy scan` now accepts `--graph-context` and exposes graph-readiness
+  metadata in JSON and text output when graph context is requested, without
+  changing the underlying scan findings yet.
+- `effigy scan --graph-context` now enriches `god-files` and
+  `attention-markers` findings with optional file-level graph facts when a
+  usable graph index exists.
+- `effigy scan boundary-violations` now checks configured path-layer rules
+  against graph edges and reports disallowed cross-layer dependencies with
+  concrete source and target evidence.
+- `effigy scan dead-code` now reports likely isolated implementation files and
+  unreferenced symbols from concrete graph evidence, with confidence labels,
+  reason fields, and path/symbol allowlists for intentional isolation.
+- `effigy scan validation-gaps` now reports hotspot owners and changed owners
+  without nearby graph-backed test targets, and surfaces likely test files and
+  tasks separately when the graph can justify them.
+
 ### Changed
 - **Effigy agent routing guidance is now job-based:** the bundled skill, repo
   contract, and adoption docs no longer teach `doctor -> tasks -> test --plan`

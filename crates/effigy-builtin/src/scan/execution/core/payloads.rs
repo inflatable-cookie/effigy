@@ -2,9 +2,10 @@ use serde_json::{json, Map, Value};
 
 use super::api::ScanPayloadResult;
 use effigy_scan::{
-    AttentionMarkerScanResult, CommentRatioScanResult, DuplicateBlockScanResult,
-    GeneratedAssetScanResult, GeneratedInSrcScanResult, GodFileScanResult,
-    StaleSuppressionScanResult,
+    AttentionMarkerScanResult, BoundaryViolationScanResult, CommentRatioScanResult,
+    DeadCodeScanResult, DuplicateBlockScanResult, GeneratedAssetScanResult,
+    GeneratedInSrcScanResult, GodFileScanResult, StaleSuppressionScanResult,
+    ValidationGapScanResult,
 };
 
 impl ScanPayloadResult for GodFileScanResult {
@@ -30,6 +31,93 @@ impl ScanPayloadResult for GodFileScanResult {
             "skipped_generated".into(),
             Value::from(self.skipped_generated),
         );
+        payload.insert("findings".into(), json!(&self.findings));
+    }
+}
+
+impl ScanPayloadResult for BoundaryViolationScanResult {
+    fn root(&self) -> &str {
+        &self.root
+    }
+
+    fn finding_count(&self) -> usize {
+        self.findings.len()
+    }
+
+    fn insert_payload_fields(&self, payload: &mut Map<String, Value>) {
+        payload.insert(
+            "configured_layers".into(),
+            Value::from(self.configured_layers),
+        );
+        payload.insert("checked_edges".into(), Value::from(self.checked_edges));
+        payload.insert("findings".into(), json!(&self.findings));
+    }
+}
+
+impl ScanPayloadResult for DeadCodeScanResult {
+    fn root(&self) -> &str {
+        &self.root
+    }
+
+    fn finding_count(&self) -> usize {
+        self.findings.len()
+    }
+
+    fn insert_payload_fields(&self, payload: &mut Map<String, Value>) {
+        payload.insert("checked_files".into(), Value::from(self.checked_files));
+        payload.insert("checked_symbols".into(), Value::from(self.checked_symbols));
+        payload.insert(
+            "skipped_allowlisted_paths".into(),
+            Value::from(self.skipped_allowlisted_paths),
+        );
+        payload.insert(
+            "skipped_allowlisted_symbols".into(),
+            Value::from(self.skipped_allowlisted_symbols),
+        );
+        payload.insert(
+            "skipped_non_implementation_files".into(),
+            Value::from(self.skipped_non_implementation_files),
+        );
+        payload.insert(
+            "skipped_unsupported_language_files".into(),
+            Value::from(self.skipped_unsupported_language_files),
+        );
+        payload.insert("findings".into(), json!(&self.findings));
+    }
+}
+
+impl ScanPayloadResult for ValidationGapScanResult {
+    fn root(&self) -> &str {
+        &self.root
+    }
+
+    fn finding_count(&self) -> usize {
+        self.findings.len()
+    }
+
+    fn insert_payload_fields(&self, payload: &mut Map<String, Value>) {
+        payload.insert("mode".into(), Value::from(self.mode.clone()));
+        payload.insert(
+            "hotspot_threshold".into(),
+            Value::from(self.hotspot_threshold),
+        );
+        payload.insert("affected_depth".into(), Value::from(self.affected_depth));
+        payload.insert("changed_paths".into(), json!(&self.changed_paths));
+        payload.insert("checked_files".into(), Value::from(self.checked_files));
+        payload.insert(
+            "skipped_allowlisted_paths".into(),
+            Value::from(self.skipped_allowlisted_paths),
+        );
+        payload.insert(
+            "skipped_non_implementation_files".into(),
+            Value::from(self.skipped_non_implementation_files),
+        );
+        payload.insert(
+            "skipped_unsupported_language_files".into(),
+            Value::from(self.skipped_unsupported_language_files),
+        );
+        payload.insert("likely_test_files".into(), json!(&self.likely_test_files));
+        payload.insert("likely_test_tasks".into(), json!(&self.likely_test_tasks));
         payload.insert("findings".into(), json!(&self.findings));
     }
 }
