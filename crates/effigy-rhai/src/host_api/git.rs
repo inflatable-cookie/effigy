@@ -1,4 +1,4 @@
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::Arc;
 
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map};
@@ -17,6 +17,15 @@ fn build_git_module(context: Arc<ScriptContext>) -> rhai::Module {
     let git_context = context.clone();
     module.set_native_fn("status", move || -> Result<Map, Box<EvalAltResult>> {
         git_status(&git_context)
+    });
+    let git_context = context.clone();
+    module.set_native_fn(
+        "working_tree_clean",
+        move || -> Result<bool, Box<EvalAltResult>> { git_working_tree_clean(&git_context) },
+    );
+    let git_context = context.clone();
+    module.set_native_fn("assert_clean", move || -> Result<(), Box<EvalAltResult>> {
+        git_assert_clean(&git_context)
     });
     let git_context = context.clone();
     module.set_native_fn(
@@ -51,6 +60,44 @@ fn build_git_module(context: Arc<ScriptContext>) -> rhai::Module {
     );
     let git_context = context.clone();
     module.set_native_fn(
+        "commit_exists",
+        move |rev: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
+            Ok(run_git_quiet_status(
+                &git_context,
+                &["cat-file", "-e", &format!("{rev}^{{commit}}")],
+            )?
+            .success())
+        },
+    );
+    let git_context = context.clone();
+    module.set_native_fn(
+        "merge_base",
+        move |left: ImmutableString,
+              right: ImmutableString|
+              -> Result<String, Box<EvalAltResult>> {
+            git_trimmed_stdout(&git_context, &["merge-base", left.as_str(), right.as_str()])
+        },
+    );
+    let git_context = context.clone();
+    module.set_native_fn(
+        "is_ancestor",
+        move |ancestor: ImmutableString,
+              descendant: ImmutableString|
+              -> Result<bool, Box<EvalAltResult>> {
+            Ok(run_git_quiet_status(
+                &git_context,
+                &[
+                    "merge-base",
+                    "--is-ancestor",
+                    ancestor.as_str(),
+                    descendant.as_str(),
+                ],
+            )?
+            .success())
+        },
+    );
+    let git_context = context.clone();
+    module.set_native_fn(
         "branch_exists",
         move |branch: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
             Ok(run_git_status(
@@ -63,6 +110,33 @@ fn build_git_module(context: Arc<ScriptContext>) -> rhai::Module {
                 ],
             )?
             .success())
+        },
+    );
+    let git_context = context.clone();
+    module.set_native_fn(
+        "remote_url",
+        move || -> Result<String, Box<EvalAltResult>> {
+            git_optional_trimmed_stdout(&git_context, &["config", "--get", "remote.origin.url"])
+        },
+    );
+    let git_context = context.clone();
+    module.set_native_fn(
+        "remote_url",
+        move |remote: ImmutableString| -> Result<String, Box<EvalAltResult>> {
+            git_optional_trimmed_stdout(
+                &git_context,
+                &["config", "--get", &format!("remote.{remote}.url")],
+            )
+        },
+    );
+    let git_context = context.clone();
+    module.set_native_fn(
+        "upstream_branch",
+        move || -> Result<String, Box<EvalAltResult>> {
+            git_optional_trimmed_stdout(
+                &git_context,
+                &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            )
         },
     );
     let git_context = context.clone();
@@ -136,6 +210,20 @@ fn git_status(context: &ScriptContext) -> Result<Map, Box<EvalAltResult>> {
     Ok(map)
 }
 
+fn git_working_tree_clean(context: &ScriptContext) -> Result<bool, Box<EvalAltResult>> {
+    let porcelain = git_lines(context, &["status", "--porcelain"])?;
+    Ok(porcelain.is_empty())
+}
+
+fn git_assert_clean(context: &ScriptContext) -> Result<(), Box<EvalAltResult>> {
+    let porcelain = git_lines(context, &["status", "--porcelain"])?;
+    if porcelain.is_empty() {
+        Ok(())
+    } else {
+        Err(rhai_runtime_error("git working tree is not clean"))
+    }
+}
+
 fn git_current_branch(context: &ScriptContext) -> Result<String, Box<EvalAltResult>> {
     git_trimmed_stdout(context, &["branch", "--show-current"]).and_then(|branch| {
         if branch.is_empty() {
@@ -184,6 +272,18 @@ fn git_trimmed_stdout(
 ) -> Result<String, Box<EvalAltResult>> {
     let output = run_git_output(context, args)?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn git_optional_trimmed_stdout(
+    context: &ScriptContext,
+    args: &[&str],
+) -> Result<String, Box<EvalAltResult>> {
+    let output = run_git_process_output(context, args)?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    } else {
+        Ok(String::new())
+    }
 }
 
 fn run_git_map(context: &ScriptContext, args: &[&str]) -> Result<Map, Box<EvalAltResult>> {
@@ -236,6 +336,18 @@ fn run_git_status(
 ) -> Result<std::process::ExitStatus, Box<EvalAltResult>> {
     git_command(context)
         .args(args)
+        .status()
+        .map_err(|error| rhai_runtime_error(error.to_string()))
+}
+
+fn run_git_quiet_status(
+    context: &ScriptContext,
+    args: &[&str],
+) -> Result<std::process::ExitStatus, Box<EvalAltResult>> {
+    git_command(context)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map_err(|error| rhai_runtime_error(error.to_string()))
 }

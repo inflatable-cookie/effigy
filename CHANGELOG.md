@@ -16,6 +16,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - Rhai scripts now have an adapter-shaped `forge::*` host module, with GitHub
   support through the `gh` CLI for provider/status checks and pull request
   view, list, create, and checkout workflows.
+- Rhai `git::*` now includes safety and ref-inspection helpers for clean-tree
+  assertions, commit existence, merge-base checks, remote URLs, and upstream
+  branch lookup.
 
 ## [0.8.3] - 2026-05-25
 

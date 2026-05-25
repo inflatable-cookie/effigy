@@ -152,11 +152,18 @@ Current v1 helpers:
   - `secrets::set_many(map)` — stores multiple declared Rhai-target secrets in one write
 - git and forge helpers:
   - `git::status()`
+  - `git::working_tree_clean()`
+  - `git::assert_clean()`
   - `git::current_branch()`
   - `git::rev_parse(rev)`
   - `git::changed_files()`
   - `git::diff_name_only([base])`
   - `git::branch_exists(name)`
+  - `git::commit_exists(rev)`
+  - `git::merge_base(left, right)`
+  - `git::is_ancestor(ancestor, descendant)`
+  - `git::remote_url([remote])`
+  - `git::upstream_branch()`
   - `git::switch(branch)`
   - `git::create_branch(branch)`
   - `git::checkout(ref)`
