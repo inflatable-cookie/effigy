@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-05-25
+
 ### Added
 - `effigy rhai surface` now prints the registered Rhai host API surface, with
   `--json` support for agents that need module/function discovery without
