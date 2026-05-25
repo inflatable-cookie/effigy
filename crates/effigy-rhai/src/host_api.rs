@@ -37,6 +37,8 @@ mod process;
 mod prompt;
 #[path = "host_api/search.rs"]
 mod search;
+#[path = "host_api/semver.rs"]
+mod semver;
 #[path = "host_api/state.rs"]
 mod state;
 #[path = "host_api/utility.rs"]
@@ -69,6 +71,7 @@ pub(super) fn register_host_api(
     forge::register_forge_module(engine, context.clone());
     process::register_process_module(engine, context.clone());
     prompt::register_prompt_module(engine);
+    semver::register_semver_module(engine);
     exec::register_exec_module(engine, context.clone(), callbacks.clone());
     http::register_http_module(engine, context.clone());
     search::register_search_module(engine, context.clone());

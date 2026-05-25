@@ -181,6 +181,14 @@ Current v1 helpers:
 - prompt helpers:
   - `prompt::confirm(message, default)`
   - `prompt::input(message)`
+- semver helpers:
+  - `semver::parse(version)`
+  - `semver::valid(version)`
+  - `semver::compare(left, right)`
+  - `semver::satisfies(version, requirement)`
+  - `semver::bump_major(version)`
+  - `semver::bump_minor(version)`
+  - `semver::bump_patch(version)`
 - state stack helpers:
   - `state::plan(options_map)`
   - `state::apply(options_map)`

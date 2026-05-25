@@ -21,6 +21,8 @@ During v0.x, MINOR bumps may include breaking changes.
   branch lookup.
 - Rhai scripts now have `prompt::*` helpers for TTY-only confirmation and
   free-text input in interactive automation.
+- Rhai scripts now have `semver::*` helpers for parsing, validating,
+  comparing, requirement matching, and bumping semantic versions.
 
 ## [0.8.3] - 2026-05-25
 

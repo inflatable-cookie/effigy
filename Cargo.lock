@@ -1055,6 +1055,7 @@ dependencies = [
  "rhai",
  "ring",
  "rpassword",
+ "semver",
  "serde_json",
  "serde_yaml",
  "signal-hook 0.4.4",

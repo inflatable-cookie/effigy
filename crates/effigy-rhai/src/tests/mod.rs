@@ -23,6 +23,7 @@ mod prompt;
 mod runtime;
 mod script_policy;
 mod secrets;
+mod semver;
 mod utility;
 
 fn temp_root(name: &str) -> PathBuf {

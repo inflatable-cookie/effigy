@@ -39,6 +39,7 @@ pub const MODULE_SECRETS: &str = "secrets";
 pub const MODULE_GIT: &str = "git";
 pub const MODULE_FORGE: &str = "forge";
 pub const MODULE_PROMPT: &str = "prompt";
+pub const MODULE_SEMVER: &str = "semver";
 
 pub const MODULE_NAMES: &[&str] = &[
     MODULE_TIME,
@@ -82,6 +83,7 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_GIT,
     MODULE_FORGE,
     MODULE_PROMPT,
+    MODULE_SEMVER,
 ];
 
 pub const FEATURE_TASKS_LIST: &str = "tasks.list";
@@ -1244,5 +1246,55 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
         signature: "prompt::input(message)",
         description: "Ask an interactive free-text question and return the answer.",
         safety: "interactive",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_SEMVER,
+        name: "parse",
+        signature: "semver::parse(version)",
+        description:
+            "Parse a semantic version into major, minor, patch, pre, build, and normalized fields.",
+        safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_SEMVER,
+        name: "valid",
+        signature: "semver::valid(version)",
+        description: "Return true when a value is a valid semantic version.",
+        safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_SEMVER,
+        name: "compare",
+        signature: "semver::compare(left, right)",
+        description: "Compare two semantic versions, returning -1, 0, or 1.",
+        safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_SEMVER,
+        name: "satisfies",
+        signature: "semver::satisfies(version, requirement)",
+        description: "Return true when a version matches a semantic version requirement.",
+        safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_SEMVER,
+        name: "bump_major",
+        signature: "semver::bump_major(version)",
+        description: "Return the next major version with minor and patch reset to zero.",
+        safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_SEMVER,
+        name: "bump_minor",
+        signature: "semver::bump_minor(version)",
+        description: "Return the next minor version with patch reset to zero.",
+        safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_SEMVER,
+        name: "bump_patch",
+        signature: "semver::bump_patch(version)",
+        description: "Return the next patch version.",
+        safety: "read-only",
     },
 ];
