@@ -40,6 +40,7 @@ pub const MODULE_GIT: &str = "git";
 pub const MODULE_FORGE: &str = "forge";
 pub const MODULE_PROMPT: &str = "prompt";
 pub const MODULE_SEMVER: &str = "semver";
+pub const MODULE_STORAGE: &str = "storage";
 
 pub const MODULE_NAMES: &[&str] = &[
     MODULE_TIME,
@@ -84,6 +85,7 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_FORGE,
     MODULE_PROMPT,
     MODULE_SEMVER,
+    MODULE_STORAGE,
 ];
 
 pub const FEATURE_TASKS_LIST: &str = "tasks.list";
@@ -1296,5 +1298,54 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
         signature: "semver::bump_patch(version)",
         description: "Return the next patch version.",
         safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_STORAGE,
+        name: "provider",
+        signature: "storage::provider([options])",
+        description: "Return the detected or explicitly requested object storage provider.",
+        safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_STORAGE,
+        name: "status",
+        signature: "storage::status([options])",
+        description: "Return provider, endpoint, bucket, and credential wiring status.",
+        safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_STORAGE,
+        name: "ls",
+        signature: "storage::ls(options)",
+        description: "List objects and common prefixes from the active object store.",
+        safety: "remote-read",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_STORAGE,
+        name: "head",
+        signature: "storage::head(options)",
+        description: "Read object metadata from the active object store.",
+        safety: "remote-read",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_STORAGE,
+        name: "get",
+        signature: "storage::get(options)",
+        description: "Fetch an object body or download it to a local path.",
+        safety: "network-local-mutation",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_STORAGE,
+        name: "put",
+        signature: "storage::put(options)",
+        description: "Upload a local file or provided body to the active object store.",
+        safety: "remote-mutation",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_STORAGE,
+        name: "delete",
+        signature: "storage::delete(options)",
+        description: "Delete one object from the active object store.",
+        safety: "remote-mutation",
     },
 ];

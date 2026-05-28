@@ -6,6 +6,12 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Added
+- Rhai scripts now have an adapter-shaped `storage::*` host module, with an
+  S3-compatible first provider for object-store status, listing, metadata,
+  download, upload, and delete workflows against AWS S3 or compatible
+  endpoints such as MinIO.
+
 ## [0.8.4] - 2026-05-25
 
 ### Added

@@ -41,6 +41,8 @@ mod search;
 mod semver;
 #[path = "host_api/state.rs"]
 mod state;
+#[path = "host_api/storage.rs"]
+mod storage;
 #[path = "host_api/utility.rs"]
 mod utility;
 
@@ -72,6 +74,7 @@ pub(super) fn register_host_api(
     process::register_process_module(engine, context.clone());
     prompt::register_prompt_module(engine);
     semver::register_semver_module(engine);
+    storage::register_storage_module(engine, context.clone());
     exec::register_exec_module(engine, context.clone(), callbacks.clone());
     http::register_http_module(engine, context.clone());
     search::register_search_module(engine, context.clone());

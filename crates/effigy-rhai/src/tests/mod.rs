@@ -24,6 +24,7 @@ mod runtime;
 mod script_policy;
 mod secrets;
 mod semver;
+mod storage;
 mod utility;
 
 fn temp_root(name: &str) -> PathBuf {
@@ -211,6 +212,14 @@ fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
             contents.contains("process::stream(program, process_args, options)")
         }
         "scripts/install-local-bin-links.rhai" => contents.contains("process::run("),
+        "scripts/benchmark-graph-agent-usage.rhai" => {
+            contents.contains("process::run(program, process_args)")
+                && contents.contains("process::run(")
+        }
+        "scripts/profile-container-shell-matrix.rhai" => {
+            contents.contains("process::run(program, process_args)")
+                && contents.contains("process::run(\"/bin/sh\",")
+        }
         _ => false,
     }
 }
