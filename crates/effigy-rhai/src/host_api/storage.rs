@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use base64::Engine as _;
 use rhai::{Array, Engine, EvalAltResult, Map};
@@ -195,23 +196,7 @@ fn storage_head(
     let config = StorageConfig::from_options(Some(options))?;
     let bucket = config.require_bucket()?;
     let key = required_string_option(options, "key")?;
-    let client = build_client(&config)?;
-    let output = client
-        .objects()
-        .head(&bucket, &key)
-        .send()
-        .map_err(|error| rhai_runtime_error(error.to_string()))?;
-
-    Ok(head_output_map(
-        config.provider.as_str(),
-        &bucket,
-        &key,
-        output.etag.as_deref(),
-        output.content_type.as_deref(),
-        output.content_length,
-        None,
-        &HashMap::new(),
-    ))
+    raw_head_object_map(&config, &bucket, &key)
 }
 
 fn storage_get(
@@ -295,6 +280,7 @@ fn storage_put(
     let content_type = string_option(options, "content_type")?;
     let metadata = string_map_option(options, "metadata")?;
     let body = resolve_put_body(context, options)?;
+    let body_size = body.len();
     let client = build_client(&config)?;
 
     let mut request = client.objects().put(&bucket, &key).body_bytes(body);
@@ -316,6 +302,12 @@ fn storage_put(
     map.insert("key".into(), key.into());
     map.insert("e_tag".into(), output.etag.unwrap_or_default().into());
     map.insert("version_id".into(), String::new().into());
+    map.insert(
+        "size".into(),
+        i64::try_from(body_size)
+            .map_err(|_| rhai_runtime_error("object size exceeded Rhai integer range"))?
+            .into(),
+    );
     map.insert("success".into(), true.into());
     Ok(map)
 }
@@ -467,6 +459,51 @@ fn build_client(config: &StorageConfig) -> Result<BlockingClient, Box<EvalAltRes
         .map_err(|error| rhai_runtime_error(error.to_string()))
 }
 
+fn raw_head_object_map(
+    config: &StorageConfig,
+    bucket: &str,
+    key: &str,
+) -> Result<Map, Box<EvalAltResult>> {
+    let client = build_client(config)?;
+    let presigned = client
+        .objects()
+        .presign_head(bucket, key)
+        .expires_in(Duration::from_secs(60))
+        .build()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+
+    let http = reqwest::blocking::Client::new();
+    let mut request = http.head(presigned.url.as_str());
+    for (name, value) in presigned.headers.iter() {
+        let value = value
+            .to_str()
+            .map_err(|error| rhai_runtime_error(error.to_string()))?;
+        request = request.header(name.as_str(), value);
+    }
+    let response = request
+        .send()
+        .map_err(|error| rhai_runtime_error(error.to_string()))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(rhai_runtime_error(format!(
+            "storage head failed with HTTP status {status}"
+        )));
+    }
+
+    let headers = response.headers();
+    let metadata = metadata_from_headers(headers);
+    Ok(head_output_map(
+        config.provider.as_str(),
+        bucket,
+        key,
+        header_string(headers, "etag").as_deref(),
+        header_string(headers, "content-type").as_deref(),
+        header_u64(headers, "content-length"),
+        header_string(headers, "x-amz-version-id").as_deref(),
+        &metadata,
+    ))
+}
+
 fn head_output_map(
     provider: &str,
     bucket: &str,
@@ -498,6 +535,33 @@ fn head_output_map(
     );
     map.insert("metadata".into(), string_map_to_dynamic(metadata).into());
     map
+}
+
+fn metadata_from_headers(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {
+    const PREFIX: &str = "x-amz-meta-";
+
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            name.as_str().strip_prefix(PREFIX).and_then(|metadata_key| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|metadata_value| (metadata_key.to_owned(), metadata_value.to_owned()))
+            })
+        })
+        .collect()
+}
+
+fn header_string(headers: &reqwest::header::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned)
+}
+
+fn header_u64(headers: &reqwest::header::HeaderMap, name: &str) -> Option<u64> {
+    header_string(headers, name).and_then(|value| value.parse::<u64>().ok())
 }
 
 fn resolve_put_body(

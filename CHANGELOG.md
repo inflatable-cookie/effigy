@@ -12,6 +12,10 @@ During v0.x, MINOR bumps may include breaking changes.
   download, upload, and delete workflows against AWS S3 or compatible
   endpoints such as MinIO.
 
+### Fixed
+- `storage::head` now returns S3-compatible user metadata from
+  `x-amz-meta-*` headers, and `storage::put` reports the uploaded byte count.
+
 ## [0.8.4] - 2026-05-25
 
 ### Added

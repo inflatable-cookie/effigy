@@ -67,7 +67,9 @@ fn execute_rhai_script_routes_storage_operations_through_s3_adapter() {
                     body
                 );
                 stream.write_all(response.as_bytes()).expect("write list");
-            } else if request_line.starts_with("HEAD /assets/docs/readme.txt ") {
+            } else if request_line.starts_with("HEAD /assets/docs/readme.txt ")
+                || request_line.starts_with("HEAD /assets/docs/readme.txt?")
+            {
                 stream
                     .write_all(
                         b"HTTP/1.1 200 OK\r\nETag: \"etag-head\"\r\nContent-Type: text/plain\r\nContent-Length: 11\r\nx-amz-meta-source: fixture\r\n\r\n",
@@ -119,6 +121,8 @@ fn execute_rhai_script_routes_storage_operations_through_s3_adapter() {
 
         let head = storage::head(base + #{{ key: "docs/readme.txt" }});
         if head["e_tag"] != "\"etag-head\"" {{ throw("head etag"); }}
+        if head["content_length"] != 11 {{ throw("head content length"); }}
+        if head["metadata"]["source"] != "fixture" {{ throw("head metadata"); }}
 
         let fetched = storage::get(base + #{{ key: "docs/readme.txt", path: "downloads/object.txt" }});
         if fetched["path"] != "{}" {{ throw("get path"); }}
@@ -126,6 +130,7 @@ fn execute_rhai_script_routes_storage_operations_through_s3_adapter() {
 
         let uploaded = storage::put(base + #{{ key: "uploads/body.txt", path: "upload.txt", content_type: "text/plain" }});
         if uploaded["e_tag"] != "\"etag-put\"" {{ throw("put etag"); }}
+        if uploaded["size"] != 11 {{ throw("put size"); }}
 
         let deleted = storage::delete(base + #{{ key: "uploads/body.txt" }});
         if !deleted["success"] {{ throw("delete success"); }}

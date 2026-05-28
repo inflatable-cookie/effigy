@@ -1310,7 +1310,8 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
         module: MODULE_STORAGE,
         name: "status",
         signature: "storage::status([options])",
-        description: "Return provider, endpoint, bucket, and credential wiring status.",
+        description:
+            "Return local storage configuration readiness without validating remote credentials.",
         safety: "read-only",
     },
     RhaiSurfaceFunction {
