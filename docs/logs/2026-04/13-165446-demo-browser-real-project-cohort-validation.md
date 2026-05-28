@@ -23,7 +23,7 @@ same bounded window.
 ## Cohort
 
 - validated consumer repo:
-  [`signal`](<~/Dev/projects/signal>)
+  [`pilot-repo-d`](<~/Dev/projects/signal>)
 - second consumer repo:
   not completed in this batch
 

@@ -491,7 +491,7 @@ effigy state apply uat
 effigy state apply uat --yes
 effigy state capture uat new-content --yes
 effigy state capture-set legacy-source db media --yes --push
-effigy --json state plan ./state/acowtancy-uat.toml
+effigy --json state plan ./state/example-app-uat.toml
 effigy release simulate
 effigy release prepare --plan
 effigy release execute --plan

@@ -21,7 +21,7 @@ Audit the existing environment/config/secret surfaces before implementing the
 - inspect container environment generation
 - inspect Rhai host API environment access
 - inspect deploy provider package credential handling
-- inspect Underlay and Acowtancy config needs at a classification level
+- inspect Underlay and Example App config needs at a classification level
 - produce an evidence-backed boundary map for what belongs in:
   - ordinary app config
   - generated Effigy runtime config
@@ -34,7 +34,7 @@ Audit the existing environment/config/secret surfaces before implementing the
 - no vault implementation
 - no crypto dependency selection
 - no container injection implementation
-- no Acowtancy app migration
+- no Example App app migration
 - no Underlay docs edits unless needed to record a discovered boundary
 
 ## Acceptance
@@ -67,7 +67,7 @@ unlock, and injection work.
 - stop if current code already has an incompatible secret backend assumption
 - stop if `.env.schema` behavior is too entangled to preserve without a
   separate compatibility roadmap
-- stop if Underlay or Acowtancy needs require repo-specific behavior in Effigy
+- stop if Underlay or Example App needs require repo-specific behavior in Effigy
 
 ## Next Task
 

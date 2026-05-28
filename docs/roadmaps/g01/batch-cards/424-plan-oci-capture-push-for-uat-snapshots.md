@@ -19,7 +19,7 @@ adding write-side OCI behavior.
 - decide how UAT operators authenticate and authorize pushes
 - decide whether `container data dump <target>=oci://...` writes directly or
   produces a local staged artifact first
-- keep Acowtancy/Farmyard migration semantics app-owned
+- keep Example App/Farmyard migration semantics app-owned
 
 ## Non-Goals
 

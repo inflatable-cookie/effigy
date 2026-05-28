@@ -6,7 +6,7 @@ Depends on: `g05.021`
 ## Goal
 
 Make active Effigy docs and contracts describe a reusable core instead of
-presenting Underlay, Decodelabs, Acowtancy, Render, or Railway as built-in core
+presenting Underlay, Decodelabs, Example App, Render, or Railway as built-in core
 ownership.
 
 Historical docs can keep historical names. Active docs should be neutral and
@@ -59,7 +59,7 @@ accurate.
 ## Suggested Implementation Steps
 
 1. Search active docs only:
-   `rg -n "underlay|decodelabs|Acowtancy|Render|Railway" docs/contracts docs/guides`.
+   `rg -n "underlay|decodelabs|Example App|Render|Railway" docs/contracts docs/guides`.
 2. Classify each hit as active guidance, external package example, or historical
    reference.
 3. Update active contract index and drift-trigger tables.
@@ -81,7 +81,7 @@ accurate.
 Minimum focused validation:
 
 ```bash
-rg -n "underlay|decodelabs|Acowtancy|Render|Railway" docs/contracts docs/guides
+rg -n "underlay|decodelabs|Example App|Render|Railway" docs/contracts docs/guides
 effigy docs check paths
 effigy docs check contains
 ```

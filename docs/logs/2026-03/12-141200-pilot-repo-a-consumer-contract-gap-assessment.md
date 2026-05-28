@@ -2,16 +2,16 @@
 
 Date: 2026-03-12
 Owner: Platform
-Target repo: `~/Dev/projects/monkey`
+Target repo: `~/Dev/projects/pilot-repo-a`
 Reference contract:
 [`../guides/056-northstar-effigy-consumer-repo-contract.md`](../guides/056-northstar-effigy-consumer-repo-contract.md)
 
 ## Summary
 
-Assessed `monkey` against the minimum Northstar + Effigy consumer repo
+Assessed `pilot-repo-a` against the minimum Northstar + Effigy consumer repo
 contract.
 
-`monkey` is a strong first pilot because it already has:
+`pilot-repo-a` is a strong first pilot because it already has:
 
 - `docs/README.md`
 - `docs/vision/`
@@ -83,7 +83,7 @@ but it does not yet provide the reusable Effigy-first loop:
 
 ### 2. Test semantics are still task-owned, not clearly framed for adoption
 
-`monkey` defines:
+`pilot-repo-a` defines:
 
 - `check = "cargo check --workspace"`
 - `test = "cargo test --workspace"`
@@ -96,7 +96,7 @@ That is workable, but the repo does not yet explain whether:
 
 ### 3. Changelog and release are missing
 
-`monkey` is ready to be prepared for an initial release, but the repo does not
+`pilot-repo-a` is ready to be prepared for an initial release, but the repo does not
 yet have:
 
 - `CHANGELOG.md`
@@ -104,7 +104,7 @@ yet have:
 - documented release gates
 - a release validation path
 
-This is the largest missing contract area and the main reason `monkey` is a
+This is the largest missing contract area and the main reason `pilot-repo-a` is a
 good pilot.
 
 ### 4. Docs structure exists, but validation does not
@@ -120,7 +120,7 @@ bundle for:
 
 ### 5. Docs authority is broad, but consumer semantics are still implicit
 
-`monkey` clearly uses Northstar structure, but it does not yet explicitly say
+`pilot-repo-a` clearly uses Northstar structure, but it does not yet explicitly say
 what the phrase "use Northstar and Effigy" means in operator terms. The shape
 exists; the reusable contract does not.
 
@@ -140,13 +140,13 @@ exists; the reusable contract does not.
 - read `AGENTS.md`
 - read `effigy.toml`
 - read `docs/README.md`
-- read `docs/vision/001-monkey-vision.md`
+- read `docs/vision/001-pilot-repo-a-vision.md`
 - read `docs/roadmaps/g01/README.md`
 - read `docs/logs/README.md`
 
 ## Conclusion
 
-`monkey` is a better first pilot than `compli-me` for Wave 1 because it is
+`pilot-repo-a` is a better first pilot than `pilot-repo-b` for Wave 1 because it is
 structurally mature enough to test the contract seriously, but still simple
 enough that the first adoption batch will not be dominated by workspace
 orchestration complexity.
@@ -155,9 +155,9 @@ orchestration complexity.
 
 - Primary tags: `OPERATE`, `CONTRACT`, `RELEASE`, `MAINT`
 - Moved from: `pilot choice based on repo familiarity and rough intuition`
-  to `explicit contract-based assessment showing why monkey is a cleaner first
+  to `explicit contract-based assessment showing why pilot-repo-a is a cleaner first
   proving ground than a larger workspace repo`
 - Remaining open:
-  - normalize `monkey` against the contract
+  - normalize `pilot-repo-a` against the contract
   - capture which gaps belong in the skill versus Effigy product surface
   - use the result to harden the reusable starter file set

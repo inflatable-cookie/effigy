@@ -549,8 +549,8 @@ Companion references:
     }
   ],
   "warnings": [],
-  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-apply.json",
-  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143013Z-apply-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+  "written_report_path": ".effigy/reports/state/example-app-uat/latest-apply.json",
+  "written_history_path": ".effigy/reports/state/example-app-uat/history/20260508T143013Z-apply-example-app-uat-Uat-structure-baseline-seed-legacy-c.json"
 }
 ```
 
@@ -775,8 +775,8 @@ Companion references:
     "report.json"
   ],
   "warnings": [],
-  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-apply.json",
-  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143014Z-apply-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+  "written_report_path": ".effigy/reports/state/example-app-uat/latest-apply.json",
+  "written_history_path": ".effigy/reports/state/example-app-uat/history/20260508T143014Z-apply-example-app-uat-Uat-structure-baseline-seed-legacy-c.json"
 }
 ```
 
@@ -789,8 +789,8 @@ Companion references:
   "env": "uat",
   "provider": "railway",
   "app": {
-    "name": "acowtancy",
-    "project_name": "acowtancy-uat"
+    "name": "example-app",
+    "project_name": "example-app-uat"
   },
   "code": {
     "requested_ref": "branch:main",
@@ -803,8 +803,8 @@ Companion references:
   },
   "state": {
     "stack": "uat",
-    "lineage_id": "acowtancy-uat-Uat-structure-baseline-seed-legacy-import",
-    "planned_report_path": ".effigy/reports/state/acowtancy-uat/latest-plan.json"
+    "lineage_id": "example-app-uat-Uat-structure-baseline-seed-legacy-import",
+    "planned_report_path": ".effigy/reports/state/example-app-uat/latest-plan.json"
   },
   "artifact_policy": {
     "mode": "digest-preferred",
@@ -816,7 +816,7 @@ Companion references:
       {
         "name": "project",
         "status": "pending",
-        "target": "acowtancy-uat"
+        "target": "example-app-uat"
       }
     ]
   },
@@ -844,7 +844,7 @@ Companion references:
 {
   "schema": "effigy.deploy.apply.v1",
   "schema_version": 1,
-  "deployment_id": "20260510T183000Z-acowtancy-uat-abc1234",
+  "deployment_id": "20260510T183000Z-example-app-uat-abc1234",
   "env": "uat",
   "provider": "railway",
   "status": "succeeded",
@@ -856,8 +856,8 @@ Companion references:
   },
   "state": {
     "status": "succeeded",
-    "lineage_id": "acowtancy-uat-Uat-structure-baseline-seed-legacy-import",
-    "apply_report_path": ".effigy/reports/state/acowtancy-uat/latest-apply.json"
+    "lineage_id": "example-app-uat-Uat-structure-baseline-seed-legacy-import",
+    "apply_report_path": ".effigy/reports/state/example-app-uat/latest-apply.json"
   },
   "provider_operation": {
     "status": "succeeded",
@@ -884,7 +884,7 @@ Companion references:
     }
   ],
   "written_report_path": ".effigy/reports/deploy/uat/latest.json",
-  "written_history_path": ".effigy/reports/deploy/uat/history/20260510T183000Z-acowtancy-uat-abc1234.json"
+  "written_history_path": ".effigy/reports/deploy/uat/history/20260510T183000Z-example-app-uat-abc1234.json"
 }
 ```
 
@@ -2093,15 +2093,15 @@ Digest-pinned refs are invalid push destinations.
 This is the `result` payload for:
 
 ```sh
-effigy --json state plan ./state/acowtancy-uat.toml
+effigy --json state plan ./state/example-app-uat.toml
 ```
 
 ```json
 {
   "schema": "effigy.state-stack.lineage.v1",
   "schema_version": 1,
-  "lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content+uat-capture",
-  "stack_name": "acowtancy-uat",
+  "lineage_id": "example-app-uat:Uat:structure+baseline-seed+legacy-content+uat-capture",
+  "stack_name": "example-app-uat",
   "environment": "uat",
   "created_at": "planned",
   "layers": [
@@ -2136,12 +2136,12 @@ effigy --json state plan ./state/acowtancy-uat.toml
       "role": "legacy-import",
       "apply_mode": "artifact",
       "environment_policy": "all",
-      "source": "oci://ghcr.io/acowtancy/content:legacy-2026-05-08",
+      "source": "oci://ghcr.io/example-app/content:legacy-2026-05-08",
       "artifact_source": {
-        "source_ref": "oci://ghcr.io/acowtancy/content:legacy-2026-05-08",
+        "source_ref": "oci://ghcr.io/example-app/content:legacy-2026-05-08",
         "kind": "app-specific"
       },
-      "hook": "acowtancy:migrate:apply-legacy-content",
+      "hook": "example-app:migrate:apply-legacy-content",
       "snapshot_identity": "old-site-db@2026-05-08"
     },
     {
@@ -2150,12 +2150,12 @@ effigy --json state plan ./state/acowtancy-uat.toml
       "role": "uat-capture",
       "apply_mode": "artifact",
       "environment_policy": "non-production",
-      "source": "oci://ghcr.io/acowtancy/content:uat-authored-2026-05-08",
+      "source": "oci://ghcr.io/example-app/content:uat-authored-2026-05-08",
       "artifact_source": {
-        "source_ref": "oci://ghcr.io/acowtancy/content:uat-authored-2026-05-08",
+        "source_ref": "oci://ghcr.io/example-app/content:uat-authored-2026-05-08",
         "kind": "content-overlay"
       },
-      "hook": "acowtancy:migrate:apply-uat-overlay",
+      "hook": "example-app:migrate:apply-uat-overlay",
       "snapshot_identity": "uat-freeze@2026-05-08"
     }
   ],
@@ -2168,20 +2168,20 @@ effigy --json state plan ./state/acowtancy-uat.toml
     },
     {
       "layer_key": "legacy-content",
-      "source_ref": "oci://ghcr.io/acowtancy/content:legacy-2026-05-08",
+      "source_ref": "oci://ghcr.io/example-app/content:legacy-2026-05-08",
       "artifact_kind": "app-specific",
       "operation": "planned-resolve"
     },
     {
       "layer_key": "uat-capture",
-      "source_ref": "oci://ghcr.io/acowtancy/content:uat-authored-2026-05-08",
+      "source_ref": "oci://ghcr.io/example-app/content:uat-authored-2026-05-08",
       "artifact_kind": "content-overlay",
       "operation": "planned-resolve"
     }
   ],
   "warnings": [],
-  "written_report_path": ".effigy/reports/state/acowtancy-uat/plan.json",
-  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143012Z-plan-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+  "written_report_path": ".effigy/reports/state/example-app-uat/plan.json",
+  "written_history_path": ".effigy/reports/state/example-app-uat/history/20260508T143012Z-plan-example-app-uat-Uat-structure-baseline-seed-legacy-c.json"
 }
 ```
 
@@ -2201,9 +2201,9 @@ Plan-only apply:
   "schema_version": 1,
   "ok": true,
   "executed": false,
-  "stack_name": "acowtancy-uat",
+  "stack_name": "example-app-uat",
   "environment": "uat",
-  "lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content",
+  "lineage_id": "example-app-uat:Uat:structure+baseline-seed+legacy-content",
   "layers": [
     {
       "index": 0,
@@ -2232,8 +2232,8 @@ Plan-only apply:
     }
   ],
   "warnings": [],
-  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-capture.json",
-  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143015Z-capture-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+  "written_report_path": ".effigy/reports/state/example-app-uat/latest-capture.json",
+  "written_history_path": ".effigy/reports/state/example-app-uat/history/20260508T143015Z-capture-example-app-uat-Uat-structure-baseline-seed-legacy-c.json"
 }
 ```
 
@@ -2245,9 +2245,9 @@ Executed task-only apply:
   "schema_version": 1,
   "ok": true,
   "executed": true,
-  "stack_name": "acowtancy-uat",
+  "stack_name": "example-app-uat",
   "environment": "uat",
-  "lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content",
+  "lineage_id": "example-app-uat:Uat:structure+baseline-seed+legacy-content",
   "layers": [
     {
       "index": 0,
@@ -2327,8 +2327,8 @@ Executed task-only apply:
     }
   ],
   "warnings": [],
-  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-capture.json",
-  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143016Z-capture-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+  "written_report_path": ".effigy/reports/state/example-app-uat/latest-capture.json",
+  "written_history_path": ".effigy/reports/state/example-app-uat/history/20260508T143016Z-capture-example-app-uat-Uat-structure-baseline-seed-legacy-c.json"
 }
 ```
 
@@ -2356,11 +2356,11 @@ Planned UAT overlay capture:
   "schema_version": 1,
   "ok": true,
   "executed": false,
-  "stack_name": "acowtancy-uat",
+  "stack_name": "example-app-uat",
   "source_environment": "uat",
   "capture_role": "uat-capture",
   "capture_mode": "uat-overlay",
-  "parent_lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content",
+  "parent_lineage_id": "example-app-uat:Uat:structure+baseline-seed+legacy-content",
   "created_at": "planned",
   "produced_layers": [
     {
@@ -2369,32 +2369,32 @@ Planned UAT overlay capture:
       "apply_mode": "artifact",
       "environment_policy": "non-production",
       "artifact_kind": "app-specific",
-      "source_ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "source_ref": "oci://ghcr.io/example-app/content:uat-capture-2026-05-08",
       "snapshot_identity": "uat-authored-content@2026-05-08",
       "depends_on": ["legacy-content"],
-      "hook": "acowtancy:migrate:apply-uat-capture"
+      "hook": "example-app:migrate:apply-uat-capture"
     }
   ],
   "capture_artifacts": [
     {
       "layer_key": "uat-capture-2026-05-08",
       "operation": "planned-capture",
-      "ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "ref": "oci://ghcr.io/example-app/content:uat-capture-2026-05-08",
       "digest": null,
       "artifact_report": null
     }
   ],
   "tasks": [
     {
-      "name": "acowtancy:migrate:capture-uat-overlay",
+      "name": "example-app:migrate:capture-uat-overlay",
       "status": "planned",
       "output": null,
       "error": null
     }
   ],
   "warnings": [],
-  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-capture.json",
-  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143017Z-capture-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+  "written_report_path": ".effigy/reports/state/example-app-uat/latest-capture.json",
+  "written_history_path": ".effigy/reports/state/example-app-uat/history/20260508T143017Z-capture-example-app-uat-Uat-structure-baseline-seed-legacy-c.json"
 }
 ```
 
@@ -2405,14 +2405,14 @@ available in `EFFIGY_STATE_CAPTURE_CONTEXT`.
 {
   "schema": "effigy.state-stack.capture-context.v1",
   "schema_version": 1,
-  "stack_name": "acowtancy-uat",
-  "parent_lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content",
+  "stack_name": "example-app-uat",
+  "parent_lineage_id": "example-app-uat:Uat:structure+baseline-seed+legacy-content",
   "capture_role": "uat-capture",
   "capture_mode": "uat-overlay",
   "source_environment": "uat",
   "key": "uat-capture-2026-05-08",
   "source": "captures/uat-overlay.json",
-  "destination_ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08"
+  "destination_ref": "oci://ghcr.io/example-app/content:uat-capture-2026-05-08"
 }
 ```
 
@@ -2440,11 +2440,11 @@ runs multiple named capture profiles with one shared key.
         "schema_version": 1,
         "ok": true,
         "executed": true,
-        "stack_name": "acowtancy-legacy-source",
+        "stack_name": "example-app-legacy-source",
         "source_environment": "dev",
         "capture_role": "full-capture",
         "capture_mode": "full-snapshot",
-        "parent_lineage_id": "acowtancy-legacy-source:Dev:legacy-source-root",
+        "parent_lineage_id": "example-app-legacy-source:Dev:legacy-source-root",
         "created_at": "planned",
         "produced_layers": [],
         "capture_artifacts": [],
@@ -2460,11 +2460,11 @@ runs multiple named capture profiles with one shared key.
         "schema_version": 1,
         "ok": true,
         "executed": true,
-        "stack_name": "acowtancy-legacy-source",
+        "stack_name": "example-app-legacy-source",
         "source_environment": "dev",
         "capture_role": "full-capture",
         "capture_mode": "full-snapshot",
-        "parent_lineage_id": "acowtancy-legacy-source:Dev:legacy-source-root",
+        "parent_lineage_id": "example-app-legacy-source:Dev:legacy-source-root",
         "created_at": "planned",
         "produced_layers": [],
         "capture_artifacts": [],
@@ -2486,11 +2486,11 @@ Staged local capture:
   "schema_version": 1,
   "ok": true,
   "executed": true,
-  "stack_name": "acowtancy-uat",
+  "stack_name": "example-app-uat",
   "source_environment": "uat",
   "capture_role": "uat-capture",
   "capture_mode": "uat-overlay",
-  "parent_lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content",
+  "parent_lineage_id": "example-app-uat:Uat:structure+baseline-seed+legacy-content",
   "created_at": "planned",
   "produced_layers": [
     {
@@ -2499,17 +2499,17 @@ Staged local capture:
       "apply_mode": "artifact",
       "environment_policy": "non-production",
       "artifact_kind": "app-specific",
-      "source_ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "source_ref": "oci://ghcr.io/example-app/content:uat-capture-2026-05-08",
       "snapshot_identity": "uat-authored-content@planned",
       "depends_on": ["legacy-content"],
-      "hook": "acowtancy:migrate:apply-uat-capture"
+      "hook": "example-app:migrate:apply-uat-capture"
     }
   ],
   "capture_artifacts": [
     {
       "layer_key": "uat-capture-2026-05-08",
       "operation": "captured-local",
-      "ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "ref": "oci://ghcr.io/example-app/content:uat-capture-2026-05-08",
       "artifact_report": {
         "schema": "effigy.artifact.capture.v1",
         "schema_version": 1,
@@ -2528,8 +2528,8 @@ Staged local capture:
           "environment_label": "uat"
         },
         "destination": {
-          "source": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
-          "reference": "ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+          "source": "oci://ghcr.io/example-app/content:uat-capture-2026-05-08",
+          "reference": "ghcr.io/example-app/content:uat-capture-2026-05-08",
           "planned": true,
           "pushed": false,
           "digest": null,
@@ -2541,15 +2541,15 @@ Staged local capture:
   ],
   "tasks": [
     {
-      "name": "acowtancy:migrate:capture-uat-overlay",
+      "name": "example-app:migrate:capture-uat-overlay",
       "status": "executed",
-      "context_path": ".effigy/state/capture-context/acowtancy-uat/uat-capture-2026-05-08.json",
+      "context_path": ".effigy/state/capture-context/example-app-uat/uat-capture-2026-05-08.json",
       "output": "capture complete"
     }
   ],
   "warnings": [],
-  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-capture.json",
-  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143016Z-capture-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+  "written_report_path": ".effigy/reports/state/example-app-uat/latest-capture.json",
+  "written_history_path": ".effigy/reports/state/example-app-uat/history/20260508T143016Z-capture-example-app-uat-Uat-structure-baseline-seed-legacy-c.json"
 }
 ```
 
@@ -2561,11 +2561,11 @@ Explicitly pushed capture:
   "schema_version": 1,
   "ok": true,
   "executed": true,
-  "stack_name": "acowtancy-uat",
+  "stack_name": "example-app-uat",
   "source_environment": "uat",
   "capture_role": "uat-capture",
   "capture_mode": "uat-overlay",
-  "parent_lineage_id": "acowtancy-uat:Uat:structure+baseline-seed+legacy-content",
+  "parent_lineage_id": "example-app-uat:Uat:structure+baseline-seed+legacy-content",
   "created_at": "planned",
   "produced_layers": [
     {
@@ -2574,17 +2574,17 @@ Explicitly pushed capture:
       "apply_mode": "artifact",
       "environment_policy": "non-production",
       "artifact_kind": "app-specific",
-      "source_ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "source_ref": "oci://ghcr.io/example-app/content:uat-capture-2026-05-08",
       "snapshot_identity": "uat-authored-content@planned",
       "depends_on": ["legacy-content"],
-      "hook": "acowtancy:migrate:apply-uat-capture"
+      "hook": "example-app:migrate:apply-uat-capture"
     }
   ],
   "capture_artifacts": [
     {
       "layer_key": "uat-capture-2026-05-08",
       "operation": "pushed",
-      "ref": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "ref": "oci://ghcr.io/example-app/content:uat-capture-2026-05-08",
       "digest": "sha256:8e5d2f...",
       "artifact_report": {
         "schema": "effigy.artifact.capture.v1",
@@ -2604,14 +2604,14 @@ Explicitly pushed capture:
           "environment_label": "uat"
         },
         "destination": {
-          "source": "oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
-          "reference": "ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+          "source": "oci://ghcr.io/example-app/content:uat-capture-2026-05-08",
+          "reference": "ghcr.io/example-app/content:uat-capture-2026-05-08",
           "planned": false,
           "pushed": true,
           "digest": "sha256:8e5d2f...",
           "descriptor": {
-            "reference": "ghcr.io/acowtancy/content:uat-capture-2026-05-08",
-            "redacted_reference": "ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+            "reference": "ghcr.io/example-app/content:uat-capture-2026-05-08",
+            "redacted_reference": "ghcr.io/example-app/content:uat-capture-2026-05-08",
             "digest": "sha256:8e5d2f...",
             "media_type": "application/vnd.oci.image.manifest.v1+json",
             "size": 123
@@ -2623,8 +2623,8 @@ Explicitly pushed capture:
   ],
   "tasks": [],
   "warnings": [],
-  "written_report_path": ".effigy/reports/state/acowtancy-uat/latest-capture.json",
-  "written_history_path": ".effigy/reports/state/acowtancy-uat/history/20260508T143017Z-capture-acowtancy-uat-Uat-structure-baseline-seed-legacy-c.json"
+  "written_report_path": ".effigy/reports/state/example-app-uat/latest-capture.json",
+  "written_history_path": ".effigy/reports/state/example-app-uat/history/20260508T143017Z-capture-example-app-uat-Uat-structure-baseline-seed-legacy-c.json"
 }
 ```
 

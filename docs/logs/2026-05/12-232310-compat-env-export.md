@@ -19,4 +19,4 @@ Implemented batch card `718` for `g05.005`.
 
 ## Next
 
-Close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`.
+Close `g05.005` or continue to the Underlay/Example App proof in `g05.006`.

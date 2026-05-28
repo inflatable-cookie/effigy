@@ -32,7 +32,7 @@ focused unit tests.
 - no OCI network pull/push yet
 - no bootstrap/container data integration yet
 - no public CLI command yet
-- no Acowtancy file edits
+- no Example App file edits
 - no migration semantics in Effigy
 
 ## Exit Condition

@@ -19,7 +19,7 @@ of state reports, history, planning, and pure model rules.
 - no JSON schema changes unless explicitly scoped by a later card
 - no provider/deploy behavior changes
 - no media/object-store implementation
-- no Acowtancy-specific transform or reconciliation logic
+- no Example App-specific transform or reconciliation logic
 - no database rollback promises
 - no `.github/workflows/` edits
 - no release execution

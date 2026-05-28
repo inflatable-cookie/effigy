@@ -39,4 +39,4 @@ the next planning card is ready.
 ## Next Task
 
 Card
-[`594-promote-phase-model-stack-manifest-and-acowtancy-proof-boundary.md`](./594-promote-phase-model-stack-manifest-and-acowtancy-proof-boundary.md).
+[`594-promote-phase-model-stack-manifest-and-example-app-proof-boundary.md`](./594-promote-phase-model-stack-manifest-and-example-app-proof-boundary.md).

@@ -24,7 +24,7 @@ edit.
 - no JSON schema change unless a batch card explicitly scopes it
 - no provider/deploy behavior changes
 - no media/object-store implementation
-- no Acowtancy-specific transformation logic
+- no Example App-specific transformation logic
 - no database rollback behavior
 - no `.github/workflows/` edits
 - no release execution

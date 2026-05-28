@@ -27,7 +27,7 @@ their public behavior for plain local SQL files.
 
 - no public artifact command yet
 - no live private registry proof
-- no Acowtancy file edits
+- no Example App file edits
 - no migration semantics in Effigy
 
 ## Exit Condition
@@ -55,4 +55,4 @@ Validation passed:
 
 ## Next Task
 
-Card [`420-acowtancy-proof-and-closeout.md`](./420-acowtancy-proof-and-closeout.md).
+Card [`420-example-app-proof-and-closeout.md`](./420-example-app-proof-and-closeout.md).

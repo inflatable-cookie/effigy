@@ -164,7 +164,7 @@ The first manifest-driven foundation is now shipped:
 - manifest-driven closeout defaults in `distribution generate-closeout`
 
 That was enough to justify one bounded consumer proof, and that proof is now
-done in `convergence`:
+done in `pilot-repo-e`:
 
 - minimal consumer-owned `[distribution.package]`,
   `[distribution.publish]`, and `[distribution.closeout]` policy was enough to
@@ -181,7 +181,7 @@ That widening batch is now done too:
   workflow/docs/package-quality gate by default
 - publish verification can now move the `release verify-install` and
   `--json tasks` probes behind explicit manifest policy
-- the `convergence` proof now passes `distribution validate-metadata`,
+- the `pilot-repo-e` proof now passes `distribution validate-metadata`,
   `distribution validate-artifacts`, and `distribution generate-closeout`
   against the widened contract
 

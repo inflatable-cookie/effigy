@@ -46,7 +46,7 @@ The first implementation surface is now real:
 - attached sessions shut down on owner exit by default
 - Colima startup now works on hosts that only have Colima installed by falling
   back to `colima nerdctl` plus `--runtime containerd`
-- `contact-patch` now acts as the first honest consumer proof for detached
+- `example-site` now acts as the first honest consumer proof for detached
   bring-up, running status, graceful teardown, and repo-owned task-session
   launch on a real web-oriented repo
 - attached sessions now widen into a real Effigy session shape instead of only
@@ -57,7 +57,7 @@ The first implementation surface is now real:
 That hardening edge is now closed:
 
 - the real-machine live-stop and closeout path is now proven strongly enough in
-  `contact-patch`
+  `example-site`
 - the current v1 container boundary is trustworthy enough to pause
 - the next valid move is release closure on `g02.007`, not more container
   churn

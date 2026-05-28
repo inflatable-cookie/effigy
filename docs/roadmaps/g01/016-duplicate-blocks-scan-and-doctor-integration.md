@@ -166,7 +166,7 @@ Expected properties:
 ### Batch 16.4 - Documentation and Validation
 - [x] Update command docs, manifest cookbook, JSON examples, and snippets.
 - [x] Add regression coverage for nested repos, `.gitignore` behavior, and default exclusions.
-- [x] Benchmark real repos such as `acowtancy` to validate runtime and noise before enabling doctor by default.
+- [x] Benchmark real repos such as `example-app` to validate runtime and noise before enabling doctor by default.
 
 ## 8) Acceptance Criteria
 
@@ -205,7 +205,7 @@ Expected properties:
 - [x] benchmark logs for at least one real repo before changing default doctor participation
 
 Benchmark note:
-- `acowtancy` standalone `scan duplicate-blocks` run: `scanned-files=1905`, `candidate-blocks=207604`, `findings=95`, `real=16.85s`
+- `example-app` standalone `scan duplicate-blocks` run: `scanned-files=1905`, `candidate-blocks=207604`, `findings=95`, `real=16.85s`
 - Decision: keep `[scan.duplicate_blocks].doctor = false` as the default because the signal is useful but still too expensive/noisy for default doctor runs.
 
 ## 12) Next Task

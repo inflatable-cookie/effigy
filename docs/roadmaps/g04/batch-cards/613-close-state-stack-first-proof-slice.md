@@ -16,14 +16,14 @@ before adding more capture or reconciliation semantics.
 - review command, contract, and JSON docs for drift
 - run a broader validation pass over the state-stack implementation
 - identify any remaining first-slice defects that block the next Effigy release
-- leave a clear next boundary for capture context hardening or Acowtancy adapter
+- leave a clear next boundary for capture context hardening or Example App adapter
   proof work
 
 ## Non-Goals
 
 - no new state-stack command family
 - no conflict detection
-- no app-specific Acowtancy transform implementation
+- no app-specific Example App transform implementation
 - no release work
 
 ## Exit Condition
@@ -42,5 +42,5 @@ blocking-fix list.
 
 ## Next Task
 
-Harden the state capture task context contract before asking Acowtancy to rebase
+Harden the state capture task context contract before asking Example App to rebase
 onto the new surface.

@@ -28,7 +28,7 @@ side-effect groups before moving code.
 - no command grammar changes
 - no JSON schema changes
 - no media/object-store behavior
-- no Acowtancy-specific behavior
+- no Example App-specific behavior
 
 ## Acceptance
 

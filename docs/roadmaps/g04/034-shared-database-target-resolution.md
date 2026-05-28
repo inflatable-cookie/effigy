@@ -19,7 +19,7 @@ domain surface used by dump, seed, state, and future migration/media flows.
   `src/runner/container_command/data.rs` and `src/runner/db_seed.rs`
 - both paths carry local helpers for database service kind, password lookup,
   declared databases, and primary database selection
-- Acowtancy migration work needs predictable DB target resolution before legacy
+- Example App migration work needs predictable DB target resolution before legacy
   import, state apply, media attachment, and deployment flows can be made boring
 
 ## Scope
@@ -38,7 +38,7 @@ domain surface used by dump, seed, state, and future migration/media flows.
 - no new database commands
 - no provider database provisioning
 - no schema migration framework changes
-- no Acowtancy-specific logic
+- no Example App-specific logic
 - no media/object-store behavior in this lane
 
 ## Core Decisions

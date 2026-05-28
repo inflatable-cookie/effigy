@@ -1,4 +1,4 @@
-# 032 - Acowtancy Deployment Proof And Closeout
+# 032 - Example App Deployment Proof And Closeout
 
 Generation: `g04`
 
@@ -10,14 +10,14 @@ Depends on:
 
 ## Goal
 
-Prove the deployment system against the original Acowtancy migration and UAT
+Prove the deployment system against the original Example App migration and UAT
 problem, then close the v0.6.0 deployment suite.
 
 ## Scope
 
-- update Acowtancy-facing documentation
-- model Acowtancy UAT deploy config
-- model Acowtancy production deploy config
+- update Example App-facing documentation
+- model Example App UAT deploy config
+- model Example App production deploy config
 - validate the intended loop:
   ```sh
   effigy deploy plan uat
@@ -27,21 +27,21 @@ problem, then close the v0.6.0 deployment suite.
   effigy deploy apply production --yes
   ```
 - document how the UAT capture/rebase loop sits beside deployment
-- confirm no Acowtancy-specific transform or reconciliation logic entered
+- confirm no Example App-specific transform or reconciliation logic entered
   Effigy
 - represent both Railway and Render support in the closeout evidence
 
 ## Non-Goals
 
 - no post-go-live legacy sync engine
-- no Acowtancy transform implementation inside Effigy
+- no Example App transform implementation inside Effigy
 - no media rewrite policy inside Effigy
 - no database rollback
 - no release execution
 
 ## Acceptance Criteria
 
-- the original Acowtancy problem document references the deployment transaction
+- the original Example App problem document references the deployment transaction
   layer
 - UAT and production operator flows are documented
 - Railway and Render provider support are both represented in the v0.6.0
@@ -52,7 +52,7 @@ problem, then close the v0.6.0 deployment suite.
 ## Validation
 
 - docs checks
-- `effigy deploy plan uat --json` against Acowtancy config or a faithful
+- `effigy deploy plan uat --json` against Example App config or a faithful
   fixture
 - UAT branch/digest-preferred proof
 - production release-evidence/digest-pinned proof

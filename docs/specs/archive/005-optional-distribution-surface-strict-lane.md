@@ -57,7 +57,7 @@ That widening batch shipped too:
 
 That consumer proof shipped too:
 
-- `convergence` adopted minimal `[distribution]` package/publish/closeout
+- `pilot-repo-e` adopted minimal `[distribution]` package/publish/closeout
   policy
 - `distribution validate-artifacts` passed against real consumer proof logs
 - `distribution generate-closeout` produced a repo-owned closeout cleanly
@@ -72,7 +72,7 @@ That widening batch is now shipped too:
   metadata checks by default in `distribution validate-metadata`
 - manifest-adopting repos can disable `verify-tag-install` and
   `verify-binary-json-tasks` in `[distribution.publish]`
-- the `convergence` proof now passes `validate-metadata`,
+- the `pilot-repo-e` proof now passes `validate-metadata`,
   `validate-artifacts`, and `generate-closeout` against the widened contract
 
 That decision is now settled too:

@@ -3,11 +3,11 @@
 Status: complete
 Created: 2026-03-12
 Roadmap: g01.029
-Batch: signal-released-surface-pilot
+Batch: pilot-repo-d-released-surface-pilot
 
 ## Summary
 
-Applied the Northstar + Effigy consumer contract to `signal` after the `0.2.6`
+Applied the Northstar + Effigy consumer contract to `pilot-repo-d` after the `0.2.6`
 release and confirmed that the released binary now supports the native docs
 surface needed for consumer adoption:
 
@@ -36,7 +36,7 @@ surfaces on the released binary rather than on a local dev build.
 
 ## Validation
 
-Validated directly in `signal` against released `effigy v0.2.6`:
+Validated directly in `pilot-repo-d` against released `effigy v0.2.6`:
 
 - `effigy tasks`
 - `effigy qa:northstar`

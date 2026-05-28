@@ -17,7 +17,7 @@ until explicit release intent is provided" without operator action. Meanwhile
 the product gap `020` closes — multi-project port collisions and absent TCP
 service DNS — has surfaced as concrete friction in live consumer repos (see
 `underlay-reference` pgweb integration where host-port hardcoding forced the
-stack to collide with `contact-patch` and `compli-me`).
+stack to collide with `example-site` and `pilot-repo-b`).
 
 ## Why Re-sequence
 

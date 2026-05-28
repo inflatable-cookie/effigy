@@ -34,7 +34,7 @@ management model.
 - No crypto dependency selection beyond contract-level requirements.
 - No task/container/deploy injection.
 - No provider-hosted secret provisioning.
-- No Acowtancy-specific migration code.
+- No Example App-specific migration code.
 
 ## Acceptance Criteria
 
@@ -55,7 +55,7 @@ Planning-only roadmap. Validate with docs consistency checks and review against:
 - existing `.env.schema` guide
 - container runtime contract
 - deployment transaction/provider package contracts
-- Underlay and Acowtancy config needs
+- Underlay and Example App config needs
 
 ## Next Task
 

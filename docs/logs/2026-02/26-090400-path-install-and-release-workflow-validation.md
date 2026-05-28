@@ -21,9 +21,9 @@ Related roadmap: 001 - Effigy Foundation
   - result: pass (`effigy` installed to `./.local-install/bin/effigy`).
 - command: `./.local-install/bin/effigy --help`
   - result: pass (usage output shown).
-- command: `PATH="~/Dev/projects/effigy/.local-install/bin:$PATH" effigy repo-pulse` (in `~/Dev/projects/acowtancy`)
+- command: `PATH="~/Dev/projects/effigy/.local-install/bin:$PATH" effigy repo-pulse` (in `~/Dev/projects/example-app`)
   - result: pass (pulse report rendered).
-- command: `bun effigy tasks` (in `~/Dev/projects/acowtancy`)
+- command: `bun effigy tasks` (in `~/Dev/projects/example-app`)
   - result: pass (catalogs/tasks listed through cargo-run wrapper).
 
 ## Risks / Follow-ups

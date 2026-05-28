@@ -14,7 +14,7 @@ Turn Effigy's seed/apply/capture substrate into a standard state-stack
 framework for schema baselines, replayable imported data, layered overlays, and
 capture/rebase workflows.
 
-The trigger is Acowtancy. OCI transport is now real, but the harder problem is
+The trigger is Example App. OCI transport is now real, but the harder problem is
 composing system state over time without pushing every repo into bespoke
 migration orchestration.
 
@@ -29,7 +29,7 @@ migration orchestration.
   repo-specific migration logic into Effigy
 - define lineage/provenance rules so operators can see what exact stack built an
   environment
-- model the Acowtancy UAT freeze, capture, refresh, and rebuild loop as the
+- model the Example App UAT freeze, capture, refresh, and rebuild loop as the
   first proof target
 
 ## Non-Goals
@@ -87,7 +87,7 @@ effigy state capture
 effigy state lineage
 ```
 
-## Acowtancy Proof
+## Example App Proof
 
 The first proof is not post-go-live sync.
 
@@ -111,7 +111,7 @@ not.
 - a durable contract defines the phase taxonomy and state-stack boundary
 - the stack manifest/report model is explicit enough to implement without
   smuggling app semantics into Effigy
-- Acowtancy's UAT freeze/rebase loop is modeled as the first proof case
+- Example App's UAT freeze/rebase loop is modeled as the first proof case
 - the first implementation card is narrow and proves manifest/lineage planning
   before app hook execution
 
@@ -121,11 +121,11 @@ This roadmap is complete for the first release boundary.
 
 Effigy now owns the app-agnostic state-stack frame: composed or standalone stack
 declaration, ordered layer planning, bounded apply adapters, explicit capture
-orchestration, and file-backed report history. The Acowtancy proof confirms
+orchestration, and file-backed report history. The Example App proof confirms
 that app-owned transform and reconciliation logic can sit behind this frame
 without being absorbed into Effigy.
 
-Hold the next release here. Further work should wait for real Acowtancy rebase
+Hold the next release here. Further work should wait for real Example App rebase
 pressure against the released contract.
 
 ## Validation

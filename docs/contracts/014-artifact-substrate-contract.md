@@ -15,7 +15,7 @@ This contract deliberately uses `artifact`, not `bundle`. In Effigy, `bundle`
 already means config bundle. Artifact means a versioned payload that may be a
 local file or an OCI registry object.
 
-The first proof target is Acowtancy legacy data migration, where app-specific
+The first proof target is Example App legacy data migration, where app-specific
 Rust binaries must keep migration/coercion logic, while Effigy owns transport,
 staging, metadata, and invocation context.
 
@@ -110,8 +110,8 @@ Examples:
 
 ```sh
 --db-seed cbs=./backups/cbs.sql.gz
---db-seed cbs=oci://ghcr.io/acowtancy/legacy-cbs-seed:2026-05-06
---db-seed cbs=oci://ghcr.io/acowtancy/legacy-cbs-seed@sha256:...
+--db-seed cbs=oci://ghcr.io/example-app/legacy-cbs-seed:2026-05-06
+--db-seed cbs=oci://ghcr.io/example-app/legacy-cbs-seed@sha256:...
 ```
 
 Local paths stay useful. OCI is a transport and storage wrapper, not a
@@ -292,7 +292,7 @@ Authentication and authorization:
 - do not put push credentials in seed/dump env files
 - UAT deployment must provision auth before running capture/push commands
 
-Acowtancy/Farmyard ownership:
+Example App/Farmyard ownership:
 
 - Effigy captures, stages, pushes, and reports outer artifact facts
 - Farmyard decides which app-local snapshot or content payload is valid to
@@ -315,12 +315,12 @@ Rules:
 - avoid accidental public publish defaults
 - keep local cache/staging paths predictable and inspectable
 
-For Acowtancy, seed artifacts are assumed private unless explicitly stated
+For Example App, seed artifacts are assumed private unless explicitly stated
 otherwise.
 
-## Acowtancy Boundary
+## Example App Boundary
 
-Effigy should own for Acowtancy:
+Effigy should own for Example App:
 
 - OCI pull/push
 - local staging
@@ -330,7 +330,7 @@ Effigy should own for Acowtancy:
 - UAT apply/capture reports
 - invocation of app-local Rust binaries with resolved artifact context
 
-Acowtancy should own:
+Example App should own:
 
 - legacy MySQL import semantics
 - migration/coercion into the new data model
@@ -354,7 +354,7 @@ Update this contract when:
 
 ## First Proof
 
-The first proof should use Acowtancy as a design target without moving its
+The first proof should use Example App as a design target without moving its
 migration engine into Effigy:
 
 1. resolve a local SQL seed through the artifact substrate

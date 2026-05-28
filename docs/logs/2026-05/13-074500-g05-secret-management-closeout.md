@@ -28,5 +28,5 @@ Residual notes:
 
 - Full `cargo test -p effigy-rhai` still has known unrelated failures outside
   the secret-filtered tests.
-- Acowtancy local vault initialisation remains an operator step before its
+- Example App local vault initialisation remains an operator step before its
   declarations can be tightened to `required = true`.

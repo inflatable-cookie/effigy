@@ -38,7 +38,7 @@ Note: superseded by root `--json` mode in later updates; JSON-mode commands shou
 ### Pretty JSON mode
 
 - JSON payload includes top-level keys: `catalogs`, `precedence`, `resolve`.
-- `catalogs` includes all 6 acowtancy catalogs.
+- `catalogs` includes all 6 example-app catalogs.
 - `resolve.status` is `ok`.
 - `resolve.catalog` is `farmyard` and `resolve.task` is `api`.
 
@@ -55,7 +55,7 @@ Text probe excerpt:
 ```text
 Resolution Probe: farmyard/api
 catalog: farmyard
-catalog-root: ~/Dev/projects/acowtancy/farmyard
+catalog-root: ~/Dev/projects/example-app/farmyard
 task: api
 evidence:
 - selected catalog via explicit prefix `farmyard`
@@ -68,7 +68,7 @@ Pretty JSON probe excerpt:
   "selector": "farmyard/api",
   "status": "ok",
   "catalog": "farmyard",
-  "catalog_root": "~/Dev/projects/acowtancy/farmyard",
+  "catalog_root": "~/Dev/projects/example-app/farmyard",
   "task": "api",
   "evidence": [
     "selected catalog via explicit prefix `farmyard`"
@@ -80,7 +80,7 @@ Pretty JSON probe excerpt:
 Compact JSON probe excerpt:
 
 ```json
-{"resolve":{"selector":"farmyard/api","status":"ok","catalog":"farmyard","catalog_root":"~/Dev/projects/acowtancy/farmyard","task":"api","evidence":["selected catalog via explicit prefix `farmyard`"],"error":null}}
+{"resolve":{"selector":"farmyard/api","status":"ok","catalog":"farmyard","catalog_root":"~/Dev/projects/example-app/farmyard","task":"api","evidence":["selected catalog via explicit prefix `farmyard`"],"error":null}}
 ```
 
 ## Conclusion

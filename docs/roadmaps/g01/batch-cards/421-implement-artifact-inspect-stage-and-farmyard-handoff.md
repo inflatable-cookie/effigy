@@ -26,7 +26,7 @@ output without adding live OCI transport yet.
 
 - no live private registry proof
 - no dynamic OCI plugin loading
-- no Acowtancy file edits
+- no Example App file edits
 - no migration semantics in Effigy
 - no `.github/workflows/` edits
 - no release work
@@ -35,7 +35,7 @@ output without adding live OCI transport yet.
 
 This card is complete when local artifact inspect/stage is available through a
 public built-in command, JSON/text output is tested, and the Farmyard handoff
-shape is explicit enough for Acowtancy adoption work.
+shape is explicit enough for Example App adoption work.
 
 ## Next Task
 

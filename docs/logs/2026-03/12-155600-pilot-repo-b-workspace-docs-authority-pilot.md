@@ -5,8 +5,8 @@ Created: 2026-03-12
 
 ## Summary
 
-Applied the Northstar + Effigy consumer contract to `compli-me` as the second
-pilot and confirmed it is not the same adoption shape as `monkey`.
+Applied the Northstar + Effigy consumer contract to `pilot-repo-b` as the second
+pilot and confirmed it is not the same adoption shape as `pilot-repo-a`.
 
 The workspace root remains a thin orchestration repo. The nested `docs/` repo
 is the real documentation authority and now carries the native current-Effigy
@@ -44,13 +44,13 @@ surface.
 
 Passed:
 
-- `PATH="$HOME/.local/bin:$PATH" effigy qa:docs` in `compli-me/docs`
-- `PATH="$HOME/.local/bin:$PATH" effigy qa:northstar` in `compli-me/docs`
-- `PATH="$HOME/.local/bin:$PATH" effigy docs/qa` from `compli-me` root
+- `PATH="$HOME/.local/bin:$PATH" effigy qa:docs` in `pilot-repo-b/docs`
+- `PATH="$HOME/.local/bin:$PATH" effigy qa:northstar` in `pilot-repo-b/docs`
+- `PATH="$HOME/.local/bin:$PATH" effigy docs/qa` from `pilot-repo-b` root
 
 Blocked outside this batch:
 
-- `PATH="$HOME/.local/bin:$PATH" effigy qa` from `compli-me` root still fails
+- `PATH="$HOME/.local/bin:$PATH" effigy qa` from `pilot-repo-b` root still fails
   in existing frontend/tooling validation because `tsc` is not available in the
   current environment
 

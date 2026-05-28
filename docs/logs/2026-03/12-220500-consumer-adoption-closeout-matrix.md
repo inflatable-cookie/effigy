@@ -30,14 +30,14 @@ boundary`.
 These repos now prove the released `0.2.6` contract across the main adoption
 shapes:
 
-- `monkey`
-- `compli-me`
+- `pilot-repo-a`
+- `pilot-repo-b`
 - `underlay`
-- `acowtancy`
-- `signal`
-- `convergence`
-- `jetstream`
-- `contact-patch`
+- `example-app`
+- `pilot-repo-d`
+- `pilot-repo-e`
+- `pilot-repo-c`
+- `example-site`
 - `underlay-reference`
 - `songsprout`
 

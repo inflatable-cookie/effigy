@@ -23,7 +23,7 @@ promoted the first contract boundary.
 - Current state: `g05.001` is complete, contract `032` is active, and the next
   ready work is an evidence-backed config/secret boundary audit.
 - Remaining open: `[secrets]` parser, built-in vault, task/Rhai/deploy
-  injection, container injection, Underlay/Acowtancy migration proof, and
+  injection, container injection, Underlay/Example App migration proof, and
   Varlock adapter decision.
 
 ## Validation

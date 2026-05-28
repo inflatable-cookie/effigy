@@ -28,7 +28,7 @@ Choose and implement the first OCI inspect/pull/stage path for artifact refs.
 
 - no public CLI promotion unless needed as a private test harness
 - no bootstrap/container data seed wiring yet
-- no Acowtancy file edits
+- no Example App file edits
 - no dynamic OCI plugin loading
 
 ## Decision Pressure

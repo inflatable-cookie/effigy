@@ -1,4 +1,4 @@
-# 415 - Plan Artifact Contract And Acowtancy Boundary
+# 415 - Plan Artifact Contract And Example App Boundary
 
 Lane: [`042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md`](../042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md)
 
@@ -9,7 +9,7 @@ Completed: 2026-05-06
 
 ## Goal
 
-Promote the first artifact substrate contract and pin the Acowtancy boundary
+Promote the first artifact substrate contract and pin the Example App boundary
 before implementation starts.
 
 ## Scope
@@ -18,7 +18,7 @@ before implementation starts.
 - add `g03.036`
 - define artifact terminology, metadata, source rules, staging rules, UAT
   apply/capture records, and security defaults
-- audit Acowtancy/Farmyard seed-bundle flow
+- audit Example App/Farmyard seed-bundle flow
 - choose the first replacement boundary
 
 ## Boundary Decision
@@ -44,7 +44,7 @@ Farmyard owns migration semantics:
 - residual queues and closeout gates
 - database idempotency
 
-## Acowtancy Audit
+## Example App Audit
 
 The current Farmyard flow already has good seams:
 

@@ -66,5 +66,5 @@ effigy secrets export --format env --output <PATH> --yes
 
 ## Next Task
 
-Close `g05.005` or continue to the Underlay/Acowtancy proof in `g05.006`,
+Close `g05.005` or continue to the Underlay/Example App proof in `g05.006`,
 depending on container injection outcome.

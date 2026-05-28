@@ -74,7 +74,7 @@ Examples:
 - [x] Add tests for package-manager specific invocation wiring.
 
 ### Phase 7.3 - Hardening + Adoption
-- [x] Validate behavior in mixed repositories (Underlay/Acowtancy-style layouts).
+- [x] Validate behavior in mixed repositories (Underlay/Example App-style layouts).
 - [x] Tighten error messaging for unavailable suites and remediation steps.
 - [x] Publish migration notes for teams moving from implicit fanout to explicit suite targeting.
 

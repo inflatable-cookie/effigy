@@ -91,8 +91,8 @@ Managed builtin suite example:
 ```toml
 [env]
 managed-test = [
-  { TEST_DATABASE_URL = "postgres://root@127.0.0.1:5432/acowtancy-test" },
-  { DATABASE_URL = "postgres://root@127.0.0.1:5432/acowtancy-test" },
+  { TEST_DATABASE_URL = "postgres://root@127.0.0.1:5432/example-app-test" },
+  { DATABASE_URL = "postgres://root@127.0.0.1:5432/example-app-test" },
   { RUST_TEST_THREADS = "1" },
 ]
 

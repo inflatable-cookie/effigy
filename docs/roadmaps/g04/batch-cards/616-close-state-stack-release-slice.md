@@ -9,12 +9,12 @@ Created: 2026-05-08
 ## Goal
 
 Decide whether the state-stack framework should be the next Effigy release
-slice, based on the Acowtancy proof and remaining framework gaps.
+slice, based on the Example App proof and remaining framework gaps.
 
 ## Scope
 
 - summarize the implemented state-stack surface
-- record the Acowtancy proof result and the routed container env fix
+- record the Example App proof result and the routed container env fix
 - identify release-blocking gaps, if any
 - ensure docs and JSON examples describe the actual boundary
 - leave release execution to a human-owned release thread
@@ -23,7 +23,7 @@ slice, based on the Acowtancy proof and remaining framework gaps.
 
 - no release prepare or execute commands
 - no additional app-specific migration semantics
-- no production Acowtancy migration execution
+- no production Example App migration execution
 
 ## Exit Condition
 
@@ -48,13 +48,13 @@ enough to be defensible:
   history files
 - `effigy state history` provides read-only lookup over report files
 
-The Acowtancy proof confirmed the app boundary:
+The Example App proof confirmed the app boundary:
 
 - the stack can model structure, canonical migrated seed, and legacy content as
   ordered layers
 - repo-owned capture work can run behind an Effigy context contract
 - generated payloads can be staged as replayable artifact material
-- Acowtancy/Farmyard still own transforms, media binding, conflict detection,
+- Example App/Farmyard still own transforms, media binding, conflict detection,
   and reconciliation
 
 The proof also exposed and fixed a real framework gap: dynamic task environment
@@ -66,7 +66,7 @@ enters a nested workspace container.
 
 Do not add rebase execution, post-go-live sync, app-specific apply hooks, or a
 durable lineage database before the next release. Those are larger semantic
-surfaces and should wait until Acowtancy has rebased real migration code onto
+surfaces and should wait until Example App has rebased real migration code onto
 this first contract.
 
 The next release should present this as an initial state-stack framework:
@@ -101,9 +101,9 @@ Validated:
 - `cargo test --test cli_output_tests state_command_tests::cli_state_capture_yes_runs_task_before_staging -- --nocapture`
 - `cargo run --bin effigy -- docs check-paths ...`
 - `git diff --check`
-- Acowtancy installed `effigy tasks`
-- Acowtancy dev-binary `effigy --json state plan state/acowtancy-uat.toml`
-- Acowtancy root and ledger `git diff --check`
+- Example App installed `effigy tasks`
+- Example App dev-binary `effigy --json state plan state/example-app-uat.toml`
+- Example App root and ledger `git diff --check`
 
 ## Next Task
 

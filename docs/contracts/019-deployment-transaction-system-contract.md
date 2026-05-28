@@ -83,7 +83,7 @@ Minimum shape:
 state = "uat"
 code_ref = "branch:main"
 release_policy = "optional"
-provider_project = "acowtancy-uat"
+provider_project = "example-app-uat"
 artifact_policy = "digest-preferred"
 
 [deploy.uat.provider]
@@ -100,7 +100,7 @@ Production shape:
 state = "production"
 code_ref = "release-tag"
 release_policy = "required"
-provider_project = "acowtancy-production"
+provider_project = "example-app-production"
 artifact_policy = "digest-pinned"
 
 [deploy.production.provider]
@@ -320,9 +320,9 @@ Rules:
 - provider rollback shortcuts may be added later only when they preserve the
   same report and reproducibility rules
 
-## Acowtancy Proof
+## Example App Proof
 
-The proof target is the Acowtancy UAT/rebase deployment loop:
+The proof target is the Example App UAT/rebase deployment loop:
 
 ```sh
 effigy deploy plan uat
@@ -334,7 +334,7 @@ effigy deploy apply production --yes
 
 Effigy owns the transaction frame.
 
-Acowtancy still owns:
+Example App still owns:
 
 - legacy snapshot transforms
 - content conflict resolution
@@ -361,5 +361,5 @@ Implementation lanes should include:
 ## Next Task
 
 Use this contract as the anchor for `g04.027` through `g04.032`. Implement
-Railway first, then Render, then status/history/redeploy and the Acowtancy
+Railway first, then Render, then status/history/redeploy and the Example App
 proof closeout.

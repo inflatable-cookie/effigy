@@ -1,4 +1,4 @@
-# 594 - Promote Phase Model Stack Manifest And Acowtancy Proof Boundary
+# 594 - Promote Phase Model Stack Manifest And Example App Proof Boundary
 
 Lane: [`061-state-stack-and-layered-seed-framework-strict-lane.md`](../061-state-stack-and-layered-seed-framework-strict-lane.md)
 
@@ -16,7 +16,7 @@ planning boundary.
 - lock the phase taxonomy Effigy will recognize in the first shipped stack model
 - define the minimum manifest fields and report fields needed for apply/capture
 - decide how stack lineage relates to the existing artifact operation record
-- pin the Acowtancy proof loop to one bounded first implementation slice
+- pin the Example App proof loop to one bounded first implementation slice
 - identify what must stay app-owned at the hook boundary
 
 ## Non-Goals
@@ -31,7 +31,7 @@ planning boundary.
 
 This card is complete when the contract is specific enough that the first
 implementation card can be chosen without reopening phase semantics or
-Acowtancy ownership boundaries.
+Example App ownership boundaries.
 
 ## Closeout
 
@@ -41,7 +41,7 @@ Acowtancy ownership boundaries.
   fields
 - decided that state-stack lineage rolls up artifact operation reports rather
   than replacing them
-- bounded the first Acowtancy proof to manifest validation and lineage planning
+- bounded the first Example App proof to manifest validation and lineage planning
   without Farmyard hook execution
 
 ## Validation

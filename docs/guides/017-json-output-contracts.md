@@ -187,7 +187,7 @@ effigy --json tasks migrate --apply
 effigy --json tasks unlock --all --yes
 effigy --json config completion bash --export
 effigy --json config completion candidates --prefix farm
-effigy --json state plan ./state/acowtancy-uat.toml
+effigy --json state plan ./state/example-app-uat.toml
 effigy --json state plan uat --write-report
 effigy --json state apply uat
 effigy --json state capture uat new-content

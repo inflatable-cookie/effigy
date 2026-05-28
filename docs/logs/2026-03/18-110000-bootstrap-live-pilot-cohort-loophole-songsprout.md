@@ -27,7 +27,7 @@ adoption lessons:
 ### Loophole
 
 - added a root `[bootstrap]` contract that clones `aura`, `chorus`, `composer`,
-  `echo`, `pulse`, `signal`, and `spark`
+  `echo`, `pulse`, `pilot-repo-d`, and `spark`
 - added root `bootstrap:deps` setup ownership so JS dependency bring-up is
   declared once at the workspace root
 - set root `start = "remote:stack"` so long-running bring-up stays explicit

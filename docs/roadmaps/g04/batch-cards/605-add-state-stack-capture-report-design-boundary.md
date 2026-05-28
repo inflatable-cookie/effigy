@@ -33,7 +33,7 @@ database/media capture execution yet.
 
 This card is complete when the contract describes a capture report shape and
 the next implementation boundary is small enough to execute without smuggling
-Acowtancy-specific logic into Effigy.
+Example App-specific logic into Effigy.
 
 ## Validation
 

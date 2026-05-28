@@ -3,14 +3,14 @@
 Status: complete
 Created: 2026-03-12
 Roadmap: g01.029
-Batch: workspace-docs-authority-cohort-contact-patch-underlay-reference
+Batch: workspace-docs-authority-cohort-example-site-underlay-reference
 
 ## Summary
 
 Applied the released `effigy v0.2.6` Northstar + Effigy consumer contract to
 two more clean workspace-container repos:
 
-- `contact-patch`
+- `example-site`
 - `underlay-reference`
 
 Both repos already had thin workspace roots plus dedicated docs-authority
@@ -32,10 +32,10 @@ implementation detail, not something taught to agents or maintainers.
 ## Changes
 
 - normalized root teaching surfaces in:
-  - `contact-patch/AGENTS.md`
-  - `contact-patch/README.md`
-  - `contact-patch/package.json`
-  - `contact-patch/effigy.toml`
+  - `example-site/AGENTS.md`
+  - `example-site/README.md`
+  - `example-site/package.json`
+  - `example-site/effigy.toml`
   - `underlay-reference/AGENTS.md`
   - `underlay-reference/README.md`
   - `underlay-reference/package.json`
@@ -47,7 +47,7 @@ implementation detail, not something taught to agents or maintainers.
   - native `qa:northstar`
   - root-to-authority execution guidance via explicit catalog selectors
 - added repo-owned vision next-task allowlists in:
-  - `contact-patch/cp-docs/policy/vision-next-task-verbs.txt`
+  - `example-site/cp-docs/policy/vision-next-task-verbs.txt`
   - `underlay-reference/acme-docs/policy/vision-next-task-verbs.txt`
 - normalized docs authority indexes and primary vision docs to include explicit
   `## Next Task` sections and valid `## Vision Artifacts` inventories
@@ -56,7 +56,7 @@ implementation detail, not something taught to agents or maintainers.
 
 Validated directly on released `effigy v0.2.6`:
 
-- in `contact-patch`:
+- in `example-site`:
   - `effigy cp-docs/qa:docs`
   - `effigy qa:docs`
 - in `underlay-reference`:

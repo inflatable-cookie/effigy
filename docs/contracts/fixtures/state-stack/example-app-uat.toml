@@ -1,5 +1,5 @@
 schema = "effigy.state-stack.v1"
-name = "acowtancy-uat"
+name = "example-app-uat"
 environment = "uat"
 
 [[layers]]
@@ -21,9 +21,9 @@ snapshot_identity = "static-reference-data@2026-05-08"
 [[layers]]
 key = "legacy-content"
 role = "legacy-import"
-source = "oci://ghcr.io/acowtancy/content:legacy-2026-05-08"
+source = "oci://ghcr.io/example-app/content:legacy-2026-05-08"
 apply_mode = "artifact"
 environment_policy = "all"
 artifact_kind = "app-specific"
-hook = "acowtancy:migrate:apply-legacy-content"
+hook = "example-app:migrate:apply-legacy-content"
 snapshot_identity = "old-site-db@2026-05-08"

@@ -9,7 +9,7 @@ Theme: Secret and local configuration management plus reusable-core hardening
 splitting ordinary config from true secrets and adding a portable, human-gated
 secret management model.
 
-The generation starts from the Underlay and Acowtancy problem: `.env` files
+The generation starts from the Underlay and Example App problem: `.env` files
 contain too much non-secret configuration, while real credentials need stronger
 handling than plaintext files can provide.
 
@@ -30,7 +30,7 @@ generation rollover yet.
 - [`003-local-encrypted-vault.md`](./003-local-encrypted-vault.md)
 - [`004-task-rhai-and-deploy-secret-injection.md`](./004-task-rhai-and-deploy-secret-injection.md)
 - [`005-container-secret-injection.md`](./005-container-secret-injection.md)
-- [`006-underlay-and-acowtancy-config-migration-proof.md`](./006-underlay-and-acowtancy-config-migration-proof.md)
+- [`006-underlay-and-example-app-config-migration-proof.md`](./006-underlay-and-example-app-config-migration-proof.md)
 - [`007-varlock-adapter-and-closeout.md`](./007-varlock-adapter-and-closeout.md)
 - [`008-post-release-reference-grade-follow-through-suite.md`](./008-post-release-reference-grade-follow-through-suite.md)
 - [`009-state-command-thin-shell-follow-through.md`](./009-state-command-thin-shell-follow-through.md)
@@ -84,7 +84,7 @@ Recommended first cards:
 716-close-task-rhai-deploy-secret-injection.md
 717-add-container-secret-injection.md
 718-add-compat-env-export.md
-719-migrate-underlay-acowtancy-config-proof.md
+719-migrate-underlay-example-app-config-proof.md
 720-decide-varlock-adapter-or-deferral.md
 721-close-g05-secret-management-suite.md
 ```
@@ -128,7 +128,7 @@ Completed cards:
 - [`716-close-task-rhai-deploy-secret-injection.md`](./batch-cards/716-close-task-rhai-deploy-secret-injection.md)
 - [`717-add-container-secret-injection.md`](./batch-cards/717-add-container-secret-injection.md)
 - [`718-add-compat-env-export.md`](./batch-cards/718-add-compat-env-export.md)
-- [`719-migrate-underlay-acowtancy-config-proof.md`](./batch-cards/719-migrate-underlay-acowtancy-config-proof.md)
+- [`719-migrate-underlay-example-app-config-proof.md`](./batch-cards/719-migrate-underlay-example-app-config-proof.md)
 - [`720-decide-varlock-adapter-or-deferral.md`](./batch-cards/720-decide-varlock-adapter-or-deferral.md)
 - [`721-close-g05-secret-management-suite.md`](./batch-cards/721-close-g05-secret-management-suite.md)
 

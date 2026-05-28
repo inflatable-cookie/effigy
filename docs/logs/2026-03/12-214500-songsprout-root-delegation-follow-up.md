@@ -13,7 +13,7 @@ workspace root after the earlier `trellis` authority-only pilot.
 The earlier authority-only batch was a conservative response to the root
 guardrail that said not to edit root files. Once that guardrail was explicitly
 overridden, Songsprout was brought up to the same workspace-root standard as
-`contact-patch` and `underlay-reference`.
+`example-site` and `underlay-reference`.
 
 ## Changes
 

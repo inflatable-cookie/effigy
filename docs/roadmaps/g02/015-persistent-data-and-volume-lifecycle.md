@@ -162,7 +162,7 @@ Shell scripts also supported: `pull_production = "scripts/pull-prod.sh"`.
 
 ## Proof Outcome
 
-The closing consumer proof landed in `/Users/tom/Dev/projects/acowtancy/farmyard`.
+The closing consumer proof landed in `/Users/tom/Dev/projects/example-app/farmyard`.
 
 That proof also exposed and closed two real product gaps:
 

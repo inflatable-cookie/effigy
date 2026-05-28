@@ -23,7 +23,7 @@ media, and migration workflows rely on it.
 - no provider provisioning
 - no secret creation or mutation
 - no schema migration behavior changes
-- no Acowtancy-specific migration logic
+- no Example App-specific migration logic
 - no object-store/media behavior
 - no `.github/workflows/` edits
 - no release execution

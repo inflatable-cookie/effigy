@@ -11,7 +11,7 @@ Created: 2026-05-08
 Define the contract and first proof boundary for a standard Effigy state-stack
 framework above the shipped artifact substrate.
 
-This lane exists because Acowtancy has exposed the real missing piece: not OCI
+This lane exists because Example App has exposed the real missing piece: not OCI
 transport, but the ordered lifecycle for structure, seed, imported data,
 captures, and rebuilds.
 
@@ -32,7 +32,7 @@ None. The lane is complete for this release slice.
 
 - `593` complete: opened the lane, promoted the initial roadmap and contract
   anchors, and selected the first contract-shaping card
-- `594` complete: promoted the phase model, stack manifest, and Acowtancy proof
+- `594` complete: promoted the phase model, stack manifest, and Example App proof
   boundary
 - `595` complete: implemented state-stack manifest and lineage plan foundation
 - `596` complete: added a plan-only state-stack command surface
@@ -67,7 +67,7 @@ None. The lane is complete for this release slice.
   validation
 - `614` complete: hardened the capture task context contract with a versioned
   JSON context file and env alias
-- `615` complete: ran the first Acowtancy-side state-stack proof and fixed
+- `615` complete: ran the first Example App-side state-stack proof and fixed
   routed workspace-container env forwarding for capture task context
 - `616` complete: closed the state-stack release slice and held this as the next
   release boundary
@@ -75,7 +75,7 @@ None. The lane is complete for this release slice.
 ## Exit Condition
 
 This lane is closed for the next release boundary. Effigy now has a durable
-contract for layered seed/migration state, a bounded Acowtancy proof loop, and
+contract for layered seed/migration state, a bounded Example App proof loop, and
 operator-visible plan/apply/capture/history surfaces that do not execute
 app-specific semantics.
 

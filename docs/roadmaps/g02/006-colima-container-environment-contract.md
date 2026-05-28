@@ -319,11 +319,11 @@ Decision for `106`:
   task-owned workspace bindings without embedding raw compose commands
 - no-Docker-host fallback through `colima nerdctl` plus Colima startup with
   `--runtime containerd`
-- one honest consumer proof in `contact-patch`
+- one honest consumer proof in `example-site`
 
 Consumer-proof result:
 
-- `contact-patch` adopted a `services` container registry entry over its
+- `example-site` adopted a `services` container registry entry over its
   existing `docker-compose.yml`
 - detached bring-up succeeded on the real machine
 - running status succeeded against live services
@@ -362,7 +362,7 @@ That hardening batch is now shipped too:
   begins
 - inherited log-follow subprocess trees are now terminated as process groups
   instead of only killing the top-level wrapper
-- the real `contact-patch` proof now exits cleanly under a timed `SIGINT`,
+- the real `example-site` proof now exits cleanly under a timed `SIGINT`,
   applies graceful shutdown, and leaves the compose environment down while the
   Colima profile remains inspectable
 

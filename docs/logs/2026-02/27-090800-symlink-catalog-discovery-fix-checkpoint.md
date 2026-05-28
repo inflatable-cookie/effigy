@@ -6,7 +6,7 @@ Related roadmap: 001 - Effigy Foundation
 
 ## Scope
 
-Validate and fix catalog discovery behavior for symlinked subdirectories in workspace roots (acowtancy -> underlay symlink topology).
+Validate and fix catalog discovery behavior for symlinked subdirectories in workspace roots (example-app -> underlay symlink topology).
 
 ## Changes
 
@@ -17,7 +17,7 @@ Validate and fix catalog discovery behavior for symlinked subdirectories in work
 
 ## Root Cause
 
-Catalog discovery only descended into entries where `file_type.is_dir()` was true. Directory symlinks were excluded, so `acowtancy/underlay -> ../underlay` never got scanned for `effigy.toml`.
+Catalog discovery only descended into entries where `file_type.is_dir()` was true. Directory symlinks were excluded, so `example-app/underlay -> ../underlay` never got scanned for `effigy.toml`.
 
 ## Validation Matrix
 
@@ -33,7 +33,7 @@ Catalog discovery only descended into entries where `file_type.is_dir()` was tru
   - result: pass; combined symlink discovery tests executed (`discover_catalogs_includes_symlinked_catalog_directories`, `discover_catalogs_reports_alias_conflict_for_symlinked_catalog`).
 
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks --task underlay/check:types`
-  - result (after fix): pass; `underlay/check:types` discovered from `~/Dev/projects/acowtancy/underlay/effigy.toml`.
+  - result (after fix): pass; `underlay/check:types` discovered from `~/Dev/projects/example-app/underlay/effigy.toml`.
 
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- underlay/check:types --pretty false`
   - result (after fix): pass; explicit `underlay/...` prefix resolves and executes.

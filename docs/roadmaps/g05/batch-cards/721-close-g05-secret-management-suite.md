@@ -17,7 +17,7 @@ Close the `g05` secret and local configuration management generation.
   the final `g05` surface
 - verify built-in vault, task/container/Rhai/deploy/state/artifact injection,
   compatibility export, and `.env.schema` posture are coherent
-- confirm Underlay and Acowtancy docs reference the final model
+- confirm Underlay and Example App docs reference the final model
 - run targeted secret-management validation
 - update roadmap front doors to mark `g05` complete
 - capture a closeout log
@@ -47,7 +47,7 @@ Close the `g05` secret and local configuration management generation.
   plaintext export bridge.
 - Confirmed Varlock is deferred and `.env.schema` remains compatibility and
   validation rather than the new secret authority.
-- Confirmed Underlay and Acowtancy docs now reference the Effigy-backed local
+- Confirmed Underlay and Example App docs now reference the Effigy-backed local
   vault model.
 - Closed `g05` roadmap front doors with no ready cards remaining.
 

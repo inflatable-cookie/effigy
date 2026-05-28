@@ -65,4 +65,4 @@ Persist:
 
 ## Next Task
 
-Continue to `g04.032` for the Acowtancy deployment proof and suite closeout.
+Continue to `g04.032` for the Example App deployment proof and suite closeout.

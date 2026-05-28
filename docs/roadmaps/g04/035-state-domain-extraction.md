@@ -19,7 +19,7 @@ thin orchestration shell over `effigy-state`.
 - `effigy scan god-files --json` flagged it as a warning
 - the runner currently owns too much plan, apply, capture, history, report,
   rendering, task, artifact, and SQL-import behavior
-- future Acowtancy migration and media capture work will add pressure to this
+- future Example App migration and media capture work will add pressure to this
   surface if it remains runner-local
 
 ## Scope
@@ -37,7 +37,7 @@ thin orchestration shell over `effigy-state`.
 - no new state commands
 - no state config format changes
 - no provider/deploy behavior changes
-- no Acowtancy transformation logic
+- no Example App transformation logic
 - no automatic database rollback
 
 ## Target Boundaries

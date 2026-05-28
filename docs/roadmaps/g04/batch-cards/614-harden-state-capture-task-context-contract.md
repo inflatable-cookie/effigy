@@ -8,7 +8,7 @@ Created: 2026-05-08
 
 ## Goal
 
-Make the repo-owned capture task context stable enough for Acowtancy to build
+Make the repo-owned capture task context stable enough for Example App to build
 against without scraping ad hoc environment variables.
 
 ## Scope
@@ -23,7 +23,7 @@ against without scraping ad hoc environment variables.
 
 ## Non-Goals
 
-- no Acowtancy transform implementation
+- no Example App transform implementation
 - no record-level conflict detection
 - no automatic old-site sync
 - no release work
@@ -31,7 +31,7 @@ against without scraping ad hoc environment variables.
 ## Exit Condition
 
 This card is complete when capture tasks have a documented and tested stable
-context surface that an app repo can consume as the first Acowtancy proof seam.
+context surface that an app repo can consume as the first Example App proof seam.
 
 ## Validation
 
@@ -42,5 +42,5 @@ context surface that an app repo can consume as the first Acowtancy proof seam.
 
 ## Next Task
 
-Run the first Acowtancy-side rebase proof against the Effigy state-stack
+Run the first Example App-side rebase proof against the Effigy state-stack
 surface.

@@ -19,7 +19,7 @@ and proving the complete secret/config model is release-ready.
 - Confirm built-in vault behavior remains independent of Varlock.
 - Update guides, command reference, JSON payload examples, and Rustdocs.
 - Confirm all secret outputs are redacted across command surfaces.
-- Confirm Underlay and Acowtancy docs reference the final model.
+- Confirm Underlay and Example App docs reference the final model.
 - Close any compatibility gaps around `.env.schema`.
 
 ## Adapter Boundary

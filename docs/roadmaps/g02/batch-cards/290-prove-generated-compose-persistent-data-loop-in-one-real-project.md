@@ -51,7 +51,7 @@ widening.
 
 ## Outcome
 
-This batch landed through `/Users/tom/Dev/projects/acowtancy/farmyard`.
+This batch landed through `/Users/tom/Dev/projects/example-app/farmyard`.
 
 What the proof established:
 

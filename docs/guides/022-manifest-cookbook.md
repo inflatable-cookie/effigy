@@ -770,7 +770,7 @@ Behavior:
 - includes source and test files by default while skipping common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts
 - respects `.gitignore`/`.ignore` during traversal unless disabled
 - `effigy doctor` can include the same scanner when `doctor = true`, with file-level details written to `.effigy/reports/doctor/scan-duplicate-blocks.md`
-- keep `doctor = false` as the default; the current `acowtancy` benchmark takes about `16.9s` and yields enough findings that this is better as an opt-in health check
+- keep `doctor = false` as the default; the current `example-app` benchmark takes about `16.9s` and yields enough findings that this is better as an opt-in health check
 
 ### Built-in Generated-In-Src Scanner
 
@@ -805,7 +805,7 @@ Behavior:
 - respects `.gitignore`/`.ignore` during traversal unless disabled
 - `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
 - doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-generated-in-src.md`
-- keep `doctor = true` as the default; the current `acowtancy` benchmark takes about `2.1s` and yields `4` warning-level findings, which is acceptable for default health runs
+- keep `doctor = true` as the default; the current `example-app` benchmark takes about `2.1s` and yields `4` warning-level findings, which is acceptable for default health runs
 
 ### Built-in Attention-Markers Scanner
 
@@ -872,7 +872,7 @@ Behavior:
 - respects `.gitignore`/`.ignore` during traversal unless disabled
 - `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
 - doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-comment-ratio.md`
-- keep `doctor = true` as the default; the current `acowtancy` benchmark takes about `2.4s` and yields `15` findings, which is acceptable for default health runs
+- keep `doctor = true` as the default; the current `example-app` benchmark takes about `2.4s` and yields `15` findings, which is acceptable for default health runs
 
 ### Built-in Stale-Suppressions Scanner
 
@@ -905,7 +905,7 @@ Behavior:
 - respects `.gitignore`/`.ignore` during traversal unless disabled
 - `effigy doctor` uses the same scanner core and can include findings when `doctor = true`
 - doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-stale-suppressions.md`
-- keep `doctor = false` as the default; the current `acowtancy` benchmark takes about `3.9s` and yields `69` findings, which is useful but too noisy for routine doctor runs
+- keep `doctor = false` as the default; the current `example-app` benchmark takes about `3.9s` and yields `69` findings, which is useful but too noisy for routine doctor runs
 
 ## System and Workspace Patterns
 
@@ -1040,11 +1040,11 @@ Use catalog aliases to keep task ownership local while retaining root-level orch
 ```toml
 [bundle]
 base = { type = "path", dir = "bundles/workspace-app" }
-databases = ["acowtancy", "acowtancy_test"]
+databases = ["example-app", "example-app_test"]
 
 [data.targets.legacy_mysql]
 service = "mysql"
-database = "acowtancy"
+database = "example-app"
 ```
 
 Use `[data.targets.<name>]` when a sidecar database should participate in

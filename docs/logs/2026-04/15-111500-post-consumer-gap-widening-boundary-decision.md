@@ -13,7 +13,7 @@ Pause `g02.005` on the current optional distribution boundary.
 
 The lane now has enough real evidence to stop widening:
 
-- `convergence` proved cross-repo adoption of the optional manifest surface
+- `pilot-repo-e` proved cross-repo adoption of the optional manifest surface
 - `distribution validate-metadata` now works for manifest-adopting consumers
   without inheriting Effigy's workflow/docs/package gate by default
 - `distribution validate-artifacts` now works with consumer-owned publish

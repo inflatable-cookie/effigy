@@ -30,7 +30,7 @@ feeding manifest service params into the shared `effigy-data` resolver.
 - no JSON schema changes
 - no state/media caller migration
 - no provider database provisioning
-- no Acowtancy-specific behavior
+- no Example App-specific behavior
 
 ## Compatibility Decision
 

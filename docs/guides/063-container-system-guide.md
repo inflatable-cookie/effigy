@@ -525,7 +525,7 @@ effigy container cache list
 effigy container cache list --global
 
 # Filter by project or kind
-effigy container cache list --project acowtancy-dev
+effigy container cache list --project example-app-dev
 effigy container cache list --kind rust-target
 
 # Prune (requires confirmation)

@@ -202,7 +202,7 @@ Use `--fresh` when you need a clean generated-compose namespace for bootstrap
 testing without reusing named volumes from a previous local run:
 
 ```sh
-effigy bootstrap git@github.com:acowtancy/market.git --fresh
+effigy bootstrap git@github.com:example-app/market.git --fresh
 ```
 
 Effigy records the fresh session under `.effigy/runtime/` for the root repo and

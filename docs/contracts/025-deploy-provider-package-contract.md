@@ -129,7 +129,7 @@ Context schema:
       "front": "srv-..."
     }
   },
-  "provider_project": "acowtancy-uat",
+  "provider_project": "example-app-uat",
   "provider_package": {
     "root": "/repo/.effigy/cache/providers/render",
     "name": "render",

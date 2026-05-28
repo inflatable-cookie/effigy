@@ -59,12 +59,12 @@ This roadmap is based on the consumer-repo scan:
 
 - [`../../logs/2026-03/12-135650-consumer-adoption-landscape-scan.md`](../../logs/2026-03/12-135650-consumer-adoption-landscape-scan.md)
 - [`../../guides/056-northstar-effigy-consumer-repo-contract.md`](../../guides/056-northstar-effigy-consumer-repo-contract.md)
-- [`../../logs/2026-03/12-141200-monkey-consumer-contract-gap-assessment.md`](../../logs/2026-03/12-141200-monkey-consumer-contract-gap-assessment.md)
-- [`../../logs/2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md`](../../logs/2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md)
-- [`../../logs/2026-03/12-184800-signal-released-surface-pilot.md`](../../logs/2026-03/12-184800-signal-released-surface-pilot.md)
-- [`../../logs/2026-03/12-190515-convergence-released-surface-pilot.md`](../../logs/2026-03/12-190515-convergence-released-surface-pilot.md)
-- [`../../logs/2026-03/12-193800-jetstream-released-surface-pilot.md`](../../logs/2026-03/12-193800-jetstream-released-surface-pilot.md)
-- [`../../logs/2026-03/12-210000-workspace-docs-authority-cohort-contact-patch-underlay-reference.md`](../../logs/2026-03/12-210000-workspace-docs-authority-cohort-contact-patch-underlay-reference.md)
+- [`../../logs/2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md`](../../logs/2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md)
+- [`../../logs/2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md`](../../logs/2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md)
+- [`../../logs/2026-03/12-184800-pilot-repo-d-released-surface-pilot.md`](../../logs/2026-03/12-184800-pilot-repo-d-released-surface-pilot.md)
+- [`../../logs/2026-03/12-190515-pilot-repo-e-released-surface-pilot.md`](../../logs/2026-03/12-190515-pilot-repo-e-released-surface-pilot.md)
+- [`../../logs/2026-03/12-193800-pilot-repo-c-released-surface-pilot.md`](../../logs/2026-03/12-193800-pilot-repo-c-released-surface-pilot.md)
+- [`../../logs/2026-03/12-210000-workspace-docs-authority-cohort-example-site-underlay-reference.md`](../../logs/2026-03/12-210000-workspace-docs-authority-cohort-example-site-underlay-reference.md)
 - [`../../logs/2026-03/12-212500-songsprout-trellis-authority-only-pilot.md`](../../logs/2026-03/12-212500-songsprout-trellis-authority-only-pilot.md)
 - [`../../logs/2026-03/12-214500-songsprout-root-delegation-follow-up.md`](../../logs/2026-03/12-214500-songsprout-root-delegation-follow-up.md)
 - [`../../logs/2026-03/12-220500-consumer-adoption-closeout-matrix.md`](../../logs/2026-03/12-220500-consumer-adoption-closeout-matrix.md)
@@ -149,20 +149,20 @@ Minimum semantics:
 
 Current pilot boundary:
 
-- `monkey` proved the single-repo contract in native current-Effigy mode
-- `compli-me` proved that a workspace container can stay thin while a nested
+- `pilot-repo-a` proved the single-repo contract in native current-Effigy mode
+- `pilot-repo-b` proved that a workspace container can stay thin while a nested
   docs-authority repo carries the real Northstar contract
-- `signal` proved that released `effigy v0.2.6` is enough for native
+- `pilot-repo-d` proved that released `effigy v0.2.6` is enough for native
   consumer-side `docs_policy`, `qa:docs`, and `qa:northstar` on a real
   non-Effigy repo
-- `convergence` proved that the same released surface coexists cleanly with a
+- `pilot-repo-e` proved that the same released surface coexists cleanly with a
   deeper existing repo validation lane, including a successful `effigy validate`
   pass after contract adoption
-- `jetstream` proved that the same released surface also works on a
+- `pilot-repo-c` proved that the same released surface also works on a
   research-heavy repo with a large existing docs tree and a retained
   repo-specific docs contract script, once the native docs lane surfaced and
   cleared real backlog link debt
-- `contact-patch` and `underlay-reference` proved that thin workspace roots
+- `example-site` and `underlay-reference` proved that thin workspace roots
   with dedicated docs-authority catalogs can standardize on root-level
   `qa:docs` / `qa:northstar` orchestration plus native authority-level docs
   policy on released `0.2.6`
@@ -171,8 +171,8 @@ Current pilot boundary:
   `trellis`
 - the contract can no longer be documented only as a single-repo shape
 - the remaining rollout state is now explicit:
-  - fully adopted consumer repos: `monkey`, `compli-me`, `underlay`,
-    `acowtancy`, `signal`, `convergence`, `jetstream`, `contact-patch`,
+  - fully adopted consumer repos: `pilot-repo-a`, `pilot-repo-b`, `underlay`,
+    `example-app`, `pilot-repo-d`, `pilot-repo-e`, `pilot-repo-c`, `example-site`,
     `underlay-reference`, `songsprout`
   - ready but deferred until calmer worktrees: `finch`, `loophole`
   - needs Effigy adoption first: `pug`
@@ -317,44 +317,44 @@ Prove the contract in real consuming repos.
 
 Recommended pilot order from the scan:
 
-1. `monkey`
-2. `compli-me`
+1. `pilot-repo-a`
+2. `pilot-repo-b`
 3. `underlay`
-4. `acowtancy`
-5. `signal`
-6. `convergence`
+4. `example-app`
+5. `pilot-repo-d`
+6. `pilot-repo-e`
 
 Rationale:
 
-- `monkey` already has `docs/vision`, `docs/roadmaps`, `docs/guides`, and a
+- `pilot-repo-a` already has `docs/vision`, `docs/roadmaps`, `docs/guides`, and a
   simple local Effigy surface, but does not yet carry the full
   changelog/release/validation doctrine
-- `compli-me` already has `docs/vision`, `docs/roadmaps`, and a docs authority
+- `pilot-repo-b` already has `docs/vision`, `docs/roadmaps`, and a docs authority
   surface, but is more complex because it is a workspace-scale environment
 - `underlay` tests the model on a shared foundation repo instead of only an
   app repo
-- `acowtancy` tests workspace-scale orchestration and multi-repo agent
+- `example-app` tests workspace-scale orchestration and multi-repo agent
   semantics after the contract is proven in simpler targets, especially around
   a separate planning authority repo (`ledger`) and staged release posture
-- `signal` proves that the released `0.2.6` binary, not just the dev build,
+- `pilot-repo-d` proves that the released `0.2.6` binary, not just the dev build,
   can carry native docs-policy validation in a real repo with an existing
   Northstar docs spine and changelog
-- `convergence` proves that the same released surface works in a repo with an
+- `pilot-repo-e` proves that the same released surface works in a repo with an
   existing deeper validation lane and does not require special shell fallback
   once the docs contract is normalized
 
 Tasks:
 
-- [x] Apply the contract manually to `monkey` and record the released-surface
+- [x] Apply the contract manually to `pilot-repo-a` and record the released-surface
       gap
-- [ ] Re-run `monkey` with the reusable skill once Wave 2 exists
-- [x] Apply the contract manually to `compli-me` and record the
+- [ ] Re-run `pilot-repo-a` with the reusable skill once Wave 2 exists
+- [x] Apply the contract manually to `pilot-repo-b` and record the
       workspace-container docs-authority mode
 - [x] Apply the revised contract to `underlay`
 - [x] Record friction and missing-product gaps
-- [x] Apply the revised contract to `acowtancy`
-- [x] Apply the released `0.2.6` contract to `signal`
-- [x] Apply the released `0.2.6` contract to `convergence`
+- [x] Apply the revised contract to `example-app`
+- [x] Apply the released `0.2.6` contract to `pilot-repo-d`
+- [x] Apply the released `0.2.6` contract to `pilot-repo-e`
 - [x] Classify the remaining untouched repos by migration worthiness
 - [ ] Capture which parts should remain skill-level versus become Effigy-native
 
@@ -369,8 +369,8 @@ Acceptance:
 Current closeout matrix:
 
 - fully adopted consumer repos:
-  `monkey`, `compli-me`, `underlay`, `acowtancy`, `signal`, `convergence`,
-  `jetstream`, `contact-patch`, `underlay-reference`, `songsprout`
+  `pilot-repo-a`, `pilot-repo-b`, `underlay`, `example-app`, `pilot-repo-d`, `pilot-repo-e`,
+  `pilot-repo-c`, `example-site`, `underlay-reference`, `songsprout`
 - source-of-truth repos, not consumer rollout targets:
   `effigy`, `northstar`
 - ready for full contract, but defer for now:
@@ -451,20 +451,20 @@ Acceptance:
 
 - consumer scan log:
   [`../../logs/2026-03/12-135650-consumer-adoption-landscape-scan.md`](../../logs/2026-03/12-135650-consumer-adoption-landscape-scan.md)
-- `monkey` gap assessment:
-  [`../../logs/2026-03/12-141200-monkey-consumer-contract-gap-assessment.md`](../../logs/2026-03/12-141200-monkey-consumer-contract-gap-assessment.md)
-- `monkey` Wave 1 pilot and released-surface gap:
-  [`../../logs/2026-03/12-142509-monkey-wave1-pilot-and-released-surface-gap.md`](../../logs/2026-03/12-142509-monkey-wave1-pilot-and-released-surface-gap.md)
-- `compli-me` workspace + docs-authority pilot:
-  [`../../logs/2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md`](../../logs/2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md)
+- `pilot-repo-a` gap assessment:
+  [`../../logs/2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md`](../../logs/2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md)
+- `pilot-repo-a` Wave 1 pilot and released-surface gap:
+  [`../../logs/2026-03/12-142509-pilot-repo-a-wave1-pilot-and-released-surface-gap.md`](../../logs/2026-03/12-142509-pilot-repo-a-wave1-pilot-and-released-surface-gap.md)
+- `pilot-repo-b` workspace + docs-authority pilot:
+  [`../../logs/2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md`](../../logs/2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md)
 - `underlay` single-repo foundation pilot:
   [`../../logs/2026-03/12-163200-underlay-single-repo-pilot.md`](../../logs/2026-03/12-163200-underlay-single-repo-pilot.md)
-- `acowtancy` workspace + ledger-authority pilot:
-  [`../../logs/2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md`](../../logs/2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md)
-- `signal` released-surface pilot:
-  [`../../logs/2026-03/12-184800-signal-released-surface-pilot.md`](../../logs/2026-03/12-184800-signal-released-surface-pilot.md)
-- `convergence` released-surface pilot:
-  [`../../logs/2026-03/12-190515-convergence-released-surface-pilot.md`](../../logs/2026-03/12-190515-convergence-released-surface-pilot.md)
+- `example-app` workspace + ledger-authority pilot:
+  [`../../logs/2026-03/12-174500-example-app-workspace-ledger-authority-pilot.md`](../../logs/2026-03/12-174500-example-app-workspace-ledger-authority-pilot.md)
+- `pilot-repo-d` released-surface pilot:
+  [`../../logs/2026-03/12-184800-pilot-repo-d-released-surface-pilot.md`](../../logs/2026-03/12-184800-pilot-repo-d-released-surface-pilot.md)
+- `pilot-repo-e` released-surface pilot:
+  [`../../logs/2026-03/12-190515-pilot-repo-e-released-surface-pilot.md`](../../logs/2026-03/12-190515-pilot-repo-e-released-surface-pilot.md)
 - rollout closeout matrix:
   [`../../logs/2026-03/12-220500-consumer-adoption-closeout-matrix.md`](../../logs/2026-03/12-220500-consumer-adoption-closeout-matrix.md)
 - product boundary + verify-install SSH closeout:

@@ -28,7 +28,7 @@ sources will use later.
 - no OCI pull/push
 - no public `effigy artifact` command
 - no bootstrap or container data wiring yet
-- no Acowtancy file edits
+- no Example App file edits
 
 ## Exit Condition
 

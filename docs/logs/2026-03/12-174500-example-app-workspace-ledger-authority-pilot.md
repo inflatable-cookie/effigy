@@ -1,13 +1,13 @@
-# Acowtancy Workspace + Ledger Authority Pilot
+# Example App Workspace + Ledger Authority Pilot
 
 Status: complete
 Created: 2026-03-12
 Roadmap: g01.029
-Batch: acowtancy-workspace-ledger-authority
+Batch: example-app-workspace-ledger-authority
 
 ## Summary
 
-Applied the Northstar + Effigy consumer contract to `acowtancy` as the fourth
+Applied the Northstar + Effigy consumer contract to `example-app` as the fourth
 pilot and confirmed that it is best modeled as:
 
 - a thin workspace orchestration root
@@ -21,7 +21,7 @@ root or a docs-only authority repo at initial adoption time.
 
 ## Changes
 
-- normalized the `acowtancy` workspace root so it teaches `effigy tasks`,
+- normalized the `example-app` workspace root so it teaches `effigy tasks`,
   `effigy doctor`, `effigy test --plan`, and direct `effigy <task>` usage
   without redundant `--repo .`
 - updated the workspace root `effigy.toml` so `qa:docs` checks the root
@@ -40,23 +40,23 @@ root or a docs-only authority repo at initial adoption time.
 Validated directly against the native built-in docs surface with
 `~/.local/bin/effigy`:
 
-- `effigy docs check-links` in `acowtancy/ledger`
-- `effigy docs check-index --policy-index vision` in `acowtancy/ledger`
-- `effigy docs check-next-action --policy vision` in `acowtancy/ledger`
+- `effigy docs check-links` in `example-app/ledger`
+- `effigy docs check-index --policy-index vision` in `example-app/ledger`
+- `effigy docs check-next-action --policy vision` in `example-app/ledger`
 - `effigy docs check-headings` across `ledger/vision/README.md`,
-  `ledger/vision/001-acowtancy-platform-vision.md`,
+  `ledger/vision/001-example-app-platform-vision.md`,
   `ledger/roadmaps/README.md`,
   `ledger/roadmaps/g01/README.md`,
   `ledger/roadmaps/g02/README.md`, and
   `ledger/roadmaps/generation-index.md`
 - `effigy docs check-forbidden AGENTS.md README.md package.json --forbid '--repo .'`
-  at the `acowtancy` workspace root
+  at the `example-app` workspace root
 
 Two environment constraints were surfaced during verification:
 
 - the shell in this session still resolves bare `effigy` to Homebrew `0.2.4`
   before `~/.local/bin`, even though the newer binary exists locally
-- live workspace locks in `acowtancy` and `ledger` prevented running the new
+- live workspace locks in `example-app` and `ledger` prevented running the new
   `qa:docs` / `qa:northstar` task aliases end-to-end without interrupting
   existing user sessions
 

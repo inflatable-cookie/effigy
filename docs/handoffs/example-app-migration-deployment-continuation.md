@@ -1,20 +1,20 @@
 ---
-title: Acowtancy migration and deployment continuation handoff
+title: Example App migration and deployment continuation handoff
 status: active
 owner: Platform
 updated: 2026-05-11
-tags: [coordination, handoff, acowtancy, deployment, state, oci]
+tags: [coordination, handoff, example-app, deployment, state, oci]
 ---
 
 ## What This Thread Was Doing
 
-This thread took the original Acowtancy migration problem and pushed the
+This thread took the original Example App migration problem and pushed the
 generic parts into Effigy.
 
-The starting problem was not a one-shot data import. Acowtancy has a live
+The starting problem was not a one-shot data import. Example App has a live
 legacy MySQL site, a new Underlay/Farmyard/Postgres site, media that must stay
 referenced, UAT content created in the new system before go-live, and repeated
-legacy refreshes before cutover. The old migration code in Acowtancy is
+legacy refreshes before cutover. The old migration code in Example App is
 sprawling because it mixes app-specific transforms with orchestration,
 artifact transport, state replay, capture, and deployment concerns.
 
@@ -28,14 +28,14 @@ Effigy now has the app-agnostic outer frame:
 - Deployment transaction commands for named environments.
 - Deployment status, history, and evidence-backed redeploy reports.
 
-The next thread should turn those generic features into a practical Acowtancy
-operator plan: concrete Acowtancy `effigy.toml`/import config, Farmyard tasks,
+The next thread should turn those generic features into a practical Example App
+operator plan: concrete Example App `effigy.toml`/import config, Farmyard tasks,
 artifact naming, capture/rebase workflow, UAT deployment flow, and final
 readiness checklist.
 
 ## Why It Matters
 
-Acowtancy needs a repeatable pre-go-live loop:
+Example App needs a repeatable pre-go-live loop:
 
 1. Snapshot the old site.
 2. Transform legacy database/media into replayable OCI-backed state artifacts.
@@ -48,7 +48,7 @@ Acowtancy needs a repeatable pre-go-live loop:
 9. Reconcile offline.
 10. Rebuild and redeploy a clean UAT or production candidate.
 
-Effigy should own the orchestration and evidence trail. Acowtancy should still
+Effigy should own the orchestration and evidence trail. Example App should still
 own transforms, conflict decisions, and media semantics.
 
 The final solution needs to make that split operational, not theoretical.
@@ -58,9 +58,9 @@ The final solution needs to make that split operational, not theoretical.
 - Done so far: Effigy has the state-stack framework, OCI artifact substrate,
   remote bundle source support, deployment transaction surface, report history,
   and canonical documentation for their boundaries.
-- Still open: Acowtancy has not yet been rebased onto the new Effigy surfaces
+- Still open: Example App has not yet been rebased onto the new Effigy surfaces
   end-to-end. The next work is concrete cross-repo integration planning and
-  then implementation inside `/Users/tom/Dev/projects/acowtancy`.
+  then implementation inside `/Users/tom/Dev/projects/example-app`.
 - Active spec lane: none. Effigy `g04` is closed for this feature group.
 - Canonical refs:
   - `/Users/tom/Dev/projects/effigy/docs/contracts/014-artifact-substrate-contract.md`
@@ -71,13 +71,13 @@ The final solution needs to make that split operational, not theoretical.
   - `/Users/tom/Dev/projects/effigy/docs/roadmaps/g04/029-railway-deployment-adapter.md`
   - `/Users/tom/Dev/projects/effigy/docs/roadmaps/g04/030-render-deployment-adapter.md`
   - `/Users/tom/Dev/projects/effigy/docs/roadmaps/g04/031-deployment-status-history-and-redeploy.md`
-  - `/Users/tom/Dev/projects/effigy/docs/roadmaps/g04/032-acowtancy-deployment-proof-and-closeout.md`
-  - `/Users/tom/Dev/projects/acowtancy/ledger/planning/migration-execution/legacy-migration-problem-space-and-rebase-loop.md`
+  - `/Users/tom/Dev/projects/effigy/docs/roadmaps/g04/032-example-app-deployment-proof-and-closeout.md`
+  - `/Users/tom/Dev/projects/example-app/ledger/planning/migration-execution/legacy-migration-problem-space-and-rebase-loop.md`
 - Relevant Effigy commits:
   - `936f7e8d Document deploy transaction API`
   - `69c62c7e Add deployment transaction surface`
-- Remaining continuation envelope: plan Acowtancy integration first; do not
-  open another Effigy implementation lane until Acowtancy exposes a concrete
+- Remaining continuation envelope: plan Example App integration first; do not
+  open another Effigy implementation lane until Example App exposes a concrete
   framework gap.
 - Lane budget / pause signal: fresh-thread boundary requested by the user.
 
@@ -87,11 +87,11 @@ Key local files:
 - `/Users/tom/Dev/projects/effigy/docs/guides/025-command-reference-matrix.md`
 - `/Users/tom/Dev/projects/effigy/docs/guides/026-json-payload-examples.md`
 - `/Users/tom/Dev/projects/effigy/src/runner/deploy_command/transaction.rs`
-- `/Users/tom/Dev/projects/acowtancy/ledger/planning/migration-execution/legacy-migration-problem-space-and-rebase-loop.md`
+- `/Users/tom/Dev/projects/example-app/ledger/planning/migration-execution/legacy-migration-problem-space-and-rebase-loop.md`
 
 ## Boundaries
 
-- Keep Effigy app-agnostic. Do not put Acowtancy transforms, row merge policy,
+- Keep Effigy app-agnostic. Do not put Example App transforms, row merge policy,
   paper-specific conflict logic, or media rewrite semantics into Effigy.
 - Do not treat `deploy export` as live deployment. It remains file export.
   `deploy apply` is the transaction surface.
@@ -99,14 +99,14 @@ Key local files:
   variables, or secrets.
 - Do not promise database/media rollback. `deploy redeploy` is replay of
   recorded immutable inputs, not rollback.
-- Treat media as its own state lane. Farmyard owns Acowtancy media semantics,
+- Treat media as its own state lane. Farmyard owns Example App media semantics,
   Underlay owns the object-store env/config contract, and Effigy should grow a
   generic object-store artifact apply primitive for OCI-backed media payloads.
 - Do not run release prepare/execute unless the user explicitly asks. Release
   execution remains human-owned.
 - Do not edit `.github/workflows/` without explicit approval.
 - Follow repo constraints from `/Users/tom/Dev/projects/effigy/AGENTS.md` and
-  the Acowtancy repo instructions before touching Acowtancy files.
+  the Example App repo instructions before touching Example App files.
 
 ## Important Context
 
@@ -119,7 +119,7 @@ only one declared state stack, no `default = "uat"` is needed.
 
 Named capture profiles matter.
 
-The user also pushed for concise repeated commands. The intended Acowtancy
+The user also pushed for concise repeated commands. The intended Example App
 capture command is:
 
 ```sh
@@ -143,7 +143,7 @@ Expected shape:
 state = "uat"
 code_ref = "branch:main"
 release_policy = "optional"
-provider_project = "acowtancy-uat"
+provider_project = "example-app-uat"
 artifact_policy = "digest-preferred"
 
 [deploy.uat.provider]
@@ -156,7 +156,7 @@ services = { front = "<srv-front>", admin = "<srv-admin>", api = "<srv-api>", jo
 state = "production"
 code_ref = "release-tag"
 release_policy = "required"
-provider_project = "acowtancy-production"
+provider_project = "example-app-production"
 artifact_policy = "digest-pinned"
 
 [deploy.production.provider]
@@ -175,14 +175,14 @@ examples/render-provider-smoke/
 ```
 
 Use the smoke fixture to verify package wiring against a disposable Render
-project. Acowtancy itself should use the client-owned Render workspace, with
+project. Example App itself should use the client-owned Render workspace, with
 project, environment, and service IDs recorded in manifest config. Only
 `RENDER_API_KEY` should come from the operator environment.
 
-The Acowtancy canonical problem doc already explains the rebase loop and must
+The Example App canonical problem doc already explains the rebase loop and must
 remain the source of truth for the business/migration problem:
 
-- `/Users/tom/Dev/projects/acowtancy/ledger/planning/migration-execution/legacy-migration-problem-space-and-rebase-loop.md`
+- `/Users/tom/Dev/projects/example-app/ledger/planning/migration-execution/legacy-migration-problem-space-and-rebase-loop.md`
 
 The same doc now records the target media lane:
 
@@ -215,16 +215,16 @@ and production object stores.
 
 ## Suggested Next Move
 
-Start in the Acowtancy repo and produce an actionable integration plan before
+Start in the Example App repo and produce an actionable integration plan before
 editing broad app code.
 
 Recommended first prompt for the new thread:
 
 ```text
-Read `/Users/tom/Dev/projects/effigy/docs/handoffs/acowtancy-migration-deployment-continuation.md`
-and the Acowtancy migration problem doc it references.
+Read `/Users/tom/Dev/projects/effigy/docs/handoffs/example-app-migration-deployment-continuation.md`
+and the Example App migration problem doc it references.
 
-Then inspect `/Users/tom/Dev/projects/acowtancy` for:
+Then inspect `/Users/tom/Dev/projects/example-app` for:
 - existing Effigy config and manifest imports
 - current state config, if any
 - Farmyard migration/reset tasks
@@ -233,14 +233,14 @@ Then inspect `/Users/tom/Dev/projects/acowtancy` for:
 - deployment/export config
 - docs that mention the migration/rebase loop
 
-Produce a concrete Acowtancy implementation plan that ties Effigy state,
+Produce a concrete Example App implementation plan that ties Effigy state,
 OCI artifacts, remote bundle sources, deployment transactions, UAT capture,
 and production release policy into one operator workflow. Do not implement
 until the plan identifies exact files, command flow, missing tasks, and any
 Effigy framework gaps.
 ```
 
-The first concrete deliverable should be a short Acowtancy plan with:
+The first concrete deliverable should be a short Example App plan with:
 
 - target `effigy.toml`/import layout
 - `[state.uat]` and `[state.production]` stack shape
@@ -254,15 +254,15 @@ The first concrete deliverable should be a short Acowtancy plan with:
 
 ## Completion Protocol
 
-1. Keep Effigy changes out of scope unless Acowtancy integration proves a real
+1. Keep Effigy changes out of scope unless Example App integration proves a real
    framework gap.
 2. If Effigy needs changes, open a new roadmap/spec lane before implementation.
-3. Update the Acowtancy canonical problem doc when the operator workflow
+3. Update the Example App canonical problem doc when the operator workflow
    becomes concrete.
-4. Keep app-owned migration details in Acowtancy docs/code, not Effigy.
-5. Validate Acowtancy commands with focused dry-run/plan commands first.
+4. Keep app-owned migration details in Example App docs/code, not Effigy.
+5. Validate Example App commands with focused dry-run/plan commands first.
 6. Record any live-provider assumptions separately before UAT deployment.
-7. End the next thread with either an implemented Acowtancy workflow or a
+7. End the next thread with either an implemented Example App workflow or a
    precise blocked list with file paths and commands.
 
 Validation note for this handoff:

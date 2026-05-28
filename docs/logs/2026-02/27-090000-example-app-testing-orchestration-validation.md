@@ -1,4 +1,4 @@
-# Acowtancy Testing Orchestration Validation
+# Example App Testing Orchestration Validation
 
 Date: 2026-02-27
 Owner: Platform
@@ -6,7 +6,7 @@ Related roadmap: 005 - Unified Testing Orchestration
 
 ## Scope
 
-Validate built-in `effigy test` behavior against an active multi-repo workspace (`acowtancy`), including plan output, sub-repo routing, and execution startup path.
+Validate built-in `effigy test` behavior against an active multi-repo workspace (`example-app`), including plan output, sub-repo routing, and execution startup path.
 
 ## Changes
 
@@ -18,31 +18,31 @@ Validate built-in `effigy test` behavior against an active multi-repo workspace 
 ## Validation
 
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test --plan`
-  - cwd: `~/Dev/projects/acowtancy`
+  - cwd: `~/Dev/projects/example-app`
   - result: failed due invalid TOML in child catalog (`cream/effigy.toml`: `js = bun` missing quotes).
 
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test --plan`
-  - cwd: `~/Dev/projects/acowtancy/farmyard`
+  - cwd: `~/Dev/projects/example-app/farmyard`
   - result: pass; selected `cargo-nextest`, showed fallback chain (`vitest` rejected, `cargo-test` available fallback).
 
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test --plan`
-  - cwd: `~/Dev/projects/acowtancy/cream`
+  - cwd: `~/Dev/projects/example-app/cream`
   - result: failed due invalid TOML (`js = bun` missing quotes).
 
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test --plan`
-  - cwd: `~/Dev/projects/acowtancy/dairy`
+  - cwd: `~/Dev/projects/example-app/dairy`
   - result: failed due invalid TOML (`js = bun` missing quotes).
 
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test nextest -E 'none()'`
-  - cwd: `~/Dev/projects/acowtancy/farmyard`
+  - cwd: `~/Dev/projects/example-app/farmyard`
   - result: execution path started successfully and entered Rust workspace compile + nextest path; terminated manually due compile-time cost for this checkpoint run.
 
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test --plan`
-  - cwd: `~/Dev/projects/acowtancy`
+  - cwd: `~/Dev/projects/example-app`
   - result (after fix): pass; root fanout now detects `cream`/`dairy` (`vitest`) and `farmyard` (`cargo-nextest`) without manifest parse errors.
 
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test vitest`
-  - cwd: `~/Dev/projects/acowtancy`
+  - cwd: `~/Dev/projects/example-app`
   - result (after fix): pass for orchestration path; suite-targeted fanout executed against `cream` + `dairy`, returned non-zero due real project test failure in `dairy` (`tests/summary-forms.test.ts` timeout), and produced ordered per-target summary (`cream: ok`, `dairy: exit=1`).
 
 ## Findings

@@ -54,7 +54,7 @@ Rhai v1 is for repo automation glue, not general shell emulation.
 
 ### Needs Rust Helper Work But Still Targets Full Migration
 
-- `jetstream`
+- `pilot-repo-c`
   - bash QA/policy orchestration is a clear Rhai target
   - Python analysis tools are still migration targets, but likely need Rust
     host capability before Rhai can replace them cleanly

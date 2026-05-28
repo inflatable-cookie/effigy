@@ -13,9 +13,9 @@ Define and implement a standalone Effigy artifact substrate for local and OCI
 data payloads used by bootstrap, data seed, UAT apply, and UAT capture
 workflows.
 
-The first proof target is Acowtancy. Effigy should remove transport, staging,
-metadata, and operation-reporting weight from Acowtancy while keeping
-Acowtancy's migration and content-coercion logic app-owned.
+The first proof target is Example App. Effigy should remove transport, staging,
+metadata, and operation-reporting weight from Example App while keeping
+Example App's migration and content-coercion logic app-owned.
 
 ## Scope
 
@@ -30,13 +30,13 @@ Acowtancy's migration and content-coercion logic app-owned.
 - integrate artifact destinations with `container data dump`
 - define UAT apply/capture operation reports
 - define a small artifact operation ledger model
-- prove the Acowtancy handoff boundary
+- prove the Example App handoff boundary
 
 ## Non-Goals
 
 - no generic migration framework
 - no MySQL-to-Postgres transform engine
-- no Acowtancy schema logic in Effigy
+- no Example App schema logic in Effigy
 - no production deployment orchestration
 - no `.github/workflows/` edits
 - no release execution
@@ -57,9 +57,9 @@ Seed and dump integrations:
 
 ```sh
 effigy bootstrap <repo> --db-seed cbs=./backups/cbs.sql.gz
-effigy bootstrap <repo> --db-seed cbs=oci://ghcr.io/acowtancy/legacy-cbs:2026-05-06
-effigy container data seed --db-seed cbs=oci://ghcr.io/acowtancy/legacy-cbs@sha256:...
-effigy container data dump --db-dump cbs=oci://ghcr.io/acowtancy/uat-content:2026-05-06
+effigy bootstrap <repo> --db-seed cbs=oci://ghcr.io/example-app/legacy-cbs:2026-05-06
+effigy container data seed --db-seed cbs=oci://ghcr.io/example-app/legacy-cbs@sha256:...
+effigy container data dump --db-dump cbs=oci://ghcr.io/example-app/uat-content:2026-05-06
 ```
 
 The `oci://` prefix is required in the first implementation round.
@@ -112,7 +112,7 @@ guards.
 
 ## UAT Requirements
 
-Acowtancy artifacts must work from UAT.
+Example App artifacts must work from UAT.
 
 Planning assumptions:
 
@@ -126,9 +126,9 @@ Planning assumptions:
 The app owns DB-level idempotency and migration history. Effigy owns the outer
 artifact operation record.
 
-## Acowtancy Proof
+## Example App Proof
 
-The proof should inspect `~/Dev/projects/acowtancy` and identify:
+The proof should inspect `~/Dev/projects/example-app` and identify:
 
 - current OCI artifact production/consumption path
 - current legacy MySQL snapshot shape
@@ -146,7 +146,7 @@ The first implementation proof should be one vertical slice:
 4. apply report records artifact source and digest if available
 5. capture planning can package a generated SQL dump
 
-### Initial Acowtancy Audit Notes
+### Initial Example App Audit Notes
 
 Current Farmyard seed-bundle flow already has a useful app-owned split:
 
@@ -195,14 +195,14 @@ UAT proof implication:
 
 ## Milestone Cards
 
-### 415 - Plan Artifact Contract And Acowtancy Boundary
+### 415 - Plan Artifact Contract And Example App Boundary
 
 Status: Complete
 
 Scope:
 
 - promote `014-artifact-substrate-contract.md`
-- audit Acowtancy migration/artifact flow
+- audit Example App migration/artifact flow
 - define artifact metadata schema draft
 - define local/OCI ref syntax
 - define UAT apply/capture ledger fields
@@ -210,13 +210,13 @@ Scope:
 
 Exit condition:
 
-- Effigy/Acowtancy responsibility boundary is explicit enough to implement
+- Effigy/Example App responsibility boundary is explicit enough to implement
   without moving app migration logic into Effigy.
 
 Closeout:
 
 - `014-artifact-substrate-contract.md` exists as the durable contract draft.
-- Acowtancy audit notes identify the current Farmyard seed-bundle build,
+- Example App audit notes identify the current Farmyard seed-bundle build,
   publish, install, local OCI, and `bundle-set.json` surfaces.
 - The first replacement boundary is transport/staging for seed-bundle install,
   leaving Farmyard in charge of replay semantics.
@@ -299,20 +299,20 @@ Closeout:
 - the legacy `.effigy/local/db-seeds` handoff stays intact
 - focused seed tests prove existing local SQL behavior still works
 
-### 420 - Acowtancy Proof And Closeout
+### 420 - Example App Proof And Closeout
 
 Status: Complete
 
 Scope:
 
-- prove one Acowtancy path end to end
+- prove one Example App path end to end
 - document UAT operator flow
 - document remaining app-owned migration surfaces
 - update docs and changelog for user-facing behavior
 
 Closeout:
 
-- Acowtancy/Farmyard proof confirms Effigy should replace only the
+- Example App/Farmyard proof confirms Effigy should replace only the
   transport/staging half of `seed-bundle-install.sh` first.
 - Farmyard keeps `bundle-set.json`, family ordering, hook artifacts, patch
   overlays, residual queues, and migration idempotency.
@@ -577,7 +577,7 @@ Closeout:
 - artifact refs do not use the word bundle
 - artifact built-ins are top-level, not under `container`
 - UAT apply/capture requirements are documented
-- Acowtancy proof does not move migration logic into Effigy
+- Example App proof does not move migration logic into Effigy
 - private artifact security assumptions are explicit
 
 ## Next Task

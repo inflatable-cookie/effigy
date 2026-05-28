@@ -51,4 +51,4 @@ Passed:
 - Remains open: add changelog and release posture where appropriate, decide
   whether shared foundation repos should adopt the same release baseline as app
   repos, and test the contract on a more orchestration-heavy consumer such as
-  `acowtancy`
+  `example-app`

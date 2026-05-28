@@ -64,13 +64,13 @@ new reusable-core work.
   and managed task execution.
 - [`014-artifact-substrate-contract.md`](./014-artifact-substrate-contract.md):
   standalone artifact contract for local and OCI data payloads used by seed,
-  apply, capture, and Acowtancy/UAT workflows.
+  apply, capture, and Example App/UAT workflows.
 - [`015-runtime-operation-pipeline-contract.md`](./015-runtime-operation-pipeline-contract.md):
   runtime operation pipeline contract for execution, activation, container
   operation, and artifact/data request-plan-adapter seams.
 - [`016-state-stack-and-layered-seed-framework-contract.md`](./016-state-stack-and-layered-seed-framework-contract.md):
   layered state-stack contract for schema baselines, imported data, overlays,
-  lineage, and Acowtancy-style UAT capture/rebase workflows.
+  lineage, and Example App-style UAT capture/rebase workflows.
 - [`017-task-status-record-and-active-run-model-contract.md`](./017-task-status-record-and-active-run-model-contract.md):
   task-status record contract for identity, normalized status/stage taxonomy,
   active/completed persistence, and stale-record reconciliation before the

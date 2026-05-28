@@ -21,7 +21,7 @@ Completed card `703`, the typed `[secrets]` manifest parser slice.
 - Baseline: repos could not declare secret names and targets in the manifest.
 - Current state: manifests can parse declaration-only `[secrets]` config.
 - Remaining open: read-only command surface, vault storage, unlock, injection,
-  container startup integration, Underlay/Acowtancy migration proof, and
+  container startup integration, Underlay/Example App migration proof, and
   Varlock adapter decision.
 
 ## Validation

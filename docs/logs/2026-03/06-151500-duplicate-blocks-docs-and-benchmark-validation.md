@@ -8,7 +8,7 @@ Batch: duplicate-blocks-docs-and-benchmark-validation
 ## Summary
 - Updated the operator docs, manifest cookbook, JSON examples, CI recipes, snippets, and schema index to include `effigy scan duplicate-blocks`.
 - Validated `duplicate-blocks` doctor integration and CLI JSON envelope coverage.
-- Benchmarked the scanner on `acowtancy` to decide whether doctor participation should remain opt-in by default.
+- Benchmarked the scanner on `example-app` to decide whether doctor participation should remain opt-in by default.
 
 ## Changes
 - Added `duplicate-blocks` coverage to:

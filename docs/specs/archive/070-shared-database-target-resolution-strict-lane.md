@@ -10,7 +10,7 @@ Created: 2026-05-12
 
 Remove the current seed/dump database-service split path and promote database
 target resolution into one shared domain seam before state, media, and
-Acowtancy migration work build on the duplicated behavior.
+Example App migration work build on the duplicated behavior.
 
 ## Hard Boundaries
 
@@ -19,7 +19,7 @@ Acowtancy migration work build on the duplicated behavior.
 - no provider provisioning
 - no schema migration framework changes
 - no media/object-store implementation
-- no Acowtancy-specific logic
+- no Example App-specific logic
 - no `.github/workflows/` edits
 - no release execution
 

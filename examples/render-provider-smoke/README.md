@@ -1,7 +1,7 @@
 # Render Provider Smoke
 
 Minimal Effigy repo for validating the external Render provider package against
-a real Render account without using Acowtancy.
+a real Render account without depending on any client repository.
 
 Expected Render shape:
 

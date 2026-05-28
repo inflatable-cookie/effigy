@@ -1,4 +1,4 @@
-# 420 - Acowtancy Proof And Closeout
+# 420 - Example App Proof And Closeout
 
 Lane: [`042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md`](../042-artifact-substrate-for-seed-apply-and-capture-workflows-strict-lane.md)
 
@@ -9,12 +9,12 @@ Completed: 2026-05-06
 
 ## Goal
 
-Close the artifact substrate planning/implementation round with an Acowtancy
+Close the artifact substrate planning/implementation round with an Example App
 proof boundary and the next implementation handoff.
 
 ## Scope
 
-- inspect the current Acowtancy seed-bundle install/build/publish flow again
+- inspect the current Example App seed-bundle install/build/publish flow again
 - map the Effigy artifact substrate onto the first Farmyard replacement seam
 - document how UAT should apply explicit artifact refs
 - document how UAT capture should be represented without making Effigy part of
@@ -25,18 +25,18 @@ proof boundary and the next implementation handoff.
 
 ## Non-Goals
 
-- no Acowtancy file edits
+- no Example App file edits
 - no live private registry proof
 - no production deployment orchestration
 - no release work
 
 ## Exit Condition
 
-This card is complete when the first Acowtancy operator flow is documented
+This card is complete when the first Example App operator flow is documented
 against the new artifact substrate and the lane either closes cleanly or names
 one precise next card.
 
-## Acowtancy Proof Boundary
+## Example App Proof Boundary
 
 Current Farmyard flow:
 

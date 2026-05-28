@@ -11,7 +11,7 @@ Completed: 2026-05-10
 
 Close the v0.6.0 deployment transaction implementation suite after the
 deploy-specific command, report, provider, status, history, redeploy, and
-Acowtancy documentation slices landed.
+Example App documentation slices landed.
 
 ## Scope
 
@@ -23,7 +23,7 @@ Acowtancy documentation slices landed.
 - add `deploy history <env>`
 - add `deploy redeploy <env> --deployment <ID> --yes`
 - update deploy help, command reference, JSON contract guidance, and examples
-- update the Acowtancy migration problem document with deployment flows
+- update the Example App migration problem document with deployment flows
 - close `g04.027` through `g04.032`
 
 ## Non-Goals

@@ -18,7 +18,7 @@ validation, and lineage planning.
 - validate role ordering and environment policy decisions
 - model a lineage plan/report that rolls up layer order and artifact-operation
   references
-- include Acowtancy-shaped fixtures for structure, baseline seed,
+- include Example App-shaped fixtures for structure, baseline seed,
   legacy-import, dev-overlay, UAT capture, and full-capture roles
 
 ## Non-Goals
@@ -43,7 +43,7 @@ plan/report without invoking app code.
 - added role ordering, environment policy, artifact-source, duplicate-key, and
   dependency validation
 - added deterministic lineage planning and report shaping
-- added Acowtancy-shaped fixture coverage for structure, baseline seed,
+- added Example App-shaped fixture coverage for structure, baseline seed,
   legacy-import, dev-overlay, UAT capture, and full-capture layers
 
 ## Validation

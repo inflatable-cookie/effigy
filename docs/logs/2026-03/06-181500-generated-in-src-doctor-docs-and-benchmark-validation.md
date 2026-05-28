@@ -8,7 +8,7 @@ Batch: 18.3-18.4
 ## Summary
 - Added `generated-in-src` integration to `effigy doctor`.
 - Updated docs/contracts for the new scan and doctor default.
-- Benchmarked the scanner on `acowtancy` to validate runtime and default doctor participation.
+- Benchmarked the scanner on `example-app` to validate runtime and default doctor participation.
 
 ## Changes
 - Added doctor check registration, progress label, JSON integration, and report-file support for `scan.generated-in-src`.

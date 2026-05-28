@@ -7,7 +7,7 @@ Batch Card: `docs/roadmaps/g02/batch-cards/103-implement-consumer-proof-of-optio
 
 ## Summary
 
-Ran one bounded consumer proof in `convergence` to test whether the current
+Ran one bounded consumer proof in `pilot-repo-e` to test whether the current
 optional `[distribution]` surface works outside Effigy's self-hosting release
 flow.
 
@@ -76,7 +76,7 @@ cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- \
   shape rather than broader consumer variants.
 - The fuller `distribution first-publish` path still assumes an
   Effigy-compatible CLI self-inspection surface such as `--json tasks`.
-- In the `convergence` proof, `converge --json tasks` failed with
+- In the `pilot-repo-e` proof, `converge --json tasks` failed with
   `unexpected argument '--json'`, which is valid consumer behavior today but
   not yet compatible with Effigy's first-publish matrix.
 
@@ -95,9 +95,9 @@ decision loop:
 ## Validation
 
 - consumer proof logs captured under `/tmp/effigy-convergence-distribution-proof`
-- `cargo run --manifest-path /Users/tom/Dev/projects/effigy/Cargo.toml --bin effigy -- distribution validate-artifacts --repo /Users/tom/Dev/projects/convergence --artifacts-dir /tmp/effigy-convergence-distribution-proof`
-- `cargo run --manifest-path /Users/tom/Dev/projects/effigy/Cargo.toml --bin effigy -- distribution generate-closeout --repo /Users/tom/Dev/projects/convergence --tag v0.1.0 --artifacts-dir /tmp/effigy-convergence-distribution-proof --output /tmp/effigy-convergence-distribution-closeout.md`
-- `cargo run --manifest-path /Users/tom/Dev/projects/effigy/Cargo.toml --bin effigy -- distribution validate-metadata --repo /Users/tom/Dev/projects/convergence --tag v0.1.0` (fails honestly on missing `.github/workflows/release-binaries.yml`)
+- `cargo run --manifest-path /Users/tom/Dev/projects/effigy/Cargo.toml --bin effigy -- distribution validate-artifacts --repo /Users/tom/Dev/projects/pilot-repo-e --artifacts-dir /tmp/effigy-convergence-distribution-proof`
+- `cargo run --manifest-path /Users/tom/Dev/projects/effigy/Cargo.toml --bin effigy -- distribution generate-closeout --repo /Users/tom/Dev/projects/pilot-repo-e --tag v0.1.0 --artifacts-dir /tmp/effigy-convergence-distribution-proof --output /tmp/effigy-convergence-distribution-closeout.md`
+- `cargo run --manifest-path /Users/tom/Dev/projects/effigy/Cargo.toml --bin effigy -- distribution validate-metadata --repo /Users/tom/Dev/projects/pilot-repo-e --tag v0.1.0` (fails honestly on missing `.github/workflows/release-binaries.yml`)
 
 ## Vision Target Delta
 
@@ -112,4 +112,4 @@ decision loop:
 
 Execute `docs/roadmaps/g02/batch-cards/104-implement-consumer-driven-distribution-gap-widening.md`
 to widen the named metadata and first-publish gaps exposed by the
-`convergence` proof.
+`pilot-repo-e` proof.

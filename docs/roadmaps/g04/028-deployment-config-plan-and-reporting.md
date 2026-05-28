@@ -36,7 +36,7 @@ provider = "railway"
 state = "uat"
 code_ref = "branch:main"
 release_policy = "optional"
-provider_project = "acowtancy-uat"
+provider_project = "example-app-uat"
 artifact_policy = "digest-preferred"
 
 [deploy.production]
@@ -44,7 +44,7 @@ provider = "railway"
 state = "production"
 code_ref = "release-tag"
 release_policy = "required"
-provider_project = "acowtancy-production"
+provider_project = "example-app-production"
 artifact_policy = "digest-pinned"
 ```
 

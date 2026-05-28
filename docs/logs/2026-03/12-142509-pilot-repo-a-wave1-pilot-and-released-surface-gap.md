@@ -3,13 +3,13 @@
 Status: complete
 Created: 2026-03-12
 Roadmap: g01.029
-Batch: monkey-wave1-pilot
+Batch: pilot-repo-a-wave1-pilot
 
 ## Summary
 
-- Applied the Wave 1 Northstar + Effigy consumer contract to `monkey` as the
+- Applied the Wave 1 Northstar + Effigy consumer contract to `pilot-repo-a` as the
   first real pilot.
-- Rewrote `monkey`'s agent and front-door docs around the Effigy-first loop:
+- Rewrote `pilot-repo-a`'s agent and front-door docs around the Effigy-first loop:
   `effigy tasks`, `effigy doctor`, `effigy test --plan`, and `effigy qa`.
 - Added `CHANGELOG.md` plus repo-owned `qa:docs` and `qa:northstar` bundles so
   the contract is inspectable through Effigy tasks.
@@ -18,9 +18,9 @@ Batch: monkey-wave1-pilot
 
 ## Changes
 
-- `monkey` now uses built-in `effigy test` instead of a local `tasks.test`
+- `pilot-repo-a` now uses built-in `effigy test` instead of a local `tasks.test`
   override.
-- `monkey` now has:
+- `pilot-repo-a` now has:
   - Effigy-first `AGENTS.md`
   - README and docs front door aligned to the same operator loop
   - `CHANGELOG.md` with an `Unreleased` baseline
@@ -36,7 +36,7 @@ Batch: monkey-wave1-pilot
 
 - Primary tags: `OPERATE`, `CONTRACT`, `MAINT`
 - Movement: baseline `consumer adoption kit still theoretical outside the
-  Effigy repo` -> current `manual consumer pilot proven in monkey on the
+  Effigy repo` -> current `manual consumer pilot proven in pilot-repo-a on the
   released Effigy surface`
 - Remaining gap: `consumer repos still need repo-owned scripts for docs and
   release-readiness validation because the released product surface has not yet
@@ -45,17 +45,17 @@ Batch: monkey-wave1-pilot
 ## Validation Performed
 
 - command: `effigy tasks`
-  - result: passed in `~/Dev/projects/monkey`; showed the new consumer contract
+  - result: passed in `~/Dev/projects/pilot-repo-a`; showed the new consumer contract
     tasks
 - command: `effigy test --plan`
-  - result: passed in `~/Dev/projects/monkey`; confirmed built-in test routing
+  - result: passed in `~/Dev/projects/pilot-repo-a`; confirmed built-in test routing
     to `cargo nextest run`
 - command: `effigy qa:docs`
-  - result: passed in `~/Dev/projects/monkey`
+  - result: passed in `~/Dev/projects/pilot-repo-a`
 - command: `effigy qa:northstar`
-  - result: passed in `~/Dev/projects/monkey`
+  - result: passed in `~/Dev/projects/pilot-repo-a`
 - command: `effigy qa`
-  - result: passed in `~/Dev/projects/monkey`; 84 tests passed, 3 skipped
+  - result: passed in `~/Dev/projects/pilot-repo-a`; 84 tests passed, 3 skipped
 
 ## Risks
 

@@ -13,7 +13,7 @@ The shipped artifact substrate already covers transport, staging, metadata, and
 OCI/local parity. This contract sits above that substrate and defines the
 ordered replay model.
 
-The first proof target is Acowtancy's legacy-to-new-site UAT loop, where:
+The first proof target is Example App's legacy-to-new-site UAT loop, where:
 
 - legacy data arrives through replayable OCI artifacts
 - new-system-authored UAT changes must be captured without being lost
@@ -545,7 +545,7 @@ effective composed manifest:
 ```toml
 [state.uat]
 schema = "effigy.state-stack.v1"
-name = "acowtancy-uat"
+name = "example-app-uat"
 environment = "uat"
 
 [[state.uat.layers]]
@@ -557,7 +557,7 @@ environment_policy = "all"
 ```
 
 Large state declarations should use normal manifest composition, for example
-including a repo-owned `state/acowtancy.state.toml` fragment from `effigy.toml`.
+including a repo-owned `state/example-app.state.toml` fragment from `effigy.toml`.
 There is no separate state-specific file discovery convention.
 
 Selection rules:
@@ -578,7 +578,7 @@ Named capture profiles:
 role = "uat-capture"
 source_env = "uat"
 source = ".effigy/state/captures/{key}.tar"
-ref = "oci://ghcr.io/acowtancy/state:{key}"
+ref = "oci://ghcr.io/example-app/state:{key}"
 task = "state:capture-new-content"
 ```
 
@@ -798,7 +798,7 @@ Report shape additions for SQL layers:
 - `sql_report`: database import result
 - `status`: `would-import`, `planned-sql-import`, `imported`, or `failed`
 
-## Acowtancy Proof Boundary
+## Example App Proof Boundary
 
 The first proof case is the UAT freeze/rebuild loop:
 
@@ -816,7 +816,7 @@ Effigy should prove the orchestration and lineage around that loop.
 
 First implementation slice:
 
-- parse a stack manifest with Acowtancy-shaped layers
+- parse a stack manifest with Example App-shaped layers
 - validate role/order/environment policy
 - resolve local and `oci://` artifact sources through planning stubs where
   live transport is not needed
@@ -841,5 +841,5 @@ Effigy should not absorb:
 ## Next Task
 
 Use this contract as the next release boundary. Further rebase execution
-semantics should be driven by Acowtancy rebasing real migration code onto the
+semantics should be driven by Example App rebasing real migration code onto the
 released state-stack surface.

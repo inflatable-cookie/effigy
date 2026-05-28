@@ -21,15 +21,15 @@ Most consuming repos have some of the pieces, but not the combined package:
 
 ## Scan Scope
 
-- `~/Dev/projects/acowtancy`
-- `~/Dev/projects/compli-me`
-- `~/Dev/projects/contact-patch`
+- `~/Dev/projects/example-app`
+- `~/Dev/projects/pilot-repo-b`
+- `~/Dev/projects/example-site`
 - `~/Dev/projects/convergence`
 - `~/Dev/projects/effigy`
 - `~/Dev/projects/finch`
-- `~/Dev/projects/jetstream`
+- `~/Dev/projects/pilot-repo-c`
 - `~/Dev/projects/loophole`
-- `~/Dev/projects/monkey`
+- `~/Dev/projects/pilot-repo-a`
 - `~/Dev/projects/northstar`
 - `~/Dev/projects/nucleus`
 - `~/Dev/projects/pug`
@@ -76,11 +76,11 @@ Effigy is currently the only repo with the full self-hosted doctrine:
 These repos already have real `docs/vision` and `docs/roadmaps`, but their
 Effigy layer is mostly light task routing rather than doctrine enforcement:
 
-- `compli-me`
-- `convergence`
+- `pilot-repo-b`
+- `pilot-repo-e`
 - `finch`
-- `jetstream`
-- `signal`
+- `pilot-repo-c`
+- `pilot-repo-d`
 
 These are the best near-term pilot candidates for a consumer adoption kit.
 
@@ -89,8 +89,8 @@ These are the best near-term pilot candidates for a consumer adoption kit.
 These repos already rely on Effigy but do not yet expose the full Northstar
 documentation skeleton:
 
-- `acowtancy`
-- `contact-patch`
+- `example-app`
+- `example-site`
 - `loophole`
 - `nucleus`
 - `songsprout`
@@ -102,17 +102,17 @@ These need scaffolding and doctrine migration more than new task semantics.
 
 - `underlay` has strong guides and a meaningful Effigy task surface, but does
   not yet expose the same Northstar-style vision/roadmap layer used elsewhere.
-- `monkey` has guides plus vision/roadmaps and some Effigy usage, but not the
+- `pilot-repo-a` has guides plus vision/roadmaps and some Effigy usage, but not the
   broader validation/release doctrine. It is also a strong first pilot because
   the repo is structurally mature without carrying the workspace-scale
-  complexity of `compli-me`.
+  complexity of `pilot-repo-b`.
 - `pug` has Northstar-style docs structure but does not yet have `effigy.toml`.
 
 ## Representative Findings
 
 ### Workspace AGENTS drift
 
-`acowtancy`, `compli-me`, and `underlay` all have real Effigy-first agent
+`example-app`, `pilot-repo-b`, and `underlay` all have real Effigy-first agent
 instructions, but they still teach `--repo .` as a default. That means the
 agent contract has spread faster than the corrected default semantics.
 
@@ -130,19 +130,19 @@ contract. The structure exists, the phrase contract does not.
 
 ## Recommended Pilot Sequence
 
-1. `monkey`
+1. `pilot-repo-a`
    - Has `docs/vision`, `docs/roadmaps`, `docs/guides`, and a simple
      single-repo Effigy surface.
    - Missing changelog/release doctrine, which makes it a strong end-to-end
      proving ground for the adoption kit.
-2. `compli-me`
+2. `pilot-repo-b`
    - Has `docs/vision`, `docs/roadmaps`, and a docs authority repo shape.
    - Good second pilot after the contract is proven in a simpler repo.
 3. `underlay`
    - Strong Effigy usage and guides.
    - Good candidate for testing how the contract applies to a shared library
      repo rather than an app workspace.
-4. `acowtancy`
+4. `example-app`
    - Good workspace-scale pilot once the repo contract works in a simpler repo.
 
 ## Conclusion

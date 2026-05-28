@@ -159,7 +159,7 @@ Expected properties:
 ### Batch 18.4 - Documentation and Validation
 - [x] Update command docs, manifest cookbook, JSON examples, and snippets.
 - [x] Add regression coverage for nested repos, `.gitignore` behavior, and source-root defaults.
-- [x] Benchmark a real repo such as `acowtancy` to confirm runtime and default doctor signal quality.
+- [x] Benchmark a real repo such as `example-app` to confirm runtime and default doctor signal quality.
 
 ## 8) Acceptance Criteria
 
@@ -198,7 +198,7 @@ Expected properties:
 - [x] benchmark logs for at least one real repo before changing default doctor policy
 
 Benchmark summary:
-- `acowtancy` standalone `scan generated-in-src` run: `scanned-files=1716`, `candidate-files=4`, `findings=4`, `real=2.06s`
+- `example-app` standalone `scan generated-in-src` run: `scanned-files=1716`, `candidate-files=4`, `findings=4`, `real=2.06s`
 - Decision: keep `[scan.generated_in_src].doctor = true` as the default because runtime and noise are acceptable for default health runs.
 
 ## 12) Next Task

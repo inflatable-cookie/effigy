@@ -20,7 +20,7 @@ private-registry safety.
 - wire live OCI pull plus staging into `effigy artifact stage`
 - keep local artifact staging behavior unchanged
 - add focused tests with fake transport fixtures before any live registry proof
-- document how Acowtancy/UAT should provide credentials without env-file seed
+- document how Example App/UAT should provide credentials without env-file seed
   configuration
 
 ## Non-Goals

@@ -2,11 +2,11 @@
 
 ## Scope
 
-Validate foundational built-in routing behavior in a real workspace (`acowtancy`) after generic built-in dispatch changes.
+Validate foundational built-in routing behavior in a real workspace (`example-app`) after generic built-in dispatch changes.
 
 ## Environment
 
-- Workspace: `~/Dev/projects/acowtancy`
+- Workspace: `~/Dev/projects/example-app`
 - Effigy binary (dev): `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- ...`
 - Date: 2026-02-27
 

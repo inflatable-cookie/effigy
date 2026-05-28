@@ -3,11 +3,11 @@
 Status: complete
 Created: 2026-03-12
 Roadmap: g01.029
-Batch: jetstream-released-surface-pilot
+Batch: pilot-repo-c-released-surface-pilot
 
 ## Summary
 
-Applied the Northstar + Effigy consumer contract to `jetstream` on released
+Applied the Northstar + Effigy consumer contract to `pilot-repo-c` on released
 `effigy v0.2.6` and confirmed that the released docs-policy surface works even
 when the repo already has a large research-heavy docs tree and a custom legacy
 docs contract script.
@@ -20,15 +20,15 @@ away from the released Effigy surface.
 
 ## Changes
 
-- normalized `jetstream/AGENTS.md`, `jetstream/README.md`, and
-  `jetstream/effigy.toml` so the repo teaches root-level `effigy` usage and
+- normalized `pilot-repo-c/AGENTS.md`, `pilot-repo-c/README.md`, and
+  `pilot-repo-c/effigy.toml` so the repo teaches root-level `effigy` usage and
   routes docs validation through native `qa:docs` / `qa:northstar`
 - added declarative `[docs_policy.indexes.vision]` and
-  `[docs_policy.next_actions.vision]` config in `jetstream/effigy.toml`
-- tightened `jetstream/docs/README.md`, `jetstream/docs/vision/README.md`,
-  `jetstream/docs/roadmaps/README.md`, and `jetstream/docs/logs/README.md`
+  `[docs_policy.next_actions.vision]` config in `pilot-repo-c/effigy.toml`
+- tightened `pilot-repo-c/docs/README.md`, `pilot-repo-c/docs/vision/README.md`,
+  `pilot-repo-c/docs/roadmaps/README.md`, and `pilot-repo-c/docs/logs/README.md`
   around explicit `## Next Task` headings and valid index behavior
-- added `jetstream/docs/policy/vision-next-task-verbs.txt` so the repo owns
+- added `pilot-repo-c/docs/policy/vision-next-task-verbs.txt` so the repo owns
   its vision next-task vocabulary
 - repaired high-volume broken-link debt in concept, prototype, and research
   docs by turning planned-but-missing concept pages into plain text references,
@@ -40,7 +40,7 @@ away from the released Effigy surface.
 
 ## Validation
 
-Validated directly in `jetstream` against released `effigy v0.2.6`:
+Validated directly in `pilot-repo-c` against released `effigy v0.2.6`:
 
 - `effigy tasks`
 - `effigy qa:northstar`
@@ -59,10 +59,10 @@ Validated directly in `jetstream` against released `effigy v0.2.6`:
 
 The released `0.2.6` surface is now proven on a harder class of consumer repo:
 
-- `signal` proved native docs-policy adoption on a straightforward consumer
+- `pilot-repo-d` proved native docs-policy adoption on a straightforward consumer
   repo
-- `convergence` proved coexistence with a broader existing validation lane
-- `jetstream` proves the same released docs-policy surface can absorb real docs
+- `pilot-repo-e` proved coexistence with a broader existing validation lane
+- `pilot-repo-c` proves the same released docs-policy surface can absorb real docs
   debt and coexist with a repo-owned legacy docs contract script
 
 The remaining cross-cutting product gap is unchanged: `effigy release

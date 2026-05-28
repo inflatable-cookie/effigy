@@ -17,7 +17,7 @@ stop treating it as a deferred edge.
   `colima nerdctl compose` path
 - harden the stop and closeout behavior so external stop requests route through
   one reliable container shutdown path
-- re-prove the fixed path honestly in `contact-patch`
+- re-prove the fixed path honestly in `example-site`
 - update the lane state based on the real result
 
 ## Out Of Scope
@@ -37,7 +37,7 @@ stop treating it as a deferred edge.
 ## Validation
 
 - targeted tests for the stop/closeout path
-- one real `contact-patch` proof update
+- one real `example-site` proof update
 - `cargo run --bin effigy -- qa:docs`
 - `git diff --check`
 

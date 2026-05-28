@@ -42,7 +42,7 @@ release policy, hooks, health checks, and durable deployment reports.
 - no command implementation
 - no provider execution
 - no Render or Railway CLI calls
-- no Acowtancy-specific migration logic
+- no Example App-specific migration logic
 - no release execution
 - no `.github/workflows/` edits
 
@@ -56,7 +56,7 @@ Effigy now has the separate primitives needed for deployment:
 - release readiness and gates
 - task execution and Rhai hooks
 
-Acowtancy needs those primitives composed into one predictable UAT and
+Example App needs those primitives composed into one predictable UAT and
 production deployment transaction.
 
 ## Acceptance Criteria

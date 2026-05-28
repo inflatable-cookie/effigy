@@ -53,7 +53,7 @@ This batch proves a new adoption mode explicitly:
 - docs authority migrated independently
 - native docs-policy and docs QA applied only where the repo contract allows
 
-That is different from the earlier `contact-patch` and `underlay-reference`
+That is different from the earlier `example-site` and `underlay-reference`
 cohort, where the workspace roots were also updated to expose root-level
 `qa:docs` and `qa:northstar` orchestration.
 

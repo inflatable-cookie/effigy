@@ -83,9 +83,9 @@ Recommended first envelope:
   "schema": "deploy.model.v1",
   "schema_version": 1,
   "app": {
-    "name": "contact-patch",
+    "name": "example-site",
     "bundle": "acme",
-    "project_name": "contact-patch"
+    "project_name": "example-site"
   },
   "services": [],
   "backing_services": [],

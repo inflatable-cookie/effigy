@@ -7,7 +7,7 @@ Spec: `docs/specs/archive/005-optional-distribution-surface-strict-lane.md`
 
 ## Objective
 
-Widen the optional distribution surface only where the `convergence` consumer
+Widen the optional distribution surface only where the `pilot-repo-e` consumer
 proof exposed concrete remaining Effigy-shaped assumptions.
 
 ## In Scope
@@ -17,7 +17,7 @@ proof exposed concrete remaining Effigy-shaped assumptions.
 - remove or loosen `distribution first-publish` assumptions that require an
   Effigy-style CLI self-inspection path such as `--json tasks`
 - keep the widening anchored to the specific consumer-proof evidence from
-  `convergence`
+  `pilot-repo-e`
 - update the distribution guide and manifest contract docs to match the widened
   boundary honestly
 
@@ -29,14 +29,14 @@ proof exposed concrete remaining Effigy-shaped assumptions.
 
 ## Acceptance Criteria
 
-- the `convergence` proof gaps are either removed or moved behind explicit
+- the `pilot-repo-e` proof gaps are either removed or moved behind explicit
   manifest policy
 - the widened surface stays optional and composable
 - the lane has an honest next boundary after the widening
 
 ## Validation
 
-- rerun the relevant consumer-proof command path against `convergence`
+- rerun the relevant consumer-proof command path against `pilot-repo-e`
 - `cargo run --bin effigy -- qa:docs`
 - `git diff --check`
 

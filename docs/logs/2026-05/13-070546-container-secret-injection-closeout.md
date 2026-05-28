@@ -6,7 +6,7 @@ Closed `g05.005`.
 
 - Marked `g05.005` complete.
 - Marked strict lane `080` complete.
-- Added ready card `719` for the Underlay/Acowtancy config migration proof.
+- Added ready card `719` for the Underlay/Example App config migration proof.
 - Updated roadmap/spec front doors to point at `719`.
 
 ## Current State
@@ -22,4 +22,4 @@ an explicit plaintext bridge and refuses repo-root `.env`.
 
 ## Next
 
-Execute `719` to prove the config/secrets split in Underlay and Acowtancy.
+Execute `719` to prove the config/secrets split in Underlay and Example App.

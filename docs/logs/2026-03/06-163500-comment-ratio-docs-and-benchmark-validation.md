@@ -8,7 +8,7 @@ Batch: comment-ratio-docs-and-benchmark-validation
 ## Summary
 - Updated the operator docs, manifest cookbook, JSON contract guide, snippets, schema index, and roadmap indexes to include `effigy scan comment-ratio`.
 - Validated standalone scan contracts, doctor integration, CLI JSON envelope coverage, and the schema/help surfaces.
-- Benchmarked `comment-ratio` on `acowtancy` and used the result to make a default-doctor decision.
+- Benchmarked `comment-ratio` on `example-app` and used the result to make a default-doctor decision.
 
 ## Changes
 - Added `comment-ratio` coverage to:

@@ -144,7 +144,7 @@ Boundary:
 - Startup-time container secrets are different from task exec secrets.
 - Persistent repo-root `.env` generation must become compatibility only.
 
-## Underlay And Acowtancy Classification
+## Underlay And Example App Classification
 
 ### Underlay Bundle
 
@@ -165,11 +165,11 @@ Boundary:
 - Local generated credentials should either be stored in the Effigy vault or
   generated into an explicit compatibility file under `.effigy/runtime/`.
 
-### Acowtancy
+### Example App
 
 Evidence:
 
-- Acowtancy has `.env` files in `cream`, `dairy`, and `farmyard`.
+- Example App has `.env` files in `cream`, `dairy`, and `farmyard`.
 - `cream` and `dairy` `.env` files only contain public URL/version config.
 - `farmyard/.env` mixes ordinary config with true credentials and local
   generated secrets.
@@ -222,7 +222,7 @@ Do not implement these in `g05.002`:
 - Existing Render provider package env-var compatibility must keep working
   until `g05.004`.
 - Existing Underlay bootstrap `.env` generation must not be removed before
-  the Acowtancy proof has a replacement path.
+  the Example App proof has a replacement path.
 
 ## Blockers
 

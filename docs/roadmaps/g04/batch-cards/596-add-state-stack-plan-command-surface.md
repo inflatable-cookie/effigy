@@ -23,7 +23,7 @@ Expose the state-stack manifest foundation through a narrow planning command.
 - no `apply`, `capture`, or `rebase` execution
 - no app hook execution
 - no durable lineage ledger
-- no Acowtancy-specific command behavior
+- no Example App-specific command behavior
 - no release work
 
 ## Exit Condition

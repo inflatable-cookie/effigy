@@ -20,7 +20,7 @@ The lane now has enough real evidence to stop widening:
   Effigy-owned session shape
 - repos can now expose named container sessions through
   `container_session = "..."` without dropping back to raw compose shell glue
-- `contact-patch` proved detached bring-up, running status, graceful teardown,
+- `example-site` proved detached bring-up, running status, graceful teardown,
   and repo-owned task-session launch on a real machine
 
 The remaining open question is narrower and explicit:
@@ -43,7 +43,7 @@ What is now trustworthy to claim:
 - explicit `primary_service`
 - attached Effigy-owned container sessions
 - repo-owned task aliases via `container_session = "..."`
-- one honest bounded consumer proof in `contact-patch`
+- one honest bounded consumer proof in `example-site`
 
 What remains explicitly deferred:
 

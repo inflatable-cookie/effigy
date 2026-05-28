@@ -117,7 +117,7 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
-      "command": "effigy --json state plan docs/contracts/fixtures/state-stack/acowtancy-uat.toml",
+      "command": "effigy --json state plan docs/contracts/fixtures/state-stack/example-app-uat.toml",
       "surface": "built-in task",
       "status": "active",
       "payload_schema": "effigy.state-stack.lineage.v1"
@@ -125,7 +125,7 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
-      "command": "effigy --json state apply docs/contracts/fixtures/state-stack/acowtancy-uat.toml",
+      "command": "effigy --json state apply docs/contracts/fixtures/state-stack/example-app-uat.toml",
       "surface": "built-in task",
       "status": "active",
       "payload_schema": "effigy.state-stack.apply.v1"
@@ -133,7 +133,7 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
-      "command": "effigy --json state capture docs/contracts/fixtures/state-stack/acowtancy-uat.toml --role uat-capture --source-env uat --key uat-capture-2026-05-08 --ref oci://ghcr.io/acowtancy/content:uat-capture-2026-05-08",
+      "command": "effigy --json state capture docs/contracts/fixtures/state-stack/example-app-uat.toml --role uat-capture --source-env uat --key uat-capture-2026-05-08 --ref oci://ghcr.io/example-app/content:uat-capture-2026-05-08",
       "surface": "built-in task",
       "status": "active",
       "payload_schema": "effigy.state-stack.capture.v1"
@@ -141,7 +141,7 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
-      "command": "effigy --json state history --stack acowtancy-uat",
+      "command": "effigy --json state history --stack example-app-uat",
       "surface": "built-in task",
       "status": "active",
       "payload_schema": "effigy.state-stack.history.v1"

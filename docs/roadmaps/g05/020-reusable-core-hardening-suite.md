@@ -35,7 +35,7 @@ bundle repos.
 
 ## Execution Guardrails
 
-- do not reintroduce Render, Railway, Underlay, Decodelabs, or Acowtancy as
+- do not reintroduce Render, Railway, Underlay, Decodelabs, or Example App as
   core Rust concepts
 - do not edit files under `external/` unless the user explicitly asks for
   submodule/provider-repo work

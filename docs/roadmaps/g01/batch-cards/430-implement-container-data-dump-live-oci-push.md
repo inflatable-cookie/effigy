@@ -25,7 +25,7 @@ SQL dump as an OCI artifact.
 - no implicit registry mutation
 - no overwrite flag
 - no credential manager
-- no Acowtancy app migration changes
+- no Example App app migration changes
 - no `.github/workflows/` edits
 - no release work
 

@@ -19,11 +19,11 @@ Shipped changes:
 
 ## Consumer Proof
 
-Bounded consumer repo: `contact-patch`
+Bounded consumer repo: `example-site`
 
 Real proof:
 
-- launched `target/debug/effigy dev:services --repo /Users/tom/Dev/projects/contact-patch`
+- launched `target/debug/effigy dev:services --repo /Users/tom/Dev/projects/example-site`
 - sent timed `SIGINT` during the non-PTY stream path
 - Effigy exited `0`
 - closeout reported:
@@ -56,7 +56,7 @@ distribution release closure.
 
 - `cargo test --test cli_output_tests container`
 - `cargo test --lib container`
-- real `contact-patch` timed-`SIGINT` proof plus post-stop status check
+- real `example-site` timed-`SIGINT` proof plus post-stop status check
 - `cargo run --bin effigy -- qa:docs`
 - `git diff --check`
 

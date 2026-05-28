@@ -271,5 +271,5 @@ Effigy owns the tooling. Underlay owns the app-facing convention.
 - Task, container, Rhai, and deploy paths can consume declared secrets through
   one model.
 - Secret values are redacted from normal output and reports.
-- Underlay and Acowtancy can move non-secret `.env` values into ordinary config.
+- Underlay and Example App can move non-secret `.env` values into ordinary config.
 - Varlock is clearly documented as deferred.

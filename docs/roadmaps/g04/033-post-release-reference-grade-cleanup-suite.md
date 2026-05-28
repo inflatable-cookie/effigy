@@ -6,7 +6,7 @@ Status: Complete
 Owner: Platform
 Created: 2026-05-12
 Depends on:
-- [`032-acowtancy-deployment-proof-and-closeout.md`](./032-acowtancy-deployment-proof-and-closeout.md)
+- [`032-example-app-deployment-proof-and-closeout.md`](./032-example-app-deployment-proof-and-closeout.md)
 
 ## Goal
 
@@ -57,7 +57,7 @@ Primary evidence:
 - each follow-up roadmap names its target evidence and success criteria
 - the first execution move is explicit
 - implementation batch cards are deferred until each lane opens
-- the suite keeps the Acowtancy migration/deployment path in view, especially
+- the suite keeps the Example App migration/deployment path in view, especially
   shared data target resolution and state extraction
 
 ## Validation
@@ -75,4 +75,4 @@ Primary evidence:
 ## Next Task
 
 Open shared database target resolution. It removes a real split path before
-state, media, and Acowtancy migration work build on it.
+state, media, and Example App migration work build on it.

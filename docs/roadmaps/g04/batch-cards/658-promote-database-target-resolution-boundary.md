@@ -29,7 +29,7 @@ exact shared owner and API boundary before code extraction starts.
 - no CLI behavior changes
 - no JSON schema changes
 - no media/object-store implementation
-- no Acowtancy-specific logic
+- no Example App-specific logic
 
 ## Acceptance
 

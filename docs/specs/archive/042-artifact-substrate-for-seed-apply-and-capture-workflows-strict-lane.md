@@ -9,7 +9,7 @@ Created: 2026-05-06
 ## Purpose
 
 Create a standalone Effigy artifact substrate for local and OCI data payloads
-used by bootstrap, container data seed/dump, and Acowtancy UAT apply/capture
+used by bootstrap, container data seed/dump, and Example App UAT apply/capture
 workflows.
 
 This lane keeps the artifact surface separate from config bundles and separate
@@ -21,7 +21,7 @@ semantics.
 
 - do not edit `.github/workflows/`
 - do not initiate release commands
-- do not move Acowtancy migration/coercion logic into Effigy
+- do not move Example App migration/coercion logic into Effigy
 - do not make OCI refs implicit; first-round OCI refs use `oci://`
 - do not log registry credentials or tokens
 - preserve local SQL seed behavior while widening it through artifact staging
@@ -33,12 +33,12 @@ None.
 
 ## Execution Chain
 
-- `415` complete: artifact contract and Acowtancy boundary
+- `415` complete: artifact contract and Example App boundary
 - `416` complete: scaffold `effigy-artifacts`
 - `417` complete: local artifact staging for seed inputs
 - `418` complete: OCI pull/inspect/stage core
 - `419` complete: seed/dump apply/capture integration
-- `420` complete: Acowtancy proof and closeout
+- `420` complete: Example App proof and closeout
 - `421` complete: public artifact inspect/stage and Farmyard handoff output
 - `422` complete: live OCI transport and private-registry proof
 - `423` complete: wire OCI artifact refs into seed surfaces and park dump push
@@ -56,7 +56,7 @@ None.
 
 This lane closes when local SQL and OCI artifact sources resolve through one
 metadata/staging model, seed/dump surfaces can consume that model, UAT
-apply/capture reports are defined, and the Acowtancy proof keeps app-owned
+apply/capture reports are defined, and the Example App proof keeps app-owned
 migration logic outside Effigy.
 
 ## Next Task

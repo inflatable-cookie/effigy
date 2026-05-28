@@ -7,7 +7,7 @@ Card: `107`
 ## Summary
 
 Shipped the first bounded `effigy container` foundation inside Effigy, then
-proved it against `contact-patch` as one safe real consumer repo.
+proved it against `example-site` as one safe real consumer repo.
 
 The batch delivered:
 
@@ -69,7 +69,7 @@ Documentation changes:
 
 Chosen consumer repo:
 
-- `contact-patch`
+- `example-site`
 
 Why it was safe:
 
@@ -88,12 +88,12 @@ Consumer config added:
 Real proof commands:
 
 ```sh
-cargo run --bin effigy -- container status --repo /Users/tom/Dev/projects/contact-patch --json
-cargo run --bin effigy -- container up --repo /Users/tom/Dev/projects/contact-patch --detach --json
-cargo run --bin effigy -- container status --repo /Users/tom/Dev/projects/contact-patch --json
-cargo run --bin effigy -- container down --repo /Users/tom/Dev/projects/contact-patch --json
-cargo run --bin effigy -- container status --repo /Users/tom/Dev/projects/contact-patch --json
-colima stop --profile contact-patch
+cargo run --bin effigy -- container status --repo /Users/tom/Dev/projects/example-site --json
+cargo run --bin effigy -- container up --repo /Users/tom/Dev/projects/example-site --detach --json
+cargo run --bin effigy -- container status --repo /Users/tom/Dev/projects/example-site --json
+cargo run --bin effigy -- container down --repo /Users/tom/Dev/projects/example-site --json
+cargo run --bin effigy -- container status --repo /Users/tom/Dev/projects/example-site --json
+colima stop --profile example-site
 ```
 
 Observed result:
@@ -117,7 +117,7 @@ Batch validation:
 
 - `cargo run --bin effigy -- qa:docs`
 - `git diff --check`
-- `git -C /Users/tom/Dev/projects/contact-patch diff --check`
+- `git -C /Users/tom/Dev/projects/example-site diff --check`
 
 ## Churn Check
 

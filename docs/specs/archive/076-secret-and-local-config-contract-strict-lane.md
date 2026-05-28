@@ -50,6 +50,6 @@ vault implementation.
 ## Next Task
 
 Execute `702` to audit current `.env`, `.env.schema`, container, deploy, Rhai,
-Underlay, and Acowtancy config/secret boundaries before implementing parser or
+Underlay, and Example App config/secret boundaries before implementing parser or
 vault behavior.
 

@@ -19,7 +19,7 @@ bounded pilot slice for Rust-first repos.
 - classify current non-Bun script surfaces in:
   - `effigy`
   - `keepsake`
-  - `jetstream`
+  - `pilot-repo-c`
 - make Jetstream's “full migration target” posture explicit
 - choose the first pilot implementation slice
 

@@ -176,7 +176,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-05/13-235616-g05-post-release-follow-through-lane-opened-and-first-state-slice.md`](./2026-05/13-235616-g05-post-release-follow-through-lane-opened-and-first-state-slice.md)
 - [`2026-05/13-074500-g05-secret-management-closeout.md`](./2026-05/13-074500-g05-secret-management-closeout.md)
 - [`2026-05/13-073000-varlock-deferral-decision.md`](./2026-05/13-073000-varlock-deferral-decision.md)
-- [`2026-05/13-072147-underlay-acowtancy-config-proof.md`](./2026-05/13-072147-underlay-acowtancy-config-proof.md)
+- [`2026-05/13-072147-underlay-example-app-config-proof.md`](./2026-05/13-072147-underlay-example-app-config-proof.md)
 - [`2026-05/13-070546-container-secret-injection-closeout.md`](./2026-05/13-070546-container-secret-injection-closeout.md)
 - [`2026-05/12-232310-compat-env-export.md`](./2026-05/12-232310-compat-env-export.md)
 - [`2026-05/12-231623-container-secret-injection.md`](./2026-05/12-231623-container-secret-injection.md)
@@ -433,7 +433,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-04/15-181500-post-container-session-and-task-composition-boundary-decision.md`](./2026-04/15-181500-post-container-session-and-task-composition-boundary-decision.md)
 - [`2026-04/15-182500-container-lane-reopen-for-live-stop-hardening.md`](./2026-04/15-182500-container-lane-reopen-for-live-stop-hardening.md)
 - [`2026-04/15-173500-attached-container-session-ux-and-task-composition.md`](./2026-04/15-173500-attached-container-session-ux-and-task-composition.md)
-- [`2026-04/15-165500-colima-container-foundation-and-contact-patch-consumer-proof.md`](./2026-04/15-165500-colima-container-foundation-and-contact-patch-consumer-proof.md)
+- [`2026-04/15-165500-colima-container-foundation-and-example-site-consumer-proof.md`](./2026-04/15-165500-colima-container-foundation-and-example-site-consumer-proof.md)
 - [`2026-04/15-131500-colima-container-v1-contract-decision.md`](./2026-04/15-131500-colima-container-v1-contract-decision.md)
 - [`2026-04/15-123000-container-contract-and-four-milestone-sequence-planning.md`](./2026-04/15-123000-container-contract-and-four-milestone-sequence-planning.md)
 - [`2026-04/15-111500-post-consumer-gap-widening-boundary-decision.md`](./2026-04/15-111500-post-consumer-gap-widening-boundary-decision.md)
@@ -548,14 +548,14 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-03-12-consumer-adoption-closeout-matrix.md`](./2026-03/12-220500-consumer-adoption-closeout-matrix.md)
 - [`2026-03-12-songsprout-root-delegation-follow-up.md`](./2026-03/12-214500-songsprout-root-delegation-follow-up.md)
 - [`2026-03-12-songsprout-trellis-authority-only-pilot.md`](./2026-03/12-212500-songsprout-trellis-authority-only-pilot.md)
-- [`2026-03-12-workspace-docs-authority-cohort-contact-patch-underlay-reference.md`](./2026-03/12-210000-workspace-docs-authority-cohort-contact-patch-underlay-reference.md)
-- [`2026-03-12-jetstream-released-surface-pilot.md`](./2026-03/12-193800-jetstream-released-surface-pilot.md)
-- [`2026-03-12-convergence-released-surface-pilot.md`](./2026-03/12-190515-convergence-released-surface-pilot.md)
-- [`2026-03-12-signal-released-surface-pilot.md`](./2026-03/12-184800-signal-released-surface-pilot.md)
-- [`2026-03-12-acowtancy-workspace-ledger-authority-pilot.md`](./2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md)
+- [`2026-03-12-workspace-docs-authority-cohort-example-site-underlay-reference.md`](./2026-03/12-210000-workspace-docs-authority-cohort-example-site-underlay-reference.md)
+- [`2026-03-12-pilot-repo-c-released-surface-pilot.md`](./2026-03/12-193800-pilot-repo-c-released-surface-pilot.md)
+- [`2026-03-12-pilot-repo-e-released-surface-pilot.md`](./2026-03/12-190515-pilot-repo-e-released-surface-pilot.md)
+- [`2026-03-12-pilot-repo-d-released-surface-pilot.md`](./2026-03/12-184800-pilot-repo-d-released-surface-pilot.md)
+- [`2026-03-12-example-app-workspace-ledger-authority-pilot.md`](./2026-03/12-174500-example-app-workspace-ledger-authority-pilot.md)
 - [`2026-03-12-underlay-single-repo-pilot.md`](./2026-03/12-163200-underlay-single-repo-pilot.md)
-- [`2026-03-12-compli-me-workspace-docs-authority-pilot.md`](./2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md)
-- [`2026-03-12-monkey-wave-1-pilot-and-released-surface-gap.md`](./2026-03/12-142509-monkey-wave1-pilot-and-released-surface-gap.md)
+- [`2026-03-12-pilot-repo-b-workspace-docs-authority-pilot.md`](./2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md)
+- [`2026-03-12-pilot-repo-a-wave-1-pilot-and-released-surface-gap.md`](./2026-03/12-142509-pilot-repo-a-wave1-pilot-and-released-surface-gap.md)
 - [`2026-03-12-release-checkpoint-v0-2-5.md`](./2026-03/12-131500-release-checkpoint-v0-2-5.md)
 - [`2026-03-12-remaining-script-boundary-audit.md`](./2026-03/12-114500-remaining-script-boundary-audit.md)
 - [`2026-03-12-docs-policy-task-chain-closeout.md`](./2026-03/12-111500-docs-policy-task-chain-closeout.md)
@@ -677,21 +677,21 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 
 - [`2026-03/12-135650-consumer-adoption-landscape-scan.md`](./2026-03/12-135650-consumer-adoption-landscape-scan.md)
 
-- [`2026-03/12-141200-monkey-consumer-contract-gap-assessment.md`](./2026-03/12-141200-monkey-consumer-contract-gap-assessment.md)
+- [`2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md`](./2026-03/12-141200-pilot-repo-a-consumer-contract-gap-assessment.md)
 
-- [`2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md`](./2026-03/12-155600-compli-me-workspace-docs-authority-pilot.md)
+- [`2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md`](./2026-03/12-155600-pilot-repo-b-workspace-docs-authority-pilot.md)
 
 - [`2026-03/12-163200-underlay-single-repo-pilot.md`](./2026-03/12-163200-underlay-single-repo-pilot.md)
 
-- [`2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md`](./2026-03/12-174500-acowtancy-workspace-ledger-authority-pilot.md)
+- [`2026-03/12-174500-example-app-workspace-ledger-authority-pilot.md`](./2026-03/12-174500-example-app-workspace-ledger-authority-pilot.md)
 
-- [`2026-03/12-184800-signal-released-surface-pilot.md`](./2026-03/12-184800-signal-released-surface-pilot.md)
+- [`2026-03/12-184800-pilot-repo-d-released-surface-pilot.md`](./2026-03/12-184800-pilot-repo-d-released-surface-pilot.md)
 
-- [`2026-03/12-190515-convergence-released-surface-pilot.md`](./2026-03/12-190515-convergence-released-surface-pilot.md)
+- [`2026-03/12-190515-pilot-repo-e-released-surface-pilot.md`](./2026-03/12-190515-pilot-repo-e-released-surface-pilot.md)
 
-- [`2026-03/12-193800-jetstream-released-surface-pilot.md`](./2026-03/12-193800-jetstream-released-surface-pilot.md)
+- [`2026-03/12-193800-pilot-repo-c-released-surface-pilot.md`](./2026-03/12-193800-pilot-repo-c-released-surface-pilot.md)
 
-- [`2026-03/12-210000-workspace-docs-authority-cohort-contact-patch-underlay-reference.md`](./2026-03/12-210000-workspace-docs-authority-cohort-contact-patch-underlay-reference.md)
+- [`2026-03/12-210000-workspace-docs-authority-cohort-example-site-underlay-reference.md`](./2026-03/12-210000-workspace-docs-authority-cohort-example-site-underlay-reference.md)
 
 - [`2026-03/12-212500-songsprout-trellis-authority-only-pilot.md`](./2026-03/12-212500-songsprout-trellis-authority-only-pilot.md)
 
@@ -732,7 +732,7 @@ See `docs/vision/history/README.md` for archived vision rollout checklists and c
 - [`2026-02-26-effigy-extraction-and-migration-checkpoint.md`](./2026-02/26-090200-effigy-extraction-and-migration-checkpoint.md)
 - [`2026-02-26-legacy-and-active-repo-smoke-sweep.md`](./2026-02/26-090300-legacy-and-active-repo-smoke-sweep.md)
 - [`2026-02-26-path-install-and-release-workflow-validation.md`](./2026-02/26-090400-path-install-and-release-workflow-validation.md)
-- [`2026-02-27-acowtancy-testing-orchestration-validation.md`](./2026-02/27-090000-acowtancy-testing-orchestration-validation.md)
+- [`2026-02-27-example-app-testing-orchestration-validation.md`](./2026-02/27-090000-example-app-testing-orchestration-validation.md)
 - [`2026-02-27-builtin-health-fallback-smoke-checkpoint.md`](./2026-02/27-090100-builtin-health-fallback-smoke-checkpoint.md)
 - [`2026-02-27-builtin-prefixed-routing-smoke-checkpoint.md`](./2026-02/27-090200-builtin-prefixed-routing-smoke-checkpoint.md)
 - [`2026-02-27-catalogs-diagnostics-validation.md`](./2026-02/27-090300-catalogs-diagnostics-validation.md)

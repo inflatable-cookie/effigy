@@ -7,7 +7,7 @@ Related roadmap: 002-deferral-fallback-system
 ## Scope
 - Validate direct source-run usage (`cargo run --manifest-path ... --bin effigy -- ...`) against:
 - `~/Dev/legacy/sites/r7-playground` (legacy PHP-effigy project)
-- `~/Dev/projects/acowtancy` (active effigy-catalog workspace)
+- `~/Dev/projects/example-app` (active effigy-catalog workspace)
 - Confirm expected behavior for:
 - built-in task (`repo-pulse`)
 - catalog listing (`tasks`)
@@ -29,7 +29,7 @@ Related roadmap: 002-deferral-fallback-system
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- repo-pulse`
   - result: exit 0, pulse report rendered, root markers include `package.json, .git`.
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- tasks`
-  - result: exit 0, catalogs and tasks rendered (acowtancy/cream/dairy/farmyard).
+  - result: exit 0, catalogs and tasks rendered (example-app/cream/dairy/farmyard).
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- version`
   - result: exit 1, expected unresolved-task error, no deferral engaged.
 

@@ -71,4 +71,4 @@ effigy secrets export --format env --output <PATH> --yes
 
 ## Next Task
 
-Prove the config/secrets split in Underlay and Acowtancy in `g05.006`.
+Prove the config/secrets split in Underlay and Example App in `g05.006`.

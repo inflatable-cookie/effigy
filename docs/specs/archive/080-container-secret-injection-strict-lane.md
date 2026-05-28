@@ -85,4 +85,4 @@ explicit bridge, and generated plaintext is avoided by the injection path.
 
 ## Next Task
 
-Execute `719` to prove the config/secrets split in Underlay and Acowtancy.
+Execute `719` to prove the config/secrets split in Underlay and Example App.

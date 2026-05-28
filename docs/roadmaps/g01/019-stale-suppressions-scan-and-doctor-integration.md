@@ -179,7 +179,7 @@ Expected properties:
 ### Batch 19.4 - Documentation and Validation
 - [x] Update command docs, manifest cookbook, JSON examples, and snippets.
 - [x] Add regression coverage for nested repos, `.gitignore` behavior, and marker de-duplication.
-- [x] Benchmark a real repo such as `acowtancy` to confirm runtime and default doctor signal quality.
+- [x] Benchmark a real repo such as `example-app` to confirm runtime and default doctor signal quality.
 
 ## 8) Acceptance Criteria
 
@@ -221,4 +221,4 @@ Expected properties:
 
 Status: complete
 
-The stale-suppressions scanner is fully landed as a standalone `scan` command with optional doctor integration. Benchmarking on `acowtancy` kept doctor support opt-in by default because the scan is useful but too noisy for routine health runs.
+The stale-suppressions scanner is fully landed as a standalone `scan` command with optional doctor integration. Benchmarking on `example-app` kept doctor support opt-in by default because the scan is useful but too noisy for routine health runs.

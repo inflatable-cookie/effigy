@@ -11,7 +11,7 @@ Validate deterministic suite selection behavior across mixed-suite repositories 
 ## Validation Matrix
 
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test smoke`
-  - cwd: `~/Dev/projects/acowtancy`
+  - cwd: `~/Dev/projects/example-app`
   - result: fails with expected ambiguity error (`cargo-nextest, vitest`) and explicit remediation to provide suite token.
 
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- test --plan`
@@ -27,7 +27,7 @@ Validate deterministic suite selection behavior across mixed-suite repositories 
   - result: executes selected suite only (`root/vitest`), no cross-suite fanout; returned non-zero because no test files matched the filter, with expected no-match hint.
 
 - command: `cargo run --manifest-path ~/Dev/projects/effigy/Cargo.toml --bin effigy -- farmyard/test --plan`
-  - cwd: `~/Dev/projects/acowtancy`
+  - cwd: `~/Dev/projects/example-app`
   - result: prefixed routing resolves to `farmyard` target root and selects `cargo-nextest` deterministically.
 
 ## Findings

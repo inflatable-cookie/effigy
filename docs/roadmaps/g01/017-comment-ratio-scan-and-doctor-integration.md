@@ -123,7 +123,7 @@ The command should allow CLI overrides for:
 
 Initial doctor policy:
 - ship doctor integration in the roadmap
-- after `acowtancy` benchmark validation, keep `[scan.comment_ratio].doctor = true` as the default
+- after `example-app` benchmark validation, keep `[scan.comment_ratio].doctor = true` as the default
 
 ## 6) Detection Strategy
 
@@ -164,7 +164,7 @@ Expected properties:
 ### Batch 17.4 - Documentation and Validation
 - [x] Update command docs, manifest cookbook, JSON examples, and snippets.
 - [x] Add regression coverage for nested repos, `.gitignore` behavior, and language fallback behavior.
-- [x] Benchmark real repos such as `acowtancy` to validate runtime and noise before enabling doctor by default.
+- [x] Benchmark real repos such as `example-app` to validate runtime and noise before enabling doctor by default.
 
 ## 8) Acceptance Criteria
 
@@ -203,7 +203,7 @@ Expected properties:
 - [x] benchmark logs for at least one real repo before changing default doctor participation
 
 Benchmark summary:
-- `acowtancy` standalone `scan comment-ratio` run: `scanned-files=1905`, `candidate-files=1472`, `findings=15`, `real=2.41s`
+- `example-app` standalone `scan comment-ratio` run: `scanned-files=1905`, `candidate-files=1472`, `findings=15`, `real=2.41s`
 - Decision: keep `[scan.comment_ratio].doctor = true` as the default because runtime and noise are acceptable for default health runs.
 
 ## 12) Next Task

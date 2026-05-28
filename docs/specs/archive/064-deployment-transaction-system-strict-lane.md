@@ -20,7 +20,7 @@ This lane owns:
 - Railway provider apply adapter
 - Render provider apply adapter
 - deployment status/history/redeploy
-- Acowtancy deployment proof and closeout
+- Example App deployment proof and closeout
 
 ## Hard Boundaries
 
@@ -35,7 +35,7 @@ This lane owns:
 - deploy may consume release evidence, but must not run release prepare or
   release execute
 - no automatic database or media rollback
-- no Acowtancy-specific transform or reconciliation logic in Effigy
+- no Example App-specific transform or reconciliation logic in Effigy
 - no `.github/workflows/` edits
 
 ## Coordination Boundaries
@@ -53,7 +53,7 @@ None. The lane is complete for the v0.6.0 deployment slice.
   boundaries, and selected the first future implementation boundary
 - `636` complete: closed the deployment transaction suite with config parsing,
   plan/apply/status/history/redeploy commands, Railway/Render transaction
-  report support, docs, tests, and Acowtancy proof documentation
+  report support, docs, tests, and Example App proof documentation
 
 ## Exit Condition
 

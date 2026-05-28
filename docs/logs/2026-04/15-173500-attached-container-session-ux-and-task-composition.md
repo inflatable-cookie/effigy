@@ -25,14 +25,14 @@ Shipped changes:
 
 ## Consumer Proof
 
-Bounded consumer repo: `contact-patch`
+Bounded consumer repo: `example-site`
 
 Consumer widening:
 
 - added `tasks."dev:services".container_session = "default"` alongside the
   existing `services` container registry
 - exercised the repo-owned task path on the real machine through:
-  - `target/debug/effigy dev:services --repo /Users/tom/Dev/projects/contact-patch`
+  - `target/debug/effigy dev:services --repo /Users/tom/Dev/projects/example-site`
 
 Real proof result:
 
@@ -51,10 +51,10 @@ Real proof result:
 - `cargo test --test cli_output_tests container`
 - `cargo test --lib command_kind_and_name_maps_command_variants`
 - `cargo test --lib run_manifest_task_builtin_config_schema_prints_canonical_template`
-- real consumer proof launch via `target/debug/effigy dev:services --repo /Users/tom/Dev/projects/contact-patch`
+- real consumer proof launch via `target/debug/effigy dev:services --repo /Users/tom/Dev/projects/example-site`
 - `cargo run --bin effigy -- qa:docs`
 - `git diff --check`
-- `git -C /Users/tom/Dev/projects/contact-patch diff --check`
+- `git -C /Users/tom/Dev/projects/example-site diff --check`
 
 ## Churn
 

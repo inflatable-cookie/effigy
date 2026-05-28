@@ -66,7 +66,7 @@ It is not the right answer for:
 
 ### Rhai-First, But Needs Deeper Migration Planning
 
-- `jetstream`
+- `pilot-repo-c`
 
 Jetstream is the important exception to the usual “keep Python where it is
 substantive” rule. Jetstream's own developer experience intends to promote
@@ -77,11 +77,11 @@ today's analysis and orchestration surfaces honestly.
 
 ### Bun + TypeScript Defaults
 
-- `convergence`
+- `pilot-repo-e`
 - `soundcheck`
-- `compli-me`
+- `pilot-repo-b`
 - `songsprout`
-- `signal`
+- `pilot-repo-d`
 - similar web/app repos
 
 ### Mixed / Ecosystem-Driven Cases

@@ -53,7 +53,7 @@ Landed. The real-project proof now covers both sides of the shipped contract:
   generated services is feasible on the shipped path
 - HTTP route registration still works honestly on the generated path, with
   `acme.test`, `admin.acme.test`, `api.acme.test`,
-  `contact-patch.legacy.test`, and `pma.contact-patch.legacy.test`
+  `example-site.legacy.test`, and `pma.example-site.legacy.test`
   all re-registered against live runtime published ports
 - the current lane code derives and registers DNS-only TCP aliases for both
   project-owned and shared-service stacks, and those aliases are now reachable
@@ -72,7 +72,7 @@ Landed. The real-project proof now covers both sides of the shipped contract:
 - the repo README now documents the same alias-first runtime wiring instead of
   the old direct `postgres` / `mailpit` / `minio` container names
 - multi-label project hosts now keep their full alias domain shape
-  (`db.contact-patch.legacy.test`, not `db.legacy.test`)
+  (`db.example-site.legacy.test`, not `db.legacy.test`)
 - gateway registration now prunes stale container routes for a project before
   writing the current route set, so proof reruns do not leave orphaned old
   alias domains behind

@@ -3,16 +3,16 @@
 Status: complete
 Created: 2026-03-12
 Roadmap: g01.029
-Batch: convergence-released-surface-pilot
+Batch: pilot-repo-e-released-surface-pilot
 
 ## Summary
 
-Applied the Northstar + Effigy consumer contract to `convergence` on released
+Applied the Northstar + Effigy consumer contract to `pilot-repo-e` on released
 `effigy v0.2.6` and confirmed that the released binary now supports the native
 docs-validation path on another real non-Effigy repo with an established
 Northstar docs spine.
 
-Unlike the earlier `signal` batch, this pilot also completed the repo-owned
+Unlike the earlier `pilot-repo-d` batch, this pilot also completed the repo-owned
 runtime validation path after the docs contract was installed, showing that the
 new task graph coexists cleanly with an already substantial existing test
 surface.
@@ -37,7 +37,7 @@ surface.
 
 ## Validation
 
-Validated directly in `convergence` against released `effigy v0.2.6`:
+Validated directly in `pilot-repo-e` against released `effigy v0.2.6`:
 
 - `effigy tasks`
 - `effigy qa:northstar`
@@ -53,9 +53,9 @@ skipped.
 The released `0.2.6` surface is now proven on more than one non-Effigy
 consumer repo:
 
-- `signal` proved the docs-policy and docs-QA path on a repo with an active
+- `pilot-repo-d` proved the docs-policy and docs-QA path on a repo with an active
   changelog and mixed runtime surface
-- `convergence` proves the same docs-policy path coexists with a deeper
+- `pilot-repo-e` proves the same docs-policy path coexists with a deeper
   existing validation lane and does not require repo-specific shell fallback
 
 The main remaining product gap is still outside the consumer docs surface:

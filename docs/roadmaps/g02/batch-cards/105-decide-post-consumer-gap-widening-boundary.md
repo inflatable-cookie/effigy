@@ -13,7 +13,7 @@ published consumer is still needed.
 
 ## In Scope
 
-- assess the current `convergence` proof after the `104` widening batch
+- assess the current `pilot-repo-e` proof after the `104` widening batch
 - decide whether metadata validation, artifact validation, and closeout support
   are now strong enough to pause credibly
 - decide whether the remaining `first-publish` limitations justify another
