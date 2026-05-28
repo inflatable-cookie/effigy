@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-05-28
+
 ### Added
 - Rhai scripts now have an adapter-shaped `storage::*` host module, with an
   S3-compatible first provider for object-store status, listing, metadata,

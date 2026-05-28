@@ -450,9 +450,9 @@ dependencies = [
 
 [[package]]
 name = "compact_str"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fdb1325a1cece981e8a296ab8f0f9b63ae357bd0784a9faaf548cc7b480707a"
+checksum = "9dfdd1c2274d9aa354115b09dc9a901d6c5576818cdf70d14cae2bdb47df00ab"
 dependencies = [
  "castaway",
  "cfg-if",
@@ -740,9 +740,9 @@ dependencies = [
 
 [[package]]
 name = "displaydoc"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97369cbbc041bc366949bc74d34658d6cda5621039731c6310521892a3a20ae0"
+checksum = "1ac70aa55017e108007fbaf5aa0f54b021c98f92ff8af59d42eda9da96e3dd4f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -772,7 +772,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "effigy"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anstyle",
  "chrono",
@@ -834,7 +834,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-artifacts"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -842,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-bootstrap"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "effigy-manifest",
  "serde_json",
@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-builtin"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anstyle",
  "effigy-catalog",
@@ -877,7 +877,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-catalog"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "indexmap",
  "minijinja",
@@ -892,14 +892,14 @@ dependencies = [
 
 [[package]]
 name = "effigy-changelog"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "semver",
 ]
 
 [[package]]
 name = "effigy-cli"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "crossterm",
  "effigy-core",
@@ -908,7 +908,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-codegraph"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "effigy-manifest",
  "ignore",
@@ -931,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-containers"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "effigy-catalog",
  "effigy-core",
@@ -947,14 +947,14 @@ dependencies = [
 
 [[package]]
 name = "effigy-context"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "effigy-core",
 ]
 
 [[package]]
 name = "effigy-contracts"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "effigy-cli",
  "serde_json",
@@ -962,7 +962,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-core"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -973,11 +973,11 @@ dependencies = [
 
 [[package]]
 name = "effigy-data"
-version = "0.8.4"
+version = "0.8.5"
 
 [[package]]
 name = "effigy-demo"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "crossterm",
  "effigy-core",
@@ -989,7 +989,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-distribution"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anstyle",
  "chrono",
@@ -1002,7 +1002,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-docs-policy"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "effigy-manifest",
  "regex",
@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-doctor"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anstream",
  "effigy-cli",
@@ -1029,7 +1029,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-env"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "regex",
  "tempfile",
@@ -1038,7 +1038,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-exec"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "serde",
  "tempfile",
@@ -1047,7 +1047,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-execution"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "effigy-context",
  "effigy-tasks",
@@ -1056,7 +1056,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-gateway"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "chrono",
  "effigy-core",
@@ -1081,7 +1081,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-managed"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "effigy-core",
  "effigy-env",
@@ -1095,7 +1095,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-manifest"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "effigy-artifacts",
  "effigy-core",
@@ -1110,14 +1110,14 @@ dependencies = [
 
 [[package]]
 name = "effigy-process"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "nix 0.31.3",
 ]
 
 [[package]]
 name = "effigy-release"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "chrono",
  "effigy-changelog",
@@ -1131,7 +1131,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-rhai"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anstyle",
  "base64",
@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-routing"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "effigy-core",
  "effigy-manifest",
@@ -1172,7 +1172,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-runtime"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anstyle",
  "chrono",
@@ -1195,11 +1195,11 @@ dependencies = [
 
 [[package]]
 name = "effigy-runtime-plan"
-version = "0.8.4"
+version = "0.8.5"
 
 [[package]]
 name = "effigy-scan"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anstyle",
  "effigy-manifest",
@@ -1212,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-secrets"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -1226,7 +1226,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-state"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "effigy-artifacts",
  "effigy-manifest",
@@ -1237,7 +1237,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-tasks"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anstyle",
  "effigy-core",
@@ -1250,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-tui"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1268,7 +1268,7 @@ dependencies = [
 
 [[package]]
 name = "effigy-ui"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1757,9 +1757,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.9.0"
+version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6299f016b246a94207e63da54dbe807655bf9e00044f73ded42c3ac5305fbcca"
+checksum = "eb92f162bf56536459fc83c79b974bb12837acfed43d6bc370a7916d0ae15ecc"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -2324,9 +2324,9 @@ checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 
 [[package]]
 name = "memchr"
-version = "2.8.0"
+version = "2.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
+checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
 
 [[package]]
 name = "memmem"
@@ -2377,9 +2377,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50b7e5b27aa02a74bac8c3f23f448f8d87ff11f92d3aac1a6ed369ee08cc56c1"
+checksum = "02bd0af71c67b473010cbbc60715ee815645a4dc942899111f494b4b737d6fda"
 dependencies = [
  "libc",
  "log",
@@ -3715,9 +3715,9 @@ dependencies = [
 
 [[package]]
 name = "socket2"
-version = "0.6.3"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
+checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -4117,9 +4117,9 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.25.11+spec-1.1.0"
+version = "0.25.12+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b59c4d22ed448339746c59b905d24568fcbb3ab65a500494f7b8c3e97739f2b"
+checksum = "d2153edc6955a6c354fad8f5efd38b6a8769bdccf9fe50f8e1329f81b0baa5d7"
 dependencies = [
  "indexmap",
  "toml_datetime",
@@ -5196,18 +5196,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.48"
+version = "0.8.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eed437bf9d6692032087e337407a86f04cd8d6a16a37199ed57949d415bd68e9"
+checksum = "bce33a6288fa3f072a8c2c7d0f2fdbb90e28298f0135c1f99b96c3db2efcc60b"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.48"
+version = "0.8.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70e3cd084b1788766f53af483dd21f93881ff30d7320490ec3ef7526d203bad4"
+checksum = "8fd425244944f4ab65ccff928e7323354c5a018c75838362fdce749dfad2ee1e"
 dependencies = [
  "proc-macro2",
  "quote",
