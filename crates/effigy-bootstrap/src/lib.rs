@@ -287,6 +287,7 @@ where
     ConfirmDestinationReuse: FnMut(&Path) -> Result<bool, BootstrapError>,
 {
     let mut effective_destination = request.destination.clone();
+    let destination_existed_before_checkout = effective_destination.exists();
     report_progress(BootstrapProgressEvent::RootCheckoutStarted {
         repo_url: request.repo_url.clone(),
         destination: effective_destination.clone(),
@@ -302,7 +303,10 @@ where
     })?;
     let mut manifest_path = effective_destination.join(TASK_MANIFEST_FILE);
     let manifest_found = manifest_path.is_file();
-    if manifest_found && request.destination_source == "cwd-default" {
+    if manifest_found
+        && request.destination_source == "cwd-default"
+        && !destination_existed_before_checkout
+    {
         if let Some(preferred_name) = preferred_bootstrap_destination_name(&manifest_path)? {
             let current_name = effective_destination
                 .file_name()

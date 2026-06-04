@@ -263,11 +263,7 @@ fn is_starter_asset_dir(catalog_root: &Path) -> bool {
     catalog_root.join("starter.toml").is_file()
 }
 
-pub fn default_alias(catalog_root: &Path, workspace_root: &Path) -> String {
-    if catalog_root == workspace_root {
-        return "root".to_owned();
-    }
-
+pub fn default_alias(catalog_root: &Path, _workspace_root: &Path) -> String {
     catalog_root
         .file_name()
         .and_then(|n| n.to_str())
@@ -357,10 +353,29 @@ fn manifest_declares_root(manifest_path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::discover_manifest_paths;
+    use super::{default_alias, discover_manifest_paths};
     use std::fs;
+    use std::path::Path;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn default_alias_uses_workspace_directory_name_for_root_catalog() {
+        let root = Path::new("/tmp/dev/cbs");
+
+        assert_eq!(default_alias(root, root), "cbs");
+    }
+
+    #[test]
+    fn default_alias_uses_catalog_directory_name_for_child_catalog() {
+        assert_eq!(
+            default_alias(
+                Path::new("/tmp/dev/cbs/apps/api"),
+                Path::new("/tmp/dev/cbs")
+            ),
+            "api"
+        );
+    }
 
     #[test]
     fn discover_manifest_paths_skips_internal_catalogs() {

@@ -6,6 +6,11 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- `effigy bootstrap` no longer renames an existing reused default destination
+  after reading the root catalog alias, and missing root catalog aliases now
+  default to the repository directory name instead of `root`.
+
 ## [0.8.5] - 2026-05-28
 
 ### Added

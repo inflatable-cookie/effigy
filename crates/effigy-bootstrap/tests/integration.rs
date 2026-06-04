@@ -106,17 +106,19 @@ fn create_plain_root_remote() -> PathBuf {
     remote
 }
 
-fn create_catalog_alias_root_remote() -> PathBuf {
+fn create_catalog_alias_remote(alias: &str) -> PathBuf {
     let worktree = temp_dir("root-catalog-alias-worktree");
     fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
     fs::write(
         worktree.join("effigy.toml"),
-        r#"[catalog]
-alias = "contact-patch"
+        format!(
+            r#"[catalog]
+alias = "{alias}"
 
 [bootstrap]
 run = "sh ./scripts/root-setup.sh"
 "#,
+        ),
     )
     .expect("write manifest");
     fs::write(
@@ -136,6 +138,10 @@ run = "sh ./scripts/root-setup.sh"
     init_bare_remote(&remote);
     attach_remote_and_push(&worktree, &remote);
     remote
+}
+
+fn create_catalog_alias_root_remote() -> PathBuf {
+    create_catalog_alias_remote("contact-patch")
 }
 
 /// Parse the manifest at `path` and surface its `[bootstrap]` section.
@@ -555,6 +561,35 @@ fn execute_bootstrap_request_uses_catalog_alias_for_default_destination() {
 }
 
 #[test]
+fn execute_bootstrap_request_honors_explicit_root_catalog_alias_for_default_destination() {
+    let remote = create_catalog_alias_remote("root");
+    let cwd = temp_dir("bootstrap-root-catalog-alias");
+    let request = resolve_bootstrap_request(
+        &cwd,
+        &remote.display().to_string(),
+        None,
+        None,
+        &[],
+        false,
+        false,
+    )
+    .expect("resolve request");
+
+    let result = execute_bootstrap_request(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+    )
+    .expect("execute bootstrap");
+
+    let destination = cwd.join("root");
+    assert_eq!(result.request.destination, destination);
+    assert!(destination.is_dir());
+    assert!(!cwd.join("remote").exists());
+}
+
+#[test]
 fn execute_bootstrap_request_reuses_existing_catalog_alias_destination_when_confirmed() {
     let remote = create_catalog_alias_root_remote();
     let cwd = temp_dir("bootstrap-catalog-alias-reuse");
@@ -595,4 +630,42 @@ fn execute_bootstrap_request_reuses_existing_catalog_alias_destination_when_conf
             .expect("root setup marker"),
         "aliased"
     );
+}
+
+#[test]
+fn execute_bootstrap_request_keeps_reused_default_destination_when_catalog_alias_differs() {
+    let remote = create_catalog_alias_remote("root");
+    let cwd = temp_dir("bootstrap-reused-default-destination");
+    let reused_destination = cwd.join("cbs");
+    ProcessCommand::new("git")
+        .arg("clone")
+        .arg(&remote)
+        .arg(&reused_destination)
+        .status()
+        .expect("git clone reused destination");
+
+    let request = BootstrapResolution {
+        repo_url: remote.display().to_string(),
+        repo_name: "cbs".to_owned(),
+        destination: reused_destination.clone(),
+        destination_source: "cwd-default",
+        branch: None,
+        db_seeds: Vec::new(),
+        fresh: false,
+        start_requested: false,
+    };
+
+    let result = execute_bootstrap_request_with_progress(
+        &request,
+        load_bootstrap_from_manifest,
+        run_bootstrap_run_via_sh,
+        run_task_via_sh,
+        |_event| Ok(()),
+        |_destination| Ok(true),
+    )
+    .expect("execute bootstrap with reused destination");
+
+    assert_eq!(result.request.destination, reused_destination);
+    assert!(cwd.join("cbs").is_dir());
+    assert!(!cwd.join("root").exists());
 }
