@@ -57,6 +57,20 @@ fn allocation_port_for_offset() {
     assert_eq!(alloc.port_for(ServicePortOffsets::REDIS), 8279);
 }
 
+#[test]
+fn allocation_end_and_contains_handle_high_port_ranges_without_overflow() {
+    let alloc = PortAllocation {
+        base: 65500,
+        range: 100,
+        project: "/tmp".to_string(),
+        assigned_ports: HashMap::new(),
+    };
+    assert_eq!(alloc.end(), u16::MAX);
+    assert!(alloc.contains(65500));
+    assert!(alloc.contains(u16::MAX - 1));
+    assert!(alloc.contains(u16::MAX));
+}
+
 // ── PortRegistry ─────────────────────────────────────────────────
 
 #[test]
@@ -216,6 +230,24 @@ fn assign_port_distinguishes_services_sharing_container_port() {
         reg.assign_port("client", "/projects/client", "dbadmin", 80)
             .unwrap(),
         8101
+    );
+}
+
+#[test]
+fn assign_port_falls_back_to_first_open_slot_when_preferred_offset_overflows_range() {
+    let mut reg = PortRegistry::new();
+    reg.allocate_at("client", "/projects/client", 65500, 100)
+        .unwrap();
+
+    assert_eq!(
+        reg.assign_port("client", "/projects/client", "web", 80)
+            .unwrap(),
+        65500
+    );
+    assert_eq!(
+        reg.assign_port("client", "/projects/client", "app", 9000)
+            .unwrap(),
+        65501
     );
 }
 

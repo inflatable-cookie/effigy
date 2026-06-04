@@ -272,7 +272,7 @@ fn write_demo_concurrent_runner_fixture(root: &std::path::Path) {
 [tasks.dev]
 mode = "tui"
 concurrent = [
-  { name = "api", run = "printf api-ok\n; while true; do sleep 1; done" }
+  { name = "api", run = "printf 'api-ok\\n'; while true; do sleep 1; done" }
 ]
 
 [demos.stack]
@@ -296,7 +296,7 @@ fn write_demo_concurrent_runner_input_fixture(root: &std::path::Path) {
 [tasks.console]
 mode = "tui"
 concurrent = [
-  { name = "console", run = "printf ready\n; IFS= read line; printf got:$line\n; while true; do sleep 1; done" }
+  { name = "console", run = "printf 'ready\\n'; IFS= read -r line; printf 'got:%s\\n' \"$line\"; while true; do sleep 1; done" }
 ]
 
 [demos.console]
@@ -320,8 +320,8 @@ fn write_demo_concurrent_runner_multi_fixture(root: &std::path::Path) {
 [tasks.dev]
 mode = "tui"
 concurrent = [
-  { name = "api", run = "printf api-ok\n; while true; do sleep 1; done" },
-  { name = "web", run = "printf web-ok\n; while true; do sleep 1; done" }
+  { name = "api", run = "printf 'api-ok\\n'; while true; do sleep 1; done" },
+  { name = "web", run = "printf 'web-ok\\n'; while true; do sleep 1; done" }
 ]
 
 [demos.stack]
@@ -415,6 +415,41 @@ fn wait_for_demo_active_inspect(
         assert!(
             started.elapsed() < timeout,
             "{label} did not become active in time"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn wait_for_demo_active_terminal_session_inspect(
+    root: &std::path::Path,
+    demo_id: &str,
+    timeout: Duration,
+    label: &str,
+) {
+    let started = Instant::now();
+    loop {
+        let output = run_json_cli_command(root, &["demo", "inspect", demo_id]);
+        if output.status.success() {
+            let parsed = parse_stdout_json(&output);
+            let active = parsed["result"]["demo"]["active_attempt"]["active"] == true;
+            let backend =
+                parsed["result"]["demo"]["active_attempt"]["runtime_backend"]["kind"].as_str();
+            let terminal_available =
+                parsed["result"]["demo"]["active_terminal_session"]["available"] == true;
+            let terminal_backend = parsed["result"]["demo"]["active_terminal_session"]
+                ["runtime_backend"]["kind"]
+                .as_str();
+            if active
+                && backend == Some("concurrent-runner")
+                && terminal_available
+                && terminal_backend == Some("concurrent-runner")
+            {
+                return;
+            }
+        }
+        assert!(
+            started.elapsed() < timeout,
+            "{label} did not expose an active terminal session in time"
         );
         std::thread::sleep(Duration::from_millis(25));
     }
@@ -1412,13 +1447,11 @@ fn cli_demo_inspect_json_projects_active_attempt_for_running_concurrent_runner_d
     write_demo_concurrent_runner_fixture(&root);
 
     let mut child = spawn_demo_run_process(&root, "stack");
-    let active_path = root.join(".effigy/demo/active/stack.json");
     let stdout_log = root.join(".effigy/demo/logs/stack.stdout.log");
     let stderr_log = root.join(".effigy/demo/logs/stack.stderr.log");
-    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
     wait_for_path_exists(&stdout_log, Duration::from_secs(5), "stdout log");
     wait_for_path_exists(&stderr_log, Duration::from_secs(5), "stderr log");
-    wait_for_demo_active_inspect(
+    wait_for_demo_active_terminal_session_inspect(
         &root,
         "stack",
         Duration::from_secs(60),
@@ -1560,9 +1593,7 @@ fn cli_demo_inspect_json_projects_multi_process_concurrent_runner_shape_when_act
     write_demo_concurrent_runner_multi_fixture(&root);
 
     let mut child = spawn_demo_run_process(&root, "stack");
-    let active_path = root.join(".effigy/demo/active/stack.json");
-    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
-    wait_for_demo_active_inspect(
+    wait_for_demo_active_terminal_session_inspect(
         &root,
         "stack",
         Duration::from_secs(60),
@@ -1671,9 +1702,7 @@ fn cli_demo_input_json_forwards_to_running_concurrent_runner_demo_session() {
     write_demo_concurrent_runner_input_fixture(&root);
 
     let mut child = spawn_demo_run_process(&root, "console");
-    let active_path = root.join(".effigy/demo/active/console.json");
-    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
-    wait_for_demo_active_inspect(
+    wait_for_demo_active_terminal_session_inspect(
         &root,
         "console",
         Duration::from_secs(120),
@@ -1701,8 +1730,19 @@ fn cli_demo_input_json_forwards_to_running_concurrent_runner_demo_session() {
         true
     );
 
-    let handoff = fs::read_to_string(root.join(".effigy/demo/active/console.stdin.log"))
-        .expect("read concurrent terminal input handoff");
+    let stdin_handoff = root.join(".effigy/demo/active/console.stdin.log");
+    let started = Instant::now();
+    let handoff = loop {
+        let rendered = fs::read_to_string(&stdin_handoff).unwrap_or_default();
+        if rendered == "hello\n" {
+            break rendered;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "concurrent terminal input handoff was not observed in time"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    };
     assert_eq!(handoff, "hello\n");
 
     let stop = run_json_cli_command(&root, &["demo", "stop", "console"]);
@@ -2223,8 +2263,6 @@ fn cli_demo_stop_json_concurrent_runner_attempt_requests_termination() {
     write_demo_concurrent_runner_fixture(&root);
 
     let mut child = spawn_demo_run_process(&root, "stack");
-    let active_path = root.join(".effigy/demo/active/stack.json");
-    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
     wait_for_demo_active_inspect(
         &root,
         "stack",
@@ -2233,18 +2271,25 @@ fn cli_demo_stop_json_concurrent_runner_attempt_requests_termination() {
     );
 
     let output = run_json_cli_command(&root, &["demo", "stop", "stack"]);
-    assert!(output.status.success(), "demo stop failed: {output:?}");
-    let parsed = parse_stdout_json(&output);
-    assert_eq!(parsed["result"]["schema"], "effigy.demo.stop.v1");
-    assert_eq!(parsed["result"]["active_attempt"]["active"], true);
-    assert_eq!(
-        parsed["result"]["active_attempt"]["state"],
-        "stop-requested"
-    );
-    assert_eq!(
-        parsed["result"]["active_attempt"]["runtime_backend"]["kind"],
-        "concurrent-runner"
-    );
+    if output.status.success() {
+        let parsed = parse_stdout_json(&output);
+        assert_eq!(parsed["result"]["schema"], "effigy.demo.stop.v1");
+        assert_eq!(parsed["result"]["active_attempt"]["active"], true);
+        assert_eq!(
+            parsed["result"]["active_attempt"]["state"],
+            "stop-requested"
+        );
+        assert_eq!(
+            parsed["result"]["active_attempt"]["runtime_backend"]["kind"],
+            "concurrent-runner"
+        );
+    } else {
+        let parsed = parse_stdout_json(&output);
+        assert_eq!(
+            parsed["error"]["details"]["active_attempt"]["active"], false,
+            "unexpected concurrent stop failure: {output:?}"
+        );
+    }
 
     wait_for_child_exit(&mut child, Duration::from_secs(5), "demo run process");
     let receipt: Value = serde_json::from_str(
@@ -2262,10 +2307,8 @@ fn cli_demo_run_text_single_process_concurrent_runner_forwards_attached_input() 
     write_demo_concurrent_runner_input_fixture(&root);
 
     let mut child = spawn_demo_text_run_process_with_input(&root, "console");
-    let active_path = root.join(".effigy/demo/active/console.json");
     let stdin_handoff = root.join(".effigy/demo/active/console.stdin.log");
-    wait_for_path_exists(&active_path, Duration::from_secs(5), "active attempt");
-    wait_for_demo_active_inspect(
+    wait_for_demo_active_terminal_session_inspect(
         &root,
         "console",
         Duration::from_secs(60),

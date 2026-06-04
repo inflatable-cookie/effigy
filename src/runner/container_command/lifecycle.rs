@@ -836,6 +836,9 @@ default = "web"
 [containers.web]
 primary_service = "app"
 
+[containers.web.host]
+ports = ["18080:80"]
+
 [containers.web.services.app]
 catalog = "php-fpm"
 version = "8.3"

@@ -155,6 +155,9 @@ mod tests {
 primary_service = "app"
 working_dir = "/var/www/contact-patch"
 
+[containers.web.host]
+ports = ["13306:3306"]
+
 [containers.web.services.app]
 catalog = "php-fpm"
 
@@ -211,6 +214,9 @@ catalog = "php-fpm"
 [containers.web]
 primary_service = "app"
 working_dir = "/workspace-root/acowtancy"
+
+[containers.web.host]
+ports = ["15432:5432"]
 
 [containers.web.services.app]
 catalog = "php-fpm"

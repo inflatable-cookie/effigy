@@ -1024,6 +1024,8 @@ primary_service = "app"
     #[test]
     fn run_container_data_dump_rejects_push_without_oci_destination() {
         let root = temp_repo("data-dump-push-local");
+        let home = temp_repo("data-dump-push-local-home");
+        let _home = HomeGuard::set(&home);
         fs::write(
             root.join("effigy.toml"),
             r#"
@@ -1052,7 +1054,10 @@ database = "app"
         )
         .expect_err("should fail before container exec");
         let message = error.to_string();
-        assert!(message.contains("`container data dump --push` requires"));
+        assert!(
+            message.contains("`container data dump --push` requires"),
+            "{message}"
+        );
     }
 
     #[test]

@@ -14,6 +14,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - `effigy bootstrap` no longer renames an existing reused default destination
   after reading the root catalog alias, and missing root catalog aliases now
   default to the repository directory name instead of `root`.
+- Container policy port allocation now handles near-exhausted host-port ranges
+  without overflowing internal `u16` arithmetic.
+- Container and data command tests no longer depend on the caller's live
+  `~/.effigy` port registry for auto-port allocation.
+- Concurrent-runner demo fixtures now use valid shell command fragments, and
+  the demo CLI tests wait for terminal-session and handoff readiness instead of
+  racing the active-attempt file.
 
 ## [0.8.5] - 2026-05-28
 

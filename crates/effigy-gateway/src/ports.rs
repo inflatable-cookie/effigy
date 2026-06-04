@@ -73,24 +73,29 @@ pub struct PortAllocation {
 }
 
 impl PortAllocation {
+    fn end_u32(&self) -> u32 {
+        u32::from(self.base) + u32::from(self.range)
+    }
+
     /// Get the allocated port for a service by offset.
     pub fn port_for(&self, offset: u16) -> u16 {
-        self.base + offset
+        self.base.saturating_add(offset)
     }
 
     /// The last port in this allocation's range (exclusive).
     pub fn end(&self) -> u16 {
-        self.base + self.range
+        self.end_u32().min(u32::from(u16::MAX)) as u16
     }
 
     /// Check if a port falls within this allocation.
     pub fn contains(&self, port: u16) -> bool {
-        port >= self.base && port < self.end()
+        let port = u32::from(port);
+        port >= u32::from(self.base) && port < self.end_u32()
     }
 
     /// Check if this allocation overlaps with another.
     pub fn overlaps(&self, other: &PortAllocation) -> bool {
-        self.base < other.end() && other.base < self.end()
+        u32::from(self.base) < other.end_u32() && u32::from(other.base) < self.end_u32()
     }
 }
 
@@ -240,15 +245,17 @@ impl PortRegistry {
         }
 
         // Collect all allocated ranges and sort by base.
-        let mut ranges: Vec<(u16, u16)> = self
+        let mut ranges: Vec<(u32, u32)> = self
             .allocations
             .values()
-            .map(|a| (a.base, a.end()))
+            .map(|a| (u32::from(a.base), a.end_u32()))
             .collect();
         ranges.sort_by_key(|&(base, _)| base);
 
         // Try to fit before the first range.
-        if ranges[0].0 >= DEFAULT_BASE + range {
+        let default_base = u32::from(DEFAULT_BASE);
+        let range = u32::from(range);
+        if ranges[0].0 >= default_base + range {
             return DEFAULT_BASE;
         }
 
@@ -256,13 +263,13 @@ impl PortRegistry {
         for window in ranges.windows(2) {
             let gap_start = window[0].1;
             let gap_end = window[1].0;
-            if gap_end - gap_start >= range {
-                return gap_start;
+            if gap_end.saturating_sub(gap_start) >= range {
+                return gap_start.min(u32::from(u16::MAX)) as u16;
             }
         }
 
         // Fit after the last range.
-        ranges.last().unwrap().1
+        ranges.last().unwrap().1.min(u32::from(u16::MAX)) as u16
     }
 
     /// Generate a port mapping table for a project.
@@ -329,14 +336,19 @@ impl PortRegistry {
         }
 
         if let Some(offset) = preferred_offset_for(container_port) {
-            let host_port = allocation.port_for(offset);
-            if !allocation
-                .assigned_ports
-                .values()
-                .any(|value| *value == host_port)
+            if let Some(host_port) = allocation
+                .base
+                .checked_add(offset)
+                .filter(|host_port| u32::from(*host_port) < allocation.end_u32())
             {
-                allocation.assigned_ports.insert(binding_key, host_port);
-                return Ok(host_port);
+                if !allocation
+                    .assigned_ports
+                    .values()
+                    .any(|value| *value == host_port)
+                {
+                    allocation.assigned_ports.insert(binding_key, host_port);
+                    return Ok(host_port);
+                }
             }
         }
 
