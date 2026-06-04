@@ -6,6 +6,8 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-06-04
+
 ### Changed
 - JSON Contracts CI now runs on PRs, pushes to `main`, and manual dispatch only;
   the daily scheduled run has been removed.
