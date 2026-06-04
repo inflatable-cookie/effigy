@@ -351,7 +351,7 @@ All release workflows are now active in `.github/workflows/`:
 |----------|---------|---------|
 | `ci.yml` | PR, push to main | Format, clippy, tests |
 | `release-binaries.yml` | Tag push `v*` | Gates → build → release → Homebrew tap |
-| `json-contracts.yml` | PR, push to main, daily | JSON contract and docs link validation |
+| `json-contracts.yml` | PR, push to main, manual | JSON contract and docs link validation |
 
 Workflow changes still require explicit human approval.
 

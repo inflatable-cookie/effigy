@@ -59,7 +59,8 @@ fn run_effigy(args: &[&str], repo: Option<&Path>, color: bool) -> String {
 
 fn write_catalog_build_workspace(name: &str) -> PathBuf {
     let root = temp_workspace(name);
-    fs::write(root.join("effigy.toml"), "").expect("write root manifest");
+    fs::write(root.join("effigy.toml"), "[catalog]\nalias = \"root\"\n")
+        .expect("write root manifest");
     let catalog = root.join("cattle-grid");
     fs::create_dir_all(&catalog).expect("mkdir catalog");
     fs::write(
@@ -73,7 +74,10 @@ fn write_catalog_build_workspace(name: &str) -> PathBuf {
 fn write_managed_profiles_manifest(root: &Path) {
     fs::write(
         root.join("effigy.toml"),
-        r#"[tasks.dev]
+        r#"[catalog]
+alias = "root"
+
+[tasks.dev]
 mode = "tui"
 concurrent = [{ task = "catalog_a/api" }]
 

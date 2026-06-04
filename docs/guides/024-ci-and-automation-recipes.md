@@ -124,7 +124,7 @@ cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_inva
 
 ## 3) Recipe: PR-Optimized Contracts Job
 
-Use changed-only checks for pull requests and full checks for main/scheduled runs.
+Use changed-only checks for pull requests and full checks for main/manual runs.
 
 ```yaml
 name: JSON Contracts
@@ -133,8 +133,6 @@ on:
   pull_request:
   push:
     branches: [main]
-  schedule:
-    - cron: "0 2 * * *"
   workflow_dispatch:
 
 jobs:

@@ -31,7 +31,10 @@ fn cli_tasks_resolve_managed_profile_invocation_is_concise() {
     let root = temp_workspace("cli-text-fixture-tail-resolve-managed-profile");
     fs::write(
         root.join("effigy.toml"),
-        r#"[tasks.dev]
+        r#"[catalog]
+alias = "root"
+
+[tasks.dev]
 mode = "tui"
 concurrent = [{ run = "printf default-ok" }]
 
@@ -64,7 +67,10 @@ fn cli_tasks_resolve_managed_profile_missing_is_concise_with_available_profiles(
     let root = temp_workspace("cli-text-fixture-tail-resolve-managed-profile-missing");
     fs::write(
         root.join("effigy.toml"),
-        r#"[tasks.dev]
+        r#"[catalog]
+alias = "root"
+
+[tasks.dev]
 mode = "tui"
 concurrent = [{ run = "printf default-ok" }]
 
@@ -102,7 +108,10 @@ fn cli_tasks_resolve_shared_lock_name_is_concise() {
     let root = temp_workspace("cli-text-fixture-tail-resolve-shared-lock");
     fs::write(
         root.join("effigy.toml"),
-        r#"[tasks.api]
+        r#"[catalog]
+alias = "root"
+
+[tasks.api]
 run = "printf api"
 lock = "backend"
 "#,

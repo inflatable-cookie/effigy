@@ -5,7 +5,14 @@ pub(crate) fn write_manifest(path: &Path, body: &str) {
 }
 
 pub(crate) fn write_root_manifest(root: &Path, body: &str) {
-    write_manifest(&root.join("effigy.toml"), body);
+    let manifest = if body.contains("[catalog]") {
+        body.to_owned()
+    } else if body.is_empty() {
+        "[catalog]\nalias = \"root\"\n".to_owned()
+    } else {
+        format!("[catalog]\nalias = \"root\"\n\n{body}")
+    };
+    write_manifest(&root.join("effigy.toml"), &manifest);
 }
 
 pub(crate) fn create_workspace_dir(root: &Path, name: &str) -> PathBuf {

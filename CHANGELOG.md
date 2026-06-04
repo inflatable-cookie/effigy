@@ -6,6 +6,10 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Changed
+- JSON Contracts CI now runs on PRs, pushes to `main`, and manual dispatch only;
+  the daily scheduled run has been removed.
+
 ### Fixed
 - `effigy bootstrap` no longer renames an existing reused default destination
   after reading the root catalog alias, and missing root catalog aliases now

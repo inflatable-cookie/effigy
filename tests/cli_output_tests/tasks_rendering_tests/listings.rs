@@ -60,7 +60,7 @@ fn cli_tasks_hides_explicitly_deferred_builtins() {
     let root = temp_workspace("cli-tasks-hidden-deferred-builtin");
     fs::write(
         root.join("effigy.toml"),
-        "[defer]\nrun = \"printf deferred\"\nbuiltins = [\"release\"]\n",
+        "[catalog]\nalias = \"root\"\n\n[defer]\nrun = \"printf deferred\"\nbuiltins = [\"release\"]\n",
     )
     .expect("write manifest");
 
