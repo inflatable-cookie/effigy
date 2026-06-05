@@ -3,6 +3,7 @@ use std::process::Command as ProcessCommand;
 use std::time::Instant;
 
 use super::{ReleaseError, ReleaseVerifyInstall, VerificationStepResult};
+use effigy_manifest::TASK_MANIFEST_FILE;
 use serde_json::Value;
 
 pub fn resolve_verify_install_tag(
@@ -62,7 +63,7 @@ fn make_release_temp_dir(purpose: &str) -> Result<PathBuf, ReleaseError> {
 }
 
 fn write_release_install_fixture(path: &Path) -> Result<(), ReleaseError> {
-    let manifest_path = path.join("effigy.toml");
+    let manifest_path = path.join(TASK_MANIFEST_FILE);
     std::fs::write(
         &manifest_path,
         "[catalog]\nalias = \"catalog_a\"\n\n[tasks]\nnoop = \"echo noop\"\n",

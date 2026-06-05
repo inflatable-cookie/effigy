@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use crate::repo_markers::{LOCAL_OVERLAY_FILE, LOCAL_OVERLAY_GITIGNORE_ALIASES};
+
 pub fn ensure_effigy_ignored_in_git_root(repo_root: &Path) -> std::io::Result<bool> {
     ensure_pattern_ignored_in_git_root(repo_root, ".effigy", &[".effigy", ".effigy/"])
 }
@@ -10,8 +12,8 @@ pub fn ensure_effigy_ignored_in_git_root(repo_root: &Path) -> std::io::Result<bo
 pub fn ensure_local_overlay_ignored_in_git_root(repo_root: &Path) -> std::io::Result<bool> {
     ensure_pattern_ignored_in_git_root(
         repo_root,
-        "effigy.local.toml",
-        &["effigy.local.toml", "/effigy.local.toml"],
+        LOCAL_OVERLAY_FILE,
+        &LOCAL_OVERLAY_GITIGNORE_ALIASES,
     )
 }
 

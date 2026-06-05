@@ -26,31 +26,6 @@ fn required_tools_for_command(command: &str) -> &'static [&'static str] {
     }
 }
 
-#[cfg(test)]
-mod tooling_tests {
-    use super::{command_head, required_tools_for_command};
-
-    #[test]
-    fn required_tools_by_command() {
-        assert_eq!(command_head("cargo build"), "cargo");
-        assert_eq!(
-            required_tools_for_command("cargo build"),
-            &["cargo", "rustc"]
-        );
-        assert_eq!(required_tools_for_command("bun x vitest"), &["bun", "node"]);
-        assert_eq!(
-            required_tools_for_command("pnpm exec vitest"),
-            &["pnpm", "node"]
-        );
-        assert_eq!(
-            required_tools_for_command("npx vitest run"),
-            &["npm", "node"]
-        );
-        assert_eq!(required_tools_for_command("node script.js"), &["node"]);
-        assert!(required_tools_for_command("echo hello").is_empty());
-    }
-}
-
 pub(super) fn check_environment_tools(
     workspace_root: &Path,
     catalogs: &[LoadedCatalog],
@@ -164,4 +139,29 @@ fn collect_required_tools_from_manifest(manifest: &TaskManifest, required: &mut 
 
 fn detect_tools_in_command(command: &str, required: &mut HashSet<String>) {
     add_required_tools(required, required_tools_for_command(command));
+}
+
+#[cfg(test)]
+mod tooling_tests {
+    use super::{command_head, required_tools_for_command};
+
+    #[test]
+    fn required_tools_by_command() {
+        assert_eq!(command_head("cargo build"), "cargo");
+        assert_eq!(
+            required_tools_for_command("cargo build"),
+            &["cargo", "rustc"]
+        );
+        assert_eq!(required_tools_for_command("bun x vitest"), &["bun", "node"]);
+        assert_eq!(
+            required_tools_for_command("pnpm exec vitest"),
+            &["pnpm", "node"]
+        );
+        assert_eq!(
+            required_tools_for_command("npx vitest run"),
+            &["npm", "node"]
+        );
+        assert_eq!(required_tools_for_command("node script.js"), &["node"]);
+        assert!(required_tools_for_command("echo hello").is_empty());
+    }
 }

@@ -7,7 +7,7 @@
 //! `RunnerError::*` one-for-one (and the existing `BuiltinError`
 //! pattern) so the runner-side `From` impl is a pure re-shape.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use effigy_core::path_error_text::{
     failed_to_parse_path, failed_to_read_path, failed_to_render_path, failed_to_write_path,
@@ -106,8 +106,3 @@ impl From<ResolveError> for DoctorError {
         DoctorError::task_invocation(value.to_string())
     }
 }
-
-// `PathBuf` mention to quiet unused-import lints when the module is
-// compiled without active consumers of path helpers.
-#[allow(dead_code)]
-fn _typecheck_path_types(_p: PathBuf) {}

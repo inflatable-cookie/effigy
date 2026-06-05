@@ -10,6 +10,7 @@ use effigy_manifest::{
     config_sections::{ManifestDistributionCloseoutConfig, ManifestDistributionPublishConfig},
     load_task_manifest, ManifestDistributionConfig, ManifestDistributionMetadataConfig,
     ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig, ManifestError,
+    TASK_MANIFEST_FILE,
 };
 use effigy_ui::theme::{resolve_color_enabled, Theme};
 use effigy_ui::OutputMode;
@@ -127,7 +128,7 @@ impl EffectiveDistributionPolicy {
 pub fn load_distribution_policy(
     repo_root: &Path,
 ) -> Result<EffectiveDistributionPolicy, DistributionPolicyError> {
-    let manifest_path = repo_root.join("effigy.toml");
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let distribution = if manifest_path.is_file() {
         load_task_manifest(&manifest_path)?.distribution
     } else {

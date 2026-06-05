@@ -12,7 +12,7 @@ use effigy_manifest::{
 
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::run_compose_exec_plan_with_options;
-use crate::runner::manifest::load_task_manifest;
+use crate::runner::manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 
 #[derive(Debug)]
 pub(in crate::runner) struct ResolvedContainerSecretRuntime {
@@ -25,7 +25,7 @@ pub(super) fn resolve_container_secret_runtime(
     policy: &EffectiveContainerPolicy,
     force_required: bool,
 ) -> Result<ResolvedContainerSecretRuntime, RunnerError> {
-    let manifest = load_task_manifest(&repo_root.join("effigy.toml"))?;
+    let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     let delivery = policy.secret_delivery;
     let Some(secrets) = manifest.secrets.as_ref() else {
         return Ok(ResolvedContainerSecretRuntime {

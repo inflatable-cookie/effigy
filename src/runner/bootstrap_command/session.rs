@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use effigy_bootstrap::BootstrapProgressEvent;
 use effigy_builtin::{PromptDecision, PromptPolicy};
-use effigy_manifest::load_task_manifest;
+use effigy_manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -234,12 +234,12 @@ pub(super) fn run_bootstrap_teardown_with_cwd(
     let mut removed_session_files = Vec::new();
 
     for repo in &record.repos {
-        if !repo.join("effigy.toml").is_file() {
+        if !repo.join(TASK_MANIFEST_FILE).is_file() {
             let _ = remove_bootstrap_fresh_session_record(repo);
             removed_session_files.push(bootstrap_fresh_session_path(repo));
             continue;
         }
-        let manifest = load_task_manifest(&repo.join("effigy.toml"))
+        let manifest = load_task_manifest(&repo.join(TASK_MANIFEST_FILE))
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         if manifest.containers.is_none() {
             remove_bootstrap_fresh_session_record(repo)?;

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use effigy_core::repo_markers::LOCAL_OVERLAY_FILE;
 use toml::Value;
 
 use super::TaskManifest;
@@ -230,8 +231,6 @@ fn load_composed_value(
     Ok(composed)
 }
 
-/// Filename of the auto-discovered local-overlay manifest.
-const LOCAL_OVERLAY_FILENAME: &str = "effigy.local.toml";
 /// Env switch that disables auto-discovery for CI determinism.
 const NO_LOCAL_OVERLAY_ENV: &str = "EFFIGY_NO_LOCAL_OVERLAY";
 
@@ -247,7 +246,7 @@ fn append_local_overlay_include(manifest_path: &Path, includes: &mut Vec<Manifes
         Some(parent) => parent,
         None => return,
     };
-    let local_path = parent.join(LOCAL_OVERLAY_FILENAME);
+    let local_path = parent.join(LOCAL_OVERLAY_FILE);
     if !local_path.is_file() {
         return;
     }

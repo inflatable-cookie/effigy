@@ -249,7 +249,7 @@ pub(super) fn infer_host_working_dir_from_inspect(stdout: &str) -> Result<Option
         .iter()
         .filter(|mount| mount.mount_type.as_deref() == Some("bind"))
         .filter_map(|mount| mount.source.as_deref())
-        .find(|source| Path::new(source).join("effigy.toml").is_file())
+        .find(|source| effigy_core::repo_markers::has_task_manifest(Path::new(source)))
         .map(str::to_owned))
 }
 

@@ -2,14 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::fs_probe::PathPresenceCache;
-
-const ROOT_MARKERS: [&str; 5] = [
-    "effigy.toml",
-    "package.json",
-    "composer.json",
-    "Cargo.toml",
-    ".git",
-];
+use crate::repo_markers::{task_manifest_path, ROOT_MARKERS, TASK_MANIFEST_FILE};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolutionMode {
@@ -118,7 +111,7 @@ fn maybe_promote_to_parent_workspace(
             resolution_mode: ResolutionMode::AutoNearest,
             evidence: vec![format!(
                 "child manifest {} declares `[manifest].root = true`; kept nearest root",
-                child.join("effigy.toml").display()
+                task_manifest_path(child).display()
             )],
             warnings: Vec::new(),
         });
@@ -134,7 +127,9 @@ fn maybe_promote_to_parent_workspace(
     let mut evidence: Vec<String> = Vec::new();
     let mut should_promote = false;
 
-    if probe.child_exists(parent, "effigy.toml") && child_manifest_declares_catalog(child, probe) {
+    if probe.child_exists(parent, TASK_MANIFEST_FILE)
+        && child_manifest_declares_catalog(child, probe)
+    {
         should_promote = true;
         evidence.push("parent effigy.toml anchors child workspace".to_owned());
     }
@@ -219,7 +214,7 @@ fn child_manifest_declares_catalog(path: &Path, probe: &mut PathPresenceCache) -
 }
 
 fn manifest_value(path: &Path, probe: &mut PathPresenceCache) -> Option<toml::Value> {
-    let manifest_path = path.join("effigy.toml");
+    let manifest_path = task_manifest_path(path);
     if !probe.exists(&manifest_path) {
         return None;
     }

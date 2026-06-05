@@ -2,8 +2,8 @@ use super::feature_dispatch::{is_runner_dispatch_feature, run_rhai_feature};
 use super::{container_exec_operation_from_options, parse_rhai_embedded_command};
 use effigy_cli::{Command, DocsArgs, DocsCheckKind, DocsSubcommand};
 use effigy_rhai::surface::{
-    FEATURE_DEPLOY_APPLY, FEATURE_DEPLOY_MODEL, FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS,
-    FEATURE_DISTRIBUTION_VALIDATE_METADATA, FEATURE_NAMES,
+    rhai_feature_descriptors, RhaiFeatureDispatch, FEATURE_DEPLOY_APPLY, FEATURE_DEPLOY_MODEL,
+    FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS, FEATURE_DISTRIBUTION_VALIDATE_METADATA,
 };
 use serde_json::json;
 use std::path::Path;
@@ -61,11 +61,19 @@ fn parse_rhai_embedded_command_preserves_explicit_repo_override() {
 
 #[test]
 fn every_registered_rhai_feature_has_a_runner_dispatch_branch() {
-    for feature in FEATURE_NAMES {
-        assert!(
-            is_runner_dispatch_feature(feature) || *feature == "state.capture_set",
-            "feature `{feature}` is registered in effigy-rhai but is neither runner-dispatched nor explicitly host-handled"
-        );
+    for descriptor in rhai_feature_descriptors() {
+        match descriptor.dispatch {
+            RhaiFeatureDispatch::Runner => assert!(
+                is_runner_dispatch_feature(descriptor.id),
+                "feature `{}` is marked runner-dispatched but has no runner dispatch branch",
+                descriptor.id
+            ),
+            RhaiFeatureDispatch::HostHandled => assert!(
+                !is_runner_dispatch_feature(descriptor.id),
+                "feature `{}` is marked host-handled but is also runner-dispatched",
+                descriptor.id
+            ),
+        }
     }
 }
 

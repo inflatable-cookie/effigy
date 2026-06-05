@@ -10,6 +10,8 @@ mod boundaries;
 mod core;
 #[path = "execution/dead_code.rs"]
 mod dead_code;
+#[path = "execution/graph_helpers.rs"]
+mod graph_helpers;
 #[path = "execution/modes.rs"]
 mod modes;
 #[path = "execution/validation_gaps.rs"]

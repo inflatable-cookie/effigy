@@ -18,13 +18,7 @@ pub mod task_runtime;
 mod test_config;
 pub mod user_config;
 
-/// Filename of the per-catalog Effigy manifest file (`effigy.toml`).
-///
-/// Canonical copy lives here. A handful of historical call sites in
-/// `effigy-bootstrap`, `effigy-release`, and `effigy-routing` still
-/// inline their own copies to avoid an extra cross-crate dep; they
-/// should migrate to this constant when the opportunity arises.
-pub const TASK_MANIFEST_FILE: &str = "effigy.toml";
+pub use effigy_core::repo_markers::TASK_MANIFEST_FILE;
 
 pub use bundles::{
     inspect_bundle_source, sync_bundle_source, BundleInputSpec, BundleInputType,

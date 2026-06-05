@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use effigy_codegraph::model::{Confidence, SymbolRecord};
@@ -55,6 +55,7 @@ pub(super) fn run_boundary_violation_scan(
         .into_iter()
         .map(|symbol| (symbol.id.clone(), symbol))
         .collect();
+    let symbol_lookup = build_symbol_lookup(&symbols_by_id);
 
     let mut checked_edges = 0usize;
     let mut findings = Vec::new();
@@ -70,7 +71,8 @@ pub(super) fn run_boundary_violation_scan(
         else {
             continue;
         };
-        let Some(target_symbol) = resolve_target_symbol(&edge, &symbols_by_id) else {
+        let Some(target_symbol) = resolve_target_symbol(&edge, &symbols_by_id, &symbol_lookup)
+        else {
             continue;
         };
         let Some(target_path) = file_paths.get(&target_symbol.file_id) else {
@@ -158,31 +160,61 @@ fn resolve_source_evidence(
 fn resolve_target_symbol<'a>(
     edge: &effigy_codegraph::model::EdgeRecord,
     symbols_by_id: &'a BTreeMap<effigy_codegraph::GraphId, SymbolRecord>,
+    symbol_lookup: &BTreeMap<String, BTreeSet<effigy_codegraph::GraphId>>,
 ) -> Option<&'a SymbolRecord> {
     if let Some(target_id) = edge.to_id.as_ref() {
         return symbols_by_id.get(target_id);
     }
     let unresolved = edge.unresolved_target.as_deref()?;
-    let normalized = normalize_unresolved_target(unresolved);
-    let last_segment = normalized
-        .rsplit("::")
-        .next()
-        .unwrap_or(normalized.as_str());
-    let mut candidates = symbols_by_id
-        .values()
-        .filter(|symbol| {
-            symbol.canonical_name == normalized
-                || symbol.display_name == normalized
-                || symbol.canonical_name == last_segment
-                || symbol.display_name == last_segment
-                || symbol.canonical_name.ends_with(&format!("::{normalized}"))
-        })
-        .collect::<Vec<_>>();
-    candidates.dedup_by(|left, right| left.id == right.id);
-    if candidates.len() == 1 {
-        candidates.into_iter().next()
-    } else {
-        None
+    let mut candidate_ids = BTreeSet::new();
+    for key in unresolved_target_keys(unresolved) {
+        if let Some(ids) = symbol_lookup.get(&key) {
+            candidate_ids.extend(ids.iter().cloned());
+        }
+    }
+    if candidate_ids.len() == 1 {
+        let id = candidate_ids.iter().next()?;
+        return symbols_by_id.get(id);
+    }
+    None
+}
+
+fn build_symbol_lookup(
+    symbols_by_id: &BTreeMap<effigy_codegraph::GraphId, SymbolRecord>,
+) -> BTreeMap<String, BTreeSet<effigy_codegraph::GraphId>> {
+    let mut lookup = BTreeMap::<String, BTreeSet<effigy_codegraph::GraphId>>::new();
+    for symbol in symbols_by_id.values() {
+        for key in symbol_lookup_keys(symbol) {
+            lookup.entry(key).or_default().insert(symbol.id.clone());
+        }
+    }
+    lookup
+}
+
+fn symbol_lookup_keys(symbol: &SymbolRecord) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    push_symbol_key(&mut keys, symbol.display_name.as_str());
+    push_symbol_key(&mut keys, symbol.canonical_name.as_str());
+    if let Some(last) = symbol.canonical_name.rsplit("::").next() {
+        push_symbol_key(&mut keys, last);
+    }
+    keys
+}
+
+fn unresolved_target_keys(target: &str) -> BTreeSet<String> {
+    let normalized = normalize_unresolved_target(target);
+    let mut keys = BTreeSet::new();
+    push_symbol_key(&mut keys, normalized.as_str());
+    if let Some(last) = normalized.rsplit("::").next() {
+        push_symbol_key(&mut keys, last);
+    }
+    keys
+}
+
+fn push_symbol_key(keys: &mut BTreeSet<String>, raw: &str) {
+    let key = raw.trim();
+    if !key.is_empty() {
+        keys.insert(key.to_owned());
     }
 }
 

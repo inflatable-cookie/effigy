@@ -11,3 +11,23 @@ exclude = [
 
 [scan.comment_ratio]
 exclude = ["src/changelog.rs"]
+
+[scan.boundary_violations]
+# Self-adopt the graph boundary scanner on the scan library/adapter seam first.
+# Keep this advisory until the graph scanner has enough history as a gate.
+doctor = false
+fail_on_findings = false
+include_heuristic = false
+
+[scan.boundary_violations.layers.scan_model]
+paths = ["crates/effigy-scan/src/**"]
+
+[scan.boundary_violations.layers.scan_builtin_adapter]
+paths = ["crates/effigy-builtin/src/scan/**"]
+may_depend_on = ["scan_model"]
+
+[scan.dead_code]
+# Keep advisory until Rust symbol findings have enough history as a gate.
+doctor = false
+fail_on_findings = false
+include_heuristic = false

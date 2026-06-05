@@ -100,7 +100,7 @@ pub fn load_container_policy_with_workspace(
     requested_name: Option<&str>,
     workspace_override: Option<&ManifestWorkspaceConfig>,
 ) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
-    let manifest_path = repo_root.join("effigy.toml");
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
     let inferred_workspace = workspace_override
         .cloned()
@@ -141,7 +141,7 @@ pub fn load_container_policy_with_workspace(
 pub fn load_all_container_policies(
     repo_root: &Path,
 ) -> Result<Vec<EffectiveContainerPolicy>, ContainerPolicyError> {
-    let manifest_path = repo_root.join("effigy.toml");
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
     let containers = loaded.manifest.containers.as_ref().ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(

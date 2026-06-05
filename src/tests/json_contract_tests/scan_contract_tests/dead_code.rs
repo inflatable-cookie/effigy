@@ -12,9 +12,15 @@ allow_paths = ["src/bin/**"]
 "#,
     );
     fs::create_dir_all(root.join("src/bin")).expect("mkdir bin");
+    fs::create_dir_all(root.join("src/dead")).expect("mkdir dead");
     fs::create_dir_all(root.join("src/live")).expect("mkdir live");
     fs::create_dir_all(root.join("src/orphan")).expect("mkdir orphan");
     fs::write(root.join("src/lib.rs"), "pub mod live;\npub mod orphan;\n").expect("write lib");
+    fs::write(
+        root.join("src/dead/mod.rs"),
+        "fn unused_file() -> usize { 0 }\n",
+    )
+    .expect("write dead");
     fs::write(
         root.join("src/live/mod.rs"),
         "use crate::orphan::helper;\npub fn used() -> usize { helper() }\n",
@@ -22,7 +28,7 @@ allow_paths = ["src/bin/**"]
     .expect("write live");
     fs::write(
         root.join("src/orphan/mod.rs"),
-        "pub fn lonely() -> usize { 1 }\npub fn helper() -> usize { 2 }\n",
+        "fn lonely() -> usize { 1 }\npub fn helper() -> usize { 2 }\n",
     )
     .expect("write orphan");
     fs::write(
@@ -43,7 +49,7 @@ allow_paths = ["src/bin/**"]
         .iter()
         .find(|finding| finding["kind"] == "isolated-file")
         .expect("isolated file finding");
-    assert_eq!(isolated["path"], "src/orphan/mod.rs");
+    assert_eq!(isolated["path"], "src/dead/mod.rs");
     assert_eq!(isolated["confidence"], "high");
     assert!(isolated["reason"].is_string());
 }

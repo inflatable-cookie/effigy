@@ -9,6 +9,7 @@ use effigy_containers::{
     },
     load_all_container_policies, EffectiveContainerPolicy,
 };
+use effigy_core::repo_markers::has_task_manifest;
 
 use crate::EffigyRuntimeError;
 
@@ -109,7 +110,7 @@ pub(crate) fn discover_effigy_repos_under(scope_root: &Path) -> Vec<PathBuf> {
     let mut stack = vec![canonicalize_or_original(scope_root)];
 
     while let Some(dir) = stack.pop() {
-        if dir.join("effigy.toml").is_file() {
+        if has_task_manifest(&dir) {
             discovered.insert(dir.clone());
         }
 
@@ -141,7 +142,7 @@ pub(crate) fn discover_effigy_repos_under(scope_root: &Path) -> Vec<PathBuf> {
 pub fn resolve_effigy_repo_root(start: &Path, max_depth: usize) -> Option<PathBuf> {
     let mut current = start;
     for _ in 0..=max_depth {
-        if current.join("effigy.toml").is_file() {
+        if has_task_manifest(current) {
             return Some(current.to_path_buf());
         }
         match current.parent() {
@@ -207,12 +208,10 @@ mod tests {
     };
     use effigy_containers::exec::RunningComposeContainer;
     use effigy_containers::EffectiveContainerPolicy;
-    use effigy_manifest::{
-        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-        ManifestContainerStartup,
-    };
     use std::fs;
     use tempfile::tempdir;
+
+    use crate::test_support::generated_policy;
 
     #[test]
     fn resolve_effigy_repo_root_returns_repo_when_started_at_repo_root() {
@@ -275,7 +274,7 @@ mod tests {
         fs::create_dir_all(&child_repo).expect("child repo");
         fs::create_dir_all(&other_repo).expect("other repo");
 
-        let policy = stub_policy("web");
+        let policy = generated_policy("web");
         let filtered = filter_running_environments_for_scope(
             vec![
                 stub_environment(child_repo.display().to_string(), policy.clone()),
@@ -298,8 +297,8 @@ mod tests {
 
         let filtered = filter_running_environments_for_scope(
             vec![
-                stub_environment(child_repo.display().to_string(), stub_policy("web")),
-                stub_environment(child_repo.display().to_string(), stub_policy("db")),
+                stub_environment(child_repo.display().to_string(), generated_policy("web")),
+                stub_environment(child_repo.display().to_string(), generated_policy("db")),
             ],
             &scope_root,
             Some("db"),
@@ -401,43 +400,6 @@ mod tests {
                 working_dir: None,
                 service: Some("app".to_owned()),
             }],
-        }
-    }
-
-    fn stub_policy(name: &str) -> EffectiveContainerPolicy {
-        EffectiveContainerPolicy {
-            name: name.to_owned(),
-            driver: ManifestContainerDriver::Colima,
-            startup: ManifestContainerStartup::Detached,
-            profile: "effigy".to_owned(),
-            compose_source: effigy_containers::EffectiveComposeSource::Generated,
-            compose_files: vec![],
-            compose_file_display: String::new(),
-            managed_volumes: vec![],
-            shared_services: vec![],
-            project_name: format!("{name}-project"),
-            primary_service: "app".to_owned(),
-            dns_domain: None,
-            dns_tls: false,
-            dns_port: None,
-            dns_routes: vec![],
-            service_aliases: vec![],
-            declared_ports: vec![],
-            ports_declared_explicitly: false,
-            declared_mounts: vec![],
-            declared_media_mounts: vec![],
-            pull_production_hook: None,
-            health_check: None,
-            health_timeout_secs: 60,
-            secret_delivery: effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv,
-            secret_runtime_dir: None,
-            source_secret_runtime_for_deferrals: false,
-            workspace_user: None,
-            workspace_home: None,
-            on_task_exit: ManifestContainerOnTaskExit::Stop,
-            shutdown: ManifestContainerShutdownMode::Graceful,
-            detach_timeout_secs: 10,
-            host_processes: vec![],
         }
     }
 }

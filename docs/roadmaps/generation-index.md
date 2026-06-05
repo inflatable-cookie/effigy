@@ -1,7 +1,7 @@
 # Roadmap Generation Index
 
 Current generation: g08
-Updated: 2026-05-25
+Updated: 2026-06-05
 
 ## Generation history
 
@@ -94,16 +94,21 @@ Updated: 2026-05-25
   JavaScript runtime dependencies, and LLM-generated summaries as canonical
   graph data.
 
-`g08` is closed.
+`g08` is complete through `g08.009` with no ready card.
 
 - `g08.001` through `g08.008` completed the graph-aware scan intelligence
   generation:
   scan/graph readiness, additive enrichment for existing scans, graph-native
   scans for boundaries, likely dead code, and validation risk, plus agent
   guidance, JSON examples, benchmark proof, and closeout.
+- `g08.009` owns the code-quality boundary sweep follow-up. Its completed
+  batch cards cover command-surface descriptor convergence, Rhai feature
+  descriptor convergence, container `up` phase boundary cleanup, Effigy
+  repo-marker/root-rule convergence, selected duplicate-block reduction,
+  boundary/dead-code scan self-adoption, dead-code Rust signal repair, residual
+  false-positive precision, and the final burn-down to 0 dead-code findings.
 
-Active ready card:
-none.
+Active ready card: none.
 
 ## Research Roadmaps
 
@@ -136,4 +141,4 @@ closeout there first.
 
 ## Next Task
 
-Planning only.
+No current dead-code residual batch remains.

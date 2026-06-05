@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use effigy_manifest::{LoadedTaskManifest, ManifestDemoConfig};
+use effigy_manifest::{LoadedTaskManifest, ManifestDemoConfig, TASK_MANIFEST_FILE};
 
 use crate::{
     derive_gap_class, display_repo_path, load_active_attempt, load_active_terminal_session,
@@ -27,7 +27,7 @@ where
     let primary_source = sources
         .first()
         .cloned()
-        .unwrap_or_else(|| "effigy.toml".to_owned());
+        .unwrap_or_else(|| TASK_MANIFEST_FILE.to_owned());
     let latest_attempt = load_latest_attempt(repo_root, demo_id, demo)?;
     let active_attempt = load_active_attempt(repo_root, demo_id, is_pid_alive)?;
     let attempt_history = load_attempt_history(repo_root, demo_id)?;

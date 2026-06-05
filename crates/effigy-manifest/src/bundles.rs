@@ -5,6 +5,7 @@ use toml::Value;
 
 use crate::manifest_section::{validate_minimum_effigy_version, ManifestSectionConfig};
 use crate::ManifestError;
+use crate::TASK_MANIFEST_FILE;
 
 mod source;
 
@@ -164,7 +165,7 @@ pub(super) struct LocalBundleInputDescriptor {
 }
 
 fn default_local_bundle_defaults_file() -> String {
-    "effigy.toml".to_owned()
+    TASK_MANIFEST_FILE.to_owned()
 }
 
 pub(super) fn parse_bundle_descriptor_source(
@@ -529,7 +530,7 @@ fn render_bundle_host_label(host: String) -> Result<String, minijinja::Error> {
 
 fn render_bundle_host_path(manifest_root: String, path: String) -> String {
     let resolved = resolve_bundle_host_path(
-        Path::new(&manifest_root).join("effigy.toml").as_path(),
+        Path::new(&manifest_root).join(TASK_MANIFEST_FILE).as_path(),
         &path,
     );
     resolved
@@ -544,7 +545,7 @@ fn render_bundle_workspace_subdir(
     shared_root: String,
 ) -> Result<String, minijinja::Error> {
     let shared_root = resolve_bundle_host_path(
-        Path::new(&manifest_root).join("effigy.toml").as_path(),
+        Path::new(&manifest_root).join(TASK_MANIFEST_FILE).as_path(),
         &shared_root,
     );
     derive_bundle_workspace_subdir_from_roots(Path::new(&manifest_root), &shared_root)

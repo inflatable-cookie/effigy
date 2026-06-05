@@ -1,249 +1,141 @@
 use std::collections::BTreeSet;
 
+use crate::command_surface::{self, CommandDescriptor};
 use crate::HelpTopic;
 
 use super::topics;
 use super::{HelpRenderer, HelpResult};
 
 pub(crate) struct HelpTopicDescriptor {
-    pub(crate) topic: HelpTopic,
-    pub(crate) command_name: Option<&'static str>,
-    pub(crate) general_help_command: Option<&'static str>,
-    pub(crate) general_help_description: Option<&'static str>,
-    pub(crate) deferred_builtin: Option<&'static str>,
+    pub(crate) command: &'static CommandDescriptor,
     pub(crate) render: fn(&mut dyn HelpRenderer, &BTreeSet<String>) -> HelpResult<()>,
 }
 
 const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
     HelpTopicDescriptor {
-        topic: HelpTopic::General,
-        command_name: None,
-        general_help_command: Some("effigy help"),
-        general_help_description: Some("Show general help (same as --help)"),
-        deferred_builtin: None,
+        command: descriptor(HelpTopic::General),
         render: render_general,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Bundle,
-        command_name: Some("bundle"),
-        general_help_command: Some("effigy bundle"),
-        general_help_description: Some("Inspect or refresh the active repo bundle source"),
-        deferred_builtin: Some("bundle"),
+        command: descriptor(HelpTopic::Bundle),
         render: render_bundle,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Deploy,
-        command_name: Some("deploy"),
-        general_help_command: Some("effigy deploy"),
-        general_help_description: Some(
-            "Inspect the provider-neutral production deployment model derived from the effective manifest",
-        ),
-        deferred_builtin: Some("deploy"),
+        command: descriptor(HelpTopic::Deploy),
         render: render_deploy,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Secrets,
-        command_name: Some("secrets"),
-        general_help_command: Some("effigy secrets"),
-        general_help_description: Some("Inspect declarations and manage the local encrypted secrets vault"),
-        deferred_builtin: Some("secrets"),
+        command: descriptor(HelpTopic::Secrets),
         render: render_secrets,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Defer,
-        command_name: Some("defer"),
-        general_help_command: Some(
-            "effigy defer",
-        ),
-        general_help_description: Some(
-            "Run the configured `[defer]` fallback explicitly instead of relying on selector miss routing",
-        ),
-        deferred_builtin: Some("defer"),
+        command: descriptor(HelpTopic::Defer),
         render: render_defer,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Exec,
-        command_name: Some("exec"),
-        general_help_command: Some("effigy exec"),
-        general_help_description: Some("Run one ad-hoc command inside the manifest's default system workspace container"),
-        deferred_builtin: None,
+        command: descriptor(HelpTopic::Exec),
         render: render_exec,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::State,
-        command_name: None,
-        general_help_command: Some("effigy state"),
-        general_help_description: Some("Plan layered state-stack manifests and lineage without executing app hooks"),
-        deferred_builtin: None,
+        command: descriptor(HelpTopic::State),
         render: render_state,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::System,
-        command_name: Some("system"),
-        general_help_command: Some("effigy system"),
-        general_help_description: Some("Operate the manifest default system substrate through its default workspace container"),
-        deferred_builtin: Some("system"),
+        command: descriptor(HelpTopic::System),
         render: render_system,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Workspace,
-        command_name: Some("workspace"),
-        general_help_command: Some("effigy workspace"),
-        general_help_description: Some("Ensure the selected system is up, then open the resolved workspace shell"),
-        deferred_builtin: Some("workspace"),
+        command: descriptor(HelpTopic::Workspace),
         render: render_workspace,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Gateway,
-        command_name: Some("gateway"),
-        general_help_command: Some("effigy gateway"),
-        general_help_description: Some("Operate the host-native local DNS and reverse-proxy gateway"),
-        deferred_builtin: Some("gateway"),
+        command: descriptor(HelpTopic::Gateway),
         render: render_gateway,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Service,
-        command_name: Some("service"),
-        general_help_command: Some("effigy service"),
-        general_help_description: Some("Inspect the layered service catalog and extract bundled fragments for override ownership"),
-        deferred_builtin: Some("service"),
+        command: descriptor(HelpTopic::Service),
         render: render_service,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Demo,
-        command_name: Some("demo"),
-        general_help_command: Some("effigy demo"),
-        general_help_description: Some("List declared demos and inspect the latest known proof state without starting execution"),
-        deferred_builtin: Some("demo"),
+        command: descriptor(HelpTopic::Demo),
         render: render_demo,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Graph,
-        command_name: Some("graph"),
-        general_help_command: Some("effigy graph"),
-        general_help_description: Some("Build and query the local deterministic code graph for agent navigation"),
-        deferred_builtin: Some("graph"),
+        command: descriptor(HelpTopic::Graph),
         render: render_graph,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Rhai,
-        command_name: Some("rhai"),
-        general_help_command: Some("effigy rhai surface"),
-        general_help_description: Some("Inspect the registered Rhai host API available to scripts"),
-        deferred_builtin: None,
+        command: descriptor(HelpTopic::Rhai),
         render: render_rhai,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Docs,
-        command_name: Some("docs"),
-        general_help_command: Some("effigy docs"),
-        general_help_description: Some("Run reusable docs QA checks such as markdown link, JSON example, and index validation"),
-        deferred_builtin: Some("docs"),
+        command: descriptor(HelpTopic::Docs),
         render: render_docs,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Contracts,
-        command_name: Some("contracts"),
-        general_help_command: Some("effigy contracts"),
-        general_help_description: Some("Validate reusable JSON contract artifacts such as selection payloads"),
-        deferred_builtin: Some("contracts"),
+        command: descriptor(HelpTopic::Contracts),
         render: render_contracts,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Artifact,
-        command_name: None,
-        general_help_command: Some("effigy artifact"),
-        general_help_description: Some("Inspect and stage standalone seed/apply/capture data artifacts"),
-        deferred_builtin: Some("artifact"),
+        command: descriptor(HelpTopic::Artifact),
         render: render_artifact,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Container,
-        command_name: Some("container"),
-        general_help_command: Some("effigy container"),
-        general_help_description: Some("Operate manifest-defined local container environments"),
-        deferred_builtin: Some("container"),
+        command: descriptor(HelpTopic::Container),
         render: render_container,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Bootstrap,
-        command_name: Some("bootstrap"),
-        general_help_command: Some("effigy bootstrap"),
-        general_help_description: Some("Clone/update a repo from a git URL and apply its repo-owned `[bootstrap]` contract"),
-        deferred_builtin: Some("bootstrap"),
+        command: descriptor(HelpTopic::Bootstrap),
         render: render_bootstrap,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Release,
-        command_name: Some("release"),
-        general_help_command: Some("effigy release"),
-        general_help_description: Some("Inspect release readiness from changelog, version files, and optional gates"),
-        deferred_builtin: Some("release"),
+        command: descriptor(HelpTopic::Release),
         render: render_release,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Doctor,
-        command_name: Some("doctor"),
-        general_help_command: Some("effigy doctor"),
-        general_help_description: Some("Run remedial-first health checks for environment, manifests, and task references"),
-        deferred_builtin: Some("doctor"),
+        command: descriptor(HelpTopic::Doctor),
         render: render_doctor,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Tasks,
-        command_name: None,
-        general_help_command: Some("effigy tasks"),
-        general_help_description: Some("List discovered catalogs/task commands and probe routing"),
-        deferred_builtin: Some("tasks"),
+        command: descriptor(HelpTopic::Tasks),
         render: render_tasks,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Test,
-        command_name: Some("test"),
-        general_help_command: Some("effigy test"),
-        general_help_description: Some("Run built-in auto-detected tests (or explicit tasks.test); supports <catalog>/test fallback"),
-        deferred_builtin: Some("test"),
+        command: descriptor(HelpTopic::Test),
         render: render_test,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Watch,
-        command_name: Some("watch"),
-        general_help_command: Some("effigy watch"),
-        general_help_description: Some("Watch mode phase-1 runtime with explicit owner policy and debounce/glob controls"),
-        deferred_builtin: Some("watch"),
+        command: descriptor(HelpTopic::Watch),
         render: render_watch,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Init,
-        command_name: Some("init"),
-        general_help_command: Some("effigy init"),
-        general_help_description: Some("Initialize baseline effigy.toml scaffold with safe overwrite/dry-run controls"),
-        deferred_builtin: Some("init"),
+        command: descriptor(HelpTopic::Init),
         render: render_init,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Migrate,
-        command_name: None,
-        general_help_command: None,
-        general_help_description: None,
-        deferred_builtin: None,
+        command: descriptor(HelpTopic::Migrate),
         render: render_migrate,
     },
     HelpTopicDescriptor {
-        topic: HelpTopic::Changelog,
-        command_name: None,
-        general_help_command: None,
-        general_help_description: None,
-        deferred_builtin: None,
+        command: descriptor(HelpTopic::Changelog),
         render: render_changelog,
     },
 ];
 
+const fn descriptor(topic: HelpTopic) -> &'static CommandDescriptor {
+    let mut index = 0;
+    while index < command_surface::COMMAND_DESCRIPTORS.len() {
+        let descriptor = &command_surface::COMMAND_DESCRIPTORS[index];
+        if descriptor.topic as u8 == topic as u8 {
+            return descriptor;
+        }
+        index += 1;
+    }
+    panic!("missing command descriptor for help topic")
+}
+
 pub(crate) fn builtin_help_topic(command: &str) -> Option<HelpTopic> {
-    HELP_TOPIC_DESCRIPTORS
-        .iter()
-        .find(|descriptor| descriptor.command_name == Some(command))
-        .map(|descriptor| descriptor.topic)
+    command_surface::help_topic_for_command(command)
 }
 
 pub(crate) fn render_help_topic(
@@ -253,20 +145,14 @@ pub(crate) fn render_help_topic(
 ) -> HelpResult<()> {
     let descriptor = HELP_TOPIC_DESCRIPTORS
         .iter()
-        .find(|descriptor| descriptor.topic == topic)
+        .find(|descriptor| descriptor.command.topic == topic)
         .ok_or_else(|| std::io::Error::other("unknown help topic"))?;
     (descriptor.render)(renderer, deferred_builtins)
 }
 
 pub(crate) fn general_help_command_rows(
 ) -> impl Iterator<Item = (&'static str, &'static str, Option<&'static str>)> {
-    HELP_TOPIC_DESCRIPTORS.iter().filter_map(|descriptor| {
-        Some((
-            descriptor.general_help_command?,
-            descriptor.general_help_description?,
-            descriptor.deferred_builtin,
-        ))
-    })
+    command_surface::general_help_command_rows()
 }
 
 fn render_general(

@@ -82,7 +82,7 @@ use effigy_manifest::config_sections::{
 };
 use effigy_manifest::load_task_manifest;
 
-const TASK_MANIFEST_FILE: &str = "effigy.toml";
+use effigy_manifest::TASK_MANIFEST_FILE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionFileKind {

@@ -2,18 +2,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use effigy_codegraph::json::{GraphAffectedFilePayload, GraphAffectedTaskPayload};
-use effigy_codegraph::model::{
-    Confidence, ExtractorCapability, ExtractorRecord, FileIndexStatus, SymbolRecord,
-};
+use effigy_codegraph::model::{Confidence, FileIndexStatus};
 use effigy_codegraph::{affected, status, GraphId, GraphStore};
 use effigy_scan::{
     ValidationGapConfidence, ValidationGapFinding, ValidationGapFindingKind,
     ValidationGapScanOptions, ValidationGapScanResult, ValidationGapSeverity,
     ValidationGapTestTarget,
 };
-use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use crate::BuiltinError;
+
+use super::graph_helpers::{
+    classify_file_role, compile_globs, first_symbol_line, supported_language_map, FileRole,
+    FileRoleOptions,
+};
 
 pub(super) fn run_validation_gap_scan(
     target_root: &Path,
@@ -136,7 +138,11 @@ pub(super) fn run_validation_gap_scan(
         if file.status != FileIndexStatus::Indexed {
             continue;
         }
-        let role = classify_file_role(&file.path, &file.language_id);
+        let role = classify_file_role(
+            &file.path,
+            &file.language_id,
+            FileRoleOptions::validation_gaps(),
+        );
         if role != FileRole::Implementation {
             skipped_non_implementation_files += 1;
             continue;
@@ -285,87 +291,6 @@ struct CandidateFile {
     stats: FileStats,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FileRole {
-    Implementation,
-    Config,
-    Test,
-    Docs,
-    Planning,
-    Fixture,
-    Generated,
-    Script,
-    Migration,
-}
-
-fn classify_file_role(path: &str, language_id: &str) -> FileRole {
-    let lower = path.to_ascii_lowercase();
-    if lower.contains("/target/")
-        || lower.contains("/node_modules/")
-        || lower.contains("/vendor/")
-        || lower.contains("/.effigy/")
-    {
-        return FileRole::Generated;
-    }
-    if lower.contains("/fixtures/")
-        || lower.contains("/fixture/")
-        || lower.starts_with("examples/")
-        || lower.contains("/examples/")
-    {
-        return FileRole::Fixture;
-    }
-    if lower.starts_with("tests/")
-        || lower.contains("/tests/")
-        || lower.ends_with("/tests.rs")
-        || lower.ends_with("_test.rs")
-        || lower.ends_with("_tests.rs")
-        || lower.ends_with(".test.ts")
-        || lower.ends_with(".spec.ts")
-        || lower.ends_with(".test.js")
-        || lower.ends_with(".spec.js")
-    {
-        return FileRole::Test;
-    }
-    if lower.starts_with("docs/roadmaps/")
-        || lower.starts_with("docs/specs/")
-        || lower.starts_with("docs/logs/")
-    {
-        return FileRole::Planning;
-    }
-    if language_id == "markdown" || lower.starts_with("docs/") || lower.ends_with(".md") {
-        return FileRole::Docs;
-    }
-    if lower.starts_with("migrations/")
-        || lower.contains("/migrations/")
-        || lower.contains("/db/migrate/")
-        || lower.contains("/database/migrations/")
-    {
-        return FileRole::Migration;
-    }
-    if lower.starts_with("scripts/")
-        || lower.starts_with("bin/")
-        || lower.starts_with("cmd/")
-        || lower.contains("/scripts/")
-        || lower.contains("/src/bin/")
-        || lower.ends_with("/main.rs")
-        || lower.ends_with("/main.ts")
-        || lower.ends_with("/main.js")
-        || lower.ends_with("/main.py")
-        || lower.ends_with("/main.php")
-    {
-        return FileRole::Script;
-    }
-    if lower.starts_with("config/")
-        || lower.ends_with(".toml")
-        || lower.ends_with(".json")
-        || lower.ends_with(".yaml")
-        || lower.ends_with(".yml")
-    {
-        return FileRole::Config;
-    }
-    FileRole::Implementation
-}
-
 #[derive(Debug, Clone, Default)]
 struct FileStats {
     inbound_edges: usize,
@@ -381,54 +306,6 @@ impl FileStats {
             + self.inbound_references
             + self.outbound_references
     }
-}
-
-fn compile_globs(label: &str, patterns: &[String]) -> Result<GlobSet, BuiltinError> {
-    let mut builder = GlobSetBuilder::new();
-    for pattern in patterns {
-        let glob = Glob::new(pattern).map_err(|error| {
-            BuiltinError::task_invocation(format!("invalid `{label}` glob `{pattern}`: {error}"))
-        })?;
-        builder.add(glob);
-    }
-    builder.build().map_err(|error| {
-        BuiltinError::task_invocation(format!("failed to compile `{label}` patterns: {error}"))
-    })
-}
-
-fn supported_language_map(extractors: &[ExtractorRecord]) -> BTreeMap<String, bool> {
-    let mut map = BTreeMap::new();
-    for extractor in extractors {
-        let has_symbols = extractor
-            .capabilities
-            .contains(&ExtractorCapability::Symbols);
-        let has_relations = extractor
-            .capabilities
-            .contains(&ExtractorCapability::References)
-            || extractor.capabilities.contains(&ExtractorCapability::Calls)
-            || extractor
-                .capabilities
-                .contains(&ExtractorCapability::Imports);
-        let supported = has_symbols && has_relations;
-        for language in &extractor.language_ids {
-            map.entry(language.clone())
-                .and_modify(|value| *value |= supported)
-                .or_insert(supported);
-        }
-    }
-    map
-}
-
-fn first_symbol_line(
-    symbol_ids: &[GraphId],
-    symbol_by_id: &BTreeMap<GraphId, SymbolRecord>,
-) -> usize {
-    symbol_ids
-        .iter()
-        .filter_map(|id| symbol_by_id.get(id))
-        .map(|symbol| symbol.span.start.line as usize)
-        .min()
-        .unwrap_or(1)
 }
 
 fn collect_changed_paths(

@@ -34,7 +34,7 @@ use crate::runner::execute::workspace_seeded::{
 };
 use crate::runner::host_container_lease::emit_host_container_lease_notice;
 use crate::runner::manifest::config_sections::ManifestEnvSchemaConfig;
-use crate::runner::manifest::load_task_manifest;
+use crate::runner::manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 use crate::runner::runtime_session_context::{
     current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
 };
@@ -471,7 +471,7 @@ pub(in crate::runner::execute) fn resolve_task_secret_env(
     task: &effigy_manifest::ManifestTask,
     eager_load: bool,
 ) -> Result<Vec<(String, SecretString)>, RunnerError> {
-    let manifest = load_task_manifest(&repo_root.join("effigy.toml"))?;
+    let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     let Some(secrets) = manifest.secrets.as_ref() else {
         return Ok(Vec::new());
     };

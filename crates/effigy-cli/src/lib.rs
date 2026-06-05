@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 
 mod command_parsing;
+pub mod command_surface;
 mod global_json;
 pub mod header;
 pub mod help;

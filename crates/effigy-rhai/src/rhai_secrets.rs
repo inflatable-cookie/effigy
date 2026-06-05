@@ -1,7 +1,9 @@
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-use effigy_manifest::{ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig};
+use effigy_manifest::{
+    ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig, TASK_MANIFEST_FILE,
+};
 use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload, VaultSecretRecord};
 use rhai::{EvalAltResult, ImmutableString, Map};
 
@@ -20,7 +22,7 @@ pub(crate) fn resolve_rhai_secret_store(
     repo_root: &Path,
     secret_targets: &[RhaiSecretTarget],
 ) -> Result<RhaiSecretStore, RhaiHostError> {
-    let manifest_path = repo_root.join("effigy.toml");
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     if !manifest_path.exists() {
         return Ok(RhaiSecretStore::default());
     }
@@ -233,7 +235,7 @@ fn active_rhai_load_vault_if_needed(
         return Ok(());
     }
 
-    let manifest_path = repo_root.join("effigy.toml");
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let manifest = effigy_manifest::load_task_manifest(&manifest_path)
         .map_err(|error| RhaiHostError::new(error.to_string()))?;
     let secrets = manifest
@@ -321,7 +323,7 @@ fn active_rhai_set_secret_records(
         return Ok(());
     }
 
-    let manifest_path = repo_root.join("effigy.toml");
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let manifest = effigy_manifest::load_task_manifest(&manifest_path)
         .map_err(|error| crate::rhai_runtime_error(error.to_string()))?;
     let secrets = manifest

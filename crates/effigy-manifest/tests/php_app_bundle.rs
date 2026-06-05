@@ -305,15 +305,13 @@ fn php_app_bundle_rejects_legacy_name_key() {
     let manifest_path = tmp.path().join("effigy.toml");
     std::fs::write(
         &manifest_path,
-        format!(
-            r#"
+        r#"
 [bundle]
 name = "php-app"
 host = "contact-patch.legacy.test"
 project_name = "contactpatch-dev"
 databases = ["contactpatch"]
 "#,
-        ),
     )
     .expect("write manifest");
 
@@ -747,7 +745,7 @@ base = {{ type = "path", dir = "{}" }}
         "\"${COMPOSER_HOME:-$HOME/.config/composer}/vendor/bin/effigy\" {request} {args}"
     );
     assert_eq!(defer.run_in, Some(ManifestTaskRunIn::Container));
-    assert!(manifest.tasks.get("seed").is_none());
+    assert!(!manifest.tasks.contains_key("seed"));
 }
 
 #[test]

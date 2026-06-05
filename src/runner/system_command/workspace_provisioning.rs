@@ -1,4 +1,5 @@
 use effigy_containers::{load_workspace_ownership_targets, EffectiveContainerPolicy};
+use effigy_core::repo_markers::has_task_manifest;
 use effigy_core::shell::shell_quote;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -566,7 +567,7 @@ pub(super) fn discover_effigy_repo_root(start: Option<&Path>) -> Option<PathBuf>
 }
 
 pub(super) fn looks_like_effigy_repo_root(path: &Path) -> bool {
-    path.join("effigy.toml").is_file()
+    has_task_manifest(path)
         && path.join("config/tasks.toml").is_file()
         && path.join("config/containers.toml").is_file()
 }

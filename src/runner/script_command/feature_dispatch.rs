@@ -928,7 +928,7 @@ pub(super) fn run_rhai_feature(
             }
             run_builtin_json(repo_root, "test", args)
         }
-        other if FEATURE_NAMES.contains(&other) => Err(RunnerError::Ui(format!(
+        other if rhai_feature_descriptor(other).is_some() => Err(RunnerError::Ui(format!(
             "known Rhai feature `{other}` is not wired to a runner dispatch path"
         ))),
         other => Err(RunnerError::task_invocation(format!(

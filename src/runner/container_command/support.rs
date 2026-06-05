@@ -14,6 +14,7 @@ use effigy_containers::{
     BackendId, ContainerAction, ContainerBackendDetection, ContainerInterruptPolicy,
     ContainerManager, ContainerManagerRequest,
 };
+use effigy_core::repo_markers::{has_task_manifest, TASK_MANIFEST_FILE};
 use effigy_core::shell::shell_quote;
 use serde_json::json;
 
@@ -50,7 +51,7 @@ pub(super) fn resolve_repo_root_or_invocation_cwd_scope(
 }
 
 pub(super) fn repo_root_has_effigy_manifest(repo_root: &Path) -> bool {
-    repo_root.join("effigy.toml").is_file()
+    has_task_manifest(repo_root)
 }
 
 pub(super) fn wait_for_container_ready(
@@ -148,7 +149,7 @@ pub(super) fn rewrite_manifest_for_ejected_compose(
     container_name: &str,
     compose_path: &Path,
 ) -> Result<(), RunnerError> {
-    let manifest_path = repo_root.join("effigy.toml");
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let raw = std::fs::read_to_string(&manifest_path)
         .map_err(|error| RunnerError::task_invocation_failed_read(&manifest_path, error))?;
     let mut document = raw.parse::<toml_edit::DocumentMut>().map_err(|error| {

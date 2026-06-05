@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+use effigy_core::repo_markers::is_effigy_config_filename;
+
 #[derive(Debug, Default)]
 pub(super) struct RepoSetupContext {
     pub(super) has_package_json: bool,
@@ -47,10 +49,7 @@ fn load_manifest_snippets(target_root: &Path) -> String {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|ext| ext.to_str()) == Some("toml")
-                && path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name == "effigy.toml" || name.starts_with("effigy."))
+                && path.file_name().is_some_and(is_effigy_config_filename)
             {
                 files.push(path);
             }

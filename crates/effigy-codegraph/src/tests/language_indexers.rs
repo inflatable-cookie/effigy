@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn graph_rust_indexer_emits_module_import_and_syntactic_call_facts() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("src/support")).expect("mkdir support");
+    fs::write(
+        temp.path().join("src/lib.rs"),
+        "pub mod support;\nuse support::helper;\nfn run() -> usize { helper() }\n",
+    )
+    .expect("write lib");
+    fs::write(
+        temp.path().join("src/support/mod.rs"),
+        "pub fn helper() -> usize { 1 }\n",
+    )
+    .expect("write support");
+
+    let report = run_index(temp.path()).expect("index");
+    assert_eq!(report.failed_paths.len(), 0);
+
+    let store = GraphStore::open(temp.path()).expect("store");
+    let symbols = store.list_symbols().expect("symbols");
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol.kind == "module" && symbol.canonical_name == "support"));
+    assert!(symbols
+        .iter()
+        .any(|symbol| symbol.kind == "function" && symbol.canonical_name == "helper"));
+
+    let edges = store.list_edges().expect("edges");
+    assert!(edges.iter().any(|edge| {
+        edge.kind == "import" && edge.unresolved_target.as_deref() == Some("support::helper")
+    }));
+    assert!(edges.iter().any(|edge| {
+        edge.kind == "call"
+            && edge.unresolved_target.as_deref() == Some("helper")
+            && edge.provenance.confidence == Confidence::Syntactic
+    }));
+}
+
+#[test]
 fn graph_markdown_indexer_emits_code_fences_and_local_path_refs() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(temp.path().join("docs")).expect("mkdir docs");

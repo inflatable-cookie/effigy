@@ -14,7 +14,7 @@ use effigy_secrets::{
 use serde_json::{json, Value};
 
 use crate::runner::command_context::resolve_active_repo_root;
-use crate::runner::manifest::load_task_manifest;
+use crate::runner::manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 use crate::runner::render::render_command_result;
 
 use super::error::RunnerError;
@@ -24,7 +24,7 @@ const TASK_SECRET_GENERATION_ACTIVE_ENV: &str = "EFFIGY_INTERNAL_TASK_SECRET_GEN
 pub(super) fn run_secrets(args: SecretsArgs) -> Result<String, RunnerError> {
     let resolved = resolve_active_repo_root(args.repo_override.clone())?;
     let repo_root = resolved.resolved_root;
-    let manifest_path = repo_root.join("effigy.toml");
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     let manifest = load_task_manifest(&manifest_path)?;
     match args.subcommand {
         SecretsSubcommand::List => {

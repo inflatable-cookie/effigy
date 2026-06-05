@@ -7,7 +7,7 @@ use effigy_cli::TaskInvocation;
 
 use effigy_core::container_detection::process_is_inside_container;
 use effigy_core::shell::{shell_quote, with_local_node_bin_path};
-use effigy_manifest::{load_task_manifest, ManifestTask, ManifestTaskRunIn};
+use effigy_manifest::{load_task_manifest, ManifestTask, ManifestTaskRunIn, TASK_MANIFEST_FILE};
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
 
 use super::policy::DEFER_DEPTH_ENV;
@@ -177,7 +177,7 @@ fn run_deferred_request_with_binding(
     cause: &RunnerError,
     current_depth: u8,
 ) -> Result<DeferredExecutionPlan, RunnerError> {
-    let manifest_path = deferral.working_dir.join("effigy.toml");
+    let manifest_path = deferral.working_dir.join(TASK_MANIFEST_FILE);
     if !manifest_path.is_file() {
         return match deferral.run_in {
             ManifestTaskRunIn::Either => Ok(DeferredExecutionPlan::HostCommand(

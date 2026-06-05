@@ -3,11 +3,9 @@ use std::process::Command as ProcessCommand;
 
 use effigy_manifest::{
     config_sections::ManifestBootstrapChildConfig, load_task_manifest, ManifestBootstrapConfig,
-    ManifestBootstrapRun, ManifestBootstrapSubmodulesPolicy,
+    ManifestBootstrapRun, ManifestBootstrapSubmodulesPolicy, TASK_MANIFEST_FILE,
 };
 use serde_json::json;
-
-pub const TASK_MANIFEST_FILE: &str = "effigy.toml";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootstrapDbSeedInput {

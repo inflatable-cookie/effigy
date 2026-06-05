@@ -185,17 +185,12 @@ fn project_name_from_volume_name(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::test_support::generated_policy;
     use effigy_containers::{
         ContainerCacheOperation, ContainerConfirmationPolicy, ContainerDataOperation,
         ContainerOperationKind, ContainerSideEffectClass,
     };
-    use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
-    use effigy_manifest::{
-        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
-        ManifestContainerStartup,
-    };
-
-    use super::*;
 
     #[test]
     fn project_name_inference_handles_workspace_cache_volumes() {
@@ -327,7 +322,7 @@ mod tests {
 
     #[test]
     fn data_operation_plan_keeps_transfer_identity() {
-        let policy = stub_policy("web");
+        let policy = generated_policy("web");
         let archive = std::path::PathBuf::from("/tmp/export.tar.gz");
         let plan = data_operation_plan(
             std::path::Path::new("/tmp/repo"),
@@ -349,7 +344,7 @@ mod tests {
 
     #[test]
     fn cache_prune_operation_plan_requires_confirmation() {
-        let policy = stub_policy("web");
+        let policy = generated_policy("web");
         let plan = cache_operation_plan(
             std::path::Path::new("/tmp/repo"),
             &policy,
@@ -381,43 +376,6 @@ mod tests {
                 assert_eq!(operation.project.as_deref(), Some("project"));
             }
             other => panic!("unexpected operation kind: {other:?}"),
-        }
-    }
-
-    fn stub_policy(name: &str) -> EffectiveContainerPolicy {
-        EffectiveContainerPolicy {
-            name: name.to_owned(),
-            driver: ManifestContainerDriver::Colima,
-            startup: ManifestContainerStartup::Detached,
-            profile: "effigy".to_owned(),
-            compose_source: EffectiveComposeSource::Generated,
-            compose_files: vec![],
-            compose_file_display: String::new(),
-            managed_volumes: vec![],
-            shared_services: vec![],
-            project_name: format!("{name}-project"),
-            primary_service: "app".to_owned(),
-            dns_domain: None,
-            dns_tls: false,
-            dns_port: None,
-            dns_routes: vec![],
-            service_aliases: vec![],
-            declared_ports: vec![],
-            ports_declared_explicitly: false,
-            declared_mounts: vec![],
-            declared_media_mounts: vec![],
-            pull_production_hook: None,
-            health_check: None,
-            health_timeout_secs: 60,
-            secret_delivery: effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv,
-            secret_runtime_dir: None,
-            source_secret_runtime_for_deferrals: false,
-            workspace_user: None,
-            workspace_home: None,
-            on_task_exit: ManifestContainerOnTaskExit::Stop,
-            shutdown: ManifestContainerShutdownMode::Graceful,
-            detach_timeout_secs: 10,
-            host_processes: vec![],
         }
     }
 }

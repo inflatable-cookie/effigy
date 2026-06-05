@@ -18,7 +18,7 @@ impl RustIndexer {
     pub fn new() -> Self {
         Self {
             extractor_id: extractor_id("rust-syntax").expect("static extractor id"),
-            version: "0.1.0".to_owned(),
+            version: "0.1.1".to_owned(),
         }
     }
 }
@@ -200,7 +200,7 @@ fn walk_rust_node(
                     &target,
                     function,
                     state,
-                    Confidence::Heuristic,
+                    Confidence::Syntactic,
                 )?;
                 unresolved_edge(
                     &owner_id,
@@ -208,7 +208,7 @@ fn walk_rust_node(
                     target.as_str(),
                     function,
                     state,
-                    Confidence::Heuristic,
+                    Confidence::Syntactic,
                 )?;
             }
         }

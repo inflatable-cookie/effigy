@@ -627,7 +627,7 @@ fn load_repo_ownership(repo_root: &str) -> RepoOwnershipState {
     if !repo_root_path.exists() {
         return RepoOwnershipState::RepoMissing;
     }
-    if !repo_root_path.join("effigy.toml").is_file() {
+    if !effigy_core::repo_markers::has_task_manifest(&repo_root_path) {
         return RepoOwnershipState::ManifestMissing;
     }
     match load_all_container_policies(&repo_root_path) {

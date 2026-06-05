@@ -20,7 +20,8 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
 ## Layout
 
 - `gNN/batch-cards/` optional per-generation execution cards
-- `g08/` current graph-aware scan intelligence generation
+- `g08/` current graph-aware scan intelligence and code quality boundary
+  follow-through generation
 - `g07/` previous native code graph intelligence generation
 - `g06/` previous codebase lean-down and ownership simplification generation
 - `g05/` previous secret and reusable-core hardening generation
@@ -62,16 +63,20 @@ Roadmaps are executable milestone plans derived from Effigy vision and architect
   agent-adoption follow-through focused on cross-repo freshness trust,
   behavioral query ranking, edit-target packets, benchmark proof, and agent
   guidance.
-- `g08` is closed through
-  [`g08.008`](./g08/008-graph-aware-scan-closeout.md). It covered
-  graph-aware scan intelligence: preserving deterministic filesystem scans,
-  adding optional graph enrichment, and introducing graph-native scans for
-  boundaries, isolated code, hotspots, and validation gaps, plus the agent
-  guidance, JSON examples, benchmark proof, and closeout.
+- `g08` is complete through
+  [`g08.009`](./g08/009-code-quality-boundary-sweep-suite.md). The first tranche
+  covered graph-aware scan intelligence: preserving deterministic filesystem
+  scans, adding optional graph enrichment, and introducing graph-native scans
+  for boundaries, isolated code, hotspots, and validation gaps. The follow-up
+  tranche lives under one code-quality boundary sweep roadmap with batch cards:
+  command/Rhai descriptor convergence, container bring-up phase cleanup,
+  repo-marker convergence, duplicate-block follow-through, boundary/dead-code
+  scan self-adoption, dead-code Rust signal repair, residual false-positive
+  precision, and the final dead-code burn-down to 0 findings.
 
 ## Active Strict Lane
 
-None.
+No active ready card.
 
 ## Research Program
 
@@ -107,7 +112,7 @@ Before rollover:
 
 ## Next Task
 
-Planning only.
+No current dead-code residual batch remains.
 
 ## Historical language boundary
 

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use effigy_docs_policy::{resolve_repo_input as resolve_docs_repo_input, DocsPolicyError};
 
 use crate::runner::command_context::resolve_active_repo_root;
-use crate::runner::manifest::{load_task_manifest, ManifestDocsPolicyConfig};
+use crate::runner::manifest::{load_task_manifest, ManifestDocsPolicyConfig, TASK_MANIFEST_FILE};
 use effigy_cli::{DocsArgs, DocsCheckKind, DocsSubcommand};
 
 use super::error::RunnerError;
@@ -83,7 +83,7 @@ pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
 }
 
 fn load_docs_policy_config(repo_root: &Path) -> Result<ManifestDocsPolicyConfig, RunnerError> {
-    let manifest_path = repo_root.join("effigy.toml");
+    let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
     if !manifest_path.is_file() {
         return Ok(ManifestDocsPolicyConfig::default());
     }

@@ -1,5 +1,7 @@
 use effigy_cli::{BundleArgs, BundleSubcommand};
-use effigy_manifest::{inspect_bundle_source, sync_bundle_source, BundleSourceType};
+use effigy_manifest::{
+    inspect_bundle_source, sync_bundle_source, BundleSourceType, TASK_MANIFEST_FILE,
+};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -124,13 +126,13 @@ fn run_bundle_sync(output_json: bool) -> Result<String, RunnerError> {
 fn discover_bundle_manifest_path(root_or_cwd: impl AsRef<Path>) -> Result<PathBuf, RunnerError> {
     let root_or_cwd = root_or_cwd.as_ref();
     if root_or_cwd.is_dir() {
-        let direct = root_or_cwd.join("effigy.toml");
+        let direct = root_or_cwd.join(TASK_MANIFEST_FILE);
         if direct.is_file() {
             return Ok(direct);
         }
     }
     for ancestor in root_or_cwd.ancestors() {
-        let manifest_path = ancestor.join("effigy.toml");
+        let manifest_path = ancestor.join(TASK_MANIFEST_FILE);
         if manifest_path.is_file() {
             return Ok(manifest_path);
         }

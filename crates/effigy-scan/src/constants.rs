@@ -1,4 +1,4 @@
-pub const TASK_MANIFEST_FILE: &str = "effigy.toml";
+pub use effigy_manifest::TASK_MANIFEST_FILE;
 
 pub(super) const DEFAULT_GOD_FILES_WARN: usize = 250;
 pub(super) const DEFAULT_GOD_FILES_HIGH: usize = 400;

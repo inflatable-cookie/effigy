@@ -50,7 +50,7 @@ use serde_json::{json, Value as JsonValue};
 use crate::runner::command_context::resolve_active_repo_root;
 use crate::runner::manifest::{
     load_task_manifest_with_inspection, LoadedTaskManifest, ManifestDemoConfig, ManifestDemoMode,
-    ManifestManagedRun, ManifestTask,
+    ManifestManagedRun, ManifestTask, TASK_MANIFEST_FILE,
 };
 use crate::tui::run_demo_browser_tui;
 use effigy_cli::{

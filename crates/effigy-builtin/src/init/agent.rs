@@ -611,6 +611,7 @@ fn inject_internal_skill_metadata(contents: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::inject_internal_skill_metadata;
 

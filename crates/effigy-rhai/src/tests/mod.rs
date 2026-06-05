@@ -5,7 +5,7 @@ use super::{
     EffigyCommandError, HostCallbacks, HostCommandOutput, RhaiSecretTarget, ScriptContext,
     EFFIGY_RHAI_ARGS_JSON, EFFIGY_RHAI_CATALOG_ROOT, EFFIGY_RHAI_INVOCATION_CWD,
 };
-use crate::surface::{FEATURE_NAMES, MODULE_NAMES};
+use crate::surface::{rhai_feature_descriptors, RhaiFeatureDispatch, FEATURE_NAMES, MODULE_NAMES};
 use effigy_secrets::{SecretValue, VaultEnvelope, VaultPlaintextPayload, VaultSecretRecord};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -308,6 +308,28 @@ fn rhai_surface_feature_names_are_unique() {
         FEATURE_NAMES.len(),
         "duplicate Rhai feature names in surface registry"
     );
+}
+
+#[test]
+fn rhai_surface_feature_descriptors_cover_feature_names() {
+    let names = FEATURE_NAMES.iter().copied().collect::<BTreeSet<_>>();
+    let descriptor_names = rhai_feature_descriptors()
+        .iter()
+        .map(|descriptor| descriptor.id)
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(descriptor_names, names);
+
+    for descriptor in rhai_feature_descriptors() {
+        assert!(!descriptor.module().is_empty());
+        assert!(!descriptor.function().is_empty());
+        assert!(!descriptor.option_style.is_empty());
+        assert!(!descriptor.safety.is_empty());
+        assert!(matches!(
+            descriptor.dispatch,
+            RhaiFeatureDispatch::Runner | RhaiFeatureDispatch::HostHandled
+        ));
+    }
 }
 
 #[test]

@@ -2,7 +2,7 @@ use super::{
     compare_release_state_fingerprints, format_release_tag, gate_blockers, load_release_config,
     load_release_prepared_state, normalized_expected_files, snapshot_mutation_paths, test_support,
     write_release_prepared_state, FileMutationApply, FileMutationPlan, GateExecutionReport,
-    GateResult, ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints, VersionFileKind,
+    GateResult, ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints,
 };
 use std::fs;
 use std::path::PathBuf;

@@ -261,6 +261,151 @@ pub const FEATURE_NAMES: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RhaiFeatureDispatch {
+    Runner,
+    HostHandled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RhaiFeatureDescriptor {
+    pub id: &'static str,
+    pub option_style: &'static str,
+    pub safety: &'static str,
+    pub dispatch: RhaiFeatureDispatch,
+}
+
+impl RhaiFeatureDescriptor {
+    pub fn module(self) -> &'static str {
+        self.id
+            .split_once('.')
+            .expect("Rhai feature ids must use module.function form")
+            .0
+    }
+
+    pub fn function(self) -> &'static str {
+        self.id
+            .split_once('.')
+            .expect("Rhai feature ids must use module.function form")
+            .1
+    }
+}
+
+const fn runner_feature(id: &'static str) -> RhaiFeatureDescriptor {
+    RhaiFeatureDescriptor {
+        id,
+        option_style: "options",
+        safety: "depends-on-command",
+        dispatch: RhaiFeatureDispatch::Runner,
+    }
+}
+
+const fn host_handled_feature(id: &'static str) -> RhaiFeatureDescriptor {
+    RhaiFeatureDescriptor {
+        id,
+        option_style: "host",
+        safety: "depends-on-command",
+        dispatch: RhaiFeatureDispatch::HostHandled,
+    }
+}
+
+pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
+    runner_feature(FEATURE_TASKS_LIST),
+    runner_feature(FEATURE_TASKS_RESOLVE),
+    runner_feature(FEATURE_TASKS_INFO),
+    runner_feature(FEATURE_CATALOG_TASKS),
+    runner_feature(FEATURE_CONFIG_EFFECTIVE),
+    runner_feature(FEATURE_CONFIG_RAW),
+    runner_feature(FEATURE_CONFIG_GET),
+    runner_feature(FEATURE_CONFIG_USER_PATH),
+    runner_feature(FEATURE_CONFIG_USER_GET),
+    runner_feature(FEATURE_CONFIG_USER_SET),
+    runner_feature(FEATURE_CONFIG_USER_UNSET),
+    runner_feature(FEATURE_STATE_PLAN),
+    runner_feature(FEATURE_STATE_APPLY),
+    runner_feature(FEATURE_STATE_CAPTURE),
+    host_handled_feature(FEATURE_STATE_CAPTURE_SET),
+    runner_feature(FEATURE_STATE_HISTORY),
+    runner_feature(FEATURE_CONTAINER_STATUS),
+    runner_feature(FEATURE_CONTAINER_LOGS),
+    runner_feature(FEATURE_CONTAINER_RESET),
+    runner_feature(FEATURE_CONTAINER_DATA),
+    runner_feature(FEATURE_CONTAINER_DATA_DUMP),
+    runner_feature(FEATURE_CONTAINER_DATA_SEED),
+    runner_feature(FEATURE_CONTAINER_DATA_PULL_PRODUCTION),
+    runner_feature(FEATURE_CONTAINER_CACHE_LIST),
+    runner_feature(FEATURE_CONTAINER_CACHE_PRUNE),
+    runner_feature(FEATURE_CONTAINER_VOLUME_LIST),
+    runner_feature(FEATURE_CONTAINER_VOLUME_PRUNE),
+    runner_feature(FEATURE_CONTAINER_EJECT),
+    runner_feature(FEATURE_CONTAINER_STATS),
+    runner_feature(FEATURE_ARTIFACT_INSPECT),
+    runner_feature(FEATURE_ARTIFACT_STAGE),
+    runner_feature(FEATURE_ARTIFACT_CAPTURE),
+    runner_feature(FEATURE_DOCS_CHECK_LINKS),
+    runner_feature(FEATURE_DOCS_CHECK_JSON_EXAMPLES),
+    runner_feature(FEATURE_DOCS_CHECK_HEADINGS),
+    runner_feature(FEATURE_DOCS_CHECK_PATHS),
+    runner_feature(FEATURE_DOCS_CHECK_CONTAINS),
+    runner_feature(FEATURE_DOCS_CHECK_FORBIDDEN),
+    runner_feature(FEATURE_DOCS_CHECK_INDEX),
+    runner_feature(FEATURE_DOCS_CHECK_NEXT_ACTION),
+    runner_feature(FEATURE_DOCS_CHECK_WORKFLOW_PATHS),
+    runner_feature(FEATURE_DOCS_ADD_LOG_INDEX),
+    runner_feature(FEATURE_BUNDLE_INSPECT),
+    runner_feature(FEATURE_SERVICE_LIST),
+    runner_feature(FEATURE_SERVICE_EXTRACT),
+    runner_feature(FEATURE_GATEWAY_STATUS),
+    runner_feature(FEATURE_GATEWAY_SETUP_TLS),
+    runner_feature(FEATURE_GATEWAY_UP),
+    runner_feature(FEATURE_GATEWAY_DOWN),
+    runner_feature(FEATURE_DOCTOR_RUN),
+    runner_feature(FEATURE_SCAN_GOD_FILES),
+    runner_feature(FEATURE_SCAN_GENERATED_ASSETS),
+    runner_feature(FEATURE_SCAN_GENERATED_IN_SRC),
+    runner_feature(FEATURE_SCAN_DUPLICATE_BLOCKS),
+    runner_feature(FEATURE_SCAN_COMMENT_RATIO),
+    runner_feature(FEATURE_SCAN_ATTENTION_MARKERS),
+    runner_feature(FEATURE_SCAN_STALE_SUPPRESSIONS),
+    runner_feature(FEATURE_CACHE_INSPECT),
+    runner_feature(FEATURE_CACHE_INVALIDATE),
+    runner_feature(FEATURE_CONTRACTS_CHECK_JSON),
+    runner_feature(FEATURE_CONTRACTS_VALIDATE_SELECTION),
+    runner_feature(FEATURE_DEPLOY_MODEL),
+    runner_feature(FEATURE_DEPLOY_EMIT),
+    runner_feature(FEATURE_DEPLOY_PLAN),
+    runner_feature(FEATURE_DEPLOY_APPLY),
+    runner_feature(FEATURE_DEPLOY_STATUS),
+    runner_feature(FEATURE_DEPLOY_HISTORY),
+    runner_feature(FEATURE_DEPLOY_REDEPLOY),
+    runner_feature(FEATURE_DISTRIBUTION_VALIDATE_METADATA),
+    runner_feature(FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR),
+    runner_feature(FEATURE_DISTRIBUTION_PREFLIGHT),
+    runner_feature(FEATURE_DISTRIBUTION_FIRST_PUBLISH),
+    runner_feature(FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS),
+    runner_feature(FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT),
+    runner_feature(FEATURE_DISTRIBUTION_WRITE_SUMMARY),
+    runner_feature(FEATURE_SYSTEM_STATUS),
+    runner_feature(FEATURE_SYSTEM_LOGS),
+    runner_feature(FEATURE_DEMO_LIST),
+    runner_feature(FEATURE_DEMO_INSPECT),
+    runner_feature(FEATURE_DEMO_HISTORY),
+    runner_feature(FEATURE_CHANGELOG_VALIDATE),
+    runner_feature(FEATURE_CHANGELOG_EXTRACT),
+    runner_feature(FEATURE_UNLOCK_SCOPES),
+    runner_feature(FEATURE_TEST_PLAN),
+];
+
+pub fn rhai_feature_descriptors() -> &'static [RhaiFeatureDescriptor] {
+    FEATURE_DESCRIPTORS
+}
+
+pub fn rhai_feature_descriptor(feature: &str) -> Option<&'static RhaiFeatureDescriptor> {
+    FEATURE_DESCRIPTORS
+        .iter()
+        .find(|descriptor| descriptor.id == feature)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RhaiSurfaceFunction {
     pub module: &'static str,
     pub name: &'static str,
@@ -271,7 +416,12 @@ pub struct RhaiSurfaceFunction {
 
 pub fn rhai_surface_functions() -> Vec<RhaiSurfaceFunction> {
     let mut functions = EXTRA_SURFACE_FUNCTIONS.to_vec();
-    functions.extend(FEATURE_NAMES.iter().copied().map(feature_surface_function));
+    functions.extend(
+        FEATURE_DESCRIPTORS
+            .iter()
+            .copied()
+            .map(feature_surface_function),
+    );
     functions.sort_by(|left, right| {
         left.module
             .cmp(right.module)
@@ -310,17 +460,14 @@ pub fn rendered_signature(function: &RhaiSurfaceFunction) -> String {
     }
 }
 
-fn feature_surface_function(feature: &'static str) -> RhaiSurfaceFunction {
-    let (module, name) = feature
-        .split_once('.')
-        .expect("Rhai feature names must use module.name form");
+fn feature_surface_function(feature: RhaiFeatureDescriptor) -> RhaiSurfaceFunction {
     RhaiSurfaceFunction {
-        module,
-        name,
+        module: feature.module(),
+        name: feature.function(),
         signature: "module::function(options)",
         description:
             "Typed Effigy command helper; returns the matching JSON command payload as a Rhai map.",
-        safety: "depends-on-command",
+        safety: feature.safety,
     }
 }
 

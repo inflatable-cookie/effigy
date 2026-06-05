@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 use std::process::Output;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use super::closeout::{
     finish_container_up_failure, maybe_confirm_container_reset_wipe_data,
@@ -13,7 +15,10 @@ use super::gateway_registration::{
     deregister_gateway_routes_for_container, register_gateway_routes_for_container,
 };
 use super::runtime_error_from_runner;
-use super::secret_env::{materialize_container_secret_runtime, resolve_container_secret_runtime};
+use super::secret_env::{
+    materialize_container_secret_runtime, resolve_container_secret_runtime,
+    ResolvedContainerSecretRuntime,
+};
 use super::shell_prep::{
     append_container_exec_env, maybe_refresh_workspace_effigy_for_shell,
     resolve_container_exec_working_dir_for_operation, resolve_container_shell_session,
@@ -50,6 +55,7 @@ use effigy_containers::{
     ContainerCapturedExecOperation, ContainerExecOperation, ContainerLifecycleOperation,
     ContainerOperationKind, ContainerOperationPlan, ContainerOperationRequest,
 };
+use effigy_containers::{ContainerCommandReport, ContainerComposeInvocationPlan};
 use effigy_runtime::read::{
     run_container_logs, run_container_stats_all, run_container_status, run_container_status_all,
     run_container_status_under_path,
@@ -66,6 +72,24 @@ use effigy_runtime::write::{
 
 const SECRETS_REQUIRED_ENV: &str = "EFFIGY_SECRETS_REQUIRED";
 
+struct ContainerUpPlan {
+    stop_flag: Arc<AtomicBool>,
+    policy: EffectiveContainerPolicy,
+    secret_runtime: ResolvedContainerSecretRuntime,
+    compose_secret_env: Vec<(String, OsString)>,
+    warnings: Vec<String>,
+    attach_mode: EffectiveAttachMode,
+    colima_started: bool,
+    shared_service_notes: Vec<String>,
+    up_plan: ContainerComposeInvocationPlan,
+}
+
+struct ContainerUpRuntimeIntegrations {
+    gateway_routes: Vec<super::gateway_registration::RegisteredGatewayRoute>,
+    tcp_alias_host_notes: Vec<String>,
+    warnings: Vec<String>,
+}
+
 pub(super) fn run_container_up(
     repo_root: &Path,
     name: Option<&str>,
@@ -73,12 +97,50 @@ pub(super) fn run_container_up(
     detach: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    reject_conflicting_container_up_modes(attach, detach)?;
+
+    let plan = prepare_container_up(repo_root, name, attach, detach)?;
+
+    if container_up_stop_requested(&plan) {
+        return render_container_up_interrupted(repo_root, &plan);
+    }
+
+    if let Some(closeout) = run_container_up_compose(repo_root, &plan)? {
+        return Ok(closeout);
+    }
+    write_container_up_backend_override(repo_root, &plan.policy);
+
+    if container_up_stop_requested(&plan) {
+        return render_container_up_interrupted(repo_root, &plan);
+    }
+
+    let health = wait_for_container_ready(&plan.policy, Some(&plan.stop_flag))?;
+    if container_up_stop_requested(&plan) {
+        return render_container_up_interrupted(repo_root, &plan);
+    }
+
+    let integrations = complete_container_up_runtime_integrations(repo_root, &plan)?;
+
+    clear_host_container_lease(repo_root, &plan.policy)?;
+
+    render_container_up_result(repo_root, &plan, health, integrations, output_json)
+}
+
+fn reject_conflicting_container_up_modes(attach: bool, detach: bool) -> Result<(), RunnerError> {
     if attach && detach {
         return Err(RunnerError::task_invocation(
             "`effigy container up` cannot combine `--attach` and `--detach`",
         ));
     }
+    Ok(())
+}
 
+fn prepare_container_up(
+    repo_root: &Path,
+    name: Option<&str>,
+    attach: bool,
+    detach: bool,
+) -> Result<ContainerUpPlan, RunnerError> {
     let stop_flag = install_stop_requested_flag()?;
     let policy = load_container_policy(repo_root, name)?;
     let _operation_plan = lifecycle_operation_plan(
@@ -101,15 +163,6 @@ pub(super) fn run_container_up(
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
     let colima_started = ensure_runtime_backend_running(&policy, repo_root)?;
-    if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-        return render_interrupted_up_closeout(
-            repo_root,
-            &policy,
-            colima_started,
-            attach_mode,
-            lifecycle_cleanup_failed_container_up,
-        );
-    }
     let shared_service_notes = ensure_shared_services_running(&policy)?;
     let _manager_report = effigy_runtime::container_manager::lifecycle_operation_report(
         repo_root,
@@ -126,24 +179,35 @@ pub(super) fn run_container_up(
         "docker compose up",
     )
     .map_err(RunnerError::from)?;
-    if attach_mode == EffectiveAttachMode::Attached {
+    Ok(ContainerUpPlan {
+        stop_flag,
+        policy,
+        secret_runtime,
+        compose_secret_env,
+        warnings,
+        attach_mode,
+        colima_started,
+        shared_service_notes,
+        up_plan,
+    })
+}
+
+fn run_container_up_compose(
+    repo_root: &Path,
+    plan: &ContainerUpPlan,
+) -> Result<Option<String>, RunnerError> {
+    if plan.attach_mode == EffectiveAttachMode::Attached {
         match run_compose_plan_inherit_with_stop_flag_and_env(
-            &up_plan,
-            &stop_flag,
-            &compose_secret_env,
+            &plan.up_plan,
+            &plan.stop_flag,
+            &plan.compose_secret_env,
         )? {
             ComposeRunOutcome::Succeeded => {}
             ComposeRunOutcome::Interrupted => {
-                return render_interrupted_up_closeout(
-                    repo_root,
-                    &policy,
-                    colima_started,
-                    attach_mode,
-                    lifecycle_cleanup_failed_container_up,
-                );
+                return render_container_up_interrupted(repo_root, plan).map(Some);
             }
             ComposeRunOutcome::Failed(status) => {
-                let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &policy);
+                let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &plan.policy);
                 return Err(finish_container_up_failure(
                     RunnerError::task_invocation(format!(
                         "docker compose up exited with status {status}"
@@ -154,92 +218,105 @@ pub(super) fn run_container_up(
         }
     } else {
         effigy_runtime::signals::run_compose_plan_capture_with_env(
-            &policy,
-            &up_plan,
-            &compose_secret_env,
+            &plan.policy,
+            &plan.up_plan,
+            &plan.compose_secret_env,
         )?;
     }
-    let backend_id = match resolve_compose_backend_for_repo(repo_root, &policy) {
+    Ok(None)
+}
+
+fn write_container_up_backend_override(repo_root: &Path, policy: &EffectiveContainerPolicy) {
+    let backend_id = match resolve_compose_backend_for_repo(repo_root, policy) {
         ComposeBackend::Docker => effigy_containers::BackendId::docker_compose(),
         ComposeBackend::ColimaNerdctl => effigy_containers::BackendId::colima_nerdctl(),
     };
     let _ = write_runtime_backend_override(repo_root, Some(policy.name.as_str()), &backend_id);
-    if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-        return render_interrupted_up_closeout(
-            repo_root,
-            &policy,
-            colima_started,
-            attach_mode,
-            lifecycle_cleanup_failed_container_up,
-        );
-    }
-    let health = wait_for_container_ready(&policy, Some(&stop_flag))?;
-    if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-        return render_interrupted_up_closeout(
-            repo_root,
-            &policy,
-            colima_started,
-            attach_mode,
-            lifecycle_cleanup_failed_container_up,
-        );
-    }
+}
+
+fn container_up_stop_requested(plan: &ContainerUpPlan) -> bool {
+    plan.stop_flag.load(Ordering::Relaxed)
+}
+
+fn render_container_up_interrupted(
+    repo_root: &Path,
+    plan: &ContainerUpPlan,
+) -> Result<String, RunnerError> {
+    render_interrupted_up_closeout(
+        repo_root,
+        &plan.policy,
+        plan.colima_started,
+        plan.attach_mode,
+        lifecycle_cleanup_failed_container_up,
+    )
+}
+
+fn complete_container_up_runtime_integrations(
+    repo_root: &Path,
+    plan: &ContainerUpPlan,
+) -> Result<ContainerUpRuntimeIntegrations, RunnerError> {
+    let policy = &plan.policy;
     let working_dir = load_container_exec_working_dir(repo_root, Some(policy.name.as_str()))
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     if let Err(error) =
-        ensure_primary_service_exec_ready_for_runtime(repo_root, &policy, &working_dir)
+        ensure_primary_service_exec_ready_for_runtime(repo_root, policy, &working_dir)
     {
-        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &policy);
+        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
-    if let Err(error) = materialize_container_secret_runtime(repo_root, &policy, &secret_runtime) {
-        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &policy);
+    if let Err(error) =
+        materialize_container_secret_runtime(repo_root, policy, &plan.secret_runtime)
+    {
+        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
-    let gateway_routes = match register_gateway_routes_for_container(repo_root, &policy) {
+    let gateway_routes = match register_gateway_routes_for_container(repo_root, policy) {
         Ok(routes) => routes,
         Err(error) => {
-            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &policy);
+            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
             return Err(finish_container_up_failure(error, cleanup_result));
         }
     };
-    let tcp_alias_host_notes = match reconcile_primary_service_tcp_alias_hosts(repo_root, &policy) {
+    let tcp_alias_host_notes = match reconcile_primary_service_tcp_alias_hosts(repo_root, policy) {
         Ok(notes) => notes,
         Err(error) => {
-            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, &policy);
+            let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
             return Err(finish_container_up_failure(error, cleanup_result));
         }
     };
 
-    clear_host_container_lease(repo_root, &policy)?;
-
-    // Spawn detached host-process supervisors (one per
-    // `[[containers.<name>.host_processes]]` entry). Failures here do
-    // not abort the container bring-up — they surface as warnings on
-    // the report.
-    let mut combined_warnings: Vec<String> = warnings.clone();
-    if let Err(error) = start_host_processes_for_container(repo_root, &policy) {
-        combined_warnings.push(format!("host-process supervisor failed to start: {error}"));
+    let mut warnings = plan.warnings.clone();
+    if let Err(error) = start_host_processes_for_container(repo_root, policy) {
+        warnings.push(format!("host-process supervisor failed to start: {error}"));
     }
 
-    if attach_mode == EffectiveAttachMode::Detached {
-        let mut report = up_detached_report(&policy, colima_started, health);
-        annotate_shared_service_notes(&mut report, &shared_service_notes);
-        annotate_registered_gateway_routes(&mut report, &gateway_routes);
-        annotate_tcp_alias_host_notes(&mut report, &tcp_alias_host_notes);
-        annotate_warning_lines(&mut report, &combined_warnings);
+    Ok(ContainerUpRuntimeIntegrations {
+        gateway_routes,
+        tcp_alias_host_notes,
+        warnings,
+    })
+}
+
+fn render_container_up_result(
+    repo_root: &Path,
+    plan: &ContainerUpPlan,
+    health: Option<&'static str>,
+    integrations: ContainerUpRuntimeIntegrations,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if plan.attach_mode == EffectiveAttachMode::Detached {
+        let report = detached_container_up_report(plan, health, integrations);
         return Ok(render_container_report(report, output_json));
     }
-
     if output_json {
         return Err(RunnerError::task_invocation(
             "`effigy container up --json` is only supported for detached bring-up; attached sessions stream live output instead",
         ));
     }
-
     run_attached_container_session_with_hook(
         repo_root,
-        &policy,
-        colima_started,
+        &plan.policy,
+        plan.colima_started,
         health,
         None,
         |policy| {
@@ -252,6 +329,19 @@ pub(super) fn run_container_up(
         },
     )
     .map_err(Into::into)
+}
+
+fn detached_container_up_report(
+    plan: &ContainerUpPlan,
+    health: Option<&'static str>,
+    integrations: ContainerUpRuntimeIntegrations,
+) -> ContainerCommandReport {
+    let mut report = up_detached_report(&plan.policy, plan.colima_started, health);
+    annotate_shared_service_notes(&mut report, &plan.shared_service_notes);
+    annotate_registered_gateway_routes(&mut report, &integrations.gateway_routes);
+    annotate_tcp_alias_host_notes(&mut report, &integrations.tcp_alias_host_notes);
+    annotate_warning_lines(&mut report, &integrations.warnings);
+    report
 }
 
 pub(super) fn run_container_down_command(

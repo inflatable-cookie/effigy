@@ -1,7 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use effigy_manifest::{load_task_manifest, ManifestWorkspaceConfig};
+use effigy_manifest::{load_task_manifest, ManifestWorkspaceConfig, TASK_MANIFEST_FILE};
 
 use crate::ContainerPolicyError;
 
@@ -28,7 +28,7 @@ pub(crate) fn build_isolation_mounts(
         if source == repo_root {
             continue;
         }
-        let manifest_path = source.join("effigy.toml");
+        let manifest_path = source.join(TASK_MANIFEST_FILE);
         if !manifest_path.is_file() {
             continue;
         }
@@ -39,7 +39,7 @@ pub(crate) fn build_isolation_mounts(
     }
 
     for (adoption_repo, producer_root) in adopted_roots {
-        let producer_manifest_path = producer_root.join("effigy.toml");
+        let producer_manifest_path = producer_root.join(TASK_MANIFEST_FILE);
         let manifest = load_task_manifest(&producer_manifest_path).map_err(|error| {
             ContainerPolicyError::TaskInvocation(format!(
                 "failed to load isolation contract from `{}` for container `{container_name}`: {error}",

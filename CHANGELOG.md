@@ -6,6 +6,13 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- `effigy scan dead-code` now recognizes Rust public/test/API roots,
+  descriptor and dispatch roots, data-shape references, impl/call references,
+  serde default helpers, binary entrypoints, nested crate modules, and
+  cross-file references more accurately, reducing Effigy's own current
+  dead-code findings to zero after removing confirmed dead artifacts.
+
 ## [0.8.6] - 2026-06-04
 
 ### Changed

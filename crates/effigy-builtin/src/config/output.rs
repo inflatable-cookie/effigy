@@ -178,7 +178,7 @@ fn render_inspect_payload(
     request: ConfigRequest,
     target_root: &Path,
 ) -> Result<Option<String>, BuiltinError> {
-    let manifest_path = target_root.join("effigy.toml");
+    let manifest_path = target_root.join(effigy_manifest::TASK_MANIFEST_FILE);
     let loaded = load_task_manifest_with_inspection(&manifest_path)?;
     let selected_path = request.inspect_path.clone();
     let selected = selected_path
