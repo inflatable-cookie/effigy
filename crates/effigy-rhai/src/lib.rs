@@ -56,6 +56,9 @@ type ContainerExecWithOptionsRunner = Arc<
         + Send
         + Sync,
 >;
+type ContainerExecStreamRunner = Arc<
+    dyn Fn(&Path, &str, Option<&str>, &[String]) -> Result<HostCommandOutput, String> + Send + Sync,
+>;
 
 #[derive(Debug, Clone)]
 pub struct RhaiHostError {
@@ -100,6 +103,7 @@ pub struct HostCallbacks {
     pub container_shell: ContainerShellRunner,
     pub container_exec: ContainerExecRunner,
     pub container_exec_with_options: ContainerExecWithOptionsRunner,
+    pub container_exec_stream: ContainerExecStreamRunner,
 }
 
 #[derive(Debug, Clone)]

@@ -183,12 +183,7 @@ fn host_callbacks() -> HostCallbacks {
                 },
             )
             .map_err(|error| error.to_string())?;
-            Ok(HostCommandOutput {
-                status: i64::from(output.status.code().unwrap_or(-1)),
-                success: output.status.success(),
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            })
+            Ok(host_command_output_from_process_output(output))
         }),
         container_exec_with_options: Arc::new(|repo_root, name, service, command, options| {
             let name = if name.is_empty() { None } else { Some(name) };
@@ -199,13 +194,26 @@ fn host_callbacks() -> HostCallbacks {
                 repo_root, name, operation,
             )
             .map_err(|error| error.to_string())?;
-            Ok(HostCommandOutput {
-                status: i64::from(output.status.code().unwrap_or(-1)),
-                success: output.status.success(),
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            })
+            Ok(host_command_output_from_process_output(output))
         }),
+        container_exec_stream: Arc::new(|repo_root, name, service, command| {
+            let name = if name.is_empty() { None } else { Some(name) };
+            activate_rhai_container_exec(repo_root, name).map_err(|error| error.to_string())?;
+            let output = crate::runner::container_command::run_container_exec_stream(
+                repo_root, name, service, command,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(host_command_output_from_process_output(output))
+        }),
+    }
+}
+
+fn host_command_output_from_process_output(output: std::process::Output) -> HostCommandOutput {
+    HostCommandOutput {
+        status: i64::from(output.status.code().unwrap_or(-1)),
+        success: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     }
 }
 

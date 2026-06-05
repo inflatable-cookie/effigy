@@ -1075,6 +1075,13 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
         safety: "runtime-mutation",
     },
     RhaiSurfaceFunction {
+        module: MODULE_CONTAINER,
+        name: "exec_stream",
+        signature: "container::exec_stream(name[, service], args)",
+        description: "Run an argv-style command in a container service with inherited output.",
+        safety: "runtime-mutation",
+    },
+    RhaiSurfaceFunction {
         module: MODULE_STATE,
         name: "capture_context",
         signature: "state::capture_context()",

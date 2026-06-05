@@ -57,9 +57,9 @@ try {
     // a stateful in-container build flow with exports, command substitution,
     // redirection, and artifact writes inside `/workspace`; flattening it into
     // one-off Rhai host helpers would not simplify the behavior.
-    let output = container::shell(container_name, build_script);
-    if output.trim() != "" {
-        log(output);
+    let output = container::exec_stream(container_name, ["sh", "-lc", build_script]);
+    if !output["success"] {
+        throw "container build command exited with status " + output["status"].to_string();
     }
 } catch (error) {
     shell_error = error.to_string();

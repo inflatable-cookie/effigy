@@ -83,6 +83,41 @@ fn build_container_module(context: Arc<ScriptContext>, callbacks: HostCallbacks)
     let container_exec_context = context.clone();
     let container_exec_callbacks = callbacks.clone();
     module.set_native_fn(
+        "exec_stream",
+        move |name: ImmutableString, command: Array| -> Result<Map, Box<EvalAltResult>> {
+            Ok(host_command_output_map(
+                (container_exec_callbacks.container_exec_stream)(
+                    &container_exec_context.repo_root,
+                    name.as_str(),
+                    None,
+                    &dynamic_array_to_strings(&command)?,
+                )
+                .map_err(rhai_runtime_error)?,
+            ))
+        },
+    );
+    let container_exec_context = context.clone();
+    let container_exec_callbacks = callbacks.clone();
+    module.set_native_fn(
+        "exec_stream",
+        move |name: ImmutableString,
+              service: ImmutableString,
+              command: Array|
+              -> Result<Map, Box<EvalAltResult>> {
+            Ok(host_command_output_map(
+                (container_exec_callbacks.container_exec_stream)(
+                    &container_exec_context.repo_root,
+                    name.as_str(),
+                    Some(service.as_str()),
+                    &dynamic_array_to_strings(&command)?,
+                )
+                .map_err(rhai_runtime_error)?,
+            ))
+        },
+    );
+    let container_exec_context = context.clone();
+    let container_exec_callbacks = callbacks.clone();
+    module.set_native_fn(
         "exec",
         move |name: ImmutableString, command: Array| -> Result<Map, Box<EvalAltResult>> {
             Ok(host_command_output_map(

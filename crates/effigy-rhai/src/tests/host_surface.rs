@@ -25,6 +25,8 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
             if !exec["success"] || exec["stdout"] != "exec:web:postgres:psql,-c,select 1" { throw("exec"); }
             let default_service = container::exec("web", ["pwd"]);
             if default_service["stdout"] != "exec:web::pwd" { throw("exec default"); }
+            let stream = container::exec_stream("web", "postgres", ["sh", "-lc", "echo hi"]);
+            if !stream["success"] || stream["stdout"] != "stream:web:postgres:sh,-lc,echo hi" { throw("exec stream"); }
             let tasks = task::list();
             if tasks["feature"] != "tasks.list" { throw("tasks list"); }
             let resolved = task::resolve("api/test");

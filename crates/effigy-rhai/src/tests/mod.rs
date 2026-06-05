@@ -100,6 +100,18 @@ fn callbacks() -> HostCallbacks {
                 stderr: String::new(),
             })
         }),
+        container_exec_stream: Arc::new(|_, name, service, command| {
+            Ok(HostCommandOutput {
+                status: 0,
+                success: true,
+                stdout: format!(
+                    "stream:{name}:{}:{}",
+                    service.unwrap_or(""),
+                    command.join(",")
+                ),
+                stderr: String::new(),
+            })
+        }),
     }
 }
 

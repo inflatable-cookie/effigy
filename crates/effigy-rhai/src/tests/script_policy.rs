@@ -23,6 +23,7 @@ fn run_effigy_json_surfaces_callback_errors_as_runtime_errors() {
         container_shell: callbacks().container_shell,
         container_exec: callbacks().container_exec,
         container_exec_with_options: callbacks().container_exec_with_options,
+        container_exec_stream: callbacks().container_exec_stream,
     };
 
     let error = execute_rhai_script(&context, "effigy::run_json([\"demo\"]);", &[], &callbacks)

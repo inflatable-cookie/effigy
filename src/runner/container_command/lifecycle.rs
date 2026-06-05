@@ -660,6 +660,35 @@ pub(in crate::runner) fn run_container_exec_operation_capture(
     name: Option<&str>,
     operation: ContainerCapturedExecOperation,
 ) -> Result<Output, RunnerError> {
+    run_container_exec_operation(repo_root, name, operation, true)
+}
+
+pub(in crate::runner) fn run_container_exec_stream(
+    repo_root: &Path,
+    name: Option<&str>,
+    service: Option<&str>,
+    command: &[String],
+) -> Result<Output, RunnerError> {
+    run_container_exec_operation(
+        repo_root,
+        name,
+        ContainerCapturedExecOperation {
+            service: service.map(str::to_owned),
+            command: command.to_vec(),
+            stdin_file: None,
+            cwd: None,
+            env: BTreeMap::new(),
+        },
+        false,
+    )
+}
+
+fn run_container_exec_operation(
+    repo_root: &Path,
+    name: Option<&str>,
+    operation: ContainerCapturedExecOperation,
+    capture: bool,
+) -> Result<Output, RunnerError> {
     if operation.command.is_empty() {
         return Err(RunnerError::task_invocation(
             "container_exec requires at least one command argument",
@@ -703,7 +732,7 @@ pub(in crate::runner) fn run_container_exec_operation_capture(
         "docker compose exec",
     )
     .map_err(RunnerError::from)?;
-    run_compose_exec_plan_with_options(&policy, &plan, true, operation.stdin_file.as_deref())
+    run_compose_exec_plan_with_options(&policy, &plan, capture, operation.stdin_file.as_deref())
 }
 
 fn probe_runtime_shell_capability(
